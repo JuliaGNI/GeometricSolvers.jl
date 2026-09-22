@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+GeometricSolvers = "3a2b8526-dde5-4630-ad43-3d2dcd69f118"
+
+[sources]
+GeometricSolvers = {path = ".."}
