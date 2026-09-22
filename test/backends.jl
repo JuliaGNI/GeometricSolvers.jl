@@ -1,4 +1,4 @@
-# The array back ends later parts loop over: an ordinary `Array`; `JLArray`, a CPU array that
+# The array backends a test loops over: an ordinary `Array`; `JLArray`, a CPU array that
 # refuses scalar indexing and so catches a GPU-only fault in ordinary CI; and the
 # KernelAbstractions `CPU()` backend, for a kernel itself rather than for the array it runs on.
 
@@ -9,7 +9,7 @@ using Test
 const ARRAY_BACKENDS = (Array, JLArray)
 const KA_BACKEND = KernelAbstractions.CPU()
 
-@testset "the backends later parts loop over are constructible" begin
+@testset "the backends are constructible" begin
     for AT in ARRAY_BACKENDS
         a = AT(zeros(Float32, 4))
         @test a isa AbstractVector{Float32}
