@@ -1,41 +1,41 @@
-# Capability census for the R3 operations GeometricSolvers needs from a vendor library or its
-# own generic kernel.
+# Capability census for the dense linear-algebra operations GeometricSolvers needs from a vendor
+# library or from its own generic kernels.
 #
 # For each element type -- F16, BF16, F32, F64, CF32, CF64 -- and each operation -- GEMM, lu!,
-# qr!, svd!, A \ b, cholesky, batched LU (CUDA/ROCm only) -- a cell is *pass*, *wrong* (the
-# relative residual exceeds a stated tolerance) or the first line of the thrown error. The
+# qr!, svd!, A \ b, cholesky, batched LU -- a cell is *pass*, *wrong* (the relative residual
+# exceeds a stated tolerance) or the first line of the thrown error, tagged with the step that
+# threw it: moving the input to the device, the computation, or reading the result back. The
 # residual is taken in ComplexF64 against the T-rounded input: the product for GEMM, the
 # reconstruction L*U, Q*R, U*S*Vt or U'*U for a factorisation, A*x - b for A \ b. Two extra checks,
-# not swept over every element type: a KernelAbstractions kernel doing BFloat16 arithmetic
-# (P0.6), and DifferentiationInterface's `jacobian!` with `AutoForwardDiff()` on the backend's
-# own array type and on a `JLArray` (P0.3).
+# not swept over every element type: a KernelAbstractions kernel doing BFloat16 arithmetic, and
+# DifferentiationInterface's `jacobian!` with `AutoForwardDiff()` on the backend's own array type
+# and on a `JLArray`.
 #
 # Usage: julia --startup-file=no --project=. run.jl <backend>
 #   backend in {cpu, metal, cuda, rocm}.
 #
-# Only `cpu` and `metal` run on this machine. `cuda` and `rocm` are accepted so a runner with that
-# hardware can call the same script unchanged; here they report the load error (`Package CUDA not
-# found`) for every cell, because CUDA.jl and AMDGPU.jl are not dependencies of this spike
-# environment (AMDGPU.jl does not support macOS at all, and this machine has no CUDA device to
-# exercise).
+# Metal.jl is the only backend package in this environment. `cuda` and `rocm` need CUDA.jl or
+# AMDGPU.jl added to it; without that, every cell reports the load error (`Package CUDA not
+# found`). Batched LU has no check yet: it is *n/a* on `cpu` and `metal`, and *not measured* on
+# `cuda` and `rocm`.
 #
 # `Float64` and `ComplexF64` on `metal` are marked *unsupported* without a run: a `Float64` scalar
 # reaching a Metal kernel raises `InvalidIRError`.
 #
-# `lu!` and `cholesky` on a `Float16` `MtlArray` crash the Julia process outright (not a catchable
-# exception -- confirmed twice, in separate Kaimon sessions). This script does not attempt them:
-# it reports *crash (confirmed manually, not re-run)* for both, and skips `A \ b` on the same
-# (backend, F16) pair because it dispatches to `lu!` internally.
+# `lu!` and `cholesky` on a `Float16` `MtlArray` crash the Julia process rather than raise a
+# catchable exception. This script does not attempt them: it reports *crash (confirmed manually,
+# not re-run)* for both, and skips `A \ b` on the same (backend, F16) pair because it dispatches
+# to `lu!` internally.
 #
 # No timings: this is a correctness census, not a benchmark.
 
 using LinearAlgebra
 using Random
 using Printf
-using BFloat16s: BFloat16
-using JLArrays: JLArray
+using BFloat16s: BFloat16s, BFloat16
+using JLArrays: JLArrays, JLArray
 using KernelAbstractions
-using ADTypes: AutoForwardDiff
+using ADTypes: ADTypes, AutoForwardDiff
 using DifferentiationInterface: DifferentiationInterface as DI
 import ForwardDiff   # DI's ForwardDiff back end needs this loaded, not only `using ADTypes`.
 
@@ -47,7 +47,7 @@ const OPS = ("GEMM", "lu!", "qr!", "svd!", "A\\b", "cholesky", "batched LU")
 
 # A coarse "does this basically work" bound, not a precision or cost study.
 # Every comparison is in ComplexF64, against a reference built from the T-rounded input.
-rtol(T) = 100 * Float64(eps(T <: Complex ? real(T) : T))
+rtol(T) = 100 * Float64(eps(real(T)))
 function relerr(C, Cref)
     norm(ComplexF64.(C) .- ComplexF64.(Cref)) / max(norm(ComplexF64.(Cref)), eps())
 end
@@ -122,53 +122,73 @@ spd(A) = A * A' + size(A, 1) * one(eltype(A)) * I
 # --- one grid cell -------------------------------------------------------------------------
 
 function run_cell(backend::AbstractString, T::Type, op::AbstractString)
-    op == "batched LU" && return "n/a (CUDA, ROCm only)"
+    if op == "batched LU"
+        return backend in ("cuda", "rocm") ? "not measured (no batched LU check yet)" :
+               "n/a (CUDA, ROCm only)"
+    end
     unsupported_eltype(backend, T) && return "unsupported (no Float64 on Metal)"
     crashes(backend, T, op) && return "crash (confirmed manually, not re-run)"
 
     A, b = testdata(T)
+    step = "to device"
     try
         Ad = to_device(backend, A)
         Aref = ComplexF64.(A)
         if op == "GEMM"
+            step = "compute"
             C = Ad * Ad
+            step = "read back"
             judge(Array(C), Aref * Aref, T)
         elseif op == "lu!"
+            step = "compute"
             F = lu!(copy(Ad))
+            step = "read back"
             L = Array(F.L)
             U = Array(F.U)
             p = Array(F.p)
             judge(ComplexF64.(L) * ComplexF64.(U), Aref[p, :], T)
         elseif op == "qr!"
+            step = "compute"
             F = qr!(copy(Ad))
+            step = "read back"
             Q = Array(Matrix(F.Q))
             R = Array(Matrix(F.R))
             judge(ComplexF64.(Q) * ComplexF64.(R), Aref, T)
         elseif op == "svd!"
+            step = "compute"
             F = svd!(copy(Ad))
+            step = "read back"
             U = Array(F.U)
             S = Array(F.S)
             Vt = Array(F.Vt)
             judge(ComplexF64.(U) * Diagonal(ComplexF64.(S)) * ComplexF64.(Vt), Aref, T)
         elseif op == "A\\b"
             bd = to_device(backend, b)
+            step = "compute"
             x = Ad \ bd
+            step = "read back"
             judge(Aref * ComplexF64.(Array(x)), ComplexF64.(b), T)
         elseif op == "cholesky"
+            step = "compute"
             Aspd = spd(Ad)
             F = cholesky(Aspd)
+            step = "read back"
             # `Array(F.U)` on a GPU array scalar-indexes through the generic triangular copy
             # path; go through the raw, unmasked factor and triangularise on the host instead.
             Uraw = Array(parent(F.U))
             U = triu(ComplexF64.(Uraw))
-            judge(U' * U, ComplexF64.(Array(spd(A))), T)
+            verdict = judge(U' * U, ComplexF64.(Array(spd(A))), T)
+            # LinearAlgebra factorises Float16 and BFloat16 in Float32 (`choltype`). A BFloat16
+            # input keeps the Float32 factor, flagged here; a Float16 input is converted back to
+            # Float16, so its cell cannot show that the arithmetic ran in Float32.
+            eltype(F) == T ? verdict : verdict * " [factor eltype $(eltype(F))]"
         end
     catch e
-        "error: " * firstline(e)
+        "error ($step): " * firstline(e)
     end
 end
 
-# --- P0.6: a KA kernel with BFloat16 arithmetic (no rem, fma, atan(y,x), mod2pi or sincos --
+# --- a KA kernel with BFloat16 arithmetic (no rem, fma, atan(y,x), mod2pi or sincos --
 # BFloat16s.jl lacks the first four and the fifth recurses to a stack overflow) --------------
 
 @kernel function bf16_axpy_kernel!(c, @Const(a), @Const(b))
@@ -194,7 +214,7 @@ function check_ka_bfloat16(backend::AbstractString)
     end
 end
 
-# --- P0.3: DI jacobian! with AutoForwardDiff() on the device array, and on a JLArray ---------
+# --- DI jacobian! with AutoForwardDiff() on the device array, and on a JLArray ---------
 
 di_f!(y, x) = (y .= x .^ 2 .+ 1; nothing)
 
@@ -222,26 +242,40 @@ end
 
 # --- report --------------------------------------------------------------------------------
 
+const BACKEND_PACKAGE = Dict("metal" => :Metal, "cuda" => :CUDA, "rocm" => :AMDGPU)
+
+# The Manifest is not committed, so the output records the versions that decided each cell.
+function package_versions(backend::AbstractString)
+    mods = Module[KernelAbstractions, DI, ForwardDiff, ADTypes, BFloat16s, JLArrays]
+    name = get(BACKEND_PACKAGE, backend, nothing)
+    if name !== nothing && Base.invokelatest(isdefined, Main, name)
+        push!(mods, Base.invokelatest(getfield, Main, name))
+    end
+    join(("$(nameof(m)) $(pkgversion(m))" for m in mods), ", ")
+end
+
 function main(io::IO, backend::AbstractString)
     println(io, "GeometricSolvers capability census -- backend = ", backend)
     println(io, "Julia ", VERSION, "; tolerance = 100*eps(real(T)) per element type")
     println(io)
-    @printf(io, "%-8s", "type")
-    foreach(op -> @printf(io, "  %-34s", op), OPS)
+    rows = [[run_cell(backend, T, op) for op in OPS] for (_, T) in ELTYPES]
+    widths = [max(textwidth(op), maximum(r -> textwidth(r[j]), rows))
+              for (j, op) in enumerate(OPS)]
+    print(io, rpad("type", 8))
+    foreach((op, w) -> print(io, "  ", rpad(op, w)), OPS, widths)
     println(io)
-    for (label, T) in ELTYPES
-        @printf(io, "%-8s", label)
-        for op in OPS
-            @printf(io, "  %-34s", run_cell(backend, T, op))
-        end
+    for ((label, _), row) in zip(ELTYPES, rows)
+        print(io, rpad(string(label), 8))
+        foreach((cell, w) -> print(io, "  ", rpad(cell, w)), row, widths)
         println(io)
     end
     println(io)
-    println(io, "KA kernel, BFloat16 arithmetic (P0.6): ", check_ka_bfloat16(backend))
-    println(io, "DI jacobian!, AutoForwardDiff (P0.3), device array: ",
-        check_di_jacobian(backend))
-    println(io, "DI jacobian!, AutoForwardDiff (P0.3), JLArray:      ",
+    println(io, "KA kernel, BFloat16 arithmetic:               ", check_ka_bfloat16(backend))
+    println(io, "DI jacobian!, AutoForwardDiff, device array:  ", check_di_jacobian(backend))
+    println(io, "DI jacobian!, AutoForwardDiff, JLArray:       ",
         check_di_jacobian(JLArray(Float32.(1:6))))
+    println(io)
+    println(io, "Packages: ", package_versions(backend))
     nothing
 end
 
