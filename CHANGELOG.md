@@ -17,3 +17,13 @@ so that a compat-only bump can be told apart from an interface change.
   backend). `scripts/float16_dot.jl` measures the accuracy of five `Float16` dot-product
   accumulation policies (naive, Neumaier compensated summation, Ogita–Rump–Oishi `Dot2`,
   `Base.TwicePrecision` and a `Float32` accumulator) against a `BigFloat` reference.
+
+- `scripts/spikes/capabilities/run.jl` is a capability census: for each element type (Float16,
+  BFloat16, Float32, Float64, ComplexF32, ComplexF64) and dense linear-algebra operation (GEMM,
+  `lu!`, `qr!`, `svd!`, `A \ b`, `cholesky`, batched LU), it reports whether the backend array
+  supports it — pass, wrong (tolerance: `8 * eps(real(T))` for Float16/BFloat16,
+  `100 * eps(real(T))` for others), unsupported, n/a, or the first line of the thrown error
+  (tagged with the step: `to device`, `compute`, or `read back`) — and checks
+  a KernelAbstractions kernel doing `BFloat16` arithmetic and
+  `DifferentiationInterface`'s `jacobian!` with `AutoForwardDiff()` on the backend's native array
+  type and on a `JLArray`. Runs on `cpu` and `metal` backends.
