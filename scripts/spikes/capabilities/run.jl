@@ -45,9 +45,10 @@ const ELTYPES = (:F16 => Float16, :BF16 => BFloat16, :F32 => Float32, :F64 => Fl
     :CF32 => ComplexF32, :CF64 => ComplexF64)
 const OPS = ("GEMM", "lu!", "qr!", "svd!", "A\\b", "cholesky", "batched LU")
 
-# A coarse "does this basically work" bound, not a precision or cost study.
-# Every comparison is in ComplexF64, against a reference built from the T-rounded input.
-rtol(T) = 100 * Float64(eps(real(T)))
+# Float16 and BFloat16 follow the `max(8, n) * eps` scaling of
+# `GeometricIntegratorsBase.default_options`; `svd!` sits near 5 eps at Float32, so the higher
+# precisions keep 100 eps. Every comparison is in ComplexF64, against the T-rounded input.
+rtol(T, n) = (real(T) in (Float16, BFloat16) ? max(8, n) : 100) * Float64(eps(real(T)))
 function relerr(C, Cref)
     norm(ComplexF64.(C) .- ComplexF64.(Cref)) / max(norm(ComplexF64.(Cref)), eps())
 end
@@ -55,8 +56,9 @@ firstline(e) = first(split(sprint(showerror, e), '\n'))
 
 function judge(C, Cref, T)
     e = relerr(C, Cref)
-    e <= rtol(T) ? @sprintf("pass (relerr %.2g, tol %.2g)", e, rtol(T)) :
-    @sprintf("wrong (relerr %.2g, tol %.2g)", e, rtol(T))
+    tol = rtol(T, N)
+    e <= tol ? @sprintf("pass (relerr %.2g, tol %.2g)", e, tol) :
+    @sprintf("wrong (relerr %.2g, tol %.2g)", e, tol)
 end
 
 # --- backend dispatch -------------------------------------------------------------------------
@@ -254,9 +256,27 @@ function package_versions(backend::AbstractString)
     join(("$(nameof(m)) $(pkgversion(m))" for m in mods), ", ")
 end
 
+# Loading the backend package inside a cell leaves the rest of that call in a world without the
+# package's methods. Load it first, so `main` can run the census in the newest world. A package
+# that is not in the environment is left to `to_device`, which reports it in every cell.
+function load_backend(backend::AbstractString)
+    name = get(BACKEND_PACKAGE, backend, nothing)
+    if name !== nothing && Base.find_package(string(name)) !== nothing
+        Core.eval(Main, Expr(:using, Expr(:., name)))
+    end
+    nothing
+end
+
 function main(io::IO, backend::AbstractString)
+    load_backend(backend)
+    Base.invokelatest(census, io, backend)
+end
+
+function census(io::IO, backend::AbstractString)
     println(io, "GeometricSolvers capability census -- backend = ", backend)
-    println(io, "Julia ", VERSION, "; tolerance = 100*eps(real(T)) per element type")
+    println(
+        io, "Julia ", VERSION, "; tolerance = max(8, n)*eps(T) for F16 and BF16 (n = ", N,
+        "), 100*eps(real(T)) otherwise")
     println(io)
     rows = [[run_cell(backend, T, op) for op in OPS] for (_, T) in ELTYPES]
     widths = [max(textwidth(op), maximum(r -> textwidth(r[j]), rows))

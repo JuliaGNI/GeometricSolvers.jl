@@ -21,8 +21,9 @@ so that a compat-only bump can be told apart from an interface change.
 - `scripts/spikes/capabilities/run.jl` is a capability census: for each element type (Float16,
   BFloat16, Float32, Float64, ComplexF32, ComplexF64) and dense linear-algebra operation (GEMM,
   `lu!`, `qr!`, `svd!`, `A \ b`, `cholesky`, batched LU), it reports whether the backend array
-  supports it — pass, wrong (residual over stated tolerance), unsupported, n/a, or the first line
-  of the thrown error (tagged with the step: `to device`, `compute`, or `read back`) — and checks
+  supports it — pass, wrong (tolerance: `8 * eps(real(T))` for Float16/BFloat16,
+  `100 * eps(real(T))` for others), unsupported, n/a, or the first line of the thrown error
+  (tagged with the step: `to device`, `compute`, or `read back`) — and checks
   a KernelAbstractions kernel doing `BFloat16` arithmetic and
   `DifferentiationInterface`'s `jacobian!` with `AutoForwardDiff()` on the backend's native array
   type and on a `JLArray`. Runs on `cpu` and `metal` backends.
