@@ -1,6 +1,6 @@
 using GeometricSolvers
 using GeometricSolvers: converged, record, rnorm
-using StaticArrays: SVector, SMatrix, @SMatrix
+using StaticArrays: SVector, SMatrix
 using Test
 
 @testset "Options(T) is Options{real(T)} and isbits" for T in (Float32, Float64, ComplexF32,
