@@ -2,15 +2,15 @@
 
 There is no GitHub runner with a GPU, and there is no device CI. The GPU machines are reachable
 only inside the institute. A person runs the device tests, or a spike, on the machine, and pushes
-the output to a results branch. A session then copies the output into the design record, and
-deletes the branch. **A results branch is never merged.**
+the output to a results branch. The maintainer then records the output and deletes the branch.
+**A results branch is never merged.**
 
 | machine | slug | backend |
 |:--|:--|:--|
 | DGX Spark | `spark` | `cuda` |
 | RTX 4090 workstation | `rtx4090` | `cuda` |
 | RX 7900 XTX workstation | `rx7900xtx` | `rocm` |
-| Apple silicon Mac | `mac` | `metal`, through Kaimon (see below) |
+| Apple silicon Mac | `mac` | `metal` |
 
 ## The environments
 
@@ -56,11 +56,15 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    mkdir -p ../results
    ```
 
-4. Instantiate the vendor environment, once for each change of its dependencies:
+4. Resolve and instantiate the vendor environment, before every run:
 
    ```sh
-   julia --startup-file=no --project=test/gpu/<backend> -e 'using Pkg; Pkg.instantiate()'
+   julia --startup-file=no --project=test/gpu/<backend> -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
    ```
+
+   `Pkg.resolve()` is needed because `GeometricSolvers` comes from the clone: when the checked-out
+   code has a new dependency, `Pkg.instantiate()` alone keeps the old manifest, and the load fails
+   with `package GeometricSolvers does not have … in its dependencies`.
 
 5. Run the device tests, or a spike. Save the output as
    `../results/<spike>-<machine>-<cpu|gpu>.txt`.
@@ -119,29 +123,24 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
 
    The last two commands delete the local branch, so that the next run finds only the remote one.
 
-Then tell the session that the branch is there. The session copies the output into the design
-record and deletes the branch.
+Then tell the maintainer that the branch is there.
 
-## Metal, on the Mac
+## From a REPL
 
-Metal runs in a Kaimon session on this Mac, with the active project `test/gpu/metal`. A Julia
-process that the Claude Code sandbox starts sees no Metal device, so a plain shell is not enough.
+The same runs work from a Julia REPL started at the repository root. The device tests:
 
 ```julia
 using Pkg
-Pkg.activate("test/gpu/metal"); Pkg.instantiate()
+Pkg.activate("test/gpu/metal"); Pkg.resolve(); Pkg.instantiate()      # or cuda, rocm
 include("test/gpu/runtests.jl"); main("metal")
 ```
 
-A spike needs the vendor environment behind its own, as `JULIA_LOAD_PATH` gives it on a machine.
-In a session whose load path already has the global environment, put `test/gpu/metal` second:
+A spike needs the vendor environment behind its own, as `JULIA_LOAD_PATH` gives it in step 5.
+`insert!(LOAD_PATH, 2, …)` puts `test/gpu/<backend>` right after the active project, before the
+global environment:
 
 ```julia
 Pkg.activate("scripts/spikes/capabilities"); Pkg.instantiate()
 insert!(LOAD_PATH, 2, abspath("test/gpu/metal"))
 include("scripts/spikes/capabilities/run.jl"); main("metal")
 ```
-
-A Kaimon session can also run the shell commands of step 5 in a child process, through `run`. The
-child inherits the session's access to the device. Remove `JULIA_LOAD_PATH` and `JULIA_PROJECT`
-from the child's environment first, because the session sets both.

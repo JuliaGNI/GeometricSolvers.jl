@@ -47,3 +47,10 @@ so that a compat-only bump can be told apart from an interface change.
   every float of a method tree to `R` through `Adapt`.
 - `Adapt` is the first runtime dependency. The Julia floor is 1.11, for
   `LAPACK.getrf!(A, ipiv)` with preallocated pivots.
+- Device runs by hand, as there is no GPU runner: `test/gpu/cuda`, `test/gpu/rocm` and
+  `test/gpu/metal` are one environment per vendor, and `test/gpu/runtests.jl <backend>` runs a
+  KernelAbstractions kernel on the device in `Float32` and `Float16` (and `Float64` on CUDA and
+  ROCm) against a host reference. `test/gpu/README.md` gives the procedure for a run on a machine
+  and for pushing its output to a `results/<machine>` branch. The spike environments have no
+  vendor package: a GPU run of `scripts/spikes/capabilities/run.jl` stacks `test/gpu/<backend>`
+  behind the spike's environment through `JULIA_LOAD_PATH`.
