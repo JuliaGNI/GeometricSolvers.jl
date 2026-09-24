@@ -30,7 +30,7 @@ end
     Options(T; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls)
 
 Build the [`Options`](@ref) of a solve whose iterate has element type `T`, as `Options{real(T)}`.
-The defaults scale with `eps(R)`:
+The two relative tolerances scale with `eps(R)`:
 
 | keyword | default |
 |:--|:--|

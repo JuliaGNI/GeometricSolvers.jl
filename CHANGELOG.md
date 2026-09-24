@@ -11,7 +11,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
-- The empty package skeleton: `Project.toml` with no runtime dependencies yet, the module and its
+- The empty package skeleton: `Project.toml`, the module and its
   docstring, a test harness with Aqua and a diagnostic JET check, and `test/backends.jl` — the
   array backends a test loops over (`Array`, `JLArray`, and the KernelAbstractions `CPU()`
   backend). `scripts/float16_dot.jl` measures the accuracy of five `Float16` dot-product

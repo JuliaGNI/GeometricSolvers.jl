@@ -1,5 +1,5 @@
 using GeometricSolvers: norm2, rnorm, rdot
-using JET: @test_opt
+using JET: JET, @test_opt
 using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions, @kernel, @index
 using Random: Xoshiro
@@ -67,15 +67,28 @@ end
     @test allocations(rdot, a, b) == 0
 end
 
+@testset "arguments with different axes raise a DimensionMismatch" begin
+    @test_throws DimensionMismatch rdot([1.0], [1.0, 2.0, 3.0])
+    @test_throws DimensionMismatch rdot([1.0, 2.0, 3.0], [1.0 2.0 3.0])
+end
+
+# On a Julia it does not support, JET loads empty stubs that throw. JET 0.12 exports
+# `JET_AVAILABLE` to say so; JET 0.9 and 0.10 name the same flag `JET_LOADABLE`.
+const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
+
 @testset "JET: no runtime dispatch, $T" for T in ELTYPES
     a = SVector{3, T}(1, 2, 3)
     v = T[1, 2, 3]
-    @test_opt norm2(a)
-    @test_opt rnorm(a)
-    @test_opt rdot(a, a)
-    @test_opt norm2(v)
-    @test_opt rnorm(v)
-    @test_opt rdot(v, v)
+    if JET_WORKS
+        @test_opt norm2(a)
+        @test_opt rnorm(a)
+        @test_opt rdot(a, a)
+        @test_opt norm2(v)
+        @test_opt rnorm(v)
+        @test_opt rdot(v, v)
+    else
+        @test_skip JET_WORKS
+    end
 end
 
 @kernel function reduce_kernel!(n2, d, xs, ys)

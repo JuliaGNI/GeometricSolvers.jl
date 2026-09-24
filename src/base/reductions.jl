@@ -22,9 +22,12 @@ rnorm(a) = sqrt(norm2(a))
 
 The real part of the inner product, ``\\mathrm{Re} \\sum_i \\bar{a}_i b_i``, in
 `real(promote_type(eltype(a), eltype(b)))`. That is the dot product of the real vector space
-under a complex `T`, which a merit derivative needs.
+under a complex `T`, which a merit derivative needs. Arguments with different axes raise a
+`DimensionMismatch`.
 """
 function rdot(a, b)
+    # The broadcast below would otherwise extend a length-1 or a row argument without an error.
+    axes(a) == axes(b) || throw(DimensionMismatch("rdot arguments have different axes"))
     R = real(promote_type(eltype(a), eltype(b)))
     # A lazy broadcast: `mapreduce` over two `Array`s materialises `map(f, a, b)` first.
     products = Broadcast.instantiate(Broadcast.broadcasted((x, y) -> real(conj(x) * y), a, b))
