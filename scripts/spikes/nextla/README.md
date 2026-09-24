@@ -28,14 +28,19 @@ main("metal")               # prints to stdout
 io = IOBuffer(); main(io, "metal"); String(take!(io))
 ```
 
-`cuda` is accepted as a backend, but `CUDA.jl` is not a dependency of this environment; without
-it, every cell reports an `UndefVarError` for `CUDA`. On a machine with an NVIDIA GPU, add it and
-run the same script unchanged:
+`cuda` is accepted as a backend, but this environment has no `CUDA.jl`. A CUDA run stacks the
+vendor environment `test/gpu/cuda` behind this one through `JULIA_LOAD_PATH`, so no committed file
+changes. The procedure for a run on a GPU machine, and for saving and pushing its output, is in
+[`test/gpu/README.md`](../../../test/gpu/README.md). From the repository root:
 
 ```sh
-julia --startup-file=no --project=. -e 'using Pkg; Pkg.add("CUDA"); Pkg.instantiate()'
-julia --startup-file=no --project=. run.jl cuda
+julia --startup-file=no --project=scripts/spikes/nextla -e 'using Pkg; Pkg.instantiate()'
+JULIA_LOAD_PATH="@:$PWD/test/gpu/cuda:@stdlib" \
+    julia --startup-file=no --project=scripts/spikes/nextla \
+    scripts/spikes/nextla/run.jl cuda
 ```
+
+Without the vendor environment in the load path, every cell reports an `UndefVarError` for `CUDA`.
 
 There are no timings in this census; it checks correctness only.
 
@@ -54,5 +59,6 @@ result cannot hide behind a large condition number. No dimension is a multiple o
 tile, and the recursive solve runs at n = 300, above the size of 256 where `unified_rectrxm!`
 starts to recurse. The last line records the versions of the packages that decide each cell.
 
-The script only prints to stdout; it writes nothing to disk. The tables in this directory's pull
-request are the record of a run.
+The script only prints to stdout; it writes nothing to disk. The tables in
+[pull request #4](https://github.com/JuliaGNI/GeometricSolvers.jl/pull/4) are the record of the
+`cpu` and `metal` runs.

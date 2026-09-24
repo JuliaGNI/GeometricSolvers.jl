@@ -25,8 +25,9 @@
 # Usage: julia --startup-file=no --project=. run.jl <backend>
 #   backend in {cpu, metal, cuda}.
 #
-# Metal.jl is the only backend package in this environment. `cuda` needs CUDA.jl added to it;
-# without that, every cell reports an `UndefVarError` for `CUDA`, at the `to device` step.
+# Metal.jl is the only backend package in this environment. `cuda` needs the vendor environment
+# `test/gpu/cuda` stacked behind it through `JULIA_LOAD_PATH` (see README.md); without that, every
+# cell reports an `UndefVarError` for `CUDA`, at the `to device` step.
 #
 # `Float64` on `metal` is marked *unsupported* without a run: a `Float64` scalar reaching a
 # Metal kernel raises `InvalidIRError`.
