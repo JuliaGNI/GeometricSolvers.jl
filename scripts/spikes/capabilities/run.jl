@@ -15,9 +15,10 @@
 #   backend in {cpu, metal, cuda, rocm}.
 #
 # This environment has no backend package. `metal`, `cuda` and `rocm` need the vendor environment
-# `test/gpu/<backend>` stacked behind it through `JULIA_LOAD_PATH` (see README.md); without that,
-# every cell reports the load error (`Package CUDA not found`). Batched LU has no check yet: it is *n/a* on `cpu` and `metal`, and *not measured* on
-# `cuda` and `rocm`.
+# `test/gpu/<backend>` stacked behind it through `JULIA_LOAD_PATH` (see README.md). Without that,
+# every cell reports the load error (`Package CUDA not found`), unless the global environment on
+# the load path has the vendor package: then it loads from there. Batched LU has no check yet: it
+# is *n/a* on `cpu` and `metal`, and *not measured* on `cuda` and `rocm`.
 #
 # `Float64` and `ComplexF64` on `metal` are marked *unsupported* without a run: a `Float64` scalar
 # reaching a Metal kernel raises `InvalidIRError`.

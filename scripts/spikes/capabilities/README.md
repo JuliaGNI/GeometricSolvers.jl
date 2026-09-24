@@ -10,7 +10,8 @@ the backend array support it? Plus two one-off checks: a KernelAbstractions kern
 
 The procedure for a run on a GPU machine, and for saving and pushing its output, is in
 [`test/gpu/README.md`](../../../test/gpu/README.md). This environment has no vendor package, so a
-GPU run stacks the vendor environment `test/gpu/<backend>` behind it. From the repository root:
+GPU run stacks the vendor environment `test/gpu/<backend>` behind it. The two manifests must agree
+on every package they share; step 5 of that procedure checks it. From the repository root:
 
 ```sh
 julia --startup-file=no --project=scripts/spikes/capabilities -e 'using Pkg; Pkg.instantiate()'
@@ -32,7 +33,7 @@ io = IOBuffer(); main(io, "metal"); String(take!(io))
 ```
 
 Without the vendor environment in the load path, every cell of a GPU backend reports the load
-error.
+error, unless the global environment has the vendor package: then the package loads from there.
 
 There are no timings in this census; it checks correctness only.
 

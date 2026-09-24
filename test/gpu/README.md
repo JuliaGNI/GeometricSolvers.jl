@@ -23,7 +23,8 @@ package. A spike run stacks the vendor environment behind the spike's own throug
 `JULIA_LOAD_PATH`. The spike finds its own dependencies first, and the vendor package in the
 second environment. A package that both environments have, such as `KernelAbstractions` or
 `GPUArrays`, loads from the spike's environment, for the vendor package too, so the two manifests
-must agree on its version. No committed file changes for a run.
+must agree on its version. Step 5 checks that before a spike run. No committed file changes for a
+run.
 
 ## One run on a machine
 
@@ -50,7 +51,7 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    results branch in step 6 cannot overwrite them:
 
    ```sh
-   git fetch origin
+   git fetch --prune origin
    git switch --detach origin/main        # or the branch under test
    mkdir -p ../results
    ```
@@ -72,10 +73,19 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
        2>&1 | tee ../results/devicetests-<machine>-gpu.txt
    ```
 
-   A spike, here `capabilities` on the GPU:
+   A spike, here `capabilities` on the GPU. The second command stops with an error when the two
+   manifests differ on the version of a package they share; instantiate both again in that case:
 
    ```sh
    julia --startup-file=no --project=scripts/spikes/capabilities -e 'using Pkg; Pkg.instantiate()'
+   julia --startup-file=no -e '
+       using TOML
+       versions(env) = Dict(name => get(only(entries), "version", "")
+           for (name, entries) in TOML.parsefile(joinpath(env, "Manifest.toml"))["deps"])
+       a, b = versions.(ARGS)
+       differ = sort!([name for name in intersect(keys(a), keys(b)) if a[name] != b[name]])
+       isempty(differ) || error("the manifests differ on ", join(differ, ", "))
+   ' scripts/spikes/capabilities test/gpu/<backend>
    JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib" \
        julia --startup-file=no --project=scripts/spikes/capabilities \
        scripts/spikes/capabilities/run.jl <backend> \
@@ -103,7 +113,11 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    git add -f results/<spike>-<machine>-<cpu|gpu>.txt
    git commit -m "<spike> on <machine>"
    git push -u origin results/<machine>
+   git switch --detach
+   git branch -d results/<machine>
    ```
+
+   The last two commands delete the local branch, so that the next run finds only the remote one.
 
 Then tell the session that the branch is there. The session copies the output into the design
 record and deletes the branch.

@@ -8,10 +8,10 @@
 # active project is `test/gpu/<backend>`:
 #   include("test/gpu/runtests.jl"); main("metal")
 #
-# The test runs a KernelAbstractions kernel on the device array and checks it against the same
-# kernel on the KA `CPU()` backend: in `Float32` and `Float16`, plus `Float64` on CUDA and ROCm
-# for correctness (Metal has no `Float64`). The output starts with the device, the driver and the
-# package versions, so that a saved output records what it was run on.
+# The test runs a KernelAbstractions kernel on the device array and checks it against a broadcast
+# on the CPU, which does not share the kernel: in `Float32` and `Float16`, plus `Float64` on CUDA
+# and ROCm for correctness (Metal has no `Float64`). The output starts with the device, the driver
+# and the package versions, so that a saved output records what it was run on.
 
 using GeometricSolvers: GeometricSolvers
 using KernelAbstractions
@@ -56,7 +56,6 @@ function run_tests(name::AbstractString, vendor::Module, device, eltypes)
     println()
     vendor.versioninfo()
     println()
-    cpu = KernelAbstractions.CPU()
     @testset "KA kernel on $name" begin
         @testset "axpy, $T, n = $n" for T in eltypes, n in LENGTHS
 
@@ -64,11 +63,11 @@ function run_tests(name::AbstractString, vendor::Module, device, eltypes)
             x = rand(rng, T, n)
             y = rand(rng, T, n)
             a = T(0.75)
-            y_cpu = axpy!(cpu, copy(y), a, x)
+            y_ref = muladd.(a, x, y)
             y_dev = axpy!(device, to_backend(device, y), a, to_backend(device, x))
             @test KernelAbstractions.get_backend(y_dev) == device
             # A device may fuse the multiply-add where the CPU rounds twice: one ulp apart.
-            @test Array(y_dev) ≈ y_cpu rtol=2 * eps(T)
+            @test Array(y_dev) ≈ y_ref rtol=2 * eps(T)
         end
     end
 end
