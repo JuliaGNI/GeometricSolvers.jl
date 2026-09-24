@@ -27,3 +27,22 @@ so that a compat-only bump can be told apart from an interface change.
   a KernelAbstractions kernel doing `BFloat16` arithmetic and
   `DifferentiationInterface`'s `jacobian!` with `AutoForwardDiff()` on the backend's native array
   type and on a `JLArray`. Runs on `cpu` and `metal` backends.
+
+- The core types, all `isbits` so that a kernel can hold them, with every real field in
+  `R = real(T)`: `ReturnCode` (one byte: `SUCCESS`, `STALLED`, `MAXITERS`, `SINGULAR`,
+  `NONFINITE`, `LINESEARCH_FAILED`); `SolverStatus{R}`, with `step_failures` counting every
+  step-rule failure and `promoted` recording a factorisation above its method's precision;
+  `StepInfo{R}`, which `GeometricSolvers.record` folds into a status; and `Options{R}`, the
+  stopping test only, built by `Options(T; kwargs...)` and converted to another `R` by `convert`.
+  The default residual test is relative (`f_reltol = √eps(R)`, `f_abstol = 0`), because the
+  attainable residual depends on the scale of the problem, and `min_iterations` is `0`, so a
+  start that already passes the test takes no step.
+- `LUFactorization`, `QRFactorization` and `SVDFactorization` carry their factorisation precision
+  as a type parameter: `LUFactorization()` for the working type, `LUFactorization(Float32)` for a
+  `Float32` factorisation, and the markers `TF32()`, `FP16()`, `BF16()` for vendor tensor cores.
+  No factorisation runs yet.
+- Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
+  `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts
+  every float of a method tree to `R` through `Adapt`.
+- `Adapt` is the first runtime dependency. The Julia floor is 1.11, for
+  `LAPACK.getrf!(A, ipiv)` with preallocated pivots.
