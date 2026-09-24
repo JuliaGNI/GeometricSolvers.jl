@@ -60,6 +60,13 @@ allocations(f::F, a::A, b::B) where {F, A, B} = (f(a, b); @allocated f(a, b))
     @test allocations(rdot, a, b) == 0
 end
 
+@testset "Array: allocation-free, $T" for T in ELTYPES
+    a, b = randn(Xoshiro(1), T, 100), randn(Xoshiro(2), T, 100)
+    @test allocations(norm2, a) == 0
+    @test allocations(rnorm, a) == 0
+    @test allocations(rdot, a, b) == 0
+end
+
 @testset "JET: no runtime dispatch, $T" for T in ELTYPES
     a = SVector{3, T}(1, 2, 3)
     v = T[1, 2, 3]

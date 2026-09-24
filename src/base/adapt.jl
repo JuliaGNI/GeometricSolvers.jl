@@ -1,8 +1,8 @@
 """
     ToReal{R}()
 
-The `Adapt` rule that converts every `AbstractFloat` in a method tree to `R`. `init` applies it on
-the host, with `R = real(eltype(x))`, so that `Picard(; damping = 0.7)` runs in a `Float32`
+The `Adapt` rule that converts every `AbstractFloat` in a method tree to `R`. Applied on the host
+with `R = real(eltype(x))`, it lets a method written with `Float64` literals run in a `Float32`
 kernel that never sees a `Float64`. An integer, a type and a function pass through unchanged.
 
 Each method type that holds a float adds `Adapt.@adapt_structure` for itself.

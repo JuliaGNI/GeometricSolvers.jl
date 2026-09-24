@@ -26,5 +26,7 @@ under a complex `T`, which a merit derivative needs.
 """
 function rdot(a, b)
     R = real(promote_type(eltype(a), eltype(b)))
-    mapreduce((x, y) -> real(conj(x) * y), +, a, b; init = zero(R))
+    # A lazy broadcast: `mapreduce` over two `Array`s materialises `map(f, a, b)` first.
+    products = Broadcast.instantiate(Broadcast.broadcasted((x, y) -> real(conj(x) * y), a, b))
+    sum(products; init = zero(R))
 end

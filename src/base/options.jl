@@ -12,8 +12,8 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 - `min_iterations::Int32`, `max_iterations::Int32`: the bounds on the number of steps.
 - `max_stalls::Int32`: the number of consecutive stalled steps after which the solve stops.
 
-A user builds no `Options` for a type: `solve` and `init` build them from their keywords with
-[`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}), and `convert` turns an `Options` of
+[`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
+type `T` of the iterate, so the caller never names `R`, and `convert` turns an `Options` of
 another `R` into `Options{R}`.
 """
 struct Options{R <: Real}
@@ -99,7 +99,8 @@ end
 
 The stopping test of [`Options`](@ref) at `status`, for a start with residual norm `fnorm₀` and
 an iterate of norm `xnorm`. It holds once `min_iterations` steps are taken and either the residual
-test or, after the first step, the step test holds. The loop calls it before the first step too.
+test or, after the first step, the step test holds. At 0 iterations it is the test before the
+first step, which a start at the limiting accuracy passes.
 """
 function converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R, xnorm::R) where {R}
     status.iterations >= options.min_iterations || return false

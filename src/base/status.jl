@@ -10,8 +10,8 @@ is in `R = real(T)` for the element type `T` of the iterate.
 - `iterations::Int32`: the number of steps taken.
 - `fnorm::R`: ``\\|F(x)\\|`` at return.
 - `stepnorm::R`: ``\\|Δx\\|`` of the last step.
-- `step_failures::Int32`: every step-rule failure of the solve in one count: line-search
-  failures, composite weight fallbacks and `Anderson` restarts.
+- `step_failures::Int32`: every step-rule failure of the solve, such as a failed line search, in
+  one count.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
 
@@ -31,7 +31,7 @@ end
 """
     StepInfo{R <: Real}
 
-What one step returns to the loop, or to a combinator that runs it as a member.
+The result of one step, which [`record`](@ref) folds into a [`SolverStatus`](@ref).
 
 # Fields
 

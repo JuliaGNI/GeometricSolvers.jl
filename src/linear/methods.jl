@@ -1,9 +1,8 @@
 """
     TF32()
 
-The factorisation-precision marker for NVIDIA's TensorFloat-32 tensor cores. Only the CUDA fast
-path will accept it; with any other array there is no method, and the solve raises a
-`MethodError` on the host.
+The factorisation-precision marker for NVIDIA's TensorFloat-32 tensor cores. It is a type only:
+no factorisation method accepts a marker, so a marker selects no code path.
 """
 struct TF32 end
 
@@ -42,7 +41,8 @@ abstract type LinearMethod{TF <: FactorisationPrecision} end
     LUFactorization(TF)
 
 LU factorisation with partial pivoting. `LUFactorization()` factorises in the working type of the
-problem, `LUFactorization(Float32)` in `Float32`, and `LUFactorization(TF32())` on tensor cores.
+problem, `LUFactorization(Float32)` in `Float32`, and `LUFactorization(TF32())` carries a
+tensor-core marker (see [`TF32`](@ref)).
 """
 struct LUFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 

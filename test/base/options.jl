@@ -48,8 +48,8 @@ end
     @test_throws ArgumentError Options(Float64; max_stalls = 0)
 end
 
-# A minimal Newton loop over the stopping test. It stands in for the loop of part L, which runs
-# the same test at the same points: once before the first step and once after each step.
+# A minimal Newton loop over the stopping test. It runs the test where a solver loop runs it:
+# once before the first step and once after each step.
 function newton(F, J, x, opt::Options{R}) where {R}
     Fx = F(x)
     fnorm₀ = rnorm(Fx)
