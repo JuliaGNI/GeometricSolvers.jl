@@ -14,7 +14,9 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 
 [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
 type `T` of the iterate, so the caller never names `R`, and `convert` turns an `Options` of
-another `R` into `Options{R}`.
+another `R` into `Options{R}`. The conversion raises `f_reltol` to at least `√eps(R)` and
+`x_reltol` to at least `2 eps(R)`, the defaults of `R`, because a smaller relative tolerance
+cannot be met in `R`.
 """
 struct Options{R <: Real}
     f_abstol::R
@@ -44,14 +46,15 @@ The two relative tolerances scale with `eps(R)`:
 
 **The default residual test is relative.** The residual cannot fall below about
 ``\\mathrm{eps}(T) \\|J\\| \\|x\\|``, whatever the precision of the residual (Tisseur 2001,
-Cor. 2.5), and an absolute default cannot know ``\\|J\\| \\|x\\|``. Any fixed value of `f_abstol`
-lies below that floor for some problem, which then ends as a stall. So `f_abstol` is `0` unless
-the caller knows the scale of `F`.
+Cor. 2.5), and a default cannot know ``\\|J\\| \\|x\\|``. So the default `f_abstol` is `0`, which
+turns the absolute test off, and the relative test ``f_{reltol} \\|F(x₀)\\|`` decides.
 
 **The stopping test runs before the first step, and `min_iterations` is `0`.** From a start at the
-limiting accuracy one Newton step makes the result worse (Wilkinson, quoted by Tisseur 2001), and
-an integrator starts each solve from an extrapolation. A start that passes the test returns
-unchanged after 0 iterations.
+limiting accuracy one Newton step makes the result worse (Wilkinson, quoted by Tisseur 2001). The
+relative test cannot see such a start: before the first step it compares ``\\|F(x₀)\\|`` with a
+fraction of itself. So a start at the limiting accuracy returns unchanged after 0 iterations only
+when the caller sets `f_abstol` at or above its residual floor, as an integrator that knows the
+scale of `F` can.
 
 A negative or `NaN` tolerance, a negative `min_iterations`, a `max_iterations` below
 `min_iterations` and a `max_stalls` below 1 raise an `ArgumentError`.
@@ -89,8 +92,11 @@ function Options(::Type{T};
         Int32(min_iterations), Int32(max_iterations), Int32(max_stalls))
 end
 
+# A relative tolerance below the default of `R` cannot be met in `R`: the `Float64` default
+# `f_reltol = √eps(Float64)` lies below `eps(Float32)`. So each is raised to that default.
 function Base.convert(::Type{Options{R}}, opt::Options) where {R <: Real}
-    Options{R}(R(opt.f_abstol), R(opt.f_reltol), R(opt.x_abstol), R(opt.x_reltol),
+    Options{R}(R(opt.f_abstol), max(R(opt.f_reltol), sqrt(eps(R))),
+        R(opt.x_abstol), max(R(opt.x_reltol), 2 * eps(R)),
         opt.min_iterations, opt.max_iterations, opt.max_stalls)
 end
 
@@ -100,7 +106,8 @@ end
 The stopping test of [`Options`](@ref) at `status`, for a start with residual norm `fnorm₀` and
 an iterate of norm `xnorm`. It holds once `min_iterations` steps are taken and either the residual
 test or, after the first step, the step test holds. At 0 iterations it is the test before the
-first step, which a start at the limiting accuracy passes.
+first step: the relative residual test then holds only for ``F(x₀) = 0``, so a start passes it
+through `f_abstol`.
 """
 function converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R, xnorm::R) where {R}
     status.iterations >= options.min_iterations || return false

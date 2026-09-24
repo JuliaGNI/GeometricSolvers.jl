@@ -33,9 +33,24 @@ end
     end
     @test all(T -> T === Float32 || T === Int32, fieldtypes(typeof(opt)))
     @test opt.f_abstol === 1.0f-9
-    @test opt.f_reltol === Float32(sqrt(eps(Float64)))
     @test opt.max_stalls === Int32(5)
     @test convert(Options{Float32}, opt) === opt
+end
+
+@testset "convert raises a relative tolerance to the default of R" begin
+    # the Float64 defaults, √eps(Float64) and 2 eps(Float64), are below eps(Float32)
+    opt = convert(Options{Float32}, Options(Float64))
+    @test opt.f_reltol === sqrt(eps(Float32))
+    @test opt.x_reltol === 2 * eps(Float32)
+    @test opt.f_reltol >= eps(Float32)
+    # a looser tolerance is kept
+    opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-3, x_reltol = 1e-5))
+    @test opt.f_reltol === 1.0f-3
+    @test opt.x_reltol === 1.0f-5
+    # towards a finer type, every value is kept
+    opt = convert(Options{Float64}, Options(Float32))
+    @test opt.f_reltol === Float64(sqrt(eps(Float32)))
+    @test opt.x_reltol === Float64(2 * eps(Float32))
 end
 
 @testset "invalid values raise an ArgumentError" begin
@@ -85,6 +100,24 @@ end
     @test st.iterations < 20
     @test x ≈ sqrt.(c) rtol = 1e-8
     @test st.fnorm > 1                # the relative test, not a small absolute one, stopped it
+end
+
+@testset "a start at the limiting accuracy returns after 0 iterations through f_abstol" begin
+    # The same problem, started one ulp from the rounded root. There ‖F‖ is at its floor but not
+    # zero: x² moves by about 2x ulp(x) ≈ 1.4e5, more than one ulp of c (6.6e4).
+    c = SVector(π * 1e20, ℯ * 1e20)
+    F(x) = x .^ 2 .- c
+    J(x) = SMatrix{2, 2}(2x[1], 0, 0, 2x[2])
+    x₀ = nextfloat.(sqrt.(c))
+    @test 0 < rnorm(F(x₀)) < 1e6
+    # the relative test alone cannot see it, so Newton steps from it
+    _, st, _ = newton(F, J, x₀, Options(Float64))
+    @test st.iterations > 0
+    # an f_abstol at the floor of F returns it unchanged
+    x, st, ok = newton(F, J, x₀, Options(Float64; f_abstol = 1e6))
+    @test ok
+    @test st.iterations == 0
+    @test x === x₀
 end
 
 @testset "min_iterations defers the test, and the step test waits for a step" begin

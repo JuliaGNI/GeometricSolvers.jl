@@ -33,7 +33,8 @@ so that a compat-only bump can be told apart from an interface change.
   `NONFINITE`, `LINESEARCH_FAILED`); `SolverStatus{R}`, with `step_failures` counting every
   step-rule failure and `promoted` recording a factorisation above its method's precision;
   `StepInfo{R}`, which `GeometricSolvers.record` folds into a status; and `Options{R}`, the
-  stopping test only, built by `Options(T; kwargs...)` and converted to another `R` by `convert`.
+  stopping test only, built by `Options(T; kwargs...)` and converted to another `R` by `convert`,
+  which raises a relative tolerance below the default of `R` to that default.
   The default residual test is relative (`f_reltol = √eps(R)`, `f_abstol = 0`), because the
   attainable residual depends on the scale of the problem, and `min_iterations` is `0`, so a
   start that already passes the test takes no step.
