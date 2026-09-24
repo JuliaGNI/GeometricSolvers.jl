@@ -1,0 +1,26 @@
+AMDGPU.functional() = true
+AMDGPU versioninfo
+┌───────────┬──────────────────┬───────────┬────────────────────────────────────
+│ Available │ Name             │ Version   │ Path                              ⋯
+├───────────┼──────────────────┼───────────┼────────────────────────────────────
+│     +     │ LLD              │ -         │ /opt/rocm-6.2.4/lib/llvm/bin/ld.l ⋯
+│     +     │ Device Libraries │ -         │ /home/IPP-AD/mkraus/.julia/artifa ⋯
+│     +     │ HIP              │ 6.2.41134 │ /opt/rocm-6.2.4/lib/libamdhip64.s ⋯
+│     +     │ rocBLAS          │ 4.2.4     │ /opt/rocm-6.2.4/lib/librocblas.so ⋯
+│     +     │ rocSOLVER        │ 3.26.2    │ /opt/rocm-6.2.4/lib/librocsolver. ⋯
+│     +     │ rocSPARSE        │ 3.2.1     │ /opt/rocm-6.2.4/lib/librocsparse. ⋯
+│     +     │ rocRAND          │ 3.1.1     │ /opt/rocm-6.2.4/lib/librocrand.so ⋯
+│     +     │ rocFFT           │ 1.0.30    │ /opt/rocm-6.2.4/lib/librocfft.so  ⋯
+│     -     │ hipTENSOR        │ -         │ /opt/rocm-6.2.4/lib/libhiptensor. ⋯
+│     +     │ MIOpen           │ 3.2.0     │ /opt/rocm-6.2.4/lib/libMIOpen.so  ⋯
+└───────────┴──────────────────┴───────────┴────────────────────────────────────
+                                                                1 column omitted
+
+AMDGPU devices
+┌────┬─────────────────────┬──────────┬───────────┬────────────┬───────────────┐
+│ Id │                Name │ GCN arch │ Wavefront │     Memory │ Shared Memory │
+├────┼─────────────────────┼──────────┼───────────┼────────────┼───────────────┤
+│  1 │  Radeon RX 7900 XTX │  gfx1100 │        32 │ 23.984 GiB │    64.000 KiB │
+│  2 │ AMD Radeon Graphics │  gfx1036 │        32 │ 30.960 GiB │    64.000 KiB │
+└────┴─────────────────────┴──────────┴───────────┴────────────┴───────────────┘
+

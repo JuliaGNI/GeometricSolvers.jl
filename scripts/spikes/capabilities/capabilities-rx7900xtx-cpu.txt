@@ -1,0 +1,16 @@
+GeometricSolvers capability census -- backend = cpu
+Julia 1.13.0; tolerance = max(8, n)*eps(T) for F16 and BF16 (n = 8), 100*eps(real(T)) otherwise
+
+type      GEMM                                lu!                                 qr!                                 svd!                                                                       A\b                                 cholesky                                                  batched LU           
+F16       pass (relerr 0.00047, tol 0.0078)   pass (relerr 0.00079, tol 0.0078)   pass (relerr 0.00092, tol 0.0078)   error (compute): MethodError: no method matching svd!(::Matrix{Float16})   pass (relerr 0.00093, tol 0.0078)   pass (relerr 0.00053, tol 0.0078)                         n/a (CUDA, ROCm only)
+BF16      pass (relerr 0.0033, tol 0.062)     pass (relerr 0.0017, tol 0.062)     pass (relerr 0.0049, tol 0.062)     error (compute): MethodError: no method matching svd!(::Matrix{BFloat16})  pass (relerr 0.0066, tol 0.062)     pass (relerr 4.7e-08, tol 0.062) [factor eltype Float32]  n/a (CUDA, ROCm only)
+F32       pass (relerr 5.5e-08, tol 1.2e-05)  pass (relerr 2.4e-08, tol 1.2e-05)  pass (relerr 7.3e-08, tol 1.2e-05)  pass (relerr 4.7e-07, tol 1.2e-05)                                         pass (relerr 8.4e-08, tol 1.2e-05)  pass (relerr 6.1e-08, tol 1.2e-05)                        n/a (CUDA, ROCm only)
+F64       pass (relerr 0, tol 2.2e-14)        pass (relerr 5.8e-17, tol 2.2e-14)  pass (relerr 1.2e-16, tol 2.2e-14)  pass (relerr 8.9e-16, tol 2.2e-14)                                         pass (relerr 1.8e-16, tol 2.2e-14)  pass (relerr 2.7e-17, tol 2.2e-14)                        n/a (CUDA, ROCm only)
+CF32      pass (relerr 5.4e-08, tol 1.2e-05)  pass (relerr 4.5e-08, tol 1.2e-05)  pass (relerr 1.3e-07, tol 1.2e-05)  pass (relerr 4.7e-07, tol 1.2e-05)                                         pass (relerr 1.3e-07, tol 1.2e-05)  pass (relerr 4.6e-08, tol 1.2e-05)                        n/a (CUDA, ROCm only)
+CF64      pass (relerr 0, tol 2.2e-14)        pass (relerr 1.3e-16, tol 2.2e-14)  pass (relerr 2.7e-16, tol 2.2e-14)  pass (relerr 1.3e-15, tol 2.2e-14)                                         pass (relerr 3.4e-16, tol 2.2e-14)  pass (relerr 6.2e-17, tol 2.2e-14)                        n/a (CUDA, ROCm only)
+
+KA kernel, BFloat16 arithmetic:               pass (relerr 0.0022, tol 0.062)
+DI jacobian!, AutoForwardDiff, device array:  pass (relerr 0, tol 1.2e-05)
+DI jacobian!, AutoForwardDiff, JLArray:       error: Scalar indexing is disallowed.
+
+Packages: KernelAbstractions 0.9.42, DifferentiationInterface 0.7.21, ForwardDiff 1.4.6, ADTypes 1.24.0, BFloat16s 0.6.2, JLArrays 0.3.3
