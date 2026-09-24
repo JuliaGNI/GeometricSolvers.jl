@@ -92,9 +92,9 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
 
    Each spike's `README.md` gives its own arguments.
 
-6. Push the output to the branch `results/<machine>`. The first command makes the branch, and
-   the second switches to it where it exists on the remote already. `results/` and `*.txt` are in
-   `.gitignore`, so add the file with `-f`:
+6. Push the output to the branch `results/<machine>`. `git switch -c` makes the branch. Where the
+   branch exists on the remote already, use `git switch results/<machine>` in its place.
+   `results/` and `*.txt` are in `.gitignore`, so add the file with `-f`:
 
    ```sh
    git switch -c results/<machine>        # or: git switch results/<machine>
