@@ -13,34 +13,43 @@ QR, so the census has no row for them. Its LU is CPU code (`getrf2!` calls `BLAS
 
 ## Run it
 
+This environment has no vendor package. A GPU run stacks the vendor environment
+`test/gpu/<backend>` behind it through `JULIA_LOAD_PATH`, so no committed file changes. The
+procedure for a run on a GPU machine, and for saving and pushing its output, is in
+[`test/gpu/README.md`](../../../test/gpu/README.md). From the repository root:
+
 ```sh
-cd scripts/spikes/nextla
-julia --startup-file=no --project=. -e 'using Pkg; Pkg.instantiate()'   # first time only
-julia --startup-file=no --project=. run.jl cpu
+julia --startup-file=no --project=scripts/spikes/nextla -e 'using Pkg; Pkg.instantiate()'
+julia --startup-file=no --project=scripts/spikes/nextla scripts/spikes/nextla/run.jl cpu
+JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib" \
+    julia --startup-file=no --project=scripts/spikes/nextla \
+    scripts/spikes/nextla/run.jl <backend>
 ```
 
-`cpu` and `metal` both run this way; `metal` needs an Apple GPU. From a REPL on this directory:
+`<backend>` is `metal` or `cuda`. Without the vendor environment in the load path, every cell of
+that backend reports an `UndefVarError` for the vendor module. From a REPL started at the
+repository root:
 
 ```julia
-include("run.jl")
+using Pkg; Pkg.activate("scripts/spikes/nextla"); Pkg.instantiate()
+insert!(LOAD_PATH, 2, abspath("test/gpu/metal"))   # the vendor environment
+include("scripts/spikes/nextla/run.jl")
 main("metal")               # prints to stdout
 # or, to capture the table as a string:
 io = IOBuffer(); main(io, "metal"); String(take!(io))
 ```
 
-`cuda` is accepted as a backend, but this environment has no `CUDA.jl`. A CUDA run stacks the
-vendor environment `test/gpu/cuda` behind this one through `JULIA_LOAD_PATH`, so no committed file
-changes. The procedure for a run on a GPU machine, and for saving and pushing its output, is in
-[`test/gpu/README.md`](../../../test/gpu/README.md). From the repository root:
+## Probes
 
-```sh
-julia --startup-file=no --project=scripts/spikes/nextla -e 'using Pkg; Pkg.instantiate()'
-JULIA_LOAD_PATH="@:$PWD/test/gpu/cuda:@stdlib" \
-    julia --startup-file=no --project=scripts/spikes/nextla \
-    scripts/spikes/nextla/run.jl cuda
-```
+`probes/` holds three small scripts behind the findings of the census. Each prints its figures and
+writes nothing to disk. They take no argument; the two Metal probes run with `test/gpu/metal`
+stacked, as above.
 
-Without the vendor environment in the load path, every cell reports an `UndefVarError` for `CUDA`.
+| script | backend | checks |
+|:--|:--|:--|
+| `probes/trsm_repeat.jl` | `metal` | each base TRSM kernel 10 times at n = 40, 256, 1000 (F32), counting the runs above the tolerance |
+| `probes/trsm_flags.jl` | `cpu` | `NextLA.trsm` with `transa` and `diag` other than `'N'`, against the solve those flags ask for |
+| `probes/geqrt_shared.jl` | `metal` | `geqrt!` on `SharedStorage` arrays, 5 runs each for F32 and CF32: factorisation and orthogonality errors |
 
 There are no timings in this census; it checks correctness only.
 
