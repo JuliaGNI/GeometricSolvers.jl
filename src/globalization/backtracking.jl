@@ -10,8 +10,8 @@ trial step until
 
 where ``τ`` is the [`roundoff`](@ref) of ``φ(0)``. Each backtrack takes the minimiser of the
 model through ``φ(0)``, ``φ′(0)`` and the last one or two trials, clamped to ``[0.1 α, p α]``.
-The search stops at the smallest informative step [`smallest_step`](@ref), after two trials
-whose merit equals ``φ(0)`` bit for bit, or after `maxiter` trials.
+The search stops at the [`smallest_step`](@ref), after two trials at steps below
+``\\sqrt{\\mathrm{eps}}`` whose merit equals ``φ(0)`` bit for bit, or after `maxiter` trials.
 
 The slope ``φ′(0)`` comes from the step kind: ``-2φ(0)`` for an [`ExactStep`](@ref), one
 evaluation for a [`MeasuredSlope`](@ref). For an [`InexactStep`](@ref) with residual ``η`` the
@@ -110,7 +110,9 @@ function linesearch(ls::Backtracking{R}, lf, step::StepKind, φ₀::R, α::R,
         done && continue
         αₐ, φₐ = α, φ(lf, α)
         n += Int32(1)
-        frozen = φₐ == φ₀ ? frozen + 1 : 0
+        # A merit equal to φ₀ is taken as a frozen trial point only for a step small enough that
+        # x + αd may round to x; a larger step with φ = φ₀ is an ordinary rejected trial.
+        frozen = φₐ == φ₀ && α ≤ sqrt(eps(R)) ? frozen + 1 : 0
         if accepts(step, ls, φₐ, φ₀, d₀, α, η, τ)
             code = φₐ ≤ φ₀ - τ ? SUCCESS : STALLED
             done = true

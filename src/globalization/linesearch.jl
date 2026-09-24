@@ -46,7 +46,8 @@ function φ′ end
     ExactStep()
 
 The step kind of a direction from a fresh Jacobian and an exact linear solve. For the merit
-``φ = \\|r\\|^2`` it gives ``φ′(0) = -2φ(0)``, so no line search evaluates ``φ′(0)``.
+``φ = \\|r\\|^2`` it gives ``φ′(0) = -2φ(0)``, so no line search evaluates ``φ′(0)``. For
+``φ(0) > \\mathrm{floatmax}(R)/2`` that slope overflows, and the search reports `NONFINITE`.
 """
 struct ExactStep end
 
@@ -105,7 +106,7 @@ end
 Run the line search `ls` along the line function `lf` from the trial step `α`, and return a
 [`LineSearchResult{R}`](@ref LineSearchResult). `φ₀` is the merit at ``α = 0``, which the caller
 has; `step` is an [`ExactStep`](@ref), an [`InexactStep`](@ref) or a [`MeasuredSlope`](@ref);
-`αmax` is the caller's ceiling on the step. A trial step that is not positive is replaced by 1.
+`αmax` is the caller's ceiling on the step. A trial step that is not positive or not finite is replaced by 1.
 
 A non-positive or `NaN` `αmax` is a caller error. The search then evaluates nothing and returns
 `LINESEARCH_FAILED` with the trial step, bounded by the ceiling of the method.
@@ -152,8 +153,12 @@ roundoff(φ₀) = 4 * eps(φ₀)
     smallest_step(c, d₀, τ)
 
 The smallest step ``τ / (c |φ′(0)|)`` at which a demanded decrease ``c α |φ′(0)|`` still
-exceeds the round-off ``τ``, clamped to ``[\\mathrm{eps}(R), \\sqrt{\\mathrm{eps}(R)}]``. Below
-it, a trial carries no information, so a search stops there instead of spending its cap.
+exceeds the round-off ``τ``, clamped to ``[\\mathrm{eps}(R), \\sqrt{\\mathrm{eps}(R)}]``. A
+search stops there instead of spending its cap. Unclamped, a smaller trial could only show a
+decrease below ``τ``. The upper clamp keeps a nearly flat merit searchable, but it can stop the
+search where a smaller step still decreases the merit by more than ``τ``: a merit that curves
+steeply against ``|φ′(0)|``, such as ``1 - 2α + 10^4 α^2`` in `Float32`. The search then
+reports what the merit shows at the clamp.
 """
 function smallest_step(c::R, d₀::R, τ::R) where {R}
     αmin = τ / (c * abs(d₀))

@@ -199,7 +199,7 @@ end
             @test strong_wolfe(lf, r.α, φ₀, d₀, R(c₁), R(c₂))
         end
         # Every case is solved in Float64, which is where Moré and Thuente ran them.
-        R == Float64 && @test r.code == SUCCESS
+        @test r.code == SUCCESS
         @test r.α > 0
     end
 
@@ -443,13 +443,34 @@ end
         r = search(Backtracking(), w, Float64)
         @test r.code == STALLED
         @test length(w.atφ) < 43
-        @test r.α > 1e-8
+        # the frozen stop counts only steps below √eps, where x + αd may round to x
+        @test sqrt(eps()) / 10 < r.α ≤ sqrt(eps())
         # every α > 0 lands one ulp above φ₀: pure round-off
         w = Watched(Line(α -> α > 0 ? nextfloat(1.0) : 1.0, α -> -2.0), Float64)
         r = search(Backtracking(), w, Float64)
         @test r.code == STALLED
         @test length(w.atφ) < 53
         @test r.α == smallest_step(1e-4, -2.0, roundoff(1.0)) == 4.440892098500626e-12
+    end
+
+    @testset "no method accepts a step that increases the merit" begin
+        for T in (Float32, Float64), m in SEARCHES, step in (MeasuredSlope(), ExactStep())
+            τ = roundoff(one(T))
+            creep = Line(α -> one(T) + (α > 0 ? τ / 2 : zero(T)), α -> -2 * one(T))
+            r = search(m, creep, T; step)
+            @test r.code != SUCCESS
+        end
+    end
+
+    @testset "a merit equal to φ₀ at a large step is not the round-off floor" begin
+        # φ = 1 - 2α + 6α² - 4α³ equals φ₀ at α = 1 and at α = 1/2, and has φ(0.21) ≈ 0.81
+        for T in (Float32, Float64), s in (1e-8, 1.0, 1e8),
+            step in (MeasuredSlope(), ExactStep())
+            lf = Line(α -> T(s) * (1 - 2α + 6α^2 - 4α^3), α -> T(s) * (-2 + 12α - 12α^2))
+            r = search(Backtracking(), lf, T; step)
+            @test r.code == SUCCESS
+            @test r.φ < T(0.9) * T(s)
+        end
     end
 
     @testset "roundoff, smallest_step and the interpolation" begin
