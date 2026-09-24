@@ -32,11 +32,38 @@ FP16
 BF16
 ```
 
+## Line searches
+
+A line search is scalar code: [`linesearch`](@ref) sees the line only through the merit
+[`φ`](@ref) and its derivative [`φ′`](@ref), allocates nothing and never throws, so the same
+search runs on the host and inside a kernel. Its iteration cap is its own field.
+
+```@docs
+Static
+Backtracking
+Bisection
+StrongWolfe
+```
+
 ## Internals
 
 These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
+LineSearch
+linesearch
+φ
+φ′
+ExactStep
+InexactStep
+MeasuredSlope
+LineSearchResult
+roundoff
+smallest_step
+sufficient_decrease
+classify
+backtrack_step
+zoom_step
 LinearMethod
 ToReal
 record
