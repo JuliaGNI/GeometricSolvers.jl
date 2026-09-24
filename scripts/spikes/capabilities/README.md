@@ -20,7 +20,8 @@ JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib" \
     scripts/spikes/capabilities/run.jl <backend>
 ```
 
-`<backend>` is `metal`, `cuda` or `rocm`. From a REPL whose active project is this directory:
+`<backend>` is `metal`, `cuda` or `rocm`. From a REPL started in this directory with
+`julia --project=.`:
 
 ```julia
 insert!(LOAD_PATH, 2, abspath("../../../test/gpu/metal"))   # the vendor environment

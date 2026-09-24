@@ -21,7 +21,9 @@ has `GeometricSolvers` from this clone, through `[sources]`, which needs Julia 1
 The spike environments in `scripts/spikes/<spike>/` are backend-neutral: they have no vendor
 package. A spike run stacks the vendor environment behind the spike's own through
 `JULIA_LOAD_PATH`. The spike finds its own dependencies first, and the vendor package in the
-second environment. No committed file changes for a run.
+second environment. A package that both environments have, such as `KernelAbstractions` or
+`GPUArrays`, loads from the spike's environment, for the vendor package too, so the two manifests
+must agree on its version. No committed file changes for a run.
 
 ## One run on a machine
 
@@ -44,17 +46,14 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    cd GeometricSolvers.jl
    ```
 
-3. Get the code to run, and make the results branch. Name the branch after the machine:
+3. Get the code to run. The outputs go to a directory outside the clone, so that the switch to the
+   results branch in step 6 cannot overwrite them:
 
    ```sh
    git fetch origin
    git switch --detach origin/main        # or the branch under test
-   git switch -c results/<machine>
-   mkdir -p results
+   mkdir -p ../results
    ```
-
-   If `results/<machine>` exists on the remote already, fetch it and add to it instead:
-   `git switch results/<machine>`.
 
 4. Instantiate the vendor environment, once for each change of its dependencies:
 
@@ -62,14 +61,15 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    julia --startup-file=no --project=test/gpu/<backend> -e 'using Pkg; Pkg.instantiate()'
    ```
 
-5. Run the device tests, or a spike. Save the output as `results/<spike>-<machine>-<cpu|gpu>.txt`.
+5. Run the device tests, or a spike. Save the output as
+   `../results/<spike>-<machine>-<cpu|gpu>.txt`.
    The device tests are the spike `devicetests`, on the `gpu`.
 
    The device tests:
 
    ```sh
    julia --startup-file=no --project=test/gpu/<backend> test/gpu/runtests.jl <backend> \
-       2>&1 | tee results/devicetests-<machine>-gpu.txt
+       2>&1 | tee ../results/devicetests-<machine>-gpu.txt
    ```
 
    A spike, here `capabilities` on the GPU:
@@ -79,7 +79,7 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib" \
        julia --startup-file=no --project=scripts/spikes/capabilities \
        scripts/spikes/capabilities/run.jl <backend> \
-       2>&1 | tee results/capabilities-<machine>-gpu.txt
+       2>&1 | tee ../results/capabilities-<machine>-gpu.txt
    ```
 
    The same spike on the CPU of the machine needs no vendor environment:
@@ -87,14 +87,19 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    ```sh
    julia --startup-file=no --project=scripts/spikes/capabilities \
        scripts/spikes/capabilities/run.jl cpu \
-       2>&1 | tee results/capabilities-<machine>-cpu.txt
+       2>&1 | tee ../results/capabilities-<machine>-cpu.txt
    ```
 
    Each spike's `README.md` gives its own arguments.
 
-6. Push the output. `results/` and `*.txt` are in `.gitignore`, so add the file with `-f`:
+6. Push the output to the branch `results/<machine>`. The first command makes the branch, and
+   the second switches to it where it exists on the remote already. `results/` and `*.txt` are in
+   `.gitignore`, so add the file with `-f`:
 
    ```sh
+   git switch -c results/<machine>        # or: git switch results/<machine>
+   mkdir -p results
+   cp ../results/<spike>-<machine>-<cpu|gpu>.txt results/
    git add -f results/<spike>-<machine>-<cpu|gpu>.txt
    git commit -m "<spike> on <machine>"
    git push -u origin results/<machine>
