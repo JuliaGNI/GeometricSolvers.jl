@@ -8,24 +8,32 @@ the backend array support it? Plus two one-off checks: a KernelAbstractions kern
 
 ## Run it
 
+The procedure for a run on a GPU machine, and for saving and pushing its output, is in
+[`test/gpu/README.md`](../../../test/gpu/README.md). This environment has no vendor package, so a
+GPU run stacks the vendor environment `test/gpu/<backend>` behind it. The two manifests must agree
+on every package they share; step 5 of that procedure checks it. From the repository root:
+
 ```sh
-cd scripts/spikes/capabilities
-julia --startup-file=no --project=. -e 'using Pkg; Pkg.instantiate()'   # first time only
-julia --startup-file=no --project=. run.jl cpu
+julia --startup-file=no --project=scripts/spikes/capabilities -e 'using Pkg; Pkg.instantiate()'
+julia --startup-file=no --project=scripts/spikes/capabilities scripts/spikes/capabilities/run.jl cpu
+JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib" \
+    julia --startup-file=no --project=scripts/spikes/capabilities \
+    scripts/spikes/capabilities/run.jl <backend>
 ```
 
-`cpu` and `metal` both run this way; `metal` needs an Apple GPU. From a REPL on this directory:
+`<backend>` is `metal`, `cuda` or `rocm`. From a REPL started in this directory with
+`julia --project=.`:
 
 ```julia
+insert!(LOAD_PATH, 2, abspath("../../../test/gpu/metal"))   # the vendor environment
 include("run.jl")
 main("metal")               # prints to stdout
 # or, to capture the table as a string:
 io = IOBuffer(); main(io, "metal"); String(take!(io))
 ```
 
-`cuda` and `rocm` are accepted as backends, but `CUDA.jl` and `AMDGPU.jl` are not dependencies of
-this environment; without them, every cell reports the load error. A runner with that hardware
-adds the relevant package to `Project.toml` and runs the same script unchanged.
+Without the vendor environment in the load path, every cell of a GPU backend reports the load
+error, unless the global environment has the vendor package: then the package loads from there.
 
 There are no timings in this census; it checks correctness only.
 
