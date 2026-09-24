@@ -72,8 +72,7 @@ function backtrack_step(φ₀::R, d₀::R, α::R, φα::R, αp::R, φp::R, p::R)
 end
 
 # The slope the model and the test of each step kind use, and its cost.
-backtracking_slope(::ExactStep, lf, φ₀) = (-2φ₀, Int32(0))
-backtracking_slope(::MeasuredSlope, lf, φ₀) = (φ′(lf, zero(φ₀)), Int32(1))
+backtracking_slope(step, lf, φ₀) = anchor_slope(step, lf, φ₀)
 backtracking_slope(step::InexactStep, lf, φ₀) = (-2 * (1 - step.η) * φ₀, Int32(0))
 
 # η of the trial step α: an inexact step d with residual η₀ gives the residual 1 - α(1 - η₀) along
@@ -85,8 +84,10 @@ initial_residual(step, α::R) where {R} = zero(R)
 function accepts(::Union{ExactStep, MeasuredSlope}, ls, φα, φ₀, d₀, α, η, τ)
     sufficient_decrease(φα, φ₀, ls.c₁ * α * d₀, τ)
 end
+# Past α = 1/(c₁(1 - η₀)) the factor 1 - c₁(1 - η) is not positive, and no step can meet the test.
 function accepts(::InexactStep, ls, φα, φ₀, d₀, α, η, τ)
-    φα ≤ min(φ₀, (1 - ls.c₁ * (1 - η))^2 * φ₀ + τ)
+    factor = 1 - ls.c₁ * (1 - η)
+    factor > 0 && φα ≤ min(φ₀, factor^2 * φ₀ + τ)
 end
 
 function linesearch(ls::Backtracking{R}, lf, step::StepKind, φ₀::R, α::R,
@@ -118,7 +119,7 @@ function linesearch(ls::Backtracking{R}, lf, step::StepKind, φ₀::R, α::R,
             code = STALLED
             done = true
         elseif α ≤ αmin
-            code = abs(φₐ - φ₀) ≤ τ ? STALLED : LINESEARCH_FAILED
+            code = floor_code(φₐ, φ₀, τ)
             done = true
         else
             αₙ = max(backtrack_step(φ₀, d₀, α, φₐ, αp, φp, ls.p), αmin)

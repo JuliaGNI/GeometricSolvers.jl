@@ -3,6 +3,7 @@ using GeometricSolvers: linesearch, φ, φ′, ExactStep, InexactStep, MeasuredS
                         LineSearchResult, ToReal, roundoff, smallest_step,
                         sufficient_decrease,
                         backtrack_step, zoom_step
+using JET: JET
 using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions, @kernel, @index, @Const
 using Random: Random
@@ -80,8 +81,11 @@ end
             Line(α -> o + α, α -> -2o),                             # slope contradicts values
             Line(α -> α > 0 ? R(NaN) : o, α -> -2o)                 # NaN beyond the anchor
         )
-        for m in METHODS, step in STEPS, lf in pathological, αmax in (Inf, 0.5)
-            r = @test_logs search(m, lf, R; step, αmax)            # 3: it logs nothing
+        for m in (METHODS..., Bisection(; αmax = Inf), StrongWolfe(; αmax = Inf)),
+            step in STEPS, lf in pathological, αmax in (Inf, 0.5),
+            α in (1.0, Inf, NaN, -1.0)
+
+            r = @test_logs search(m, lf, R; step, αmax, α)         # 3: it logs nothing
             @test r isa LineSearchResult{R}                         # 1: it did not throw
             @test r.α > 0                                           # 2
             @test isfinite(r.α)
@@ -168,6 +172,16 @@ end
         @test r.φ ≤ (1 - c₁ * r.α * (1 - η₀))^2          # the updated test holds
         @test r.φ > (1 - c₁ * (1 - η₀))^2                 # the test of α = 1 does not
         @test r.evaluations == 2
+
+        # A trial step past α = 1 / (c₁(1 - η₀)) makes the factor 1 - c₁(1 - η) negative; its
+        # square must not accept a step with almost no decrease.
+        flat = Line(α -> α > 0 ? 1 - R(1e-6) : one(R), α -> -2 * one(R))
+        for (c₁, α) in ((0.5, 5.0), (1e-4, 3e4))
+            r = search(Backtracking(; c₁), flat, R; step = InexactStep(0.1), α)
+            @test r.α < 1 / (c₁ * (1 - 0.1))
+            # the test with its round-off allowance τ
+            @test r.code != SUCCESS || r.φ ≤ (1 - R(c₁) * r.α * R(0.9))^2 + roundoff(one(R))
+        end
     end
 end
 
@@ -354,6 +368,23 @@ end
             @test all(r -> r === rs[2] || (r.α == rs[2].α && r.code == rs[2].code), rs)
             @test all(r -> r.evaluations == rs[1].evaluations, rs)
         end
+        # and on the round-off-floor path: a merit one ulp above φ₀, and a cliff. Powers of two
+        # scale the merit exactly; a decimal scale changes the relative size of one ulp, so
+        # there only the code must agree.
+        noise(s) = Line(α -> α > 0 ? R(s) * nextfloat(one(R)) : R(s), α -> -2 * R(s))
+        cliff(s) = Line(α -> α > 0 ? R(s) * (1 + 1000α) : R(s), α -> -2 * R(s))
+        exact = R == Float32 ? (2.0^-60, 1.0, 2.0^60) : (2.0^-600, 1.0, 2.0^600)
+        decimal = R == Float32 ? (1e-20, 1e20) : (1e-200, 1e200)
+        for merit in (noise, cliff)
+            rs = [search(m, merit(s), R) for s in exact]
+            @test all(
+                r -> (r.α, r.code, r.evaluations) ==
+                     (rs[2].α, rs[2].code, rs[2].evaluations), rs)
+            @test all(s -> search(m, merit(s), R).code == rs[2].code, decimal)
+        end
+        @test all(
+            s -> search(m, cliff(s), R).evaluations == search(m, cliff(1.0), R).evaluations,
+            decimal)
     end
 end
 
@@ -619,17 +650,13 @@ end
 end
 
 @testset "JET: the searches are optimisable and error-free" begin
-    jet = try
-        @eval using JET
-        true
-    catch
-        false
-    end
-    if jet
+    # the flag of test/base/reductions.jl, which also covers the stub JET of an unsupported Julia
+    JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
+    if JET_WORKS
         for R in (Float32, Float64), m in METHODS, step in STEPS
             types = (typeof(inR(R, m)), MoreThuente{R}, typeof(stepR(R, step)), R, R, R)
-            Base.invokelatest(JET.test_opt, linesearch, types)
-            Base.invokelatest(JET.test_call, linesearch, types)
+            JET.test_opt(linesearch, types)
+            JET.test_call(linesearch, types)
         end
     else
         @test_skip "JET does not load on Julia $(VERSION)"

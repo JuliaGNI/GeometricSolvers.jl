@@ -68,9 +68,6 @@ end
 armijo(φα, φ₀, c₁, α, d₀) = φα ≤ φ₀ + c₁ * α * d₀
 curvature(dα, c₂, d₀) = abs(dα) ≤ -c₂ * d₀
 
-# The code of a step that does not meet both strong Wolfe conditions.
-unmet_code(φα, φ₀, τ) = abs(φα - φ₀) ≤ τ ? STALLED : LINESEARCH_FAILED
-
 function linesearch(ls::StrongWolfe{R}, lf, step::StepKind, φ₀::R, α::R, αmax::R) where {R}
     usable_ceiling(αmax) ||
         return LineSearchResult{R}(trial_step(α, ls.αmax), R(NaN), LINESEARCH_FAILED, 0)
@@ -113,7 +110,7 @@ function linesearch(ls::StrongWolfe{R}, lf, step::StepKind, φ₀::R, α::R, αm
                 lo, φlo, dlo = αi, φi, di
                 hi, φhi, dhi = αp, φp, dp
             elseif αi == ceiling
-                code = unmet_code(φi, φ₀, τ)
+                code = floor_code(φi, φ₀, τ)
                 done = true
             else
                 αp, φp, dp = αi, φi, di
@@ -144,7 +141,7 @@ function linesearch(ls::StrongWolfe{R}, lf, step::StepKind, φ₀::R, α::R, αm
                 αres, φres = αj, φj
             end
             if !done && (abs(hi - lo) ≤ eps(R) * max(lo, hi) || max(lo, hi) ≤ αmin)
-                code = unmet_code(φres, φ₀, τ)
+                code = floor_code(φres, φ₀, τ)
                 done = true
             end
         end

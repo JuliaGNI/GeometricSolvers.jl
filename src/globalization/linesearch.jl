@@ -56,7 +56,9 @@ struct ExactStep end
 The step kind of a direction `d` with the linear residual ``\\|r + J d\\| ≤ η \\|r\\|``,
 ``0 ≤ η < 1``. It gives only ``φ′(0) ≤ -2(1 - η) φ(0)`` (Eisenstat and Walker 1996, (1.2)).
 [`Backtracking`](@ref) then tests ``\\|r(x + s)\\| ≤ [1 - c_1 (1 - η)] \\|r\\|`` and updates
-``η ← 1 - θ (1 - η)`` for each backtrack by ``θ``, and evaluates no ``φ′``.
+``η ← 1 - θ (1 - η)`` for each backtrack by ``θ``, and evaluates no ``φ′``. From the trial step
+``α`` the residual is ``η = 1 - α (1 - η_0)``; a step with ``c_1 α (1 - η_0) ≥ 1`` makes the
+factor ``1 - c_1 (1 - η)`` non-positive and is rejected.
 [`Bisection`](@ref) and [`StrongWolfe`](@ref) need the true slope and evaluate ``φ′(0)``.
 """
 struct InexactStep{R <: Real}
@@ -120,8 +122,10 @@ end
 # A ceiling is usable when it is positive; `NaN > 0` is false.
 usable_ceiling(αmax) = αmax > zero(αmax)
 
-# The trial step: a non-positive or `NaN` one is replaced by the unit step, then bounded.
-trial_step(α::R, ceiling::R) where {R} = min(α > zero(R) ? α : one(R), ceiling)
+# The trial step: a non-positive or non-finite one is replaced by the unit step, then bounded.
+function trial_step(α::R, ceiling::R) where {R}
+    min(α > zero(R) && isfinite(α) ? α : one(R), ceiling)
+end
 
 # The anchor may be searched from when it is finite and descending.
 usable_anchor(φ₀, d₀) = isfinite(φ₀) & isfinite(d₀) & (d₀ < zero(d₀))
@@ -175,5 +179,9 @@ merit that is not finite.
 """
 function classify(φα, φ₀, τ)
     φα ≤ φ₀ - τ && return SUCCESS
-    abs(φα - φ₀) ≤ τ ? STALLED : LINESEARCH_FAILED
+    floor_code(φα, φ₀, τ)
 end
+
+# The code of a step that is not accepted: `STALLED` at the round-off floor of the merit, where
+# it changes by no more than τ, and `LINESEARCH_FAILED` otherwise.
+floor_code(φα, φ₀, τ) = abs(φα - φ₀) ≤ τ ? STALLED : LINESEARCH_FAILED
