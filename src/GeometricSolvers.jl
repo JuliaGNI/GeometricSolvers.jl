@@ -9,6 +9,7 @@ using Adapt: Adapt
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
+export Static, Backtracking, Bisection, StrongWolfe
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -17,5 +18,11 @@ include("base/reductions.jl")
 include("base/adapt.jl")
 
 include("linear/methods.jl")
+
+include("globalization/linesearch.jl")
+include("globalization/static.jl")
+include("globalization/backtracking.jl")
+include("globalization/bisection.jl")
+include("globalization/strongwolfe.jl")
 
 end

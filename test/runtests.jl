@@ -24,3 +24,6 @@ end
 @safetestset "Linear-solver methods" begin
     include("linear/methods.jl")
 end
+@safetestset "Line searches" begin
+    include("globalization/linesearch.jl")
+end
