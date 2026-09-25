@@ -38,22 +38,20 @@ so that a compat-only bump can be told apart from an interface change.
   The default residual test is relative (`f_reltol = √eps(R)`, `f_abstol = 0`), because the
   attainable residual depends on the scale of the problem, and `min_iterations` is `0`, so a
   start that already passes the test takes no step.
-- Four line searches, all `isbits` and runnable in KernelAbstractions kernels: `Static` (fixed
-  step), `Backtracking` (Armijo), `Bisection` (derivative bisection), and `StrongWolfe` (strong
-  Wolfe conditions). Accessed via the unexported `GeometricSolvers.linesearch(ls, lf, step, φ₀,
-  α, αmax)`, they allocate nothing, never throw, and see the line function only through `φ(lf,
-  α)` and `φ′(lf, α)`. Callers declare the descent direction's quality (`ExactStep`,
-  `InexactStep(η)`, `MeasuredSlope`): `ExactStep` gives φ′(0) = −2φ(0) so no search evaluates
-  φ′(0); `MeasuredSlope` costs one φ′(0) evaluation; with `InexactStep(η)` `Backtracking` uses
-  Eisenstat and Walker's test ‖r(x + s)‖ ≤ [1 − c₁(1 − η)]‖r‖ with η ← 1 − θ(1 − η) for each
-  backtrack and evaluates no φ′, while `Bisection` and `StrongWolfe` evaluate φ′(0). Each search
-  is one loop of exactly `maxiter` trips with a done flag, so threads of a GPU warp stay together;
-  a trip after the flag is set evaluates nothing. Returns are isbits `LineSearchResult` with the
-  step (positive, at most the caller's `αmax` and the method's own), the merit there, a
-  `ReturnCode`, and evaluation count; the caller passes φ(0), which no search evaluates again.
-  Large increases of the merit report `LINESEARCH_FAILED`, never `STALLED`; `StrongWolfe` reports
-  `SUCCESS` only for a step with both strong Wolfe conditions. `Quadratic` and `BierlaireQuadratic`
-  of SimpleSolvers are not ported.
+- Exported line searches `Static`, `Backtracking`, `Bisection`, `StrongWolfe`: all `isbits`,
+  converted by `ToReal`, run by the unexported `GeometricSolvers.linesearch(ls, lf, step, φ₀,
+  α, αmax)`. The function sees the line only through `φ(lf, α)` and `φ′(lf, α)`, allocates
+  nothing, never throws, and loops exactly `maxiter` trips with a done flag (warp-uniform in
+  kernels). Returns isbits `LineSearchResult` with step (positive, within caller's `αmax` and
+  method's own), merit there, `ReturnCode`, and count; φ(0) from caller is never evaluated.
+  Step kinds declare descent quality: `ExactStep` (φ′(0) = −2φ(0), no evaluation),
+  `MeasuredSlope` (one φ′(0) evaluation), a number (the slope itself), `InexactStep(η)`
+  (bounds only). `Backtracking` uses Eisenstat–Walker's test with η(α) = |1 − α| + αη,
+  evaluating no φ′; `Bisection` and `StrongWolfe` evaluate φ′(0). Round-off τ = 4 eps |φ(0)|,
+  step floor τ/|φ′(0)|, Armijo test on φ(α) − φ(0). `Bisection` bisects φ′ in log space while
+  lower end is 0. `StrongWolfe` evaluates φ′ only at trials passing first condition, returns
+  `SUCCESS` only for both conditions. Large merit increases report `LINESEARCH_FAILED`, never
+  `STALLED`. `Quadratic` and `BierlaireQuadratic` of SimpleSolvers are not ported.
 - `LUFactorization`, `QRFactorization` and `SVDFactorization` carry their factorisation precision
   as a type parameter: `LUFactorization()` for the working type, `LUFactorization(Float32)` for a
   `Float32` factorisation, and the markers `TF32()`, `FP16()`, `BF16()` for vendor tensor cores.
