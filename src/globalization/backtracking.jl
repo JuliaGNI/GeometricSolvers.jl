@@ -79,12 +79,14 @@ function backtrack_step(φ₀::R, d₀::R, α::R, φα::R, αp::R, φp::R, p::R)
 end
 
 # An inexact step bounds the slope only; the model uses the bound.
-search_slope(::Backtracking, step::InexactStep, lf, φ₀) = (-2 * (1 - step.η) * φ₀, Int32(0))
+function search_slope(::Backtracking, step::InexactStep, lf, φ₀)
+    (-2 * (1 - oftype(φ₀, step.η)) * φ₀, Int32(0))
+end
 
 # The acceptance test at the trial step α.
 accepts(step, ls, φα, φ₀, d₀, α, τ) = sufficient_decrease(φα, φ₀, ls.c₁ * α * d₀, τ)
 function accepts(step::InexactStep, ls, φα, φ₀, d₀, α, τ)
-    η = abs(1 - α) + α * step.η
+    η = abs(1 - α) + α * oftype(α, step.η)
     η < 1 && sufficient_decrease(φα, φ₀, ((1 - ls.c₁ * (1 - η))^2 - 1) * φ₀, τ)
 end
 

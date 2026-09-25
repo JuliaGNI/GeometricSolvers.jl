@@ -69,7 +69,7 @@ function search(ls::Bisection{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, cei
             αres, done = iszero(lo) ? hi : lo, true
         else
             lower = lo > zero(R) ? lo : αmin
-            m = hi > 2lower ? sqrt(hi) * sqrt(lower) : (lo + hi) / 2
+            m = hi > 2lower ? sqrt(hi) * sqrt(lower) : midpoint(lo, hi)
             dm = φ′(lf, m)
             n += Int32(1)
             if iszero(dm)

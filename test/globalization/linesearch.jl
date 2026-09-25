@@ -88,8 +88,8 @@ end
     @test Bisection(; αmax = Inf).αmax == Inf
 end
 
-# The six contracts of `SimpleSolvers/src/linesearch/linesearch.jl`, for every method, step kind
-# and precision, on the pathological anchors of the `SimpleSolvers` contract test.
+# The contracts of the `LineSearch` docstring, for every method, step kind and precision, on the
+# pathological anchors of the `SimpleSolvers` contract test.
 @testset "contracts 1-4 and 6 hold for every method on every pathological line" begin
     for R in (Float32, Float64)
         o = one(R)
@@ -126,7 +126,7 @@ end
             @test 0 < r.α < Inf                                     # 2
             @test r.α ≤ αmax                                        # 6
             @test r.α ≤ GeometricSolvers.method_αmax(inR(R, m))
-            @test 0 ≤ r.evaluations ≤ max_evaluations(m)            # 5: the bound
+            @test 0 ≤ r.evaluations ≤ max_evaluations(m)            # the evaluation bound
             @test r.evaluations == evaluated(w)
             @test !(0 in w.atφ)                                     # φ(0) is the caller's
             @test all(≤(αmax), w.atφ) && all(≤(αmax), w.atφ′)
@@ -196,6 +196,10 @@ end
         r = search(Backtracking(), linear, R; step = InexactStep(η))
         @test r == LineSearchResult{R}(1, (1 - (1 - η))^2, SUCCESS, 1)
         @test isempty(linear.atφ′)
+        # an η of a wider type converts to the type of the merit, as a slope passed as a number does
+        @test linesearch(
+            inR(R, Backtracking()), linear.lf, InexactStep(Float64(η)), one(R),
+            one(R)) == r
         @test search(Backtracking(), linear, R; step = ExactStep()).α < 1
 
         # A backtrack must update η ← 1 - θ(1 - η): the step accepted here decreases the merit by
@@ -473,6 +477,11 @@ end
         # and a decrease at the ceiling that fails the curvature condition is a failure
         r = search(StrongWolfe(), Line(α -> 1 - 2α, α -> -2one(R)), R; αmax = 0.25)
         @test r.code == LINESEARCH_FAILED && r.φ < 1
+        # without a ceiling the doubling stops at floatmax: the step is never Inf
+        r = search(StrongWolfe(; αmax = Inf), Line(α -> 1 - α, α -> -one(R)), R;
+            α = floatmax(R) / 4)
+        @test r.α == floatmax(R)
+        @test r.code == LINESEARCH_FAILED
     end
 end
 
@@ -694,6 +703,16 @@ end
     # and so is a bisection trial where φ′ is exactly 0: φ′ at 0, 0.5, 1 and 0.75, then φ
     r = search(Bisection(), Line(α -> (α - R(0.75))^2, α -> 2 * (α - R(0.75))), R; α = 0.5)
     @test (r.α, r.code, r.evaluations) == (R(0.75), SUCCESS, 5)
+    # a midpoint of two steps above floatmax / 2 does not overflow: from 0.6 floatmax to a
+    # minimiser at 0.9 floatmax, no trial is at Inf
+    fm = floatmax(R)
+    top = Line(α -> abs(α / fm - R(0.9)), α -> (α / fm < R(0.9) ? -o : o) / fm)
+    for m in (Bisection(; αmax = Inf), StrongWolfe(; αmax = Inf))
+        w = Watched(top, R)
+        r = search(m, w, R; α = R(0.6) * fm)
+        @test all(isfinite, w.atφ) && all(isfinite, w.atφ′)
+        @test 0 < r.α < Inf
+    end
     # StrongWolfe: a trial that meets the first condition but has a higher merit than the one
     # before it ends the bracketing; the zoom then finds the lower merit below it
     bump = Line(α -> α ≤ R(0.6) ? 1 - α : R(0.7), α -> -o)
@@ -926,7 +945,7 @@ end
     end
 end
 
-@testset "R3: the searches on Array and JLArray" begin
+@testset "the searches on arrays: Array and JLArray" begin
     for R in (Float32, Float64), m in METHODS, step in (ExactStep(), MeasuredSlope())
         x₀ = R.(range(0.5, 3; length = 8))
         results = map((Array, JLArray)) do AT
@@ -961,7 +980,7 @@ end
     counts[i] = r.evaluations
 end
 
-@testset "R1: the searches run inside a KernelAbstractions kernel on CPU()" begin
+@testset "the searches run inside a KernelAbstractions kernel on CPU()" begin
     backend = KernelAbstractions.CPU()
     # the Moré–Thuente set, the cubics of the step-floor and equal-merit tests, the kinks, the
     # cliff, and a Bisection line whose lower end stays at 0; one kernel launch per type
@@ -993,7 +1012,7 @@ end
     end
 end
 
-@testset "R1: isbits, inferred and allocation-free" begin
+@testset "the searches are isbits, inferred and allocation-free" begin
     count_allocations(ls, lf, step, φ₀, α) = @allocated linesearch(ls, lf, step, φ₀, α)
     for R in (Float32, Float64), m in METHODS, step in STEPS
         ls, stepr = inR(R, m), stepR(R, step)

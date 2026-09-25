@@ -92,11 +92,12 @@ The result of one [`linesearch`](@ref). It is `isbits`.
 - `α::R`: the step, ``0 < α ≤ α_{max}``.
 - `φ::R`: the merit at `α`, or `NaN` if the search did not evaluate it there.
 - `code::ReturnCode`: `SUCCESS` for an accepted step that decreases the merit by more than its
-  round-off, and for the step of [`Static`](@ref), which evaluates nothing; `STALLED` for a step that changes the merit by no more than its round-off, or a
-  stationary anchor; `NONFINITE` for a non-finite anchor; `LINESEARCH_FAILED` for anything
-  else: an ascending anchor, a spent cap, an increase of the merit, an invalid `αmax`, or a
-  [`StrongWolfe`](@ref) step without the curvature condition. `φ` tells the caller whether the
-  step of a failure still decreases the merit.
+  round-off, and for the step of [`Static`](@ref), which evaluates nothing; `STALLED` for a step
+  that changes the merit by no more than its round-off, or a stationary anchor; `NONFINITE` for
+  a non-finite anchor; `LINESEARCH_FAILED` for anything else: an ascending anchor, a spent cap,
+  an increase of the merit, an invalid `αmax`, or a [`StrongWolfe`](@ref) step without the
+  curvature condition. `φ` tells the caller whether the step of a failure still decreases the
+  merit.
 - `evaluations::Int32`: the evaluations of [`φ`](@ref) and [`φ′`](@ref) together.
 """
 struct LineSearchResult{R <: Real}
@@ -216,6 +217,10 @@ end
 # The code of a step that is not accepted: `STALLED` at the round-off floor of the merit, where
 # it changes by no more than τ, and `LINESEARCH_FAILED` otherwise.
 floor_code(φα, φ₀, τ) = abs(φα - φ₀) ≤ τ ? STALLED : LINESEARCH_FAILED
+
+# The middle of a and b. Halving is exact, so it rounds as (a + b) / 2 does, but it does not
+# overflow when a and b are both above floatmax / 2.
+midpoint(a, b) = a / 2 + b / 2
 
 # Whether d and Δ have the same sign, or d is zero: the sign test of d · Δ ≥ 0 without the
 # product, which can underflow to -0.0.

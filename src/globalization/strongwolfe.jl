@@ -75,15 +75,15 @@ function zoom_step(a::R, φa::R, da::R, b::R, φb::R, db::R) where {R}
         θ = 3 * (φa - φb) / (b - a) + da + db
         s = max(abs(θ), abs(da), abs(db))
         γ² = (θ / s)^2 - (da / s) * (db / s)
-        γ² ≥ zero(R) || return (a + b) / 2
+        γ² ≥ zero(R) || return midpoint(a, b)
         γ = b > a ? s * sqrt(γ²) : -s * sqrt(γ²)
         αc = b - (b - a) * (db + γ - θ) / (db - da + 2γ)
     else
         c = (φb - φa - da * (b - a)) / (b - a)^2
-        c > zero(R) || return (a + b) / 2
+        c > zero(R) || return midpoint(a, b)
         αc = a - da / (2c)
     end
-    isfinite(αc) ? clamp(αc, lo + δ, hi - δ) : (a + b) / 2
+    isfinite(αc) ? clamp(αc, lo + δ, hi - δ) : midpoint(a, b)
 end
 
 # The two strong Wolfe conditions, exact: no round-off allowance.
@@ -94,6 +94,7 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
         n::Int32) where {R}
     c₁, c₂ = ls.c₁, ls.c₂
     αmin = smallest_step(d₀, τ)
+    top = min(ceiling, floatmax(R))    # without a ceiling the doubling stops at floatmax
     unknown = R(NaN)    # the slope at a trial where it was not evaluated
 
     # the previous trial of the bracketing phase, and the next one
@@ -129,12 +130,12 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
                     zooming = true
                     lo, φlo, dlo = αi, φi, di
                     hi, φhi, dhi = αp, φp, dp
-                elseif αi == ceiling
+                elseif αi == top
                     code = floor_code(φi, φ₀, τ)
                     done = true
                 else
                     αp, φp, dp = αi, φi, di
-                    αi = min(2αi, ceiling)
+                    αi = min(2αi, top)
                 end
             end
             initial = false
@@ -147,7 +148,7 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
         else
             width = abs(hi - lo)
             # no trial below the step floor: there the merit cannot show the predicted decrease
-            αj = max(bisect ? (lo + hi) / 2 : zoom_step(lo, φlo, dlo, hi, φhi, dhi), αmin)
+            αj = max(bisect ? midpoint(lo, hi) : zoom_step(lo, φlo, dlo, hi, φhi, dhi), αmin)
             φj = φ(lf, αj)
             n += Int32(1)
             # the round-off of the two merits compared, which may be far from φ₀

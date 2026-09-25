@@ -43,8 +43,9 @@ so that a compat-only bump can be told apart from an interface change.
   throwing once built; constructors check parameters and raise `ArgumentError`. Each reports
   through a `ReturnCode` (`SUCCESS`, `STALLED`, `NONFINITE`, `LINESEARCH_FAILED`), not through a
   log. Every step is positive and within the caller's ceiling. `StrongWolfe` reports `SUCCESS`
-  only for steps meeting both strong Wolfe conditions. The entry point comes with the nonlinear
-  solver; `Quadratic` and `BierlaireQuadratic` of SimpleSolvers are not ported.
+  only for steps meeting both strong Wolfe conditions. The four method types are exported;
+  the function that runs a search is internal, and the nonlinear solvers call it; `Quadratic`
+  and `BierlaireQuadratic` of SimpleSolvers are not ported.
 - `LUFactorization`, `QRFactorization` and `SVDFactorization` carry their factorisation precision
   as a type parameter: `LUFactorization()` for the working type, `LUFactorization(Float32)` for a
   `Float32` factorisation, and the markers `TF32()`, `FP16()`, `BF16()` for vendor tensor cores.
