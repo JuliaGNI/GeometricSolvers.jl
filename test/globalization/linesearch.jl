@@ -98,7 +98,8 @@ end
             Line(α -> (α + o)^2, α -> 2 * (α + o)),                 # minimiser at α < 0
             Line(α -> o + α, α -> -2o),                             # slope contradicts values
             Line(α -> α > 0 ? R(NaN) : o, α -> -2o),                # NaN beyond the anchor
-            # the fixtures of run r9 of the effort benchmark
+            Line(α -> nextfloat(zero(R)) + α, α -> -2nextfloat(zero(R))),  # subnormal anchor, rises
+            Line(α -> α > 0 ? zero(R) : nextfloat(zero(R)), α -> -2nextfloat(zero(R))), # subnormal, falls
             Line(α -> o + α, α -> α < R(0.5) ? -2o : 2o),           # φ′ turns where φ rises
             Line(α -> α > 0 ? R(-Inf) : o, α -> -2o),               # -Inf beyond α = 0
             Line(α -> α > R(0.3) ? R(-Inf) : (α - o)^2, α -> 2 * (α - o)),  # -Inf beyond 0.3
@@ -431,8 +432,8 @@ end
 end
 
 @testset "item 5, decision 40: the step floor is τ/|φ′(0)|" begin
-    # φ = 1 - 2α + kα² accepts only steps below 2/k. With the floor τ/(c₁|φ′(0)|) of SimpleSolvers,
-    # clamped to √eps, both searches stopped above that; here they find the decrease.
+    # φ = 1 - 2α + kα² accepts only steps below 2/k, far below √eps, and decreases by about 1/k
+    # there, many times τ. A floor τ/(c₁|φ′(0)|) clamped to √eps lies above those steps.
     for (R, ks) in ((Float32, (1e4, 1e5, 1e6)), (Float64, (1e10, 1e11, 1e12))),
         k in ks, m in (Backtracking(), StrongWolfe()),
         step in (ExactStep(), MeasuredSlope())
@@ -440,6 +441,23 @@ end
         r = search(m, lf, R; step)
         @test r.code == SUCCESS
         @test r.φ - 1 ≤ -2 * R(1e-4) * r.α                  # the Armijo condition holds
+    end
+end
+
+@testset "a subnormal anchor: τ and the step floor stay positive" begin
+    for R in (Float32, Float64), m in SEARCHES, step in (ExactStep(), MeasuredSlope())
+        s = nextfloat(zero(R))
+        @test roundoff(s) > 0
+        # a steep slope makes τ/|φ′(0)| underflow as well
+        for slope in (-2s, -R(1e10))
+            w = Watched(Line(α -> s + α, α -> slope), R)
+            r = search(m, w, R; step)
+            @test r.α > 0 && !(0 in w.atφ) && !(0 in filter(!iszero, w.atφ′))
+            @test r.code != SUCCESS                 # the merit rises at every step
+            # with the true slope the floor stops it, not the cap; the lying slope -1e10 puts the
+            # floor at floatmin, 300 decades below the trial step, so the cap may end it first
+            @test r.evaluations ≤ (slope == -2s ? 20 : max_evaluations(m))
+        end
     end
 end
 
@@ -465,8 +483,12 @@ end
                   strong_wolfe(lf, r.α, φ₀, φ′(lf, zero(R)), R(1e-4), R(0.9))
             @test r.code == LINESEARCH_FAILED
             @test r.φ < φ₀                                # the step still decreases the merit
-            # the collapse and the ceiling end the search before its cap
-            @test r.evaluations < max_evaluations(StrongWolfe())
+            # the collapse and the ceiling end the search: no point is evaluated twice, which a
+            # search that runs on to its cap does on a collapsed bracket, and far below the cap
+            w = Watched(lf, R)
+            @test search(StrongWolfe(; αmax = 65536.0), w, R) === r
+            @test allunique(w.atφ)
+            @test r.evaluations ≤ 100
             a < 1 && @test r.α ≈ a rtol = 8eps(R)
         end
         # A C¹ wall at α = 0.5: the steps with the curvature condition lie within 1e-8 above it
@@ -478,7 +500,7 @@ end
         @test r.code == SUCCESS
         @test strong_wolfe(wall, r.α, one(R), -one(R), R(1e-4), R(0.9))
         # the safeguard bisects at least every other trial: about 2 log₂(0.5 / 1e-8) ≈ 51
-        # trials of at most 2 evaluations bound it; 67 were measured in Float64
+        # trials of at most 2 evaluations bound it
         @test r.evaluations ≤ 80
         # the step floor: a merit one ulp above φ₀ at every step
         noise = Line(α -> α > 0 ? nextfloat(one(R)) : one(R), α -> -2one(R))
@@ -882,7 +904,8 @@ end
 
 @testset "R1: the searches run inside a KernelAbstractions kernel on CPU()" begin
     backend = KernelAbstractions.CPU()
-    for R in (Float32, Float64), m in METHODS, step in (MeasuredSlope(), InexactStep(0.1))
+    for R in (Float32, Float64), m in METHODS,
+        step in (MeasuredSlope(), InexactStep(0.1), ExactStep(), -0.5)
         ls = inR(R, m)
         stepr = stepR(R, step)
         lfs = [MoreThuente(R, kind) for kind in 1:6 for _ in MT_STEPS]

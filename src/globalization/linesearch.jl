@@ -165,17 +165,19 @@ The round-off resolution ``τ = 4\\,\\mathrm{eps}(R)\\,|φ(0)|`` of the merit, f
 relative round-off. A step that changes the merit by no more than ``τ`` is at the round-off
 floor of the merit. It is proportional to ``|φ(0)|``, not a count of ulps of ``φ(0)``, so that
 it and the step floor [`smallest_step`](@ref) scale with the merit and do not jump by a factor 2
-at a power of two.
+at a power of two. For a subnormal ``φ(0)``, where the product underflows, it is at least four
+of the smallest subnormals, so it is never 0.
 """
-roundoff(φ₀) = 4 * eps(typeof(φ₀)) * abs(φ₀)
+roundoff(φ₀) = max(4 * eps(typeof(φ₀)) * abs(φ₀), 4 * nextfloat(zero(φ₀)))
 
 """
     smallest_step(d₀, τ)
 
 The step floor ``τ / |φ′(0)|`` of every search (decision 40): below it the decrease that the
-slope predicts, ``α |φ′(0)|``, is smaller than the round-off ``τ``, so no trial can show it.
+slope predicts, ``α |φ′(0)|``, is smaller than the round-off ``τ``, so no trial can show it. It
+is at least `floatmin(R)`, so that no search tries a step of 0 when the quotient underflows.
 """
-smallest_step(d₀, τ) = τ / abs(d₀)
+smallest_step(d₀, τ) = max(τ / abs(d₀), floatmin(typeof(τ)))
 
 """
     sufficient_decrease(φα, φ₀, demand, τ)
