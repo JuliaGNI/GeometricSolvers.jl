@@ -72,6 +72,23 @@ function GeometricSolvers.φ′(lf::MoreThuente{R}, α::R) where {R}
     end
 end
 
+# Isbits merits of the verify items, for a kernel: a cubic c₀ + c₁α + c₂α² + c₃α³ (items 5 and
+# 8), the kink 1 - α below a and 1 - a + 2(α - a) above it (item 7), and the cliff 1 + 1000α with
+# the lying slope -2 (defect 4).
+struct Cubic{R}
+    c::NTuple{4, R}
+end
+GeometricSolvers.φ(l::Cubic, α) = evalpoly(α, l.c)
+GeometricSolvers.φ′(l::Cubic, α) = evalpoly(α, (l.c[2], 2l.c[3], 3l.c[4]))
+struct Kink{R}
+    a::R
+end
+GeometricSolvers.φ(l::Kink, α) = α < l.a ? 1 - α : 1 - l.a + 2 * (α - l.a)
+GeometricSolvers.φ′(l::Kink, α) = α < l.a ? -one(α) : 2one(α)
+struct Cliff end
+GeometricSolvers.φ(::Cliff, α) = α > 0 ? 1 + 1000α : one(α)
+GeometricSolvers.φ′(::Cliff, α) = -2one(α)
+
 # The merit φ(α) = ‖r(x + α d)‖² of r(x) = x² - 2, componentwise, along its Newton direction
 # d = -r(x) / 2x: an array line function for R3, on any array type.
 struct NewtonLine{V}

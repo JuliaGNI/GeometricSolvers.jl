@@ -15,10 +15,10 @@ minimiser of the cubic through the merit and its derivative at both ends of the 
 the quadratic through both merits and the derivative at the lower end where the upper end has
 no derivative. The trial is safeguarded to the inner 80 % of the bracket, and it is the middle
 after a trial that shrinks the bracket by less than a factor 0.66, as in Moré and Thuente. The
-lower end is always the trial with the lowest merit that meets the first condition; two merits
-within the [`roundoff`](@ref) of the larger of them tie, and the sign of ``φ′`` at the trial
-decides the side of the minimiser. A zoom trial that meets both conditions is accepted whatever
-its merit.
+lower end is the trial with the lowest merit that meets the first condition, up to the
+[`roundoff`](@ref) of the larger of two merits: a trial within it of the lower end ties with it,
+and the sign of ``φ′`` at the trial decides the side of the minimiser. A zoom trial that meets
+both conditions is accepted whatever its merit.
 
 ``φ′`` is evaluated only at a trial that meets the first condition and, in the bracketing phase,
 decreases the merit: a trial that fails costs one ``φ``, a trial that passes one ``φ`` and one
@@ -162,10 +162,9 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
                     αres, φres = αj, φj
                     code = classify(φj, φ₀, τ)
                     done = true
-                elseif φj ≥ φlo && samesign(dj, αj - lo)
-                    # a tie within the round-off, and φ rises at αj: the minimiser is below αj
-                    hi, φhi, dhi = αj, φj, dj
                 else
+                    # the sign of φ′ at αj decides the side of the minimiser, also for a merit
+                    # that ties with φlo within the round-off
                     samesign(dj, hi - lo) && ((hi, φhi, dhi) = (lo, φlo, dlo))
                     lo, φlo, dlo = αj, φj, dj
                     αres, φres = αj, φj

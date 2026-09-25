@@ -312,7 +312,8 @@ end
     # bisects in log space down to the floor instead (decision 41). Its count is at most
     # 3 + ⌈log₂ log₂(α / floatmin(R))⌉: φ′(0), one bracket, the geometric trials from α down to
     # the floor, which is at least floatmin, and the merit at the step. That is 10 in Float32
-    # and 13 in Float64 for α = 1, and it stays bounded for αmax = Inf.
+    # and 13 in Float64 for α = 1, 11 and 14 for the default ceiling 2¹⁶, and 11 and 14 for
+    # 1e16 with αmax = Inf: it stays bounded without a ceiling.
     bound(R, α) = 3 + ceil(Int, log2(log2(α) - log2(floatmin(R))))
     for R in (Float32, Float64)
         near = Line(α -> 1 + (α - R(1e-12))^2, α -> 2 * (α - R(1e-12)))
@@ -337,6 +338,15 @@ end
             @test r.code != SUCCESS                   # no detectable decrease exists
         end
         @test bound(R, 1.0) == (R == Float64 ? 13 : 10)
+        @test bound(R, 65536.0) == (R == Float64 ? 14 : 11)
+        @test bound(R, 1e16) == (R == Float64 ? 14 : 11)
+        # a trial step below the floor is raised to it: the search then brackets up from there
+        for m in SEARCHES
+            r = search(m, Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R; α = 1e-30)
+            @test r.α ≥ smallest_step(-2one(R), roundoff(one(R)))
+            @test r.evaluations < max_evaluations(m)
+            m isa Backtracking || @test r.code == SUCCESS
+        end
         # Only a spent cap is a spent cap: φ′(0), three trips, and the merit at the step.
         r = search(Bisection(; maxiter = 3), Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R; α = 1e-3)
         @test r.code == LINESEARCH_FAILED
@@ -599,6 +609,33 @@ end
         @test backtrack_step(one(R), -2one(R), one(R), R(bad), R(NaN), R(NaN), R(0.5)) ==
               R(0.1)
     end
+end
+
+@testset "an η outside [0, 1) is a failure that evaluates nothing" begin
+    for R in (Float32, Float64), m in SEARCHES, η in (1.0, 1.5, -0.5, NaN, Inf)
+        w = Watched(Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R)
+        r = search(m, w, R; step = InexactStep(η), α = 0.7)
+        @test r.code == LINESEARCH_FAILED
+        @test r.evaluations == 0 == evaluated(w)
+        @test r.α == R(0.7)
+    end
+end
+
+@testset "Backtracking from floatmax shrinks a non-finite merit in log space" begin
+    # φ is Inf at floatmax; the next trial is the geometric mean of the step and the floor, where
+    # φ is finite: 9e15 in Float32, 2.8e146 in Float64. From there the 0.1α safeguard allows one
+    # decade per backtrack. So Float32 needs 16 more trials, and Float64 needs 147, which the
+    # default cap of 100 does not hold: that search reports a spent cap.
+    line = Line(α -> (α - 1)^2, α -> 2 * (α - 1))
+    r = search(Backtracking(), line, Float32; α = floatmax(Float32))
+    @test r.code == SUCCESS
+    @test r.evaluations ≤ 1 + 1 + 1 + 16 + 2
+    r = search(Backtracking(), line, Float64; α = floatmax(Float64))
+    @test r.code == LINESEARCH_FAILED
+    @test r.evaluations == 1 + 100
+    r = search(Backtracking(; maxiter = 200), line, Float64; α = floatmax(Float64))
+    @test r.code == SUCCESS
+    @test r.evaluations ≤ 1 + 1 + 1 + 147 + 2
 end
 
 @testset "a lying φ₀ below every merit gives no success" begin
@@ -920,12 +957,22 @@ end
 
 @testset "R1: the searches run inside a KernelAbstractions kernel on CPU()" begin
     backend = KernelAbstractions.CPU()
+    # the Moré–Thuente set of item 1, the cubics of items 5 and 8, the kinks of item 7 and the
+    # cliff of defect 4; one kernel launch per line-function type
+    lines(R) = (
+        ([MoreThuente(R, kind) for kind in 1:6 for _ in MT_STEPS],
+            [R(α) for _ in 1:6 for α in MT_STEPS]),
+        (
+            [Cubic((one(R), -2one(R), R(k), zero(R))) for k in (1e4, 1e6, 1e10, 1e12)] ∪
+            [Cubic((one(R), -2one(R), 6one(R), -4one(R)))],
+            ones(R, 5)),
+        ([Kink(R(a)) for a in (3e-5, 0.3, 3e5)], ones(R, 3)),
+        ([Cliff()], ones(R, 1)))
     for R in (Float32, Float64), m in METHODS,
-        step in (MeasuredSlope(), InexactStep(0.1), ExactStep(), -0.5)
+        step in (MeasuredSlope(), InexactStep(0.1), ExactStep(), -0.5),
+        (lfs, α₀s) in lines(R)
         ls = inR(R, m)
         stepr = stepR(R, step)
-        lfs = [MoreThuente(R, kind) for kind in 1:6 for _ in MT_STEPS]
-        α₀s = [R(α) for _ in 1:6 for α in MT_STEPS]
         n = length(lfs)
         αs, codes, counts = zeros(R, n), fill(MAXITERS, n), zeros(Int32, n)
         search_kernel!(backend)(αs, codes, counts, lfs, α₀s, ls, stepr; ndrange = n)

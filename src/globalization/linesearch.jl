@@ -18,7 +18,8 @@ Every line search keeps six contracts:
 2. It returns ``α > 0``.
 3. It reports through the `code` of its [`LineSearchResult`](@ref) and never logs.
 4. A non-finite or ascending anchor is reported, not searched: `NONFINITE` and
-   `LINESEARCH_FAILED`. A stationary anchor, ``φ′(0) = 0``, is `STALLED`.
+   `LINESEARCH_FAILED`. A stationary anchor, ``φ′(0) = 0``, is `STALLED`. [`Static`](@ref) is
+   the exception: it reads no anchor and returns its step.
 5. Its number of evaluations does not depend on the scale of the merit.
 6. It returns ``α ≤ α_{max}``, for the caller's `αmax` and for its own.
 
@@ -62,7 +63,9 @@ Along ``α d`` the linear residual is ``(1 - α) r + α (r + J d)``, so its boun
 ``\\|r(x + α d)\\| ≤ [1 - c_1 (1 - η(α))] \\|r\\|`` with this ``η(α)``, which for ``α ≤ 1`` is the
 update ``η ← 1 - θ (1 - η)`` of each backtrack by ``θ``, and evaluates no ``φ′``. A step with
 ``η(α) ≥ 1`` promises no decrease and is rejected. [`Bisection`](@ref) and
-[`StrongWolfe`](@ref) need the true slope and evaluate ``φ′(0)``.
+[`StrongWolfe`](@ref) need the true slope and evaluate ``φ′(0)``. The constructor checks
+nothing, so that solver code can build one in a kernel: a search given an ``η`` outside
+``[0, 1)`` evaluates nothing and returns `LINESEARCH_FAILED`.
 """
 struct InexactStep{R <: Real}
     η::R
@@ -110,7 +113,8 @@ Run the line search `ls` along the line function `lf` from the trial step `α`, 
 [`LineSearchResult{R}`](@ref LineSearchResult). `φ₀` is the merit at ``α = 0``, which the caller
 has; `step` is an [`ExactStep`](@ref), an [`InexactStep`](@ref), a [`MeasuredSlope`](@ref) or the
 slope ``φ′(0)`` itself; `αmax` is the caller's ceiling on the step. A trial step that is not
-positive or not finite is replaced by 1.
+positive or not finite is replaced by 1, and one below the step floor
+[`smallest_step`](@ref) is raised to it.
 
 A non-positive or `NaN` `αmax` is a caller error. The search then evaluates nothing and returns
 `LINESEARCH_FAILED` with the trial step, bounded by the ceiling of the method.
@@ -125,11 +129,18 @@ function linesearch(ls::LineSearch{R}, lf, step::StepKind, φ₀::R, α::R,
         return LineSearchResult{R}(trial_step(α, method_αmax(ls)), R(NaN), LINESEARCH_FAILED, 0)
     ceiling = min(method_αmax(ls), αmax)
     α = trial_step(α, ceiling)
+    usable_step(step) || return LineSearchResult{R}(α, R(NaN), LINESEARCH_FAILED, 0)
     d₀, n = search_slope(ls, step, lf, φ₀)
     usable_anchor(φ₀, d₀) || return LineSearchResult{R}(α, R(NaN), anchor_code(φ₀, d₀), n)
     τ = roundoff(φ₀)
+    # a trial step below the step floor is raised to it, within the ceiling
+    α = min(max(α, smallest_step(d₀, τ)), ceiling)
     search(ls, lf, step, φ₀, d₀, τ, α, ceiling, n)
 end
+
+# An inexact step needs 0 ≤ η < 1; `NaN` fails both tests.
+usable_step(step) = true
+usable_step(step::InexactStep) = zero(step.η) ≤ step.η < one(step.η)
 
 # The ceiling of the method itself.
 method_αmax(ls::LineSearch{R}) where {R} = R(Inf)

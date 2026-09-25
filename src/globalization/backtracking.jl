@@ -10,7 +10,8 @@ trial step until the [`sufficient_decrease`](@ref) test
 
 holds, where ``τ`` is the [`roundoff`](@ref) of ``φ(0)``. Each backtrack takes the minimiser of
 the model through ``φ(0)``, ``φ′(0)`` and the last one or two trials, clamped to
-``[0.1 α, p α]``. The search stops at the step floor [`smallest_step`](@ref), after two trials at
+``[0.1 α, p α]``. A trial whose merit is not finite gives no model; the next trial is then the
+smaller of ``0.1 α`` and the geometric mean of ``α`` and the step floor. The search stops at the step floor [`smallest_step`](@ref), after two trials at
 steps below ``\\sqrt{\\mathrm{eps}}`` whose merit equals ``φ(0)`` bit for bit, or after `maxiter`
 trials.
 
@@ -113,7 +114,11 @@ function search(ls::Backtracking{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, 
             code = floor_code(φₐ, φ₀, τ)
             done = true
         else
-            αp, φp, α = α, φₐ, max(backtrack_step(φ₀, d₀, α, φₐ, αp, φp, ls.p), αmin)
+            # a merit that is not finite gives no model: shrink in log space towards the floor,
+            # so that a trial step many decades too long costs log₂ of the decades, not tens
+            αₙ = isfinite(φₐ) ? backtrack_step(φ₀, d₀, α, φₐ, αp, φp, ls.p) :
+                 min(R(0.1) * α, sqrt(α) * sqrt(αmin))
+            αp, φp, α = α, φₐ, max(αₙ, αmin)
         end
     end
     LineSearchResult{R}(αₐ, φₐ, code, n)
