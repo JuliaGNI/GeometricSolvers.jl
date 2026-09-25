@@ -5,7 +5,7 @@ The line search that takes the fixed step `α`, bounded by the caller's `αmax`,
 nothing: the common case inside an integrator. It ignores the trial step and returns `SUCCESS`
 with `φ = NaN`.
 """
-struct Static{R <: Real} <: LineSearch
+struct Static{R <: Real} <: LineSearch{R}
     α::R
     function Static{R}(α::R) where {R <: Real}
         α > 0 && isfinite(α) ||
@@ -18,7 +18,8 @@ Static(α::Real = 1.0) = Static{float(typeof(α))}(float(α))
 
 Adapt.@adapt_structure Static
 
-function linesearch(ls::Static{R}, lf, step::StepKind, φ₀::R, α::R, αmax::R) where {R}
+function linesearch(
+        ls::Static{R}, lf, step::StepKind, φ₀::R, α::R, αmax::R = R(Inf)) where {R}
     usable_ceiling(αmax) || return LineSearchResult{R}(ls.α, R(NaN), LINESEARCH_FAILED, 0)
     LineSearchResult{R}(min(ls.α, αmax), R(NaN), SUCCESS, 0)
 end

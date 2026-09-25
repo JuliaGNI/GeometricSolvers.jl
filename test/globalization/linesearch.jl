@@ -28,8 +28,26 @@ function search(m, lf, R; step = MeasuredSlope(), α = 1, αmax = Inf)
 end
 
 function strong_wolfe(lf, α, φ₀, d₀, c₁, c₂)
-    φ(lf, α) ≤ φ₀ + c₁ * α * d₀ &&
+    φ(lf, α) - φ₀ ≤ c₁ * α * d₀ &&
         abs(φ′(lf, α)) ≤ c₂ * abs(d₀)
+end
+
+# The most evaluations a method can spend, from the structure of its loop: the slope at the
+# anchor, at most two per trip, and the merit at the step of Bisection.
+max_evaluations(::Static) = 0
+max_evaluations(m::Backtracking) = 1 + m.maxiter
+max_evaluations(m::Bisection) = 1 + m.maxiter + 1
+max_evaluations(m::StrongWolfe) = 1 + 2m.maxiter
+
+# The code agrees with the merit at the step: a finite decrease by more than τ for SUCCESS, a
+# change within τ for STALLED. Static evaluates nothing and carries φ = NaN, and so does a search
+# that stops at its anchor.
+function agrees(m, r, φ₀)
+    τ = roundoff(φ₀)
+    m isa Static && r.code == SUCCESS && return isnan(r.φ)
+    r.code == SUCCESS && return isfinite(r.φ) && r.φ - φ₀ < -τ
+    r.code == STALLED && return isnan(r.φ) || abs(r.φ - φ₀) ≤ τ
+    true
 end
 
 @testset "the methods are isbits and convert with ToReal" begin
@@ -79,18 +97,34 @@ end
             Line(α -> α > 0 ? nextfloat(o) : o, α -> -2o),          # flat to round-off
             Line(α -> (α + o)^2, α -> 2 * (α + o)),                 # minimiser at α < 0
             Line(α -> o + α, α -> -2o),                             # slope contradicts values
-            Line(α -> α > 0 ? R(NaN) : o, α -> -2o)                 # NaN beyond the anchor
+            Line(α -> α > 0 ? R(NaN) : o, α -> -2o),                # NaN beyond the anchor
+            # the fixtures of run r9 of the effort benchmark
+            Line(α -> o + α, α -> α < R(0.5) ? -2o : 2o),           # φ′ turns where φ rises
+            Line(α -> α > 0 ? R(-Inf) : o, α -> -2o),               # -Inf beyond α = 0
+            Line(α -> α > R(0.3) ? R(-Inf) : (α - o)^2, α -> 2 * (α - o)),  # -Inf beyond 0.3
+            Line(α -> α > R(0.5) ? R(Inf) : (α - o)^2, α -> 2 * (α - o)),   # Inf beyond 0.5
+            Line(α -> α > 2 ? R(NaN) : (α - 4)^2, α -> 2 * (α - 4)),        # NaN beyond 2
+            Line(α -> α > 0 ? o + α : o, α -> α > 0 ? o : -o),      # minimum at α = 0⁺
+            Line(α -> 2 - sin(3α), α -> -3cos(3α)),                 # not convex
+            Line(α -> o - α, α -> -o),                              # falls forever
+            Line(α -> (α - R(0.7))^2, α -> 2 * (α - R(0.7)))        # healthy
         )
         for m in (METHODS..., Bisection(; αmax = Inf), StrongWolfe(; αmax = Inf)),
-            step in STEPS, lf in pathological, αmax in (Inf, 0.5),
-            α in (1.0, Inf, NaN, -1.0)
+            step in (STEPS..., -2.0), lf in pathological,
+            αmax in (Inf, 0.5, floatmin(R), nextfloat(zero(R))),
+            α in (1.0, 0.0, -3.0, Inf, NaN)
 
-            r = @test_logs search(m, lf, R; step, αmax, α)         # 3: it logs nothing
+            w = Watched(lf, R)
+            r = @test_logs search(m, w, R; step, αmax, α)          # 3: it logs nothing
             @test r isa LineSearchResult{R}                         # 1: it did not throw
-            @test r.α > 0                                           # 2
-            @test isfinite(r.α)
+            @test 0 < r.α < Inf                                     # 2
             @test r.α ≤ αmax                                        # 6
-            @test r.code in instances(ReturnCode)
+            @test r.α ≤ GeometricSolvers.method_αmax(inR(R, m))
+            @test 0 ≤ r.evaluations ≤ max_evaluations(m)            # 5: the bound
+            @test r.evaluations == evaluated(w)
+            @test !(0 in w.atφ)                                     # φ(0) is the caller's
+            @test all(≤(αmax), w.atφ) && all(≤(αmax), w.atφ′)
+            @test agrees(m, r, φ(lf, zero(R)))
         end
         # 4: the anchor is reported, not searched
         for m in SEARCHES
@@ -210,7 +244,9 @@ end
         r = search(StrongWolfe(), w, R; α = 4)
         @test r.code == SUCCESS
         @test r.α ≈ 1 atol = 4eps(R)
-        @test r.evaluations == 5                           # φ′(0), then φ and φ′ at 4 and at 1
+        # φ′(0), φ at 4, which fails the first condition and so costs no φ′, then φ and φ′ at 1
+        @test r.evaluations == 4
+        @test w.atφ′ ≈ R[0, 1] atol = 4eps(R)
     end
     # The cubic step is exact on a cubic, in either orientation of the bracket and at any
     # scale: φ(α) = α³ - 3α has its minimiser at 1.
@@ -266,20 +302,26 @@ end
     @test backtrack_step(1e200, -2e200, 0.1, 10.8e200, 1.0, 999e200, 0.5) ≈ 0.01
 end
 
-@testset "defect 3: Bisection with the lower end at 0 returns α > 0 before its cap" begin
+@testset "defect 3 and item 6, decision 41: Bisection at a lower end of 0, in log space" begin
     for R in (Float32, Float64)
         # The minimiser lies below the resolution of the step, or φ′ is positive right after
         # the anchor: the lower end of the bracket stays at 0 and a relative-width stop cannot
-        # fire. The search stops at the smallest informative step instead.
+        # fire. The search bisects in log space down to the step floor instead (decision 41):
+        # from the trial step 1, from the default ceiling 2¹⁶, and from 1e16 without a ceiling,
+        # at most 10 evaluations: φ′(0), one bracket, ⌈log₂ log₂(10³²)⌉ = 7 geometric trials
+        # and the merit at the step.
         near = Line(α -> 1 + (α - R(1e-12))^2, α -> 2 * (α - R(1e-12)))
         lying = Line(α -> α > 0 ? 1 + α : one(R), α -> α > 0 ? one(R) : -2 * one(R))
-        for lf in (near, lying)
+        for lf in (near, lying),
+            (m, α) in ((Bisection(), 1.0), (Bisection(), 65536.0),
+                (Bisection(; αmax = Inf), 1e16))
+
             w = Watched(lf, R)
-            r = search(Bisection(), w, R)
+            r = search(m, w, R; α)
             @test r.α > 0
             @test all(>(0), w.atφ)                    # φ₀ is reused, never evaluated
-            @test r.evaluations < Bisection().maxiter
-            @test r.code == STALLED                   # at the round-off floor, not a spent cap
+            @test r.evaluations ≤ 10
+            @test r.code != SUCCESS                   # no detectable decrease exists
         end
     end
     # Only a spent cap is a spent cap.
@@ -292,7 +334,7 @@ end
     for R in (Float32, Float64), step in (MeasuredSlope(), ExactStep())
 
         cliff = Line(α -> α > 0 ? 1 + 1000α : one(R), α -> -2 * one(R))
-        steep = Line(α -> α > 0 ? 1 + α + R(1e6) * α^2 : one(R), α -> -2 * one(R))
+        steep = Line(α -> α > 0 ? 1 + 10α + R(1e6) * α^2 : one(R), α -> -2 * one(R))
         for lf in (cliff, steep), m in SEARCHES
 
             r = search(m, lf, R; step)
@@ -388,6 +430,205 @@ end
     end
 end
 
+@testset "item 5, decision 40: the step floor is τ/|φ′(0)|" begin
+    # φ = 1 - 2α + kα² accepts only steps below 2/k. With the floor τ/(c₁|φ′(0)|) of SimpleSolvers,
+    # clamped to √eps, both searches stopped above that; here they find the decrease.
+    for (R, ks) in ((Float32, (1e4, 1e5, 1e6)), (Float64, (1e10, 1e11, 1e12))),
+        k in ks, m in (Backtracking(), StrongWolfe()),
+        step in (ExactStep(), MeasuredSlope())
+        lf = Line(α -> 1 - 2α + R(k) * α^2, α -> -2 + 2R(k) * α)
+        r = search(m, lf, R; step)
+        @test r.code == SUCCESS
+        @test r.φ - 1 ≤ -2 * R(1e-4) * r.α                  # the Armijo condition holds
+    end
+end
+
+@testset "the Armijo test on the difference keeps a demand below one ulp of φ₀" begin
+    # φ(0) + demand rounds to φ(0) for a demand of 1e-17, so the sum form accepts no decrease
+    @test 1.0 + -1e-17 == 1.0
+    @test !sufficient_decrease(1.0, 1.0, -1e-17, 0.0)
+    @test sufficient_decrease(prevfloat(1.0), 1.0, -1e-17, 0.0)
+end
+
+@testset "item 7: every exit of StrongWolfe" begin
+    for R in (Float32, Float64)
+        # A kink: φ′ jumps from -1 to 2 at α = a, so no step meets the curvature condition with
+        # c₂ = 0.9. For a = 0.3 and 3e-5 the zoom collapses onto the kink with its lower end
+        # above 0; for 3e5 the bracketing reaches the ceiling 2¹⁶. Neither is a success.
+        vee(a) = Line(α -> α < a ? 1 - α : 1 - a + 2 * (α - a), α -> α < a ? -one(R) :
+                                                                     2one(R))
+        for a in (R(3e-5), R(0.3), R(3e5))
+            lf = vee(a)
+            r = search(StrongWolfe(; αmax = 65536.0), lf, R)
+            φ₀ = one(R)
+            @test r.code != SUCCESS ||
+                  strong_wolfe(lf, r.α, φ₀, φ′(lf, zero(R)), R(1e-4), R(0.9))
+            @test r.code == LINESEARCH_FAILED
+            @test r.φ < φ₀                                # the step still decreases the merit
+            # the collapse and the ceiling end the search before its cap
+            @test r.evaluations < max_evaluations(StrongWolfe())
+            a < 1 && @test r.α ≈ a rtol = 8eps(R)
+        end
+        # A C¹ wall at α = 0.5: the steps with the curvature condition lie within 1e-8 above it
+        # in Float64. The 0.66 safeguard bisects a bracket that does not shrink.
+        K = R == Float64 ? 1e8 : 1e4
+        wall = Line(α -> 1 - α + R(K) * max(α - R(0.5), 0)^2,
+            α -> -1 + 2R(K) * max(α - R(0.5), 0))
+        r = search(StrongWolfe(), wall, R)
+        @test r.code == SUCCESS
+        @test strong_wolfe(wall, r.α, one(R), -one(R), R(1e-4), R(0.9))
+        # the safeguard bisects at least every other trial: about 2 log₂(0.5 / 1e-8) ≈ 51
+        # trials of at most 2 evaluations bound it; 67 were measured in Float64
+        @test r.evaluations ≤ 80
+        # the step floor: a merit one ulp above φ₀ at every step
+        noise = Line(α -> α > 0 ? nextfloat(one(R)) : one(R), α -> -2one(R))
+        r = search(StrongWolfe(), noise, R)
+        @test r.code == STALLED
+        @test r.α ≥ smallest_step(-2one(R), roundoff(one(R)))
+    end
+end
+
+@testset "Eisenstat and Walker's η(α) = |1 - α| + α η₀" begin
+    # F(x) = x² - 2 with the direction (1 + η₀) d_N, which overshoots the Newton step d_N:
+    # ‖F + J d‖ = η₀ ‖F‖ exactly. Every trial the search rejects fails the test with η(α), and
+    # the step it returns meets it.
+    x = [0.1, 0.2, 0.15]
+    η₀ = 0.5
+    newton = NewtonLine(x)
+    lf = Watched(NewtonLine(x, (1 + η₀) .* newton.d), Float64)
+    φ₀ = φ(lf.lf, 0.0)
+    r = linesearch(Backtracking(), lf, InexactStep(η₀), φ₀, 1.0)
+    @test r.code == SUCCESS
+    @test length(lf.atφ) ≥ 2                     # it backtracks
+    @test isempty(lf.atφ′)
+    for (k, α) in enumerate(lf.atφ)
+        η = abs(1 - α) + α * η₀
+        meets = η < 1 && sqrt(φ(lf.lf, α)) ≤ (1 - 1e-4 * (1 - η)) * sqrt(φ₀)
+        @test meets == (k == length(lf.atφ))
+    end
+    # beyond α = 1 the bound is |1 - α| + α η₀, not 1 - α(1 - η₀): on the linear model of this
+    # direction the residual at α = 1.5 is |1 - 1.5(1 + η)| = 0.65 of ‖r‖, and the step passes
+    for R in (Float32, Float64)
+        η = R(0.1)
+        linear = Line(α -> (1 - α * (1 + η))^2, α -> -2 * (1 + η) * (1 - α * (1 + η)))
+        r = search(Backtracking(; c₁ = 0.5), linear, R; step = InexactStep(η), α = 1.5)
+        @test r.α == R(1.5)
+        @test r.code == SUCCESS
+        @test r.evaluations == 1
+    end
+end
+
+@testset "a slope passed as a number costs no evaluation" begin
+    for R in (Float32, Float64), m in SEARCHES
+
+        w = Watched(Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R)
+        r = search(m, w, R; step = -2.0)
+        @test all(>(0), w.atφ′)
+        rm = search(m, w.lf, R)
+        @test (r.α, r.φ, r.code, r.evaluations + 1) == (rm.α, rm.φ, rm.code, rm.evaluations)
+    end
+end
+
+@testset "Bisection does not grow into a non-finite region" begin
+    for R in (Float32, Float64)
+        trap = Line(α -> α > R(0.5) ? R(Inf) : (α - 1)^2, α -> α > R(0.5) ? -R(Inf) :
+                                                               2 * (α - 1))
+        r = search(Bisection(), trap, R; α = 0.25)
+        @test r.α ≤ R(0.5)
+        @test isfinite(r.φ) && r.φ < 1
+    end
+end
+
+@testset "the sign test does not underflow" begin
+    @test 1e-200 * -1e-200 == 0.0 && -0.0 ≥ 0              # the product would say "same sign"
+    @test !GeometricSolvers.samesign(1e-200, -1e-200)
+    @test GeometricSolvers.samesign(-1e-200, -1e-200)
+    @test GeometricSolvers.samesign(0.0, -1.0)
+end
+
+@testset "the positional constructors check their parameters" begin
+    @test_throws ArgumentError Bisection(-1.0, Int32(10))
+    @test_throws ArgumentError Backtracking(0.5, 1.5, Int32(10))
+    @test_throws ArgumentError StrongWolfe(0.9, 0.1, 1.0, Int32(10))
+    @test_throws ArgumentError Backtracking{Float32}(1.0, 0.5, 10)
+    # a merit that is not finite at the trial gives the shortest backtrack, 0.1α
+    @test backtrack_step(1.0, -2.0, 1.0, Inf, NaN, NaN, 0.5) == 0.1
+    @test backtrack_step(1.0, -2.0, 1.0, NaN, NaN, NaN, 0.5) == 0.1
+end
+
+@testset "a lying φ₀ below every merit gives no success" begin
+    for R in (Float32, Float64), m in SEARCHES, step in (ExactStep(), MeasuredSlope())
+        lf = Line(α -> (α - 1)^2 + 1, α -> 2 * (α - 1))
+        r = linesearch(inR(R, m), lf, stepR(R, step), R(0.5), one(R))
+        @test r.code != SUCCESS
+    end
+end
+
+@testset "no point is evaluated twice, and a larger cap changes nothing" begin
+    lines = (
+        (α -> (α - 0.7)^2, α -> 2(α - 0.7), 1.0), (α -> (α - 0.7)^2, α -> 2(α - 0.7), 0.5),
+        (α -> (α - 1.0)^2, α -> 2(α - 1.0), 0.5), (
+            α -> (α - 100.0)^2, α -> 2(α - 100.0), 1.0),
+        (α -> 1.0 - 2α + 1000α^2, α -> -2.0 + 2000α, 1.0),
+        (α -> (α - 1.0)^2, α -> -(α - 0.3) * (α - 2.0), 0.01), (
+            α -> 1.0 - α, α -> -1.0, 1.0),
+        (α -> α > 0 ? nextfloat(1.0) : 1.0, α -> -2.0, 1.0))
+    for m in SEARCHES, (f, d, α) in lines
+
+        w = Watched(Line(f, d), Float64)
+        r = search(m, w, Float64; α)
+        @test allunique(w.atφ) && allunique(w.atφ′)
+        long = typeof(m)((getfield(m, k) for k in fieldnames(typeof(m))[1:(end - 1)])..., 400)
+        @test search(long, Line(f, d), Float64; α) === r
+    end
+end
+
+@testset "contract 5: bit-identical under 2^k, and 500 random scales" begin
+    for R in (Float32, Float64)
+        o = one(R)
+        steady = ((α -> (α - o)^2, α -> 2 * (α - o), R(0.4)),
+            (α -> o - 2α + 1000α^2, α -> -2o + 2000α, o),
+            (α -> (α - R(1e-3))^2, α -> 2 * (α - R(1e-3)), o),
+            (α -> (α - 11)^2, α -> 2 * (α - 11), o))
+        scaled(m, f, d, α, c) = search(m, Line(a -> c * f(a), a -> c * d(a)), R; α)
+        for m in SEARCHES, (f, d, α) in steady
+
+            base = scaled(m, f, d, α, o)
+            @test base.code == SUCCESS
+            @test all(-30:30) do k
+                r = scaled(m, f, d, α, R(2)^k)
+                (r.α, r.code, r.evaluations) === (base.α, base.code, base.evaluations)
+            end
+            e = R == Float64 ? 12 : 8
+            scales = R.(10 .^ (2e .* rand(Random.Xoshiro(20260925), 500) .- e))
+            rs = map(c -> scaled(m, f, d, α, c), scales)
+            @test all(r -> r.code == base.code && r.evaluations == base.evaluations, rs)
+        end
+    end
+    # a Float32 Newton merit near the top of its range, where an unscaled square overflows
+    δ = -10 * atan(3.0f0)
+    for m in SEARCHES, step in (MeasuredSlope(), ExactStep())
+
+        counts = map((1.0f0, 2.0f0^32)) do c
+            f = α -> (c * atan(3 + α * δ))^2
+            d = α -> 2 * c^2 * atan(3 + α * δ) * δ / (1 + (3 + α * δ)^2)
+            search(m, Line(f, d), Float32; step).evaluations
+        end
+        @test allequal(counts)
+    end
+end
+
+@testset "the round-off τ decides a decrease in Float32" begin
+    # the merit falls by `ulps` ulps of φ₀ = 1 at its minimiser: 2 is the floor, 8 a decrease
+    T = Float32
+    for (ulps, code) in ((2, STALLED), (8, SUCCESS)), m in (Backtracking(), StrongWolfe())
+
+        a = T(ulps) * eps(T)
+        r = search(m, Line(α -> one(T) - 2a * α + a * α^2, α -> -2a + 2a * α), T)
+        @test r.code == code
+    end
+end
+
 # The tests of `SimpleSolvers/test/linesearch_tests.jl` for the four methods, where the design
 # keeps the behaviour. Not ported: `Quadratic` and `BierlaireQuadratic` (§5.1); the expansion
 # phase of `Backtracking`, its `τ_ulps` key and its curvature warning, the `Float16` rows, the
@@ -433,8 +674,8 @@ end
         @test r.α == 0.7
         @test r.α == search(StrongWolfe(), ascent, Float64; α = 0.7).α
         @test search(Backtracking(), Line(α -> -1.0, α -> 0.0), Float64).code == STALLED
-        @test search(Backtracking(), Line(α -> 1.0 + α, α -> -2.0), Float64).code ==
-              LINESEARCH_FAILED
+        # the slope contradicts the values; at the step floor the rise is within τ
+        @test search(Backtracking(), Line(α -> 1.0 + α, α -> -2.0), Float64).code != SUCCESS
     end
 
     @testset "Backtracking: stagnation at the merit's round-off floor" begin
@@ -450,7 +691,7 @@ end
         r = search(Backtracking(), w, Float64)
         @test r.code == STALLED
         @test length(w.atφ) < 53
-        @test r.α == smallest_step(1e-4, -2.0, roundoff(1.0)) == 4.440892098500626e-12
+        @test r.α == smallest_step(-2.0, roundoff(1.0)) == 2eps()
     end
 
     @testset "no method accepts a step that increases the merit" begin
@@ -462,7 +703,7 @@ end
         end
     end
 
-    @testset "a merit equal to φ₀ at a large step is not the round-off floor" begin
+    @testset "item 8: a merit equal to φ₀ at a large step is not the round-off floor" begin
         # φ = 1 - 2α + 6α² - 4α³ equals φ₀ at α = 1 and at α = 1/2, and has φ(0.21) ≈ 0.81
         for T in (Float32, Float64), s in (1e-8, 1.0, 1e8),
             step in (MeasuredSlope(), ExactStep())
@@ -475,13 +716,13 @@ end
 
     @testset "roundoff, smallest_step and the interpolation" begin
         @test roundoff(1.0) == 4eps(1.0)
-        @test roundoff(1e-20) == 4eps(1e-20)
+        @test roundoff(1e-20) == 4eps() * 1e-20             # relative, not a count of ulps
+        @test roundoff(-3.0f0) == 12eps(Float32)
         τ = roundoff(1.0)
-        @test smallest_step(1e-4, -2.0, τ) == 4.440892098500626e-12
-        @test smallest_step(1e-4, -0.0, τ) == sqrt(eps(1.0))
-        @test smallest_step(1e-4, -1e30, τ) == eps(1.0)
-        @test smallest_step(1e-4, -1e-30, τ) == sqrt(eps(1.0))
-        @test smallest_step(1e-4, -2.0, 0.0) == eps(1.0)
+        # decision 40: τ/|φ′(0)|, with no c₁ and no clamp
+        @test smallest_step(-2.0, τ) == 2eps(1.0)
+        @test smallest_step(-1e30, τ) == τ / 1e30
+        @test smallest_step(-1e-30, τ) == τ / 1e-30
         for (φα, αp, φp) in ((3.0, NaN, NaN), (3.0, 2.0, 5.0), (NaN, NaN, NaN), (
             Inf, 1.5, 2.0))
             @test 0.1 ≤ backtrack_step(1.0, -2.0, 1.0, φα, αp, φp, 0.5) ≤ 0.5

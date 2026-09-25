@@ -1,14 +1,15 @@
-# What the four line searches share: the line-function interface, the result, the three kinds
-# of step a caller can hand in, and the anchor, ceiling and round-off rules. Every function here
-# is scalar, allocates nothing and never throws, so the same code runs on the host and inside a
-# kernel.
+# What the four line searches share: the line-function interface, the result, the kinds of step
+# a caller can hand in, the one entry point with its ceiling, trial-step and anchor checks, and
+# the round-off rules. Every function here is scalar, allocates nothing and never throws, so the
+# same code runs on the host and inside a kernel.
 
 """
-    LineSearch
+    LineSearch{R}
 
 The supertype of the line searches [`Static`](@ref), [`Backtracking`](@ref),
-[`Bisection`](@ref) and [`StrongWolfe`](@ref). A line search is a method: it is `isbits`, it
-holds numbers and an `Int32` cap and nothing else, and [`linesearch`](@ref) runs it.
+[`Bisection`](@ref) and [`StrongWolfe`](@ref), whose numbers are of the real type `R`. A line
+search is a method: it is `isbits`, it holds numbers and an `Int32` cap and nothing else, and
+[`linesearch`](@ref) runs it.
 
 Every line search keeps six contracts:
 
@@ -24,7 +25,7 @@ Every line search keeps six contracts:
 It never evaluates the merit at ``α = 0``: the caller passes ``φ(0)``, which is the residual it
 already has.
 """
-abstract type LineSearch end
+abstract type LineSearch{R <: Real} end
 
 """
     φ(lf, α)
@@ -56,11 +57,12 @@ struct ExactStep end
 
 The step kind of a direction `d` with the linear residual ``\\|r + J d\\| ≤ η \\|r\\|``,
 ``0 ≤ η < 1``. It gives only ``φ′(0) ≤ -2(1 - η) φ(0)`` (Eisenstat and Walker 1996, (1.2)).
-[`Backtracking`](@ref) then tests ``\\|r(x + s)\\| ≤ [1 - c_1 (1 - η)] \\|r\\|`` and updates
-``η ← 1 - θ (1 - η)`` for each backtrack by ``θ``, and evaluates no ``φ′``. From the trial step
-``α`` the residual is ``η = 1 - α (1 - η_0)``; a step with ``c_1 α (1 - η_0) ≥ 1`` makes the
-factor ``1 - c_1 (1 - η)`` non-positive and is rejected.
-[`Bisection`](@ref) and [`StrongWolfe`](@ref) need the true slope and evaluate ``φ′(0)``.
+Along ``α d`` the linear residual is ``(1 - α) r + α (r + J d)``, so its bound is
+``η(α) = |1 - α| + α η``. [`Backtracking`](@ref) tests
+``\\|r(x + α d)\\| ≤ [1 - c_1 (1 - η(α))] \\|r\\|`` with this ``η(α)``, which for ``α ≤ 1`` is the
+update ``η ← 1 - θ (1 - η)`` of each backtrack by ``θ``, and evaluates no ``φ′``. A step with
+``η(α) ≥ 1`` promises no decrease and is rejected. [`Bisection`](@ref) and
+[`StrongWolfe`](@ref) need the true slope and evaluate ``φ′(0)``.
 """
 struct InexactStep{R <: Real}
     η::R
@@ -70,11 +72,12 @@ end
     MeasuredSlope()
 
 The step kind of any other descent direction, such as one from a reused Jacobian: every line
-search except [`Static`](@ref) evaluates ``φ′(0)`` once.
+search except [`Static`](@ref) evaluates ``φ′(0)`` once. A caller that already has ``φ′(0)``
+passes the number itself as the step kind, and no search evaluates it.
 """
 struct MeasuredSlope end
 
-const StepKind = Union{ExactStep, InexactStep, MeasuredSlope}
+const StepKind = Union{ExactStep, InexactStep, MeasuredSlope, Real}
 
 """
     LineSearchResult{R <: Real}
@@ -101,24 +104,35 @@ struct LineSearchResult{R <: Real}
 end
 
 """
-    linesearch(ls::LineSearch, lf, step, φ₀::R, α::R, αmax::R = R(Inf))
+    linesearch(ls::LineSearch{R}, lf, step, φ₀::R, α::R, αmax::R = R(Inf))
 
 Run the line search `ls` along the line function `lf` from the trial step `α`, and return a
 [`LineSearchResult{R}`](@ref LineSearchResult). `φ₀` is the merit at ``α = 0``, which the caller
-has; `step` is an [`ExactStep`](@ref), an [`InexactStep`](@ref) or a [`MeasuredSlope`](@ref);
-`αmax` is the caller's ceiling on the step. A trial step that is not positive or not finite is replaced by 1.
+has; `step` is an [`ExactStep`](@ref), an [`InexactStep`](@ref), a [`MeasuredSlope`](@ref) or the
+slope ``φ′(0)`` itself; `αmax` is the caller's ceiling on the step. A trial step that is not
+positive or not finite is replaced by 1.
 
 A non-positive or `NaN` `αmax` is a caller error. The search then evaluates nothing and returns
 `LINESEARCH_FAILED` with the trial step, bounded by the ceiling of the method.
 
-Each search is one loop of exactly `ls.maxiter` trips with a done flag, so that the threads of
-a warp stay together in a kernel; a trip after the flag is set evaluates nothing.
+This is the one entry point: it applies the ceiling, the trial step and the anchor checks, then
+runs the loop of the method. Each loop has exactly `ls.maxiter` trips with a done flag, so that
+the threads of a warp stay together in a kernel; a trip after the flag is set evaluates nothing.
 """
-function linesearch end
-
-function linesearch(ls::LineSearch, lf, step::StepKind, φ₀::R, α::R) where {R <: Real}
-    linesearch(ls, lf, step, φ₀, α, R(Inf))
+function linesearch(ls::LineSearch{R}, lf, step::StepKind, φ₀::R, α::R,
+        αmax::R = R(Inf)) where {R}
+    usable_ceiling(αmax) ||
+        return LineSearchResult{R}(trial_step(α, method_αmax(ls)), R(NaN), LINESEARCH_FAILED, 0)
+    ceiling = min(method_αmax(ls), αmax)
+    α = trial_step(α, ceiling)
+    d₀, n = search_slope(ls, step, lf, φ₀)
+    usable_anchor(φ₀, d₀) || return LineSearchResult{R}(α, R(NaN), anchor_code(φ₀, d₀), n)
+    τ = roundoff(φ₀)
+    search(ls, lf, step, φ₀, d₀, τ, α, ceiling, n)
 end
+
+# The ceiling of the method itself.
+method_αmax(ls::LineSearch{R}) where {R} = R(Inf)
 
 # A ceiling is usable when it is positive; `NaN > 0` is false.
 usable_ceiling(αmax) = αmax > zero(αmax)
@@ -137,56 +151,59 @@ function anchor_code(φ₀, d₀)
     d₀ > zero(d₀) ? LINESEARCH_FAILED : STALLED
 end
 
-# The slope at the anchor, and what it cost.
+# The slope at the anchor, and what it cost. `search_slope` is what a method uses; a method with
+# its own rule for a step kind adds a method of it.
 anchor_slope(::ExactStep, lf, φ₀) = (-2φ₀, Int32(0))
 anchor_slope(::Union{InexactStep, MeasuredSlope}, lf, φ₀) = (φ′(lf, zero(φ₀)), Int32(1))
+anchor_slope(d₀::Real, lf, φ₀) = (oftype(φ₀, d₀), Int32(0))
+search_slope(ls, step, lf, φ₀) = anchor_slope(step, lf, φ₀)
 
 """
     roundoff(φ₀)
 
-The round-off resolution ``τ = 4\\,\\mathrm{ulp}(φ(0))`` of the merit. A step that changes the
-merit by no more than ``τ`` is at the round-off floor of the merit.
+The round-off resolution ``τ = 4\\,\\mathrm{eps}(R)\\,|φ(0)|`` of the merit, four units of
+relative round-off. A step that changes the merit by no more than ``τ`` is at the round-off
+floor of the merit. It is proportional to ``|φ(0)|``, not a count of ulps of ``φ(0)``, so that
+it and the step floor [`smallest_step`](@ref) scale with the merit and do not jump by a factor 2
+at a power of two.
 """
-roundoff(φ₀) = 4 * eps(φ₀)
+roundoff(φ₀) = 4 * eps(typeof(φ₀)) * abs(φ₀)
 
 """
-    smallest_step(c, d₀, τ)
+    smallest_step(d₀, τ)
 
-The smallest step ``τ / (c |φ′(0)|)`` at which a demanded decrease ``c α |φ′(0)|`` still
-exceeds the round-off ``τ``, clamped to ``[\\mathrm{eps}(R), \\sqrt{\\mathrm{eps}(R)}]``. A
-search stops there instead of spending its cap. Unclamped, a smaller trial could only show a
-decrease below ``τ``. The upper clamp keeps a nearly flat merit searchable, but it can stop the
-search where a smaller step still decreases the merit by more than ``τ``: a merit that curves
-steeply against ``|φ′(0)|``, such as ``1 - 2α + 10^4 α^2`` in `Float32`. The search then
-reports what the merit shows at the clamp.
+The step floor ``τ / |φ′(0)|`` of every search (decision 40): below it the decrease that the
+slope predicts, ``α |φ′(0)|``, is smaller than the round-off ``τ``, so no trial can show it.
 """
-function smallest_step(c::R, d₀::R, τ::R) where {R}
-    αmin = τ / (c * abs(d₀))
-    isfinite(αmin) || (αmin = sqrt(eps(R)))
-    clamp(αmin, eps(R), sqrt(eps(R)))
-end
+smallest_step(d₀, τ) = τ / abs(d₀)
 
 """
     sufficient_decrease(φα, φ₀, demand, τ)
 
-The Armijo test with the round-off allowance: ``φ(α) ≤ \\min(φ(0), φ(0) + \\mathrm{demand} + τ)``,
-where `demand` is the negative decrease the test demands. The `min` lets ``τ`` lower the demand,
-never accept an increase.
+The Armijo test on the difference, ``φ(α) - φ(0) ≤ \\min(0, \\mathrm{demand} + τ)``, where
+`demand` is the negative decrease the test demands and ``τ`` the round-off allowance. The
+difference keeps a demand below one ulp of ``φ(0)``, which ``φ(0) + \\mathrm{demand}`` would
+round away; the `min` lets ``τ`` lower the demand, never accept an increase. [`StrongWolfe`](@ref)
+passes ``τ = 0``.
 """
-sufficient_decrease(φα, φ₀, demand, τ) = φα ≤ min(φ₀, φ₀ + demand + τ)
+sufficient_decrease(φα, φ₀, demand, τ) = φα - φ₀ ≤ min(zero(φ₀), demand + τ)
 
 """
     classify(φα, φ₀, τ)
 
-The code of an accepted step: `SUCCESS` for a decrease by more than ``τ``, `STALLED` for a
-change by no more than ``τ``, and `LINESEARCH_FAILED` for an increase by more than ``τ`` or a
+The code of an accepted step: `SUCCESS` for a finite decrease by more than ``τ``, `STALLED` for
+a change by no more than ``τ``, and `LINESEARCH_FAILED` for an increase by more than ``τ`` or a
 merit that is not finite.
 """
 function classify(φα, φ₀, τ)
-    φα ≤ φ₀ - τ && return SUCCESS
+    isfinite(φα) && φα - φ₀ ≤ -τ && return SUCCESS
     floor_code(φα, φ₀, τ)
 end
 
 # The code of a step that is not accepted: `STALLED` at the round-off floor of the merit, where
 # it changes by no more than τ, and `LINESEARCH_FAILED` otherwise.
 floor_code(φα, φ₀, τ) = abs(φα - φ₀) ≤ τ ? STALLED : LINESEARCH_FAILED
+
+# Whether d and Δ have the same sign, or d is zero: the sign test of d · Δ ≥ 0 without the
+# product, which can underflow to -0.0.
+samesign(d, Δ) = iszero(d) || ((d > zero(d)) == (Δ > zero(Δ)))
