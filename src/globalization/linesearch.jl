@@ -8,8 +8,8 @@
 
 The supertype of the line searches [`Static`](@ref), [`Backtracking`](@ref),
 [`Bisection`](@ref) and [`StrongWolfe`](@ref), whose numbers are of the real type `R`. A line
-search is a method: it is `isbits`, it holds numbers and an `Int32` cap and nothing else, and
-[`linesearch`](@ref) runs it.
+search is a method: it is `isbits`, it holds numbers and, except [`Static`](@ref), an `Int32` cap
+and nothing else, and [`linesearch`](@ref) runs it.
 
 Every line search keeps six contracts:
 
@@ -65,11 +65,14 @@ update ``η ← 1 - θ (1 - η)`` of each backtrack by ``θ``, and evaluates no 
 ``η(α) ≥ 1`` promises no decrease and is rejected. [`Bisection`](@ref) and
 [`StrongWolfe`](@ref) need the true slope and evaluate ``φ′(0)``. The constructor checks
 nothing, so that solver code can build one in a kernel: a search given an ``η`` outside
-``[0, 1)`` evaluates nothing and returns `LINESEARCH_FAILED`.
+``[0, 1)`` evaluates nothing and returns `LINESEARCH_FAILED`. [`Static`](@ref) reads no step kind
+and returns its step.
 """
 struct InexactStep{R <: Real}
     η::R
 end
+
+Adapt.@adapt_structure InexactStep
 
 """
     MeasuredSlope()
@@ -123,6 +126,7 @@ A non-positive or `NaN` `αmax` is a caller error. The search then evaluates not
 This is the one entry point: it applies the ceiling, the trial step and the anchor checks, then
 runs the loop of the method. Each loop has exactly `ls.maxiter` trips with a done flag, so that
 the threads of a warp stay together in a kernel; a trip after the flag is set evaluates nothing.
+[`Static`](@ref) has no loop.
 """
 function linesearch(ls::LineSearch{R}, lf, step::StepKind, φ₀::R, α::R,
         αmax::R = R(Inf)) where {R}
@@ -210,7 +214,7 @@ a change by no more than ``τ``, and `LINESEARCH_FAILED` for an increase by more
 merit that is not finite.
 """
 function classify(φα, φ₀, τ)
-    isfinite(φα) && φα - φ₀ ≤ -τ && return SUCCESS
+    isfinite(φα) && φα - φ₀ < -τ && return SUCCESS
     floor_code(φα, φ₀, τ)
 end
 

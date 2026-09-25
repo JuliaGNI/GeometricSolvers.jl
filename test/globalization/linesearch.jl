@@ -17,14 +17,12 @@ inR(R, m) = adapt(ToReal{R}(), m)
 const METHODS = (Static(), Backtracking(), Bisection(), StrongWolfe())
 const SEARCHES = (Backtracking(), Bisection(), StrongWolfe())
 const STEPS = (ExactStep(), MeasuredSlope(), InexactStep(0.1))
-stepR(R, s::InexactStep) = InexactStep(R(s.η))
-stepR(R, s) = s
 
 # Run `m` in precision `R` along `lf` from the trial step `α`. The anchor merit `φ₀` is the
 # caller's, computed outside any `Watched` wrapper, as a solver would have it.
 function search(m, lf, R; step = MeasuredSlope(), α = 1, αmax = Inf)
     inner = lf isa Watched ? lf.lf : lf
-    linesearch(inR(R, m), lf, stepR(R, step), φ(inner, zero(R)), R(α), R(αmax))
+    linesearch(inR(R, m), lf, inR(R, step), φ(inner, zero(R)), R(α), R(αmax))
 end
 
 # `search` on the merit f and its slope d, both multiplied by the constant c.
@@ -68,6 +66,9 @@ end
     @test inR(Float32, Backtracking()).maxiter === Int32(100)
     @test isbits(LineSearchResult{Float32}(1.0f0, 0.0f0, SUCCESS, Int32(1)))
     @test isbitstype(InexactStep{Float32})
+    # a step kind converts too, so that no Float64 reaches a Float32 kernel
+    @test inR(Float32, InexactStep(0.1)) === InexactStep(0.1f0)
+    @test inR(Float32, -0.5) === -0.5f0
 end
 
 @testset "constructors check their parameters on the host" begin
@@ -85,6 +86,11 @@ end
     @test_throws ArgumentError StrongWolfe(; αmax = NaN)
     @test_throws ArgumentError Bisection(; αmax = 0.0)
     @test_throws ArgumentError Bisection(; maxiter = -1)
+    # the cap is an Int32
+    for M in (Backtracking, Bisection, StrongWolfe)
+        @test_throws ArgumentError M(; maxiter = 2^40)
+        @test M(; maxiter = typemax(Int32)).maxiter === typemax(Int32)
+    end
     @test Bisection(; αmax = Inf).αmax == Inf
 end
 
@@ -242,7 +248,7 @@ end
         if r.code == SUCCESS
             @test strong_wolfe(lf, r.α, φ₀, d₀, R(c₁), R(c₂))
         end
-        # Every case is solved in Float64, which is where Moré and Thuente ran them.
+        # Every case is solved in Float32 and in Float64; Moré and Thuente ran them in Float64.
         @test r.code == SUCCESS
         @test r.α > 0
     end
@@ -592,7 +598,7 @@ end
 @testset "a lying φ₀ below every merit gives no success" begin
     for R in (Float32, Float64), m in SEARCHES, step in (ExactStep(), MeasuredSlope())
         lf = Line(α -> (α - 1)^2 + 1, α -> 2 * (α - 1))
-        r = linesearch(inR(R, m), lf, stepR(R, step), R(0.5), one(R))
+        r = linesearch(inR(R, m), lf, inR(R, step), R(0.5), one(R))
         @test r.code != SUCCESS
     end
 end
@@ -693,9 +699,11 @@ end
 
 @testset "the exits and boundaries that other tests do not reach" for R in (Float32, Float64)
     o = one(R)
-    # classify and floor_code at their boundaries: a change by exactly τ
+    # classify and floor_code at their boundaries: a change by exactly τ is at the round-off
+    # floor, and one ulp more of a decrease is a SUCCESS
     τ = roundoff(o)
-    @test classify(o - τ, o, τ) == SUCCESS
+    @test classify(o - τ, o, τ) == STALLED
+    @test classify(prevfloat(o - τ), o, τ) == SUCCESS
     @test floor_code(o + τ, o, τ) == STALLED
     # Bisection: a bracket trial where φ′ is exactly 0 is the step: φ′(0), φ′(1), φ(1)
     r = search(Bisection(), Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R; α = 1)
@@ -1000,7 +1008,7 @@ end
         (lfs, α₀s) in lines(R)
 
         ls = inR(R, m)
-        stepr = stepR(R, step)
+        stepr = inR(R, step)
         n = length(lfs)
         αs, codes, counts = zeros(R, n), fill(MAXITERS, n), zeros(Int32, n)
         search_kernel!(backend)(αs, codes, counts, lfs, α₀s, ls, stepr; ndrange = n)
@@ -1015,7 +1023,7 @@ end
 @testset "the searches are isbits, inferred and allocation-free" begin
     count_allocations(ls, lf, step, φ₀, α) = @allocated linesearch(ls, lf, step, φ₀, α)
     for R in (Float32, Float64), m in METHODS, step in STEPS
-        ls, stepr = inR(R, m), stepR(R, step)
+        ls, stepr = inR(R, m), inR(R, step)
         lf = MoreThuente(R, 1)
         φ₀ = φ(lf, zero(R))
         r = @inferred linesearch(ls, lf, stepr, φ₀, one(R))
@@ -1030,7 +1038,7 @@ end
     JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
     if JET_WORKS
         for R in (Float32, Float64), m in METHODS, step in STEPS
-            types = (typeof(inR(R, m)), MoreThuente{R}, typeof(stepR(R, step)), R, R, R)
+            types = (typeof(inR(R, m)), MoreThuente{R}, typeof(inR(R, step)), R, R, R)
             JET.test_opt(linesearch, types)
             JET.test_call(linesearch, types)
         end

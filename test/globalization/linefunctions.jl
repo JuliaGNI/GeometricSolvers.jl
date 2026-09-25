@@ -93,7 +93,7 @@ GeometricSolvers.φ(::Cliff, α) = α > 0 ? 1 + 1000α : one(α)
 GeometricSolvers.φ′(::Cliff, α) = -2one(α)
 
 # The merit φ(α) = ‖r(x + α d)‖² of r(x) = x² - 2, componentwise, along its Newton direction
-# d = -r(x) / 2x: an array line function for R3, on any array type.
+# d = -r(x) / 2x: an array line function, on any array type.
 struct NewtonLine{V}
     x::V
     d::V

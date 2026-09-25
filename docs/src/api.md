@@ -36,7 +36,8 @@ BF16
 
 A line search is scalar code: [`linesearch`](@ref) sees the line only through the merit
 [`φ`](@ref) and its derivative [`φ′`](@ref), allocates nothing and never throws, so the same
-search runs on the host and inside a kernel. Its iteration cap is its own field.
+search runs on the host and inside a kernel. Its iteration cap, where it has one, is its own
+field.
 
 ```@docs
 Static

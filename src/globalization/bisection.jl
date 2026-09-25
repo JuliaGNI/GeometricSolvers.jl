@@ -27,7 +27,8 @@ struct Bisection{R <: Real} <: LineSearch{R}
     maxiter::Int32
     function Bisection{R}(αmax::Real, maxiter::Integer) where {R <: Real}
         αmax > 0 || throw(ArgumentError("Bisection needs αmax > 0, got αmax = $αmax"))
-        maxiter ≥ 1 || throw(ArgumentError("Bisection needs maxiter ≥ 1, got $maxiter"))
+        1 ≤ maxiter ≤ typemax(Int32) ||
+            throw(ArgumentError("Bisection needs 1 ≤ maxiter ≤ typemax(Int32), got $maxiter"))
         new{R}(αmax, maxiter)
     end
 end

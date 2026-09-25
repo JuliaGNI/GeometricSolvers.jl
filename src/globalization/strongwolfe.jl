@@ -40,7 +40,8 @@ struct StrongWolfe{R <: Real} <: LineSearch{R}
         0 < c₁ < c₂ < 1 ||
             throw(ArgumentError("StrongWolfe needs 0 < c₁ < c₂ < 1, got c₁ = $c₁, c₂ = $c₂"))
         αmax > 0 || throw(ArgumentError("StrongWolfe needs αmax > 0, got αmax = $αmax"))
-        maxiter ≥ 1 || throw(ArgumentError("StrongWolfe needs maxiter ≥ 1, got $maxiter"))
+        1 ≤ maxiter ≤ typemax(Int32) ||
+            throw(ArgumentError("StrongWolfe needs 1 ≤ maxiter ≤ typemax(Int32), got $maxiter"))
         new{R}(c₁, c₂, αmax, maxiter)
     end
 end

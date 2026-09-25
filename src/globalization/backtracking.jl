@@ -32,7 +32,8 @@ struct Backtracking{R <: Real} <: LineSearch{R}
     function Backtracking{R}(c₁::Real, p::Real, maxiter::Integer) where {R <: Real}
         0 < c₁ < 1 || throw(ArgumentError("Backtracking needs 0 < c₁ < 1, got c₁ = $c₁"))
         0 < p < 1 || throw(ArgumentError("Backtracking needs 0 < p < 1, got p = $p"))
-        maxiter ≥ 1 || throw(ArgumentError("Backtracking needs maxiter ≥ 1, got $maxiter"))
+        1 ≤ maxiter ≤ typemax(Int32) ||
+            throw(ArgumentError("Backtracking needs 1 ≤ maxiter ≤ typemax(Int32), got $maxiter"))
         new{R}(c₁, p, maxiter)
     end
 end
