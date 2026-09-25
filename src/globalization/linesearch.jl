@@ -92,7 +92,7 @@ The result of one [`linesearch`](@ref). It is `isbits`.
 - `α::R`: the step, ``0 < α ≤ α_{max}``.
 - `φ::R`: the merit at `α`, or `NaN` if the search did not evaluate it there.
 - `code::ReturnCode`: `SUCCESS` for an accepted step that decreases the merit by more than its
-  round-off; `STALLED` for a step that changes the merit by no more than its round-off, or a
+  round-off, and for the step of [`Static`](@ref), which evaluates nothing; `STALLED` for a step that changes the merit by no more than its round-off, or a
   stationary anchor; `NONFINITE` for a non-finite anchor; `LINESEARCH_FAILED` for anything
   else: an ascending anchor, a spent cap, an increase of the merit, an invalid `αmax`, or a
   [`StrongWolfe`](@ref) step without the curvature condition. `φ` tells the caller whether the
@@ -184,7 +184,7 @@ roundoff(φ₀) = max(4 * eps(typeof(φ₀)) * abs(φ₀), 4 * nextfloat(zero(φ
 """
     smallest_step(d₀, τ)
 
-The step floor ``τ / |φ′(0)|`` of every search (decision 40): below it the decrease that the
+The step floor ``τ / |φ′(0)|`` of every search: below it the decrease that the
 slope predicts, ``α |φ′(0)|``, is smaller than the round-off ``τ``, so no trial can show it. It
 is at least `floatmin(R)`, so that no search tries a step of 0 when the quotient underflows.
 """

@@ -10,7 +10,7 @@ the merit is not finite.
 
 It then bisects the bracket. While the bracket spans more than a factor 2, the next trial is the
 geometric mean of its ends, with a lower end of ``0`` taken as the step floor
-[`smallest_step`](@ref) (decision 41); after that it is the middle. It stops when the width is
+[`smallest_step`](@ref); after that it is the middle. It stops when the width is
 below ``\\sqrt{\\mathrm{eps}}`` times the upper end, or when the lower end is still ``0`` and the
 upper end is within a factor 2 of the floor. So the number of trials grows only with
 ``\\log_2 \\log_2`` of the ratio of the trial step to the floor, and it stays bounded for

@@ -38,13 +38,13 @@ so that a compat-only bump can be told apart from an interface change.
   The default residual test is relative (`f_reltol = √eps(R)`, `f_abstol = 0`), because the
   attainable residual depends on the scale of the problem, and `min_iterations` is `0`, so a
   start that already passes the test takes no step.
-- The line searches `Static`, `Backtracking` (Armijo), `Bisection` and `StrongWolfe` are
-  exported, all isbits and run in a KernelAbstractions kernel and on the host, allocate
-  nothing and never throw. Each search reports its outcome through a `ReturnCode` (`SUCCESS`,
-  `STALLED`, `NONFINITE`, `LINESEARCH_FAILED`), not through a log. Every step it returns is
-  positive and within the caller's ceiling. `StrongWolfe` reports `SUCCESS` only for a step
-  that meets both strong Wolfe conditions. Note: `Quadratic` and `BierlaireQuadratic` of
-  SimpleSolvers are not ported.
+- The line searches `Static`, `Backtracking` (Armijo), `Bisection` and `StrongWolfe` are `isbits`
+  types running in a KernelAbstractions kernel and on the host, allocating nothing and never
+  throwing once built; constructors check parameters and raise `ArgumentError`. Each reports
+  through a `ReturnCode` (`SUCCESS`, `STALLED`, `NONFINITE`, `LINESEARCH_FAILED`), not through a
+  log. Every step is positive and within the caller's ceiling. `StrongWolfe` reports `SUCCESS`
+  only for steps meeting both strong Wolfe conditions. The entry point comes with the nonlinear
+  solver; `Quadratic` and `BierlaireQuadratic` of SimpleSolvers are not ported.
 - `LUFactorization`, `QRFactorization` and `SVDFactorization` carry their factorisation precision
   as a type parameter: `LUFactorization()` for the working type, `LUFactorization(Float32)` for a
   `Float32` factorisation, and the markers `TF32()`, `FP16()`, `BF16()` for vendor tensor cores.

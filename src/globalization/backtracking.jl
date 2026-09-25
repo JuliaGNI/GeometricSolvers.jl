@@ -11,9 +11,9 @@ trial step until the [`sufficient_decrease`](@ref) test
 holds, where ``τ`` is the [`roundoff`](@ref) of ``φ(0)``. Each backtrack takes the minimiser of
 the model through ``φ(0)``, ``φ′(0)`` and the last one or two trials, clamped to
 ``[0.1 α, p α]``. A trial whose merit is not finite gives no model; the next trial is then the
-smaller of ``0.1 α`` and the geometric mean of ``α`` and the step floor. The search stops at the step floor [`smallest_step`](@ref), after two trials at
-steps below ``\\sqrt{\\mathrm{eps}}`` whose merit equals ``φ(0)`` bit for bit, or after `maxiter`
-trials.
+smaller of ``0.1 α`` and the geometric mean of ``α`` and the step floor. The search stops at the
+step floor [`smallest_step`](@ref), after two trials at steps below ``\\sqrt{\\mathrm{eps}}``
+whose merit equals ``φ(0)`` bit for bit, or after `maxiter` trials.
 
 The slope ``φ′(0)`` comes from the step kind: ``-2φ(0)`` for an [`ExactStep`](@ref), one
 evaluation for a [`MeasuredSlope`](@ref), the number itself for a slope passed in. For an

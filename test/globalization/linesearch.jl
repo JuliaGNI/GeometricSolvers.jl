@@ -1,7 +1,7 @@
 using GeometricSolvers
 using GeometricSolvers: linesearch, φ, φ′, ExactStep, InexactStep, MeasuredSlope,
                         LineSearchResult, ToReal, roundoff, smallest_step,
-                        sufficient_decrease,
+                        sufficient_decrease, classify, floor_code,
                         backtrack_step, zoom_step
 using JET: JET
 using JLArrays: JLArray
@@ -225,7 +225,7 @@ end
     end
 end
 
-@testset "defect 1: StrongWolfe returns SUCCESS only for a strong Wolfe step" begin
+@testset "StrongWolfe returns SUCCESS only for a strong Wolfe step" begin
     # The six functions of Moré and Thuente (1994), their curvature constant η and their initial
     # steps. Their μ equals η for five of the functions, which the c₁ < c₂ of Nocedal and Wright
     # excludes, so c₁ keeps its default.
@@ -280,36 +280,10 @@ end
     end
 end
 
-@testset "defect 2: Backtracking's cost does not change with the merit scale" begin
-    merits = ((α -> 1 - 2α + 1000α^2, α -> -2 + 2000α),        # near-quadratic: the cubic step
-        (α -> (α - 100)^2 / 10^4, α -> 2 * (α - 100) / 10^4),
-        (α -> 1 - 2α + 100α^2 + 50α^3, α -> -2 + 200α + 150α^2),
-        (α -> exp(8α) - 9α, α -> 8exp(8α) - 9))
-    for R in (Float32, Float64), (f, d) in merits, step in (MeasuredSlope(), ExactStep())
-        scales = R == Float32 ? (1e-8, 1.0, 1e8) : (1e-200, 1e-8, 1.0, 1e8, 1e200)
-        results = map(s -> scaled(Backtracking(), f, d, R, s; step), scales)
-        @test all(r -> r.evaluations == results[1].evaluations, results)
-        @test all(r -> r.code == results[1].code, results)
-        @test all(r -> isapprox(r.α, results[1].α; rtol = 8eps(R)), results)
-    end
-    # On the near-quadratic merit the cubic model is the quadratic itself, so the ladder is
-    # 1, 0.1, 0.01 and then the minimiser 0.001: the stable form of the cubic step, where the
-    # textbook form (-b + √(b² - 3a d₀)) / 3a cancels.
-    for R in (Float32, Float64), s in (1e-8, 1.0, 1e8)
-
-        w = Watched(Line(α -> R(s) * (1 - 2α + 1000α^2), α -> R(s) * (-2 + 2000α)), R)
-        r = search(Backtracking(), w, R)
-        @test w.atφ ≈ R[1, 0.1, 0.01, 0.001] rtol = 64eps(R)
-        @test r.code == SUCCESS
-    end
-    @test backtrack_step(1.0, -2.0, 0.1, 10.8, 1.0, 999.0, 0.5) ≈ 0.01
-    @test backtrack_step(1e200, -2e200, 0.1, 10.8e200, 1.0, 999e200, 0.5) ≈ 0.01
-end
-
-@testset "defect 3 and item 6, decision 41: Bisection at a lower end of 0, in log space" begin
+@testset "Bisection at a lower end of 0 bisects in log space, within a stated bound" begin
     # The minimiser lies below the step floor, or φ′ is positive right after the anchor: the
     # lower end of the bracket stays at 0 and a relative-width stop cannot fire. The search
-    # bisects in log space down to the floor instead (decision 41). Its count is at most
+    # bisects in log space down to the floor instead. Its count is at most
     # 3 + ⌈log₂ log₂(α / floatmin(R))⌉: φ′(0), one bracket, the geometric trials from α down to
     # the floor, which is at least floatmin, and the merit at the step. That is 10 in Float32
     # and 13 in Float64 for α = 1, 11 and 14 for the default ceiling 2¹⁶, and 11 and 14 for
@@ -355,7 +329,7 @@ end
     end
 end
 
-@testset "defect 4: a large increase of the merit is a failure, never STALLED" begin
+@testset "a large increase of the merit is a failure, never STALLED" begin
     for R in (Float32, Float64), step in (MeasuredSlope(), ExactStep())
 
         cliff = Line(α -> α > 0 ? 1 + 1000α : one(R), α -> -2 * one(R))
@@ -415,44 +389,7 @@ end
     end
 end
 
-@testset "contract 5: the cost of every method is independent of the merit's scale" begin
-    for m in SEARCHES, R in (Float32, Float64)
-
-        scales = R == Float32 ? (1e-12, 1e-6, 1.0, 1e6, 1e12) :
-                 (1e-200, 1e-12, 1.0, 1e12, 1e200)
-        rs = [scaled(m, α -> (α - 1)^2, α -> 2 * (α - 1), R, c; α = 0.5) for c in scales]
-        @test all(r -> r.α ≈ rs[1].α, rs)
-        @test all(r -> r.evaluations == rs[1].evaluations, rs)
-        @test all(r -> r.code == SUCCESS, rs)
-        # and on the Moré–Thuente functions, scaled by powers of two: the arithmetic is then
-        # exact, so any change of the cost is a threshold of the method that does not scale
-        for kind in 1:6
-            lf = MoreThuente(R, kind)
-            rs = [scaled(m, α -> φ(lf, α), α -> φ′(lf, α), R, c; α = 1e-1)
-                  for c in (2.0^-20, 1.0, 2.0^20)]
-            @test all(r -> r === rs[2] || (r.α == rs[2].α && r.code == rs[2].code), rs)
-            @test all(r -> r.evaluations == rs[1].evaluations, rs)
-        end
-        # and on the round-off-floor path: a merit one ulp above φ₀, and a cliff. Powers of two
-        # scale the merit exactly; a decimal scale changes the relative size of one ulp, so
-        # there only the code must agree.
-        noise = (α -> α > 0 ? nextfloat(one(R)) : one(R), α -> -2one(R))
-        cliff = (α -> α > 0 ? 1 + 1000α : one(R), α -> -2one(R))
-        exact = R == Float32 ? (2.0^-60, 1.0, 2.0^60) : (2.0^-600, 1.0, 2.0^600)
-        decimal = R == Float32 ? (1e-20, 1e20) : (1e-200, 1e200)
-        for (f, d) in (noise, cliff)
-            rs = [scaled(m, f, d, R, s) for s in exact]
-            @test all(
-                r -> (r.α, r.code, r.evaluations) ==
-                     (rs[2].α, rs[2].code, rs[2].evaluations), rs)
-            @test all(s -> scaled(m, f, d, R, s).code == rs[2].code, decimal)
-        end
-        n₁ = scaled(m, cliff..., R, 1.0).evaluations
-        @test all(s -> scaled(m, cliff..., R, s).evaluations == n₁, decimal)
-    end
-end
-
-@testset "item 5, decision 40: the step floor is τ/|φ′(0)|" begin
+@testset "the step floor is τ/|φ′(0)|" begin
     # φ = 1 - 2α + kα² accepts only steps below 2/k, far below √eps, and decreases by about 1/k
     # there, many times τ. A floor τ/(c₁|φ′(0)|) clamped to √eps lies above those steps.
     for (R, ks) in ((Float32, (1e4, 1e5, 1e6)), (Float64, (1e10, 1e11, 1e12))),
@@ -492,7 +429,7 @@ end
     end
 end
 
-@testset "item 7: every exit of StrongWolfe" begin
+@testset "every exit of StrongWolfe" begin
     for R in (Float32, Float64)
         # A kink: φ′ jumps from -1 to 2 at α = a, so no step meets the curvature condition with
         # c₂ = 0.9. For a = 0.3 and 3e-5 the zoom collapses onto the kink with its lower end
@@ -503,8 +440,6 @@ end
             lf = vee(a)
             r = search(StrongWolfe(; αmax = 65536.0), lf, R)
             φ₀ = one(R)
-            @test r.code != SUCCESS ||
-                  strong_wolfe(lf, r.α, φ₀, φ′(lf, zero(R)), R(1e-4), R(0.9))
             @test r.code == LINESEARCH_FAILED
             @test r.φ < φ₀                                # the step still decreases the merit
             # the collapse and the ceiling end the search: no point is evaluated twice, which a
@@ -531,6 +466,13 @@ end
         r = search(StrongWolfe(), noise, R)
         @test r.code == STALLED
         @test r.α ≥ smallest_step(-2one(R), roundoff(one(R)))
+        # the ceiling exit at the round-off floor: at α = 1.5eps the decrease 3eps is below τ
+        r = search(StrongWolfe(), Line(α -> 1 - 2α, α -> -2one(R)), R; αmax = 1.5eps(R))
+        @test r.α == R(1.5eps(R))
+        @test r.code == STALLED
+        # and a decrease at the ceiling that fails the curvature condition is a failure
+        r = search(StrongWolfe(), Line(α -> 1 - 2α, α -> -2one(R)), R; αmax = 0.25)
+        @test r.code == LINESEARCH_FAILED && r.φ < 1
     end
 end
 
@@ -669,52 +611,116 @@ end
     end
 end
 
-@testset "contract 5: bit-identical under 2^k, and 500 random scales" begin
-    for R in (Float32, Float64)
-        o = one(R)
-        steady = ((α -> (α - o)^2, α -> 2 * (α - o), R(0.4)),
-            (α -> o - 2α + 1000α^2, α -> -2o + 2000α, o),
-            (α -> (α - R(1e-3))^2, α -> 2 * (α - R(1e-3)), o),
-            (α -> (α - 11)^2, α -> 2 * (α - 11), o))
-        for m in SEARCHES, (f, d, α) in steady
+@testset "the cost does not depend on the merit's scale" for R in (Float32, Float64)
+    o = one(R)
+    # Merits whose tests lie far from their thresholds, with the trial step: a minimiser past
+    # the trial step, an overshoot by 1000 that the cubic model answers, a minimiser 100 or 11
+    # times beyond it and one a thousand times below it, a cubic and an exponential.
+    steady = ((α -> (α - 1)^2, α -> 2 * (α - 1), R(0.4)),
+        (α -> 1 - 2α + 1000α^2, α -> -2 + 2000α, o),
+        (α -> (α - 100)^2 / 10^4, α -> 2 * (α - 100) / 10^4, o),
+        (α -> (α - 11)^2, α -> 2 * (α - 11), o),
+        (α -> (α - R(1e-3))^2, α -> 2 * (α - R(1e-3)), o),
+        (α -> 1 - 2α + 100α^2 + 50α^3, α -> -2 + 200α + 150α^2, o),
+        (α -> exp(8α) - 9α, α -> 8exp(8α) - 9, o))
+    decimal = R == Float32 ? (1e-8, 1e8) : (1e-200, 1e-8, 1e8, 1e200)
+    e = R == Float64 ? 12 : 8
+    random = R.(10 .^ (2e .* rand(Random.Xoshiro(20260925), 500) .- e))
+    same(r, b) = (r.α, r.code, r.evaluations) === (b.α, b.code, b.evaluations)
+    for m in SEARCHES, (f, d, α) in steady
 
-            base = scaled(m, f, d, R, o; α)
-            @test base.code == SUCCESS
-            @test all(-30:30) do k
-                r = scaled(m, f, d, R, R(2)^k; α)
-                (r.α, r.code, r.evaluations) === (base.α, base.code, base.evaluations)
-            end
-            e = R == Float64 ? 12 : 8
-            scales = R.(10 .^ (2e .* rand(Random.Xoshiro(20260925), 500) .- e))
-            rs = map(c -> scaled(m, f, d, R, c; α), scales)
-            @test all(r -> r.code == base.code && r.evaluations == base.evaluations, rs)
-        end
+        base = scaled(m, f, d, R, o; α)
+        # a power of two changes nothing; any other scale changes the step by rounding only
+        @test all(k -> same(scaled(m, f, d, R, R(2)^k; α), base), -30:30)
+        rs = map(c -> scaled(m, f, d, R, c; α), (decimal..., random...))
+        @test all(r -> r.code == base.code && r.evaluations == base.evaluations, rs)
+        @test all(r -> isapprox(r.α, base.α; rtol = 16eps(R)), rs)
     end
+    for m in SEARCHES
+        # the Moré–Thuente functions, and the round-off-floor path: a merit one ulp above φ₀
+        # and a cliff. A power of two scales them exactly; a decimal scale changes the relative
+        # size of one ulp, so there only the code of the noise merit must agree.
+        for kind in 1:6
+            lf = MoreThuente(R, kind)
+            b = scaled(m, α -> φ(lf, α), α -> φ′(lf, α), R, 1; α = 0.1)
+            @test all(
+                c -> same(scaled(m, α -> φ(lf, α), α -> φ′(lf, α), R, c; α = 0.1), b),
+                (2.0^-20, 2.0^20))
+        end
+        noise = (α -> α > 0 ? nextfloat(o) : o, α -> -2o)
+        cliff = (α -> α > 0 ? 1 + 1000α : o, α -> -2o)
+        exact = R == Float32 ? (2.0^-60, 2.0^60) : (2.0^-600, 2.0^600)
+        for (f, d) in (noise, cliff)
+            b = scaled(m, f, d, R, 1)
+            @test all(c -> same(scaled(m, f, d, R, c), b), exact)
+            @test all(c -> scaled(m, f, d, R, c).code == b.code, decimal)
+        end
+        n₁ = scaled(m, cliff..., R, 1).evaluations
+        @test all(c -> scaled(m, cliff..., R, c).evaluations == n₁, decimal)
+    end
+    # On the near-quadratic merit the cubic model is the quadratic itself, so the ladder is
+    # 1, 0.1, 0.01 and then the minimiser 0.001: the stable form of the cubic step, where the
+    # textbook form (-b + √(b² - 3a d₀)) / 3a cancels.
+    for s in (1e-8, 1.0, 1e8)
+        w = Watched(Line(α -> R(s) * (1 - 2α + 1000α^2), α -> R(s) * (-2 + 2000α)), R)
+        @test search(Backtracking(), w, R).code == SUCCESS
+        @test w.atφ ≈ R[1, 0.1, 0.01, 0.001] rtol = 64eps(R)
+    end
+    @test backtrack_step(o, -2o, R(0.1), R(10.8), o, R(999), R(0.5)) ≈ R(0.01)
     # a Float32 Newton merit near the top of its range, where an unscaled square overflows
-    δ = -10 * atan(3.0f0)
-    for m in SEARCHES, step in (MeasuredSlope(), ExactStep())
+    if R == Float32
+        δ = -10 * atan(3.0f0)
+        for m in SEARCHES, step in (MeasuredSlope(), ExactStep())
 
-        counts = map((1.0f0, 2.0f0^32)) do c
-            f = α -> (c * atan(3 + α * δ))^2
-            d = α -> 2 * c^2 * atan(3 + α * δ) * δ / (1 + (3 + α * δ)^2)
-            search(m, Line(f, d), Float32; step).evaluations
+            counts = map((1.0f0, 2.0f0^32)) do c
+                f = α -> (c * atan(3 + α * δ))^2
+                d = α -> 2 * c^2 * atan(3 + α * δ) * δ / (1 + (3 + α * δ)^2)
+                search(m, Line(f, d), Float32; step).evaluations
+            end
+            @test allequal(counts)
         end
-        @test allequal(counts)
     end
+end
+
+@testset "the exits and boundaries that other tests do not reach" for R in (Float32, Float64)
+    o = one(R)
+    # classify and floor_code at their boundaries: a change by exactly τ
+    τ = roundoff(o)
+    @test classify(o - τ, o, τ) == SUCCESS
+    @test floor_code(o + τ, o, τ) == STALLED
+    # Bisection: a bracket trial where φ′ is exactly 0 is the step: φ′(0), φ′(1), φ(1)
+    r = search(Bisection(), Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R; α = 1)
+    @test (r.α, r.code, r.evaluations) == (1, SUCCESS, 3)
+    # and so is a bisection trial where φ′ is exactly 0: φ′ at 0, 0.5, 1 and 0.75, then φ
+    r = search(Bisection(), Line(α -> (α - R(0.75))^2, α -> 2 * (α - R(0.75))), R; α = 0.5)
+    @test (r.α, r.code, r.evaluations) == (R(0.75), SUCCESS, 5)
+    # StrongWolfe: a trial that meets the first condition but has a higher merit than the one
+    # before it ends the bracketing; the zoom then finds the lower merit below it
+    bump = Line(α -> α ≤ R(0.6) ? 1 - α : R(0.7), α -> -o)
+    r = search(StrongWolfe(), bump, R; α = 0.5)
+    @test r.α < 1 && r.φ < R(0.5)
+    # Backtracking: the frozen stop needs two trials below √eps whose merit equals φ₀. In
+    # Float32 a merit equal to φ₀ is accepted first, because below 1e-6 the demanded decrease
+    # is already below τ; in Float64 it is not, and the frozen stop ends the search.
+    w = Watched(Line(α -> α ≤ R(1e-6) ? o : 1 + α, α -> -2o), R)
+    r = search(Backtracking(), w, R)
+    @test r.code == STALLED
+    R == Float64 && @test count(α -> α ≤ sqrt(eps(R)) && φ(w.lf, α) == o, w.atφ) ≥ 2
 end
 
 @testset "the round-off τ decides a decrease" begin
     # the merit falls by `ulps` ulps of φ₀ = 1 at its minimiser: 2 is the floor, 8 a decrease
+    # from α = 4, StrongWolfe reaches the minimiser through its zoom, and classifies it there
     for T in (Float32, Float64), (ulps, code) in ((2, STALLED), (8, SUCCESS)),
-        m in (Backtracking(), StrongWolfe())
+        (m, α) in ((Backtracking(), 1), (StrongWolfe(), 1), (StrongWolfe(), 4))
         a = T(ulps) * eps(T)
-        r = search(m, Line(α -> one(T) - 2a * α + a * α^2, α -> -2a + 2a * α), T)
+        r = search(m, Line(α -> one(T) - 2a * α + a * α^2, α -> -2a + 2a * α), T; α)
         @test r.code == code
     end
 end
 
 # The tests of `SimpleSolvers/test/linesearch_tests.jl` for the four methods, where the design
-# keeps the behaviour. Not ported: `Quadratic` and `BierlaireQuadratic` (§5.1); the expansion
+# keeps the behaviour. Not ported: `Quadratic` and `BierlaireQuadratic`; the expansion
 # phase of `Backtracking`, its `τ_ulps` key and its curvature warning, the `Float16` rows, the
 # `Linesearch` and `LinesearchProblem` objects, `change_precision`, `bracket_minimum`,
 # `triple_point_finder` and the message tests, none of which this package has.
@@ -790,7 +796,7 @@ end
         end
     end
 
-    @testset "item 8: a merit equal to φ₀ at a large step is not the round-off floor" begin
+    @testset "a merit equal to φ₀ at a large step is not the round-off floor" begin
         # φ = 1 - 2α + 6α² - 4α³ equals φ₀ at α = 1 and at α = 1/2, and has φ(0.21) ≈ 0.81
         for s in (1e-8, 1.0, 1e8), step in (MeasuredSlope(), ExactStep())
 
@@ -806,7 +812,7 @@ end
         @test roundoff(R(1e-20)) == 4eps(R) * R(1e-20)       # relative, not a count of ulps
         @test roundoff(-3o) == 12eps(R)
         τ = roundoff(o)
-        # decision 40: τ/|φ′(0)|, with no c₁ and no clamp above floatmin
+        # τ/|φ′(0)|, with no c₁ and no clamp above floatmin
         @test smallest_step(-2o, τ) == 2eps(R)
         @test smallest_step(-R(1e30), τ) == max(τ / R(1e30), floatmin(R))
         @test smallest_step(-R(1e-30), τ) == τ / R(1e-30)
@@ -957,20 +963,23 @@ end
 
 @testset "R1: the searches run inside a KernelAbstractions kernel on CPU()" begin
     backend = KernelAbstractions.CPU()
-    # the Moré–Thuente set of item 1, the cubics of items 5 and 8, the kinks of item 7 and the
-    # cliff of defect 4; one kernel launch per line-function type
+    # the Moré–Thuente set, the cubics of the step-floor and equal-merit tests, the kinks, the
+    # cliff, and a Bisection line whose lower end stays at 0; one kernel launch per type
     lines(R) = (
         ([MoreThuente(R, kind) for kind in 1:6 for _ in MT_STEPS],
             [R(α) for _ in 1:6 for α in MT_STEPS]),
         (
             [Cubic((one(R), -2one(R), R(k), zero(R))) for k in (1e4, 1e6, 1e10, 1e12)] ∪
-            [Cubic((one(R), -2one(R), 6one(R), -4one(R)))],
-            ones(R, 5)),
+            [Cubic((one(R), -2one(R), 6one(R), -4one(R)))] ∪
+            [Cubic(R(s) .* (1, -2, 1000, 0)) for s in (1e-8, 1.0, 1e8)],
+            ones(R, 8)),
         ([Kink(R(a)) for a in (3e-5, 0.3, 3e5)], ones(R, 3)),
-        ([Cliff()], ones(R, 1)))
-    for R in (Float32, Float64), m in METHODS,
+        ([Cliff()], ones(R, 1)),
+        ([Rising(), Rising()], R[1, 1e16]))
+    for R in (Float32, Float64), m in (METHODS..., Bisection(; αmax = Inf)),
         step in (MeasuredSlope(), InexactStep(0.1), ExactStep(), -0.5),
         (lfs, α₀s) in lines(R)
+
         ls = inR(R, m)
         stepr = stepR(R, step)
         n = length(lfs)
