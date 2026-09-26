@@ -9,7 +9,7 @@ using KernelAbstractions: KernelAbstractions, @kernel, @index, @Const
 using Random: Random
 using Test
 
-include("linefunctions.jl")
+include("../helpers/linefunctions.jl")
 
 const adapt = GeometricSolvers.Adapt.adapt
 inR(R, m) = adapt(ToReal{R}(), m)
