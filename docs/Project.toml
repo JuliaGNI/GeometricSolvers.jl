@@ -4,3 +4,6 @@ GeometricSolvers = "3a2b8526-dde5-4630-ad43-3d2dcd69f118"
 
 [sources]
 GeometricSolvers = {path = ".."}
+
+[compat]
+Documenter = "1.19.0"
