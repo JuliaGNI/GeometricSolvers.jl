@@ -87,7 +87,7 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
         @test_opt rnorm(v)
         @test_opt rdot(v, v)
     else
-        @test_skip JET_WORKS
+        @test_skip JET_WORKS  # issue #8
     end
 end
 
