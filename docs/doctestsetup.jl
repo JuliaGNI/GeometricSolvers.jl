@@ -2,9 +2,8 @@
 #
 # Included by `docs/make.jl`, by the `doctest` job of `.github/workflows/CI.yml` and by
 # `test/quality/doctests.jl`, so that a documentation build and a doctest run cannot disagree.
-# One definition, three callers: the CI
-# workflow is byte-identical in every repository and cannot carry per-package knowledge, and a
-# second copy of this list is exactly the thing that goes stale.
+# One definition, three callers: the CI workflow is byte-identical in every repository and cannot
+# carry per-package knowledge, and a second copy of this list is exactly the thing that goes stale.
 
 using Documenter: DocMeta
 
