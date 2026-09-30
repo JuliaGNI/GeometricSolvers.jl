@@ -63,8 +63,6 @@ so that a compat-only bump can be told apart from an interface change.
   vendor package: a GPU run of `scripts/spikes/capabilities/run.jl` stacks `test/gpu/<backend>`
   behind the spike's environment through `JULIA_LOAD_PATH`.
 
-### Testing
-
 - The test suite follows the shared layout. The test dependencies move from `[extras]` and
   `[targets]` to `test/Project.toml`, with their bounds; `Adapt`, which the tests use directly,
   takes its bound from `Project.toml` alone, and `Documenter` is new. `test/runtests.jl` runs
