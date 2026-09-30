@@ -1,26 +1,17 @@
 using SafeTestsets
 
-@safetestset "Aqua Quality Assurance" begin
-    include("aqua_tests.jl")
+const GROUPS = isempty(ARGS) ? ["core", "slow"] : ARGS
+
+if "core" in GROUPS
+    @safetestset "Aqua Quality Assurance" include("quality/aqua.jl")
+    @safetestset "JET Static Analysis" include("quality/jet.jl")
+    @safetestset "Backends" include("backends.jl")
+    @safetestset "Return codes and status" include("base/status.jl")
+    @safetestset "Options" include("base/options.jl")
+    @safetestset "Reductions" include("base/reductions.jl")
+    @safetestset "ToReal adaptor" include("base/adapt.jl")
+    @safetestset "Linear-solver methods" include("linear/methods.jl")
 end
-@safetestset "JET Static Analysis" begin
-    include("jet_tests.jl")
-end
-@safetestset "Backends" begin
-    include("backends.jl")
-end
-@safetestset "Return codes and status" begin
-    include("base/status.jl")
-end
-@safetestset "Options" begin
-    include("base/options.jl")
-end
-@safetestset "Reductions" begin
-    include("base/reductions.jl")
-end
-@safetestset "ToReal adaptor" begin
-    include("base/adapt.jl")
-end
-@safetestset "Linear-solver methods" begin
-    include("linear/methods.jl")
+if "slow" in GROUPS
+    @safetestset "Doctests" include("quality/doctests.jl")
 end
