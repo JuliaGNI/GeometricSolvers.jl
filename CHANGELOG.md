@@ -67,8 +67,8 @@ so that a compat-only bump can be told apart from an interface change.
 
 - The test suite follows the shared layout. The test dependencies move from `[extras]` and
   `[targets]` to `test/Project.toml`, with their bounds; `Adapt`, which the tests use directly,
-  takes its bound from `Project.toml` alone, and `Documenter` is new. `test/runtests.jl` runs the groups `core` and
-  `slow`: `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to `test/quality/aqua.jl` and
-  `test/quality/jet.jl`, the line-function fixture moves to `test/helpers/linefunctions.jl`, and
-  the new `test/quality/doctests.jl` in `slow` runs the docstring doctests. `test/gpu/` is
-  unchanged.
+  takes its bound from `Project.toml` alone, and `Documenter` is new. `test/runtests.jl` runs
+  the groups `core` and `slow`: `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to
+  `test/quality/aqua.jl` and `test/quality/jet.jl`, the line-function fixture moves to
+  `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
+  docstring doctests. `test/gpu/` is unchanged.
