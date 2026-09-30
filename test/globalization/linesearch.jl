@@ -1043,6 +1043,6 @@ end
             JET.test_call(linesearch, types)
         end
     else
-        @test_skip "JET does not load on Julia $(VERSION)"
+        @test_skip "JET does not load on Julia $(VERSION)"  # issue #8
     end
 end
