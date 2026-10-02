@@ -67,7 +67,7 @@ so that a compat-only bump can be told apart from an interface change.
   `[targets]` to `test/Project.toml`, with their bounds; `Adapt`, which the tests use directly,
   takes its bound from `Project.toml` alone, and `Documenter` is new. `test/runtests.jl` selects
   the groups `core`, `slow` and `metal` from `ARGS`, and the next entry gives the groups of a run
-  with empty `ARGS`: `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to
+  with empty `ARGS`. `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to
   `test/quality/aqua.jl` and `test/quality/jet.jl`, the line-function fixture moves to
   `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
   docstring doctests. `test/gpu/` is unchanged.
@@ -79,6 +79,6 @@ so that a compat-only bump can be told apart from an interface change.
   `Metal.functional()` is `false`, as inside a sandbox, the file runs no test and records one skip
   (`@test_skip Metal.functional()`), also under `test_args = ["metal"]`. Metal (1.10 or later) is
   a test dependency on every platform; it installs on Linux and Windows, and no default run there
-  loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and `1`
-  Julia versions, and a step before the tests fails that job where Metal is not functional. The
+  loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and
+  `1` Julia versions, and a step before the tests fails that job where Metal is not functional. The
   job is not a required check.
