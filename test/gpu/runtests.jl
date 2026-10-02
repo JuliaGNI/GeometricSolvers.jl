@@ -1,4 +1,4 @@
-# Device tests, run by hand on a machine with the GPU. There is no device CI; `README.md` in this
+# Device tests, run by hand on a machine with the GPU, and for Metal in CI; `README.md` in this
 # directory is the procedure.
 #
 # Usage, from the repository root:

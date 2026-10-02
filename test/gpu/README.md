@@ -1,6 +1,6 @@
 # Device runs by hand
 
-There is no GitHub runner with a GPU, and there is no device CI. The GPU machines are reachable
+Only the Metal case has device CI, in the `Metal` workflow. The GPU machines are reachable
 only inside the institute. A person runs the device tests, or a spike, on the machine, and pushes
 the output to a results branch. The maintainer then records the output and deletes the branch.
 **A results branch is never merged.**

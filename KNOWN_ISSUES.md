@@ -25,18 +25,9 @@
   Vector{Metal.MTL.MTLDevice} at index [1]` from `device()`; after one run of the same command
   outside the sandbox it gave `Broken 1`. Here, with a Metal cache present, the sandboxed
   `run-tests.jl <repository> devices/metal.jl` gives `Broken 1`. The fix is upstream: a workload
-  that skips the kernel compilation where no device exists.
+  that skips the kernel compilation where no device exists, asked for in JuliaGPU/Metal.jl#996.
+  The workaround is the `precompile` local preference of Metal 1.11.1 (Metal.jl PR #915,
+  `@load_preference("precompile", true)` at `src/Metal.jl:110`): set to `false`, it turns the
+  precompile workload off.
 - **kind:** upstream
-- **found:** 2026-10-02
-
-### K3 · Two comments of `test/gpu/` say that there is no device CI, which the `Metal` workflow contradicts
-
-- **location:** `test/gpu/README.md:3`, `test/gpu/runtests.jl:1`
-- **evidence:** `test/gpu/README.md:3` says "There is no GitHub runner with a GPU, and there is no
-  device CI", and `test/gpu/runtests.jl:1` says "There is no device CI". The `Metal` workflow
-  (`.github/workflows/Metal.yml`) runs the `metal` group on GitHub's `macos-15` runner, whose GPU
-  is Apple's paravirtual device, and `test/devices/metal.jl` runs the Metal case of
-  `test/gpu/runtests.jl` there. The CUDA and ROCm cases have no CI. The change that adds the
-  workflow leaves `test/gpu/` unchanged, so both lines stay.
-- **kind:** docs
 - **found:** 2026-10-02

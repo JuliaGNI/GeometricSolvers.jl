@@ -75,7 +75,8 @@ so that a compat-only bump can be told apart from an interface change.
   `test/runtests.jl` runs the groups `core`, `slow` and `metal` on an Apple-silicon Mac and `core`
   and `slow` everywhere else. The new `test/devices/metal.jl`, in the `metal` group, includes
   `test/gpu/runtests.jl` and runs its Metal case, the `axpy` kernel in `Float32` and `Float16`;
-  `test/gpu/` is unchanged and stays the separate suite for a run by hand. Where
+  `test/gpu/` stays the separate suite for a run by hand, and `test/gpu/README.md` and the header
+  of `test/gpu/runtests.jl` say that the Metal case alone has device CI. Where
   `Metal.functional()` is `false`, as inside a sandbox, the file runs no test and records one skip
   (`@test_skip Metal.functional()`), also under `test_args = ["metal"]`. Metal (1.10 or later) is
   a test dependency on every platform; it installs on Linux and Windows, and no default run there
