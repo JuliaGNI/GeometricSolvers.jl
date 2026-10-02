@@ -70,3 +70,7 @@ so that a compat-only bump can be told apart from an interface change.
   `test/quality/aqua.jl` and `test/quality/jet.jl`, the line-function fixture moves to
   `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
   docstring doctests. `test/gpu/` is unchanged.
+
+- The `Adapt` floor rises from 4.0 to 4.6.1. Metal 1.10 and later, and the GPUArrays they need,
+  require Adapt 4.6.1, so the test environment does not resolve at the old floor once `Metal`
+  joins it with `Metal = "1.10"`.
