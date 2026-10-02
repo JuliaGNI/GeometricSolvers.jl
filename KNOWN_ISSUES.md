@@ -31,7 +31,7 @@
 
 ### K3 · Two comments of `test/gpu/` say that there is no device CI, which the `Metal` workflow contradicts
 
-- **location:** `test/gpu/README.md:3`
+- **location:** `test/gpu/README.md:3`, `test/gpu/runtests.jl:1`
 - **evidence:** `test/gpu/README.md:3` says "There is no GitHub runner with a GPU, and there is no
   device CI", and `test/gpu/runtests.jl:1` says "There is no device CI". The `Metal` workflow
   (`.github/workflows/Metal.yml`) runs the `metal` group on GitHub's `macos-15` runner, whose GPU

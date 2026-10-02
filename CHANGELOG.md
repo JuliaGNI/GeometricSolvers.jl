@@ -78,7 +78,7 @@ so that a compat-only bump can be told apart from an interface change.
   `test/gpu/` is unchanged and stays the separate suite for a run by hand. Where
   `Metal.functional()` is `false`, as inside a sandbox, the file runs no test and records one skip
   (`@test_skip Metal.functional()`), also under `test_args = ["metal"]`. Metal (1.10 or later) is
-  a test dependency on every platform; it installs on Linux and Windows, and nothing there loads
-  it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and `1`
+  a test dependency on every platform; it installs on Linux and Windows, and no default run there
+  loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and `1`
   Julia versions, and a step before the tests fails that job where Metal is not functional. The
   job is not a required check.
