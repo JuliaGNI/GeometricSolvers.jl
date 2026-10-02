@@ -70,7 +70,7 @@ so that a compat-only bump can be told apart from an interface change.
   with empty `ARGS`. `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to
   `test/quality/aqua.jl` and `test/quality/jet.jl`, the line-function fixture moves to
   `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
-  docstring doctests. `test/gpu/` is unchanged.
+  docstring doctests. No file of `test/gpu/` moves.
 - A default test run on an Apple-silicon Mac runs the Metal device tests. When `ARGS` is empty,
   `test/runtests.jl` runs the groups `core`, `slow` and `metal` on an Apple-silicon Mac and `core`
   and `slow` everywhere else. The new `test/devices/metal.jl`, in the `metal` group, includes
