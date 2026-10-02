@@ -71,6 +71,6 @@ so that a compat-only bump can be told apart from an interface change.
   `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
   docstring doctests. `test/gpu/` is unchanged.
 
-- The `Adapt` floor rises from 4.0 to 4.6.1. Metal 1.10 and later, and the GPUArrays they need,
-  require Adapt 4.6.1, so the test environment does not resolve at the old floor once `Metal`
-  joins it with `Metal = "1.10"`.
+- The `Adapt` floor is 4.6.1. Metal 1.10 and later, and the GPUArrays 11.5.6 and later that they
+  require, need Adapt 4.6.1, so a test environment with `Metal = "1.10"` does not resolve with
+  Adapt held below it.
