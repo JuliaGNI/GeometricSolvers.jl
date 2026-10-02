@@ -1,6 +1,8 @@
 using SafeTestsets
 
-const GROUPS = isempty(ARGS) ? ["core", "slow"] : ARGS
+const GROUPS = isempty(ARGS) ?
+               (Sys.isapple() && Sys.ARCH === :aarch64 ? ["core", "slow", "metal"] :
+                ["core", "slow"]) : ARGS
 
 if "core" in GROUPS
     @safetestset "Aqua Quality Assurance" include("quality/aqua.jl")
@@ -15,4 +17,7 @@ if "core" in GROUPS
 end
 if "slow" in GROUPS
     @safetestset "Doctests" include("quality/doctests.jl")
+end
+if "metal" in GROUPS
+    @safetestset "Metal" include("devices/metal.jl")
 end
