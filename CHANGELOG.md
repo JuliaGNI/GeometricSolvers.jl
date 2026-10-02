@@ -83,3 +83,6 @@ so that a compat-only bump can be told apart from an interface change.
   loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and
   `1` Julia versions, and a step before the tests fails that job where Metal is not functional. The
   job is not a required check.
+- The `Adapt` floor is 4.6.1. Metal 1.10 and later, and the GPUArrays 11.5.6 and later that they
+  require, need Adapt 4.6.1, so a test environment with `Metal = "1.10"` does not resolve with
+  Adapt held below it.
