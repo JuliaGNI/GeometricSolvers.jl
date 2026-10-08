@@ -115,7 +115,7 @@ end
     @test length(broken) == 1
     @test occursin("does not parse", only(broken))
 
-    # Parser recovery can put an error inside a block or call, with no element-type tuple.
+    # Defensive: the parser puts an error only at the top level today. A nested one must still fail.
     for head in (:error, :incomplete), wrap in (identity, QuoteNode)
 
         ast = Expr(:toplevel,
