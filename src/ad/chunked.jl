@@ -12,11 +12,13 @@
 # call allocates one.
 
 """
-    ChunkedForwardDiff{N, Tg}
+    ChunkedForwardDiff{N, Tg, P}
 
 The AD preparation of the R3 device path: `N` Jacobian columns per residual evaluation, in one
 pass of `ForwardDiff.Dual{Tg, T, N}` arithmetic. `Tg` is the tag, this solver's own where the
-caller named none, and the same tag serves the Jacobian and the JVP.
+caller named none, and the same tag serves the Jacobian and the JVP. `P` is the type of the
+parameters the preparation was built for: a replacement object of that type takes effect with no
+new solver, and another type raises `ArgumentError` naming both types.
 
 The four fields are the dual buffers, and they are the state slots that make a solve
 allocation-free: `xdual` and `rdual` carry `N` partials for [`jacobian!!`](@ref), `xdual1` and
@@ -24,31 +26,35 @@ allocation-free: `xdual` and `rdual` carry `N` partials for [`jacobian!!`](@ref)
 `Complex{ForwardDiff.Dual{Tg, real(T), N}}` buffers, so that a holomorphic residual is
 differentiated in its complex argument.
 """
-struct ChunkedForwardDiff{N, Tg, DX, DR, DX1, DR1}
+struct ChunkedForwardDiff{N, Tg, P, DX, DR, DX1, DR1}
     xdual::DX
     rdual::DR
     xdual1::DX1
     rdual1::DR1
 
-    function ChunkedForwardDiff{N, Tg}(
+    function ChunkedForwardDiff{N, Tg, P}(
             xdual::DX, rdual::DR, xdual1::DX1, rdual1::DR1
-    ) where {N, Tg, DX, DR, DX1, DR1}
-        return new{N, Tg, DX, DR, DX1, DR1}(xdual, rdual, xdual1, rdual1)
+    ) where {N, Tg, P, DX, DR, DX1, DR1}
+        return new{N, Tg, P, DX, DR, DX1, DR1}(xdual, rdual, xdual1, rdual1)
     end
 end
 
 """
-    ChunkedForwardDiff(backend::AutoForwardDiff, prob, r, x)
+    ChunkedForwardDiff(backend::AutoForwardDiff, prob, r, x, p)
 
 Allocate the four dual buffers for the residual of `prob`, an iterate like `x` and a residual
-buffer like `r`, and fix the chunk size and the tag. [`prepare_ad`](@ref) calls this for a device
-array iterate; it is written for any array type, because the chunked mode is the one code that
-runs on every backend and is therefore also what a CPU comparison tests.
+buffer like `r`, and fix the chunk size, the tag and the parameter type from `p`.
+[`prepare_ad`](@ref) calls this for a device array iterate; it is written for any array type,
+because the chunked mode is the one code that runs on every backend and is therefore also what a
+CPU comparison tests. A non-vector iterate is refused here, as it is on the DI path.
 """
-function ChunkedForwardDiff(backend::AutoForwardDiff, prob, r::AbstractArray, x::AbstractArray)
+function ChunkedForwardDiff(
+        backend::AutoForwardDiff, prob, r::AbstractArray, x::AbstractArray, p
+)
+    check_iterate_shape(x)
     N = chunk_size(backend, length(x))
     Tg = typeof(tag_of(backend, prob, x))
-    return ChunkedForwardDiff{N, Tg}(
+    return ChunkedForwardDiff{N, Tg, typeof(p)}(
         similar(x, dual_type(eltype(x), Tg, N)),
         similar(r, dual_type(eltype(r), Tg, N)),
         similar(x, dual_type(eltype(x), Tg, 1)),
@@ -59,7 +65,7 @@ end
 function prepare_ad(
         backend::AutoForwardDiff, prob, r::AbstractGPUArray, x::AbstractGPUArray, p
 )
-    return ChunkedForwardDiff(backend, prob, r, x)
+    return ChunkedForwardDiff(backend, prob, r, x, p)
 end
 
 # The element type of a dual buffer. A complex iterate is differentiated as a holomorphic function
@@ -105,7 +111,8 @@ end
     return complex(ForwardDiff.partials(real(d), k), ForwardDiff.partials(imag(d), k))
 end
 
-function jacobian!!(J, prep::ChunkedForwardDiff{N}, prob, x, p) where {N}
+function jacobian!!(J, prep::ChunkedForwardDiff{N, Tg, P}, prob, x, p) where {N, Tg, P}
+    check_parameter_type(P, p)
     n = length(x)
     xdual, rdual = prep.xdual, prep.rdual
     for j0 in 0:N:(n - 1)

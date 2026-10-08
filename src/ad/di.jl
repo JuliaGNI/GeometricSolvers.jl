@@ -22,6 +22,47 @@ inside DI at the first solve.
 """
 function prepare_ad end
 
+# R3 iterates are vectors (§13.S): the Jacobian is the matrix whose column `j` belongs to entry
+# `j` of the iterate, and a chunk is a range of those columns. A matrix-shaped unknown has no
+# such column numbering, so it is refused where the preparation is built, with its shape in the
+# message — the alternative is a `DimensionMismatch` out of a broadcast deep in the chunk loop,
+# which names no size the caller can place. A caller with a matrix unknown reshapes it, and the
+# residual with it, into a vector.
+@noinline function iterate_shape_error(sz::Tuple)
+    throw(
+        ArgumentError(
+        "the R3 iterate is a vector; got an array of size $(sz). Reshape the unknown and " *
+        "its residual into vectors, for example with `vec`, before preparing the Jacobian."
+    )
+    )
+end
+
+@inline function check_iterate_shape(x::AbstractArray)
+    x isa AbstractVector || iterate_shape_error(size(x))
+    return x
+end
+
+# The parameters may be replaced on every solve, and a replacement of the prepared type takes
+# effect with no new solver — that is what lets one solver serve a whole time-stepping loop. A
+# replacement of *another* type is a different matter: the preparation is built for one parameter
+# type, in DI's tape and in the dual buffers alike, so another type is refused here, naming both
+# types, rather than failing inside the back end with a `convert` error that names neither the
+# package nor the remedy.
+@noinline function parameter_type_error(::Type{P}, ::Type{Q}) where {P, Q}
+    throw(
+        ArgumentError(
+        "the AD preparation was built for parameters of type $P and was given $Q. A " *
+        "replacement parameter object must have the prepared type; another type needs a " *
+        "new preparation, from `prepare_ad`."
+    )
+    )
+end
+
+@inline function check_parameter_type(::Type{P}, p) where {P}
+    typeof(p) === P || parameter_type_error(P, typeof(p))
+    return p
+end
+
 # The tag and the chunk size are fixed here, once, and are the same for the Jacobian and for the
 # JVP. A back end that carries no tag gets this solver's own: the alternative is `Dual{Nothing}`,
 # which confuses the perturbations of a residual that differentiates, and so breaks nested
@@ -58,7 +99,9 @@ parameters. [`prepare_ad`](@ref) builds it, and it lives in the solver state.
 The parameters are a context and not a differentiated argument, so they are wrapped in DI's
 `Constant`. The wrapper is rebuilt exactly when the caller passes a different parameter object, so
 a solve that keeps its parameters allocates nothing and a caller that replaces its parameter array
-needs no new solver.
+needs no new solver. The replacement must have the type the preparation was built for — `P` here —
+and another type raises `ArgumentError` naming both types, because the preparation is built for
+one parameter type and cannot be reused for another.
 """
 mutable struct DIJacobian{B <: AbstractADType, J, V, Y <: AbstractArray, P}
     const backend::B
@@ -69,6 +112,7 @@ mutable struct DIJacobian{B <: AbstractADType, J, V, Y <: AbstractArray, P}
 end
 
 function prepare_ad(backend::AbstractADType, prob, r::AbstractArray, x::AbstractArray, p)
+    check_iterate_shape(x)
     b = prepared_backend(backend, prob, x)
     context = DI.Constant(p)
     jacprep = DI.prepare_jacobian(prob.F, similar(r), b, x, context)
@@ -94,12 +138,19 @@ end
 # `DI.Constant{P}` is one pointer and is stored inline in the field, so rebuilding it per call
 # allocates nothing either (measured: the allocation assertions of `test/ad/jacobian.jl` hold with
 # the guard removed) — it keeps the stored context and the argument one object rather than two.
-@inline function context!(prep::DIJacobian, p)
+@inline function context!(prep::DIJacobian{B, J, V, Y, P}, p) where {B, J, V, Y, P}
+    check_parameter_type(P, p)
     prep.context.data === p || (prep.context = DI.Constant(p))
     return prep.context
 end
 
 function jacobian!!(J, prep::DIJacobian, prob, x, p)
-    DI.jacobian!(prob.F, prep.y, J, prep.jacprep, prep.backend, x, context!(prep, p))
+    context = context!(prep, p)
+    # an empty iterate has no column, so there is nothing to write. ForwardDiff's chunk mode
+    # refuses a chunk of one on a structural length of zero, where the chunked path of
+    # `src/ad/chunked.jl` simply runs no chunk at all; both paths therefore write nothing and
+    # return their output at `n = 0` (§13.S).
+    isempty(x) && return J
+    DI.jacobian!(prob.F, prep.y, J, prep.jacprep, prep.backend, x, context)
     return J
 end

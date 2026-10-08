@@ -105,14 +105,19 @@ so that a compat-only bump can be told apart from an interface change.
   forward mode (`ChunkedForwardDiff`: four `Dual` buffers allocated once, seeded and read back by
   broadcasts, `N` Jacobian columns per residual evaluation), because `DifferentiationInterface`'s
   `jacobian!` raises a scalar-indexing error on an `MtlArray`, a `CuArray` and a `JLArray`. Any
-  other back end on a device array raises `ArgumentError` at preparation. Both paths use a tag of
+  other back end on a device array raises `ArgumentError` at preparation, as do a non-vector
+  iterate on either path and a replacement parameter object of another type than the preparation
+  was built for. Both paths use a tag of
   this solver's own where the caller named none, so a residual that differentiates inside its own
   body is not confused, and `jvp!!` is one pushforward — exactly one residual evaluation per call.
-  Both agree with `ForwardDiff.jacobian` on an `Array` exactly, and on an `Array` a prepared
-  `jacobian!!` and `jvp!!` allocate nothing. `ADTypes`, `DifferentiationInterface`, `ForwardDiff`
-  and `GPUArraysCore` are new dependencies.
+  Both agree with `ForwardDiff.jacobian` on an `Array` exactly; on an `Array` `jvp!!` allocates
+  nothing and `jacobian!!` allocates nothing where the chunk size covers the iterate and a fixed
+  48 bytes inside DifferentiationInterface where it does not. `ADTypes`, `DifferentiationInterface`,
+  `ForwardDiff` and `GPUArraysCore` are new dependencies.
 - `test/gpu/runtests.jl` runs the R3 AD checks on the device as well (`test/gpu/ad.jl`), in
   `Float32`, plus `Float64` on CUDA and ROCm.
-- `AutoEnzyme()` through `DifferentiationInterface` is tested in an environment of its own,
-  `test/enzyme/`, by the new `Enzyme` workflow, which is not a required status check: an Enzyme
-  break then fails that job alone and blocks no merge.
+- `AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Forward))` through
+  `DifferentiationInterface` is tested in an environment of its own, `test/enzyme/`, by the new
+  `Enzyme` workflow, which is not a required status check: an Enzyme break then fails that job
+  alone and blocks no merge. Runtime activity is what a `Constant` parameter context needs from
+  Enzyme's forward mode; a plain `AutoEnzyme()` raises `EnzymeRuntimeActivityError`.

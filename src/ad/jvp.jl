@@ -30,7 +30,8 @@ end
     )
 end
 
-function jvp!!(Jv, prep::ChunkedForwardDiff, prob, x, v, p)
+function jvp!!(Jv, prep::ChunkedForwardDiff{N, Tg, P}, prob, x, v, p) where {N, Tg, P}
+    check_parameter_type(P, p)
     xdual, rdual = prep.xdual1, prep.rdual1
     xdual .= dual_seed1.(xdual, x, v)
     prob.F(rdual, xdual, p)

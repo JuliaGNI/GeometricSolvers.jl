@@ -77,7 +77,7 @@ end
         host = Coupled(cyclic_perm(Array, N_AD))
         prob = StubProblem(Coupled(cyclic_perm(AT, N_AD)))
         x, p, r = ad_inputs(AT, T, N_AD)
-        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x)
+        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
         slots = (prep.xdual, prep.rdual, prep.xdual1, prep.rdual1)
         Jv = similar(x)
         v = AT(T[i == 2 ? one(T) : zero(T) for i in 1:N_AD])
@@ -87,6 +87,17 @@ end
         @test prep.rdual === slots[2]
         @test prep.xdual1 === slots[3]
         @test prep.rdual1 === slots[4]
+
+        # a parameter object of another type is refused here as it is in `jacobian!!`: the dual
+        # buffers and the residual's specialisation belong to the prepared type
+        err = try
+            jvp!!(Jv, prep, prob, x, v, Tuple(Array(p)))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin(string(typeof(p)), err.msg)
     end
 end
 
@@ -98,7 +109,7 @@ end
 
         prob = StubProblem(Holomorphic())
         x, p, r = ad_inputs(AT, T, N_AD)
-        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x)
+        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
         d = Array(x) .+ Array(x) .+ Array(p)
         Jv = similar(x)
         for j in (1, N_AD)
@@ -127,4 +138,15 @@ end
     v = similar(x)
     v .= one(T)
     @test jvp_allocations(Jv, prep, prob, x, v, p) == 0
+
+    # and with a chunk below the iterate, where the Jacobian costs DI a fixed 48 bytes (K3 of
+    # `KNOWN_ISSUES.md`): the pushforward is one dual pass whatever the chunk size, so it stays at
+    # zero — at `n` and at `4n` alike (§13.S).
+    @testset "chunk $CHUNK, n = $n" for n in (N_AD, 4 * N_AD)
+        xn, pn, rn = ad_inputs(Array, T, n)
+        prepn = prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, rn, xn, pn)
+        vn = similar(xn)
+        vn .= one(T)
+        @test jvp_allocations(similar(xn), prepn, prob, xn, vn, pn) == 0
+    end
 end

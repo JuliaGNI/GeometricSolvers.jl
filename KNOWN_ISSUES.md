@@ -42,9 +42,10 @@
   the number of chunks (measured at `n = 16` with chunk sizes 16, 8 and 4, and `48` at
   `n = 7, chunk = 3`). `ForwardDiff.pickchunksize(n)`
   is `n` for `n ≤ 12`, so the default back end allocates nothing up to `n = 12` and 48 bytes per
-  call above it. `test/ad/jacobian.jl` asserts the exact zero at `n = 7`, which is the size §13.S
-  of the design names; the clause "`@allocated jacobian!!(…) == 0` on an `Array`" therefore holds
-  for a vector-mode chunk and not for every `n`. The chunked device path is unaffected: it never
+  call above it. The 48 bytes do not grow with `n` or with the number of chunks, and are the same
+  in `Float32` and `Float64`, which is what `test/ad/jacobian.jl` asserts beside the exact zero of
+  the vector-mode case: §13.S of the design requires the exact zero where the chunk covers the
+  iterate and at most 48 bytes where it does not. The chunked device path is unaffected: it never
   goes through DI. The fix is upstream, in DifferentiationInterface's chunked loop.
 - **kind:** upstream
 - **found:** 2026-10-08

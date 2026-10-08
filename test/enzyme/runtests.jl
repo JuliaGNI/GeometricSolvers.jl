@@ -1,4 +1,4 @@
-# `AutoEnzyme()` through DifferentiationInterface, in an environment of its own.
+# `AutoEnzyme` through DifferentiationInterface, in an environment of its own.
 #
 # §3.2: the package codes against DI, so a back end other than ForwardDiff costs it no line of
 # source. Enzyme is the back end that shows this, and it is also the back end whose releases break
@@ -10,8 +10,10 @@
 #   julia --startup-file=no --project=test/enzyme test/enzyme/runtests.jl
 #
 # What is checked is the claim of §3.2 and nothing more: the same `prepare_ad`, `jacobian!!` and
-# `jvp!!` give, with `AutoEnzyme()`, what ForwardDiff gives. The device path is not touched —
-# Enzyme does not differentiate Metal kernels, which is the reason the chunked mode exists.
+# `jvp!!` give, with an `AutoEnzyme` back end, what ForwardDiff gives. The back end is Enzyme's
+# forward mode with runtime activity, which is what §13.S of the design names and what a
+# `Constant` parameter context needs; the device path is not touched — Enzyme does not
+# differentiate Metal kernels, which is the reason the chunked mode exists.
 
 using ADTypes: AutoEnzyme
 using Enzyme: Enzyme
@@ -33,7 +35,7 @@ const N_AD = 7
 # in `KNOWN_ISSUES.md`.
 const BACKEND = AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Forward))
 
-@testset "AutoEnzyme() through DifferentiationInterface" begin
+@testset "AutoEnzyme, forward mode with runtime activity, through DifferentiationInterface" begin
     @testset "$T" for T in REAL_ELTYPES
         prob = StubProblem(Coupled(cyclic_perm(Array, N_AD)))
         x, p, r = ad_inputs(Array, T, N_AD)

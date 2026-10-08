@@ -57,13 +57,24 @@ forward mode, because DifferentiationInterface's `jacobian!` raises a scalar-ind
 the object the preparation returned, so the solver makes no runtime choice and carries no `ad`
 keyword.
 
+The iterate is a vector, and a preparation belongs to one parameter type: a non-vector iterate and
+a replacement parameter object of another type both raise `ArgumentError`, where the preparation is
+built and at the next call respectively. A replacement parameter object of the prepared type takes
+effect with no new solver, which is what lets one solver serve a whole time-stepping loop.
+
+`AutoEnzyme` reaches the `Array` path through DifferentiationInterface like any other back end, but
+it needs runtime activity for the parameter context —
+`AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Forward))`. A plain `AutoEnzyme()` raises
+`EnzymeRuntimeActivityError` on a residual that broadcasts constant parameters into its result; see
+`KNOWN_ISSUES.md`. The mode is the caller's choice, so the package sets none.
+
 These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 prepare_ad
 DIJacobian
 ChunkedForwardDiff
-ChunkedForwardDiff(::AutoForwardDiff, ::Any, ::AbstractArray, ::AbstractArray)
+ChunkedForwardDiff(::AutoForwardDiff, ::Any, ::AbstractArray, ::AbstractArray, ::Any)
 jacobian!!
 jvp!!
 ```

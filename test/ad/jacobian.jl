@@ -9,11 +9,12 @@
 using ADTypes: AutoFiniteDiff, AutoForwardDiff
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
+using JET: JET
 using JLArrays: JLArray
 using LinearAlgebra: Diagonal
 using Test
 
-using GeometricSolvers: ChunkedForwardDiff, DIJacobian, jacobian!!, prepare_ad,
+using GeometricSolvers: ChunkedForwardDiff, DIJacobian, jacobian!!, jvp!!, prepare_ad,
                         prepared_backend
 
 include("../helpers/matrix.jl")
@@ -156,7 +157,7 @@ end
         T in filter(T -> T <: Complex, ELTYPES), N in (CHUNK, N_AD)
         prob = StubProblem(Holomorphic())
         x, p, r = ad_inputs(AT, T, N_AD)
-        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = N), prob, r, x)
+        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = N), prob, r, x, p)
         J = similar(x, N_AD, N_AD)
         jacobian!!(J, prep, prob, x, p)
         # `r_i = x_i² + p_i x_i`, so `dr_i/dx_i = 2 x_i + p_i` — exactly, in the arithmetic the
@@ -204,7 +205,7 @@ end
         host = Coupled(cyclic_perm(Array, N_AD))
         prob = StubProblem(host)
         x, p, r = ad_inputs(Array, T, N_AD)
-        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x)
+        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
         J = similar(x, N_AD, N_AD)
         jacobian!!(J, prep, prob, x, p)
         @test J == forwarddiff_jacobian(host, x, p)
@@ -260,22 +261,136 @@ end
         jacobian!!(J, prep, prob, x, q)
         @test Array(J) == Diagonal(Array(q))
         @test Array(J) != Diagonal(Array(p))
+
+        # but an object of another type is not a replacement: the preparation is built for one
+        # parameter type — DI's tape and the dual buffers alike — so it is refused, with both
+        # types in the message, rather than failing inside the back end or silently recompiling
+        err = try
+            jacobian!!(J, prep, prob, x, Tuple(Array(p)))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin(string(typeof(p)), err.msg)
+        @test occursin(string(typeof(Tuple(Array(p)))), err.msg)
+        @test occursin("prepare_ad", err.msg)
+        # and the refusal left the preparation usable with the prepared type
+        jacobian!!(J, prep, prob, x, p)
+        @test Array(J) == Diagonal(Array(p))
+    end
+end
+
+@testset "a non-vector iterate is refused, on both paths" begin
+    # R3 iterates are vectors (§13.S): a chunk is a range of Jacobian columns, and a matrix
+    # unknown has no such column numbering. Both paths refuse it where the preparation is built,
+    # and the message carries the shape — a `DimensionMismatch` out of a broadcast, which is what
+    # the chunked path gave before, names no size the caller can place.
+    @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in REAL_ELTYPES
+
+        prob = StubProblem(Scaled())
+        x = AT(reshape(T[(i + 1) / 8 for i in 1:6], 3, 2))
+        r = similar(x)
+        p = AT(reshape(T[(2i + 3) / 11 for i in 1:6], 3, 2))
+        err = try
+            prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("(3, 2)", err.msg)
+        # a vector of the same length is prepared, so it is the shape and not the size that is
+        # refused
+        xv, pv, rv = ad_inputs(AT, T, 6)
+        @test prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, rv, xv, pv) isa
+              Union{DIJacobian, ChunkedForwardDiff}
+    end
+end
+
+@testset "an empty iterate writes nothing and returns its output, on both paths" begin
+    # §13.S: at `n = 0` both paths write nothing and return their output. The chunked path runs no
+    # chunk; on the DI path ForwardDiff refuses a chunk of one on a structural length of zero, so
+    # the call returns before DI is reached. An `n = 0` solve is what a problem whose unknowns are
+    # all eliminated gives, and it must not throw.
+    @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in REAL_ELTYPES
+
+        prob = StubProblem(Scaled())
+        x, p, r = ad_inputs(AT, T, 0)
+        prep = prepare_ad(AutoForwardDiff(), prob, r, x, p)
+        J = similar(x, 0, 0)
+        @test jacobian!!(J, prep, prob, x, p) === J
+        Jv = similar(x)
+        @test jvp!!(Jv, prep, prob, x, similar(x), p) === Jv
+        @test length(Jv) == 0
     end
 end
 
 @testset "the dual buffers are allocated once, in prepare_ad" begin
-    # On an `Array`: exactly zero, in the cold process `run-tests.jl` starts for this file. At
-    # `n = 7` the default chunk size is `n`, so DI runs one vector-mode pass; a chunk below `n`
-    # costs 48 bytes per call inside DI, which is K3 of `KNOWN_ISSUES.md` and not reachable from
-    # here.
-    @testset "no allocation on an Array, $T" for T in REAL_ELTYPES
+    # The allocation clause of §13.S, on an `Array`, in the cold process `run-tests.jl` starts for
+    # this file: exactly zero where the chunk covers the iterate — at `n = 7` the default chunk
+    # size is `n`, so DI runs one vector-mode pass — and at most 48 bytes where the chunk is
+    # below `n`, the same number at `n` and at `4n` and in either precision. The 48 bytes are
+    # DifferentiationInterface's own chunk-mode `jacobian!` and are not reachable from here (K3 of
+    # `KNOWN_ISSUES.md`); what this pins is that they do not grow with the iterate, which is what
+    # a buffer allocated per call would do.
+    @testset "a chunk that covers the iterate allocates nothing, $T" for T in REAL_ELTYPES
         prob = StubProblem(Scaled())
         x, p, r = ad_inputs(Array, T, N_AD)
         prep = prepare_ad(AutoForwardDiff(), prob, r, x, p)
+        @test prep.backend isa AutoForwardDiff{N_AD}    # the vector-mode pass this case is about
         J = similar(x, N_AD, N_AD)
         @test jacobian_allocations(J, prep, prob, x, p) == 0
         # the control: the barrier does see an allocation
         @test (@allocated similar(x, N_AD, N_AD)) > 0
+    end
+
+    @testset "a chunk below n costs a fixed 48 bytes, $T" for T in REAL_ELTYPES
+        prob = StubProblem(Scaled())
+        function chunked_allocations(n)
+            x, p, r = ad_inputs(Array, T, n)
+            prep = prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
+            return jacobian_allocations(similar(x, n, n), prep, prob, x, p)
+        end
+        # `4n` runs `ceil(4n/3)` chunks against `ceil(n/3)`: a per-chunk or per-column
+        # allocation would grow with the iterate, where a fixed cost does not.
+        a_n = chunked_allocations(N_AD)
+        a_4n = chunked_allocations(4 * N_AD)
+        @test a_n <= 48
+        @test a_4n == a_n
+    end
+
+    # and the number is the same in both precisions, which a dual buffer allocated per call —
+    # twice the bytes in `Float64` — would not be
+    @testset "the 48 bytes do not depend on the precision" begin
+        prob = StubProblem(Scaled())
+        function chunked_allocations(::Type{T}) where {T}
+            x, p, r = ad_inputs(Array, T, 4 * N_AD)
+            prep = prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
+            n = 4 * N_AD
+            return jacobian_allocations(similar(x, n, n), prep, prob, x, p)
+        end
+        @test chunked_allocations(Float32) == chunked_allocations(Float64)
+    end
+
+    # The state slots of the `Array` path are DI's two preparations, the residual buffer and the
+    # parameter context: a call that rebuilt any of them would allocate per solve. The context is
+    # `===` across calls that keep the parameter object, which is what `context!` is for.
+    @testset "the state slots keep their identity on an Array, $T" for T in REAL_ELTYPES
+        prob = StubProblem(Scaled())
+        x, p, r = ad_inputs(Array, T, N_AD)
+        prep = prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
+        slots = (prep.jacprep, prep.jvpprep, prep.y, prep.context)
+        J = similar(x, N_AD, N_AD)
+        v = similar(x)
+        v .= one(T)
+        jacobian!!(J, prep, prob, x, p)
+        jvp!!(similar(x), prep, prob, x, v, p)
+        jacobian!!(J, prep, prob, x, p)
+        @test prep.jacprep === slots[1]
+        @test prep.jvpprep === slots[2]
+        @test prep.y === slots[3]
+        @test prep.context === slots[4]
     end
 
     # On a device array the dual buffers are the state slots, and they stay the arrays that
@@ -308,5 +423,40 @@ end
         prob.F(rx, x, p)
         @test Array(ForwardDiff.value.(prep.xdual)) == Array(x)
         @test Array(ForwardDiff.value.(prep.rdual)) == Array(rx)
+    end
+end
+
+@testset "both paths are optimisable and error-free on concrete arguments" begin
+    # `test/quality/jet.jl` runs `report_package`, which analyses every method at its declared
+    # signature: `jacobian!!(J, prep, prob, x, p)` takes `J` as `Any`, so `J[:, cols]` is analysed
+    # over every `AbstractArray` there is, `CartesianIndices` included, and reports follow from
+    # that alone. What a solve does is this: concrete arguments, through both preparations. The
+    # flag is the one of `test/base/reductions.jl`, for a Julia whose JET loads only stubs.
+    JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
+    @testset "$T, chunk $N" for T in REAL_ELTYPES, N in (CHUNK, N_AD)
+
+        prob = StubProblem(Scaled())
+        x, p, r = ad_inputs(Array, T, N_AD)
+        J = similar(x, N_AD, N_AD)
+        v = similar(x)
+        v .= one(T)
+        Jv = similar(x)
+        if JET_WORKS
+            # the DI path, and the chunked path on an `Array`, which is the same code the device
+            # runs
+            prep = prepare_ad(AutoForwardDiff(; chunksize = N), prob, r, x, p)
+            JET.test_opt(jacobian!!, typeof.((J, prep, prob, x, p)))
+            JET.test_call(jacobian!!, typeof.((J, prep, prob, x, p)))
+            JET.test_opt(jvp!!, typeof.((Jv, prep, prob, x, v, p)))
+            JET.test_call(jvp!!, typeof.((Jv, prep, prob, x, v, p)))
+
+            prepc = ChunkedForwardDiff(AutoForwardDiff(; chunksize = N), prob, r, x, p)
+            JET.test_opt(jacobian!!, typeof.((J, prepc, prob, x, p)))
+            JET.test_call(jacobian!!, typeof.((J, prepc, prob, x, p)))
+            JET.test_opt(jvp!!, typeof.((Jv, prepc, prob, x, v, p)))
+            JET.test_call(jvp!!, typeof.((Jv, prepc, prob, x, v, p)))
+        else
+            @test_skip "JET does not load on Julia $(VERSION)"  # issue #8
+        end
     end
 end
