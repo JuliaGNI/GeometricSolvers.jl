@@ -2,13 +2,14 @@
 # `test/helpers/matrix.jl`, and nowhere else: a test that writes its own `(Float32, Float64)` can
 # drift from the matrix the package claims to support, and a reader can check the matrix only by
 # reading every loop. This file makes that a command: it parses every test file and fails with
-# `file:line` for each literal tuple of two or more element-type names.
+# `file:line` for each literal tuple or vector of two or more element-type names.
 #
-# A test that needs one element type writes that type -- only a tuple of two or more is a matrix.
-# A subset of a named set is `REAL_ELTYPES` or a `filter` of `ELTYPES`. A type expression
-# `Tuple{Float32, Float64}` and a call `promote_type(Float32, Float64)` are not tuple expressions
-# and pass. `test/helpers/` holds the sets themselves, and `test/gpu/` is the separate suite with
-# its own environment (it is not run from `runtests.jl`), so neither is scanned.
+# A test that needs one element type writes that type -- only a tuple or vector of two or more is a
+# matrix. A subset of a named set is `REAL_ELTYPES` or a `filter` of `ELTYPES`. A type expression
+# `Tuple{Float32, Float64}` and a call `promote_type(Float32, Float64)` are neither, and pass.
+# `test/helpers/` holds the sets themselves, and `test/gpu/` is the separate suite with its own
+# environment and its own element types (`runtests.jl` reaches it only through
+# `test/devices/metal.jl`, in the `metal` group), so neither is scanned.
 
 using Test
 
@@ -20,10 +21,9 @@ const ELTYPE_NAMES = (:Float16, :BFloat16, :Float32, :Float64, :ComplexF16, :Com
 # The top-level directories of `test/` that are not scanned.
 const UNSCANNED = ("helpers", "gpu")
 
-"Whether `ex` is a literal tuple expression of two or more element-type names."
+"Whether `ex` is a literal tuple, vector or typed vector of two or more element-type names."
 function is_eltype_tuple(ex)
-    ex isa Expr || return false
-    ex.head === :tuple || return false
+    Meta.isexpr(ex, (:tuple, :vect, :ref)) || return false
     return count(a -> a isa Symbol && a in ELTYPE_NAMES, ex.args) >= 2
 end
 
@@ -55,9 +55,9 @@ end
 """
     eltype_tuples(code_or_ast, file = "snippet") -> Vector{String}
 
-Every `file:line` of the code or AST at which a literal tuple of two or more element-type names stands.
-Code that does not parse yields its parse error instead, so that a broken file fails rather than
-being skipped.
+Every `file:line` of the code or AST at which a literal tuple or vector of two or more element-type
+names stands. Code that does not parse yields its parse error instead, so that a broken file fails
+rather than being skipped.
 """
 function eltype_tuples(code::AbstractString, file::AbstractString = "snippet")
     return eltype_tuples(Meta.parseall(code; filename = file), file)
@@ -84,7 +84,7 @@ function scanned_files(dir)
     return sort!(files)
 end
 
-@testset "the checker sees a literal element-type tuple, and only that" begin
+@testset "the checker sees a literal element-type tuple or vector, and only that" begin
     # the two inline snippets: one with such a tuple, one without
     @test eltype_tuples("for T in (Float32, Float64)\n    @test T === T\nend\n") ==
           ["snippet:1"]
@@ -105,6 +105,11 @@ end
     @test eltype_tuples("u = (Float16, BFloat16)\n") == ["snippet:1"]
     @test eltype_tuples("v = (ComplexF16, Float32, Int)\n") == ["snippet:1"]
 
+    # a vector literal, typed or not, is a matrix too; a typed vector of numbers is not
+    @test eltype_tuples("for T in [Float32, Float64]\nend\n") == ["snippet:1"]
+    @test eltype_tuples("E = Any[ComplexF32, ComplexF64]\n") == ["snippet:1"]
+    @test isempty(eltype_tuples("w = Float32[1, 2]\n"))
+
     # a file that does not parse fails with its parse error; it is never skipped
     broken = eltype_tuples("function f(\n", "broken.jl")
     @test length(broken) == 1
@@ -122,7 +127,7 @@ end
     end
 end
 
-@testset "no test file writes a literal element-type tuple" begin
+@testset "no test file writes a literal element-type tuple or vector" begin
     dir = normpath(joinpath(@__DIR__, ".."))
     files = scanned_files(dir)
     # The scan set is checked against a walk of `test/` made here, which excludes `helpers` and
