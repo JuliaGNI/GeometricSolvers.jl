@@ -327,13 +327,13 @@ end
 end
 
 @testset "the dual buffers are allocated once, in prepare_ad" begin
-    # The allocation clause of §13.S, on an `Array`, in the cold process `run-tests.jl` starts for
-    # this file: exactly zero where the chunk covers the iterate — at `n = 7` the default chunk
-    # size is `n`, so DI runs one vector-mode pass — and at most 48 bytes where the chunk is
-    # below `n`, the same number at `n` and at `4n` and in either precision. The 48 bytes are
-    # DifferentiationInterface's own chunk-mode `jacobian!` and are not reachable from here (K3 of
-    # `KNOWN_ISSUES.md`); what this pins is that they do not grow with the iterate, which is what
-    # a buffer allocated per call would do.
+    # The allocation clause of §13.S, on an `Array`, in a cold process: exactly zero where the
+    # chunk covers the iterate — at `n = 7` the default chunk size is `n`, so DI runs one
+    # vector-mode pass — and at most 48 bytes where the chunk is below `n`, the same number at
+    # `n` and at `4n` and in either precision. The 48 bytes are DifferentiationInterface's own
+    # chunk-mode `jacobian!` and are not reachable from here (K3 of `KNOWN_ISSUES.md`); what this
+    # pins is that they do not grow with the iterate, which is what a buffer allocated per call
+    # would do.
     @testset "a chunk that covers the iterate allocates nothing, $T" for T in REAL_ELTYPES
         prob = StubProblem(Scaled())
         x, p, r = ad_inputs(Array, T, N_AD)
