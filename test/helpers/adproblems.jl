@@ -1,13 +1,11 @@
 # The problem stubs the R3 AD tests differentiate.
 #
-# Part S adds the AD seam only: `prepare_ad`, `jacobian!!` and `jvp!!`. `NonlinearProblem` is part
-# L, so the tests build the one thing the AD methods read from a problem — the field `F`, the
-# in-place residual `F(r, x, p)` — and nothing else. When part L lands, these stubs stay: they keep
-# the AD tests independent of the solver interface.
+# The tests build the one thing the AD methods read from a problem — the field `F`, the in-place
+# residual `F(r, x, p)` — and nothing else, which keeps them independent of the solver interface.
 #
 # Every residual here is a broadcast with no reduction, so the arithmetic per element is the same
 # on every array backend and a comparison against `ForwardDiff.jacobian` on an `Array` is exact
-# rather than approximate (§13.S, "Verify it").
+# rather than approximate.
 
 using ForwardDiff: ForwardDiff
 
@@ -67,10 +65,8 @@ struct Nested end
     Holomorphic()
 
 `r_i = x_i² + p_i x_i`, holomorphic in `x`, so that in a complex element type the Jacobian is the
-complex derivative `Diagonal(2 x_i + p_i)` and not the real Jacobian of the two components. The
-chunked mode is the only path that differentiates it: ForwardDiff, and so
-DifferentiationInterface, has no complex mode, which is why the complex tests build a
-`ChunkedForwardDiff` directly rather than through `prepare_ad`.
+complex derivative `Diagonal(2 x_i + p_i)` and not the real Jacobian of the two components.
+ForwardDiff has no complex mode, so the reference here is this closed form.
 """
 struct Holomorphic end
 
@@ -118,8 +114,8 @@ cyclic_perm(AT, n::Int) = AT(circshift(collect(1:n), -1))
 """
     forwarddiff_jacobian(F, x, p)
 
-The reference: `ForwardDiff.jacobian` of the same residual on an `Array`, which is what the *Done
-when* of part S compares against. `x` and `p` may live on any backend; the reference is taken on
+The reference: `ForwardDiff.jacobian` of the same residual on an `Array`. `x` and `p` may live on
+any backend; the reference is taken on
 the host copies, so `F` is the host copy of the residual — a [`Coupled`](@ref) on a device array
 carries a device permutation, which cannot index a host array.
 """

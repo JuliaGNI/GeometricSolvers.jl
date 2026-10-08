@@ -1,16 +1,16 @@
 # The R3 Jacobian–vector product: one pushforward, exactly one evaluation of the residual.
 #
-# `jvp!!` is what makes `StrongWolfe` and `Bisection` affordable (§1.6: the merit derivative
-# `φ′(α) = F(x+αd)ᵀ J(x+αd) d` costs one directional derivative rather than n) and what the
-# mixed-precision refinement residual uses (§1.4). Both uses are one pushforward per call, so the
-# call count is part of the contract and is tested here, not only the value.
+# `jvp!!` is what makes `StrongWolfe` and `Bisection` affordable — the merit derivative
+# `φ′(α) = F(x+αd)ᵀ J(x+αd) d` costs one directional derivative rather than n — and what the
+# mixed-precision refinement residual uses. Both uses are one pushforward per call, so the call
+# count is part of the contract and is tested here, not only the value.
 
 using ADTypes: AutoForwardDiff
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
 using Test
 
-using GeometricSolvers: ChunkedForwardDiff, jacobian!!, jvp!!, prepare_ad
+using GeometricSolvers: jacobian!!, jvp!!, prepare_ad
 
 include("../helpers/matrix.jl")
 include("../helpers/adproblems.jl")
@@ -70,14 +70,13 @@ end
 
 @testset "jvp!! through the chunked mode uses the N = 1 buffers only" begin
     # The chunked mode's JVP is one dual pass with one partial, so the Jacobian buffers are not
-    # touched and the `N = 1` buffers keep their identity. Built directly on an `Array` as well,
-    # because `prepare_ad` selects DI there.
+    # touched and the `N = 1` buffers keep their identity.
     @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in REAL_ELTYPES
 
         host = Coupled(cyclic_perm(Array, N_AD))
         prob = StubProblem(Coupled(cyclic_perm(AT, N_AD)))
         x, p, r = ad_inputs(AT, T, N_AD)
-        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
+        prep = prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
         slots = (prep.xdual, prep.rdual, prep.xdual1, prep.rdual1)
         Jv = similar(x)
         v = AT(T[i == 2 ? one(T) : zero(T) for i in 1:N_AD])
@@ -87,29 +86,17 @@ end
         @test prep.rdual === slots[2]
         @test prep.xdual1 === slots[3]
         @test prep.rdual1 === slots[4]
-
-        # a parameter object of another type is refused here as it is in `jacobian!!`: the dual
-        # buffers and the residual's specialisation belong to the prepared type
-        err = try
-            jvp!!(Jv, prep, prob, x, v, Tuple(Array(p)))
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin(string(typeof(p)), err.msg)
     end
 end
 
 @testset "jvp!! on a holomorphic residual in a complex element type" begin
     # The complex counterpart of the Jacobian test in `test/ad/jacobian.jl`: `Complex{Dual{…,1}}`
-    # buffers, one partial, and the complex derivative `2 x + p`. The chunked mode is built
-    # directly, because ForwardDiff has no complex mode for `prepare_ad` to select on an `Array`.
+    # buffers, one partial, and the complex derivative `2 x + p`.
     @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in filter(T -> T <: Complex, ELTYPES)
 
         prob = StubProblem(Holomorphic())
         x, p, r = ad_inputs(AT, T, N_AD)
-        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
+        prep = prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, r, x, p)
         d = Array(x) .+ Array(x) .+ Array(p)
         Jv = similar(x)
         for j in (1, N_AD)
@@ -139,9 +126,8 @@ end
     v .= one(T)
     @test jvp_allocations(Jv, prep, prob, x, v, p) == 0
 
-    # and with a chunk below the iterate, where the Jacobian costs DI a fixed 48 bytes (K3 of
-    # `KNOWN_ISSUES.md`): the pushforward is one dual pass whatever the chunk size, so it stays at
-    # zero — at `n` and at `4n` alike (§13.S).
+    # and with a chunk below the iterate: the pushforward is one dual pass whatever the chunk
+    # size, so it stays at zero — at `n` and at `4n` alike.
     @testset "chunk $CHUNK, n = $n" for n in (N_AD, 4 * N_AD)
         xn, pn, rn = ad_inputs(Array, T, n)
         prepn = prepare_ad(AutoForwardDiff(; chunksize = CHUNK), prob, rn, xn, pn)
