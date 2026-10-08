@@ -9,6 +9,7 @@ using KernelAbstractions: KernelAbstractions, @kernel, @index, @Const
 using Random: Random
 using Test
 
+include("../helpers/matrix.jl")
 include("../helpers/linefunctions.jl")
 
 const adapt = GeometricSolvers.Adapt.adapt
@@ -54,7 +55,7 @@ function agrees(m, r, φ₀)
 end
 
 @testset "the methods are isbits and convert with ToReal" begin
-    for m in METHODS, R in (Float32, Float64)
+    for m in METHODS, R in REAL_ELTYPES
 
         mR = inR(R, m)
         @test isbits(mR)
@@ -97,7 +98,7 @@ end
 # The contracts of the `LineSearch` docstring, for every method, step kind and precision, on the
 # pathological anchors of the `SimpleSolvers` contract test.
 @testset "contracts 1-4 and 6 hold for every method on every pathological line" begin
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         o = one(R)
         pathological = (
             Line(α -> R(NaN), α -> R(NaN)),                         # NaN merit
@@ -157,7 +158,7 @@ end
 end
 
 @testset "Static returns its own step, bounded by the ceiling, and evaluates nothing" begin
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         w = Watched(Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R)
         @test search(Static(), w, R; α = 0) == LineSearchResult{R}(1, NaN, SUCCESS, 0)
         @test search(Static(0.8), w, R).α == R(0.8)
@@ -167,7 +168,7 @@ end
 end
 
 @testset "no method evaluates the merit at α = 0: φ₀ is the caller's" begin
-    for R in (Float32, Float64), m in SEARCHES, step in STEPS, α in (0.25, 1.0, 4.0)
+    for R in REAL_ELTYPES, m in SEARCHES, step in STEPS, α in (0.25, 1.0, 4.0)
         w = Watched(Line(α -> 1 - 2α + 1000α^2, α -> -2 + 2000α), R)
         r = search(m, w, R; step, α)
         @test all(>(0), w.atφ)
@@ -176,7 +177,7 @@ end
 end
 
 @testset "Backtracking: the exact step needs no φ′, a measured slope one" begin
-    for R in (Float32, Float64), AT in (Array, JLArray)
+    for R in REAL_ELTYPES, AT in ARRAY_BACKENDS
 
         lf = Watched(NewtonLine(AT(R.(range(0.5, 3; length = 8)))), R)
         exact = search(Backtracking(), lf, R; step = ExactStep())
@@ -191,7 +192,7 @@ end
 end
 
 @testset "Backtracking: Eisenstat and Walker's test for an inexact step" begin
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         # The merit of a linear problem along a step with linear residual η‖r‖:
         # r(x + αd) = (1 - α(1 - η)) r. With η near 1 the Armijo test of an exact step rejects
         # α = 1, and Eisenstat and Walker's test accepts it, without a φ′.
@@ -239,7 +240,7 @@ end
     # The six functions of Moré and Thuente (1994), their curvature constant η and their initial
     # steps. Their μ equals η for five of the functions, which the c₁ < c₂ of Nocedal and Wright
     # excludes, so c₁ keeps its default.
-    for R in (Float32, Float64), kind in 1:6, α₀ in MT_STEPS
+    for R in REAL_ELTYPES, kind in 1:6, α₀ in MT_STEPS
         lf = MoreThuente(R, kind)
         c₁, c₂ = 1e-4, MT_C[kind][2]
         m = StrongWolfe(; c₂)
@@ -255,7 +256,7 @@ end
 
     # The zoom interpolates: on a quadratic merit from an overshooting trial step the first
     # zoom trial is the minimiser. Plain bisection needs two more evaluations.
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         w = Watched(Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R)
         r = search(StrongWolfe(), w, R; α = 4)
         @test r.code == SUCCESS
@@ -278,7 +279,7 @@ end
 
     # A step that fails the curvature condition is never a success: at the ceiling, or after the
     # cap is spent.
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         far = Line(α -> (α - R(1e7))^2 / R(1e14), α -> 2 * (α - R(1e7)) / R(1e14))
         r = search(StrongWolfe(), far, R)
         @test r.α == R(65536)
@@ -299,7 +300,7 @@ end
     # and 13 in Float64 for α = 1, 11 and 14 for the default ceiling 2¹⁶, and 11 and 14 for
     # 1e16 with αmax = Inf: it stays bounded without a ceiling.
     bound(R, α) = 3 + ceil(Int, log2(log2(α) - log2(floatmin(R))))
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         near = Line(α -> 1 + (α - R(1e-12))^2, α -> 2 * (α - R(1e-12)))
         lying = Line(α -> α > 0 ? 1 + α : one(R), α -> α > 0 ? one(R) : -2 * one(R))
         # a steep anchor puts the floor far down: φ′(0) = -1e30 in Float64, -1e10 in Float32
@@ -340,7 +341,7 @@ end
 end
 
 @testset "a large increase of the merit is a failure, never STALLED" begin
-    for R in (Float32, Float64), step in (MeasuredSlope(), ExactStep())
+    for R in REAL_ELTYPES, step in (MeasuredSlope(), ExactStep())
 
         cliff = Line(α -> α > 0 ? 1 + 1000α : one(R), α -> -2 * one(R))
         steep = Line(α -> α > 0 ? 1 + 10α + R(1e6) * α^2 : one(R), α -> -2 * one(R))
@@ -353,7 +354,7 @@ end
     end
 end
 
-@testset "contract 6 and the caller's αmax" for R in (Float32, Float64)
+@testset "contract 6 and the caller's αmax" for R in REAL_ELTYPES
     far = Line(α -> (α - R(1e7))^2 / R(1e14), α -> 2(α - R(1e7)) / R(1e14))
     near = Line(α -> (α - 1)^2, α -> 2(α - 1))
     # A ceiling is not a failure: the minimising search stops at its own and reports a decrease.
@@ -413,7 +414,7 @@ end
 end
 
 @testset "a subnormal anchor: τ and the step floor stay positive" begin
-    for R in (Float32, Float64), m in SEARCHES, step in (ExactStep(), MeasuredSlope())
+    for R in REAL_ELTYPES, m in SEARCHES, step in (ExactStep(), MeasuredSlope())
         s = nextfloat(zero(R))
         @test roundoff(s) > 0
         # a steep slope makes τ/|φ′(0)| underflow as well
@@ -431,7 +432,7 @@ end
 
 @testset "the Armijo test on the difference keeps a demand below one ulp of φ₀" begin
     # φ(0) + demand rounds to φ(0) for a demand of eps/16, so the sum form accepts no decrease
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         o, demand = one(R), -eps(R) / 16
         @test o + demand == o
         @test !sufficient_decrease(o, o, demand, zero(R))
@@ -440,7 +441,7 @@ end
 end
 
 @testset "every exit of StrongWolfe" begin
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         # A kink: φ′ jumps from -1 to 2 at α = a, so no step meets the curvature condition with
         # c₂ = 0.9. For a = 0.3 and 3e-5 the zoom collapses onto the kink with its lower end
         # above 0; for 3e5 the bracketing reaches the ceiling 2¹⁶. Neither is a success.
@@ -495,7 +496,7 @@ end
     # F(x) = x² - 2 with the direction (1 + η₀) d_N, which overshoots the Newton step d_N:
     # ‖F + J d‖ = η₀ ‖F‖ exactly. Every trial the search rejects fails the test with η(α), and
     # the step it returns meets it.
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         x = R[0.1, 0.2, 0.15]
         η₀ = R(0.5)
         newton = NewtonLine(x)
@@ -513,7 +514,7 @@ end
     end
     # beyond α = 1 the bound is |1 - α| + α η₀, not 1 - α(1 - η₀): on the linear model of this
     # direction the residual at α = 1.5 is |1 - 1.5(1 + η)| = 0.65 of ‖r‖, and the step passes
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         η = R(0.1)
         linear = Line(α -> (1 - α * (1 + η))^2, α -> -2 * (1 + η) * (1 - α * (1 + η)))
         r = search(Backtracking(; c₁ = 0.5), linear, R; step = InexactStep(η), α = 1.5)
@@ -524,7 +525,7 @@ end
 end
 
 @testset "a slope passed as a number costs no evaluation" begin
-    for R in (Float32, Float64), m in SEARCHES
+    for R in REAL_ELTYPES, m in SEARCHES
 
         w = Watched(Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R)
         r = search(m, w, R; step = -2.0)
@@ -535,7 +536,7 @@ end
 end
 
 @testset "Bisection does not grow into a non-finite region" begin
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         trap = Line(α -> α > R(0.5) ? R(Inf) : (α - 1)^2, α -> α > R(0.5) ? -R(Inf) :
                                                                2 * (α - 1))
         r = search(Bisection(), trap, R; α = 0.25)
@@ -545,7 +546,7 @@ end
 end
 
 @testset "the sign test does not underflow" begin
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         s = R == Float64 ? 1e-200 : 1e-30
         a, b = R(s), -R(s)
         @test a * b == 0 && -zero(R) ≥ 0               # the product would say "same sign"
@@ -561,7 +562,7 @@ end
     @test_throws ArgumentError StrongWolfe(0.9, 0.1, 1.0, Int32(10))
     @test_throws ArgumentError Backtracking{Float32}(1.0, 0.5, 10)
     # a merit that is not finite at the trial gives the shortest backtrack, 0.1α
-    for R in (Float32, Float64), bad in (Inf, NaN)
+    for R in REAL_ELTYPES, bad in (Inf, NaN)
 
         @test backtrack_step(one(R), -2one(R), one(R), R(bad), R(NaN), R(NaN), R(0.5)) ==
               R(0.1)
@@ -569,7 +570,7 @@ end
 end
 
 @testset "an η outside [0, 1) is a failure that evaluates nothing" begin
-    for R in (Float32, Float64), m in SEARCHES, η in (1.0, 1.5, -0.5, NaN, Inf)
+    for R in REAL_ELTYPES, m in SEARCHES, η in (1.0, 1.5, -0.5, NaN, Inf)
         w = Watched(Line(α -> (α - 1)^2, α -> 2 * (α - 1)), R)
         r = search(m, w, R; step = InexactStep(η), α = 0.7)
         @test r.code == LINESEARCH_FAILED
@@ -596,7 +597,7 @@ end
 end
 
 @testset "a lying φ₀ below every merit gives no success" begin
-    for R in (Float32, Float64), m in SEARCHES, step in (ExactStep(), MeasuredSlope())
+    for R in REAL_ELTYPES, m in SEARCHES, step in (ExactStep(), MeasuredSlope())
         lf = Line(α -> (α - 1)^2 + 1, α -> 2 * (α - 1))
         r = linesearch(inR(R, m), lf, inR(R, step), R(0.5), one(R))
         @test r.code != SUCCESS
@@ -604,7 +605,7 @@ end
 end
 
 @testset "no point is evaluated twice, and a larger cap changes nothing" begin
-    for R in (Float32, Float64)
+    for R in REAL_ELTYPES
         o, c = one(R), R(0.7)
         lines = (
             (α -> (α - c)^2, α -> 2(α - c), 1.0), (α -> (α - c)^2, α -> 2(α - c), 0.5),
@@ -626,7 +627,7 @@ end
     end
 end
 
-@testset "the cost does not depend on the merit's scale" for R in (Float32, Float64)
+@testset "the cost does not depend on the merit's scale" for R in REAL_ELTYPES
     o = one(R)
     # Merits whose tests lie far from their thresholds, with the trial step: a minimiser past
     # the trial step, an overshoot by 1000 that the cubic model answers, a minimiser 100 or 11
@@ -697,7 +698,7 @@ end
     end
 end
 
-@testset "the exits and boundaries that other tests do not reach" for R in (Float32, Float64)
+@testset "the exits and boundaries that other tests do not reach" for R in REAL_ELTYPES
     o = one(R)
     # classify and floor_code at their boundaries: a change by exactly τ is at the round-off
     # floor, and one ulp more of a decrease is a SUCCESS
@@ -738,7 +739,7 @@ end
 @testset "the round-off τ decides a decrease" begin
     # the merit falls by `ulps` ulps of φ₀ = 1 at its minimiser: 2 is the floor, 8 a decrease
     # from α = 4, StrongWolfe reaches the minimiser through its zoom, and classifies it there
-    for T in (Float32, Float64), (ulps, code) in ((2, STALLED), (8, SUCCESS)),
+    for T in REAL_ELTYPES, (ulps, code) in ((2, STALLED), (8, SUCCESS)),
         (m, α) in ((Backtracking(), 1), (StrongWolfe(), 1), (StrongWolfe(), 4))
         a = T(ulps) * eps(T)
         r = search(m, Line(α -> one(T) - 2a * α + a * α^2, α -> -2a + 2a * α), T; α)
@@ -751,7 +752,7 @@ end
 # phase of `Backtracking`, its `τ_ulps` key and its curvature warning, the `Float16` rows, the
 # `Linesearch` and `LinesearchProblem` objects, `change_precision`, `bracket_minimum`,
 # `triple_point_finder` and the message tests, none of which this package has.
-@testset "ported from SimpleSolvers: $R" for R in (Float32, Float64)
+@testset "ported from SimpleSolvers: $R" for R in REAL_ELTYPES
     o = one(R)
     f(x) = x^2 - 1
     g(x) = 2x
@@ -954,9 +955,9 @@ end
 end
 
 @testset "the searches on arrays: Array and JLArray" begin
-    for R in (Float32, Float64), m in METHODS, step in (ExactStep(), MeasuredSlope())
+    for R in REAL_ELTYPES, m in METHODS, step in (ExactStep(), MeasuredSlope())
         x₀ = R.(range(0.5, 3; length = 8))
-        results = map((Array, JLArray)) do AT
+        results = map(ARRAY_BACKENDS) do AT
             x = AT(copy(x₀))
             for _ in 1:50
                 lf = NewtonLine(x)
@@ -989,7 +990,7 @@ end
 end
 
 @testset "the searches run inside a KernelAbstractions kernel on CPU()" begin
-    backend = KernelAbstractions.CPU()
+    backend = KA_BACKEND
     # the Moré–Thuente set, the cubics of the step-floor and equal-merit tests, the kinks, the
     # cliff, and a Bisection line whose lower end stays at 0; one kernel launch per type
     lines(R) = (
@@ -1003,7 +1004,7 @@ end
         ([Kink(R(a)) for a in (3e-5, 0.3, 3e5)], ones(R, 3)),
         ([Cliff()], ones(R, 1)),
         ([Rising(), Rising()], R[1, 1e16]))
-    for R in (Float32, Float64), m in (METHODS..., Bisection(; αmax = Inf)),
+    for R in REAL_ELTYPES, m in (METHODS..., Bisection(; αmax = Inf)),
         step in (MeasuredSlope(), InexactStep(0.1), ExactStep(), -0.5),
         (lfs, α₀s) in lines(R)
 
@@ -1022,7 +1023,7 @@ end
 
 @testset "the searches are isbits, inferred and allocation-free" begin
     count_allocations(ls, lf, step, φ₀, α) = @allocated linesearch(ls, lf, step, φ₀, α)
-    for R in (Float32, Float64), m in METHODS, step in STEPS
+    for R in REAL_ELTYPES, m in METHODS, step in STEPS
         ls, stepr = inR(R, m), inR(R, step)
         lf = MoreThuente(R, 1)
         φ₀ = φ(lf, zero(R))
@@ -1037,7 +1038,7 @@ end
     # the flag of test/base/reductions.jl, which also covers the stub JET of an unsupported Julia
     JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
     if JET_WORKS
-        for R in (Float32, Float64), m in METHODS, step in STEPS
+        for R in REAL_ELTYPES, m in METHODS, step in STEPS
             types = (typeof(inR(R, m)), MoreThuente{R}, typeof(inR(R, step)), R, R, R)
             JET.test_opt(linesearch, types)
             JET.test_call(linesearch, types)

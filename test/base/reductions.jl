@@ -6,7 +6,7 @@ using Random: Xoshiro
 using StaticArrays: SVector
 using Test
 
-const ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
+include("../helpers/matrix.jl")
 
 # The error bound of a sum of n products in any order, ``γ_{n+2} Σ |aᵢ bᵢ|`` with
 # ``γ_k = k u / (1 - k u)`` (Higham, *Accuracy and Stability*, §3.1): n - 1 additions, and at
@@ -14,7 +14,7 @@ const ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
 γ(k, R) = k * eps(R) / (1 - k * eps(R))
 
 @testset "exact against BigFloat within γ(n+2): $T, n = $n, $(AT)" for T in ELTYPES,
-    n in (1, 7, 1000), AT in (Array, JLArray)
+    n in (1, 7, 1000), AT in ARRAY_BACKENDS
     R = real(T)
     rng = Xoshiro(n)
     a, b = randn(rng, T, n), randn(rng, T, n)
@@ -106,7 +106,7 @@ end
     ys = [randn(rng, SVector{3, T}) for _ in 1:16]
     n2 = zeros(R, 16)
     d = zeros(R, 16)
-    backend = KernelAbstractions.CPU()
+    backend = KA_BACKEND
     reduce_kernel!(backend)(n2, d, xs, ys; ndrange = 16)
     KernelAbstractions.synchronize(backend)
     @test n2 == norm2.(xs)

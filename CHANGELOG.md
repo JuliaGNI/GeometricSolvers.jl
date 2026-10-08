@@ -86,3 +86,11 @@ so that a compat-only bump can be told apart from an interface change.
 - The `Adapt` floor is 4.6.1. Metal 1.10 and later, and the GPUArrays 11.5.6 and later that they
   require, need Adapt 4.6.1, so a test environment with `Metal = "1.10"` does not resolve with
   Adapt held below it.
+- The element types and array backends a test loops over are named once, in the new
+  `test/helpers/matrix.jl`: `REAL_ELTYPES`, `ELTYPES`, `ARRAY_BACKENDS` and `KA_BACKEND`. Every
+  test file under `test/base/`, `test/linear/` and `test/globalization/`, and `test/backends.jl`,
+  loops over those names instead of writing its own tuple, and the new `test/quality/matrix.jl`
+  in the `core` group fails with `file:line` for a literal tuple or vector of two or more element
+  types anywhere under `test/`, outside `test/helpers/` and the separate suite `test/gpu/`. No
+  package code changes, and no test file changes what it asserts: `test/backends.jl` gains testsets
+  of its own for the named sets, beside the ones it had.
