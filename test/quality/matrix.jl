@@ -41,20 +41,31 @@ function walk_tuples!(bad, ex, line::Int, file)
     return nothing
 end
 
-"""
-    eltype_tuples(code, file = "snippet") -> Vector{String}
+"Walk the complete AST, pushing a parse-error finding for each error or incomplete expression."
+function walk_parse_errors!(bad, ex, file)
+    ex isa QuoteNode && return walk_parse_errors!(bad, ex.value, file)
+    ex isa Expr || return nothing
+    ex.head in (:error, :incomplete) && push!(bad, "$file: does not parse: $ex")
+    for a in ex.args
+        walk_parse_errors!(bad, a, file)
+    end
+    return nothing
+end
 
-Every `file:line` of `code` at which a literal tuple of two or more element-type names stands.
+"""
+    eltype_tuples(code_or_ast, file = "snippet") -> Vector{String}
+
+Every `file:line` of the code or AST at which a literal tuple of two or more element-type names stands.
 Code that does not parse yields its parse error instead, so that a broken file fails rather than
 being skipped.
 """
 function eltype_tuples(code::AbstractString, file::AbstractString = "snippet")
-    ast = Meta.parseall(code; filename = file)
+    return eltype_tuples(Meta.parseall(code; filename = file), file)
+end
+
+function eltype_tuples(ast::Expr, file::AbstractString = "snippet")
     bad = String[]
-    for a in ast.args
-        a isa Expr && a.head in (:error, :incomplete) &&
-            push!(bad, "$file: does not parse: $a")
-    end
+    walk_parse_errors!(bad, ast, file)
     isempty(bad) || return bad
     walk_tuples!(bad, ast, 0, file)
     return bad
@@ -98,6 +109,17 @@ end
     broken = eltype_tuples("function f(\n", "broken.jl")
     @test length(broken) == 1
     @test occursin("does not parse", only(broken))
+
+    # Parser recovery can put an error inside a block or call, with no element-type tuple.
+    for head in (:error, :incomplete), wrap in (identity, QuoteNode)
+
+        ast = Expr(:toplevel,
+            Expr(:block, Expr(:call, :f, wrap(Expr(head, "nested parse failure")))))
+        broken = eltype_tuples(ast, "nested.jl")
+        @test length(broken) == 1
+        @test startswith(only(broken), "nested.jl: does not parse:")
+        @test occursin("nested parse failure", only(broken))
+    end
 end
 
 @testset "no test file writes a literal element-type tuple" begin
