@@ -94,3 +94,25 @@ so that a compat-only bump can be told apart from an interface change.
   types anywhere under `test/`, outside `test/helpers/` and the separate suite `test/gpu/`. No
   package code changes, and no test file changes what it asserts: `test/backends.jl` gains testsets
   of its own for the named sets, beside the ones it had.
+
+- The R3 Jacobian seam, internal: `GeometricSolvers.prepare_ad(backend, prob, r, x, p)` chooses the
+  AD path once, from the storage of the iterate, and `jacobian!!(J, prep, prob, x, p)` and
+  `jvp!!(Jv, prep, prob, x, v, p)` dispatch on what it returned, so the solver takes no `ad`
+  keyword and makes no runtime choice. An `Array` iterate goes through
+  `DifferentiationInterface` with any ADTypes back end (`DIJacobian`: a prepared `jacobian!` and
+  `pushforward!`, the parameters as a `Constant` context rebuilt only when the caller passes a
+  different object); a device array iterate with `AutoForwardDiff()` goes through an own chunked
+  forward mode (`ChunkedForwardDiff`: four `Dual` buffers allocated once, seeded and read back by
+  broadcasts, `N` Jacobian columns per residual evaluation), because `DifferentiationInterface`'s
+  `jacobian!` raises a scalar-indexing error on an `MtlArray`, a `CuArray` and a `JLArray`. Any
+  other back end on a device array raises `ArgumentError` at preparation. Both paths use a tag of
+  this solver's own where the caller named none, so a residual that differentiates inside its own
+  body is not confused, and `jvp!!` is one pushforward — exactly one residual evaluation per call.
+  Both agree with `ForwardDiff.jacobian` on an `Array` exactly, and on an `Array` a prepared
+  `jacobian!!` and `jvp!!` allocate nothing. `ADTypes`, `DifferentiationInterface`, `ForwardDiff`
+  and `GPUArraysCore` are new dependencies.
+- `test/gpu/runtests.jl` runs the R3 AD checks on the device as well (`test/gpu/ad.jl`), in
+  `Float32`, plus `Float64` on CUDA and ROCm.
+- `AutoEnzyme()` through `DifferentiationInterface` is tested in an environment of its own,
+  `test/enzyme/`, by the new `Enzyme` workflow, which is not a required status check: an Enzyme
+  break then fails that job alone and blocks no merge.

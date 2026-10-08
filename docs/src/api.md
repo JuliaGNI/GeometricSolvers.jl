@@ -46,6 +46,28 @@ Bisection
 StrongWolfe
 ```
 
+## Automatic differentiation
+
+The Jacobian seam of the R3 solver. The AD path is chosen once, by [`prepare_ad`](@ref), from the
+storage of the iterate: an `Array` goes through
+[DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl), so every
+ADTypes back end works with no line of source here, and a device array goes through an own chunked
+forward mode, because DifferentiationInterface's `jacobian!` raises a scalar-indexing error on an
+`MtlArray`, a `CuArray` and a `JLArray`. [`jacobian!!`](@ref) and [`jvp!!`](@ref) then dispatch on
+the object the preparation returned, so the solver makes no runtime choice and carries no `ad`
+keyword.
+
+These names are not exported. Reach them as `GeometricSolvers.name`.
+
+```@docs
+prepare_ad
+DIJacobian
+ChunkedForwardDiff
+ChunkedForwardDiff(::AutoForwardDiff, ::Any, ::AbstractArray, ::AbstractArray)
+jacobian!!
+jvp!!
+```
+
 ## Internals
 
 These names are not exported. Reach them as `GeometricSolvers.name`.

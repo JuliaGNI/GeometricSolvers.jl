@@ -31,3 +31,38 @@
   precompile workload off.
 - **kind:** upstream
 - **found:** 2026-10-02
+
+### K3 · A prepared DI `jacobian!` allocates 48 bytes per call when the chunk size is below `n`
+
+- **location:** `src/ad/di.jl:98` (`DI.jacobian!`)
+- **evidence:** measured in a cold Julia 1.13.1 process with DifferentiationInterface 0.7.21 and
+  ForwardDiff 1.4.6, on `F!(r, x, p) = (r .= p .* x)` with a `DI.Constant(p)` context and a
+  preparation made once: `@allocated` of the prepared `jacobian!` is exactly `0` where the chunk
+  size equals `n` (one vector-mode pass) and exactly `48` where it is below `n`, independent of
+  the number of chunks (measured at `n = 16` with chunk sizes 16, 8 and 4, and `48` at
+  `n = 7, chunk = 3`). `ForwardDiff.pickchunksize(n)`
+  is `n` for `n ≤ 12`, so the default back end allocates nothing up to `n = 12` and 48 bytes per
+  call above it. `test/ad/jacobian.jl` asserts the exact zero at `n = 7`, which is the size §13.S
+  of the design names; the clause "`@allocated jacobian!!(…) == 0` on an `Array`" therefore holds
+  for a vector-mode chunk and not for every `n`. The chunked device path is unaffected: it never
+  goes through DI. The fix is upstream, in DifferentiationInterface's chunked loop.
+- **kind:** upstream
+- **found:** 2026-10-08
+
+### K4 · A plain `AutoEnzyme()` cannot differentiate a residual whose parameters are a `Constant`
+
+- **location:** `test/enzyme/runtests.jl:35` (`BACKEND`)
+- **evidence:** `prepare_ad(AutoEnzyme(), prob, r, x, p)` followed by `jacobian!!` raises
+  `EnzymeRuntimeActivityError: Detected potential need for runtime activity. Constant memory is
+  stored (or returned) to a differentiable variable`, pointing at the broadcast
+  `r .= x .* x .+ p .* x .+ 2 .* x[perm]` of `test/helpers/adproblems.jl:30`, with Enzyme 0.13 and
+  Julia 1.13.1. Enzyme's static activity analysis cannot prove that the constant parameter array
+  broadcast into an active result is non-differentiable. The documented remedy is runtime
+  activity, so `test/enzyme/runtests.jl` uses
+  `AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Forward))`, with which every check
+  passes. The same residuals differentiate through ForwardDiff with no such setting, so this is a
+  property of Enzyme's analysis and not of this package. A caller who passes `AutoEnzyme()` to the
+  R3 solver with parameters will meet the same error and the same remedy; nothing in the package
+  sets the mode for the caller, because the mode is the caller's choice (§3.2 of the design).
+- **kind:** upstream
+- **found:** 2026-10-08

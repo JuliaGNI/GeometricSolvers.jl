@@ -10,7 +10,8 @@
 #
 # The test runs a KernelAbstractions kernel on the device array and checks it against a broadcast
 # on the CPU, which does not share the kernel: in `Float32` and `Float16`, plus `Float64` on CUDA
-# and ROCm for correctness (Metal has no `Float64`). The output starts with the device, the driver
+# and ROCm for correctness (Metal has no `Float64`). It then runs the R3 AD checks of `ad.jl` on
+# the device, which a `JLArray` cannot stand in for. The output starts with the device, the driver
 # and the package versions, so that a saved output records what it was run on.
 
 using GeometricSolvers: GeometricSolvers
@@ -44,6 +45,9 @@ function to_backend(backend, A)
     copyto!(B, A)
 end
 
+# The R3 AD checks, which need `to_backend` above.
+include("ad.jl")
+
 function versions(vendor::Module)
     mods = (GeometricSolvers, KernelAbstractions, vendor)
     join(("$(nameof(m)) $(pkgversion(m))" for m in mods), ", ")
@@ -70,6 +74,7 @@ function run_tests(name::AbstractString, vendor::Module, device, eltypes)
             @test Array(y_dev) ≈ y_ref rtol=2 * eps(T)
         end
     end
+    run_ad_tests(name, device, eltypes)
 end
 
 function main(name::AbstractString)

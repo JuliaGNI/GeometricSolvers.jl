@@ -4,7 +4,11 @@ solvers run on the CPU and on CUDA, ROCm and Metal devices through KernelAbstrac
 """
 module GeometricSolvers
 
+using ADTypes: AbstractADType, AutoForwardDiff
 using Adapt: Adapt
+using DifferentiationInterface: DifferentiationInterface as DI
+using ForwardDiff: ForwardDiff
+using GPUArraysCore: AbstractGPUArray
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options
@@ -16,6 +20,7 @@ include("base/status.jl")
 include("base/options.jl")
 include("base/reductions.jl")
 include("base/adapt.jl")
+include("base/bang.jl")
 
 include("linear/methods.jl")
 
@@ -24,5 +29,9 @@ include("globalization/static.jl")
 include("globalization/backtracking.jl")
 include("globalization/bisection.jl")
 include("globalization/strongwolfe.jl")
+
+include("ad/di.jl")
+include("ad/chunked.jl")
+include("ad/jvp.jl")
 
 end

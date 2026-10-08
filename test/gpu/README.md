@@ -77,6 +77,10 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
        2>&1 | tee ../results/devicetests-<machine>-gpu.txt
    ```
 
+   They are a KernelAbstractions kernel (`runtests.jl`) and the R3 AD checks (`ad.jl`): the
+   chunked forward mode on the device array, against `ForwardDiff` on an `Array`, in `Float32`
+   and — on CUDA and ROCm, which have it — `Float64`.
+
    A spike, here `capabilities` on the GPU. The second command stops with an error when the two
    manifests differ on the version of a package they share; instantiate both again in that case:
 
