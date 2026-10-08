@@ -34,7 +34,7 @@
 
 ### K3 · A prepared DI `jacobian!` allocates 48 bytes per call when the chunk size is below `n`
 
-- **location:** `src/ad/di.jl:98` (`DI.jacobian!`)
+- **location:** `src/ad/di.jl` (the `DI.jacobian!` call of `jacobian!!`)
 - **evidence:** measured in a cold Julia 1.13.1 process with DifferentiationInterface 0.7.21 and
   ForwardDiff 1.4.6, on `F!(r, x, p) = (r .= p .* x)` with a `DI.Constant(p)` context and a
   preparation made once: `@allocated` of the prepared `jacobian!` is exactly `0` where the chunk
@@ -52,7 +52,7 @@
 
 ### K4 · A plain `AutoEnzyme()` cannot differentiate a residual whose parameters are a `Constant`
 
-- **location:** `test/enzyme/runtests.jl:35` (`BACKEND`)
+- **location:** `test/enzyme/runtests.jl` (`BACKEND`)
 - **evidence:** `prepare_ad(AutoEnzyme(), prob, r, x, p)` followed by `jacobian!!` raises
   `EnzymeRuntimeActivityError: Detected potential need for runtime activity. Constant memory is
   stored (or returned) to a differentiable variable`, pointing at the broadcast

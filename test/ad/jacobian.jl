@@ -284,8 +284,8 @@ end
 @testset "a non-vector iterate is refused, on both paths" begin
     # R3 iterates are vectors (§13.S): a chunk is a range of Jacobian columns, and a matrix
     # unknown has no such column numbering. Both paths refuse it where the preparation is built,
-    # and the message carries the shape — a `DimensionMismatch` out of a broadcast, which is what
-    # the chunked path gave before, names no size the caller can place.
+    # and the message carries the shape — a `DimensionMismatch` out of a broadcast names no size
+    # the caller can place.
     @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in REAL_ELTYPES
 
         prob = StubProblem(Scaled())
