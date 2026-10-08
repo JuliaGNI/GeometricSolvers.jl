@@ -103,16 +103,21 @@ end
 @testset "no test file writes a literal element-type tuple" begin
     dir = normpath(joinpath(@__DIR__, ".."))
     files = scanned_files(dir)
-    # the scan reaches every test directory that is not excluded, and no excluded one: a narrowed
-    # `UNSCANNED` or a walk that stops early would otherwise leave whole directories unchecked
-    # while this testset stays green
-    @test !isempty(files)
-    @test "globalization/linesearch.jl" in files
-    @test "base/reductions.jl" in files
-    @test "linear/methods.jl" in files
-    @test "backends.jl" in files
-    @test "quality/matrix.jl" in files
+    # The scan set is checked against a walk of `test/` made here, which excludes `helpers` and
+    # `gpu` by name and nothing else: a narrowed `UNSCANNED`, a walk that stops early, or a filter
+    # that drops a suffix would otherwise leave whole directories unchecked while this testset
+    # stays green. The comparison is of the whole set, so it needs no list of file names and
+    # covers a directory added later.
+    expected = [relpath(joinpath(root, n), dir)
+                for (root, _, names) in walkdir(dir) for n in names]
+    filter!(f -> endswith(f, ".jl") && !(first(splitpath(f)) in ("helpers", "gpu")), expected)
+    sort!(expected)
+    @test !isempty(expected)
+    @test files == expected
+    # and the two excluded directories are indeed excluded, so that the walk above is not simply
+    # agreeing with an empty exclusion on both sides
     @test !any(f -> first(splitpath(f)) in ("helpers", "gpu"), files)
+    @test isfile(joinpath(dir, "helpers", "matrix.jl"))
     bad = String[]
     for f in files
         append!(bad, eltype_tuples(read(joinpath(dir, f), String), f))

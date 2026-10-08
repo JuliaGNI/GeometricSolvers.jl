@@ -92,5 +92,5 @@ so that a compat-only bump can be told apart from an interface change.
   loops over those names instead of writing its own tuple, and the new `test/quality/matrix.jl`
   in the `core` group fails with `file:line` for a literal tuple of two or more element types
   anywhere under `test/`, outside `test/helpers/` and the separate suite `test/gpu/`. No package
-  code changes; `test/backends.jl` grows assertions on the named sets themselves, and no other
-  test file changes what it asserts.
+  code changes, and no test file changes what it asserts: `test/backends.jl` gains testsets of its
+  own for the named sets, beside the ones it had.
