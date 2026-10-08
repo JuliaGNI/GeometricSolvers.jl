@@ -3,8 +3,9 @@ using GeometricSolvers: converged, record, rnorm
 using StaticArrays: SVector, SMatrix
 using Test
 
-@testset "Options(T) is Options{real(T)} and isbits" for T in (Float32, Float64, ComplexF32,
-    ComplexF64)
+include("../helpers/matrix.jl")
+
+@testset "Options(T) is Options{real(T)} and isbits" for T in ELTYPES
     R = real(T)
     opt = Options(T)
     @test opt isa Options{R}

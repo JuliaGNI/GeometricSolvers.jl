@@ -2,6 +2,8 @@ using GeometricSolvers
 using GeometricSolvers: record, isconverged, isstalled
 using Test
 
+include("../helpers/matrix.jl")
+
 @testset "ReturnCode is one byte" begin
     @test sizeof(ReturnCode) == 1
     @test isbits(SUCCESS)
@@ -9,7 +11,7 @@ using Test
           (SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED)
 end
 
-@testset "SolverStatus and StepInfo are isbits" for R in (Float32, Float64)
+@testset "SolverStatus and StepInfo are isbits" for R in REAL_ELTYPES
     st = SolverStatus{R}(SUCCESS, Int32(0), one(R), zero(R), Int32(0), false)
     info = StepInfo{R}(SUCCESS, one(R), zero(R), Int32(0), false)
     @test isbits(st)
