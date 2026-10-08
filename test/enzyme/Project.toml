@@ -12,7 +12,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 GeometricSolvers = {path = "../.."}
 
 [compat]
-ADTypes = "1.22"
+ADTypes = "1.23"
 DifferentiationInterface = "0.7.21"
 Enzyme = "0.13"
 ForwardDiff = "1.4"

@@ -11,7 +11,7 @@ ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 
 [compat]
-ADTypes = "1.22"
+ADTypes = "1.23"
 Adapt = "4.6.1"
 DifferentiationInterface = "0.7.21"
 ForwardDiff = "1.4"
