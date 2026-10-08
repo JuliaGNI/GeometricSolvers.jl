@@ -95,24 +95,28 @@ so that a compat-only bump can be told apart from an interface change.
   package code changes, and no test file changes what it asserts: `test/backends.jl` gains testsets
   of its own for the named sets, beside the ones it had.
 - The R3 Jacobian seam, internal: `GeometricSolvers.prepare_ad(backend, prob, r, x, p)` chooses the
-  AD path once, from the storage of the iterate, and `jacobian!!(J, prep, prob, x, p)` and
-  `jvp!!(Jv, prep, prob, x, v, p)` dispatch on what it returned, so the solver takes no `ad`
-  keyword and makes no runtime choice. An `Array` iterate goes through
-  `DifferentiationInterface` with any ADTypes back end (`DIJacobian`: a prepared `jacobian!` and
-  `pushforward!`, the parameters as a `Constant` context rebuilt only when the caller passes a
-  different object); a device array iterate with `AutoForwardDiff()` goes through an own chunked
-  forward mode (`ChunkedForwardDiff`: four `Dual` buffers allocated once, seeded and read back by
+  AD path once, and `jacobian!!(J, prep, prob, x, p)` and `jvp!!(Jv, prep, prob, x, v, p)` dispatch
+  on what it returned, so the solver takes no `ad` keyword and makes no runtime choice.
+  `AutoForwardDiff()` goes through an own chunked forward mode on every array type, `Array`
+  included (`ChunkedForwardDiff`: four `Dual` buffers allocated once, seeded and read back by
   broadcasts, `N` Jacobian columns per residual evaluation), because `DifferentiationInterface`'s
-  `jacobian!` raises a scalar-indexing error on an `MtlArray`, a `CuArray` and a `JLArray`. Any
-  other back end on a device array raises `ArgumentError` at preparation, as do a non-vector
-  iterate on either path and a replacement parameter object of another type than the preparation
-  was built for. Both paths use a tag of
-  this solver's own where the caller named none, so a residual that differentiates inside its own
-  body is not confused, and `jvp!!` is one pushforward — exactly one residual evaluation per call.
-  Both agree with `ForwardDiff.jacobian` on an `Array` exactly; on an `Array` `jvp!!` allocates
-  nothing and `jacobian!!` allocates nothing where the chunk size covers the iterate and a fixed
-  48 bytes inside DifferentiationInterface where it does not. `ADTypes`, `DifferentiationInterface`,
-  `ForwardDiff` and `GPUArraysCore` are new dependencies.
+  `jacobian!` raises a scalar-indexing error on an `MtlArray`, a `CuArray` and a `JLArray`. A
+  complex iterate with a holomorphic residual is differentiated in its complex argument on that
+  path. Any other back end goes through `DifferentiationInterface` on a CPU iterate (`DIJacobian`: a
+  prepared `jacobian!` and `pushforward!`, with the parameters wrapped in a `Constant` context on
+  every call), and on a device array iterate it raises `ArgumentError` at preparation. For these
+  back ends the choice depends on the iterate alone, not on the residual buffer. A non-vector
+  iterate raises `ArgumentError` on both paths. A replacement parameter object may be of any type on
+  the chunked path; on the `DifferentiationInterface` path a parameter of another type raises
+  `DifferentiationInterface.PreparationMismatchError`, which names both types. The chunked mode tags
+  its duals with the caller's tag where the caller named one, and with this solver's own otherwise,
+  never `Nothing`, so a residual that differentiates inside its own body is not confused. `jvp!!` is
+  one pushforward on either path, with exactly one residual evaluation per call. On an `Array` the
+  chunked mode agrees exactly with `ForwardDiff.jacobian`, and its `jacobian!!` and `jvp!!` allocate
+  nothing, at a chunk size that covers the iterate and at one that does not; the
+  `DifferentiationInterface` path is checked against that within a tolerance, and its allocations
+  are not measured. An empty iterate writes nothing on either path. `ADTypes`,
+  `DifferentiationInterface`, `ForwardDiff` and `GPUArraysCore` are new dependencies.
 - `test/gpu/runtests.jl` runs the R3 AD checks on the device as well (`test/gpu/ad.jl`), in
   `Float32`, plus `Float64` on CUDA and ROCm.
 - `AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Forward))` through
