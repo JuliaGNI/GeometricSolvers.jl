@@ -17,6 +17,15 @@ struct StubProblem{F}
 end
 
 """
+    CallerTagged()
+
+A stand-in for a caller who differentiates this solver from outside. `ForwardDiff.Tag(CallerTagged(),
+T)` is a tag this solver would never build for itself, because its own tag names the residual, so a
+preparation that carries it can only have taken it from the caller.
+"""
+struct CallerTagged end
+
+"""
     Coupled(perm)
 
 `r_i = x_i² + p_i x_i + 2 x_{perm_i}`, so the Jacobian is a diagonal plus the permutation matrix
@@ -55,6 +64,19 @@ struct Nested end
 (::Nested)(r, x, p) = (r .= nested_term.(x, p); r)
 
 """
+    Holomorphic()
+
+`r_i = x_i² + p_i x_i`, holomorphic in `x`, so that in a complex element type the Jacobian is the
+complex derivative `Diagonal(2 x_i + p_i)` and not the real Jacobian of the two components. The
+chunked mode is the only path that differentiates it: ForwardDiff, and so
+DifferentiationInterface, has no complex mode, which is why the complex tests build a
+`ChunkedForwardDiff` directly rather than through `prepare_ad`.
+"""
+struct Holomorphic end
+
+(::Holomorphic)(r, x, p) = (r .= x .* x .+ p .* x; r)
+
+"""
     Counting(F)
 
 `F` with a count of its calls, in `calls[]`. `jvp!!` is one pushforward and exactly one residual
@@ -78,6 +100,14 @@ The iterate, the parameters and a residual buffer for the array type `AT` and th
 function ad_inputs(AT, ::Type{T}, n::Int) where {T}
     x = AT(T[(i + 1) / (n + 2) for i in 1:n])
     p = AT(T[(2i + 3) / (n + 5) for i in 1:n])
+    return x, p, similar(x)
+end
+
+"A complex iterate and complex parameters: no real entry, so a path that drops the imaginary
+component cannot look right by accident."
+function ad_inputs(AT, ::Type{Complex{T}}, n::Int) where {T}
+    x = AT(Complex{T}[(i + 1) / (n + 2) + im * (i + 3) / (n + 4) for i in 1:n])
+    p = AT(Complex{T}[(2i + 3) / (n + 5) - im * (i + 2) / (n + 6) for i in 1:n])
     return x, p, similar(x)
 end
 

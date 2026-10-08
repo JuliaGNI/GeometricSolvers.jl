@@ -90,6 +90,35 @@ end
     end
 end
 
+@testset "jvp!! on a holomorphic residual in a complex element type" begin
+    # The complex counterpart of the Jacobian test in `test/ad/jacobian.jl`: `Complex{Dual{…,1}}`
+    # buffers, one partial, and the complex derivative `2 x + p`. The chunked mode is built
+    # directly, because ForwardDiff has no complex mode for `prepare_ad` to select on an `Array`.
+    @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in filter(T -> T <: Complex, ELTYPES)
+
+        prob = StubProblem(Holomorphic())
+        x, p, r = ad_inputs(AT, T, N_AD)
+        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = CHUNK), prob, r, x)
+        d = Array(x) .+ Array(x) .+ Array(p)
+        Jv = similar(x)
+        for j in (1, N_AD)
+            v = AT(T[i == j ? one(T) : zero(T) for i in 1:N_AD])
+            jvp!!(Jv, prep, prob, x, v, p)
+            # the residual is diagonal, so the product with a unit vector is one entry of `2x + p`
+            @test Array(Jv) == [i == j ? d[j] : zero(T) for i in 1:N_AD]
+        end
+
+        # and on a complex vector that is not a unit vector: a seed that dropped the vector's
+        # imaginary component, or kept only it, would differ here. Approximate, and the only
+        # approximate comparison in these files: the dual pass multiplies the partial by the
+        # vector inside the residual's arithmetic, so the complex products are rounded in a
+        # different order from `d .* v`, which costs the last bit or two.
+        v = AT(T[(i + 2) / (N_AD + 1) + im * (i + 1) / (N_AD + 3) for i in 1:N_AD])
+        jvp!!(Jv, prep, prob, x, v, p)
+        @test Array(Jv) ≈ d .* Array(v) rtol = 8 * eps(real(T))
+    end
+end
+
 @testset "jvp!! allocates nothing on an Array, $T" for T in REAL_ELTYPES
     prob = StubProblem(Scaled())
     x, p, r = ad_inputs(Array, T, N_AD)

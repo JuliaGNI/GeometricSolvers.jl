@@ -13,7 +13,8 @@ using JLArrays: JLArray
 using LinearAlgebra: Diagonal
 using Test
 
-using GeometricSolvers: ChunkedForwardDiff, DIJacobian, jacobian!!, prepare_ad
+using GeometricSolvers: ChunkedForwardDiff, DIJacobian, jacobian!!, prepare_ad,
+                        prepared_backend
 
 include("../helpers/matrix.jl")
 include("../helpers/adproblems.jl")
@@ -67,6 +68,104 @@ end
     prob = StubProblem(Scaled())
     x, p, r = ad_inputs(JLArray, Float64, N_AD)
     @test_throws ArgumentError prepare_ad(AutoFiniteDiff(), prob, r, x, p)
+
+    # On an `Array` it has a path, and it keeps every option the caller gave it: only
+    # `AutoForwardDiff` gets a tag and a chunk size fixed here, because only its options are this
+    # solver's to fix.
+    @test prepared_backend(AutoFiniteDiff(), prob, Array(x)) === AutoFiniteDiff()
+    @test prepared_backend(AutoFiniteDiff(; fdtype = Val(:central)), prob, Array(x)) ===
+          AutoFiniteDiff(; fdtype = Val(:central))
+end
+
+@testset "the chunk size: the caller's where it is positive, otherwise ForwardDiff's, clamped" begin
+    # The rule of §13.S. The chunk size is a type parameter of the preparation, so each case is
+    # read off the type and none of them needs a Jacobian.
+    prob = StubProblem(Coupled(cyclic_perm(JLArray, N_AD)))
+    @testset "$T" for T in REAL_ELTYPES
+        x, p, r = ad_inputs(JLArray, T, N_AD)
+        prepared(c) = prepare_ad(AutoForwardDiff(; chunksize = c), prob, r, x, p)
+
+        # the caller's, where it is positive — one included, which `pickchunksize` would not give
+        @test prepared(CHUNK) isa ChunkedForwardDiff{CHUNK}
+        @test prepared(1) isa ChunkedForwardDiff{1}
+
+        # wider than the iterate is clamped to `n`: a wider chunk would seed columns that do not
+        # exist
+        @test prepared(N_AD + 5) isa ChunkedForwardDiff{N_AD}
+
+        # not positive is no chunk size at all, so ForwardDiff's own choice stands, as it does
+        # when the caller names none
+        @test prepared(0) isa ChunkedForwardDiff{ForwardDiff.pickchunksize(N_AD)}
+        @test prepared(-2) isa ChunkedForwardDiff{ForwardDiff.pickchunksize(N_AD)}
+        @test prepare_ad(AutoForwardDiff(), prob, r, x, p) isa
+              ChunkedForwardDiff{ForwardDiff.pickchunksize(N_AD)}
+
+        # and an empty iterate still has a chunk of at least one: `pickchunksize(0)` is `0`, and a
+        # step of zero is not a range. There is no column, so the residual is never called.
+        x0, p0, r0 = ad_inputs(JLArray, T, 0)
+        prep0 = prepare_ad(AutoForwardDiff(), prob, r0, x0, p0)
+        @test prep0 isa ChunkedForwardDiff{1}
+        J0 = similar(x0, 0, 0)
+        @test jacobian!!(J0, prep0, prob, x0, p0) === J0
+    end
+end
+
+@testset "a Jacobian costs ceil(n / N) residual evaluations" begin
+    # The cost claim of §13.S: `N` columns come out of one evaluation. It is also what says that
+    # the chunk loop stops at the last column — a loop one step too long evaluates the residual
+    # once more for a chunk with no column in it.
+    @testset "$AT, $T, chunk $N" for AT in ARRAY_BACKENDS, T in REAL_ELTYPES,
+        N in (CHUNK, N_AD)
+        counting = Counting(Coupled(cyclic_perm(AT, N_AD)))
+        prob = StubProblem(counting)
+        x, p, r = ad_inputs(AT, T, N_AD)
+        prep = prepare_ad(AutoForwardDiff(; chunksize = N), prob, r, x, p)
+        J = similar(x, N_AD, N_AD)
+        # the preparation evaluates the residual as often as it needs; the count starts here
+        counting.calls[] = 0
+        jacobian!!(J, prep, prob, x, p)
+        @test counting.calls[] == cld(N_AD, N)
+    end
+end
+
+@testset "the caller's tag is kept where the caller named one" begin
+    # §13.S: the solver's own tag is for a back end that carries none. A caller who nests this
+    # solver inside another differentiation needs its own tag to survive.
+    @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in REAL_ELTYPES
+
+        host = Coupled(cyclic_perm(Array, N_AD))
+        prob = StubProblem(Coupled(cyclic_perm(AT, N_AD)))
+        x, p, r = ad_inputs(AT, T, N_AD)
+        mine = ForwardDiff.Tag(CallerTagged(), T)
+        prep = prepare_ad(AutoForwardDiff(; tag = mine), prob, r, x, p)
+        @test ad_tag(prep) === typeof(mine)
+        @test ad_tag(prep) !== typeof(ForwardDiff.Tag(prob.F, T))
+        J = similar(x, N_AD, N_AD)
+        jacobian!!(J, prep, prob, x, p)
+        @test Array(J) == forwarddiff_jacobian(host, x, p)
+    end
+end
+
+@testset "a holomorphic residual in a complex element type" begin
+    # A complex iterate gives `Complex{Dual}` buffers, not `Dual{Complex}`: the derivative is the
+    # complex one, `d r / d z`, which is what a holomorphic residual has. The seed therefore
+    # perturbs the real component by one and the imaginary component by zero. `prepare_ad` is not
+    # the entry here, because ForwardDiff — and so DI — has no complex mode on an `Array`; the
+    # chunked mode is built directly, as the device path builds it.
+    @testset "$AT, $T, chunk $N" for AT in ARRAY_BACKENDS,
+        T in filter(T -> T <: Complex, ELTYPES), N in (CHUNK, N_AD)
+        prob = StubProblem(Holomorphic())
+        x, p, r = ad_inputs(AT, T, N_AD)
+        prep = ChunkedForwardDiff(AutoForwardDiff(; chunksize = N), prob, r, x)
+        J = similar(x, N_AD, N_AD)
+        jacobian!!(J, prep, prob, x, p)
+        # `r_i = x_i² + p_i x_i`, so `dr_i/dx_i = 2 x_i + p_i` — exactly, in the arithmetic the
+        # dual numbers do: the partial of `x*x` is `x + x` and that of `p*x` is `p`.
+        @test Array(J) == Diagonal(Array(x) .+ Array(x) .+ Array(p))
+        # the imaginary component of the seed is a zero, not a one: with a one the result would
+        # carry the perturbation of the other component too
+        @test Array(J) != Diagonal((Array(x) .+ Array(x) .+ Array(p)) .* (1 + im))
+    end
 end
 
 @testset "the Jacobian agrees with ForwardDiff on an Array" begin

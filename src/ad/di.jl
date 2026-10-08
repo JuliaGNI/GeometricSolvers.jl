@@ -90,7 +90,10 @@ end
 
 # The `Constant` wrapper of the current parameters, rebuilt only where the caller passes a
 # different object. `===` and not `==`: a parameter array whose values changed in place is the
-# same context, and rebuilding it per call would allocate on the hot path.
+# same context, so its wrapper need not be touched. The guard saves no allocation — a
+# `DI.Constant{P}` is one pointer and is stored inline in the field, so rebuilding it per call
+# allocates nothing either (measured: the allocation assertions of `test/ad/jacobian.jl` hold with
+# the guard removed) — it keeps the stored context and the argument one object rather than two.
 @inline function context!(prep::DIJacobian, p)
     prep.context.data === p || (prep.context = DI.Constant(p))
     return prep.context
