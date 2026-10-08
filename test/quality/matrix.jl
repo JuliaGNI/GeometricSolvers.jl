@@ -103,7 +103,16 @@ end
 @testset "no test file writes a literal element-type tuple" begin
     dir = normpath(joinpath(@__DIR__, ".."))
     files = scanned_files(dir)
+    # the scan reaches every test directory that is not excluded, and no excluded one: a narrowed
+    # `UNSCANNED` or a walk that stops early would otherwise leave whole directories unchecked
+    # while this testset stays green
     @test !isempty(files)
+    @test "globalization/linesearch.jl" in files
+    @test "base/reductions.jl" in files
+    @test "linear/methods.jl" in files
+    @test "backends.jl" in files
+    @test "quality/matrix.jl" in files
+    @test !any(f -> first(splitpath(f)) in ("helpers", "gpu"), files)
     bad = String[]
     for f in files
         append!(bad, eltype_tuples(read(joinpath(dir, f), String), f))

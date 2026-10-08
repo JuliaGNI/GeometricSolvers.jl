@@ -990,7 +990,7 @@ end
 end
 
 @testset "the searches run inside a KernelAbstractions kernel on CPU()" begin
-    backend = KernelAbstractions.CPU()
+    backend = KA_BACKEND
     # the Moré–Thuente set, the cubics of the step-floor and equal-merit tests, the kinks, the
     # cliff, and a Bisection line whose lower end stays at 0; one kernel launch per type
     lines(R) = (
