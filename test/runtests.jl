@@ -8,7 +8,7 @@ if "core" in GROUPS
     @safetestset "Aqua Quality Assurance" include("quality/aqua.jl")
     @safetestset "JET Static Analysis" include("quality/jet.jl")
     @safetestset "Element-type matrix" include("quality/matrix.jl")
-    @safetestset "Backends" include("backends.jl")
+    @safetestset "Backends" include("integration/backends.jl")
     @safetestset "Return codes and status" include("base/status.jl")
     @safetestset "Options" include("base/options.jl")
     @safetestset "Reductions" include("base/reductions.jl")
