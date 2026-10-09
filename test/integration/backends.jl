@@ -7,7 +7,7 @@ using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions
 using Test
 
-include("helpers/matrix.jl")
+include("../helpers/matrix.jl")
 
 @testset "the backends are constructible" begin
     for AT in ARRAY_BACKENDS

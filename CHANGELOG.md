@@ -19,6 +19,11 @@ so that a compat-only bump can be told apart from an interface change.
 - CI uploads coverage from the `Julia 1 - ubuntu-latest` job instead of `Julia min`, and a test
   job saves the Julia cache only when it succeeds.
 
+- `test/backends.jl` is now `test/integration/backends.jl`. The test convention keeps a test file
+  at the top level of `test/` only where it mirrors `src/<name>.jl`, and this file tests no source
+  file: it checks the array backends and element-type sets of `test/helpers/matrix.jl`. It stays
+  in the `core` group under the label "Backends", and asserts the same as before.
+
 ### New Features
 
 - The empty package skeleton: `Project.toml`, the module and its
