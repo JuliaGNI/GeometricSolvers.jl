@@ -31,3 +31,21 @@
   precompile workload off.
 - **kind:** upstream
 - **found:** 2026-10-02
+
+### K4 · A plain `AutoEnzyme()` cannot differentiate a residual whose parameters are a `Constant`
+
+- **location:** `test/enzyme/runtests.jl` (`BACKEND`)
+- **evidence:** `prepare_ad(AutoEnzyme(), prob, r, x, p)` followed by `jacobian!!` raises
+  `EnzymeRuntimeActivityError: Detected potential need for runtime activity. Constant memory is
+  stored (or returned) to a differentiable variable`, pointing at the broadcast
+  `r .= x .* x .+ p .* x .+ 2 .* x[perm]` of `Coupled` in `test/helpers/adproblems.jl`, with
+  Enzyme 0.13 and Julia 1.13.1. Enzyme's static activity analysis cannot prove that the constant
+  parameter array broadcast into an active result is non-differentiable. The documented remedy is
+  runtime activity, so `test/enzyme/runtests.jl` uses
+  `AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Forward))`, with which every check
+  passes. The same residuals differentiate through ForwardDiff with no such setting, so this is a
+  property of Enzyme's analysis and not of this package. A caller who passes `AutoEnzyme()` to the
+  R3 solver with parameters will meet the same error and the same remedy; nothing in the package
+  sets the mode for the caller, because the mode is the caller's choice.
+- **kind:** upstream
+- **found:** 2026-10-08

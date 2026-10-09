@@ -1,0 +1,63 @@
+# The `AutoEnzyme()` tests, in their own workflow rather than as a second job in CI.yml.
+#
+# CI.yml is byte-identical in every repository under Packages/ and Experiments/ -- that is what
+# makes the required-status-check list static and keeps branch protection from silently going stale.
+# A repository that needs an extra job therefore gets an extra file, never a local edit to CI.yml.
+# See ~/Research/Environment/Harness/githooks/install-workflows.sh.
+#
+# WHAT THIS ADDS TO CI.yml.
+#
+# The package codes against DifferentiationInterface, so `AutoEnzyme()` costs it no line of source
+# (§3.2 of the design). Keeping the claim true needs a run, and running Enzyme in the required
+# jobs would hand Enzyme a veto over every merge: Enzyme breaks on a Julia release or on one of its
+# own more often than the rest of the stack, and its failure would then be indistinguishable from
+# this package's. So Enzyme is not a dependency of `test/Project.toml`. It has an environment of
+# its own, `test/enzyme/`, which this job and nothing else instantiates.
+#
+# This job is deliberately NOT a required status check -- its name does not begin with `Julia `.
+# When it is red and the required jobs are green, the package is fine and Enzyme is not.
+
+name: Enzyme
+
+on:
+    push:
+        branches:
+            - main
+        tags: ["*"]
+    pull_request:
+    workflow_dispatch:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+    enzyme:
+        name: Enzyme - Julia ${{ matrix.version }} - ${{ matrix.os }}
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 60
+        permissions:
+            actions: write
+            contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                version:
+                    - "min"
+                    - "1"
+                os:
+                    - ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: julia-actions/setup-julia@v3
+              with:
+                  version: ${{ matrix.version }}
+            - uses: julia-actions/cache@v3
+            # Not julia-actions/julia-runtest, which runs `test/Project.toml`: this suite is its
+            # own environment, with the package itself through `[sources]`.
+            - name: Run the Enzyme tests
+              run: |
+                  julia --color=yes --startup-file=no --project=test/enzyme -e '
+                      using Pkg
+                      Pkg.instantiate()'
+                  julia --color=yes --startup-file=no --project=test/enzyme test/enzyme/runtests.jl
