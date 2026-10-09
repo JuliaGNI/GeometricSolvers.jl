@@ -18,7 +18,7 @@ if "core" in GROUPS
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "R3 Jacobian-vector product" include("ad/jvp.jl")
 end
-if "slow" in GROUPS
+if "doctests" in GROUPS
     @safetestset "Doctests" include("quality/doctests.jl")
 end
 if "metal" in GROUPS
