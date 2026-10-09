@@ -82,7 +82,8 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    and — on CUDA and ROCm, which have it — `Float64`.
 
    A spike, here `capabilities` on the GPU. The second command stops with an error when the two
-   manifests differ on the version of a package they share; instantiate both again in that case:
+   manifests differ on the version of a package they share; the text after this block says what
+   to do then:
 
    ```sh
    julia --startup-file=no --project=scripts/spikes/capabilities -e 'using Pkg; Pkg.instantiate()'
@@ -99,6 +100,26 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
        scripts/spikes/capabilities/run.jl <backend> \
        2>&1 | tee ../results/capabilities-<machine>-gpu.txt
    ```
+
+   `Pkg.instantiate()` never changes an existing manifest, so it cannot remove a difference. Run
+   `Pkg.update()` in both environments and the check again. If the check still fails, the vendor
+   package holds a shared package at an older version than the spike resolves alone. Then resolve
+   the spike's packages and the vendor package together, in one environment outside the clone,
+   and run the spike in it with no `JULIA_LOAD_PATH`. Pin the vendor package to its version in the
+   vendor environment's manifest (`<version>` below):
+
+   ```sh
+   mkdir -p ../spike-<backend>
+   cp scripts/spikes/capabilities/Project.toml ../spike-<backend>/
+   julia --startup-file=no --project=../spike-<backend> \
+       -e 'using Pkg; Pkg.add(name = "<vendor package>", version = "<version>")'
+   julia --startup-file=no --project=../spike-<backend> \
+       scripts/spikes/capabilities/run.jl <backend> \
+       2>&1 | tee ../results/capabilities-<machine>-gpu.txt
+   ```
+
+   `<vendor package>` is `CUDA`, `AMDGPU` or `Metal`. The output's last line lists the versions
+   that decide each cell, so the record shows where they differ from another run.
 
    The same spike on the CPU of the machine needs no vendor environment:
 

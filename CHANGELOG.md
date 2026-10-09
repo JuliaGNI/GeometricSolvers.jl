@@ -24,6 +24,17 @@ so that a compat-only bump can be told apart from an interface change.
   file: it checks the array backends and element-type sets of `test/helpers/matrix.jl`. It stays
   in the `core` group under the label "Backends", and asserts the same as before.
 
+- The `lu!` cell of `scripts/spikes/capabilities/run.jl` reads the raw factors and pivots back
+  and extracts L, U and p on the host. On a `ROCArray`, `F.L` and `F.p` scalar-indexed, so the
+  cell reported the read-back and not the factorisation, in every element type that `lu!`
+  supports there. On an `Array` the extracted L, U and p are `==` to those of the factorisation.
+
+- `test/gpu/README.md` step 5 no longer says to instantiate both environments again when the
+  spike's and the vendor's manifests differ: `Pkg.instantiate()` does not change a manifest. It
+  says to run `Pkg.update()` in both, and, where the vendor package holds a shared package at an
+  older version (AMDGPU.jl 2.8.0 holds GPUArrays at 11), to resolve the spike's packages and the
+  vendor package together in one environment outside the clone.
+
 ### New Features
 
 - The empty package skeleton: `Project.toml`, the module and its
