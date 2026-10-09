@@ -146,8 +146,9 @@ function run_cell(backend::AbstractString, T::Type, op::AbstractString)
             step = "compute"
             F = lu!(copy(Ad))
             step = "read back"
-            # `F.L` on a `ROCArray` scalar-indexes through the generic triangular copy path; read
-            # the raw factors and pivots back and extract L, U and p on the host instead.
+            # `F.L` and `F.p` on a `ROCArray` scalar-index: `getproperty` sets the unit diagonal
+            # of L entry by entry, and `ipiv2perm` reads the pivots one by one. Read the raw
+            # factors and pivots back and extract L, U and p on the host instead.
             Fh = LU(Array(F.factors), Array(F.ipiv), F.info)
             judge(ComplexF64.(Fh.L) * ComplexF64.(Fh.U), Aref[Fh.p, :], T)
         elseif op == "qr!"
