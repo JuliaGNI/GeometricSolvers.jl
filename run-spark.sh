@@ -156,7 +156,9 @@ fi
 # --- commit the files on the results branch --------------------------------------------------
 
 files="results/$spike-$machine-gpu.txt results/$spike-$machine-cpu.txt results/environment-$machine.txt"
-[ -s results/$spike-$machine-verify.txt ] && files="$files results/$spike-$machine-verify.txt"
+if [ -s results/$spike-$machine-verify.txt ]; then
+    files="$files results/$spike-$machine-verify.txt"
+fi
 git add -f $files
 git commit -q -m "part E: kernel_newton on $machine"
 
