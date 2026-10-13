@@ -1,6 +1,6 @@
 # The KA kernels of part E: one thread per system, R1 inside — the R2 launcher of §1.1. Each
 # kernel writes x into `out` and the iteration count into `iters`, where a negative count stands
-# for a singular factorisation (info in place of a throw, §5.2).
+# for a singular factorisation. The SNS kernel stores its exact return-code value in `iters`.
 
 @kernel function newton_M_kernel!(out, iters, @Const(A), @Const(b), maxit)
     i = @index(Global)
@@ -38,7 +38,7 @@ end
 end
 
 # The five kernels, by the variant name the output rows use.
-KERNELS = Dict(
+const KERNELS = Dict(
     "M" => newton_M_kernel!,
     "S" => newton_S_kernel!,
     "MIXED-M" => newton_mixed_M_kernel!,

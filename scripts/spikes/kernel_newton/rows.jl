@@ -1,7 +1,7 @@
 # One row of the grid: the seven columns of §10.E check 3 and the evidence behind them.
 #
 # A CPU row is a threaded host loop over the same R1 code — the baseline of §10.E. A device row
-# is the KA kernel of `kernels.jl`, one thread per thread, whose first launch is captured in the
+# is the KA kernel of `kernels.jl`, one system per thread, whose first launch is captured in the
 # device LLVM for the allocates cell.
 
 # The first line of an error. A task failure hides its cause in the line after
@@ -25,8 +25,7 @@ function cpu_launch(f, A, bs, out, iters, maxit)
     return nothing
 end
 
-# The batches of one (tmode, n), shared between its variants: one data set per row, so the timing
-# cells of the row and the CPU comparison see the same systems.
+# The batches of one row, discarded before the next row to bound retained host storage.
 struct Cache
     batches::Dict{Tuple{String, Int, Int}, Any}
 end
@@ -63,14 +62,14 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     A = make_A(T, n)
     row["kappa"] = string(cond(Array(A), Inf))
     solver = SOLVERS[(variant, tmode)]
-    kernel = KERNELS[variant]
+    kernel = KERNELS[tmode == "MIXED" ? "MIXED-" * variant : variant]
     kb = backend === :cpu ? KernelAbstractions.CPU() : ka_backend(backend, vendor)
     is_device = backend !== :cpu
 
     # --- compile_s: the child's first launch, less the warm median ---------------------------
-    row["compile_s"] = compile_s === nothing ? "not run: does not compile" :
+    row["compile_s"] = compile_s === nothing ?
+                       "does not compile: compile-time child failed" :
                        string(compile_s)
-    compile_cap = compile_s !== nothing && compile_s > COMPILE_CAP_S
     row["compile_cap_s"] = string(COMPILE_CAP_S)
 
     # --- the first launch: compiles, answer, allocates -----------------------------------------
@@ -101,6 +100,12 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
         row["compiles"] = text
         mark_columns!(row, text, (
             "answer", "allocates", "solves_1e4", "solves_1e5", "solves_1e6"))
+        if is_device && occursin(r"jl_gc|gc_alloc|malloc|pool_alloc", text)
+            row["alloc_method"] = "device_compile_allocator_error"
+            row["alloc_count"] = "1"
+            row["allocates"] = "yes"
+            row["alloc_error"] = text
+        end
         return row
     end
 
@@ -109,13 +114,26 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     if is_device
         count_alloc = device_alloc_count(ir)
         row["alloc_method"] = "device_llvm_allocator_calls"
+        row["alloc_calls"] = join((m.match for m in eachmatch(ALLOC_CALL, ir)), "|")
     else
         probe_alloc(solver, A, ans.b[1])
-        count_alloc = @allocated probe_alloc(solver, A, ans.b[1])
+        samples = [probe_alloc(solver, A, ans.b[1]) for _ in 1:TIMING_RUNS]
+        count_alloc = minimum(samples)
+        row["alloc_samples"] = join(samples, ",")
         row["alloc_method"] = "host_allocated_function_barrier"
     end
     row["alloc_count"] = string(count_alloc)
     row["allocates"] = count_alloc == 0 ? "no" : "yes"
+    if backend === :cuda
+        obj = kernel(kb, 64)
+        nd, _, space, _ = KernelAbstractions.launch_config(obj, NS_ANSWER, nothing)
+        ctx = KernelAbstractions.mkcontext(obj, nd, space)
+        args = vendor.cudaconvert.((ctx, out, iters, A, argb, MAXIT))
+        compiled = vendor.cufunction(obj.f, Tuple{typeof.(args)...};
+            maxthreads = 64, always_inline = kb.always_inline)
+        row["cuda_registers"] = string(vendor.registers(compiled))
+        row["cuda_local_bytes"] = string(getproperty(vendor.memory(compiled), :local))
+    end
 
     # --- answer ---------------------------------------------------------------------------------
 
@@ -123,9 +141,9 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     xsol = [solver(A, b, MAXIT)[1] for b in ans.b]
     err, err_cpu = answer_errors(xout, ans, xsol)
     it = is_device ? Array(iters) : iters
-    iters_row = minimum(it)
-    resnorm = maxabs(residual(A, ans.b[1], xout[1]))
-    # The bound is the strictest one over the answer batch, so that one err covers every system.
+    iters_row = variant == "SNS" ? -1 : maximum(it)
+    resnorm = maximum(maxabs(residual(A, ans.b[i], xout[i])) for i in eachindex(xout))
+    # The strictest batch bound is a sufficient bound on both maximum errors.
     xs_inf = minimum(maxabs(x) for x in ans.xs)
     row["xstar_inf"] = string(xs_inf)
     row["bound"] = string(16 * n * eps(T) * xs_inf)
@@ -133,6 +151,11 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     row["err_cpu"] = string(err_cpu)
     row["iters"] = string(iters_row)
     row["iters_kind"] = variant == "SNS" ? "unknown" : "newton_iterations"
+    if variant == "SNS"
+        row["retcode"] = join(string.(ReturnCode.T.(sort!(unique(it)))), ",")
+    else
+        row["info"] = string(minimum(it) < 0 ? -minimum(it) : 0)
+    end
     row["resnorm"] = string(resnorm)
     if err <= parse(Float64, row["bound"]) && err_cpu <= parse(Float64, row["bound"])
         row["answer"] = "right"
@@ -156,6 +179,15 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
         push!(warm, (time_ns() - t0) / 1e9)
     end
     row["warm_s"] = timings_text(warm)
+    row["first_launch_s"] = compile_s === nothing ?
+                            "does not compile: compile-time child failed" :
+                            string(compile_s)
+    if compile_s !== nothing
+        row["compile_s"] = string(max(0.0, compile_s - median(warm)))
+    end
+    compile_cap = compile_s !== nothing && parse(Float64, row["compile_s"]) > COMPILE_CAP_S
+    row["threads"] = string(Threads.nthreads())
+    row["blas_threads"] = string(LinearAlgebra.BLAS.get_num_threads())
 
     # A device Float64 row gives an iteration count and a residual, but no timing (decision 6).
     not_timed_f64 = is_device && tmode == "F64"

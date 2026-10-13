@@ -14,13 +14,13 @@ maxabs(v) = maximum(abs, v)
 # problem with a Float32 factorisation, so its step arrives in Float32 (decision 15).
 
 function stop(::Type{T}, k::Int, dx::SVector{n, Tdx}, x::SVector{n, T}) where {T, Tdx, n}
-    maxabs(dx) <= 4 * k * eps(T) * max(maxabs(x), one(T))
+    maxabs(dx) <= 4 * k * eps(T) * maxabs(x)
 end
 
 # --- the M variant: a local MMatrix, mutated in place -------------------------------------------
 
 @inline function lu_!(J::MMatrix{n, n, T}) where {n, T}
-    piv = MVector{n, Int32}(undef)
+    piv = zero(SVector{n, Int32})
     info = Int32(0)
     @inbounds for k in 1:n
         p = k
@@ -32,7 +32,7 @@ end
                 p = i
             end
         end
-        piv[k] = p
+        piv = setindex(piv, Int32(p), k)
         if p != k
             for j in 1:n
                 J[k, j], J[p, j] = J[p, j], J[k, j]
@@ -54,7 +54,7 @@ end
     return piv, info
 end
 
-@inline function lu_solve!(J::MMatrix{n, n, T}, piv::MVector{n, Int32}, rhs::SVector{
+@inline function lu_solve!(J::MMatrix{n, n, T}, piv::SVector{n, Int32}, rhs::SVector{
         n, T}) where {n, T}
     x = MVector{n, T}(rhs)
     @inbounds for k in 1:n
@@ -62,6 +62,8 @@ end
         if p != k
             x[k], x[p] = x[p], x[k]
         end
+    end
+    @inbounds for k in 1:n
         xk = x[k]
         for i in (k + 1):n
             x[i] -= J[i, k] * xk
@@ -89,6 +91,7 @@ end
             J[j, j] += cos(x[j]) / 10
         end
         piv, info = lu_!(J)
+        info == 0 || break
         dx = lu_solve!(J, piv, -f)
         x = x + dx
         stop(T, n, dx, x) && break
@@ -143,6 +146,8 @@ end
         if p != k
             x = setindex(setindex(x, x[p], k), x[k], p)
         end
+    end
+    @inbounds for k in 1:n
         xk = x[k]
         for i in (k + 1):n
             x = setindex(x, x[i] - J[i, k] * xk, i)
@@ -170,6 +175,7 @@ end
             J = setindex(J, J[j, j] + cos(x[j]) / 10, j, j)
         end
         J, piv, info = lu_S(J)
+        info == 0 || break
         dx = lu_solve_S(J, piv, -f)
         x = x + dx
         stop(T, n, dx, x) && break
@@ -193,6 +199,7 @@ end
             J[j, j] += Float32(cos(x[j]) / 10)
         end
         piv, info = lu_!(J)
+        info == 0 || break
         dx = lu_solve!(J, piv, SVector{n, Float32}(-f))
         x = x + SVector{n, T}(dx)
         stop(T, n, dx, x) && break
@@ -214,6 +221,7 @@ end
             J = setindex(J, J[j, j] + Float32(cos(x[j]) / 10), j, j)
         end
         J, piv, info = lu_S(J)
+        info == 0 || break
         dx = lu_solve_S(J, piv, SVector{n, Float32}(-f))
         x = x + SVector{n, T}(dx)
         stop(T, n, dx, x) && break

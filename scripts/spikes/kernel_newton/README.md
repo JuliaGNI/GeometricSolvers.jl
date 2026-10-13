@@ -24,7 +24,7 @@ GPU run stacks the vendor environment behind it. From the repository root:
 
 ```sh
 julia --startup-file=no --project=scripts/spikes/kernel_newton -e 'using Pkg; Pkg.instantiate()'
-julia --startup-file=no --project=scripts/spikes/kernel_newton run.jl cpu
+julia --startup-file=no --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/run.jl cpu
 JULIA_LOAD_PATH="@:$PWD/test/gpu/metal:@stdlib" \
     julia --startup-file=no --project=scripts/spikes/kernel_newton \
     scripts/spikes/kernel_newton/run.jl metal
@@ -37,8 +37,7 @@ and, on CUDA only, the mixed `Float64` problem with a `Float32` Jacobian and LU.
 **Metal on this machine.** Metal 1.11.1 rejects the GPUCompiler that the spike environment resolves
 on its own. Where step 5's manifest check fails, resolve the two together in one environment
 outside the clone and pin the shared packages to the versions `test/gpu/metal` holds —
-GPUCompiler 2.10.0, GPUArrays 11.5.16, KernelAbstractions 0.9.45, LLVM 9.13.2. The AMDGPU.jl run of
-part G needed no such pin.
+GPUCompiler 2.10.0, GPUArrays 11.5.16, KernelAbstractions 0.9.45, LLVM 9.13.2.
 
 ## The output
 
@@ -50,13 +49,18 @@ median of a launch, and — for each timing cell — all five raw values, the ra
 `does not compile: <first error line>`, `wrong: <‖x−x*‖∞>`, `wrong: maxiters`,
 `not run: compile cap`, `not timed: device Float64`.
 
+CPU rows retain five allocation samples; device rows retain the matching LLVM allocator call sites.
+CUDA rows also record registers and local-memory bytes from the compiled KA kernel; local-memory
+bytes are the spill proxy for comparing all-`Float64` and mixed storage. The answer column checks
+the 64-system answer batch with the strictest batch bound; the residual is the batch maximum.
+
 Compile time is measured in a fresh child process per row — the first launch with `synchronize` at
 top level — less the warm median the parent measures, so no earlier compile can hide in the time.
 
 ## Verify it
 
 ```sh
-julia --startup-file=no --project=scripts/spikes/kernel_newton verify.jl <results dir> <card>
+julia --startup-file=no --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/verify.jl <results dir> <card>
 ```
 
 `<card>` is the machine slug of `test/gpu/README.md`; it names the two files the run wrote.
@@ -64,4 +68,10 @@ julia --startup-file=no --project=scripts/spikes/kernel_newton verify.jl <result
 count, the grid's completeness, the median and the spread from the five raw values, and the two
 decision rules. It takes the §5.2 storage statement and the §1.1 band as two optional arguments and
 compares them; without them it prints the derived values. A missing output file is an error that
-names it. Its mutant tests ran by hand against fixtures copied from a run.
+names it.
+
+`verify.jl --self-check` exercises overlapping timing ranges, row-order independence, and a
+comparator mutant on an in-memory fixture: the conservative band is 4, and the mutant gives 2.
+The CPU wins only when its slowest run is faster than the device's fastest run; overlapping
+ranges are a tie and keep that n on the device.
+

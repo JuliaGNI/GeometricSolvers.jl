@@ -6,10 +6,9 @@
 
 @inline function sns_newton(A::SMatrix{n, n, T}, b::SVector{n, T}, maxit::Int) where {n, T}
     f = (u, p) -> residual(p[1], p[2], u)
-    prob = NonlinearProblem(f, zero(b), (A, b))
+    prob = NonlinearProblem{false}(f, zero(b), (A, b))
     sol = solve(prob, SimpleNewtonRaphson(); maxiters = maxit)
     x = SVector{n, T}(sol.u)
-    # A return code other than Success is recorded, not thrown: the answer cell checks x.
-    info = sol.retcode == ReturnCode.Success ? Int32(0) : Int32(-1)
-    return x, -1, info
+    # The kernel records the exact return-code value in place of an iteration count.
+    return x, -1, -Int32(sol.retcode)
 end

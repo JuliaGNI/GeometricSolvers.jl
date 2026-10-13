@@ -20,13 +20,18 @@ function make_A(::Type{T}, n::Int) where {T}
     for i in 1:n
         A[i, i] = T(2)
     end
+    @assert cond(A, Inf) < 2
+    @assert maximum(sum(abs, view(A, i, :)) - abs(A[i, i]) for i in 1:n) <= T(1) / 2
     return SMatrix{n, n, T}(A)
 end
 
 # One x* per system, in [-1, 1]^n, from the fixed host seed.
 function make_xstar(::Type{T}, n::Int, system::Int) where {T}
     rng = Xoshiro(SEED_X + system * 1000003 + n)
-    x = rand(rng, T, n) .* T(2) .- T(1)
+    x = rand(rng, T, n)
+    for i in eachindex(x)
+        x[i] = T(2) * x[i] - one(T)
+    end
     return SVector{n, T}(x)
 end
 

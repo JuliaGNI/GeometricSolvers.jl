@@ -7,7 +7,7 @@
 # §1.1); the CPU rows are a threaded host loop over the same R1 code.
 #
 # Usage, from the repository root, as `test/gpu/README.md` step 5 gives it:
-#     julia --startup-file=no --project=scripts/spikes/kernel_newton run.jl <backend>
+#     julia --startup-file=no --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/run.jl <backend>
 # with <backend> one of cpu, metal, cuda, rocm. A GPU backend stacks its vendor environment behind
 # this one through JULIA_LOAD_PATH; where the two manifests differ, step 5's combined environment
 # runs the same command.
@@ -25,7 +25,6 @@ using Random
 using Statistics: median
 using SciMLBase
 using SimpleNonlinearSolve
-using GPUArraysCore
 using GPUCompiler
 using GPUCompiler: @device_code_llvm
 using Pkg
@@ -55,7 +54,7 @@ function ka_backend(backend::Symbol, vendor)
     backend === :cpu && return KernelAbstractions.CPU()
     field = backend === :metal ? :MetalBackend :
             backend === :cuda ? :CUDABackend : :ROCBackend
-    return Base.invokelatest(getfield, vendor, field)
+    return Base.invokelatest(Base.invokelatest(getfield, vendor, field))
 end
 
 function card_name(backend::Symbol, vendor)
@@ -84,12 +83,12 @@ end
 
 # --- the rows of a backend ----------------------------------------------------------------------
 #
-# Metal has no Float64 (§1.4). The mixed F64/F32 row and the all-F64 row are CUDA only (§10.E,
-# decided at the edges; decision 15). SNS is a Float32 variant.
+# Metal has no Float64 (§1.4). CUDA carries the mixed F64/F32 and all-F64 rows (§10.E).
+# SNS is a Float32 variant.
 
 function rows_of(backend::Symbol)
     rows = (("M", "F32"), ("S", "F32"), ("SNS", "F32"))
-    backend === :cpu && return rows
+    backend in (:cpu, :metal) && return rows
     rows = (rows..., ("M", "F64"), ("S", "F64"))
     backend === :cuda && return (rows..., ("M", "MIXED"), ("S", "MIXED"))
     return rows
@@ -101,10 +100,10 @@ end
 # top level. Nothing else runs in it, so no earlier compile can hide in the time.
 function compile_time_child(
         project::String, backend::Symbol, variant::String, tmode::String, n::Int)
-    cmd = `$(Base.julia_exe()) --startup-file=no --project=$(project) -- $(@__DIR__)/run.jl
+    cmd = `$(joinpath(Sys.BINDIR, Sys.iswindows() ? "julia.exe" : "julia")) --startup-file=no --project=$(project) -- $(@__DIR__)/run.jl
            --compile-one $(backend) $(variant) $(tmode) $(n)`
-    try
-        out = Base.invokelatest(read, cmd, String)
+    out = try
+        Base.invokelatest(read, cmd, String)
     catch
         return nothing
     end
@@ -112,7 +111,7 @@ function compile_time_child(
     return m === nothing ? nothing : parse(Float64, m.captures[1])
 end
 
-# The child's own work: one launch, at top level, timed from the launch to the synchronize.
+# Prepare the child's inputs without launching; time its first launch in separate top-level statements.
 function compile_one(backend::Symbol, variant::String, tmode::String, n::Int)
     vendor = load_backend(backend)
     kb = ka_backend(backend, vendor)
@@ -130,15 +129,10 @@ function compile_one(backend::Symbol, variant::String, tmode::String, n::Int)
         copyto!(bd, b)
         o, it, bd
     end
-    t0 = time_ns()
-    if backend === :cpu
-        cpu_launch(SOLVERS[(variant, tmode)], A, argb, out, iters, MAXIT)
-    else
-        KERNELS[variant](kb, 64)(out, iters, A, argb, MAXIT; ndrange = 1)
-        KernelAbstractions.synchronize(kb)
-    end
-    println("compile_s=", (time_ns() - t0) / 1e9)
-    return nothing
+    solver = SOLVERS[(variant, tmode)]
+    key = tmode == "MIXED" ? "MIXED-" * variant : variant
+    kernel = KERNELS[key]
+    return solver, kernel, kb, A, out, iters, argb
 end
 
 # --- the output row ------------------------------------------------------------------------------
@@ -156,6 +150,7 @@ end
 
 function main(io::IO, backend::AbstractString)
     be = Symbol(backend)
+    be in (:cpu, :metal, :cuda, :rocm) || error("backend must be cpu, metal, cuda or rocm")
     vendor = be === :cpu ? nothing : load_backend(be)
     println(io, "GeometricSolvers kernel_newton spike -- backend = ", backend)
     println(io, "Julia ", VERSION)
@@ -166,8 +161,13 @@ function main(io::IO, backend::AbstractString)
     project = Base.active_project()
     for (variant, tmode) in rows_of(be), n in NS
 
+        empty!(cache.batches)
         compile_s = compile_time_child(project, be, variant, tmode, n)
-        row = measure_row(be, vendor, cache, variant, tmode, n, compile_s)
+        row = Base.invokelatest(
+            measure_row, be, vendor, cache, variant, tmode, n, compile_s)
+        row["julia"] = string(VERSION)
+        row["packages"] = package_versions(be, vendor)
+        row["card"] = card_name(be, vendor)
         println(io, "ROW ", row_text(row))
         flush(io)
     end
@@ -176,10 +176,27 @@ end
 
 main(backend::AbstractString) = main(stdout, backend)
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    if !isempty(ARGS) && ARGS[1] == "--compile-one"
-        compile_one(Symbol(ARGS[2]), ARGS[3], ARGS[4], parse(Int, ARGS[5]))
+const COMPILE_CHILD = abspath(PROGRAM_FILE) == (@__FILE__) &&
+                      !isempty(ARGS) && ARGS[1] == "--compile-one"
+if COMPILE_CHILD
+    be = Symbol(ARGS[2])
+    load_backend(be)
+    solver, kernel, kb, A, out, iters, argb = Base.invokelatest(compile_one,
+        be, ARGS[3], ARGS[4], parse(Int, ARGS[5]))
+end
+
+# The clock and launch are separate top-level statements, so launch compilation is timed.
+child_start = COMPILE_CHILD ? time_ns() : UInt64(0)
+if COMPILE_CHILD
+    if be === :cpu
+        cpu_launch(solver, A, argb, out, iters, MAXIT)
     else
-        main(length(ARGS) >= 1 ? ARGS[1] : "cpu")
+        Base.invokelatest(launch, kernel, kb, out, iters, A, argb, MAXIT)
     end
+end
+
+if COMPILE_CHILD
+    println("compile_s=", (time_ns() - child_start) / 1e9)
+elseif abspath(PROGRAM_FILE) == @__FILE__
+    main(length(ARGS) >= 1 ? ARGS[1] : "cpu")
 end
