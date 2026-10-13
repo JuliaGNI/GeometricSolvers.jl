@@ -97,7 +97,7 @@ function check_answer!(c::Checks, run::Run)
                 fail!(c,
                     "$(run.backend) $(label(r)): the answer reads '$(r["answer"])' but err $err and err_cpu $err_cpu are within $bound")
         else
-            occursin(r"^wrong: ", r["answer"]) ||
+            startswith(r["answer"], "wrong: ") ||
                 fail!(c, "$(run.backend) $(label(r)): the answer is wrong and the cell reads '$(r["answer"])'")
             note!(c, "$(run.backend) $(label(r)): a wrong answer is kept as the cell's mark")
         end
