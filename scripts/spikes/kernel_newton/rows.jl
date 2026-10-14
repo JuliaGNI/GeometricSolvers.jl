@@ -41,8 +41,8 @@ end
 
 # A fresh output pair for a batch, on the device and on the host.
 function out_pair_for(kb, batch::Batch{T, n}, count::Int) where {T, n}
-    out = KernelAbstractions.allocate(kb, SVector{n, T}, count)
-    iters = KernelAbstractions.allocate(kb, Int32, count)
+    out = KernelAbstractions.allocate(kb, SVector{n, T}, (count,))
+    iters = KernelAbstractions.allocate(kb, Int32, (count,))
     copyto!(out, [zero(SVector{n, T}) for _ in 1:count])
     copyto!(iters, zeros(Int32, count))
     return out, iters

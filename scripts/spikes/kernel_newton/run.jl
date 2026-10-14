@@ -59,7 +59,7 @@ end
 
 function card_name(backend::Symbol, vendor)
     backend === :cpu && return Sys.CPU_NAME
-    backend === :metal && return Base.invokelatest(() -> vendor.device().name)
+    backend === :metal && return Base.invokelatest(() -> sprint(show, vendor.device()))
     backend === :cuda && return Base.invokelatest(() -> vendor.name(vendor.device()))
     return Base.invokelatest(() -> string(vendor.device()))
 end
@@ -159,7 +159,14 @@ function main(io::IO, backend::AbstractString)
     println(io, "Compile cap: ", COMPILE_CAP_S, " s; timing runs: ", TIMING_RUNS)
     cache = Cache()
     project = Base.active_project()
+    want_variant = length(ARGS) >= 2 ? ARGS[2] : ""
+    want_tmode = length(ARGS) >= 3 ? ARGS[3] : ""
+    want_n = length(ARGS) >= 4 ? parse(Int, ARGS[4]) : -1
     for (variant, tmode) in rows_of(be), n in NS
+
+        (isempty(want_variant) || variant == want_variant) || continue
+        (isempty(want_tmode) || tmode == want_tmode) || continue
+        (want_n < 0 || n == want_n) || continue
 
         empty!(cache.batches)
         compile_s = compile_time_child(project, be, variant, tmode, n)

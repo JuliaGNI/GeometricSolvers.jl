@@ -37,8 +37,8 @@ end
 
 # The device copy of a batch prefix, and a fresh output pair on the device.
 function to_device(kb, batch::Batch{T, n}, count::Int) where {T, n}
-    b = KernelAbstractions.allocate(kb, SVector{n, T}, count)
-    copyto!(b, view(batch.b, 1:count))
+    b = KernelAbstractions.allocate(kb, SVector{n, T}, (count,))
+    copyto!(b, first(batch.b, count))
     return b
 end
 
