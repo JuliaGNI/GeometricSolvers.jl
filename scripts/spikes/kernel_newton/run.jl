@@ -1,16 +1,17 @@
-# R1 in a kernel — part E of Tasks/Design GeometricSolvers.md (§10.E, §7 P0.2, P0.4, P0.5).
+# R1 in a kernel — part E of the design (§10.E, §7 P0.2, P0.4, P0.5).
 #
 # The spike measures the R1 design on each backend: an SVector Newton iteration without a line
-# search, a partially pivoted LU with Int32 pivots, and the Jacobian of `problem.jl`, in two
+# search, a partially pivoted LU with Int32 pivots, and the analytic Jacobian, in two
 # storage variants — a local MMatrix and functional SMatrix updates — plus the
 # SimpleNonlinearSolve baseline. A KA kernel runs one system per thread (the R2 launcher of
 # §1.1); the CPU rows are a threaded host loop over the same R1 code.
 #
 # Usage, from the repository root, as `test/gpu/README.md` step 5 gives it:
-#     julia --startup-file=no --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/run.jl <backend>
+#     julia --startup-file=no --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/run.jl <backend> [variant] [tmode] [n]
 # with <backend> one of cpu, metal, cuda, rocm. A GPU backend stacks its vendor environment behind
 # this one through JULIA_LOAD_PATH; where the two manifests differ, step 5's combined environment
-# runs the same command.
+# runs the same command. The optional variant (M, S, SNS), tmode (F32, F64, MIXED) and n restrict
+# the run to the matching rows.
 #
 # The output is one ROW line per (backend, variant, tmode, n) with the seven columns of §10.E
 # check 3 and five raw timing values per timing column, so verify.jl re-derives every cell.
@@ -27,7 +28,6 @@ using SciMLBase
 using SimpleNonlinearSolve
 using GPUCompiler
 using GPUCompiler: @device_code_llvm
-using Pkg
 
 # The CPU loop runs no matrix routine, so one BLAS thread keeps the host timing honest.
 LinearAlgebra.BLAS.set_num_threads(1)
@@ -77,7 +77,7 @@ function package_versions(backend::Symbol, vendor)
         push!(mods, vendor)
     end
     return Base.invokelatest() do
-        join(("$(nameof(m)) $(Pkg.Types.pkgversion(m))" for m in mods), ", ")
+        join(("$(nameof(m)) $(pkgversion(m))" for m in mods), ", ")
     end
 end
 
@@ -104,7 +104,8 @@ function compile_time_child(
            --compile-one $(backend) $(variant) $(tmode) $(n)`
     out = try
         Base.invokelatest(read, cmd, String)
-    catch
+    catch e
+        @warn "the compile-time child failed" backend variant tmode n exception = e
         return nothing
     end
     m = match(r"^compile_s=([0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?)$"m, out)

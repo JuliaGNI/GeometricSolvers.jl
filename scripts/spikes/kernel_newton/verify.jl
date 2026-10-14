@@ -141,7 +141,9 @@ function check_allocates!(c::Checks, run::Run)
             (isempty(calls) ? 0 : length(split(calls, "|"))) == count ||
                 fail!(c, "$(run.backend) $(label(r)): allocation count does not match the LLVM call sites")
         elseif method == "device_compile_allocator_error"
-            occursin(r"jl_gc|gc_alloc|malloc|pool_alloc", get(r, "alloc_error", "")) &&
+            occursin(
+                r"jl_gc|gc_alloc|malloc|pool_alloc|jl_alloc_genericmemory|unsupported allocation",
+                get(r, "alloc_error", "")) &&
             count == 1 ||
                 fail!(c, "$(run.backend) $(label(r)): allocator compile failure has no allocator evidence")
         else

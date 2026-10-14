@@ -1,5 +1,5 @@
 # The R1 solvers of part E. Newton without a line search, a partially pivoted LU with Int32
-# pivots, and the Jacobian of `problem.jl`, in two storage variants: a local MMatrix mutated in
+# pivots, and the analytic Jacobian, in two storage variants: a local MMatrix mutated in
 # place, and functional updates on an SMatrix. Both return x, the iteration count and the
 # factorisation info, because a singular matrix is reported, not thrown (§5.2).
 

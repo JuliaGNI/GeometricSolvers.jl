@@ -15,6 +15,18 @@ function firstline(e)
     return first(split(text, "\n"))
 end
 
+# A device compile failure caused by a heap allocation. The InvalidIRError header names no
+# allocator; its Reason lines do: the GC allocator, the runtime's `Memory` allocator
+# jl_alloc_genericmemory, or an object that a device without a GC cannot allocate.
+const ALLOC_ERROR = r"jl_gc|gc_alloc|malloc|pool_alloc|jl_alloc_genericmemory|unsupported allocation"
+
+# The first line of an error that names an allocator, or nothing.
+function allocator_line(e)
+    lines = split(sprint(showerror, e), "\n")
+    i = findfirst(l -> occursin(ALLOC_ERROR, l), lines)
+    return i === nothing ? nothing : String(strip(lines[i]))
+end
+
 # The CPU path: one system per host thread (§1.1, R2 on the host).
 function cpu_launch(f, A, bs, out, iters, maxit)
     Threads.@threads for i in eachindex(bs)
@@ -100,11 +112,12 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
         row["compiles"] = text
         mark_columns!(row, text, (
             "answer", "allocates", "solves_1e4", "solves_1e5", "solves_1e6"))
-        if is_device && occursin(r"jl_gc|gc_alloc|malloc|pool_alloc", text)
+        reason = is_device ? allocator_line(e) : nothing
+        if reason !== nothing
             row["alloc_method"] = "device_compile_allocator_error"
             row["alloc_count"] = "1"
             row["allocates"] = "yes"
-            row["alloc_error"] = text
+            row["alloc_error"] = reason
         end
         return row
     end
@@ -199,7 +212,7 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
         else
             big = cached(cache, tmode, n, count)
             if is_device
-                bdev = count == length(argb) ? argb : to_device(kb, big, count)
+                bdev = to_device(kb, big, count)
                 odev, idev = out_pair_for(kb, big, count)
                 ts = device_solves(kernel, kb, odev, idev, A, bdev, count)
             else

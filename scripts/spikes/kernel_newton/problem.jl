@@ -38,16 +38,9 @@ end
 # b is built on the host, in T, from x*.
 make_b(A::SMatrix{n, n, T}, xs::SVector{n, T}) where {n, T} = A * xs + sin.(xs) / 10
 
-# F and J, the map the Newton iteration needs. The iterate may carry another element type: the
-# SimpleNonlinearSolve baseline differentiates F with ForwardDiff, so its x holds dual numbers
-# while A and b stay in T.
+# F, the map the Newton iteration needs; each solver builds J in its own storage. The iterate may
+# carry another element type: the SimpleNonlinearSolve baseline differentiates F with ForwardDiff,
+# so its x holds dual numbers while A and b stay in T.
 function residual(A::SMatrix{n, n, T}, b::SVector{n, T}, x::SVector{n, Tx}) where {n, T, Tx}
     A * x + sin.(x) / 10 - b
 end
-
-function jacobian(A::SMatrix{n, n, T}, x::SVector{n, T}) where {n, T}
-    A + SMatrix{n, n, T}(Diagonal(cos.(x) / 10))
-end
-
-# The answer bound of §10.E check 1, in the infinity norm.
-bound(::Type{T}, k::Int, xs::SVector{n}) where {T, n} = 16 * k * eps(T) * maxabs(xs)

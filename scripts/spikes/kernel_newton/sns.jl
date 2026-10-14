@@ -10,5 +10,5 @@
     sol = solve(prob, SimpleNewtonRaphson(); maxiters = maxit)
     x = SVector{n, T}(sol.u)
     # The kernel records the exact return-code value in place of an iteration count.
-    return x, -1, -Int32(sol.retcode)
+    return x, Int32(sol.retcode), Int32(0)
 end

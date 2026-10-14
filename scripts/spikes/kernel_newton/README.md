@@ -1,8 +1,8 @@
 # kernel_newton — R1 in a kernel
 
-Part E of `Tasks/Design GeometricSolvers.md`: the R1 design of part E, measured. An `SVector`
+The R1 design of part E of the design, measured. An `SVector`
 Newton iteration without a line search, a partially pivoted LU with `Int32` pivots, and the
-Jacobian of `problem.jl`, in two storage variants — a local `MMatrix` mutated in place, and
+analytic Jacobian, in two storage variants — a local `MMatrix` mutated in place, and
 functional updates on an `SMatrix` — plus the `SimpleNonlinearSolve` baseline. A KA kernel runs
 one system per thread (the R2 launcher of §1.1); the CPU rows are a threaded host loop over the
 same R1 code.
@@ -33,6 +33,10 @@ JULIA_LOAD_PATH="@:$PWD/test/gpu/metal:@stdlib" \
 `<backend>` is `cpu`, `metal`, `cuda` or `rocm`. The rows of a backend follow §10.E: Metal carries
 the `Float32` grid only, because Metal has no `Float64`; CUDA and ROCm add the all-`Float64` rows
 and, on CUDA only, the mixed `Float64` problem with a `Float32` Jacobian and LU.
+
+`run.jl <backend> [variant] [tmode] [n]` restricts a run to the rows that match: `variant` is `M`,
+`S` or `SNS`, `tmode` is `F32`, `F64` or `MIXED`. To split a grid over several runs, concatenate
+their outputs into the one file that `verify.jl` reads; a row that appears twice is a failure.
 
 **Metal on this machine.** Metal 1.11.1 rejects the GPUCompiler that the spike environment resolves
 on its own. Where step 5's manifest check fails, resolve the two together in one environment
@@ -74,4 +78,12 @@ names it.
 comparator mutant on an in-memory fixture: the conservative band is 4, and the mutant gives 2.
 The CPU wins only when its slowest run is faster than the device's fastest run; overlapping
 ranges are a tie and keep that n on the device.
+
+The test problem never pivots, so the grid does not exercise the pivoting of the two LU solves.
+`lu_check.jl` does: it solves random systems that pivot with both variants and compares the
+solutions with `\`.
+
+```sh
+julia --startup-file=no --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/lu_check.jl
+```
 
