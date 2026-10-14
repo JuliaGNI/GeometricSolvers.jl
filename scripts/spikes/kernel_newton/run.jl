@@ -152,6 +152,8 @@ end
 function main(io::IO, backend::AbstractString)
     be = Symbol(backend)
     be in (:cpu, :metal, :cuda, :rocm) || error("backend must be cpu, metal, cuda or rocm")
+    be === :cpu && Threads.nthreads() == 1 &&
+        error("the CPU baseline needs one thread per core: start Julia with --threads=auto")
     vendor = be === :cpu ? nothing : load_backend(be)
     println(io, "GeometricSolvers kernel_newton spike -- backend = ", backend)
     println(io, "Julia ", VERSION)

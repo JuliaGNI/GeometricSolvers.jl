@@ -24,7 +24,7 @@ GPU run stacks the vendor environment behind it. From the repository root:
 
 ```sh
 julia --startup-file=no --project=scripts/spikes/kernel_newton -e 'using Pkg; Pkg.instantiate()'
-julia --startup-file=no --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/run.jl cpu
+julia --startup-file=no --threads=auto --project=scripts/spikes/kernel_newton scripts/spikes/kernel_newton/run.jl cpu
 JULIA_LOAD_PATH="@:$PWD/test/gpu/metal:@stdlib" \
     julia --startup-file=no --project=scripts/spikes/kernel_newton \
     scripts/spikes/kernel_newton/run.jl metal
@@ -33,6 +33,10 @@ JULIA_LOAD_PATH="@:$PWD/test/gpu/metal:@stdlib" \
 `<backend>` is `cpu`, `metal`, `cuda` or `rocm`. The rows of a backend follow §10.E: Metal carries
 the `Float32` grid only, because Metal has no `Float64`; CUDA and ROCm add the all-`Float64` rows
 and, on CUDA only, the mixed `Float64` problem with a `Float32` Jacobian and LU.
+
+The CPU baseline runs one Julia thread per core, `--threads=auto`, because the thread count moves
+the band. `run.jl cpu` stops with an error in a single-threaded Julia, and `verify.jl` fails a CPU
+row that records one thread.
 
 `run.jl <backend> [variant] [tmode] [n]` restricts a run to the rows that match: `variant` is `M`,
 `S` or `SNS`, `tmode` is `F32`, `F64` or `MIXED`. To split a grid over several runs, concatenate

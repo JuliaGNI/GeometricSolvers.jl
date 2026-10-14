@@ -214,9 +214,10 @@ function check_timings!(c::Checks, run::Run)
             elseif !isapprox(compile, max(0.0, first_launch - median(Float64.(warm))); rtol = 1e-6, atol = 1e-7)
                 fail!(c, "$(run.backend) $(label(r)): compile time is not first launch minus the warm median")
             end
-            if run.backend == "cpu" && (tryparse(Int, get(r, "threads", "")) === nothing ||
-                get(r, "blas_threads", "") != "1")
-                fail!(c, "cpu $(label(r)): timing lacks host threads or single-threaded BLAS")
+            if run.backend == "cpu"
+                threads = tryparse(Int, get(r, "threads", ""))
+                threads !== nothing && threads > 1 && get(r, "blas_threads", "") == "1" ||
+                    fail!(c, "cpu $(label(r)): timing needs more than one host thread and single-threaded BLAS")
             end
         end
         for (cell, nsys) in zip(TIMING_COLUMNS, NSYS)
