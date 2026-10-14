@@ -15,11 +15,6 @@ function firstline(e)
     return first(split(text, "\n"))
 end
 
-# A device compile failure caused by a heap allocation. The InvalidIRError header names no
-# allocator; its Reason lines do: the GC allocator, the runtime's `Memory` allocator
-# jl_alloc_genericmemory, or an object that a device without a GC cannot allocate.
-const ALLOC_ERROR = r"jl_gc|gc_alloc|malloc|pool_alloc|jl_alloc_genericmemory|unsupported allocation"
-
 # The first line of an error that names an allocator, or nothing.
 function allocator_line(e)
     lines = split(sprint(showerror, e), "\n")
@@ -27,84 +22,38 @@ function allocator_line(e)
     return i === nothing ? nothing : String(strip(lines[i]))
 end
 
-# The CPU path: one system per host thread (§1.1, R2 on the host).
-function cpu_launch(f, A, bs, out, iters, maxit)
-    Threads.@threads for i in eachindex(bs)
-        x, it, info = f(A, bs[i], maxit)
-        out[i] = x
-        iters[i] = info == 0 ? Int32(it) : Int32(-info)
-    end
-    return nothing
-end
-
-# The batches of one row, discarded before the next row to bound retained host storage.
-struct Cache
-    batches::Dict{Tuple{String, Int, Int}, Any}
-end
-Cache() = Cache(Dict{Tuple{String, Int, Int}, Any}())
-
-function cached(cache::Cache, tmode::String, n::Int, count::Int)
-    key = (tmode, n, count)
-    haskey(cache.batches, key) && return cache.batches[key]
-    value = make_batch(tmode, n, count)
-    cache.batches[key] = value
-    return value
-end
-
-# A fresh output pair for a batch, on the device and on the host.
-function out_pair_for(kb, batch::Batch{T, n}, count::Int) where {T, n}
-    out = KernelAbstractions.allocate(kb, SVector{n, T}, (count,))
-    iters = KernelAbstractions.allocate(kb, Int32, (count,))
-    copyto!(out, [zero(SVector{n, T}) for _ in 1:count])
-    copyto!(iters, zeros(Int32, count))
-    return out, iters
-end
-
-function out_pair_for(batch::Batch{T, n}, count::Int) where {T, n}
-    out = [zero(SVector{n, T}) for _ in 1:count]
-    iters = zeros(Int32, count)
-    return out, iters
-end
-
-function measure_row(backend::Symbol, vendor, cache::Cache,
-        variant::String, tmode::String, n::Int,
+function measure_row(backend::Symbol, vendor, variant::String, tmode::String, n::Int,
         compile_s::Union{Float64, Nothing})
     row = new_row(string(backend), variant, tmode, n)
     T = T_of(tmode)
     A = make_A(T, n)
     row["kappa"] = string(cond(Array(A), Inf))
     solver = SOLVERS[(variant, tmode)]
-    kernel = KERNELS[tmode == "MIXED" ? "MIXED-" * variant : variant]
-    kb = backend === :cpu ? KernelAbstractions.CPU() : ka_backend(backend, vendor)
+    kb = ka_backend(backend, vendor)
     is_device = backend !== :cpu
 
     # --- compile_s: the child's first launch, less the warm median ---------------------------
-    row["compile_s"] = compile_s === nothing ?
-                       "does not compile: compile-time child failed" :
-                       string(compile_s)
+    first_launch = compile_s === nothing ? "does not compile: compile-time child failed" :
+                   string(compile_s)
+    row["compile_s"] = first_launch
     row["compile_cap_s"] = string(COMPILE_CAP_S)
 
     # --- the first launch: compiles, answer, allocates -----------------------------------------
 
-    ans = cached(cache, tmode, n, NS_ANSWER)
-    if is_device
-        out, iters = out_pair_for(kb, ans, NS_ANSWER)
-        argb = to_device(kb, ans, NS_ANSWER)
-    else
-        out, iters = out_pair_for(ans, NS_ANSWER)
-        argb = ans.b
-    end
+    ans = make_batch(A, NS_ANSWER)
+    out, iters = out_pair(kb, ans, NS_ANSWER)
+    argb = to_device(kb, ans, NS_ANSWER)
 
     ir = ""
     try
         if is_device
             io = IOBuffer()
-            @device_code_llvm io = io kernel(kb, 64)(
-                out, iters, A, argb, MAXIT; ndrange = NS_ANSWER)
+            @device_code_llvm io = io newton_kernel!(kb, 64)(
+                out, iters, solver, A, argb, MAXIT; ndrange = NS_ANSWER)
             KernelAbstractions.synchronize(kb)
             ir = String(take!(io))
         else
-            cpu_launch(solver, A, ans.b, out, iters, MAXIT)
+            launch(kb, solver, out, iters, A, argb, MAXIT)
         end
         row["compiles"] = "yes"
     catch e
@@ -125,7 +74,7 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     # --- allocates ------------------------------------------------------------------------------
 
     if is_device
-        count_alloc = device_alloc_count(ir)
+        count_alloc = count(ALLOC_CALL, ir)
         row["alloc_method"] = "device_llvm_allocator_calls"
         row["alloc_calls"] = join((m.match for m in eachmatch(ALLOC_CALL, ir)), "|")
     else
@@ -138,10 +87,10 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     row["alloc_count"] = string(count_alloc)
     row["allocates"] = count_alloc == 0 ? "no" : "yes"
     if backend === :cuda
-        obj = kernel(kb, 64)
+        obj = newton_kernel!(kb, 64)
         nd, _, space, _ = KernelAbstractions.launch_config(obj, NS_ANSWER, nothing)
         ctx = KernelAbstractions.mkcontext(obj, nd, space)
-        args = vendor.cudaconvert.((ctx, out, iters, A, argb, MAXIT))
+        args = vendor.cudaconvert.((ctx, out, iters, solver, A, argb, MAXIT))
         compiled = vendor.cufunction(obj.f, Tuple{typeof.(args)...};
             maxthreads = 64, always_inline = kb.always_inline)
         row["cuda_registers"] = string(vendor.registers(compiled))
@@ -150,16 +99,17 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
 
     # --- answer ---------------------------------------------------------------------------------
 
-    xout = is_device ? Array(out) : out
+    xout = Array(out)
     xsol = [solver(A, b, MAXIT)[1] for b in ans.b]
     err, err_cpu = answer_errors(xout, ans, xsol)
-    it = is_device ? Array(iters) : iters
+    it = Array(iters)
     iters_row = variant == "SNS" ? -1 : maximum(it)
     resnorm = maximum(maxabs(residual(A, ans.b[i], xout[i])) for i in eachindex(xout))
     # The strictest batch bound is a sufficient bound on both maximum errors.
     xs_inf = minimum(maxabs(x) for x in ans.xs)
+    bound = 16 * n * eps(T) * xs_inf
     row["xstar_inf"] = string(xs_inf)
-    row["bound"] = string(16 * n * eps(T) * xs_inf)
+    row["bound"] = string(bound)
     row["err"] = string(err)
     row["err_cpu"] = string(err_cpu)
     row["iters"] = string(iters_row)
@@ -170,7 +120,7 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
         row["info"] = string(minimum(it) < 0 ? -minimum(it) : 0)
     end
     row["resnorm"] = string(resnorm)
-    if err <= parse(Float64, row["bound"]) && err_cpu <= parse(Float64, row["bound"])
+    if err <= bound && err_cpu <= bound
         row["answer"] = "right"
     elseif iters_row >= MAXIT
         row["answer"] = "wrong: maxiters"
@@ -181,45 +131,28 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     # --- the three throughput cells -------------------------------------------------------------
 
     # The warm median of a launch, for the compile-time subtraction.
-    warm = Float64[]
-    for _ in 1:TIMING_RUNS
-        t0 = time_ns()
-        if is_device
-            launch(kernel, kb, out, iters, A, argb, MAXIT)
-        else
-            cpu_launch(solver, A, ans.b, out, iters, MAXIT)
-        end
-        push!(warm, (time_ns() - t0) / 1e9)
-    end
+    warm = timings(() -> launch(kb, solver, out, iters, A, argb, MAXIT))
     row["warm_s"] = timings_text(warm)
-    row["first_launch_s"] = compile_s === nothing ?
-                            "does not compile: compile-time child failed" :
-                            string(compile_s)
+    row["first_launch_s"] = first_launch
+    compile_cap = false
     if compile_s !== nothing
-        row["compile_s"] = string(max(0.0, compile_s - median(warm)))
+        compile = max(0.0, compile_s - median(warm))
+        row["compile_s"] = string(compile)
+        compile_cap = compile > COMPILE_CAP_S
     end
-    compile_cap = compile_s !== nothing && parse(Float64, row["compile_s"]) > COMPILE_CAP_S
     row["threads"] = string(Threads.nthreads())
     row["blas_threads"] = string(LinearAlgebra.BLAS.get_num_threads())
 
     # A device Float64 row gives an iteration count and a residual, but no timing (decision 6).
     not_timed_f64 = is_device && tmode == "F64"
+    batch = compile_cap || not_timed_f64 ? nothing : make_batch(A, maximum(NSYS))
     for (cell, count) in zip(("solves_1e4", "solves_1e5", "solves_1e6"), NSYS)
         if compile_cap
             row[cell] = "not run: compile cap"
         elseif not_timed_f64
             row[cell] = "not timed: device Float64"
         else
-            big = cached(cache, tmode, n, count)
-            if is_device
-                bdev = to_device(kb, big, count)
-                odev, idev = out_pair_for(kb, big, count)
-                ts = device_solves(kernel, kb, odev, idev, A, bdev, count)
-            else
-                ts = cpu_solves(solver, A, big, count)
-            end
-            row["threads"] = string(Threads.nthreads())
-            row["blas_threads"] = string(LinearAlgebra.BLAS.get_num_threads())
+            ts = solves(kb, solver, A, batch, count)
             row[cell] = timings_text(ts, count)
             row["rate_" * cell] = string(round(count / median(ts), sigdigits = 6))
             row["spread_" * cell] = string(round((maximum(ts) - minimum(ts)) / median(ts), sigdigits = 6))
@@ -228,30 +161,12 @@ function measure_row(backend::Symbol, vendor, cache::Cache,
     return row
 end
 
-# Five runs, launch to synchronize, on the device.
-function device_solves(kernel, kb, out, iters, A, bdev, count)
-    launch(kernel, kb, out, iters, A, bdev, MAXIT)
-    ts = Float64[]
-    for _ in 1:TIMING_RUNS
-        t0 = time_ns()
-        launch(kernel, kb, out, iters, A, bdev, MAXIT)
-        push!(ts, (time_ns() - t0) / 1e9)
-    end
-    return ts
-end
-
-# Five runs of the threaded host loop.
-function cpu_solves(f, A, batch::Batch, count)
-    bs = view(batch.b, 1:count)
-    out, iters = out_pair_for(batch, count)
-    cpu_launch(f, A, bs, out, iters, MAXIT)
-    ts = Float64[]
-    for _ in 1:TIMING_RUNS
-        t0 = time_ns()
-        cpu_launch(f, A, bs, out, iters, MAXIT)
-        push!(ts, (time_ns() - t0) / 1e9)
-    end
-    return ts
+# A warm launch, then TIMING_RUNS timed launches on the first `count` systems of a batch.
+function solves(kb, solver, A, batch::Batch, count::Int)
+    b = to_device(kb, batch, count)
+    out, iters = out_pair(kb, batch, count)
+    launch(kb, solver, out, iters, A, b, MAXIT)
+    return timings(() -> launch(kb, solver, out, iters, A, b, MAXIT))
 end
 
 # The five raw values, and the solves per second when the batch size is known. All five values go

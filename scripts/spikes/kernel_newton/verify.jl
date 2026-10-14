@@ -11,8 +11,10 @@
 #
 # Exit status is 0 when every check passes and 1 otherwise.
 
-const NS = (2, 4, 6, 8, 12, 16, 24)
-const NSYS = (10^4, 10^5, 10^6)
+using Statistics: median
+
+include(joinpath(@__DIR__, "grid.jl"))
+
 const TIMING_COLUMNS = ("solves_1e4", "solves_1e5", "solves_1e6")
 const COLUMNS = ("compiles", "answer", "allocates", "compile_s", TIMING_COLUMNS...)
 const MARKS = (
@@ -22,7 +24,6 @@ const MARKS = (
     r"^not run: compile cap$",
     r"^not timed: device Float64$"
 )
-const COMPILE_CAP_S = 60.0
 
 struct Run
     card::String
@@ -50,11 +51,11 @@ function read_run(path::String, card::String)
         if occursin("kernel_newton spike -- backend = ", line)
             backend = rstrip(split(line, "backend = ")[end])
         elseif startswith(line, "Julia ")
-            julia = String(strip(line[length("Julia "):end]))
+            julia = chopprefix(line, "Julia ")
         elseif startswith(line, "Packages: ")
-            packages = line[length("Packages: "):end]
+            packages = chopprefix(line, "Packages: ")
         elseif startswith(line, "Card: ")
-            cardline = strip(line[length("Card: "):end])
+            cardline = strip(chopprefix(line, "Card: "))
         elseif startswith(line, "ROW ")
             push!(rows, parse_fields(line))
         end
@@ -73,9 +74,6 @@ note!(c::Checks, text) = (push!(c.notes, text); c)
 
 is_mark(value::AbstractString) = any(m -> occursin(m, value), MARKS)
 label(r::Dict{String, String}) = r["variant"] * " " * r["tmode"] * " n=" * r["n"]
-function median(v)
-    (s = sort(v); n = length(s); isodd(n) ? s[(n + 1) ÷ 2] : (s[n ÷ 2] + s[n ÷ 2 + 1]) / 2)
-end
 first_five(v) = parse.(Float64, split(first(split(v)), ","))
 # --- 1. the answer ------------------------------------------------------------------------------
 #
@@ -132,7 +130,7 @@ function check_allocates!(c::Checks, run::Run)
         method = get(r, "alloc_method", "")
         if method == "host_allocated_function_barrier"
             samples = tryparse.(Int, split(get(r, "alloc_samples", ""), ","))
-            length(samples) == 5 && all(x -> x !== nothing && x >= 0, samples) &&
+            length(samples) == TIMING_RUNS && all(x -> x !== nothing && x >= 0, samples) &&
             minimum(samples) == count ||
                 fail!(c, "$(run.backend) $(label(r)): allocation count does not match five raw samples")
         elseif method == "device_llvm_allocator_calls"
@@ -141,10 +139,7 @@ function check_allocates!(c::Checks, run::Run)
             (isempty(calls) ? 0 : length(split(calls, "|"))) == count ||
                 fail!(c, "$(run.backend) $(label(r)): allocation count does not match the LLVM call sites")
         elseif method == "device_compile_allocator_error"
-            occursin(
-                r"jl_gc|gc_alloc|malloc|pool_alloc|jl_alloc_genericmemory|unsupported allocation",
-                get(r, "alloc_error", "")) &&
-            count == 1 ||
+            occursin(ALLOC_ERROR, get(r, "alloc_error", "")) && count == 1 ||
                 fail!(c, "$(run.backend) $(label(r)): allocator compile failure has no allocator evidence")
         else
             fail!(c, "$(run.backend) $(label(r)): unknown allocation method '$method'")
@@ -167,14 +162,8 @@ end
 #
 # Every expected row is there once, and each of the seven columns has a value or a mark.
 function check_grid!(c::Checks, run::Run)
-    pairs = [("M", "F32"), ("S", "F32"), ("SNS", "F32")]
-    if run.backend in ("cuda", "rocm")
-        append!(pairs, [("M", "F64"), ("S", "F64")])
-    end
-    if run.backend == "cuda"
-        append!(pairs, [("M", "MIXED"), ("S", "MIXED")])
-    end
-    expected = Set(v * " " * t * " " * string(n) for (v, t) in pairs for n in NS)
+    expected = Set(v * " " * t * " " * string(n) for (v, t) in rows_of(run.backend)
+    for n in NS)
     seen = Set{String}()
     for r in run.rows
         key = get(r, "variant", "") * " " * get(r, "tmode", "") * " " * get(r, "n", "")
@@ -208,7 +197,8 @@ function check_timings!(c::Checks, run::Run)
             first_launch = tryparse(Float64, get(r, "first_launch_s", ""))
             warm = tryparse.(Float64, split(get(r, "warm_s", ""), ","))
             compile = tryparse(Float64, get(r, "compile_s", ""))
-            if first_launch === nothing || compile === nothing || length(warm) != 5 ||
+            if first_launch === nothing || compile === nothing ||
+               length(warm) != TIMING_RUNS ||
                any(t -> t === nothing || !isfinite(t) || t <= 0, warm)
                 fail!(c, "$(run.backend) $(label(r)): compile-time subtraction has missing evidence")
             elseif !isapprox(compile, max(0.0, first_launch - median(Float64.(warm))); rtol = 1e-6, atol = 1e-7)
@@ -234,7 +224,8 @@ function check_timings!(c::Checks, run::Run)
                 continue
             end
             raw = tryparse.(Float64, split(parts[1], ","))
-            if length(raw) != 5 || any(v -> v === nothing || !isfinite(v) || v <= 0, raw)
+            if length(raw) != TIMING_RUNS ||
+               any(v -> v === nothing || !isfinite(v) || v <= 0, raw)
                 fail!(c, "$(run.backend) $(label(r)): $cell needs five finite positive raw values")
                 continue
             end
@@ -258,22 +249,28 @@ function check_timings!(c::Checks, run::Run)
     end
     return c
 end
-function check_rules!(c::Checks, runs::Vector{Run}, storage::String, band::String)
+# Run times a, b: the slowest of a is faster than the fastest of b. Overlapping ranges are a tie.
+faster(a, b) = maximum(a) < minimum(b)
+
+# The smallest n of a list, or 0 for none.
+smallest(ns) = isempty(ns) ? 0 : minimum(ns)
+
+# The comparator is an argument so that the self-check can pass a mutant of it.
+function check_rules!(c::Checks, runs::Vector{Run}, storage::String, band::String;
+        wins = faster)
     cpuidx = findfirst(r -> r.backend == "cpu", runs)
     heap = String[]
     for run in runs
         run.backend == "cpu" && continue
         rows_M = [r for r in run.rows if r["variant"] == "M" && r["tmode"] == "F32"]
         any(r -> r["allocates"] == "yes", rows_M) && push!(heap, run.backend)
-        n_cpu = 0
-        n_cap = 0
+        ns_cpu = Int[]
+        ns_cap = Int[]
         for r in run.rows
             r["tmode"] != "F32" && continue
             n = parse(Int, r["n"])
             s = tryparse(Float64, get(r, "compile_s", ""))
-            if s !== nothing && s > COMPILE_CAP_S
-                n_cap = n_cap == 0 ? n : min(n_cap, n)
-            end
+            s !== nothing && s > COMPILE_CAP_S && push!(ns_cap, n)
             cpuidx === nothing && continue
             host = findfirst(
                 x -> x["variant"] == r["variant"] && x["tmode"] == "F32" &&
@@ -282,21 +279,13 @@ function check_rules!(c::Checks, runs::Vector{Run}, storage::String, band::Strin
             dev = get(r, "solves_1e6", "")
             cpu = host === nothing ? "" : get(runs[cpuidx].rows[host], "solves_1e6", "")
             if host !== nothing && !isempty(dev) && !isempty(cpu) && !is_mark(dev) &&
-               !is_mark(cpu) &&
-               maximum(first_five(cpu)) < minimum(first_five(dev))
-                # The fastest-CPU/slowest-device clause is necessary; the overlap-is-a-tie
-                # clause requires disjoint ranges, so the CPU's slowest beats the device's fastest.
-                n_cpu = n_cpu == 0 ? n : min(n_cpu, n)
+               !is_mark(cpu) && wins(first_five(cpu), first_five(dev))
+                push!(ns_cpu, n)
             end
         end
-        band_n = 0
-        if n_cpu > 0 && n_cap > 0
-            band_n = min(n_cpu, n_cap)
-        elseif n_cpu > 0
-            band_n = n_cpu
-        elseif n_cap > 0
-            band_n = n_cap
-        end
+        n_cpu = smallest(ns_cpu)
+        n_cap = smallest(ns_cap)
+        band_n = smallest([ns_cpu; ns_cap])
         text = band_n == 0 ? "ge24" : string(band_n)
         note!(c,
             "$(run.backend): the CPU loop wins from n=$n_cpu, compile time passes one minute at n=$n_cap, so the R1 band is " *
@@ -324,7 +313,7 @@ function check_rules!(c::Checks, runs::Vector{Run}, storage::String, band::Strin
                 mt = get(m, "solves_1e6", "")
                 st = get(srow, "solves_1e6", "")
                 if !isempty(mt) && !isempty(st) && !is_mark(mt) && !is_mark(st)
-                    choose_M |= maximum(first_five(mt)) < minimum(first_five(st))
+                    choose_M |= faster(first_five(mt), first_five(st))
                 end
             end
             derived = choose_M ? "MMatrix" : "SMatrix"
@@ -401,20 +390,11 @@ function self_check()
     check_rules!(c_reversed, reversed_runs, "", "4")
     @assert isempty(c_reversed.failures) "row ordering does not affect the first n"
 
-    # Flip only the CPU-wins comparator; the same fixture must change the derived band to 2.
-    conservative = "maximum(" * "first_five(cpu)) < minimum(first_five(dev))"
-    overlapping = "minimum(" * "first_five(cpu)) < maximum(first_five(dev))"
-    source = read(@__FILE__, String)
-    @assert count(conservative, source) == 1
-    mutant = Module(gensym(:KernelNewtonComparatorMutant))
-    Base.include_string(mutant, replace(source, conservative => overlapping))
-    mutant_Run = Base.invokelatest(getfield, mutant, :Run)
-    mutant_runs = [Base.invokelatest(mutant_Run, r.card, r.backend, r.julia,
-                       r.packages, r.cardline, r.rows) for r in runs]
-    mutant_checks = Base.invokelatest(Base.invokelatest(getfield, mutant, :Checks))
-    Base.invokelatest(Base.invokelatest(getfield, mutant, :check_rules!),
-        mutant_checks, mutant_runs, "", "4")
-    @assert any(s -> occursin("the band is 2, not 4", s), getfield(mutant_checks, :failures))
+    # Flip only the CPU-wins comparator, so that overlapping ranges win; the same fixture must
+    # change the derived band to 2.
+    c_mutant = Checks()
+    check_rules!(c_mutant, runs, "", "4"; wins = (a, b) -> minimum(a) < maximum(b))
+    @assert any(s -> occursin("the band is 2, not 4", s), c_mutant.failures)
     println("self-check: conservative band 4; overlapping-comparator mutant band 2; row-order check passed")
     return 0
 end

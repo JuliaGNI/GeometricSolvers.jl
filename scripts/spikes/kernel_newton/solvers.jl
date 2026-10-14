@@ -79,24 +79,15 @@ end
     return SVector{n, T}(x)
 end
 
-@inline function newton_M(A::SMatrix{n, n, T}, b::SVector{n, T}, maxit::Int) where {n, T}
-    x = zero(SVector{n, T})
-    iters = 0
-    info = Int32(0)
-    @inbounds for i in 1:maxit
-        iters = i
-        f = residual(A, b, x)
-        J = MMatrix{n, n, T}(A)
-        for j in 1:n
-            J[j, j] += cos(x[j]) / 10
-        end
-        piv, info = lu_!(J)
-        info == 0 || break
-        dx = lu_solve!(J, piv, -f)
-        x = x + dx
-        stop(T, n, dx, x) && break
+# The Newton step: the Jacobian assembled in place, factored and solved for -f.
+@inline function step_M(A::SMatrix{n, n, Tf}, x::SVector{n}, f::SVector{n}) where {n, Tf}
+    J = MMatrix{n, n, Tf}(A)
+    @inbounds for j in 1:n
+        J[j, j] += Tf(cos(x[j]) / 10)
     end
-    return x, iters, info
+    piv, info = lu_!(J)
+    info == 0 || return zero(SVector{n, Tf}), info
+    return lu_solve!(J, piv, SVector{n, Tf}(-f)), info
 end
 
 # --- the S variant: functional updates on an SMatrix ---------------------------------------------
@@ -163,68 +154,38 @@ end
     return x
 end
 
-@inline function newton_S(A::SMatrix{n, n, T}, b::SVector{n, T}, maxit::Int) where {n, T}
-    x = zero(SVector{n, T})
-    iters = 0
-    info = Int32(0)
-    @inbounds for i in 1:maxit
-        iters = i
-        f = residual(A, b, x)
-        J = SMatrix{n, n, T}(A)
-        for j in 1:n
-            J = setindex(J, J[j, j] + cos(x[j]) / 10, j, j)
-        end
-        J, piv, info = lu_S(J)
-        info == 0 || break
-        dx = lu_solve_S(J, piv, -f)
-        x = x + dx
-        stop(T, n, dx, x) && break
+@inline function step_S(A::SMatrix{n, n, Tf}, x::SVector{n}, f::SVector{n}) where {n, Tf}
+    J = A
+    @inbounds for j in 1:n
+        J = setindex(J, J[j, j] + Tf(cos(x[j]) / 10), j, j)
     end
-    return x, iters, info
+    J, piv, info = lu_S(J)
+    info == 0 || return zero(SVector{n, Tf}), info
+    return lu_solve_S(J, piv, SVector{n, Tf}(-f)), info
 end
 
-# --- the mixed row: a Float64 problem with a Float32 Jacobian and LU (decision 15) ----------------
+# --- the Newton iteration -----------------------------------------------------------------------
+#
+# The residual and the iterate are in the problem's type T; the Jacobian and its LU are in Tf. The
+# F32 and F64 rows factor in T, and the mixed row factors a Float64 problem in Float32 (decision 15).
 
-@inline function newton_mixed_M(A::SMatrix{n, n, T}, b::SVector{n, T}, maxit::Int) where {
-        n, T}
+@inline function newton(step::F, A::SMatrix{n, n, T}, b::SVector{n, T}, maxit::Int,
+        ::Type{Tf}) where {F, n, T, Tf}
+    Af = SMatrix{n, n, Tf}(A)
     x = zero(SVector{n, T})
-    A32 = SMatrix{n, n, Float32}(A)
     iters = 0
     info = Int32(0)
-    @inbounds for i in 1:maxit
+    for i in 1:maxit
         iters = i
-        f = residual(A, b, x)
-        J = MMatrix{n, n, Float32}(A32)
-        for j in 1:n
-            J[j, j] += Float32(cos(x[j]) / 10)
-        end
-        piv, info = lu_!(J)
+        dx, info = step(Af, x, residual(A, b, x))
         info == 0 || break
-        dx = lu_solve!(J, piv, SVector{n, Float32}(-f))
         x = x + SVector{n, T}(dx)
         stop(T, n, dx, x) && break
     end
     return x, iters, info
 end
 
-@inline function newton_mixed_S(A::SMatrix{n, n, T}, b::SVector{n, T}, maxit::Int) where {
-        n, T}
-    x = zero(SVector{n, T})
-    J32 = SMatrix{n, n, Float32}(A)
-    iters = 0
-    info = Int32(0)
-    @inbounds for i in 1:maxit
-        iters = i
-        f = residual(A, b, x)
-        J = J32
-        for j in 1:n
-            J = setindex(J, J[j, j] + Float32(cos(x[j]) / 10), j, j)
-        end
-        J, piv, info = lu_S(J)
-        info == 0 || break
-        dx = lu_solve_S(J, piv, SVector{n, Float32}(-f))
-        x = x + SVector{n, T}(dx)
-        stop(T, n, dx, x) && break
-    end
-    return x, iters, info
-end
+@inline newton_M(A::SMatrix, b, maxit) = newton(step_M, A, b, maxit, eltype(A))
+@inline newton_S(A::SMatrix, b, maxit) = newton(step_S, A, b, maxit, eltype(A))
+@inline newton_mixed_M(A::SMatrix, b, maxit) = newton(step_M, A, b, maxit, Float32)
+@inline newton_mixed_S(A::SMatrix, b, maxit) = newton(step_S, A, b, maxit, Float32)
