@@ -406,9 +406,10 @@ function self_check()
                    n == 2 ? "3,4,5,6,7 solves_per_s=200000" :
                    "1,1,1,1,1 solves_per_s=1000000")
            for n in (2, 4, 8)]
-    # The CPU loop beats the SNS baseline at n=2, disjointly; the band must not count it.
+    # The CPU loop beats the SNS baseline at n=2, disjointly, and its compile time passes the cap;
+    # the band must count neither.
     push!(device,
-        Dict("variant" => "SNS", "tmode" => "F32", "n" => "2", "compile_s" => "1",
+        Dict("variant" => "SNS", "tmode" => "F32", "n" => "2", "compile_s" => "61",
             "allocates" => "no", "solves_1e6" => "5,5,5,5,5 solves_per_s=200000"))
     push!(cpu,
         Dict("variant" => "SNS", "tmode" => "F32", "n" => "2",
