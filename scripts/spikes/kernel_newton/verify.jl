@@ -284,13 +284,17 @@ function check_rules!(c::Checks, runs::Vector{Run}, storage::String, band::Strin
         run.backend == "cpu" && continue
         rows_M = [r for r in run.rows if r["variant"] == "M" && r["tmode"] == "F32"]
         any(r -> r["allocates"] == "yes", rows_M) && push!(heap, run.backend)
+        # The band bounds the own R1 variants, M and S. SNS is the baseline: where the CPU loop
+        # beats it is noted, and it does not enter the band.
         ns_cpu = Int[]
         ns_cap = Int[]
+        ns_sns = Int[]
         for r in run.rows
             r["tmode"] != "F32" && continue
             n = parse(Int, r["n"])
+            baseline = r["variant"] == "SNS"
             s = tryparse(Float64, get(r, "compile_s", ""))
-            s !== nothing && s > COMPILE_CAP_S && push!(ns_cap, n)
+            !baseline && s !== nothing && s > COMPILE_CAP_S && push!(ns_cap, n)
             cpuidx === nothing && continue
             host = findfirst(
                 x -> x["variant"] == r["variant"] && x["tmode"] == "F32" &&
@@ -300,9 +304,12 @@ function check_rules!(c::Checks, runs::Vector{Run}, storage::String, band::Strin
             cpu = host === nothing ? "" : get(runs[cpuidx].rows[host], "solves_1e6", "")
             if host !== nothing && !isempty(dev) && !isempty(cpu) && !is_mark(dev) &&
                !is_mark(cpu) && wins(first_five(cpu), first_five(dev))
-                push!(ns_cpu, n)
+                push!(baseline ? ns_sns : ns_cpu, n)
             end
         end
+        isempty(ns_sns) ||
+            note!(c,
+                "$(run.backend): the CPU loop beats the SNS baseline from n=$(smallest(ns_sns)); the band counts M and S only")
         n_cpu = smallest(ns_cpu)
         n_cap = smallest(ns_cap)
         band_n = smallest([ns_cpu; ns_cap])
@@ -399,11 +406,20 @@ function self_check()
                    n == 2 ? "3,4,5,6,7 solves_per_s=200000" :
                    "1,1,1,1,1 solves_per_s=1000000")
            for n in (2, 4, 8)]
+    # The CPU loop beats the SNS baseline at n=2, disjointly, and its compile time passes the cap;
+    # the band must count neither.
+    push!(device,
+        Dict("variant" => "SNS", "tmode" => "F32", "n" => "2", "compile_s" => "61",
+            "allocates" => "no", "solves_1e6" => "5,5,5,5,5 solves_per_s=200000"))
+    push!(cpu,
+        Dict("variant" => "SNS", "tmode" => "F32", "n" => "2",
+            "solves_1e6" => "1,1,1,1,1 solves_per_s=1000000"))
     runs = [Run("fixture", "metal", "fixture", "fixture", "fixture", device),
         Run("fixture", "cpu", "fixture", "fixture", "fixture", cpu)]
     c = Checks()
     check_rules!(c, runs, "", "4")
-    @assert isempty(c.failures) "overlap is a tie, and disjoint CPU timings give band 4"
+    @assert isempty(c.failures) "overlap is a tie, disjoint CPU timings give band 4, and SNS does not count"
+    @assert any(s -> occursin("beats the SNS baseline from n=2", s), c.notes)
     c_reversed = Checks()
     reversed_runs = [Run(r.card, r.backend, r.julia, r.packages,
                          r.cardline, reverse(r.rows)) for r in runs]
@@ -415,7 +431,7 @@ function self_check()
     c_mutant = Checks()
     check_rules!(c_mutant, runs, "", "4"; wins = (a, b) -> minimum(a) < maximum(b))
     @assert any(s -> occursin("the band is 2, not 4", s), c_mutant.failures)
-    println("self-check: conservative band 4; overlapping-comparator mutant band 2; row-order check passed")
+    println("self-check: conservative band 4; overlapping-comparator mutant band 2; SNS outside the band; row-order check passed")
     return 0
 end
 

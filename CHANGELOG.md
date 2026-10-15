@@ -63,8 +63,10 @@ so that a compat-only bump can be told apart from an interface change.
   one `ROW` line per backend, variant, `tmode` and `n`, with the seven columns of the design's
   §10.E check 3 and the raw evidence; compile time is measured in a fresh child process for each
   row. `verify.jl <results dir> <card>` re-derives every cell from the raw output and applies the
-  band and storage decision rules, and `verify.jl --self-check` tests the band rule against a
-  comparator mutant. `lu_check.jl` checks the pivoting of both LU solves on random matrices that
+  band and storage decision rules. The band counts the own R1 variants, `M` and `S`, not the SNS
+  baseline; `verify.jl` notes the first n where the CPU loop beats SNS. `verify.jl --self-check`
+  tests the band rule against a comparator mutant and against an SNS row that the band must not
+  count. `lu_check.jl` checks the pivoting of both LU solves on random matrices that
   pivot. A time cap bounds the throughput cells: before a cell runs, the median time of the cell
   before it projects the cell's wall time, from a warm launch and five timed launches. A cell whose
   projection passes 30 minutes is not run, nor is any larger cell, and it reads
