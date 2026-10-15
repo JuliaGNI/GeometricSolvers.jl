@@ -49,3 +49,15 @@
   sets the mode for the caller, because the mode is the caller's choice.
 - **kind:** upstream
 - **found:** 2026-10-08
+
+### K6 · A `BigFloat` static matrix has no R1 factorisation.
+
+- **location:** `src/linear/static/lu.jl`, `src/linear/static/qr.jl` (`A = MMatrix(...)` in
+  `factorize!!`)
+- **evidence:** `factorize!!(nothing, LUFactorization(), SMatrix{2, 2, BigFloat}(2, 1, 1, 3))`,
+  and the same with `QRFactorization()`, raise `setindex!() with non-isbitstype eltype is not
+  supported by StaticArrays. Consider using SizedArray.` (Julia 1.13.1). Both kernels work on a
+  local `MMatrix`, the R1 storage, and an `MMatrix` of a non-`isbits` element type has no
+  `setindex!`. `BigFloat` is best effort on the CPU, and no test names it.
+- **kind:** found late
+- **found:** 2026-10-15

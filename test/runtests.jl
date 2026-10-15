@@ -14,6 +14,9 @@ if "core" in GROUPS
     @safetestset "Reductions" include("base/reductions.jl")
     @safetestset "ToReal adaptor" include("base/adapt.jl")
     @safetestset "Linear-solver methods" include("linear/methods.jl")
+    @safetestset "Static factors" include("linear/factors.jl")
+    @safetestset "Static LU" include("linear/static/lu.jl")
+    @safetestset "Static QR" include("linear/static/qr.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "R3 Jacobian-vector product" include("ad/jvp.jl")
@@ -23,4 +26,5 @@ if "doctests" in GROUPS
 end
 if "metal" in GROUPS
     @safetestset "Metal" include("devices/metal.jl")
+    @safetestset "Metal static LU and QR" include("devices/metal_linear.jl")
 end

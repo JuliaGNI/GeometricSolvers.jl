@@ -98,7 +98,27 @@ so that a compat-only bump can be told apart from an interface change.
 - `LUFactorization`, `QRFactorization` and `SVDFactorization` carry their factorisation precision
   as a type parameter: `LUFactorization()` for the working type, `LUFactorization(Float32)` for a
   `Float32` factorisation, and the markers `TF32()`, `FP16()`, `BF16()` for vendor tensor cores.
-  No factorisation runs yet.
+- `LUFactorization` and `QRFactorization` solve a static system. The internal
+  `GeometricSolvers.factorize!!(nothing, method, J)` and `GeometricSolvers.ldiv!!(nothing, fac, r)`
+  take an `SMatrix` or `MMatrix` and return `isbits` factors and an `SVector` step, so both run
+  in a KernelAbstractions kernel, one system per thread, and allocate nothing unless bounds checks
+  are forced (`--check-bounds=yes`). LU uses partial pivoting; QR is Householder QR without column
+  pivoting, and it is not rank-revealing. A singular matrix does not throw:
+  `GeometricSolvers.returncode(fac)` gives `SINGULAR` when `info` holds the first zero pivot (LU)
+  or the first zero diagonal entry of `R` (QR). A singular matrix whose `R` has no exact zero gives
+  `SUCCESS`, and two equal rows, as a rule, give no exact zero. Two equal rows give `SINGULAR` in
+  LU in every element type, also at n = 2 with entries near `floatmax`. The factorisation checks no
+  entry for finiteness: a `NaN` gives a non-finite step or `SINGULAR`, and an `Inf` gives what the
+  elimination gives, which for a real `Inf` pivot is the finite limit, as in LAPACK. With a
+  factorisation precision below the working type, as `LUFactorization(Float32)` for a `Float64`
+  system, the matrix is first divided by a power of two that brings its largest entry near 1, which
+  is exact, and the factors are in `Float32` (`ComplexF32` for a complex system). A matrix of scale
+  `1e-50` or `1e50` therefore factorises and solves to the `Float32` bound, though entries far below
+  the largest can still underflow. The right-hand side is scaled by its largest absolute entry
+  before the conversion, so a right-hand side of size `1e-40` or `1e40` solves to the `Float32`
+  bound too. QR takes its column norm as LAPACK's `nrm2` does, so an entry below `sqrt(floatmin)`
+  or above `sqrt(floatmax)` does not give a wrong step. A precision marker such as `TF32()` has no
+  method for a static matrix. `StaticArrays` is a new dependency, at 1.9.8 or later.
 - Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
   `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts
   every float of a method tree to `R` through `Adapt`.

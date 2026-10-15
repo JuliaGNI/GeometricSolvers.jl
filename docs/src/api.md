@@ -32,6 +32,23 @@ FP16
 BF16
 ```
 
+### Factorisation and solve
+
+A linear-solver method enters a solve through two functions, [`factorize!!`](@ref) and
+[`ldiv!!`](@ref). For a static matrix (R1) both return new `isbits` values, so they run inside a
+kernel: [`StaticLU`](@ref) is LU with partial pivoting and `Int32` pivots, [`StaticQR`](@ref)
+Householder QR without column pivoting. [`factorize!!`](@ref) states what a singular matrix
+gives. These names are not exported. Reach them as `GeometricSolvers.name`.
+
+```@docs
+factorize!!
+ldiv!!
+factor_eltype
+StaticLU
+StaticQR
+returncode
+```
+
 ## Line searches
 
 A line search is scalar code: [`linesearch`](@ref) sees the line only through the merit
