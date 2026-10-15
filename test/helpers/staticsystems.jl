@@ -91,9 +91,10 @@ function conditioned_systems(seed, ::Type{T}, ::Type{TF}, n) where {T, TF}
         A = random_matrix(rng, T, n, κ)
         b = SVector{n, T}(randn(rng, T, n))
         if κ == last(κs)
+            κ₂ = κ
             while κinf(A) > cap
-                κ /= 2
-                A = random_matrix(copy(top), T, n, κ)
+                κ₂ /= 2
+                A = random_matrix(copy(top), T, n, κ₂)
             end
         end
         κinf(A) <= cap && push!(systems, (A, b))
