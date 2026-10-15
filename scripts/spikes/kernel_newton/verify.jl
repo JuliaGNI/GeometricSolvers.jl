@@ -229,8 +229,14 @@ function check_timings!(c::Checks, run::Run)
                 continue
             end
             is_mark(value) && continue
-            (time_cap || over_cap) &&
+            if time_cap
+                fail!(c, "$(run.backend) $(label(r)): $cell holds a timing after a time-cap mark")
+            elseif over_cap && haskey(r, "time_cap_s")
                 fail!(c, "$(run.backend) $(label(r)): $cell holds a timing that the time cap stops")
+            elseif over_cap
+                # A row without time_cap_s comes from a run without the time cap; the timing is kept.
+                note!(c, "$(run.backend) $(label(r)): $cell passes the time cap and holds a timing")
+            end
             parts = split(value)
             if length(parts) != 2 || !startswith(parts[2], "solves_per_s=")
                 fail!(c, "$(run.backend) $(label(r)): $cell does not hold five values and a rate")

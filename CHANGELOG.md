@@ -54,6 +54,27 @@ so that a compat-only bump can be told apart from an interface change.
   `DifferentiationInterface`'s `jacobian!` with `AutoForwardDiff()` on the backend's native array
   type and on a `JLArray`. Runs on `cpu` and `metal` backends.
 
+- `scripts/spikes/kernel_newton/` measures the R1 design of part E on each backend: a Newton
+  iteration on `SVector` systems with no line search, and a partially pivoted LU with `Int32`
+  pivots and the analytic Jacobian, in two storage variants (a local `MMatrix` mutated in place,
+  and functional updates on an `SMatrix`), against the SimpleNonlinearSolve baseline. One
+  KernelAbstractions kernel runs one system per thread and takes the solver as an argument; the CPU
+  rows are a threaded host loop over the same code. `run.jl <backend> [variant] [tmode] [n]` writes
+  one `ROW` line per backend, variant, `tmode` and `n`, with the seven columns of the design's
+  §10.E check 3 and the raw evidence; compile time is measured in a fresh child process for each
+  row. `verify.jl <results dir> <card>` re-derives every cell from the raw output and applies the
+  band and storage decision rules, and `verify.jl --self-check` tests the band rule against a
+  comparator mutant. `lu_check.jl` checks the pivoting of both LU solves on random matrices that
+  pivot. A time cap bounds the throughput cells: before a cell runs, the median time of the cell
+  before it projects the cell's wall time, from a warm launch and five timed launches. A cell whose
+  projection passes 30 minutes is not run, nor is any larger cell, and it reads
+  `not run: time cap`; the 1e4 cell always runs. Each row records `time_cap_s`. A row without it
+  comes from a run without the cap, and `verify.jl` keeps a timing past the cap in such a row and
+  notes it; in a row with `time_cap_s`, a timing past the cap fails, and so does a timing after a
+  time-cap mark. The CPU baseline runs one Julia thread per core (`--threads=auto`): `run.jl cpu`
+  stops with an error in a single-threaded Julia, and `verify.jl` fails a CPU row that records one
+  thread.
+
 - The core types, all `isbits` so that a kernel can hold them, with every real field in
   `R = real(T)`: `ReturnCode` (one byte: `SUCCESS`, `STALLED`, `MAXITERS`, `SINGULAR`,
   `NONFINITE`, `LINESEARCH_FAILED`); `SolverStatus{R}`, with `step_failures` counting every
