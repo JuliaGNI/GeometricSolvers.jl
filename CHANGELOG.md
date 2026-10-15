@@ -105,13 +105,16 @@ so that a compat-only bump can be told apart from an interface change.
   returns the step as an `SVector` in the element type of `r`. Both run inside a
   KernelAbstractions kernel, one system per thread, and allocate nothing unless bounds checks are
   forced (`--check-bounds=yes` moves the local `MMatrix` to the heap). A singular matrix does not
-  throw: `info` holds the index of the first zero pivot, or of the first zero diagonal entry of
-  `R`, and `GeometricSolvers.returncode(fac)` gives `SINGULAR`. Two equal rows give `SINGULAR` in
-  LU in every element type: a complex multiplier is computed as `(a′ conj(p′)) / abs2(p′)` on the
-  entries scaled by `|re p| + |im p|`, which is exactly 1 where Julia's `ComplexF64` division of a
-  number by itself is not. The factorisation does not check for finite entries: a `NaN` in the
-  matrix gives a non-finite step or `SINGULAR`, and an `Inf` gives what the elimination gives,
-  which for an `Inf` pivot in a real type is the finite limit step, as in LAPACK. With a
+  throw. LU holds the index of the first zero pivot in `info`, QR the index of the first zero
+  diagonal entry of `R`, and `GeometricSolvers.returncode(fac)` then gives `SINGULAR`; QR is not
+  rank-revealing, so a singular matrix whose `R` has no exact zero gives `SUCCESS`, and two equal
+  rows, as a rule, give no exact zero. Two equal rows give `SINGULAR` in LU in every element type,
+  at n = 2 also with entries near `floatmax`: a complex multiplier is computed as
+  `(a′ conj(p′)) / abs2(p′)` on the entries scaled by `max(|re p|, |im p|)`, which is exactly 1
+  where Julia's `ComplexF64` division of a number by itself is not. The factorisation does not
+  check for finite entries: a `NaN` in the matrix gives a non-finite step or `SINGULAR`, and an
+  `Inf` gives what the elimination gives, which for an `Inf` pivot in a real type is the finite
+  limit step, as in LAPACK. With a
   factorisation precision below the working type, as `LUFactorization(Float32)` for a `Float64`
   system, the factors are in `Float32` (`ComplexF32` for a complex system), and the right-hand
   side is divided by its largest absolute entry before the conversion, so a right-hand side of

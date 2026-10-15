@@ -11,8 +11,10 @@ Factorise the matrix `J` with the linear-solver method `method` and return the f
 
 For a static matrix (R1), `fac` is `nothing` or an earlier factor of the same type, whose value
 is not used, and the result is a new [`StaticLU`](@ref) or [`StaticQR`](@ref). `J` is converted
-to the element type of the factors, [`factor_eltype`](@ref). A singular `J` does not throw: the
-factor records the first zero pivot in `info`, and [`returncode`](@ref) gives `SINGULAR`.
+to the element type of the factors, [`factor_eltype`](@ref). A singular `J` does not throw. LU
+records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, and
+[`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
+no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -27,10 +29,11 @@ Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element typ
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. Where the element
 type of `r` is the element type of the factors, the solve runs in it. Where they differ, `r` is
 scaled by `s = maximum(abs, r)`, converted to the factor type, solved, converted back and
-multiplied by `s` (Kelley 2023, eqs. 2.17–2.18): the scaled right-hand side lies in `[-1, 1]`
-whatever the range of `r`, so it neither overflows nor underflows in a lower factor precision.
-The scale takes no squares, so it cannot overflow or underflow itself. A zero `r` gives a zero
-step, and an `Inf` or `NaN` in `r` gives a non-finite step; nothing throws.
+multiplied by `s` (Kelley 2023, eqs. 2.17–2.18): every entry of the scaled right-hand side has an
+absolute value of at most 1, whatever the range of `r`, so it neither overflows nor underflows in
+a lower factor precision. The scale takes no squares: it overflows only where the absolute value
+of an entry does, and it is zero only for a zero `r`. A zero `r` gives a zero step, and an `Inf`
+or `NaN` in `r` gives a non-finite step; nothing throws.
 """
 function ldiv!! end
 
@@ -42,13 +45,8 @@ factorisation precision is `Nothing`, the precision `TF` for a real `T`, and `co
 complex `T`.
 """
 factor_eltype(::LinearMethod{Nothing}, ::Type{T}) where {T <: Number} = T
-function factor_eltype(::LinearMethod{TF}, ::Type{T}) where {TF <: AbstractFloat, T <: Real}
-    TF
-end
-function factor_eltype(::LinearMethod{TF},
-        ::Type{T}) where {TF <: AbstractFloat, T <: Complex}
-    complex(TF)
-end
+factor_eltype(::LinearMethod{F}, ::Type{<:Real}) where {F <: AbstractFloat} = F
+factor_eltype(::LinearMethod{F}, ::Type{<:Complex}) where {F <: AbstractFloat} = complex(F)
 
 """
     StaticLU{N, TF, L}

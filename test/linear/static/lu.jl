@@ -47,6 +47,17 @@ end
             @test relerr(x, reference(A, b)) <= bound(A, T, TF)
         end
     end
+
+    @testset "a tie in |re| + |im| keeps the first index, $T, TF = $TF" for (T, TF) in PRECISION_PAIRS
+        m = lu_method(TF)
+        for t in (T <: Complex ? (-1, im) : (-1,))
+            # step 1 ties 1 with t
+            @test factorize!!(nothing, m, SMatrix{2, 2, T}(1, t, 2, 3)).ipiv == [1, 2]
+            # step 2 ties the subcolumn [1, t] that the elimination of column 1 leaves
+            A = SMatrix{3, 3, T}(2, 1, 1, 0, 1, t, 0, 0, 1)
+            @test factorize!!(nothing, m, A).ipiv == [1, 2, 3]
+        end
+    end
 end
 
 @testset "check 3: a singular input gives SINGULAR with info > 0, and no throw" begin
@@ -81,6 +92,17 @@ end
         bs = fill(SVector{2, T}(1, 2), length(As))
         _, info = kernel_solve(Array, lu_method(Nothing), As, bs)
         @test count(==(2), info) == 100
+    end
+
+    @testset "two equal rows near floatmax are SINGULAR with finite factors, $T" for T in ELTYPES
+        # the complex multiplier's scale max(|re p|, |im p|) stays finite where |re p| + |im p|
+        # overflows; at n ≥ 4 the Schur updates overflow here for any multiplier, as in `getrf`
+        c = real(T)(0.6) * floatmax(real(T))
+        z = T <: Complex ? T(c, c) : T(c)
+        fac = factorize!!(nothing, lu_method(Nothing), SMatrix{2, 2, T}(z, z, z, z))
+        @test fac.info == 2
+        @test returncode(fac) === SINGULAR
+        @test all(isfinite, fac.factors)
     end
 
     @testset "non-finite and subnormal entries: no throw, no finiteness check" for T in ELTYPES

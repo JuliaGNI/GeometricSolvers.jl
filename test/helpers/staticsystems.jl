@@ -16,8 +16,8 @@ using LinearAlgebra: Diagonal, opnorm, qr
 using Random: Xoshiro, randn
 using StaticArrays: SMatrix, SVector
 
-# n = 1, 4, and 16 and 24: 16 is the top of the band of §1.1 before part E, 24 the top that part E
-# measured (Metal ≥ 24 and CUDA ≥ 24), which the decision of 2026-10-08 makes the largest size.
+# n = 1, 4, 16 and 24: the R1 band of §1.1 reaches 24 on Metal and on CUDA, the largest size, and 16
+# is the top of its general estimate n ≤ 8…16.
 const STATIC_SIZES = (1, 4, 16, 24)
 
 # (T, TF) for a method `M{TF}()`: every element type with `TF = Nothing`, the working type, and the
@@ -77,7 +77,9 @@ end
     conditioned_systems(seed, T, TF, n)
 
 Systems `(A, b)` with `κ₂` geometric from 10 to `κcap`; a draw whose `κ∞` exceeds the cap is
-discarded. At `n = 1` the one system has `κ = 1`.
+discarded, except the top draw: its `κ₂` halves, with the same `U` and `V`, until `κ∞` is within
+the cap, so that the systems reach the top of check 1's domain. At `n = 1` the one system has
+`κ = 1`.
 """
 function conditioned_systems(seed, ::Type{T}, ::Type{TF}, n) where {T, TF}
     rng = Xoshiro(seed)
@@ -85,8 +87,15 @@ function conditioned_systems(seed, ::Type{T}, ::Type{TF}, n) where {T, TF}
     κs = n == 1 ? [1.0] : exp10.(range(1, log10(cap); length = 5))
     systems = Tuple{SMatrix{n, n, T, n * n}, SVector{n, T}}[]
     for κ in κs
+        top = copy(rng)
         A = random_matrix(rng, T, n, κ)
         b = SVector{n, T}(randn(rng, T, n))
+        if κ == last(κs)
+            while κinf(A) > cap
+                κ /= 2
+                A = random_matrix(copy(top), T, n, κ)
+            end
+        end
         κinf(A) <= cap && push!(systems, (A, b))
     end
     return systems

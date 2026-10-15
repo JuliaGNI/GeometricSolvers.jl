@@ -49,3 +49,33 @@
   sets the mode for the caller, because the mode is the caller's choice.
 - **kind:** upstream
 - **found:** 2026-10-08
+
+### K5 · Static QR returns `SUCCESS` with a wrong finite step when a subcolumn lies below `√floatmin`.
+
+- **location:** `src/linear/static/qr.jl` (`σ = rnorm(SVector(x))` in `factorize!!`)
+- **evidence:** the column norm goes through `rnorm`, which squares the entries unscaled, so
+  below about `√floatmin(TF)` it is inaccurate or 0, and a zero norm skips the reflector. With
+  `A = floatmin(R) * [1 0; 1 1]` and `b = floatmin(R) * [1, 1]`, `factorize!!(nothing,
+  QRFactorization(), A)` then `ldiv!!` gives `SUCCESS` and `x = [1, 1]`, not `[1, 0]`, in
+  `Float32`, `Float64`, `ComplexF32` and `ComplexF64` (Julia 1.13.1). A critic's probe of part I
+  scaled a matrix with `κ₂ = 10` by `1e-160` or `1e-170` in `Float64` and by `1e-20` or `1e-25`
+  in `Float32`: the error is up to `1e13` times the check-1 bound `4n·eps·κ∞`, with `SUCCESS`,
+  where LU solves the same matrices to the bound. The design decides only the overflow side ("an
+  entry above `√floatmax(TF)` is not scaled here"), and the scales lie outside check 1's family
+  `10^(−8:4:8)`. The fix is a max-abs scale of the subcolumn before the squares, as LAPACK's
+  `nrm2`, or a decision of the edge for parts I and O.
+- **kind:** found late
+- **found:** 2026-10-15
+
+### K6 · A `BigFloat` static matrix has no R1 factorisation.
+
+- **location:** `src/linear/static/lu.jl`, `src/linear/static/qr.jl` (`A = MMatrix(...)` in
+  `factorize!!`)
+- **evidence:** `factorize!!(nothing, LUFactorization(), SMatrix{2, 2, BigFloat}(2, 1, 1, 3))`,
+  and the same with `QRFactorization()`, raise `setindex!() with non-isbitstype eltype is not
+  supported by StaticArrays. Consider using SizedArray.` (Julia 1.13.1). Both kernels work on a
+  local `MMatrix`, the R1 storage of the design (§5.2), and an `MMatrix` of a non-`isbits` element
+  type has no `setindex!`. Decision 12 makes `BigFloat` best effort on the CPU, and no check of
+  part I names it.
+- **kind:** found late
+- **found:** 2026-10-15

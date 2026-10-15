@@ -37,9 +37,11 @@ BF16
 A linear-solver method enters a solve through two functions, [`factorize!!`](@ref) and
 [`ldiv!!`](@ref). For a static matrix (R1) both return new `isbits` values, so they run inside a
 kernel: [`StaticLU`](@ref) is LU with partial pivoting and `Int32` pivots, [`StaticQR`](@ref)
-Householder QR without column pivoting. A singular matrix does not throw: the factor records the
-first zero pivot, or the first zero diagonal entry of `R`, in `info`, and [`returncode`](@ref)
-gives `SINGULAR`. These names are not exported. Reach them as `GeometricSolvers.name`.
+Householder QR without column pivoting. A singular matrix does not throw. LU records the first
+zero pivot in `info`, QR the first zero diagonal entry of `R`, and [`returncode`](@ref) then gives
+`SINGULAR`. QR is not rank-revealing: a singular matrix whose `R` has no exact zero on the
+diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero. These names are not
+exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 factorize!!

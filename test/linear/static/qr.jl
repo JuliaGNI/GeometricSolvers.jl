@@ -116,13 +116,16 @@ end
             m = qr_method(TF)
             S = singular_matrices(3000n + 2, T, n)
             systems = conditioned_systems(1000n + 2, T, TF, n)
-            As = [first.(systems); S.zero_columns; [S.zero_matrix]]
+            singular = [S.zero_columns; [S.zero_matrix]]
+            # equal rows give no exact zero in QR: no throw, and the host's step and info
+            equal = n > 1 ? [S.equal_rows] : empty(singular)
+            As = [first.(systems); singular; equal]
             bs = [last.(systems); fill(last(first(systems)), length(As) - length(systems))]
             x, info = kernel_solve(AT, m, As, bs)
             host = map((A, b) -> host_solve(m, A, b), As, bs)
             @test isequal(x, map(last, host))
             @test info == map(h -> first(h).info, host)
-            @test all(>(0), info[(length(systems) + 1):end])
+            @test all(>(0), info[length(systems) .+ eachindex(singular)])
         end
     end
 
