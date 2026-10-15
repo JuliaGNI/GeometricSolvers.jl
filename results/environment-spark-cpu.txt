@@ -1,0 +1,5 @@
+part E, DGX Spark (GB10), host CPU rows, 2026-10-15 14:02 UTC
+branch results/spark-cpu at b94e51b1a0def377eed6399ebca6c68cc832baeb
+cores: 20; julia threads: 20
+cpu: Cortex-X925,Cortex-A725
+cuda rows: results/kernel_newton-spark-gpu.txt, a copy of b76b4cd

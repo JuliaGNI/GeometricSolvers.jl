@@ -1,0 +1,6 @@
+note: cuda S F32 n=24: solves_1e6 passes the time cap and holds a timing
+note: cuda S MIXED n=24: solves_1e6 passes the time cap and holds a timing
+note: cuda: the CPU loop wins from n=12, compile time passes one minute at n=0, so the R1 band is 12
+note: cuda: off-heap storage rule gives MMatrix
+note: MMatrix stays off the heap on every backend measured here
+checks: 0 failure(s), 5 note(s)
