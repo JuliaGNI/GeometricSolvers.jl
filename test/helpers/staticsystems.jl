@@ -38,9 +38,8 @@ epsf(::Type{T}, ::Type{TF}) where {T, TF} = eps(real(factortype(T, TF)))
 """
     extreme_scales(R)
 
-The scales near the square root of the range of the real factor type `R`, which join check 1's
-scale family for LU (decision of 2026-10-15): `|p|²` of an unscaled complex pivot overflows or
-underflows there.
+The LU scales for which `|p|²` of an unscaled complex pivot overflows or underflows in the real
+factor type `R`.
 """
 extreme_scales(::Type{Float32}) = (1e30, 1e-30)
 extreme_scales(::Type{Float64}) = (1e200, 1e-200)

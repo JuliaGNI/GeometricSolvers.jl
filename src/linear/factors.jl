@@ -27,13 +27,13 @@ function factorize!! end
 Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element type of `r`.
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. Where the element
-type of `r` is the element type of the factors, the solve runs in it. Where they differ, `r` is
-scaled by `s = maximum(abs, r)`, converted to the factor type, solved, converted back and
-multiplied by `s` (Kelley 2023, eqs. 2.17–2.18): every entry of the scaled right-hand side has an
-absolute value of at most 1, whatever the range of `r`, so it neither overflows nor underflows in
-a lower factor precision. The scale takes no squares: it overflows only where the absolute value
-of an entry does, and it is zero only for a zero `r`. A zero `r` gives a zero step, and an `Inf`
-or `NaN` in `r` gives a non-finite step; nothing throws.
+type of `r` is the element type of the factors, the solve runs directly in it. Where they differ,
+a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
+converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
+overflow from the overall right-hand-side scale in a lower factor precision; entries small
+relative to the largest entry can still underflow. The scale takes no squares and overflows
+only where an entry's absolute value does. In the mixed-type path, a zero `r` returns a zero
+step without solving, and an `Inf` or `NaN` in `r` gives a non-finite step.
 """
 function ldiv!! end
 

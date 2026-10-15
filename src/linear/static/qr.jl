@@ -29,7 +29,7 @@ function factorize!!(::Union{Nothing, StaticQR},
             phase = iszero(x₁) ? one(F) : x₁ / abs(x₁)
             v₁ = phase * (σ + abs(x₁))
             τk = (σ + abs(x₁)) / σ
-            τ = Base.setindex(τ, F(τk), k)
+            τ = setindex(τ, F(τk), k)
             for i in (k + 1):N
                 A[i, k] = A[i, k] / v₁
             end

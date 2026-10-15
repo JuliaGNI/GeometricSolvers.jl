@@ -21,9 +21,8 @@ lu_method(::Type{TF}) where {TF} = LUFactorization{TF}()
             @test eltype(x) === T
             @test relerr(x, reference(A, b)) <= bound(A, T, TF)
         end
-        # the scale family s·A, s = 10^k: the bound is scale-free; s near the square root of the
-        # range of the factor type checks that a complex multiplier does not overflow or underflow
-        # in |p|² (decision of 2026-10-15)
+        # the scale family s·A, s = 10^k: the bound is scale-free; extreme scales check that a
+        # complex multiplier stays finite where an unscaled |p|² overflows or underflows
         A, b = first(systems)
         for s in (exp10.(-8:4:8)..., extreme_scales(real(factortype(T, TF)))...)
             sA = real(T)(s) * A
@@ -80,8 +79,8 @@ end
     end
 
     @testset "the equal-rows LU at n = 2 is SINGULAR, $T" for T in ELTYPES
-        # the reciprocal multiplier a * inv(p) gives info == 0 here in Float64 (part I, measured),
-        # and Julia's complex `/` does in ComplexF64, for 25 of these 100 draws
+        # Equal rows require a multiplier of exactly one; reciprocal multiplication and complex
+        # division can round it differently and leave a nonzero second pivot.
         rng = Xoshiro(42)
         As = map(1:100) do _
             r = randn(rng, T, 2)
@@ -116,7 +115,7 @@ end
         # a NaN gives a non-finite step or info > 0
         @test all(((i, j),) -> nonfinite_or_singular(perturbed(R(NaN), i, j)...), places)
         # a ±Inf gives what the elimination gives, and nothing throws; at (1, 1) it is the pivot,
-        # which is not zero, so info == 0: there is no finiteness check (decision of 2026-10-15)
+        # which is not zero, so info == 0: there is no finiteness check
         for v in (R(Inf), -R(Inf)), (i, j) in places
 
             fac = first(perturbed(v, i, j))

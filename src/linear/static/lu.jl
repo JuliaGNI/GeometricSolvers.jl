@@ -24,7 +24,7 @@ function factorize!!(::Union{Nothing, StaticLU},
         method::LUFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
     F = factor_eltype(method, T)
-    # convert as an SMatrix: the converting MMatrix constructor allocates at n = 16 (measured)
+    # convert through an SMatrix to keep the element-type conversion off the heap
     A = MMatrix(SMatrix{N, N, F}(J))
     ipiv = zero(SVector{N, Int32})
     info = Int32(0)
@@ -39,7 +39,7 @@ function factorize!!(::Union{Nothing, StaticLU},
                 p = i
             end
         end
-        ipiv = Base.setindex(ipiv, Int32(p), k)
+        ipiv = setindex(ipiv, Int32(p), k)
         if p != k
             for j in 1:N
                 A[k, j], A[p, j] = A[p, j], A[k, j]

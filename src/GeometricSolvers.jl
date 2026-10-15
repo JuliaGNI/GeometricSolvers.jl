@@ -9,7 +9,7 @@ using Adapt: Adapt
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
-using StaticArrays: MMatrix, MVector, SMatrix, StaticMatrix, StaticVector, SVector
+using StaticArrays: MMatrix, MVector, SMatrix, StaticMatrix, StaticVector, SVector, setindex
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options

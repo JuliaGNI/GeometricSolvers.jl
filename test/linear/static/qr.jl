@@ -63,7 +63,7 @@ end
         # the first zero diagonal entry: a zero column c gives info == c
         @test [factorize!!(nothing, m, A).info for A in S.zero_columns] == 1:n
         @test factorize!!(nothing, m, S.zero_matrix).info == 1
-        # equal rows give no exact zero in QR (decided 2026-10-08): no throw and finite factors
+        # equal rows need not give an exact zero in QR: no throw and finite factors
         if n > 1
             fac = factorize!!(nothing, m, S.equal_rows)
             @test all(isfinite, fac.factors)
