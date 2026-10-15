@@ -88,7 +88,10 @@ names it.
 `verify.jl --self-check` exercises overlapping timing ranges, row-order independence, and a
 comparator mutant on an in-memory fixture: the conservative band is 4, and the mutant gives 2.
 The CPU wins only when its slowest run is faster than the device's fastest run; overlapping
-ranges are a tie and keep that n on the device.
+ranges are a tie and keep that n on the device. The band counts the own R1 variants, `M` and `S`:
+the SNS baseline enters neither the CPU comparison nor the compile cap of the band, and `verify.jl`
+notes the first n where the CPU loop beats it. The fixture holds such an SNS row, so the self-check
+fails if the band counts SNS.
 
 The test problem never pivots, so the grid does not exercise the pivoting of the two LU solves.
 `lu_check.jl` does: it solves random systems that pivot with both variants and compares the
