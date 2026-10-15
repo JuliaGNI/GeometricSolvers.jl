@@ -127,7 +127,8 @@ function run_rows(io::IO, be::Symbol, vendor, want_variant, want_tmode, want_n)
     println(io, "Julia ", VERSION)
     println(io, "Card: ", card_name(be, vendor))
     println(io, "Packages: ", package_versions(vendor))
-    println(io, "Compile cap: ", COMPILE_CAP_S, " s; timing runs: ", TIMING_RUNS)
+    println(io, "Compile cap: ", COMPILE_CAP_S, " s; time cap: ", TIME_CAP_S,
+        " s per cell; timing runs: ", TIMING_RUNS)
     project = Base.active_project()
     for (variant, tmode) in rows_of(string(be)), n in NS
 

@@ -146,13 +146,20 @@ function measure_row(backend::Symbol, vendor, variant::String, tmode::String, n:
     # A device Float64 row gives an iteration count and a residual, but no timing (decision 6).
     not_timed_f64 = is_device && tmode == "F64"
     batch = compile_cap || not_timed_f64 ? nothing : make_batch(A, maximum(NSYS))
+    prev = nothing  # the (count, median) of the cell before
+    time_cap = false
+    row["time_cap_s"] = string(TIME_CAP_S)
     for (cell, count) in zip(("solves_1e4", "solves_1e5", "solves_1e6"), NSYS)
         if compile_cap
             row[cell] = "not run: compile cap"
         elseif not_timed_f64
             row[cell] = "not timed: device Float64"
+        elseif time_cap || prev !== nothing && projected_s(prev..., count) > TIME_CAP_S
+            time_cap = true
+            row[cell] = "not run: time cap"
         else
             ts = solves(kb, solver, A, batch, count)
+            prev = (count, median(ts))
             row[cell] = timings_text(ts, count)
             row["rate_" * cell] = string(round(count / median(ts), sigdigits = 6))
             row["spread_" * cell] = string(round((maximum(ts) - minimum(ts)) / median(ts), sigdigits = 6))

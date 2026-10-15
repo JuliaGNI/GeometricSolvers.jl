@@ -22,6 +22,7 @@ const MARKS = (
     r"^wrong: maxiters$",
     r"^wrong: (?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$",
     r"^not run: compile cap$",
+    r"^not run: time cap$",
     r"^not timed: device Float64$"
 )
 
@@ -210,6 +211,8 @@ function check_timings!(c::Checks, run::Run)
                     fail!(c, "cpu $(label(r)): timing needs more than one host thread and single-threaded BLAS")
             end
         end
+        prev = nothing  # the (nsys, median) of the cell before
+        time_cap = false
         for (cell, nsys) in zip(TIMING_COLUMNS, NSYS)
             value = get(r, cell, "")
             isempty(value) && continue
@@ -217,7 +220,17 @@ function check_timings!(c::Checks, run::Run)
                value != "not timed: device Float64" && value != "not run: compile cap"
                 fail!(c, "$(run.backend) $(label(r)): device Float64 throughput must be untimed")
             end
+            over_cap = prev !== nothing && projected_s(prev..., nsys) > TIME_CAP_S
+            if value == "not run: time cap"
+                time_cap || over_cap ||
+                    fail!(c,
+                        "$(run.backend) $(label(r)): $cell has a time cap that its projection does not pass")
+                time_cap = true
+                continue
+            end
             is_mark(value) && continue
+            (time_cap || over_cap) &&
+                fail!(c, "$(run.backend) $(label(r)): $cell holds a timing that the time cap stops")
             parts = split(value)
             if length(parts) != 2 || !startswith(parts[2], "solves_per_s=")
                 fail!(c, "$(run.backend) $(label(r)): $cell does not hold five values and a rate")
@@ -231,6 +244,7 @@ function check_timings!(c::Checks, run::Run)
             end
             values = Float64.(raw)
             med = median(values)
+            prev = (nsys, med)
             spread = (maximum(values) - minimum(values)) / med
             recorded_spread = tryparse(Float64, get(r, "spread_" * cell, ""))
             recorded_spread !== nothing &&

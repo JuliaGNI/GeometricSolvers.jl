@@ -55,7 +55,12 @@ check 3 and the evidence behind them: the allocator method and count, the answer
 median of a launch, and — for each timing cell — all five raw values, the rate and the spread, so
 `verify.jl` can recompute them. A cell that has no value carries one of the marks of §10.E:
 `does not compile: <first error line>`, `wrong: <‖x−x*‖∞>`, `wrong: maxiters`,
-`not run: compile cap`, `not timed: device Float64`.
+`not run: compile cap`, `not run: time cap`, `not timed: device Float64`.
+
+The time cap bounds the wall time of one throughput cell at 30 minutes. Before a cell runs, the
+median of the cell before it projects the cell's time — a warm launch and five timed launches;
+a cell whose projection passes the cap is not run, and nor is any larger cell. The `1e4` cell
+always runs. `verify.jl` derives each `time cap` mark from the raw values again.
 
 CPU rows retain five allocation samples; device rows retain the matching LLVM allocator call sites.
 CUDA rows also record registers and local-memory bytes from the compiled KA kernel; local-memory
