@@ -111,10 +111,14 @@ so that a compat-only bump can be told apart from an interface change.
   entry for finiteness: a `NaN` gives a non-finite step or `SINGULAR`, and an `Inf` gives what the
   elimination gives, which for a real `Inf` pivot is the finite limit, as in LAPACK. With a
   factorisation precision below the working type, as `LUFactorization(Float32)` for a `Float64`
-  system, the factors are in `Float32` (`ComplexF32` for a complex system), and the right-hand
-  side is scaled by its largest absolute entry before the conversion, so a right-hand side of size
-  `1e-40` or `1e40` solves to the `Float32` bound. A precision marker such as `TF32()` has no method
-  for a static matrix. `StaticArrays` is a new dependency.
+  system, the matrix is first divided by a power of two that brings its largest entry near 1, which
+  is exact, and the factors are in `Float32` (`ComplexF32` for a complex system). A matrix of scale
+  `1e-50` or `1e50` therefore factorises and solves to the `Float32` bound, though entries far below
+  the largest can still underflow. The right-hand side is scaled by its largest absolute entry
+  before the conversion, so a right-hand side of size `1e-40` or `1e40` solves to the `Float32`
+  bound too. QR takes its column norm as LAPACK's `nrm2` does, so an entry below `sqrt(floatmin)`
+  or above `sqrt(floatmax)` does not give a wrong step. A precision marker such as `TF32()` has no
+  method for a static matrix. `StaticArrays` is a new dependency, at 1.9.8 or later.
 - Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
   `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts
   every float of a method tree to `R` through `Adapt`.
