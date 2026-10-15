@@ -60,8 +60,9 @@ median of a launch, and — for each timing cell — all five raw values, the ra
 The time cap bounds the wall time of one throughput cell at 30 minutes. Before a cell runs, the
 median of the cell before it projects the cell's time — a warm launch and five timed launches;
 a cell whose projection passes the cap is not run, and nor is any larger cell. The `1e4` cell
-always runs. `verify.jl` derives each `time cap` mark from the raw values again. A run from before
-the cap measured some such cells in full; `verify.jl` keeps their timings and notes them.
+always runs. `verify.jl` derives each `time cap` mark from the raw values again. A row without
+`time_cap_s` comes from a run without the cap; `verify.jl` keeps the timing of such a cell and
+notes it.
 
 CPU rows retain five allocation samples; device rows retain the matching LLVM allocator call sites.
 CUDA rows also record registers and local-memory bytes from the compiled KA kernel; local-memory
