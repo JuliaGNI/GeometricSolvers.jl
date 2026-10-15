@@ -5,6 +5,20 @@
 # overflow above `sqrt(floatmax)`, as `abs2` has.
 abs1(a) = abs(real(a)) + abs(imag(a))
 
+# The multiplier a / p, chosen so that a twin row cancels exactly: for `a == p` it is exactly one.
+# A real `a / p` is. Julia's complex `/` is not (for ComplexF64 it gives z / z != 1 for some z), so
+# a complex multiplier is (a′ conj(p′)) / |p′|², with a′ and p′ scaled by s = |re p| + |im p|. For
+# a == p the product a′ conj(a′) has the imaginary part 0 and the real part |a′|², rounded as
+# `abs2` rounds it, and the scaling keeps |p′|² finite and non-zero. Not a * inv(p): two equal
+# rows then do not cancel.
+multiplier(a::Real, p::Real) = a / p
+function multiplier(a::Complex, p::Complex)
+    s = abs1(p)
+    a′ = a / s
+    p′ = p / s
+    return (a′ * conj(p′)) / abs2(p′)
+end
+
 function factorize!!(::Union{Nothing, StaticLU},
         method::LUFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
@@ -35,9 +49,8 @@ function factorize!!(::Union{Nothing, StaticLU},
             # a zero pivot: skip the column's division and go on, as LAPACK's `getrf`
             info == 0 && (info = Int32(k))
         else
-            # a[i,k] / a[k,k], not a[i,k] * inv(a[k,k]): two equal rows then cancel exactly
             for i in (k + 1):N
-                A[i, k] = A[i, k] / akk
+                A[i, k] = multiplier(A[i, k], akk)
             end
             for j in (k + 1):N
                 for i in (k + 1):N

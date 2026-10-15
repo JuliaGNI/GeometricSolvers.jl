@@ -35,6 +35,16 @@ epsf(::Type{T}, ::Type{TF}) where {T, TF} = eps(real(factortype(T, TF)))
 "The largest `κ∞` a test draws: `0.1 / (n · eps(TF))` (check 1)."
 κcap(n, ::Type{T}, ::Type{TF}) where {T, TF} = 0.1 / (n * epsf(T, TF))
 
+"""
+    extreme_scales(R)
+
+The scales near the square root of the range of the real factor type `R`, which join check 1's
+scale family for LU (decision of 2026-10-15): `|p|²` of an unscaled complex pivot overflows or
+underflows there.
+"""
+extreme_scales(::Type{Float32}) = (1e30, 1e-30)
+extreme_scales(::Type{Float64}) = (1e200, 1e-200)
+
 "`κ∞(A)`, in `BigFloat`."
 function κinf(A)
     Ab = big.(Matrix(A))
@@ -86,15 +96,16 @@ end
     pivoting_matrices(seed, T, TF, n)
 
 The matrices of check 2: a well-conditioned `A` with `A[1,1] = 0`, the same with
-`A[1,1] = eps(TF)^2`, and `im` times each, whose real parts are all zero for a complex `T`.
+`A[1,1] = eps(TF)^2`, and, for a complex `T`, `im * B` for a real `B` with the same two edits,
+whose real parts are all zero.
 """
 function pivoting_matrices(seed, ::Type{T}, ::Type{TF}, n) where {T, TF}
-    A = random_matrix(Xoshiro(seed), T, n, 10.0)
-    A0 = Base.setindex(A, zero(T), 1, 1)
-    Aε = Base.setindex(A, T(epsf(T, TF)^2), 1, 1)
-    real_matrices = (A0, Aε)
-    return T <: Complex ? (real_matrices..., map(M -> im * M, real_matrices)...) :
-           real_matrices
+    edits(A) = (Base.setindex(A, zero(eltype(A)), 1, 1),
+        Base.setindex(A, eltype(A)(epsf(T, TF)^2), 1, 1))
+    matrices = edits(random_matrix(Xoshiro(seed), T, n, 10.0))
+    T <: Complex || return matrices
+    imaginary = map(B -> im * T.(B), edits(random_matrix(Xoshiro(seed), real(T), n, 10.0)))
+    return (matrices..., imaginary...)
 end
 
 """

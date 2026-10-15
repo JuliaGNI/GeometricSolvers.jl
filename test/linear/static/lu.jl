@@ -21,10 +21,12 @@ lu_method(::Type{TF}) where {TF} = LUFactorization{TF}()
             @test eltype(x) === T
             @test relerr(x, reference(A, b)) <= bound(A, T, TF)
         end
-        # the scale family s·A, s = 10^k: the bound is scale-free
+        # the scale family s·A, s = 10^k: the bound is scale-free; s near the square root of the
+        # range of the factor type checks that a complex multiplier does not overflow or underflow
+        # in |p|² (decision of 2026-10-15)
         A, b = first(systems)
-        for k in -8:4:8
-            sA = real(T)(10.0^k) * A
+        for s in (exp10.(-8:4:8)..., extreme_scales(real(factortype(T, TF)))...)
+            sA = real(T)(s) * A
             fac, x = host_solve(m, sA, b)
             @test returncode(fac) === SUCCESS
             @test relerr(x, reference(sA, b)) <= bound(sA, T, TF)
@@ -67,34 +69,38 @@ end
     end
 
     @testset "the equal-rows LU at n = 2 is SINGULAR, $T" for T in ELTYPES
-        # the reciprocal multiplier a[i,k] * inv(a[k,k]) gives info == 0 here (part I, measured)
+        # the reciprocal multiplier a * inv(p) gives info == 0 here in Float64 (part I, measured),
+        # and Julia's complex `/` does in ComplexF64, for 25 of these 100 draws
         rng = Xoshiro(42)
-        singular = count(1:100) do _
+        As = map(1:100) do _
             r = randn(rng, T, 2)
-            A = SMatrix{2, 2, T}(r[1], r[1], r[2], r[2])
-            factorize!!(nothing, lu_method(Nothing), A).info == 2
+            SMatrix{2, 2, T}(r[1], r[1], r[2], r[2])
         end
-        # in ComplexF64 this fails: Julia's ComplexF64 division gives z / z != 1 for 25 of these
-        # 100 draws, so the twin row does not cancel exactly (part I, open question 1)
-        @test singular == 100
+        @test count(A -> factorize!!(nothing, lu_method(Nothing), A).info == 2, As) == 100
+        # the same in a kernel on CPU()
+        bs = fill(SVector{2, T}(1, 2), length(As))
+        _, info = kernel_solve(Array, lu_method(Nothing), As, bs)
+        @test count(==(2), info) == 100
     end
 
-    @testset "non-finite and subnormal entries: no throw, never a finite step with info 0" for T in ELTYPES
+    @testset "non-finite and subnormal entries: no throw, no finiteness check" for T in ELTYPES
         R = real(T)
         m = lu_method(Nothing)
         A = random_matrix(Xoshiro(5), T, 4, 10.0)
         b = SVector{4, T}(randn(Xoshiro(6), T, 4))
-        function nonfinite_or_singular(v, i, j)
-            fac, x = host_solve(m, Base.setindex(A, T(v), i, j), b)
-            return fac.info != 0 || !all(isfinite, x)
-        end
+        nonfinite_or_singular(fac, x) = fac.info != 0 || !all(isfinite, x)
+        perturbed(v, i, j) = host_solve(m, Base.setindex(A, T(v), i, j), b)
         places = ((1, 1), (3, 2))
-        @test all(((i, j),) -> nonfinite_or_singular(R(NaN), i, j), places)
-        # this fails: an Inf pivot gives the multipliers 0 and the step component 0, so the step
-        # is finite with info == 0 (part I, open question 2)
-        infinite = [nonfinite_or_singular(s * R(Inf), i, j)
-                    for s in (1, -1), (i, j) in places]
-        @test all(infinite)
+        # a NaN gives a non-finite step or info > 0
+        @test all(((i, j),) -> nonfinite_or_singular(perturbed(R(NaN), i, j)...), places)
+        # a ±Inf gives what the elimination gives, and nothing throws; at (1, 1) it is the pivot,
+        # which is not zero, so info == 0: there is no finiteness check (decision of 2026-10-15)
+        for v in (R(Inf), -R(Inf)), (i, j) in places
+
+            fac = first(perturbed(v, i, j))
+            @test fac isa StaticLU
+            (i, j) == (1, 1) && @test fac.info == 0
+        end
         # a subnormal non-zero pivot is not singular
         @test factorize!!(nothing, m, SMatrix{1, 1, T}(nextfloat(zero(R)))).info == 0
         @test factorize!!(nothing, m, SMatrix{1, 1, T}(floatmin(R) / 4)).info == 0
