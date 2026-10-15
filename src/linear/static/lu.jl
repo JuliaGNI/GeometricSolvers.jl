@@ -31,11 +31,11 @@ function factorize!!(::Union{Nothing, StaticLU},
     @inbounds for k in 1:N
         # the first largest entry of the subcolumn
         p = k
-        big = abs1(A[k, k])
+        amax = abs1(A[k, k])
         for i in (k + 1):N
             a = abs1(A[i, k])
-            if a > big
-                big = a
+            if a > amax
+                amax = a
                 p = i
             end
         end

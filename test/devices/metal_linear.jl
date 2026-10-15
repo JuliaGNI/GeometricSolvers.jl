@@ -18,7 +18,9 @@ if Metal.functional()
         m = M()
         S = singular_matrices(3000n + 1, T, n)
         systems = conditioned_systems(1000n + 1, T, Nothing, n)
-        As = [first.(systems); S.zero_columns; [S.zero_matrix]]
+        # two equal rows give an exact zero pivot in LU, and as a rule no exact zero in QR
+        equal = M === LUFactorization && n > 1 ? [S.equal_rows] : empty(S.zero_columns)
+        As = [first.(systems); S.zero_columns; equal; [S.zero_matrix]]
         bs = [last.(systems); fill(last(first(systems)), length(As) - length(systems))]
         x, info = kernel_solve(MtlArray, m, As, bs)
         for (k, (A, b)) in enumerate(systems)

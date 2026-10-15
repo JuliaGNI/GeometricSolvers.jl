@@ -74,8 +74,7 @@
 - **evidence:** `factorize!!(nothing, LUFactorization(), SMatrix{2, 2, BigFloat}(2, 1, 1, 3))`,
   and the same with `QRFactorization()`, raise `setindex!() with non-isbitstype eltype is not
   supported by StaticArrays. Consider using SizedArray.` (Julia 1.13.1). Both kernels work on a
-  local `MMatrix`, the R1 storage of the design (§5.2), and an `MMatrix` of a non-`isbits` element
-  type has no `setindex!`. Decision 12 makes `BigFloat` best effort on the CPU, and no check of
-  part I names it.
+  local `MMatrix`, the R1 storage, and an `MMatrix` of a non-`isbits` element type has no
+  `setindex!`. `BigFloat` is best effort on the CPU, and no test names it.
 - **kind:** found late
 - **found:** 2026-10-15

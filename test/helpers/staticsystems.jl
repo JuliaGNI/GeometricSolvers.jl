@@ -2,7 +2,7 @@
 # pairs, the test matrices with a stated condition number, the `BigFloat` reference, the error
 # bound, and the KernelAbstractions kernel that solves one system per thread.
 #
-# The bound is check 1 of the design (part I): partial-pivot LU and Householder QR have a backward
+# The bound of check 1: partial-pivot LU and Householder QR have a backward
 # error of order `n · eps(TF)` when the growth factor is near 1, and `κ∞(A)` carries it to `x`, so
 #
 #     ‖x − x_ref‖∞ / ‖x_ref‖∞ ≤ 4n · eps(TF) · κ∞(A),
@@ -16,12 +16,12 @@ using LinearAlgebra: Diagonal, opnorm, qr
 using Random: Xoshiro, randn
 using StaticArrays: SMatrix, SVector
 
-# n = 1, 4, 16 and 24: the R1 band of §1.1 reaches 24 on Metal and on CUDA, the largest size, and 16
-# is the top of its general estimate n ≤ 8…16.
+# n = 1, 4, 16 and 24: 24 is the largest size of the R1 band on Metal and on CUDA, and 16 the top
+# of its general estimate n ≤ 8…16.
 const STATIC_SIZES = (1, 4, 16, 24)
 
 # (T, TF) for a method `M{TF}()`: every element type with `TF = Nothing`, the working type, and the
-# lower pairs of decisions 10 and 15, `Float64` and `ComplexF64` factorised with `TF = Float32`.
+# lower pairs, `Float64` and `ComplexF64` factorised with `TF = Float32`.
 const PRECISION_PAIRS = (map(T -> (T, Nothing), ELTYPES)...,
     map(T -> (T, Float32), filter(T -> real(T) === Float64, ELTYPES))...)
 

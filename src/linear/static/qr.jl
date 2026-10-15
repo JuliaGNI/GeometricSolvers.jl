@@ -5,11 +5,6 @@
 # x₁ = 0. With v = x − β e₁ scaled to w = v / v₁, the reflector is I − τ w wᴴ with
 # τ = (‖x‖ + |x₁|)/‖x‖, a real number in [1, 2], and every |w[i]| ≤ 1.
 
-# The reflector vector of step k, from the factors: 0 above k, 1 at k, the stored w below.
-function reflector(A::SMatrix{N, N, TF}, k) where {N, TF}
-    return SVector{N, TF}(ntuple(i -> i > k ? A[i, k] : (i == k ? one(TF) : zero(TF)), Val(N)))
-end
-
 function factorize!!(::Union{Nothing, StaticQR},
         method::QRFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
@@ -55,19 +50,27 @@ end
 
 function ldiv!!(::Nothing, fac::StaticQR{N, TF}, r::StaticVector{N, TF}) where {N, TF}
     A = fac.factors
-    # Qᴴ r = H_N ⋯ H_1 r, each reflector Hermitian
-    y = SVector{N, TF}(r)
-    for k in 1:N
-        w = reflector(A, k)
-        y -= (fac.τ[k] * (w' * y)) * w
-    end
-    # R x = Qᴴ r
-    x = MVector{N, TF}(y)
-    @inbounds for k in N:-1:1
-        xk = x[k] / A[k, k]
-        x[k] = xk
-        for i in 1:(k - 1)
-            x[i] -= A[i, k] * xk
+    x = MVector{N, TF}(r)
+    @inbounds begin
+        # Qᴴ r = H_N ⋯ H_1 r, each reflector Hermitian: x[k:N] -= τ w (wᴴ x[k:N])
+        for k in 1:N
+            s = x[k]
+            for i in (k + 1):N
+                s += conj(A[i, k]) * x[i]
+            end
+            s *= fac.τ[k]
+            x[k] -= s
+            for i in (k + 1):N
+                x[i] -= A[i, k] * s
+            end
+        end
+        # R x = Qᴴ r
+        for k in N:-1:1
+            xk = x[k] / A[k, k]
+            x[k] = xk
+            for i in 1:(k - 1)
+                x[i] -= A[i, k] * xk
+            end
         end
     end
     return SVector(x)

@@ -81,7 +81,7 @@ end
 
 `SUCCESS` for a factor with `info == 0`, and `SINGULAR` otherwise.
 """
-returncode(fac) = iszero(fac.info) ? SUCCESS : SINGULAR
+returncode(fac::Union{StaticLU, StaticQR}) = iszero(fac.info) ? SUCCESS : SINGULAR
 
 # The `T ≠ TF` method: the right-hand side has another element type than the factors.
 function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}},
