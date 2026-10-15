@@ -38,8 +38,8 @@ epsf(::Type{T}, ::Type{TF}) where {T, TF} = eps(real(factortype(T, TF)))
 """
     extreme_scales(R)
 
-The LU scales for which `|p|²` of an unscaled complex pivot overflows or underflows in the real
-factor type `R`.
+The scales for which an unscaled square overflows or underflows in the real factor type `R`: `|p|²`
+of a complex LU pivot and the squares of a QR column norm.
 """
 extreme_scales(::Type{Float32}) = (1e30, 1e-30)
 extreme_scales(::Type{Float64}) = (1e200, 1e-200)

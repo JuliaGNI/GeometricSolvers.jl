@@ -8,17 +8,26 @@
 function factorize!!(::Union{Nothing, StaticQR},
         method::QRFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
-    F = factor_eltype(method, T)
-    A = MMatrix(SMatrix{N, N, F}(J))
+    Â, e = factor_matrix(factor_eltype(method, T), J)
+    A = MMatrix(Â)
+    F = eltype(A)
     τ = zero(SVector{N, F})
     info = Int32(0)
     @inbounds for k in 1:N
-        # the subcolumn A[k:N, k], zero above k, so that its norm goes through `rnorm`
-        x = zero(MVector{N, F})
+        # ‖A[k:N, k]‖ as LAPACK's `nrm2` takes it: the subcolumn, zero above k, is divided by its
+        # largest |A[i, k]| before `rnorm` squares it, so that the squares neither overflow nor
+        # underflow
+        amax = zero(real(F))
         for i in k:N
-            x[i] = A[i, k]
+            amax = max(amax, abs(A[i, k]))
         end
-        σ = rnorm(SVector(x))
+        x = zero(MVector{N, F})
+        if !iszero(amax)
+            for i in k:N
+                x[i] = A[i, k] / amax
+            end
+        end
+        σ = amax * rnorm(SVector(x))
         if !iszero(σ)
             x₁ = A[k, k]
             phase = iszero(x₁) ? one(F) : x₁ / abs(x₁)
@@ -45,10 +54,11 @@ function factorize!!(::Union{Nothing, StaticQR},
         # a zero subcolumn leaves τ[k] = 0 and R[k, k] = 0, with no 0/0
         iszero(A[k, k]) && info == 0 && (info = Int32(k))
     end
-    return StaticQR(SMatrix(A), τ, info)
+    return StaticQR(SMatrix(A), τ, info, e)
 end
 
-function ldiv!!(::Nothing, fac::StaticQR{N, TF}, r::StaticVector{N, TF}) where {N, TF}
+# The solve with the stored factors, of the matrix that `factorize!!` divided by `2^e`.
+function backsolve(fac::StaticQR{N, TF}, r::SVector{N, TF}) where {N, TF}
     A = fac.factors
     x = MVector{N, TF}(r)
     @inbounds begin

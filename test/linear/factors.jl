@@ -67,7 +67,36 @@ end
         @test returncode(factorize!!(nothing, M(), A)) === SUCCESS
         @test returncode(factorize!!(nothing, M(), zero(A))) === SINGULAR
     end
-    @test returncode(StaticLU(A, SVector{2, Int32}(1, 2), Int32(0))) === SUCCESS
-    @test returncode(StaticLU(A, SVector{2, Int32}(1, 2), Int32(2))) === SINGULAR
-    @test returncode(StaticQR(A, SVector(0.0, 0.0), Int32(1))) === SINGULAR
+    @test returncode(StaticLU(A, SVector{2, Int32}(1, 2), Int32(0), Int32(0))) === SUCCESS
+    @test returncode(StaticLU(A, SVector{2, Int32}(1, 2), Int32(2), Int32(0))) === SINGULAR
+    @test returncode(StaticQR(A, SVector(0.0, 0.0), Int32(1), Int32(0))) === SINGULAR
+end
+
+@testset "the T ≠ TF factorisation divides J by a power of two, $M, $T with TF = $TF" for M in STATIC_METHODS,
+    (T, TF) in LOWER_PAIRS
+
+    m = M(TF)
+    F = factortype(T, TF)
+    A, b = first(conditioned_systems(5001, T, TF, 4))
+    # 1e-50 and 1e-39 are below floatmin(Float32), 1e40 and 1e50 above floatmax(Float32): unscaled,
+    # the conversion of s·A to Float32 flushes it to zero or overflows
+    for s in (1e-50, 1e-39, 1e40, 1e50)
+        sA = real(T)(s) * A
+        fac, x = host_solve(m, sA, b)
+        @test returncode(fac) === SUCCESS
+        @test all(isfinite, x)
+        @test relerr(x, reference(sA, b)) <= bound(sA, T, TF)
+    end
+    # the division is exact: 2^100 A has the factors of A, and an exponent larger by 100
+    fac = factorize!!(nothing, m, A)
+    fac100 = factorize!!(nothing, m, ldexp(one(real(T)), 100) * A)
+    @test fac100.factors == fac.factors
+    @test fac100.scale_exponent == fac.scale_exponent + 100
+    # a right-hand side in the factor type takes the direct solve, which applies 2^-e too
+    A20 = ldexp(one(real(T)), 20) * A
+    r = SVector{4, F}(b)
+    @test relerr(ldiv!!(nothing, factorize!!(nothing, m, A20), r), reference(A20, r)) <=
+          bound(A20, T, TF)
+    # without a conversion there is no division
+    @test factorize!!(nothing, M(), real(T)(1e40) * A).scale_exponent == 0
 end

@@ -23,9 +23,8 @@ end
 function factorize!!(::Union{Nothing, StaticLU},
         method::LUFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
-    F = factor_eltype(method, T)
-    # convert through an SMatrix to keep the element-type conversion off the heap
-    A = MMatrix(SMatrix{N, N, F}(J))
+    Â, e = factor_matrix(factor_eltype(method, T), J)
+    A = MMatrix(Â)
     ipiv = zero(SVector{N, Int32})
     info = Int32(0)
     @inbounds for k in 1:N
@@ -60,10 +59,11 @@ function factorize!!(::Union{Nothing, StaticLU},
             end
         end
     end
-    return StaticLU(SMatrix(A), ipiv, info)
+    return StaticLU(SMatrix(A), ipiv, info, e)
 end
 
-function ldiv!!(::Nothing, fac::StaticLU{N, TF}, r::StaticVector{N, TF}) where {N, TF}
+# The solve with the stored factors, of the matrix that `factorize!!` divided by `2^e`.
+function backsolve(fac::StaticLU{N, TF}, r::SVector{N, TF}) where {N, TF}
     A = fac.factors
     x = MVector{N, TF}(r)
     @inbounds begin

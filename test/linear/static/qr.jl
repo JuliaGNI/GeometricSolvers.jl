@@ -21,15 +21,27 @@ qr_method(::Type{TF}) where {TF} = QRFactorization{TF}()
             @test eltype(x) === T
             @test relerr(x, reference(A, b)) <= bound(A, T, TF)
         end
-        # the scale family s·A, s = 10^k: the bound is scale-free
+        # the scale family s·A, s = 10^k: the bound is scale-free; extreme scales check that the
+        # column norm neither overflows nor underflows where unscaled squares do
         A, b = first(systems)
-        for k in -8:4:8
-            sA = real(T)(10.0^k) * A
+        for s in (exp10.(-8:4:8)..., extreme_scales(real(factortype(T, TF)))...)
+            sA = real(T)(s) * A
             fac, x = host_solve(m, sA, b)
             @test returncode(fac) === SUCCESS
             @test relerr(x, reference(sA, b)) <= bound(sA, T, TF)
         end
     end
+end
+
+@testset "a subcolumn below √floatmin solves to the bound, $T" for T in ELTYPES
+    # unscaled, the squares of the first column underflow to 0, the reflector is skipped, and
+    # the step is [1, 1] with SUCCESS
+    R = real(T)
+    A = floatmin(R) * SMatrix{2, 2, T}(1, 1, 0, 1)
+    b = floatmin(R) * SVector{2, T}(1, 1)
+    fac, x = host_solve(qr_method(Nothing), A, b)
+    @test returncode(fac) === SUCCESS
+    @test relerr(x, reference(A, b)) <= bound(A, T, Nothing)
 end
 
 @testset "check 2: the reflector on A[1,1] = 0, A[1,1] = eps(TF)^2 and im·A" begin
