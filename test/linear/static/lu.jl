@@ -126,7 +126,7 @@ end
     end
 
     @testset "LUFactorization(T) equals LUFactorization() at TF = T" for T in REAL_ELTYPES
-        A, b = first(conditioned_systems(11, T, Nothing, 4))
+        A = first(first(conditioned_systems(11, T, Nothing, 4)))
         @test factorize!!(nothing, LUFactorization(T), A) ===
               factorize!!(nothing, LUFactorization(), A)
     end
