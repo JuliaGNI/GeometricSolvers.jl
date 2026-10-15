@@ -98,7 +98,20 @@ so that a compat-only bump can be told apart from an interface change.
 - `LUFactorization`, `QRFactorization` and `SVDFactorization` carry their factorisation precision
   as a type parameter: `LUFactorization()` for the working type, `LUFactorization(Float32)` for a
   `Float32` factorisation, and the markers `TF32()`, `FP16()`, `BF16()` for vendor tensor cores.
-  No factorisation runs yet.
+- `LUFactorization` and `QRFactorization` solve a static system (R1). The internal
+  `GeometricSolvers.factorize!!(nothing, method, J)`, for an `SMatrix` or `MMatrix` `J`, returns an
+  `isbits` factor: LU with partial pivoting and `Int32` pivots, the pivot being the first largest
+  `|re| + |im|`, or Householder QR without column pivoting. `GeometricSolvers.ldiv!!(nothing, fac, r)`
+  returns the step as an `SVector` in the element type of `r`. Both run inside a
+  KernelAbstractions kernel, one system per thread, and allocate nothing unless bounds checks are
+  forced (`--check-bounds=yes` moves the local `MMatrix` to the heap). A singular matrix does not
+  throw: `info` holds the index of the first zero pivot, or of the first zero diagonal entry of
+  `R`, and `GeometricSolvers.returncode(fac)` gives `SINGULAR`. With a factorisation precision
+  below the working type, as `LUFactorization(Float32)` for a `Float64` system, the factors are in
+  `Float32` (`ComplexF32` for a complex system), and the right-hand side is divided by its largest
+  absolute entry before the conversion, so a right-hand side of size `1e-40` or `1e40` solves to
+  the `Float32` bound. A precision marker such as `TF32()` has no method for a static matrix.
+  `StaticArrays` is a new dependency.
 - Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
   `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts
   every float of a method tree to `R` through `Adapt`.
