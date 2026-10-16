@@ -211,5 +211,7 @@ so that a compat-only bump can be told apart from an interface change.
 - Internal: `jacobian!!` and `jvp!!` for a `StaticVector` or a `Number` iterate. With the
   source `nothing`, `jacobian!!` returns the problem's `J` and `jvp!!` returns `J(x, p) * v`; with
   `AutoForwardDiff()`, `jacobian!!` differentiates the residual with ForwardDiff, and `jvp!!` takes
-  one dual evaluation of it. The ForwardDiff path allocates nothing. A method's own operator is a
-  `JacobianFunction`, which `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.
+  one dual evaluation of it. The R1 direction has the element type and the length of the iterate,
+  as the line-search slope does: a direction of another element type is a host `MethodError`. The
+  ForwardDiff path allocates nothing. A method's own operator is a `JacobianFunction`, which
+  `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.

@@ -76,20 +76,6 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K8 · The two R1 preparations of `jvp!!` return different element types for a mixed direction.
-
-- **location:** `src/ad/jvp.jl` (`jvp!!(::Nothing, ::AutoForwardDiff, …)`)
-- **evidence:** with a `Float32` iterate `x`, a `Float64` direction `v` and `F(x, p) = p .* x`,
-  `jvp!!(nothing, AutoForwardDiff(), prob, x, v, p)` returns a `SVector{3, Float32}`, because the
-  dual's partials are seeded in the iterate's element type, while
-  `jvp!!(nothing, nothing, prob, x, v, p)` returns a `SVector{3, Float64}`, because `J(x, p) * v`
-  promotes. At `v = (1/3, 1/7, 1/9)` the two differ by
-  `[1.9868214962137642e-8, -6.3862119481505886e-9, 9.934107481068821e-9]`: the seed rounds the
-  direction, the dense product does not. No test names a mixed call, because a direction of the
-  iterate's own element type is the case the seam is specified on.
-- **kind:** found late
-- **found:** 2026-10-16
-
 ### K9 · `QRFactorization` on Metal fails in `Float32` at `n = 4` on Julia 1.13.
 
 - **location:** `test/devices/metal_linear.jl:28`

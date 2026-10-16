@@ -236,6 +236,27 @@ end
     end
 end
 
+"The other precision of the same kind: `Float32` ↔ `Float64`, `ComplexF32` ↔ `ComplexF64`."
+r1_other_precision(::Type{Float32}) = Float64
+r1_other_precision(::Type{Float64}) = Float32
+r1_other_precision(::Type{ComplexF32}) = ComplexF64
+r1_other_precision(::Type{ComplexF64}) = ComplexF32
+
+@testset "the R1 direction has the iterate's element type, $T" for T in ELTYPES
+    W = r1_other_precision(T)
+    x, p = r1_inputs(T, N_STATIC)
+    prob = r1_scaled_problem()
+    scalar = NonlinearProblem(R1ScalarScaled(), r1_scalar_scaled_jacobian)
+    # The direction has the element type of the iterate, as the line-search slope does, so a
+    # direction of the other precision is a host `MethodError` raised by `jvp!!` itself — through
+    # both R1 preparations — rather than a value a widened method rounds.
+    for prep in (nothing, AutoForwardDiff())
+        @test r1_raises_missing_method(() -> jvp!!(nothing, prep, prob, x, W.(x), p), jvp!!)
+        @test r1_raises_missing_method(
+            () -> jvp!!(nothing, prep, scalar, T(2), W(5), T(3)), jvp!!)
+    end
+end
+
 @testset "every R1 preparation value is isbits, $T" for T in ELTYPES
     x, p = r1_inputs(T, N_STATIC)
     prob = r1_scaled_problem()

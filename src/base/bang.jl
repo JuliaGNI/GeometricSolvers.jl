@@ -104,7 +104,9 @@ rather than `n`, and it is what the mixed-precision refinement residual uses.
 `prep` is the JVP preparation that `init` built from the problem, never from a method's operator,
 and it selects the code exactly as in [`jacobian!!`](@ref). In R1 the output slot `Jv` is
 `nothing` and the call returns a new value: `nothing` gives `J(x, p) * v` from the problem's `J`,
-and an `AutoForwardDiff` one dual evaluation of `F`. In R3 `Jv` is a buffer and `prep` is a
-[`DIJacobian`](@ref) or a [`ChunkedForwardDiff`](@ref).
+and an `AutoForwardDiff` one dual evaluation of `F`. The R1 direction has the element type and the
+length of the iterate, as the line-search slope does: a direction of another element type is a
+host `MethodError`. In R3 `Jv` is a buffer and `prep` is a [`DIJacobian`](@ref) or a
+[`ChunkedForwardDiff`](@ref).
 """
 function jvp!! end
