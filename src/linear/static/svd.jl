@@ -212,21 +212,25 @@ function factorize!!(::Union{Nothing, StaticSVD},
         end
     end
 
-    # the singular values of the matrix the caller passed: a power of two scales one exactly
+    # the singular values of the matrix the caller passed: a power of two scales one exactly.
+    # `σ̂` keeps the ones the sweep computed, of the matrix as `factorize!!` divided it: the solve
+    # divides by those, so that a `σ₁` above `floatmax(R)` — a `σ` the report cannot hold, where
+    # every entry of the matrix is finite — still leaves a finite step
+    σ̂ = σ
     for j in 1:N
         σ = setindex(σ, ldexp2(σ[j], e), j)
     end
-    return StaticSVD(SMatrix(A), SMatrix(V), σ, info, converged, e)
+    return StaticSVD(SMatrix(A), SMatrix(V), σ, σ̂, info, converged, e)
 end
 
 # The solve with the stored factors, of the matrix that `factorize!!` divided by `2^e`: the
 # truncated pseudo-inverse `V Σ⁺ Uᴴ r`. Its coordinates are taken in the scaled domain, where the
-# divisor `Σ · 2^-e` is the one the sweep computed, and the step is multiplied back by `2^-e` as
-# the LU and QR solves are.
+# divisor is `σ̂`, the singular value the sweep computed, and the step is multiplied back by `2^-e`
+# as the LU and QR solves are: `σ` itself can be `Inf` where `σ₁` is above `floatmax(R)`, and a
+# division by it would make the step zero.
 function backsolve(fac::StaticSVD{N, TF}, r::SVector{N, TF}) where {N, TF}
     U = fac.factors
     V = fac.V
-    e = fac.scale_exponent
     # the directions the rank cutoff counted as zero contribute nothing: dividing by their
     # rounding noise is what turns a null direction into an enormous step, or into a `NaN`
     rank = fac.info == 0 ? N : Int(fac.info) - 1
@@ -236,7 +240,7 @@ function backsolve(fac::StaticSVD{N, TF}, r::SVector{N, TF}) where {N, TF}
         @inbounds for i in 1:N
             s += conj(U[i, j]) * r[i]
         end
-        d[j] = s / ldexp2(fac.σ[j], -e)
+        d[j] = s / fac.σ̂[j]
     end
     x = zero(MVector{N, TF})
     @inbounds for i in 1:N, j in 1:N

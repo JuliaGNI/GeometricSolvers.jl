@@ -9,7 +9,7 @@
 using GeometricSolvers
 using GeometricSolvers: factorize!!, ldiv!!, returncode, StaticSVD
 using JET: JET
-using LinearAlgebra: Diagonal, norm, opnorm, qr
+using LinearAlgebra: Diagonal, norm, opnorm
 using Random: Xoshiro, randn
 using StaticArrays: MMatrix, SMatrix, SVector, setindex
 using Test
@@ -35,20 +35,6 @@ end
 The `n × n` matrix of the small integers `i + j` in `T`, for check 1.
 """
 integers(::Type{T}, n) where {T} = SMatrix{n, n, T}([i + j for i in 1:n, j in 1:n])
-
-"""
-    rank_deficient(seed, T, n, r)
-
-`U Σ Vᴴ` in `T` with `U` and `V` unitary and `Σ` holding the `r` values `1, 1/2, …` and zeros,
-so that the stored matrix has the numerical rank `r` at `√n · eps` for every element type.
-"""
-function rank_deficient(seed, ::Type{T}, n, r) where {T}
-    rng = Xoshiro(seed)
-    U = SMatrix{n, n, T}(Matrix(qr(randn(rng, T, n, n)).Q))
-    V = SMatrix{n, n, T}(Matrix(qr(randn(rng, T, n, n)).Q))
-    Σ = real(T)[i ≤ r ? real(T)(0.5)^(i - 1) : zero(real(T)) for i in 1:n]
-    return SMatrix{n, n, T}(U * Diagonal(Σ) * V')
-end
 
 @testset "check 1: the subnormal ldexp trap gives finite factors and an exact prescale" begin
     @testset "$T, TF = $TF, n = $n" for (T, TF) in PRECISION_PAIRS, n in STATIC_SIZES
@@ -100,6 +86,14 @@ end
         @test all(σ -> σ ≤ tol * fac.σ[1], fac.σ[(r + 1):end])
         if r >= 1
             @test fac.σ[r] > tol * fac.σ[1]
+        end
+        # the columns of `U` past the rank are zeroed rather than normalized: the divisor of a
+        # null direction is its rounding noise, and dividing by it is what puts a `NaN` into the
+        # factor. The `StaticSVD` docstring and the changelog state the zeroing, which round 1
+        # found no test of: the doubted `if true` mutant survived (blocking defect 4)
+        @test all(isfinite, fac.factors)
+        for j in (r + 1):n
+            @test all(iszero, fac.factors[:, j])
         end
     end
 end
@@ -174,6 +168,80 @@ end
             @test eltype(x) === T
             @test relerr(x, reference(A, b)) <= bound(A, T, TF)
         end
+    end
+end
+
+@testset "check 2 and 4 of part I, for the SVD" begin
+    # §13.J: "Tests: as in I" — the shapes of part I's `test/linear/static/lu.jl` and
+    # `test/linear/static/qr.jl` and of `test/linear/factors.jl` over the SVD: `im·A`, whose real
+    # parts are all zero (check 2), the scale family `s·A` (check 1), and a right-hand side of
+    # `1e±40`, outside the range of `Float32` (check 4).
+    @testset "im·A meets the bound of check 1, $T, TF = $TF" for (T, TF) in filter(
+        p -> p[1] <: Complex, PRECISION_PAIRS)
+        # a complex `T` alone: `im * A` has a complex factor element type for a real `A`, and a
+        # right-hand side of the working type then has no `T ≠ TF` method that returns its type
+        n = 4
+        m = svd_method(TF)
+        A = im * first(pivoting_matrices(2000n + 1, real(T), TF, n))
+        b = SVector{n, T}(randn(Xoshiro(7n), T, n))
+        fac, x = host_solve(m, A, b)
+        @test returncode(fac) === SUCCESS
+        @test eltype(x) === T
+        @test all(isfinite, x)
+        @test relerr(x, reference(A, b)) <= bound(A, T, TF)
+    end
+
+    @testset "the scale family s·A meets the bound of check 1, $T, TF = $TF" for (T, TF) in PRECISION_PAIRS
+        n = 4
+        m = svd_method(TF)
+        A, b = first(conditioned_systems(1000n + 3, T, TF, n))
+        for s in (exp10.(-8:4:8)..., extreme_scales(real(factortype(T, TF)))...)
+            sA = real(T)(s) * A
+            fac, x = host_solve(m, sA, b)
+            @test returncode(fac) === SUCCESS
+            @test all(isfinite, x)
+            @test relerr(x, reference(sA, b)) <= bound(sA, T, TF)
+        end
+    end
+
+    @testset "a right-hand side of 1e±40, $T with TF = $TF" for (T, TF) in filter(
+        p -> p[2] !== Nothing, PRECISION_PAIRS)
+        n = 4
+        m = svd_method(TF)
+        F = factortype(T, TF)
+        A, b = first(conditioned_systems(4000n + 1, T, TF, n))
+        fac = factorize!!(nothing, m, A)
+        @test eltype(fac.factors) === F
+        for s in (1e-40, 1e40)
+            r = SVector{n, T}(s * b / maximum(abs, b))
+            x = ldiv!!(nothing, fac, r)
+            @test eltype(x) === T
+            @test all(isfinite, x)
+            @test relerr(x, reference(A, r)) <= bound(A, T, TF)
+        end
+    end
+
+    @testset "a singular value above floatmax(R) leaves the solve finite, $T" for T in REAL_ELTYPES
+
+        # Round 1's r4: every entry of `A` is finite, and `σ₁` is not representable in `R` — a
+        # full matrix of `floatmax/2` has a `σ₁` near `2·floatmax`. The stored `σ` overflows,
+        # which the `StaticSVD` docstring states; the solve divides by the scaled singular value
+        # instead, so the step is the one the check-1 bound gives and not the zero step with
+        # `SUCCESS` that round 1 measured there, where LU gives 0.1176
+        n = 4
+        m = svd_method(Nothing)
+        A = SMatrix{n, n, T}(fill(floatmax(T) / 2, n, n)) +
+            SMatrix{n, n, T}(Diagonal(fill(floatmax(T) / 8, n)))
+        b = SVector{n, T}(fill(floatmax(T) / 4, n))
+        fac = factorize!!(nothing, m, A)
+        x = ldiv!!(nothing, fac, b)
+        @test fac.converged
+        @test returncode(fac) === SUCCESS
+        # the reported `σ` is the one limit: `σ₁` is not representable in `R`, and every entry of
+        # `A` is finite
+        @test !isfinite(fac.σ[1])
+        @test all(isfinite, x)
+        @test relerr(x, reference(A, b)) <= bound(A, T, Nothing)
     end
 end
 

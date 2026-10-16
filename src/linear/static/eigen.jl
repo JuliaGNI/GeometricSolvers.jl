@@ -12,7 +12,9 @@ The eigenvalues and the eigenvectors of the Hermitian matrix `A`, or of a real s
 by cyclic two-sided Jacobi: the rotations, the round-robin ordering and the stopping test of the
 Jacobi SVD of [`SVDFactorization`](@ref), applied to the rows and the columns of `A` at once. The
 eigenvectors are unitary to working precision, which is what `ProjectedSkew` needs of them
-(decision 27).
+(decision 27). A pair whose off-diagonal entry is negligible against the Frobenius norm of `A` is
+skipped, which is what ends the sweep on a rank-deficient or low-rank matrix, as the SVD's
+negligible-column guard ends its own.
 
 The call returns `(values, vectors, status)`: `values` holds the `N` eigenvalues in
 `real(eltype(A))`, `vectors` the columns of the unitary `V` with `A = V * Diagonal(values) * V'`,
@@ -20,9 +22,10 @@ and `status` is [`SUCCESS`](@ref) where the sweep reached its fixed point, or [`
 where it reached its cap of 30 sweeps first. All three are `isbits`, so the call runs inside a
 kernel.
 
-Only the upper triangle of `A` is read: the matrix is assumed Hermitian, and the lower triangle
-is set to its conjugate on entry. A `NaN` or an `Inf` entry is not checked: nothing throws, and
-the sweep reaches its cap.
+The matrix is assumed Hermitian: the call reads its lower triangle and sets the upper triangle to
+the conjugate of the lower one on entry, so a matrix that is not Hermitian gives the eigensystem
+of that Hermitian part and not the one of `A`. A `NaN` or an `Inf` entry is not checked: nothing
+throws, and the sweep reaches its cap.
 
 For a real skew matrix `M`, the Hermitian matrix is `im * M`, with the eigenvalues `Λ` of
 `im * M` and
@@ -39,7 +42,36 @@ function jacobi_eigen(A::StaticMatrix{N, N, T}) where {N, T}
         H[j, i] = conj(H[i, j])
     end
     V = one(MMatrix{N, N, T, N * N})
-    tol = jacobi_tolerance(N, real(T))
+    R = real(T)
+    tol = jacobi_tolerance(N, R)
+    # The absolute floor of the pair test: `tol` times the Frobenius norm of `H`, taken once on
+    # entry so that no rotation can change it. The SVD's stopping test is its relative pair test
+    # together with the negligible-column guard, and this is the two-sided form of that guard. The
+    # relative test alone is never satisfied on a pair whose two diagonal entries hold nothing but
+    # the rounding noise of the rotations — each rotation regenerates as much noise as it removes
+    # — so a rank-deficient or low-rank input reached the sweep cap instead of its fixed point,
+    # where `im * M` for a low-rank skew `M` is the `ProjectedSkew` case the check is for (check
+    # 2, check 4). The relative term is not carried beside the floor: `√|α| · √|β| ≤ ‖H‖_F` for
+    # the diagonal entries of a Hermitian matrix, so the absolute test is the stronger of the two
+    # and subsumes it, and it is a zero diagonal entry that needs the rotation, not the skip. The
+    # scale is taken against the largest `|re|` or `|im|` first, so that neither the squares nor
+    # their sum leaves the range of `R`: `tol · s · √a` is the value of the norm with the factors
+    # ordered so that no pair of them overflows. A non-finite entry leaves the floor `NaN` or
+    # `Inf`, so that no pair is ever skipped and the sweep reaches its cap, which is what the
+    # docstring promises of a `NaN` or an `Inf`.
+    s = zero(R)
+    @inbounds for j in 1:N, i in 1:N
+
+        s = max(s, abs(real(H[i, j])), abs(imag(H[i, j])))
+    end
+    a = zero(R)
+    @inbounds for j in 1:N, i in 1:N
+
+        re = abs(real(H[i, j])) / s
+        im = abs(imag(H[i, j])) / s
+        a += re * re + im * im
+    end
+    floor = iszero(s) ? zero(R) : tol * s * sqrt(a)
     # The sweep is written out here rather than in a function of its own, as the sweeps of
     # `lu.jl` and `qr.jl` are: a call that is not inlined over a local `MMatrix` lets the matrix
     # escape, and an escaped matrix is a heap allocation of `n²` values — 4096 bytes for the two
@@ -58,13 +90,11 @@ function jacobi_eigen(A::StaticMatrix{N, N, T}) where {N, T}
             α = @inbounds real(H[p, p])
             β = @inbounds real(H[q, q])
             γ = @inbounds H[p, q]
-            # the relative test of the SVD's sweep, on the diagonal entries of the pair. The
-            # moduli are the difference from the one-sided form: a diagonal entry is not a
-            # squared norm here, so it may be zero or negative, and two zeros with a nonzero
-            # off-diagonal entry are the skew case, which the test must rotate rather than skip,
-            # where the one-sided form skips a pair of negligible columns. `√|α| · √|β|` rather
-            # than `√|α β|`, which overflows for a large diagonal.
-            abs(γ) ≤ tol * sqrt(abs(α)) * sqrt(abs(β)) && continue
+            # the pair test, the floor of the SVD's stopping test on the diagonal entries of the
+            # pair. `|β − α| ≤ 2‖H‖₂ ≤ 2‖H‖_F` bounds `ζ` of `jacobi_rotation` by `1/(√N·eps)` as
+            # well, far below the `ζ²` that overflows, so the rotation of a pair the test keeps
+            # cannot degenerate to the identity (`t = 0`) the way `[1 1e-160; 1e-160 0]` made it.
+            abs(γ) ≤ floor && continue
             cs, sn = jacobi_rotation(α, β, γ)
             rotate_columns!(H, p, q, cs, sn)
             rotate_rows!(H, p, q, cs, sn)

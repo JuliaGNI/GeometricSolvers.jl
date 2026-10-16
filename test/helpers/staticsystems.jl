@@ -133,6 +133,21 @@ function singular_matrices(seed, ::Type{T}, n) where {T}
     return (; zero_columns, equal_rows, zero_matrix = zero(SMatrix{n, n, T}))
 end
 
+"""
+    rank_deficient(seed, T, n, r)
+
+`U Σ Vᴴ` in `T` with `U` and `V` unitary and `Σ` holding the `r` values `1, 1/2, …` and zeros,
+so that the stored matrix has the numerical rank `r` at `√n · eps` for every element type. The
+SVD's check 2 and check 3 and the Metal device file share this one factory.
+"""
+function rank_deficient(seed, ::Type{T}, n, r) where {T}
+    rng = Xoshiro(seed)
+    U = SMatrix{n, n, T}(Matrix(qr(randn(rng, T, n, n)).Q))
+    V = SMatrix{n, n, T}(Matrix(qr(randn(rng, T, n, n)).Q))
+    Σ = real(T)[i ≤ r ? real(T)(0.5)^(i - 1) : zero(real(T)) for i in 1:n]
+    return SMatrix{n, n, T}(U * Diagonal(Σ) * V')
+end
+
 "Factorise and solve on the host: the factors and the step."
 function host_solve(m, A, b)
     fac = factorize!!(nothing, m, A)

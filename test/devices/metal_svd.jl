@@ -1,6 +1,6 @@
 # The R1 static Jacobi SVD and eigensolver in a KernelAbstractions kernel on an Apple GPU, one
 # thread per system, in `Float32` and `ComplexF32`: Metal has no `Float64`. Each full-rank system
-# meets the bound of part I, `4n · eps(T) · κ∞(A)` against a `BigFloat` reference; a
+# meets the bound of part I, `4n · eps(real(T)) · κ∞(A)` against a `BigFloat` reference; a
 # rank-deficient one ends below the sweep cap with the exact rank; the subnormal input of part J's
 # check 1 gives finite factors; and `jacobi_eigen(im * M)` for a real skew `M` gives the
 # eigenvalues of the host within working precision, with a unitary `V`.
@@ -11,7 +11,7 @@
 using GeometricSolvers
 using GeometricSolvers: factorize!!, ldiv!!, jacobi_eigen
 using KernelAbstractions: KernelAbstractions, @kernel, @index, @Const
-using LinearAlgebra: I, norm, qr
+using LinearAlgebra: I, norm
 using Metal, Test
 using Random: Xoshiro, randn
 using StaticArrays: SMatrix, SVector
@@ -20,15 +20,6 @@ include("../helpers/matrix.jl")
 include("../helpers/staticsystems.jl")
 
 const METAL_ELTYPES = filter(T -> real(T) === Float32, ELTYPES)
-
-# the rank-deficient matrices of the host test file, in the element types that Metal has
-function metal_rank_deficient(seed, ::Type{T}, n, r) where {T}
-    rng = Xoshiro(seed)
-    U = SMatrix{n, n, T}(Matrix(qr(randn(rng, T, n, n)).Q))
-    V = SMatrix{n, n, T}(Matrix(qr(randn(rng, T, n, n)).Q))
-    Σ = real(T)[i ≤ r ? real(T)(0.5)^(i - 1) : zero(real(T)) for i in 1:n]
-    return SMatrix{n, n, T}(U * Diagonal(Σ) * V')
-end
 
 @kernel function metal_eigen_kernel!(values, vectors, @Const(A))
     i = @index(Global)
@@ -49,8 +40,8 @@ if Metal.functional()
         m = SVDFactorization()
         R = real(T)
         systems = conditioned_systems(1000n + 3, T, Nothing, n)
-        rank0 = metal_rank_deficient(100n + 1, T, n, 0)
-        rank1 = metal_rank_deficient(100n + 5, T, n, 1)
+        rank0 = rank_deficient(100n + 1, T, n, 0)
+        rank1 = rank_deficient(100n + 5, T, n, 1)
         # the subnormal matrix of check 1: every entry is below `floatmin`, and an unclamped
         # prescale would turn it into `Inf`
         E = exponent(floatmin(R)) - 8
@@ -82,7 +73,7 @@ if Metal.functional()
         M = SMatrix{2n, 2n, T}(M - M')
         λ, V, status = jacobi_eigen(im * M)
         @test status === SUCCESS
-        @test norm(V' * V - I) <= 4 * (2n) * eps(T)
+        @test norm(V' * V - I) <= 4 * (2n) * eps(real(T))
 
         # the same in a kernel, one matrix per thread, against the host
         As = [im * M, im * (2 * M)]
@@ -95,10 +86,10 @@ if Metal.functional()
         host = map(jacobi_eigen, As)
         @test all(isfinite, Array(values))
         @test isapprox(Array(values)[:, 1], Vector(host[1][1]);
-            rtol = 8 * 2n * eps(T) * max(1, norm(M)), atol = 8 * 2n * eps(T) *
-                                                             max(1, norm(M)))
+            rtol = 8 * 2n * eps(real(T)) * max(1, norm(M)), atol = 8 * 2n * eps(real(T)) *
+                                                                   max(1, norm(M)))
         @test isapprox(Array(vectors)[:, :, 1], Matrix(host[1][2]);
-            rtol = 8 * 2n * eps(T), atol = 8 * 2n * eps(T))
+            rtol = 8 * 2n * eps(real(T)), atol = 8 * 2n * eps(real(T)))
     end
 else
     @test_skip Metal.functional()

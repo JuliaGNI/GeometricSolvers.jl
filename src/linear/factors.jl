@@ -103,7 +103,10 @@ factors; the truncated directions are zeroed in `U`, and the solve of [`ldiv!!`]
 their coordinates out. `converged` is `false` where the sweep reached its cap of 30 sweeps
 before the columns were orthogonal. `scale_exponent` is the exponent `e` of the power of two
 `2^e` that the matrix was divided by, and `σ` holds the singular values of the matrix as it was
-passed, not of the scaled one.
+passed, not of the scaled one: a `σ₁` above `floatmax(R)` — every entry of the matrix finite —
+is not representable there, and `σ` then holds `Inf`. `σ̂` holds the singular values of the scaled
+matrix, the ones the sweep computed and the ones the solve divides by, so that the limit of `σ`
+is the limit of the report alone and not of the step.
 
 `L = N * N` makes the `SMatrix` fields concrete, so the factor is `isbits`.
 """
@@ -111,6 +114,7 @@ struct StaticSVD{N, TF, R, L}
     factors::SMatrix{N, N, TF, L}
     V::SMatrix{N, N, TF, L}
     σ::SVector{N, R}
+    σ̂::SVector{N, R}
     info::Int32
     converged::Bool
     scale_exponent::Int32

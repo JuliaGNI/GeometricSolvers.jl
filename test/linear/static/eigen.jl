@@ -18,12 +18,13 @@ using GeometricSolvers
 using GeometricSolvers: jacobi_eigen, MAXITERS, ReturnCode, SUCCESS
 using JET: JET
 using KernelAbstractions: KernelAbstractions, @kernel, @index, @Const
-using LinearAlgebra: Diagonal, Eigen, Hermitian, I, eigen, eigvals, norm, opnorm
+using LinearAlgebra: Diagonal, Eigen, Hermitian, I, eigen, eigvals, norm, opnorm, qr
 using Random: Xoshiro, randn
 using StaticArrays: MMatrix, SMatrix, SVector
 using Test
 
 include("../../helpers/matrix.jl")
+include("../../helpers/staticsystems.jl")
 
 """
     skew_matrix(seed, T, N)
@@ -60,6 +61,38 @@ A Hermitian `N × N` matrix in `T`, real symmetric for a real `T`.
 function hermitian_matrix(seed, ::Type{T}, N) where {T}
     B = randn(Xoshiro(seed), T, N, N)
     return SMatrix{N, N, T}(B + B')
+end
+
+"""
+    rank_deficient_hermitian(seed, T, N, r)
+
+A Hermitian `N × N` matrix in `T` of rank `r`, with the non-zero eigenvalues `1:r`. A pair of
+diagonal entries that both hold the rounding noise of the rotations is what a relative pair test
+alone does not terminate on (check 2 of §5.2, which the SVD guards).
+"""
+function rank_deficient_hermitian(seed, ::Type{T}, N, r) where {T}
+    Q = SMatrix{N, N, T}(Matrix(qr(randn(Xoshiro(seed), T, N, N)).Q))
+    d = [i ≤ r ? real(T)(i) : zero(real(T)) for i in 1:N]
+    H = Q * Diagonal(d) * Q'
+    return SMatrix{N, N, T}((H + H') / 2)
+end
+
+"""
+    low_rank_skew(seed, T, N, r)
+
+A real skew `N × N` matrix in `T` of rank `r`, an even `r`, as `r/2` rank-2 skew terms. Its null
+directions hold nothing but rounding noise, which is the `ProjectedSkew` shape the whole check 4
+is for.
+"""
+function low_rank_skew(seed, ::Type{T}, N, r) where {T}
+    rng = Xoshiro(seed)
+    M = zeros(T, N, N)
+    for _ in 1:(r ÷ 2)
+        u = randn(rng, T, N)
+        v = randn(rng, T, N)
+        M .+= u * v' .- v * u'
+    end
+    return SMatrix{N, N, T}(M)
 end
 
 """
@@ -152,7 +185,71 @@ end
         λ, V, status = jacobi_eigen(A)
         @test status === MAXITERS
         @test !all(isfinite, λ)
+        # the same for a diagonal `Inf`, whose off-diagonal entries are exactly zero: the scale
+        # of the pair test is not finite either, so no pair is skipped and the rotation of the
+        # pair is not finite. Round 1 found this case returning `SUCCESS` (other defect 2)
+        for v in (T(Inf), -T(Inf))
+            B = SMatrix{2, 2, T}(v, zero(T), zero(T), one(T))
+            λb, Vb, statusb = jacobi_eigen(B)
+            @test statusb === MAXITERS
+            @test !all(isfinite, λb)
+        end
     end
+end
+
+@testset "the stopping test terminates on a rank-deficient or a low-rank matrix" begin
+    # The two reproducers of round 1's blocking defect 1. A pair of diagonal entries that hold
+    # nothing but the rounding noise of the rotations never satisfies a relative test — each
+    # rotation regenerates as much noise as it removes — so the sweep reaches its cap of 30
+    # sweeps and the unitarity bound of check 4 is missed. The absolute floor of the pair test is
+    # what ends it, as the SVD's negligible-column guard ends its sweep.
+    @testset "a rank-deficient Hermitian matrix, $T, rank $r" for T in ELTYPES, r in (1, 5)
+
+        N = 16
+        H = rank_deficient_hermitian(3, T, N, r)
+        λ, V, status = jacobi_eigen(H)
+        @test status === SUCCESS
+        @test norm(V' * V - I) <= 4 * N * eps(real(T))
+        scale = max(1, opnorm(Matrix(H), Inf))
+        @test isapprox(sort(Vector(λ)), sort(eigvals(Hermitian(Matrix(H))));
+            rtol = 8 * N * eps(real(T)) * scale, atol = 8 * N * eps(real(T)) * scale)
+    end
+
+    @testset "a low-rank skew M, $T, rank $r" for T in REAL_ELTYPES, r in (2, 4)
+
+        N = 16
+        H = im * low_rank_skew(7, T, N, r)
+        λ, V, status = jacobi_eigen(H)
+        @test status === SUCCESS
+        @test norm(V' * V - I) <= 4 * N * eps(T)
+        scale = max(1, opnorm(Matrix(H), Inf))
+        @test isapprox(sort(Vector(λ)), sort(eigvals(Hermitian(Matrix(H))));
+            rtol = 8 * N * eps(T) * scale, atol = 8 * N * eps(T) * scale)
+    end
+
+    @testset "a negligible off-diagonal beside a diagonal difference, $T" for T in REAL_ELTYPES
+
+        # `ζ = (β − α)/2|γ|` squares to `Inf` for an `|γ|` at the bottom of the type's range, so
+        # the rotation is the identity (`t = 0`) although `|γ|` is not zero, and the sweep counts
+        # it as a rotation and reaches its cap: `probe_misc.jl` of round 1a, `[1 1e-160; 1e-160 0]`
+        H = SMatrix{2, 2, T}(one(T), nextfloat(zero(T)), nextfloat(zero(T)), zero(T))
+        λ, V, status = jacobi_eigen(H)
+        @test status === SUCCESS
+        @test norm(V' * V - I) <= 8 * eps(T)
+        @test isapprox(sort(Vector(λ)), [zero(T), one(T)]; atol = 8 * eps(T))
+    end
+end
+
+@testset "the lower triangle is read, and the upper triangle filled from it, $T" for T in ELTYPES
+    # The contract the docstring states, which round 1 read the other way: the matrix is assumed
+    # Hermitian, and the conjugate of the lower triangle is what the upper triangle is set to on
+    # entry. `[1 2; 0 3]` is not Hermitian: the lower triangle is the diagonal `[1 0; 0 3]`, and
+    # the call returns its eigenvalues 1 and 3, not those of the upper triangle's `[1 2; 2 3]`
+    A = SMatrix{2, 2, T}(one(T), T(2), zero(T), T(3))
+    λ, V, status = jacobi_eigen(A)
+    H = Hermitian(A, :L)
+    @test status === SUCCESS
+    @test norm(V * Diagonal(λ) * V' - Matrix(H)) <= 8 * eps(real(T)) * norm(H)
 end
 
 @testset "check 5: the name collides with neither Eigen nor eigen, and pirates none" begin
@@ -220,6 +317,8 @@ end
         @test isbits(result)
         if Base.JLOptions().check_bounds != 1
             @test eigen_allocations(A) == 0
+            # the control: the allocation barrier sees an allocation where there is one
+            @test collect_allocations(A) > 0
         end
         # an MMatrix input gives the same result
         @test jacobi_eigen(MMatrix(A)) === result
