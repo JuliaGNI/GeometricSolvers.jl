@@ -11,7 +11,7 @@ using GeometricSolvers: factorize!!, ldiv!!, returncode, StaticSVD
 using JET: JET
 using LinearAlgebra: Diagonal, norm, opnorm, qr
 using Random: Xoshiro, randn
-using StaticArrays: MMatrix, SMatrix, SVector
+using StaticArrays: MMatrix, SMatrix, SVector, setindex
 using Test
 
 include("../../helpers/matrix.jl")
@@ -101,6 +101,32 @@ end
         if r >= 1
             @test fac.σ[r] > tol * fac.σ[1]
         end
+    end
+end
+
+@testset "the negligible-column guard skips a column that carries nothing" begin
+    @testset "$T, TF = $TF" for (T, TF) in PRECISION_PAIRS
+
+        # The guard of §5.2, which the relative test of a pair does not replace: a column whose
+        # squared norm is at or below `αmax · tol²` is skipped, so a column *below* the rank
+        # cutoff is left where it is instead of being rotated into the column it is parallel to.
+        # Without the guard the relative test rotates the pair — `|γ| = ε/2` against
+        # `tol · √(αβ) = eps²` — and the reported singular value of the last column becomes the
+        # rounding noise of that rotation, `~ eps²`, instead of the `ε = eps(TF)/2` the column
+        # carries. The sweep's `σ` are the column norms, and the rank cutoff truncates this one
+        # either way, which is why the two agree on the rank of this matrix.
+        n = 4
+        F = factortype(T, TF)
+        ε = eps(real(F)) / 2
+        # the identity with its last diagonal entry zeroed and a single ε in the first row of the
+        # last column: that column is `ε e₁`, whose squared norm is `eps²/4`, below the
+        # `αmax · tol² = 4 eps²` of the guard, and parallel to the first column
+        A = SMatrix{n, n, T}([i == j ? one(T) : zero(T) for i in 1:n, j in 1:n])
+        A = setindex(setindex(A, zero(T), n, n), T(ε), 1, n)
+        fac = factorize!!(nothing, svd_method(TF), A)
+        @test fac.converged
+        @test fac.info == n
+        @test fac.σ[n] == ε
     end
 end
 
