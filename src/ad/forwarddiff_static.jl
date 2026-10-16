@@ -1,0 +1,74 @@
+# The R1 Jacobian of §4.1: the tagged ForwardDiff mode on a vector iterate, the problem's own `J`,
+# and the operator of a method.
+#
+# ForwardDiff directly, not DifferentiationInterface: a dual on a `StaticArray` is an `isbits`
+# value, so the whole Jacobian is built with no allocation and compiles for every backend that
+# compiles the primal code (§3.1). The tag and the seeding rule are those of the R3 chunked mode
+# in `src/ad/chunked.jl` — `tag_of`, `dual_type`, `seed` and `dual_partial` — so that R1 and R3
+# cannot drift apart: a `Dual{Nothing}` confuses the perturbations of a residual that
+# differentiates in its own body, and a complex residual is seeded on the real part of its
+# complex argument (`Complex{Dual}`), which is what makes the derivative the holomorphic one.
+#
+# The back end is selected once, in `prepare_ad`, and `jacobian!!` dispatches on the object it
+# returns. R1 has no object: with no residual buffer the preparation *is* the back end, and the
+# tag is resolved per call against the problem and the iterate. A back end other than
+# `AutoForwardDiff` therefore has no R1 method at all, and the call is a host `MethodError`
+# (§4.6).
+
+"""
+    JacobianFunction(f)
+
+The Jacobian source of a method that carries an operator of its own: `f` is the function `init`
+resolved against the problem — `A(x, p)` in R1 and `A!(J, x, p)` in R3 — and [`jacobian!!`](@ref)
+calls it in place of the problem's `J`. The method's operator is not the derivative of the
+residual, so it serves [`jacobian!!`](@ref) and never [`jvp!!`](@ref) (§4.3).
+
+Internal: `init` builds it from the method's `jacobian` argument, and a caller passes that
+argument, never this type. It holds a function and nothing else, so it is `isbits` exactly when
+that function is.
+"""
+struct JacobianFunction{A}
+    f::A
+end
+
+"""
+    prepare_ad(backend::AutoForwardDiff, prob, ::Nothing, x::Union{StaticArray, Number}, p)
+
+The R1 preparation of `AutoForwardDiff`: with no residual buffer and a value iterate there is
+nothing to allocate, so the preparation is the back end itself, and [`jacobian!!`](@ref) and
+[`jvp!!`](@ref) resolve its tag per call against `prob` and `x`, through the same `tag_of` rule as
+the R3 chunked mode. That keeps the R1 state `isbits` and carries a caller's tag unchanged.
+"""
+function prepare_ad(
+        backend::AutoForwardDiff, prob, ::Nothing, x::Union{StaticArray, Number}, p)
+    backend
+end
+
+function jacobian!!(::Nothing, ::Nothing, prob, x::Union{StaticArray, Number}, p)
+    return prob.J(x, p)
+end
+
+function jacobian!!(::Nothing, s::JacobianFunction, prob, x, p)
+    return s.f(x, p)
+end
+
+# One pass of `N` partials, `N = length(x)`: R1 ignores the chunk size, because a static iterate
+# has no chunking to gain from and `SVector` arithmetic is unrolled. Column `j` perturbs entry `j`
+# by the real one, so the result is the complex derivative where `x` is complex. The matrix is
+# built column by column, as the constructor reads it, so that no mutable array is in the way: one
+# that a bounds check could force onto the heap would allocate where this must not.
+function jacobian!!(::Nothing, backend::AutoForwardDiff, prob, x::StaticVector{N, T},
+        p) where {N, T}
+    D = dual_type(T, typeof(tag_of(backend, prob, x)), N)
+    lanes(j) = ntuple(k -> k == j, Val(N))
+    xdual = SVector{N, D}(ntuple(j -> seed(zero(D), x[j], lanes(j)), Val(N))...)
+    rdual = prob.F(xdual, p)
+    return SMatrix{N, N, T}(
+        ntuple(k -> dual_partial(rdual[(k - 1) % N + 1], (k - 1) ÷ N + 1), Val(N * N)))
+end
+
+# A `Number` iterate is `n = 1` (§13.L), and its Jacobian is a `Number` in the same element type.
+function jacobian!!(::Nothing, backend::AutoForwardDiff, prob, x::Number, p)
+    D = dual_type(typeof(x), typeof(tag_of(backend, prob, x)), 1)
+    return dual_partial(prob.F(seed(zero(D), x, (true,)), p), 1)
+end

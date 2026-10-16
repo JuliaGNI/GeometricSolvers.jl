@@ -193,3 +193,22 @@ so that a compat-only bump can be told apart from an interface change.
   `Enzyme` workflow, which is not a required status check: an Enzyme break then fails that job
   alone and blocks no merge. Runtime activity is what a `Constant` parameter context needs from
   Enzyme's forward mode; a plain `AutoEnzyme()` raises `EnzymeRuntimeActivityError`.
+
+- `NonlinearProblem(F)` and `NonlinearProblem(F, J)`, exported, hold the residual `F` of a nonlinear
+  system and, optionally, its derivative `J`. A problem holds functions only, with no parameters
+  and no iterate, so it is `isbits` when `F` and `J` are, and one problem serves every call that
+  passes other parameters. The call form follows the storage of the iterate: a `StaticArray` or
+  `Number` iterate calls `F(x, p)`, and any other array calls `F!(y, x, p)`, which writes into `y`.
+  `J` takes the same two forms, `J(x, p)` and `J!(A, x, p)`.
+
+- Internal: the storage seam, the functions an algorithm calls on its iterate, its residual, its
+  update and its factorisation: `residual!!`, `update_iterate!!`, `map!!`, `mul!!`, `buffer`,
+  `factorize!!` and `ldiv!!`. Each has a method for a `StaticArray` or a `Number` iterate, so an
+  algorithm written against them is written once for both storages; the array methods are added
+  with the storage that needs them. A `Number` Jacobian is factorised as a `1 × 1` matrix.
+
+- Internal: `jacobian!!` and `jvp!!` for a value iterate, a `StaticArray` or a `Number`. With the
+  source `nothing`, `jacobian!!` returns the problem's `J` and `jvp!!` returns `J(x, p) * v`; with
+  `AutoForwardDiff()`, `jacobian!!` differentiates the residual with ForwardDiff, and `jvp!!` takes
+  one dual evaluation of it. The ForwardDiff path allocates nothing. A method's own operator is a
+  `JacobianFunction`, which `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.

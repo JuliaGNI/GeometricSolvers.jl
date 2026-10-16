@@ -4,6 +4,33 @@ CurrentModule = GeometricSolvers
 
 # API
 
+## The problem
+
+A problem holds functions and nothing else: the residual, and optionally its derivative. The
+storage of the iterate selects the call form of both, so one problem serves every regime. This
+name is exported.
+
+```@docs
+NonlinearProblem
+```
+
+## The storage seam
+
+Every algorithm of the package — the loop, `Newton`, `Picard`, the globalisations, `DogLeg`, the
+combinators and `Anderson` — touches storage only through the functions below. Each has a method
+for a value iterate (R1) and a method for a buffer iterate (R3), the algorithm rebinds the
+returned value, and the difference between the two storage kinds therefore stays at the leaves.
+
+These names are not exported. Reach them as `GeometricSolvers.name`.
+
+```@docs
+buffer
+residual!!
+update_iterate!!
+map!!
+mul!!
+```
+
 ## Status and stopping test
 
 Every type on this page is `isbits`, so a kernel can hold it, and every real field is in
@@ -65,7 +92,12 @@ StrongWolfe
 
 ## Automatic differentiation
 
-The Jacobian seam of the R3 solver. The AD path is chosen once, by [`prepare_ad`](@ref), from the
+The Jacobian seam. In R1 there is no preparation object to build: a dual on a static array is an
+`isbits` value, so [`jacobian!!`](@ref) and [`jvp!!`](@ref) take the `AutoForwardDiff()` back end
+itself — or the problem's own `J`, or a method's operator — and run tagged ForwardDiff directly. A
+back end other than `AutoForwardDiff` has no R1 method, and the call is a host `MethodError`.
+
+In R3 the AD path is chosen once, by [`prepare_ad`](@ref), from the
 back end and the storage of the iterate: `AutoForwardDiff()` goes through an own chunked forward
 mode on every array type, and any other back end goes through
 [DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl) on a CPU
@@ -91,6 +123,7 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 prepare_ad
 DIJacobian
 ChunkedForwardDiff
+JacobianFunction
 jacobian!!
 jvp!!
 ```

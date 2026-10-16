@@ -61,3 +61,16 @@
   `setindex!`. `BigFloat` is best effort on the CPU, and no test names it.
 - **kind:** found late
 - **found:** 2026-10-15
+
+### K7 · A value iterate that is a mutable static array allocates on every update.
+
+- **location:** `src/base/bang.jl` (`update_iterate!!`, `map!!`, `mul!!`)
+- **evidence:** `update_iterate!!(nothing, m, α, m)` with an `MMatrix{2, 2, Float64}` allocates 144
+  bytes and 272 in `ComplexF64`, and `map!!(-, nothing, m)` the same, measured through the
+  function barrier of `test/base/bang.jl` on Julia 1.13.2. `buffer(m)` is `nothing` and allocates
+  nothing. A result of a mutable static array is a new mutable array, which the heap holds, so no
+  method can avoid this while the iterate keeps its type. `MVector` and `MMatrix` count as value
+  iterates for the *call form* (§4.3), and `SVector` and `Number` are what §6's R1 target of zero
+  bytes on `SVector` names, so the target does not cover this case.
+- **kind:** found late
+- **found:** 2026-10-16

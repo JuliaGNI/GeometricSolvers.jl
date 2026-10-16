@@ -136,3 +136,83 @@ end
         @test jvp_allocations(similar(xn), prepn, prob, xn, vn, pn) == 0
     end
 end
+
+# The R1 value methods of `jvp!!` — check 5 of §13.L-a, beside the R3 pushforward above.
+#
+# The preparation of a JVP is built from the problem and never from a method's operator (§4.3), so
+# for a problem that carries `J` R1 computes `J(x, p) * v` itself and the comparison is exact;
+# where the value has to come from a dual pass, the comparison is the one the R3 tests above make,
+# for the same reason. The problems are the value forms of `../helpers/adproblems.jl`: its stubs
+# are in-place and cannot be called with an `SVector` at all.
+
+using StaticArrays: SVector
+
+using GeometricSolvers: NonlinearProblem
+
+include("../helpers/r1problems.jl")
+
+# The allocation assertion goes through a function barrier, as in the R3 tests above.
+function r1_jvp_allocations(ad::A, prob::P, x::X, v::V, p::Q) where {A, P, X, V, Q}
+    jvp!!(nothing, ad, prob, x, v, p)
+    return @allocated jvp!!(nothing, ad, prob, x, v, p)
+end
+
+@testset "the R1 jvp!! reads the problem's J, not a method's operator, $T" for T in ELTYPES
+    x = r1_cube_input(T, N_AD)
+    p = SVector{N_AD, T}(ones(T, N_AD))
+    prob = NonlinearProblem(R1Cube(), r1_cube_jacobian)
+    unit(j) = SVector{N_AD, T}([i == j ? one(T) : zero(T) for i in 1:N_AD])
+
+    # A unit direction makes the dense product one column of `J`, with no sum to round, so this
+    # comparison is `==` in every element type: `jvp!!` computes `J(x, p) * v` itself, in one
+    # expression, and reads no dual. (A general direction is not exactly comparable for a complex
+    # element type: `SMatrix * SVector` uses `muladd`, and whether that fuses into an FMA depends
+    # on the compilation context, which costs the last bit. The product of the R3 tests above
+    # carries a tolerance for the same reason.)
+    for j in 1:N_AD
+        @test @inferred(jvp!!(nothing, nothing, prob, x, unit(j), p)) ==
+              prob.J(x, p) * unit(j)
+    end
+
+    # The analytic Jacobian and the one the duals build differ in the last bit at the entries of
+    # `r1_cube_input`, so at least one unit direction separates the two: the assertions above are
+    # a test, and a `nothing` preparation sent to ForwardDiff fails one of them.
+    @test any(
+        j -> jvp!!(nothing, AutoForwardDiff(), prob, x, unit(j), p) !=
+             prob.J(x, p) * unit(j), 1:N_AD)
+end
+
+@testset "the R1 jvp!! seeds a complex direction on both its parts, $T" for T in filter(
+    T -> T <: Complex, ELTYPES)
+    x, p = r1_inputs(T, N_AD)
+    prob = NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian)
+    J = prob.J(x, p)
+
+    # a unit direction gives one column of the Jacobian, exactly: `r_i = x_i² + p_i x_i`, so the
+    # dual pass evaluates `(x_i + x_i) v_i + p_i v_i`
+    for j in (1, N_AD)
+        e = SVector{N_AD, T}([i == j ? one(T) : zero(T) for i in 1:N_AD])
+        @test jvp!!(nothing, AutoForwardDiff(), prob, x, e, p) == J * e
+    end
+
+    # and a direction with a nonzero imaginary part: a seed that took the real part of the
+    # direction in both components of the complex dual — the fault that `adjoint` spelled
+    # `transpose` is the real form of — differs here, and in no real element type. Approximate,
+    # and the only approximate comparison of the R1 tests: the dual pass multiplies the partial by
+    # the direction inside the residual's arithmetic, which rounds in a different order from
+    # `J * v`. The tolerance is the one of the R3 test above, eight ulps.
+    R = real(T)
+    v = SVector{N_AD, T}(
+        [complex(R(i + 2) / R(N_AD + 1), R(i + 1) / R(N_AD + 3)) for i in 1:N_AD])
+    @test isapprox(jvp!!(nothing, AutoForwardDiff(), prob, x, v, p), J * v;
+        rtol = 8 * eps(R))
+end
+
+@testset "the R1 jvp!! is inferred and allocation-free, $T" for T in ELTYPES
+    x, p = r1_inputs(T, N_AD)
+    prob = NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian)
+
+    @test @inferred(jvp!!(nothing, AutoForwardDiff(), prob, x, x, p)) isa SVector{N_AD, T}
+    @test r1_jvp_allocations(nothing, prob, x, x, p) == 0
+    @test r1_jvp_allocations(AutoForwardDiff(), prob, x, x, p) == 0
+end
