@@ -21,12 +21,12 @@ function jvp!!(Jv, prep::ChunkedForwardDiff, prob, x, v, p)
 end
 
 # The R1 value methods. The preparation is built from the problem and never from a method's
-# operator (§4.3), so `nothing` is the problem's own `J` and an `AutoForwardDiff` one dual
+# operator, so `nothing` is the problem's own `J` and an `AutoForwardDiff` one dual
 # evaluation of `F` — one partial, one residual evaluation, and no buffer. A `JacobianFunction`
 # has no method here: a method's operator is not the derivative of the residual.
 #
-# The direction has the element type and the length of the iterate, as the line-search slope does
-# (§13.L-a): `v` is typed with `x`, so a direction of another element type is a host `MethodError`
+# The direction has the element type and the length of the iterate, as the line-search slope
+# does: `v` is typed with `x`, so a direction of another element type is a host `MethodError`
 # and no `Float64` value reaches a `Float32` kernel.
 function jvp!!(::Nothing, ::Nothing, prob, x::StaticVector{N, T}, v::StaticVector{N, T},
         p) where {N, T}
@@ -40,9 +40,9 @@ end
 function jvp!!(::Nothing, backend::AutoForwardDiff, prob, x::StaticVector{N, T},
         v::StaticVector{N, T}, p) where {N, T}
     D = dual_type(T, typeof(tag_of(backend, prob, x)), 1)
-    xdual = SVector{N, D}(ntuple(i -> seed(zero(D), x[i], tuple(v[i])), Val(N))...)
+    xdual = SVector{N, D}(ntuple(i -> seed(zero(D), x[i], (v[i],)), Val(N)))
     rdual = prob.F(xdual, p)
-    return SVector{N, T}(ntuple(i -> dual_partial(rdual[i], 1), Val(N))...)
+    return SVector{N, T}(ntuple(i -> dual_partial(rdual[i], 1), Val(N)))
 end
 
 function jvp!!(::Nothing, backend::AutoForwardDiff, prob, x::T, v::T, p) where {T <: Number}

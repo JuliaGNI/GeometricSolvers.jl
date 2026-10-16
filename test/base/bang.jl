@@ -27,9 +27,6 @@ function mmatrix(::Type{T}, n::Int) where {T}
     return MMatrix{n, n, T}(T[(i + 2j) / (n + 3) for i in 1:n for j in 1:n])
 end
 
-"`R1Scaled` with its analytic Jacobian: the problem the residual tests read."
-r1_scaled_problem() = NonlinearProblem(R1Scaled(), r1_scaled_jacobian)
-
 # The allocation assertions go through a function barrier whose arguments all have concrete
 # types, and which calls the function once before it measures: at testset scope Julia 1.11 boxes
 # the captured values and the assertion fails although the code allocates nothing.
@@ -140,10 +137,10 @@ end
         @test isbits(fac)
         @test returncode(fac) == SUCCESS
         @test @inferred(ldiv!!(nothing, fac, T(4))) == T(2)
-        # Under `--check-bounds=yes`, which `Pkg.test()` forces up to Julia 1.12, a bounds check
-        # lets the local `MMatrix` of the static kernel and the local `MVector` of its backsolve
-        # escape to the heap, so a run that forces it does not check these two — the same guard,
-        # and the same reason, as `test/linear/static/lu.jl`.
+        # Under `--check-bounds=yes` a bounds check lets the local `MMatrix` of the static kernel
+        # and the local `MVector` of its backsolve escape to the heap, so these two are skipped
+        # where a run forces `--check-bounds=yes` — the same guard, and the same reason, as
+        # `test/linear/static/lu.jl`.
         if Base.JLOptions().check_bounds != 1
             @test factorize_allocations(method, T(2)) == 0
             @test ldiv_allocations(fac, T(4)) == 0

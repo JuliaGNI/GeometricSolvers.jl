@@ -1,5 +1,5 @@
-# The problem: the residual and its derivative, and nothing else. Parameters arrive at solve time
-# (§4.3), so one problem serves a whole time-stepping loop, and a batch shares one object.
+# The problem: the residual and its derivative, and nothing else. Parameters arrive at solve time,
+# so one problem serves a whole time-stepping loop, and a batch shares one object.
 
 """
     NonlinearProblem(F)
@@ -11,9 +11,9 @@ and a kernel can hold it.
 
 The call form follows the storage of the iterate, and [`residual!!`](@ref) selects it on the
 storage alone: with no buffer slot the call is `F(x, p)`, for a `Number`, an `MVector` — which
-counts as a value (§4.3) — and an `Array` alike. `J` is the derivative of `F`, which
+counts as a value — and an `Array` alike. `J` is the derivative of `F`, which
 [`jvp!!`](@ref) and [`jacobian!!`](@ref) read for the source `nothing`; `AutoForwardDiff` instead
-differentiates `F`. A method's own operator is a separate Jacobian source (§4.3).
+differentiates `F`. A method's own operator is a separate Jacobian source.
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x .* x .- 4);

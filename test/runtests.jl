@@ -22,7 +22,7 @@ if "core" in GROUPS
     @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
-    @safetestset "R3 Jacobian-vector product" include("ad/jvp.jl")
+    @safetestset "Jacobian-vector product" include("ad/jvp.jl")
 end
 if "doctests" in GROUPS
     @safetestset "Doctests" include("quality/doctests.jl")

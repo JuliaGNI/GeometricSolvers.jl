@@ -1,4 +1,4 @@
-# The storage functions of §4.1: the complete seam between an algorithm and its storage, and
+# The storage functions: the complete seam between an algorithm and its storage, and
 # nothing else. The value methods of the R1 storage stand here. An algorithm calls them and
 # rebinds the result, so the same algorithm runs on a value iterate and on a buffer iterate, and
 # the difference stays at the leaves.
@@ -65,8 +65,8 @@ and weighting histories, and a matrix–vector product where no [`jvp!!`](@ref) 
 """
 mul!!(::Nothing, A, B) = A * B
 
-# The `Number` iterate of §4.1: its Jacobian is a `Number`, and its factor is the `1 × 1` factor
-# of part I, in the element type that `factor_eltype` gives. `linear/factors.jl` declares these
+# The `Number` iterate: its Jacobian is a `Number`, and its factor is the `1 × 1` static factor,
+# in the element type that `factor_eltype` gives. `linear/factors.jl` declares these
 # two functions and names their factor types; it is included after this file. So these two methods
 # state the storage — `nothing`, and a `Number` — and let the factor type dispatch inside, which
 # keeps the factor types in the one file that owns them. A method type with no `1 × 1` factor,

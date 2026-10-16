@@ -38,8 +38,6 @@ function r1_coupled_problem(::Type{T}) where {T}
     return NonlinearProblem(R1Coupled(perm), (z, q) -> r1_coupled_jacobian(z, q, perm))
 end
 
-r1_scaled_problem() = NonlinearProblem(R1Scaled(), r1_scaled_jacobian)
-
 # The allocation assertion goes through a function barrier whose arguments all have concrete
 # types, and which calls the function once before it measures: at testset scope Julia 1.11 boxes
 # the captured values and the assertion fails although the code allocates nothing.

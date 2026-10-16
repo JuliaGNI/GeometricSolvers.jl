@@ -8,6 +8,7 @@
 # would hide exactly the last bit that the seam tests read.
 
 using ForwardDiff: ForwardDiff
+using GeometricSolvers: NonlinearProblem
 using StaticArrays: SMatrix, SVector
 
 "A cyclic shift by one, as the permutation of [`R1Coupled`](@ref): `[2, 3, …, n, 1]`."
@@ -114,6 +115,9 @@ struct R1Scaled end
 (::R1Scaled)(x, p) = p .* x
 
 r1_scaled_jacobian(x, p) = diagonal_matrix(p)
+
+"`R1Scaled` with its analytic Jacobian."
+r1_scaled_problem() = NonlinearProblem(R1Scaled(), r1_scaled_jacobian)
 
 """
     R1ScalarScaled()
