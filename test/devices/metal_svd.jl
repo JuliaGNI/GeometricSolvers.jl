@@ -23,7 +23,7 @@ const METAL_ELTYPES = filter(T -> real(T) === Float32, ELTYPES)
 
 @kernel function metal_eigen_kernel!(values, vectors, @Const(A))
     i = @index(Global)
-    λ, V, status = jacobi_eigen(A[i])
+    λ, V, _ = jacobi_eigen(A[i])
     n = size(A[i], 1)
     for j in 1:n
         values[j, i] = λ[j]
@@ -71,7 +71,7 @@ if Metal.functional()
 
         M = randn(Xoshiro(20 + n), T, 2n, 2n)
         M = SMatrix{2n, 2n, T}(M - M')
-        λ, V, status = jacobi_eigen(im * M)
+        _, V, status = jacobi_eigen(im * M)
         @test status === SUCCESS
         @test norm(V' * V - I) <= 4 * (2n) * eps(real(T))
 

@@ -297,7 +297,6 @@ end
             for (T, TF) in PRECISION_PAIRS, n in (1, 4)
 
                 m = svd_method(TF)
-                F = factortype(T, TF)
                 A, b = first(conditioned_systems(1000n + 3, T, TF, n))
                 JET.@test_opt factorize!!(nothing, m, A)
                 JET.@test_call factorize!!(nothing, m, A)

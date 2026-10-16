@@ -182,7 +182,7 @@ end
     @testset "a non-finite entry never throws and reports the sweep cap, $T" for T in ELTYPES
         # as for the factorisations: no finiteness check, and nothing throws
         A = SMatrix{2, 2, T}(fill(T(NaN), 2, 2))
-        λ, V, status = jacobi_eigen(A)
+        λ, _, status = jacobi_eigen(A)
         @test status === MAXITERS
         @test !all(isfinite, λ)
         # the same for a diagonal `Inf`, whose off-diagonal entries are exactly zero: the scale
