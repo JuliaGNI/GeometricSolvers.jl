@@ -282,18 +282,15 @@ end
 
 # The `Number` iterate — `n = 1` — has a Jacobian that is a `Number` and not a `1 × 1` matrix, so
 # it carries its own value, tag, inference and cost assertions: a call that ignored the tag or
-# returned a matrix would pass every vector test.
-function r1_scalar_jacobian_allocations(ad::A, prob::P, x::X, p::Q) where {A, P, X, Q}
-    (jacobian!!(nothing, ad, prob, x, p); @allocated jacobian!!(nothing, ad, prob, x, p))
-end
-
+# returned a matrix would pass every vector test. `jacobian_allocations` is generic in its four
+# argument types, so its barrier serves the `Number` calls too.
 @testset "the Number iterate: value, tag, inference and cost, $T" for T in ELTYPES
     prob = NonlinearProblem(R1ScalarScaled(), r1_scalar_scaled_jacobian)
     x, p = T(2), T(3)
     @test @inferred(jacobian!!(nothing, AutoForwardDiff(), prob, x, p)) == T(3)
     @test @inferred(jacobian!!(nothing, nothing, prob, x, p)) == T(3)
-    @test r1_scalar_jacobian_allocations(AutoForwardDiff(), prob, x, p) == 0
-    @test r1_scalar_jacobian_allocations(nothing, prob, x, p) == 0
+    @test jacobian_allocations(AutoForwardDiff(), prob, x, p) == 0
+    @test jacobian_allocations(nothing, prob, x, p) == 0
 
     # the tag rule is the vector one, on a residual that reads it: `R1Tagged` scales by `2` under
     # the caller's tag and by `1` under this solver's own

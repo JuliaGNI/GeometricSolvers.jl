@@ -210,7 +210,7 @@ end
     fac = factorize!!(nothing, LUFactorization(), one(eltype(x)) * 2)
     s = ldiv!!(nothing, fac, d[1])
     c = mul!!(nothing, S[i], y)
-    out[i] = (y[1], s, d[1], b, c)
+    out[i] = (r, y, d, s, b, c)
 end
 
 @testset "the storage seam inside a KernelAbstractions kernel on CPU(), $T" for T in ELTYPES
@@ -219,19 +219,23 @@ end
     X = [r1_inputs(T, N_BANG)[1] * T(i) for i in 1:3]
     P = [r1_inputs(T, N_BANG)[2] for i in 1:3]
     S = [diagonal_matrix(P[i] * T(i + 1)) for i in 1:3]
-    out = Vector{Tuple{T, T, T, Nothing, SVector{N_BANG, T}}}(undef, 3)
+    V = SVector{N_BANG, T}
+    out = Vector{Tuple{V, V, V, T, Nothing, V}}(undef, 3)
     α = T(2)
     seam_kernel!(backend)(out, prob, X, P, S, α; ndrange = 3)
     KernelAbstractions.synchronize(backend)
     expected = map(1:3) do i
         r = P[i] .* X[i]
         y = X[i] + α * r
-        return (y[1], -r[1] / 2, -r[1], nothing, S[i] * y)
+        return (r, y, -r, -r[1] / 2, nothing, S[i] * y)
     end
-    # The four fields that move data are exact, and are asserted bit for bit: `y[1]`, `s` and
-    # `d[1]` are `x + α d`, `-r[1] / 2` and `-r[1]` — plain `*`, `+` and a division by two — and
-    # `b` is the `nothing` buffer slot of a value iterate, which the tuple carries out of the
-    # kernel.
+    # The five fields that carry data out of the kernel are exact, and are asserted bit for bit:
+    # `r`, `y` and `d` whole, as the `SVector`s the kernel passes, `s = -r[1] / 2` from plain
+    # `*`, `+`, negation and a division by two, and `b`, the `nothing` buffer slot of a value
+    # iterate, which the tuple carries out of the kernel. Whole vectors, and not their first
+    # components alone: a second-component corruption of `r` or of `y` reaches the product below
+    # through its tolerance alone, and one of `d` reaches nothing else at all, so a row that
+    # writes out `y[1]`, `s` and `d[1]` alone reads no such corruption.
     #
     # The product is not exact in that sense. StaticArrays builds `A * B` for a static matrix and
     # a static vector from a chain of `muladd`s (`matrix_multiply_add.combine_products`), and
@@ -240,11 +244,11 @@ end
     # the choice is not the same in every compilation context. On the Julia 1.11 floor — the
     # `[compat]` lower bound — the kernel's product and this closure's then differ by up to 2 ulp
     # for `ComplexF32` alone, where 1.13.2 makes the same choice in both and agrees to the bit.
-    # `test/gpu/runtests.jl` carries a tolerance for the same reason. So the product is
-    # compared at the ulp level of the working precision, and the four fields above it are what a
-    # wrong `r`, `y`, `α` or factor has to move.
+    # `test/gpu/runtests.jl` carries a tolerance for the same reason. So the product is compared
+    # at the ulp level of the working precision, and the five fields above it are what a wrong
+    # `r`, `y`, `d`, `α` or factor has to move.
     for i in 1:3
-        @test out[i][1:4] == expected[i][1:4]
-        @test all(isapprox.(out[i][5], expected[i][5]; rtol = 8 * eps(real(T))))
+        @test out[i][1:5] === expected[i][1:5]
+        @test all(isapprox.(out[i][6], expected[i][6]; rtol = 8 * eps(real(T))))
     end
 end
