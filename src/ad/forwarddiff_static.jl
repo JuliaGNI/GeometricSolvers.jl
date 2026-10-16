@@ -1,19 +1,7 @@
-# The R1 Jacobian of §4.1: the tagged ForwardDiff mode on a vector iterate, the problem's own `J`,
-# and the operator of a method.
-#
-# ForwardDiff directly, not DifferentiationInterface: a dual on a `StaticArray` is an `isbits`
-# value, so the whole Jacobian is built with no allocation and compiles for every backend that
-# compiles the primal code (§3.1). The tag and the seeding rule are those of the R3 chunked mode
-# in `src/ad/chunked.jl` — `tag_of`, `dual_type`, `seed` and `dual_partial` — so that R1 and R3
-# cannot drift apart: a `Dual{Nothing}` confuses the perturbations of a residual that
-# differentiates in its own body, and a complex residual is seeded on the real part of its
-# complex argument (`Complex{Dual}`), which is what makes the derivative the holomorphic one.
-#
-# The back end is selected once, in `prepare_ad`, and `jacobian!!` dispatches on the object it
-# returns. R1 has no object: with no residual buffer the preparation *is* the back end, and the
-# tag is resolved per call against the problem and the iterate. A back end other than
-# `AutoForwardDiff` therefore has no R1 method at all, and the call is a host `MethodError`
-# (§4.6).
+# The R1 Jacobian of §4.1: tagged ForwardDiff on a vector or `Number` iterate, the problem's own
+# `J`, and the operator of a method. The tag and the complex seeding are the R3 chunked mode's —
+# `tag_of`, `dual_type`, `seed` and `dual_partial` — so that R1 and R3 cannot drift apart. A back
+# end other than `AutoForwardDiff` has no R1 method, and the call is a host `MethodError` (§4.6).
 
 """
     JacobianFunction(f)
@@ -32,19 +20,22 @@ struct JacobianFunction{A}
 end
 
 """
-    prepare_ad(backend::AutoForwardDiff, prob, ::Nothing, x::Union{StaticArray, Number}, p)
+    prepare_ad(backend::AutoForwardDiff, prob, ::Nothing, x::Union{StaticVector, Number}, p)
 
-The R1 preparation of `AutoForwardDiff`: with no residual buffer and a value iterate there is
-nothing to allocate, so the preparation is the back end itself, and [`jacobian!!`](@ref) and
-[`jvp!!`](@ref) resolve its tag per call against `prob` and `x`, through the same `tag_of` rule as
-the R3 chunked mode. That keeps the R1 state `isbits` and carries a caller's tag unchanged.
+The R1 preparation of `AutoForwardDiff`: with no residual buffer and a vector or `Number` iterate
+there is nothing to allocate, so the preparation is the back end itself, and [`jacobian!!`](@ref)
+and [`jvp!!`](@ref) resolve its tag per call against `prob` and `x`, through the same `tag_of` rule
+as the R3 chunked mode. That keeps the R1 state `isbits` and carries a caller's tag unchanged.
+
+A static matrix is not an iterate, so no method here takes one: `prepare_ad` on one is a host
+`MethodError` (§4.6).
 """
 function prepare_ad(
-        backend::AutoForwardDiff, prob, ::Nothing, x::Union{StaticArray, Number}, p)
+        backend::AutoForwardDiff, prob, ::Nothing, x::Union{StaticVector, Number}, p)
     backend
 end
 
-function jacobian!!(::Nothing, ::Nothing, prob, x::Union{StaticArray, Number}, p)
+function jacobian!!(::Nothing, ::Nothing, prob, x::Union{StaticVector, Number}, p)
     return prob.J(x, p)
 end
 

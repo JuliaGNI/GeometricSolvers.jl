@@ -28,9 +28,8 @@ const N_PROBLEM = 4
     @test isbits(prob)
 end
 
-# A residual whose closure holds a heap array: the problem is not `isbits` then, and because the
-# problem enters the state, `isbits(state)` is false with it — which is the property a kernel needs
-# (§4.4).
+# A residual whose closure holds a heap array: the problem is not `isbits` then. The state holds no
+# problem, so `isbits(prob)` is the whole question a kernel asks of one (§4.4).
 heap_residual(::Type{T}) where {T} = (q = zeros(T, 2); (x, p) -> x .+ q[1])
 
 @testset "the problem is isbits when its functions are" begin

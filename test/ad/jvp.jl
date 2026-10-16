@@ -145,11 +145,17 @@ end
 # for the same reason. The problems are the value forms of `../helpers/adproblems.jl`: its stubs
 # are in-place and cannot be called with an `SVector` at all.
 
+using ForwardDiff: ForwardDiff
+using JET: JET, @test_opt
 using StaticArrays: SVector
 
 using GeometricSolvers: NonlinearProblem
 
 include("../helpers/r1problems.jl")
+
+# On a Julia it does not support, JET loads empty stubs that throw. JET 0.12 exports
+# `JET_AVAILABLE` to say so; JET 0.9 and 0.10 name the same flag `JET_LOADABLE`.
+const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
 
 # The allocation assertion goes through a function barrier, as in the R3 tests above.
 function r1_jvp_allocations(ad::A, prob::P, x::X, v::V, p::Q) where {A, P, X, V, Q}
@@ -215,4 +221,41 @@ end
     @test @inferred(jvp!!(nothing, AutoForwardDiff(), prob, x, x, p)) isa SVector{N_AD, T}
     @test r1_jvp_allocations(nothing, prob, x, x, p) == 0
     @test r1_jvp_allocations(AutoForwardDiff(), prob, x, x, p) == 0
+end
+
+# The `Number` iterate — `n = 1` — is a case of its own: the value is a `Number`, the tag rule is
+# the vector one, and a call that ignored the direction, or dropped it from the `nothing` source,
+# would pass every vector test in this file.
+@testset "the R1 jvp!! on a Number iterate, $T" for T in ELTYPES
+    prob = NonlinearProblem(R1ScalarScaled(), r1_scalar_scaled_jacobian)
+    x, p = T(2), T(3)
+    @test @inferred(jvp!!(nothing, nothing, prob, x, T(5), p)) == T(15)
+    @test @inferred(jvp!!(nothing, AutoForwardDiff(), prob, x, T(5), p)) == T(15)
+    @test r1_jvp_allocations(nothing, prob, x, T(5), p) == 0
+    @test r1_jvp_allocations(AutoForwardDiff(), prob, x, T(5), p) == 0
+    # the direction is read, in both preparations
+    @test jvp!!(nothing, nothing, prob, x, T(7), p) == T(21)
+    @test jvp!!(nothing, AutoForwardDiff(), prob, x, T(7), p) == T(21)
+
+    # and the tag rule, on a residual that reads it: `R1Tagged` scales by `2` under the caller's
+    # tag and by `1` under this solver's own
+    tagged = NonlinearProblem(R1Tagged())
+    @test jvp!!(nothing, AutoForwardDiff(), tagged, x, T(2), p) == T(2)
+    @test jvp!!(
+        nothing, AutoForwardDiff(; tag = ForwardDiff.Tag(CallerTag(), T)), tagged, x,
+        T(2), p) == T(4)
+end
+
+@testset "JET: no runtime dispatch in the R1 jvp!!, $T" for T in ELTYPES
+    x, p = r1_inputs(T, N_AD)
+    prob = NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian)
+    scalar = NonlinearProblem(R1ScalarScaled(), r1_scalar_scaled_jacobian)
+    if JET_WORKS
+        @test_opt jvp!!(nothing, AutoForwardDiff(), prob, x, x, p)
+        @test_opt jvp!!(nothing, nothing, prob, x, x, p)
+        @test_opt jvp!!(nothing, AutoForwardDiff(), scalar, T(2), T(5), T(3))
+        @test_opt jvp!!(nothing, nothing, scalar, T(2), T(5), T(3))
+    else
+        @test_skip JET_WORKS  # issue #8
+    end
 end

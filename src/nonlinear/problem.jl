@@ -10,11 +10,10 @@ functions only — no parameters, no iterate and no flag — so it is `isbits` w
 and `init` can hand it to a kernel.
 
 The call form follows the storage of the iterate, and [`residual!!`](@ref) selects it on the
-storage alone: a `StaticArray` or a `Number` iterate calls `F(x, p)`, any other array calls
-`F!(y, x, p)`, and an `MVector` counts as a value. `J` is `J(x, p)` or `J!(A, x, p)` in the same
-way. It is the derivative of `F`, which [`jvp!!`](@ref) always reads and [`jacobian!!`](@ref)
-reads for the source `nothing`; a method's own operator is a separate argument of the method
-(§4.3).
+storage alone: with no buffer slot the call is `F(x, p)`, for a `Number`, an `MVector` — which
+counts as a value (§4.3) — and an `Array` alike. `J` is the derivative of `F`, which
+[`jvp!!`](@ref) always reads and [`jacobian!!`](@ref) reads for the source `nothing`; a method's
+own operator is a separate argument of the method (§4.3).
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x .* x .- 4);

@@ -17,9 +17,10 @@ NonlinearProblem
 ## The storage seam
 
 Every algorithm of the package — the loop, `Newton`, `Picard`, the globalisations, `DogLeg`, the
-combinators and `Anderson` — touches storage only through the functions below. Each has a method
-for a value iterate (R1) and a method for a buffer iterate (R3), the algorithm rebinds the
-returned value, and the difference between the two storage kinds therefore stays at the leaves.
+combinators and `Anderson` — touches storage only through the functions below, and reads their
+result rather than the storage itself, so one algorithm serves every storage kind and the
+difference between the kinds stays at the leaves. The value methods, for a `StaticArray` or a
+`Number` iterate, are the ones this page documents.
 
 These names are not exported. Reach them as `GeometricSolvers.name`.
 

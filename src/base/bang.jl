@@ -1,8 +1,7 @@
 # The storage functions of §4.1: the complete seam between an algorithm and its storage, and
-# nothing else. Each of them has a value method here, for the R1 storage, and an array method in
-# the file that owns that storage. An algorithm calls them and rebinds the result, so the same
-# algorithm runs on a value iterate and on a buffer iterate, and the difference stays at the
-# leaves.
+# nothing else. The value methods of the R1 storage stand here. An algorithm calls them and
+# rebinds the result, so the same algorithm runs on a value iterate and on a buffer iterate, and
+# the difference stays at the leaves.
 #
 # The `!!` of the name is the package's convention for a function that writes into its first
 # argument where the storage allows it and returns a value where it does not: the caller uses the
@@ -20,7 +19,9 @@ One storage slot for an iterate like `x`, in the element type `TF` and with the 
 `init` calls it, once per slot; no algorithm does.
 
 A value iterate — a `StaticArray` or a `Number` — has no slot: the call returns `nothing`, so the
-R1 state carries no buffer and spends no register on one.
+R1 state carries no buffer and spends no register on one. A static matrix is never an iterate and
+gets no slot either, which is why this method is written on `StaticArray` and not on
+`StaticVector`.
 """
 buffer(x::Union{StaticArray, Number}) = nothing
 buffer(x::Union{StaticArray, Number}, ::Type{TF}, dims...) where {TF} = nothing
@@ -31,9 +32,10 @@ buffer(x::Union{StaticArray, Number}, ::Type{TF}, dims...) where {TF} = nothing
 The residual `F(x, p)` of `prob` at the iterate `x`, for the parameters `p`, in the storage of
 `y`, and return it.
 
-The storage alone selects the call form of the problem's `F`: a `StaticArray` or a `Number`
-iterate calls `F(x, p)`, any other array calls `F!(y, x, p)`. There is no `inplace` flag that
-could disagree with the iterate, and no `hasmethod`.
+`y` is the storage slot the residual is to occupy, and it alone selects the call form of the
+problem's `F`: with no buffer slot (`nothing`) the call is `F(x, p)`, for an `SVector`, an
+`MVector`, a `Number` and an `Array` alike, because the iterate's type is read nowhere. There is
+no `inplace` flag that could disagree with the iterate, and no `hasmethod`.
 """
 residual!!(::Nothing, prob, x, p) = prob.F(x, p)
 

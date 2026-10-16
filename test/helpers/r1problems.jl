@@ -142,22 +142,29 @@ struct R1Holomorphic end
 # expression the AD evaluates and the comparison stays exact.
 r1_holomorphic_jacobian(x, p) = diagonal_matrix(x .+ x .+ p)
 
-"[`R1Nested`](@ref)'s scalar term: `x ⋅ d/ds(s² p)|_{s = x}`, which is `2 p x²`."
-r1_nested_term(xi, pi) = xi * ForwardDiff.derivative(s -> s * s * pi, xi)
+"[`R1Closing`](@ref)'s scalar term: `x ⋅ ∂/∂s(s x)|_{s = 1}`, which is `x²`."
+function r1_closing_term(xi, pi)
+    return xi * ForwardDiff.derivative(s -> s * xi, one(real(eltype(pi))))
+end
 
 """
-    R1Nested()
+    R1Closing()
 
-The value form of `Nested`: `F(x, p) = 2 p x²`, written so that the residual itself calls
-`ForwardDiff.derivative`. The Jacobian is `Diagonal(4 p x)`. This is nested differentiation: with
-a shared or a missing tag the inner and the outer perturbation are confused, which is the fault it
-catches.
+A residual in the shape of `Nested`: `F(x, p) = x .* x`, written so that the residual itself
+calls `ForwardDiff.derivative` over a variable its own body closes over — the inner body holds
+`xi`, the outer dual, so the inner and the outer perturbation meet. This is the nested
+differentiation a solver's tag rule exists for: with the outer tag missing the two are confused
+and ForwardDiff raises `DualMismatchError`, where the tagged pass gives `J = Diagonal(2x)`.
+
+The inner variable is a plain real in every element type, so a complex iterate gets the
+holomorphic derivative and no `DimensionMismatch`. The derivative is `2x` exactly at every entry:
+the duals evaluate `fl(1 ⋅ x_i) + fl(x_i ⋅ 1)`.
 """
-struct R1Nested end
+struct R1Closing end
 
-(::R1Nested)(x, p) = r1_nested_term.(x, p)
+(::R1Closing)(x, p) = map(r1_closing_term, x, p)
 
-r1_nested_jacobian(x, p) = diagonal_matrix(4 .* p .* x)
+r1_closing_jacobian(x, p) = diagonal_matrix(x .+ x)
 
 """
     R1Coupled(perm)

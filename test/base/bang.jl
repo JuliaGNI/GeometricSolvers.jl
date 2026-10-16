@@ -10,7 +10,7 @@
 using ADTypes: AutoForwardDiff
 using JET: JET, @test_opt
 using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel
-using StaticArrays: MMatrix, MVector
+using StaticArrays: MMatrix, MVector, SMatrix, SVector
 using Test
 
 using GeometricSolvers
@@ -35,9 +35,9 @@ r1_scaled_problem() = NonlinearProblem(R1Scaled(), r1_scaled_jacobian)
 # the captured values and the assertion fails although the code allocates nothing.
 #
 # A value iterate of a `Number` or an `SVector` is `isbits`, so the compiler keeps the result in
-# registers; an `MMatrix` is mutable, so `x + α d` and `map` return a new mutable array and the
-# heap holds it — `2 × 2` costs 144 bytes in `Float64` and 272 in `ComplexF64`. `buffer` returns
-# no array at all, and is asserted for an `MMatrix` too.
+# registers; an `MVector` is a value too, but `x + α d` and `map` on a mutable array return a new
+# mutable array, which the heap holds, so nothing is asserted about its cost (`KNOWN_ISSUES.md`
+# K7). `buffer` returns no array at all, and is asserted for a static matrix as well.
 buffer_allocations(x::X) where {X} = (buffer(x); @allocated buffer(x))
 function residual_allocations(y::Y, prob::P, x::X, p::Q) where {Y, P, X, Q}
     (residual!!(y, prob, x, p); @allocated residual!!(y, prob, x, p))
@@ -46,6 +46,12 @@ function update_allocations(x::X, α::A, d::D) where {X, A, D}
     (update_iterate!!(nothing, x, α, d); @allocated update_iterate!!(nothing, x, α, d))
 end
 map_allocations(x::X) where {X} = (map!!(-, nothing, x); @allocated map!!(-, nothing, x))
+function map2_allocations(x::X, z::Z) where {X, Z}
+    (map!!(+, nothing, x, z); @allocated map!!(+, nothing, x, z))
+end
+function mul_allocations(a::A, b::B) where {A, B}
+    (mul!!(nothing, a, b); @allocated mul!!(nothing, a, b))
+end
 function factorize_allocations(m::M, jac::J) where {M, J}
     (factorize!!(nothing, m, jac); @allocated factorize!!(nothing, m, jac))
 end
@@ -64,12 +70,14 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
     x, p = r1_inputs(T, N_BANG)
     v = MVector(x)
     m = mmatrix(T, N_BANG)
+    s = SMatrix(m)
     prob = r1_scaled_problem()
     α = T(2)
 
     # `buffer` has no slot for a value iterate, whatever its shape: an `SVector`, an `MVector`
-    # (which counts as a value, §4.3), an `MMatrix` and a `Number`. The second form is what `init`
-    # calls, and it is `nothing` too: the R1 state spends no register on a buffer.
+    # (which counts as a value, §4.3), an `MMatrix` — a static matrix, which is never an iterate,
+    # and still gets no heap slot (§4.1) — and a `Number`. The second form is what `init` calls,
+    # and it is `nothing` too: the R1 state spends no register on a buffer.
     @test buffer(x) === nothing
     @test buffer(v) === nothing
     @test buffer(m) === nothing
@@ -77,34 +85,41 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
     @test buffer(x, T, N_BANG) === nothing
     @test buffer(one(T), T) === nothing
 
-    # `residual!!` is `F(x, p)`; `update_iterate!!` is `x + α d`; `map!!` is `map`; `mul!!` is the
-    # product
+    # `residual!!` is `F(x, p)` for every value iterate; `update_iterate!!` is `x + α d`; `map!!`
+    # is `map`; `mul!!` is the product of a `SMatrix` with a `SVector` or a `SMatrix` (§4.1)
     @test residual!!(nothing, prob, x, p) == prob.F(x, p)
     @test residual!!(nothing, prob, v, p) == prob.F(v, p)
     @test residual!!(nothing, prob, one(T), T(3)) == T(3)
     @test update_iterate!!(nothing, x, α, x) === x + α * x
-    @test update_iterate!!(nothing, m, α, m) == m + α * m
+    @test update_iterate!!(nothing, v, α, v) == v + α * v
     @test map!!(-, nothing, x) == map(-, x)
-    @test map!!(-, nothing, m) == map(-, m)
+    @test map!!(-, nothing, v) == map(-, v)
     @test map!!(+, nothing, x, x) == map(+, x, x)
-    @test mul!!(nothing, m, m) == m * m
+    @test mul!!(nothing, s, x) == s * x
+    @test mul!!(nothing, s, s) == s * s
 
-    # and every one of them infers
+    # and every one of them infers, the `MVector` result included: it is a new mutable array
     @test @inferred(buffer(x)) === nothing
     @test @inferred(buffer(m)) === nothing
     @test @inferred(buffer(one(T))) === nothing
     @test @inferred(residual!!(nothing, prob, x, p)) == prob.F(x, p)
+    @test @inferred(residual!!(nothing, prob, v, p)) == prob.F(v, p)
     @test @inferred(update_iterate!!(nothing, x, α, x)) === x + α * x
+    @test @inferred(update_iterate!!(nothing, v, α, v)) == v + α * v
     @test @inferred(map!!(-, nothing, x)) == map(-, x)
-    @test @inferred(mul!!(nothing, m, m)) == m * m
+    @test @inferred(map!!(-, nothing, v)) == map(-, v)
+    @test @inferred(mul!!(nothing, s, x)) == s * x
+    @test @inferred(mul!!(nothing, s, s)) == s * s
 end
 
 # The value-returning calls of this testset are asserted for a value iterate of the working
-# element type, where the result is `isbits`; `buffer` is asserted for an `MMatrix` as well,
-# because it returns no array at all and so cannot allocate whatever the bounds-check flag is.
+# element type, where the result is `isbits`, and `buffer` is asserted for a static matrix as
+# well, because it returns no array at all and so cannot allocate whatever the bounds-check flag
+# is.
 @testset "the value methods allocate nothing, $T" for T in ELTYPES
     x, p = r1_inputs(T, N_BANG)
     m = mmatrix(T, N_BANG)
+    s = SMatrix(m)
     prob = r1_scaled_problem()
     @test collect_allocations([one(T)]) > 0
     @test buffer_allocations(x) == 0
@@ -113,6 +128,9 @@ end
     @test residual_allocations(nothing, prob, x, p) == 0
     @test update_allocations(x, T(2), x) == 0
     @test map_allocations(x) == 0
+    @test map2_allocations(x, x) == 0
+    @test mul_allocations(s, x) == 0
+    @test mul_allocations(s, s) == 0
 end
 
 @testset "a Number J factorises through part I's 1 × 1 factors, $T" for T in ELTYPES
@@ -180,8 +198,8 @@ end
 
 # Check 7, the storage half: every call above runs inside a kernel, on values only. A `nothing`
 # buffer slot is part of what a kernel carries — it has no storage and no register — so the tuple
-# the kernel writes out holds it.
-@kernel function seam_kernel!(out, prob, @Const(X), @Const(P), α)
+# the kernel writes out holds it, and `mul!!` takes a static matrix there as it does on the host.
+@kernel function seam_kernel!(out, prob, @Const(X), @Const(P), @Const(S), α)
     i = @index(Global)
     x = X[i]
     p = P[i]
@@ -191,7 +209,8 @@ end
     d = map!!(-, nothing, r)
     fac = factorize!!(nothing, LUFactorization(), one(eltype(x)) * 2)
     s = ldiv!!(nothing, fac, d[1])
-    out[i] = (y[1], s, d[1], b)
+    c = mul!!(nothing, S[i], y)
+    out[i] = (y[1], s, d[1], b, c)
 end
 
 @testset "the storage seam inside a KernelAbstractions kernel on CPU(), $T" for T in ELTYPES
@@ -199,12 +218,15 @@ end
     prob = r1_scaled_problem()
     X = [r1_inputs(T, N_BANG)[1] * T(i) for i in 1:3]
     P = [r1_inputs(T, N_BANG)[2] for i in 1:3]
-    out = Vector{Tuple{T, T, T, Nothing}}(undef, 3)
+    S = [diagonal_matrix(P[i] * T(i + 1)) for i in 1:3]
+    out = Vector{Tuple{T, T, T, Nothing, SVector{N_BANG, T}}}(undef, 3)
     α = T(2)
-    seam_kernel!(backend)(out, prob, X, P, α; ndrange = 3)
+    seam_kernel!(backend)(out, prob, X, P, S, α; ndrange = 3)
     KernelAbstractions.synchronize(backend)
-    expected = [((X[i] + α * (P[i] .* X[i]))[1],
-                    -(P[i] .* X[i])[1] / 2, -(P[i] .* X[i])[1], nothing)
-                for i in 1:3]
+    expected = map(1:3) do i
+        r = P[i] .* X[i]
+        y = X[i] + α * r
+        return (y[1], -r[1] / 2, -r[1], nothing, S[i] * y)
+    end
     @test out == expected
 end
