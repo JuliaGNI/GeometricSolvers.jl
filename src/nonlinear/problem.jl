@@ -7,13 +7,13 @@
 
 The residual `F` of a nonlinear system, and optionally its derivative `J`. The problem holds
 functions only — no parameters, no iterate and no flag — so it is `isbits` when `F` and `J` are
-and `init` can hand it to a kernel.
+and a kernel can hold it.
 
 The call form follows the storage of the iterate, and [`residual!!`](@ref) selects it on the
 storage alone: with no buffer slot the call is `F(x, p)`, for a `Number`, an `MVector` — which
 counts as a value (§4.3) — and an `Array` alike. `J` is the derivative of `F`, which
-[`jvp!!`](@ref) always reads and [`jacobian!!`](@ref) reads for the source `nothing`; a method's
-own operator is a separate argument of the method (§4.3).
+[`jvp!!`](@ref) and [`jacobian!!`](@ref) read for the source `nothing`; `AutoForwardDiff` instead
+differentiates `F`. A method's own operator is a separate Jacobian source (§4.3).
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x .* x .- 4);

@@ -3,8 +3,7 @@
 # `NonlinearProblem` holds the residual and, optionally, its derivative, and nothing else: no
 # parameters, no iterate and no `inplace` flag. The storage of the iterate selects the call form,
 # and it is `residual!!` that reads it: the value method of `src/base/bang.jl` calls `F(x, p)` for
-# every iterate it is handed. This file is the R1 half of the rule; the array slot and its `F!`
-# call form are part T's (§13.L-a, *Not in this part*).
+# every iterate it is handed. This file tests the value slot only, not an in-place `F!` call.
 
 using StaticArrays: MVector, SVector
 using Test
@@ -22,8 +21,7 @@ const N_PROBLEM = 4
     @test prob.F isa R1Scaled
     @test prob.J === nothing
     @test NonlinearProblem(R1Scaled(), r1_scaled_jacobian).J === r1_scaled_jacobian
-    # two fields and no flag: an `inplace` flag that could disagree with the iterate is exactly
-    # what §4.3 removes, and the call form is read off the storage instead
+    # two fields and no flag: the call form depends on the storage, not on an `inplace` flag
     @test fieldnames(typeof(prob)) === (:F, :J)
     @test isbits(prob)
 end
@@ -45,14 +43,13 @@ end
 
     # A value slot calls `F(x, p)`, whatever the iterate: an `SVector`, an `MVector`, which counts
     # as a value (§4.3), and a `Number`. Nothing in the call reads the iterate's type, so an
-    # `Array` in a value slot calls `F(x, p)` too — the array slot and its `F!(y, x, p)` call form
-    # are a second method, and part T writes it.
+    # `Array` in a value slot calls `F(x, p)` too; these tests do not use an in-place residual.
     @test residual!!(nothing, prob, x, p) == prob.F(x, p)
     @test residual!!(nothing, prob, v, p) == prob.F(v, p)
     @test residual!!(nothing, prob, one(T), p[1]) == T(p[1])
     @test residual!!(nothing, prob, Array(x), p) == prob.F(Array(x), p)
 
-    # and the slot is what `init` reads: `nothing` for every value iterate
+    # and every value iterate has a `nothing` storage slot
     @test buffer(x) === nothing
     @test buffer(v) === nothing
     @test buffer(one(T)) === nothing

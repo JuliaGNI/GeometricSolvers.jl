@@ -6,14 +6,12 @@
 """
     JacobianFunction(f)
 
-The Jacobian source of a method that carries an operator of its own: `f` is the function `init`
-resolved against the problem — `A(x, p)` in R1 and `A!(J, x, p)` in R3 — and [`jacobian!!`](@ref)
-calls it in place of the problem's `J`. The method's operator is not the derivative of the
-residual, so it serves [`jacobian!!`](@ref) and never [`jvp!!`](@ref) (§4.3).
+The Jacobian source of a method that carries an operator of its own: `f(x, p)` is that operator,
+and [`jacobian!!`](@ref) calls it in place of the problem's `J`. The method's operator is not the
+derivative of the residual, so it serves [`jacobian!!`](@ref) and never [`jvp!!`](@ref) (§4.3).
 
-Internal: `init` builds it from the method's `jacobian` argument, and a caller passes that
-argument, never this type. It holds a function and nothing else, so it is `isbits` exactly when
-that function is.
+Internal: wrap the operator in this type to pass it as the source of the R1 `jacobian!!` call.
+It holds a function and nothing else, so it is `isbits` exactly when that function is.
 """
 struct JacobianFunction{A}
     f::A

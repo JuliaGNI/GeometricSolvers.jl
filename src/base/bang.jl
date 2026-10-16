@@ -16,7 +16,7 @@
     buffer(x, TF, dims...)
 
 One storage slot for an iterate like `x`, in the element type `TF` and with the shape `dims`.
-`init` calls it, once per slot; no algorithm does.
+A caller creates slots during initialization; an algorithm consumes their returned values.
 
 A value iterate — a `StaticArray` or a `Number` — has no slot: the call returns `nothing`, so the
 R1 state carries no buffer and spends no register on one. A static matrix is never an iterate and
@@ -80,14 +80,13 @@ ldiv!!(::Nothing, fac, r::Number) = ldiv!!(nothing, fac, SVector{1}(r))[1]
 The Jacobian of the residual of `prob` at the iterate `x`, for the parameters `p`, in the storage
 of `J`, and return it.
 
-`prep` is the Jacobian source as `init` prepared it, and the only argument that selects the code.
-In R1 the output slot `J` is `nothing` and the call returns a new `SMatrix` in the element type
-`T` of `x` — a `Number` for a `Number` iterate — which [`factorize!!`](@ref) converts to the
-factorisation precision `TF`: `nothing` calls the problem's `J`, an `AutoForwardDiff` runs tagged
-ForwardDiff over a vector iterate, and a [`JacobianFunction`](@ref) calls the method's own
-function. In R3 `J` is an `n × n` buffer in `TF` and `prep` is a [`DIJacobian`](@ref), whose
-prepared `jacobian!` runs DifferentiationInterface, or a [`ChunkedForwardDiff`](@ref), the own
-chunked forward mode. A preparation selects the code once, where it is built, and never per call.
+`prep` is the Jacobian source. In R1 the output slot `J` is `nothing`: `nothing` calls the
+problem's `J(x, p)`, an `AutoForwardDiff` runs tagged ForwardDiff and returns an `SMatrix` in the
+element type of a vector iterate or a `Number` for a `Number` iterate, and a
+[`JacobianFunction`](@ref) calls the method's own function. [`factorize!!`](@ref) converts the
+result to the factorisation precision `TF`. In R3 `J` is an `n × n` buffer in `TF` and `prep` is a
+[`DIJacobian`](@ref), whose prepared `jacobian!` runs DifferentiationInterface, or a
+[`ChunkedForwardDiff`](@ref), the own chunked forward mode. The preparation selects the code.
 """
 function jacobian!! end
 
@@ -97,11 +96,11 @@ function jacobian!! end
 The Jacobian–vector product `J(x, p) * v` of the residual of `prob`, in the storage of `Jv`, and
 return it.
 
-One pushforward, and exactly one evaluation of the residual: that is what makes the merit
+With an AD source, one pushforward and exactly one evaluation of the residual make the merit
 derivative `φ′(α) = F(x + αd)ᵀ J(x + αd) d` of a line search cost one directional derivative
-rather than `n`, and it is what the mixed-precision refinement residual uses.
+rather than `n`. With the source `nothing`, the call evaluates the problem's `J` instead of `F`.
 
-`prep` is the JVP preparation that `init` built from the problem, never from a method's operator,
+`prep` is the JVP source from the problem, never from a method's operator,
 and it selects the code exactly as in [`jacobian!!`](@ref). In R1 the output slot `Jv` is
 `nothing` and the call returns a new value: `nothing` gives `J(x, p) * v` from the problem's `J`,
 and an `AutoForwardDiff` one dual evaluation of `F`. The R1 direction has the element type and the

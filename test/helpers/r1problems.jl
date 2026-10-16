@@ -49,7 +49,7 @@ end
 """
     r1_hostile_values(::Type{T})
 
-The argument set of `evidence.md` for `T`: the two zeros, the smallest subnormal, the smallest
+The hostile argument set for `T`: the two zeros, the smallest subnormal, the smallest
 normal, `eps`, one, the largest finite values, the infinities, a `NaN`, and the scale family
 `s = 10^k` for `k = -8:4:8`. A value is a value here and not a throw — the seam returns what the
 problem computes, and the finiteness rule belongs to the loop. A complex `T` takes both of its
