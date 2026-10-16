@@ -119,6 +119,27 @@ so that a compat-only bump can be told apart from an interface change.
   bound too. QR takes its column norm as LAPACK's `nrm2` does, so an entry below `sqrt(floatmin)`
   or above `sqrt(floatmax)` does not give a wrong step. A precision marker such as `TF32()` has no
   method for a static matrix. `StaticArrays` is a new dependency, at 1.9.8 or later.
+
+- `SVDFactorization` on a static matrix: `GeometricSolvers.factorize!!(nothing, SVDFactorization(), J)`
+  and `GeometricSolvers.ldiv!!(nothing, fac, r)` return an `isbits` `StaticSVD` and an `SVector`
+  step, from a one-sided Jacobi iteration run by one thread per system in a KernelAbstractions
+  kernel, and allocate nothing unless bounds checks are forced (`--check-bounds=yes`). The
+  singular values `σ` are those of `J`, in non-increasing order. A singular value at or below
+  `√n · eps(TF) · σ₁` counts as zero: `info` is the index of the first one,
+  `GeometricSolvers.returncode(fac)` gives `SINGULAR`, and the solve leaves those directions out,
+  so a rank-deficient matrix gives a finite truncated step and never a `NaN`. The matrix is first
+  divided by a power of two, recorded as `scale_exponent`, so a subnormal matrix gives finite
+  factors. A sweep that reaches the cap of 30 sweeps leaves `converged` false.
+
+- `jacobi_eigen(A)`, exported, is a cyclic two-sided Jacobi eigensolver for a Hermitian or real
+  symmetric static matrix, on the rotations, ordering and stopping test of the SVD. It returns
+  `(values, vectors, status)`: the real eigenvalues, the unitary `vectors` with
+  `A = V * Diagonal(values) * V'`, and `status`, which is `SUCCESS`, or `MAXITERS` at the cap of
+  30 sweeps. It is `isbits` and allocates nothing unless bounds checks are forced, so it runs in a
+  kernel. For a real skew `M`, `jacobi_eigen(im * M)` gives `exp(M)` as
+  `real(V * Diagonal(exp.(-im .* values)) * V')`, to working precision. It is a function on a
+  matrix and adds no method to `LinearAlgebra.eigen`.
+
 - Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
   `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts
   every float of a method tree to `R` through `Adapt`.

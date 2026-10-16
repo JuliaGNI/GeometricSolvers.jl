@@ -37,8 +37,10 @@ BF16
 A linear-solver method enters a solve through two functions, [`factorize!!`](@ref) and
 [`ldiv!!`](@ref). For a static matrix (R1) both return new `isbits` values, so they run inside a
 kernel: [`StaticLU`](@ref) is LU with partial pivoting and `Int32` pivots, [`StaticQR`](@ref)
-Householder QR without column pivoting. [`factorize!!`](@ref) states what a singular matrix
-gives. These names are not exported. Reach them as `GeometricSolvers.name`.
+Householder QR without column pivoting, and [`StaticSVD`](@ref) a one-sided Jacobi singular value
+decomposition whose solve truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what makes a
+rank-revealing solve finite. [`factorize!!`](@ref) states what a singular matrix gives. These
+names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 factorize!!
@@ -46,7 +48,20 @@ ldiv!!
 factor_eltype
 StaticLU
 StaticQR
+StaticSVD
 returncode
+```
+
+### Eigensolver
+
+[`jacobi_eigen`](@ref) is a function on a matrix and not a linear-solver method: cyclic two-sided
+Jacobi for a Hermitian or a real symmetric matrix, on the rotations, the round-robin ordering and
+the stopping test of the Jacobi SVD (decision 27), for the `ProjectedSkew` case
+`jacobi_eigen(im * M)` of a real skew `M`. It adds no method to `LinearAlgebra.eigen`, because a
+method of `eigen` for a `StaticArrays` type would be type piracy (decision 38).
+
+```@docs
+jacobi_eigen
 ```
 
 ## Line searches
