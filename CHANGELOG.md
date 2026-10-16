@@ -193,3 +193,25 @@ so that a compat-only bump can be told apart from an interface change.
   `Enzyme` workflow, which is not a required status check: an Enzyme break then fails that job
   alone and blocks no merge. Runtime activity is what a `Constant` parameter context needs from
   Enzyme's forward mode; a plain `AutoEnzyme()` raises `EnzymeRuntimeActivityError`.
+
+- `NonlinearProblem(F)` and `NonlinearProblem(F, J)`, exported, hold the residual `F` of a nonlinear
+  system and, optionally, its derivative `J`. A problem holds functions only, with no parameters
+  and no iterate, so it is `isbits` when `F` and `J` are, and one problem serves every call that
+  passes other parameters. The value method of `residual!!` calls `F(x, p)` for every iterate it is
+  handed — an `SVector`, an `MVector`, a `Number`, and an `Array` with the value slot `nothing` —
+  because the iterate's type is read nowhere: the dispatch is on the storage slot and on nothing
+  else.
+
+- Internal: the storage seam, the functions an algorithm calls on its iterate, its residual, its
+  update and its factorisation: `residual!!`, `update_iterate!!`, `map!!`, `mul!!`, `buffer`,
+  `factorize!!` and `ldiv!!`. Each has a value method for a `StaticArray` or a `Number` iterate, so
+  an algorithm written against them is written once for both storages. A `Number` Jacobian is
+  factorised as a `1 × 1` matrix.
+
+- Internal: `jacobian!!` and `jvp!!` for a `StaticVector` or a `Number` iterate. With the
+  source `nothing`, `jacobian!!` returns the problem's `J` and `jvp!!` returns `J(x, p) * v`; with
+  `AutoForwardDiff()`, `jacobian!!` differentiates the residual with ForwardDiff, and `jvp!!` takes
+  one dual evaluation of it. The R1 direction has the element type and the length of the iterate,
+  as the line-search slope does: a direction of another element type is a host `MethodError`. The
+  ForwardDiff path allocates nothing. A method's own operator is a `JacobianFunction`, which
+  `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.

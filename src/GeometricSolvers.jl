@@ -9,10 +9,13 @@ using Adapt: Adapt
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
-using StaticArrays: MMatrix, MVector, SMatrix, StaticMatrix, StaticVector, SVector, setindex
+using StaticArrays: MMatrix, MVector, SMatrix, StaticArray, StaticMatrix, StaticVector,
+                    SVector,
+                    setindex
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options
+export NonlinearProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
 export Static, Backtracking, Bisection, StrongWolfe
 
@@ -34,6 +37,9 @@ include("globalization/backtracking.jl")
 include("globalization/bisection.jl")
 include("globalization/strongwolfe.jl")
 
+include("nonlinear/problem.jl")
+
+include("ad/forwarddiff_static.jl")
 include("ad/di.jl")
 include("ad/chunked.jl")
 include("ad/jvp.jl")
