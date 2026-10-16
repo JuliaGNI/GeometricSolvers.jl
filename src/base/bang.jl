@@ -55,7 +55,7 @@ update_iterate!!(::Nothing, x, α, d) = x + α * d
 `map(f, xs...)` in the storage of `y`, and return it: the elementwise updates that are not an
 iterate update of [`update_iterate!!`](@ref) — a negation, a difference, a copy.
 """
-map!!(f, ::Nothing, xs...) = map(f, xs...)
+map!!(f::F, ::Nothing, xs::Vararg{Any, N}) where {F, N} = map(f, xs...)
 
 """
     mul!!(C, A, B)
