@@ -228,5 +228,23 @@ end
         y = X[i] + α * r
         return (y[1], -r[1] / 2, -r[1], nothing, S[i] * y)
     end
-    @test out == expected
+    # The four fields that move data are exact, and are asserted bit for bit: `y[1]`, `s` and
+    # `d[1]` are `x + α d`, `-r[1] / 2` and `-r[1]` — plain `*`, `+` and a division by two — and
+    # `b` is the `nothing` buffer slot of a value iterate, which the tuple carries out of the
+    # kernel.
+    #
+    # The product is not exact in that sense. StaticArrays builds `A * B` for a static matrix and
+    # a static vector from a chain of `muladd`s (`matrix_multiply_add.combine_products`), and
+    # Julia's `muladd` reaches the backend as `fmul contract` and `fadd contract`: whether the
+    # compiler contracts the chain into an FMA or leaves the two roundings is its own choice, and
+    # the choice is not the same in every compilation context. On the Julia 1.11 floor — the
+    # `[compat]` lower bound — the kernel's product and this closure's then differ by up to 2 ulp
+    # for `ComplexF32` alone, where 1.13.2 makes the same choice in both and agrees to the bit.
+    # `test/gpu/runtests.jl` carries a tolerance for the same reason. So the product is
+    # compared at the ulp level of the working precision, and the four fields above it are what a
+    # wrong `r`, `y`, `α` or factor has to move.
+    for i in 1:3
+        @test out[i][1:4] == expected[i][1:4]
+        @test all(isapprox.(out[i][5], expected[i][5]; rtol = 8 * eps(real(T))))
+    end
 end
