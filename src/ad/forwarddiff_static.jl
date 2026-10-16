@@ -37,7 +37,8 @@ function jacobian!!(::Nothing, ::Nothing, prob, x::Union{StaticVector, Number}, 
     return prob.J(x, p)
 end
 
-function jacobian!!(::Nothing, s::JacobianFunction, prob, x, p)
+function jacobian!!(
+        ::Nothing, s::JacobianFunction, prob, x::Union{StaticVector, Number}, p)
     return s.f(x, p)
 end
 

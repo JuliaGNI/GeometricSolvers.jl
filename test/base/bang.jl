@@ -93,7 +93,12 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
     @test map!!(-, nothing, v) == map(-, v)
     @test map!!(+, nothing, x, x) == map(+, x, x)
     @test mul!!(nothing, s, x) == s * x
-    @test mul!!(nothing, s, s) == s * s
+    # The product of two static matrices is a chain of `muladd`s, and whether the compiler
+    # contracts it into FMAs is its own choice in each compilation context: on the Julia 1.11 floor
+    # on x86_64 the two sides differ by 1 ulp in `Float32`. So the product is compared entry by
+    # entry at one ulp of the working precision, `rtol = eps(real(T))`, which every 1-ulp
+    # difference meets because `eps(x) ≤ eps(real(T)) * abs(x)`.
+    @test all(isapprox.(mul!!(nothing, s, s), s * s; rtol = eps(real(T))))
 
     # and every one of them infers, the `MVector` result included: it is a new mutable array
     @test @inferred(buffer(x)) === nothing
@@ -106,7 +111,7 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
     @test @inferred(map!!(-, nothing, x)) == map(-, x)
     @test @inferred(map!!(-, nothing, v)) == map(-, v)
     @test @inferred(mul!!(nothing, s, x)) == s * x
-    @test @inferred(mul!!(nothing, s, s)) == s * s
+    @test all(isapprox.(@inferred(mul!!(nothing, s, s)), s * s; rtol = eps(real(T))))
 end
 
 # The value-returning calls of this testset are asserted for a value iterate of the working

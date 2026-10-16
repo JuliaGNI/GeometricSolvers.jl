@@ -231,6 +231,9 @@ end
             () -> jvp!!(nothing, AutoForwardDiff(), prob, A, A, p), jvp!!)
         @test r1_raises_missing_method(
             () -> jacobian!!(nothing, nothing, prob, A, p), jacobian!!)
+        @test r1_raises_missing_method(
+            () -> jacobian!!(nothing, JacobianFunction(r1_member_operator), prob, A, p),
+            jacobian!!)
     end
 end
 
