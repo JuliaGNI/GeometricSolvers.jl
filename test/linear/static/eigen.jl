@@ -190,7 +190,7 @@ end
         # pair is not finite. Round 1 found this case returning `SUCCESS` (other defect 2)
         for v in (T(Inf), -T(Inf))
             B = SMatrix{2, 2, T}(v, zero(T), zero(T), one(T))
-            λb, Vb, statusb = jacobi_eigen(B)
+            λb, _, statusb = jacobi_eigen(B)
             @test statusb === MAXITERS
             @test !all(isfinite, λb)
         end
