@@ -19,7 +19,11 @@ if "core" in GROUPS
     @safetestset "Static LU" include("linear/static/lu.jl")
     @safetestset "Static QR" include("linear/static/qr.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
+    @safetestset "Line function and globalization" include("globalization/linefunction.jl")
     @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
+    @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
+    @safetestset "Newton" include("nonlinear/newton.jl")
+    @safetestset "Picard" include("nonlinear/picard.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "Jacobian-vector product" include("ad/jvp.jl")
@@ -30,4 +34,5 @@ end
 if "metal" in GROUPS
     @safetestset "Metal" include("devices/metal.jl")
     @safetestset "Metal static LU and QR" include("devices/metal_linear.jl")
+    @safetestset "Metal R1 nonlinear" include("devices/metal_nonlinear.jl")
 end

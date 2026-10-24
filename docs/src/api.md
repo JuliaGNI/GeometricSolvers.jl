@@ -89,6 +89,23 @@ Bisection
 StrongWolfe
 ```
 
+## Nonlinear solvers
+
+A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,
+`refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
+[`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
+to `R = real(eltype(x₀))`, calls [`init`](@ref) and [`solve!!`](@ref), and returns `(x, status)`.
+[`solve!!`](@ref) takes a solver state from [`init`](@ref) and runs the loop on a `StaticVector`,
+`MVector` or `Number` iterate in R1.
+
+```@docs
+solve
+solve!!
+Newton
+Picard
+NoRefinement
+```
+
 ## Automatic differentiation
 
 In R1, [`prepare_ad`](@ref) returns the `AutoForwardDiff()` back end itself for a `StaticVector`
@@ -133,6 +150,11 @@ jvp!!
 These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
+init
+step!!
+refine!!
+LineFunction
+globalize!!
 LineSearch
 linesearch
 φ
@@ -157,3 +179,4 @@ norm2
 rnorm
 rdot
 ```
+
