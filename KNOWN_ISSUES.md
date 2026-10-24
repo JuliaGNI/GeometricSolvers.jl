@@ -67,12 +67,12 @@
 - **location:** `src/base/bang.jl` (`update_iterate!!`, `map!!`)
 - **evidence:** `update_iterate!!(nothing, v, α, v)` with an `MVector{4, Float64}` allocates 48
   bytes, 32 in `Float32`, 48 in `ComplexF32` and 80 in `ComplexF64`, and `map!!(-, nothing, v)` the
-  same, measured through the function barrier of `test/base/bang.jl` on Julia 1.13.2 in a cold
-  process. `buffer(v)` is `nothing` and allocates nothing. The result of an arithmetic operation
-  on a mutable static array is a new mutable array, which the heap holds, so no method of the seam
-  can avoid this while the iterate keeps its type. An `MVector` is a value iterate for the call
-  form and for the value methods, and the zero-allocated-bytes target of the R1 regime names
-  `SVector` and `Number`, so the target does not cover this case.
+  same, measured with `@allocated` at testset scope in a cold process on Julia 1.13.2. `buffer(v)`
+  is `nothing` and allocates nothing. The result of an arithmetic operation on a mutable static
+  array is a new mutable array, which the heap holds, so no method of the seam can avoid this while
+  the iterate keeps its type. An `MVector` is a value iterate for the call form and for the value
+  methods, and the zero-allocated-bytes target of the R1 regime names `SVector` and `Number`, so
+  the target does not cover this case.
 - **kind:** found late
 - **found:** 2026-10-16
 
@@ -90,7 +90,7 @@
   0.0002651047319540524489503257446708858433467320775791476271978043854901525737284947`.
   Both the `metal` file and the static kernels it exercises are unchanged in this branch, and the
   same command on a tree of `origin/main` (`base-tree.jl` at `fea2905`) under 1.13.2 gives the
-  same `139 passed, 5 failed` and the same two `Evaluated:` lines; on the `[compat]` floor,
-  Julia 1.11.9, every testset of the full run passes.
+  same `139 passed, 5 failed` and the same two `Evaluated:` lines; on Julia 1.11.9 every testset
+  of the full run passes.
 - **kind:** found late
 - **found:** 2026-10-16
