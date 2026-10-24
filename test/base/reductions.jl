@@ -42,29 +42,23 @@ end
     @test rdot(T[], T[]) === zero(real(T))
 end
 
-# Inside a function with concrete argument types, so that the measurement does not count the
-# boxing of a result or an argument: 16 to 96 bytes on Julia 1.11 at testset scope or through
-# an unspecialised varargs method.
-allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
-allocations(f::F, a::A, b::B) where {F, A, B} = (f(a, b); @allocated f(a, b))
-
 @testset "SVector: inferred and allocation-free, $T" for T in ELTYPES
     a = SVector{4, T}(1, 2, 3, 4)
     b = SVector{4, T}(4, 3, 2, 1)
     @test @inferred(norm2(a)) === real(T)(30)
     @test @inferred(rnorm(a)) === sqrt(real(T)(30))
     @test @inferred(rdot(a, b)) === real(T)(20)
-    @test allocations(collect, a) > 0        # the control: the helper sees an allocation
-    @test allocations(norm2, a) == 0
-    @test allocations(rnorm, a) == 0
-    @test allocations(rdot, a, b) == 0
+    @test (@allocated collect(a)) > 0        # the control: `@allocated` sees an allocation
+    @test (@allocated norm2(a)) == 0
+    @test (@allocated rnorm(a)) == 0
+    @test (@allocated rdot(a, b)) == 0
 end
 
 @testset "Array: allocation-free, $T" for T in ELTYPES
     a, b = randn(Xoshiro(1), T, 100), randn(Xoshiro(2), T, 100)
-    @test allocations(norm2, a) == 0
-    @test allocations(rnorm, a) == 0
-    @test allocations(rdot, a, b) == 0
+    @test (@allocated norm2(a)) == 0
+    @test (@allocated rnorm(a)) == 0
+    @test (@allocated rdot(a, b)) == 0
 end
 
 @testset "arguments with different axes raise a DimensionMismatch" begin

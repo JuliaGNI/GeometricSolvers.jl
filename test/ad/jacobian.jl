@@ -37,14 +37,6 @@ allowscalar(false)
     @test_throws ErrorException JLArray(zeros(Float32, 2))[1]
 end
 
-# The allocation assertion goes through a function barrier whose arguments all have concrete
-# types, and which calls the function once before it measures: at testset scope Julia 1.11 boxes
-# the captured values and the assertion fails although the code allocates nothing.
-function jacobian_allocations(J::A, prep::P, prob::Q, x::X, p::R) where {A, P, Q, X, R}
-    jacobian!!(J, prep, prob, x, p)
-    return @allocated jacobian!!(J, prep, prob, x, p)
-end
-
 @testset "the AD path is selected by the back end and the iterate, once" begin
     @testset "$AT, $T" for AT in ARRAY_BACKENDS, T in REAL_ELTYPES
 
@@ -322,7 +314,8 @@ end
         prob = StubProblem(Scaled())
         x, p, r = ad_inputs(Array, T, n)
         prep = prepare_ad(AutoForwardDiff(; chunksize = c), prob, r, x, p)
-        @test jacobian_allocations(similar(x, n, n), prep, prob, x, p) == 0
+        J = similar(x, n, n)
+        @test (@allocated jacobian!!(J, prep, prob, x, p)) == 0
     end
 
     # On a device array the dual buffers are the state slots, and they stay the arrays that
@@ -343,8 +336,8 @@ end
         @test prep.rdual1 === slots[4]
         # stable host allocation: two later calls allocate the same, up to the 16-byte steps in
         # which Windows reports allocations, in either direction
-        a2 = jacobian_allocations(J, prep, prob, x, p)
-        a3 = jacobian_allocations(J, prep, prob, x, p)
+        a2 = @allocated jacobian!!(J, prep, prob, x, p)
+        a3 = @allocated jacobian!!(J, prep, prob, x, p)
         @test abs(a3 - a2) <= 32
 
         # and the slots are not merely kept, they are the buffers the call writes: zeroed here, so
