@@ -25,13 +25,13 @@ In `scripts/spikes/metal_qr/probe.jl`, for the explicit `4x4` `Float32` matrix `
 - `CPU x       = Float32[0.03887943, -1.8078897, 0.9948545, 0.09376802]` (`relerr = 2.89314385835767e-7`)
 - `Metal x     = Float32[-0.11811417, -2.079124, -0.0, 0.40906927]` (`relerr = 0.5502846299810247`)
 
-Across the five `n = 4, Float32` conditioned systems (`seed = 0x1055`, target `κ₂ ∈ {1, 10, 10², 10³, 10⁴}`), the unfixed kernel fails all five systems with relative errors `3.2090164093532274`, `0.42389200249621495`, `1.0`, `1.0`, and `0.9245924408027268` against bounds `4.544634866844348e-5`, `0.0002798842456502579`, `0.0029354551690624903`, `0.025852968831572578`, and `0.3046427164551889`, with `τ[3] = 1.0f0`, `factors[4, 3] = 0.0f0`, `factors[3, 4] = 0.0f0`, and `x[3] = -0.0f0` in every system.
+Across the five `n = 4, Float32` conditioned systems of `conditioned_systems(4001, Float32, Nothing, 4)` (`seed = 4001`, target `κ₂ ∈ {1, 10, 10², 10³, 10⁴}`), the unfixed kernel fails all five systems with relative errors `3.2090164093532274`, `0.42389200249621495`, `1.0`, `1.0`, and `0.9245924408027268` against bounds `2.6045170602123007e-5`, `0.00026510473195405244`, `0.004901020403420582`, `0.05881336449653876`, and `0.23557690229672026`, with `τ[3] = 1.0f0`, `factors[4, 3] = 0.0f0`, `factors[3, 4] = 0.0f0`, and `x[3] = -0.0f0` in every system.
 
 ## Index dependence
 
 Depends on the system's index: no
 
-Launching `qr_solve_kernel!` on the five `n = 4, Float32` conditioned systems in forward order (`1:5`), in reversed order (`5:-1:1`), and as five separate single-item kernel launches (`ndrange = 1`) produces the bitwise-identical wrong solution vector `x` for each system (`[0.7698731f0, 5.9730535f0, -0.0f0, 3.482837f0]`, `[-7.333426f0, -3.2040617f0, -0.0f0, -21.6029f0]`, `[701.1707f0, -2483.0505f0, -0.0f0, -1005.90466f0]`, `[-3038.109f0, 1473.077f0, -0.0f0, -1380.1969f0]`, and `[-693.78f0, -3429.9412f0, -0.0f0, -988.7534f0]`).
+Launching `qr_solve_kernel!` on the five `n = 4, Float32` conditioned systems (`seed = 0x1055`) in forward order (`1:5`), in reversed order (`5:-1:1`), and as five separate single-item kernel launches (`ndrange = 1`) produces the bitwise-identical wrong solution vector `x` for each system (`[0.7698731f0, 5.9730535f0, -0.0f0, 3.482837f0]`, `[-7.333426f0, -3.2040617f0, -0.0f0, -21.6029f0]`, `[701.1707f0, -2483.0505f0, -0.0f0, -1005.90466f0]`, `[-3038.109f0, 1473.077f0, -0.0f0, -1380.1969f0]`, and `[-693.78f0, -3429.9412f0, -0.0f0, -988.7534f0]`).
 
 ## Two runs and check bounds
 
