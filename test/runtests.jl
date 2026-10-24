@@ -18,11 +18,16 @@ if "core" in GROUPS
     @safetestset "Static factors" include("linear/factors.jl")
     @safetestset "Static LU" include("linear/static/lu.jl")
     @safetestset "Static QR" include("linear/static/qr.jl")
+    @safetestset "Dense linear solvers" include("linear/dense.jl")
+    @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
     @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "Jacobian-vector product" include("ad/jvp.jl")
+end
+if "slow" in GROUPS
+    @safetestset "Dense linear solvers (large)" include("linear/dense_large.jl")
 end
 if "doctests" in GROUPS
     @safetestset "Doctests" include("quality/doctests.jl")

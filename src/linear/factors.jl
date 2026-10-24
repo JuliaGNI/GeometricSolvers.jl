@@ -2,7 +2,8 @@
 #
 # `factorize!!` and `ldiv!!` follow the `!!` convention of `bang.jl`: the first argument is a
 # buffer where the storage has one and `nothing` where it does not, and the caller always uses
-# the returned value. R1 has no buffer: its factors are `isbits` values, returned new.
+# the returned value. R1 has no buffer: its factors are `isbits` values, returned new. R3 holds
+# its Jacobian and workspace buffers in `DenseLU`, `DenseQR` and `DenseSVD`.
 
 """
     factorize!!(fac, method, J)
@@ -20,6 +21,11 @@ records the first zero pivot in `info`, QR the first zero diagonal entry of `R`,
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 
+For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
+built by [`init`](@ref). When `J !== fac.factors`, `J` is copied into `fac.factors`, and
+`fac.factors` is factorised in place. For [`DenseSVD`](@ref), `info` is `gesvd`'s non-convergence
+code, and a rank deficiency gives `info == 0` and `SUCCESS`.
+
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
 """
@@ -30,15 +36,16 @@ function factorize!! end
 
 Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element type of `r`.
 
-For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. Where the element
+For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
+(R3), `d` is the vector buffer written in place and returned. Where the element
 type of `r` is the element type of the factors, the solve runs directly in it. Where they differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
 relative to the largest entry can still underflow. The scale takes no squares and overflows
 only where an entry's absolute value does. In the mixed-type path, a zero `r` returns a zero
-step without solving, and an `Inf` or `NaN` in `r` gives a non-finite step. In both paths the
-step is multiplied by `2^-e`, the power of two that [`factorize!!`](@ref) divided `J` by.
+step without solving, and an `Inf` or `NaN` in `r` gives a non-finite step. For a static factor,
+the step is multiplied by `2^-e`, the power of two that [`factorize!!`](@ref) divided `J` by.
 """
 function ldiv!! end
 
@@ -86,11 +93,111 @@ struct StaticQR{N, TF, L}
 end
 
 """
+    DenseLU{A, P, V}
+
+The LU factors with partial pivoting of a dense `n × n` matrix, with `factors` the `n × n`
+buffer in the factor element type, `ipiv` the `BlasInt` pivot vector of length `n`, `rhs` the
+right-hand-side buffer of the factor element type when that differs from the working element type
+and `nothing` otherwise, and `info` the index of the first zero pivot, or 0.
+"""
+struct DenseLU{A <: AbstractMatrix, P <: AbstractVector,
+    V <: Union{Nothing, AbstractVector}}
+    factors::A
+    ipiv::P
+    rhs::V
+    info::Int
+end
+
+"""
+    DenseQR{A, T, W, V}
+
+The Householder QR factors of a dense `n × n` matrix, with `factors` the `n × n` buffer in the
+factor element type (`R` on and above the diagonal, reflectors below it), `τ` the reflector scale
+vector of length `n`, `work` the workspace buffer, `rhs` the right-hand-side buffer of the factor
+element type when that differs from the working element type and `nothing` otherwise, and `info`
+the index of the first zero diagonal entry of `R`, or 0.
+"""
+struct DenseQR{A <: AbstractMatrix, T <: AbstractVector, W <: AbstractVector,
+    V <: Union{Nothing, AbstractVector}}
+    factors::A
+    τ::T
+    work::W
+    rhs::V
+    info::Int
+end
+
+"""
+    DenseSVD{A, S, W, RW, T, V}
+
+The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` matrix, with
+`factors` the `n × n` Jacobian buffer in the factor element type, `U` and `VT` the `n × n` unitary
+factors, `S` the vector of singular values in the real factor type, `work`, `rwork` and `tmp` the
+workspace buffers, `rhs` the right-hand-side buffer of the factor element type when that differs
+from the working element type and `nothing` otherwise, and `info` `gesvd`'s non-convergence code,
+or 0.
+"""
+struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
+    RW <: AbstractVector, T <: AbstractVector,
+    V <: Union{Nothing, AbstractVector}}
+    factors::A
+    U::A
+    S::S
+    VT::A
+    work::W
+    rwork::RW
+    tmp::T
+    rhs::V
+    info::Int
+end
+
+"""
+    init(method::LinearMethod, prob, x::AbstractVector, p)
+
+Build the dense factor [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) of `method` for
+the state vector `x`.
+"""
+function init(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    ipiv = Vector{BlasInt}(undef, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DenseLU(factors, ipiv, rhs, 0)
+end
+
+function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    τ = similar(x, F, n)
+    work = similar(x, F, max(1, 64 * n))
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DenseQR(factors, τ, work, rhs, 0)
+end
+
+function init(m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+    F = factor_eltype(m, T)
+    R = real(F)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    U = similar(x, F, n, n)
+    S = similar(x, R, n)
+    VT = similar(x, F, n, n)
+    work = similar(x, F, max(1, 128 * n))
+    rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : 0)
+    tmp = similar(x, F, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0)
+end
+
+"""
     returncode(fac)
 
 `SUCCESS` for a factor with `info == 0`, and `SINGULAR` otherwise.
 """
-returncode(fac::Union{StaticLU, StaticQR}) = iszero(fac.info) ? SUCCESS : SINGULAR
+function returncode(fac::Union{StaticLU, StaticQR, DenseLU, DenseQR, DenseSVD})
+    return iszero(fac.info) ? SUCCESS : SINGULAR
+end
 
 # `a · 2^e`, exact unless the result leaves the floating-point range; by component for a complex `a`.
 ldexp2(a::Real, e) = ldexp(float(a), e)

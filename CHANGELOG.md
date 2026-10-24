@@ -215,3 +215,17 @@ so that a compat-only bump can be told apart from an interface change.
   as the line-search slope does: a direction of another element type is a host `MethodError`. The
   ForwardDiff path allocates nothing. A method's own operator is a `JacobianFunction`, which
   `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.
+
+- Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
+  pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x`, with factor
+  precision `factor_eltype(m, eltype(x))` and a right-hand-side conversion buffer `rhs` when that
+  precision differs from `eltype(x)`. On `BlasFloat` (`Float32`, `Float64`, `ComplexF32`,
+  `ComplexF64`), `factorize!!` and `ldiv!!` call LAPACK's `getrf!`/`getrs!`, `geqrf!`/`ormqr!`
+  (`unmqr!`) with triangular backsolve, and QR-iteration `gesvd!` with rank cutoff
+  `√n · eps(real(T)) · σ₁`, reusing the pre-allocated workspaces without allocation. On other
+  `AbstractMatrix` element types (`BigFloat`), `DenseLU` and `DenseQR` use `LinearAlgebra.lu!` (with
+  `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
+  In mixed precision (`TF !== T`), `ldiv!!` scales the right-hand side by its infinity norm before
+  converting to the factor precision and scales the solution back, returning zero directly on a zero
+  right-hand side. `LinearAlgebra` is now a direct dependency of the package.
+
