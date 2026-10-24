@@ -38,11 +38,11 @@ Launching `qr_solve_kernel!` on the five `n = 4, Float32` conditioned systems in
 Same wrong result in two runs in one process: yes
 Survives --check-bounds=yes: no
 
-Running `qr_solve_kernel!` twice in one process on the same inputs returns bitwise-identical wrong outputs (`x_h1 == x_h2` is `true`). Running `probe.jl` or `metal_rows.jl` under `julia +1.13 --startup-file=no --check-bounds=yes` eliminates all failures (`144/144` assertions pass, and `probe.jl` exits `0` with `relerr = 2.89314385835767e-7`) because `factorize!!` in `src/linear/static/qr.jl` carries no `@inbounds`, so `--check-bounds=yes` inserts bounds-check branches that prevent LLVM from peeling `for k in 1:N` and emitting the negative-offset GEP pattern that Apple's Metal backend miscompiles.
+Running `qr_solve_kernel!` twice in one process on the same inputs returns bitwise-identical wrong outputs (`x_h1 == x_h2` is `true`). Running `probe.jl` or `metal_rows.jl` under `julia +1.13 --startup-file=no --check-bounds=yes` eliminates all failures (`144/144` assertions pass, and `probe.jl` exits `0` with `relerr = 2.89314385835767e-7`) because `--check-bounds=yes` overrides `@inbounds` in `factorize!!` (`src/linear/static/qr.jl:16`) and inserts bounds-check branches that prevent LLVM from peeling `for k in 1:N` and emitting the negative-offset GEP pattern that Apple's Metal backend miscompiles.
 
 ## Fix
 
-Workaround: Fill the scaled column buffer `x = MVector{N, F}(undef)` over the static range `for i in 1:N` with `x[i] = (i >= k && !iszero(amax)) ? A[i, k] / amax : zero(F)` in `src/linear/static/qr.jl:24-27`, which removes both the `llvm.memset` and the `if !iszero(amax)` conditional `for i in k:N` loop between the `amax` reduction and `x₁ = A[k, k]` so LLVM 20 and the Metal shader compiler keep the live column entries of `A` intact across all iterations `k = 1:N` while preserving `σ = amax * rnorm(SVector(x))` and zero host allocations.
+Workaround: Fill the scaled column buffer `x = MVector{N, F}(undef)` over the static range `for i in 1:N` with `x[i] = (i >= k && !iszero(amax)) ? A[i, k] / amax : zero(F)` in `src/linear/static/qr.jl:27-30`, which removes both the `llvm.memset` and the `if !iszero(amax)` conditional `for i in k:N` loop between the `amax` reduction and `x₁ = A[k, k]` so LLVM 20 and the Metal shader compiler keep the live column entries of `A` intact across all iterations `k = 1:N` while preserving `σ = amax * rnorm(SVector(x))` and zero host allocations.
 
 ## Commands
 

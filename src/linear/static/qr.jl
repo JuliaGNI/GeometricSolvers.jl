@@ -21,11 +21,12 @@ function factorize!!(::Union{Nothing, StaticQR},
         for i in k:N
             amax = max(amax, abs(A[i, k]))
         end
-        x = zero(MVector{N, F})
-        if !iszero(amax)
-            for i in k:N
-                x[i] = A[i, k] / amax
-            end
+        # Fill `x` over `1:N` in one loop: a `memset` plus a conditional `k:N` loop between
+        # the `amax` reduction and `x₁ = A[k, k]` is miscompiled by the Metal shader compiler
+        # at `N = 4, Float32` on Julia 1.13 (losing column 3 of `A` on iteration `k = 3`).
+        x = MVector{N, F}(undef)
+        for i in 1:N
+            x[i] = (i >= k && !iszero(amax)) ? A[i, k] / amax : zero(F)
         end
         σ = amax * rnorm(SVector(x))
         if !iszero(σ)
