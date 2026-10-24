@@ -37,7 +37,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 - Static `QRFactorization` (`factorize!!` in `src/linear/static/qr.jl`) fills the scaled subcolumn
   buffer `x` over `1:N` in a single loop instead of zero-initialising `x` and looping over `k:N`
-  under `if !iszero(amax)`. On Julia 1.13 (`LLVM 20`, `Metal.jl` 1.11.0), the Metal shader compiler
+  under `if !iszero(amax)`. On Julia 1.13 (`LLVM 20`, `Metal.jl` 1.11.1), the Metal shader compiler
   miscompiled the peeled `k = 1:4` loop of the `4 × 4` `Float32` kernel so that the column-3 loads
   after the norm computation read `0.0f0` on iteration `k = 3`, corrupting `τ[3]` and `R[:, 3:4]`
   (`K9`). `scripts/spikes/metal_qr/` records the standalone reproducer (`probe.jl`) and root-cause

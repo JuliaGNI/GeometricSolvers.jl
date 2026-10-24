@@ -31,7 +31,7 @@ using StaticArrays: SMatrix, SVector
 end
 
 function run_probe()
-    # Explicit well-conditioned 4x4 Float32 system (κ∞(A) ≈ 3.17).
+    # Explicit well-conditioned 4x4 Float32 system (κ∞(A) ≈ 3.46).
     A = SMatrix{4, 4, Float32, 16}(
         1.0f0, 0.25f0, -0.5f0, 0.125f0,
         -0.25f0, 1.0f0, 0.25f0, -0.5f0,
