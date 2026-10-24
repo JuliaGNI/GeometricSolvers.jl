@@ -13,7 +13,8 @@ using GeometricSolvers
 using GeometricSolvers: Backtracking, Bisection, LINESEARCH_FAILED, LUFactorization,
                         MAXITERS, NONFINITE, Newton, NoRefinement, NonlinearProblem,
                         Options, Picard, QRFactorization, SINGULAR, STALLED, SUCCESS,
-                        Static, StrongWolfe, ToReal, init, rnorm, solve, solve!!, step!!
+                        SolverStatus, Static, StrongWolfe, ToReal, init, jacobian!!, rnorm,
+                        solve, solve!!, step!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -22,10 +23,9 @@ const N_NEWTON = 4
 
 struct CallerTag end
 
-struct ScaledClos{S}
-    s::S
-end
-(c::ScaledClos)(x, p) = SVector(c.s * x[1] - p[1], c.s * x[2] - p[2])
+caller_tag_scale(::Type{<:ForwardDiff.Dual{<:ForwardDiff.Tag{CallerTag}}}) = 2
+caller_tag_scale(::Type{<:Complex{<:ForwardDiff.Dual{<:ForwardDiff.Tag{CallerTag}}}}) = 2
+caller_tag_scale(::Type) = 1
 
 @kernel function newton_singular_kernel!(codes, xs, @Const(prob), @Const(x₀))
     i = @index(Global, Linear)
@@ -115,10 +115,15 @@ end
     for ls in (LUFactorization(), QRFactorization()), glob in (Static(), Backtracking())
 
         x_n, st_n = solve(
-            prob_num, T(2), Newton(; linsolve = ls, globalization = glob), T(3))
+            prob_num, T(3), Newton(; linsolve = ls, globalization = glob), T(4))
         @test st_n.code == SUCCESS
-        @test isapprox(x_n * x_n, T(3); rtol = 10 * sqrt(eps(R)))
+        @test st_n isa SolverStatus{R}
+        @test isapprox(x_n, T(2); rtol = 10 * sqrt(eps(R)))
     end
+    x_n0, st_n0 = solve(prob_num, T(3), Newton(), T(4); f_reltol = zero(R))
+    @test st_n0.code == SUCCESS
+    @test st_n0 isa SolverStatus{R}
+    @test abs(x_n0 - T(2)) <= 8 * eps(R)
 
     # Large iterate and residual norm x₀ = (2e4, 2e4), p = (1e8, 1e8)
     x_big = SVector{2, T}(T(2e4), T(2e4))
@@ -139,7 +144,7 @@ end
     st = init(m, prob, x₀, p)
     Fx = prob.F(x₀, p)
     x₁, Fx₁, st, _ = step!!(st, m, prob, x₀, Fx, p)
-    x₂, Fx₂, st, _ = step!!(st, m, prob, x₁, Fx₁, p)
+    x₂, _, st, _ = step!!(st, m, prob, x₁, Fx₁, p)
     e₀ = rnorm(x₀ .- x_star)
     e₁ = rnorm(x₁ .- x_star)
     e₂ = rnorm(x₂ .- x_star)
@@ -240,20 +245,29 @@ end
     sq = (y, q) -> y .* y .- q
     J_exact = (y, q) -> diagonal_matrix(y .+ y)
     prob_ad = NonlinearProblem(sq)
-    prob_j = NonlinearProblem(sq, J_exact)
 
     # Bit-for-bit identical iterates across k = 0:6 for Newton(; jacobian = J), Newton(), and reuse = 1
+    J_shifted = (y, q) -> diagonal_matrix((y .+ y) .* (one(R) + 4 * eps(R)))
+    prob_shifted = NonlinearProblem(sq, J_shifted)
+    @test jacobian!!(nothing, AutoForwardDiff(), prob_shifted, x₀, p) != J_shifted(x₀, p)
     for k in 0:6
         opts = Options(
             T; min_iterations = k, max_iterations = k,
             f_abstol = zero(R), f_reltol = zero(R), x_abstol = zero(R), x_reltol = zero(R))
+        xk_sh_j, _ = solve(
+            prob_shifted, x₀, Newton(; jacobian = J_shifted), p; options = opts)
+        xk_sh, _ = solve(prob_shifted, x₀, Newton(), p; options = opts)
         xk_ad, _ = solve(prob_ad, x₀, Newton(), p; options = opts)
-        xk_j, _ = solve(prob_ad, x₀, Newton(; jacobian = J_exact), p; options = opts)
-        xk_pj, _ = solve(prob_j, x₀, Newton(), p; options = opts)
         xk_r1, _ = solve(prob_ad, x₀, Newton(; reuse = 1), p; options = opts)
-        @test xk_j === xk_ad
-        @test xk_pj === xk_ad
+        @test xk_sh_j === xk_sh
         @test xk_r1 === xk_ad
+    end
+    @test any(1:6) do k
+        opts = Options(
+            T; min_iterations = k, max_iterations = k,
+            f_abstol = zero(R), f_reltol = zero(R), x_abstol = zero(R), x_reltol = zero(R))
+        solve(prob_shifted, x₀, Newton(), p; options = opts)[1] !==
+        solve(prob_ad, x₀, Newton(), p; options = opts)[1]
     end
 
     # reuse = 2 and reuse = 3 factorise every k-th non-stalled step
@@ -269,34 +283,20 @@ end
     solve(prob_rc, x₀, Newton(; reuse = 3), p; options = opts4)
     @test reuse_calls[] == 2
 
-    # Problem's J differing from ForwardDiff Jacobian changes the first step
-    J_shifted = (y, q) -> diagonal_matrix((y .+ y) .* R(1.25))
-    prob_shifted = NonlinearProblem(sq, J_shifted)
-    x1_sh, _ = solve(
-        prob_shifted, x₀, Newton(), p;
-        max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
-        x_abstol = zero(R), x_reltol = zero(R))
-    x1_ad, _ = solve(
-        prob_ad, x₀, Newton(), p;
-        max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
-        x_abstol = zero(R), x_reltol = zero(R))
-    @test x1_sh !== x1_ad
-
     # Caller's AutoForwardDiff tag
-    x₀_tag = SVector{2, T}(zero(T), zero(T))
-    p_tag = SVector{2, T}(T(2), T(3))
-    prob_tag1 = NonlinearProblem(ScaledClos(one(T)))
-    prob_tag2 = NonlinearProblem(ScaledClos(T(2)))
+    x₀_tag = SVector{2, T}(T(3), T(5))
+    p_tag = SVector{2, T}(one(T), one(T))
+    prob_tag = NonlinearProblem((x, q) -> x .* T(caller_tag_scale(eltype(x))) .- q)
+    opts_tag = Options(
+        T; max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
+        x_abstol = zero(R), x_reltol = zero(R))
     x_t1, _ = solve(
-        prob_tag1, x₀_tag, Newton(; jacobian = AutoForwardDiff(; tag = CallerTag())), p_tag;
-        max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
-        x_abstol = zero(R), x_reltol = zero(R))
-    x_t2, _ = solve(
-        prob_tag2, x₀_tag, Newton(; jacobian = AutoForwardDiff(; tag = CallerTag())), p_tag;
-        max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
-        x_abstol = zero(R), x_reltol = zero(R))
+        prob_tag, x₀_tag,
+        Newton(; jacobian = AutoForwardDiff(; tag = ForwardDiff.Tag(CallerTag(), T))),
+        p_tag; options = opts_tag)
+    x_t2, _ = solve(prob_tag, x₀_tag, Newton(), p_tag; options = opts_tag)
     @test x_t1 === SVector{2, T}(T(2), T(3))
-    @test x_t2 === SVector{2, T}(one(T), T(3) / T(2))
+    @test x_t2 === SVector{2, T}(one(T), one(T))
 end
 
 @testset "Step-kind Jacobian call counts in one Backtracking step, $T" for T in ELTYPES
@@ -316,6 +316,20 @@ end
     j_calls[] = 0
     solve(prob, x₀, Newton(; globalization = bt), p; options = opts)
     @test j_calls[] == 1
+
+    # reuse = 2 -> step 1 uses ExactStep (J called 1 time for factorisation),
+    # step 2 reuses factor (fresh == false) and uses MeasuredSlope (J called 1 time by φ′)
+    prob_reuse = NonlinearProblem(
+        (y, q) -> y .* y .- q, (y, q) -> (j_calls[] += 1; diagonal_matrix(y .+ y)))
+    opts2 = Options(
+        T; min_iterations = 2, max_iterations = 2, f_abstol = zero(R), f_reltol = zero(R),
+        x_abstol = zero(R), x_reltol = zero(R))
+    j_calls[] = 0
+    solve(prob_reuse, x₀, Newton(; reuse = 2, globalization = bt), p; options = opts)
+    @test j_calls[] == 1
+    j_calls[] = 0
+    solve(prob_reuse, x₀, Newton(; reuse = 2, globalization = bt), p; options = opts2)
+    @test j_calls[] == 2
 
     # jacobian = A_func -> MeasuredSlope -> J called 1 time (by LineFunction φ′)
     j_calls[] = 0
@@ -405,22 +419,27 @@ end
 end
 
 @testset "Newton inside a KernelAbstractions kernel on CPU" begin
-    x₀_s = SVector{2, Float32}(0.0f0, 0.0f0)
-    prob_s = NonlinearProblem((y, _) -> y .* y .- 1.0f0)
-    codes_s = Vector{GeometricSolvers.ReturnCode}(undef, 2)
-    xs_s = Vector{SVector{2, Float32}}(undef, 2)
-    newton_singular_kernel!(KA_BACKEND)(codes_s, xs_s, prob_s, x₀_s; ndrange = 2)
-    synchronize(KA_BACKEND)
-    @test all(==(SINGULAR), codes_s)
-    @test all(x -> x === x₀_s, xs_s)
+    for T in ELTYPES
+        R = real(T)
+        x₀_s = SVector{2, T}(zero(T), zero(T))
+        prob_s = NonlinearProblem((y, _) -> y .* y .- one(eltype(y)))
+        codes_s = Vector{GeometricSolvers.ReturnCode}(undef, 2)
+        xs_s = Vector{SVector{2, T}}(undef, 2)
+        newton_singular_kernel!(KA_BACKEND)(codes_s, xs_s, prob_s, x₀_s; ndrange = 2)
+        synchronize(KA_BACKEND)
+        @test all(==(SINGULAR), codes_s)
+        @test all(x -> x === x₀_s, xs_s)
 
-    x₀_c = SVector{2, Float32}(3.0f0, 5.0f0)
-    p_c = SVector{2, Float32}(4.0f0, 9.0f0)
-    prob_c = NonlinearProblem((y, q) -> y .* y .- q)
-    codes_c = Vector{GeometricSolvers.ReturnCode}(undef, 2)
-    xs_c = Vector{SVector{2, Float32}}(undef, 2)
-    newton_solve_kernel!(KA_BACKEND)(codes_c, xs_c, prob_c, x₀_c, p_c; ndrange = 2)
-    synchronize(KA_BACKEND)
-    @test all(==(SUCCESS), codes_c)
-    @test all(x -> isapprox(x, SVector(2.0f0, 3.0f0); rtol = 10 * sqrt(eps(Float32))), xs_c)
+        x₀_c = SVector{2, T}(T(3), T(5))
+        p_c = SVector{2, T}(T(4), T(9))
+        prob_c = NonlinearProblem((y, q) -> y .* y .- q)
+        _, st_host = solve(prob_c, x₀_c, Newton(), p_c)
+        codes_c = Vector{GeometricSolvers.ReturnCode}(undef, 2)
+        xs_c = Vector{SVector{2, T}}(undef, 2)
+        newton_solve_kernel!(KA_BACKEND)(codes_c, xs_c, prob_c, x₀_c, p_c; ndrange = 2)
+        synchronize(KA_BACKEND)
+        @test all(==(st_host.code), codes_c)
+        @test all(
+            x -> isapprox(x, SVector{2, T}(T(2), T(3)); rtol = 10 * sqrt(eps(R))), xs_c)
+    end
 end

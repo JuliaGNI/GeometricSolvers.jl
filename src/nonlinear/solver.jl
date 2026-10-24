@@ -52,9 +52,10 @@ Run the nonlinear solver loop from `x₀` using `state = init(method, prob, x₀
 calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 
 Before the loop, `solve!!` evaluates `Fx = residual!!(nothing, prob, x₀, p)` and `fnorm₀ = rnorm(Fx)`.
-When `fnorm₀` is not finite, it returns `NONFINITE` with `0` iterations. When `converged(options,
-status, fnorm₀, rnorm(x₀))` already holds at `0` iterations, it returns `SUCCESS`. When
-`options.max_iterations == 0`, it returns `MAXITERS` with `0` iterations.
+When `fnorm₀` is not finite — including in `Float32` when `‖F‖ > sqrt(floatmax(Float32)) ≈ 1.8e19`,
+where `norm2` overflows to `Inf` — it returns `NONFINITE` with `0` iterations. When
+`converged(options, status, fnorm₀, rnorm(x₀))` already holds at `0` iterations, it returns
+`SUCCESS`. When `options.max_iterations == 0`, it returns `MAXITERS` with `0` iterations.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
@@ -126,7 +127,8 @@ Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters
 
 `solve` adapts `method` to `real(eltype(x₀))` with [`ToReal`](@ref), builds [`Options`](@ref) in
 `eltype(x₀)` from `options` or `kwargs...`, calls [`init`](@ref), and delegates to
-[`solve!!`](@ref).
+[`solve!!`](@ref). In `Float32`, a residual norm above `sqrt(floatmax(Float32)) ≈ 1.8e19` overflows
+`norm2` to `Inf` and returns `NONFINITE`.
 """
 function solve(
         prob::NonlinearProblem, x₀, method, p = nothing;

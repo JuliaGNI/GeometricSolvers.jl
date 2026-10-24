@@ -242,6 +242,6 @@ so that a compat-only bump can be told apart from an interface change.
   with a finite trial merit strictly below `φ₀ = norm2(Fx)`, `globalize!!` accepts the trial point
   and records `LINESEARCH_FAILED` in `step_failures`; otherwise the solver stops with
   `LINESEARCH_FAILED`. `Picard(; damping = 1, globalization = Static())` takes `d = -damping * Fx`
-  with `MeasuredSlope()`. On `SVector`, `MVector` and `Number` iterates, `solve` allocates zero bytes
-  after warmup.
+  with `MeasuredSlope()`. On `SVector` and `Number` iterates, `solve` allocates zero bytes after
+  warmup.
 

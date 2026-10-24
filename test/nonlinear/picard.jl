@@ -13,10 +13,11 @@ using GeometricSolvers: Backtracking, Bisection, NonlinearProblem, Options, Pica
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
 
-@kernel function picard_solve_kernel!(codes, xs, @Const(prob), @Const(x₀), @Const(p))
+@kernel function picard_solve_kernel!(
+        codes, xs, @Const(prob), @Const(x₀), @Const(m), @Const(p))
     i = @index(Global, Linear)
     @inbounds begin
-        x, st = solve(prob, x₀, Picard(; damping = 0.7), p)
+        x, st = solve(prob, x₀, m, p)
         codes[i] = st.code
         xs[i] = x
     end
@@ -81,16 +82,18 @@ end
 
 @testset "Picard Float32 inference and KernelAbstractions kernel" begin
     x₀ = SVector{2, Float32}(3.0f0, 5.0f0)
-    p = SVector{2, Float32}(1.0f0, 2.0f0)
-    prob = NonlinearProblem((y, q) -> 0.5f0 .* (y .- q))
+    p = SVector{2, Float32}(2.0f0, 4.0f0)
+    prob = NonlinearProblem((y, q) -> y .- q)
+    m_pic = Adapt.adapt(ToReal{Float32}(), Picard(; damping = 0.7))
     x_sol, st = @inferred solve(prob, x₀, Picard(; damping = 0.7), p)
     @test st.code == SUCCESS
     @test eltype(x_sol) === Float32
 
     codes = Vector{GeometricSolvers.ReturnCode}(undef, 2)
     xs = Vector{SVector{2, Float32}}(undef, 2)
-    picard_solve_kernel!(KA_BACKEND)(codes, xs, prob, x₀, p; ndrange = 2)
+    picard_solve_kernel!(KA_BACKEND)(codes, xs, prob, x₀, m_pic, p; ndrange = 2)
     synchronize(KA_BACKEND)
-    @test all(==(SUCCESS), codes)
+    @test all(==(st.code), codes)
+    @test eltype(xs[1]) === Float32
     @test all(x -> isapprox(x, p; rtol = 10 * sqrt(eps(Float32))), xs)
 end

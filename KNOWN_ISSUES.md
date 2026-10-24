@@ -94,3 +94,12 @@
   Julia 1.11.9, every testset of the full run passes.
 - **kind:** found late
 - **found:** 2026-10-16
+
+### K10 · `test/globalization/linesearch.jl` exceeds the 60 s `core` file budget cold.
+
+- **location:** `test/globalization/linesearch.jl:1`
+- **evidence:** `run-tests.jl <worktree> globalization/linesearch.jl` on Julia 1.13.2 takes
+  `79.7s` cold (`1372 passed, 0 failed`), above the 60 s per-file `core` budget in §V.
+- **kind:** found late
+- **found:** 2026-10-24
+

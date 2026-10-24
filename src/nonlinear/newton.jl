@@ -13,9 +13,9 @@ regularisation `regularization`, and factor-reuse period `reuse`.
 - `linsolve::L`: the linear-solver method.
 - `globalization::G`: the globalization method.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
-  `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Note that [`ToReal`](@ref) does not
-  descend into `Function` closures, so a custom Jacobian closure that captures floating-point
-  constants should capture them in the target precision.
+  `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
+  [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
+  `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
 - `refinement::RF`: the refinement setting ([`NoRefinement`](@ref)).
 - `regularization::R`: non-negative finite diagonal shift ``μ ≥ 0`` added as ``J + μ I`` before
   factorisation when `μ > 0`.

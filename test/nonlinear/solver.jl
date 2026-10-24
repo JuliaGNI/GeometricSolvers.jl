@@ -283,9 +283,10 @@ end
 
 @testset "JET.@test_opt on solve for Newton() and Picard()" begin
     prob = NonlinearProblem((y, q) -> y .^ 2 .- q)
-    x₀ = SVector(3.0, 5.0)
-    p = SVector(4.0, 9.0)
-    for m in (Newton(), Picard())
+    for T in ELTYPES, m in (Newton(), Picard())
+
+        x₀ = SVector{2, T}(T(3), T(5))
+        p = SVector{2, T}(T(4), T(9))
         JET.@test_opt solve(prob, x₀, m, p)
     end
 end
