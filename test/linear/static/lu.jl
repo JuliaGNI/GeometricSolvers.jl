@@ -143,9 +143,9 @@ end
         # under --check-bounds=yes a bounds check lets the local MMatrix escape to the heap,
         # so a run that forces it (Pkg.test() up to Julia 1.12) does not check these
         if Base.JLOptions().check_bounds != 1
-            @test factorize_allocations(m, A) == 0
-            @test ldiv_allocations(fac, b) == 0
-            @test collect_allocations(b) > 0
+            @test (@allocated factorize!!(nothing, m, A)) == 0
+            @test (@allocated ldiv!!(nothing, fac, b)) == 0
+            @test (@allocated collect(b)) > 0
         end
         # an MMatrix Jacobian and a previous factor give the same factors
         @test factorize!!(nothing, m, MMatrix(A)) === fac
