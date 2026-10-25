@@ -38,13 +38,6 @@ function r1_coupled_problem(::Type{T}) where {T}
     return NonlinearProblem(R1Coupled(perm), (z, q) -> r1_coupled_jacobian(z, q, perm))
 end
 
-# The allocation assertion goes through a function barrier whose arguments all have concrete
-# types, and which calls the function once before it measures: at testset scope Julia 1.11 boxes
-# the captured values and the assertion fails although the code allocates nothing.
-function jacobian_allocations(ad::A, prob::P, x::X, p::Q) where {A, P, X, Q}
-    (jacobian!!(nothing, ad, prob, x, p); @allocated jacobian!!(nothing, ad, prob, x, p))
-end
-
 # On a Julia it does not support, JET loads empty stubs that throw. JET 0.12 exports
 # `JET_AVAILABLE` to say so; JET 0.9 and 0.10 name the same flag `JET_LOADABLE`.
 const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
@@ -277,21 +270,20 @@ end
 @testset "the R1 Jacobian allocates nothing on an SVector, $T" for T in ELTYPES
     x, p = r1_inputs(T, N_STATIC)
     prob = r1_coupled_problem(T)
-    @test jacobian_allocations(AutoForwardDiff(), prob, x, p) == 0
-    @test jacobian_allocations(nothing, prob, x, p) == 0
+    @test (@allocated jacobian!!(nothing, AutoForwardDiff(), prob, x, p)) == 0
+    @test (@allocated jacobian!!(nothing, nothing, prob, x, p)) == 0
 end
 
 # The `Number` iterate — `n = 1` — has a Jacobian that is a `Number` and not a `1 × 1` matrix, so
 # it carries its own value, tag, inference and cost assertions: a call that ignored the tag or
-# returned a matrix would pass every vector test. `jacobian_allocations` is generic in its four
-# argument types, so its barrier serves the `Number` calls too.
+# returned a matrix would pass every vector test.
 @testset "the Number iterate: value, tag, inference and cost, $T" for T in ELTYPES
     prob = NonlinearProblem(R1ScalarScaled(), r1_scalar_scaled_jacobian)
     x, p = T(2), T(3)
     @test @inferred(jacobian!!(nothing, AutoForwardDiff(), prob, x, p)) == T(3)
     @test @inferred(jacobian!!(nothing, nothing, prob, x, p)) == T(3)
-    @test jacobian_allocations(AutoForwardDiff(), prob, x, p) == 0
-    @test jacobian_allocations(nothing, prob, x, p) == 0
+    @test (@allocated jacobian!!(nothing, AutoForwardDiff(), prob, x, p)) == 0
+    @test (@allocated jacobian!!(nothing, nothing, prob, x, p)) == 0
 
     # the tag rule is the vector one, on a residual that reads it: `R1Tagged` scales by `2` under
     # the caller's tag and by `1` under this solver's own
