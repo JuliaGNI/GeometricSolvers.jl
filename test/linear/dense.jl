@@ -308,7 +308,7 @@ end
             b = Vector(b_s)
             xref = reference(A, b)
             bnd = bound(A, T, TF)
-            for M in (LUFactorization, QRFactorization)
+            for M in (LUFactorization, QRFactorization, SVDFactorization)
                 m = make_method(M, TF)
                 fac = init(m, nothing, x, nothing)
                 copyto!(fac.factors, A)
@@ -375,6 +375,20 @@ end
         x_sol = ldiv!!(d, fac, b)
         @test !any(isnan, x_sol)
         @test x_sol == zeros(T, 4)
+    end
+
+    @testset "n = 0 ($T)" for T in ELTYPES
+        A = zeros(T, 0, 0)
+        b = zeros(T, 0)
+        m = SVDFactorization()
+        fac = init(m, nothing, zeros(T, 0), nothing)
+        fac = factorize!!(fac, m, A)
+        @test fac.info == 0
+        @test returncode(fac) === SUCCESS
+        d = similar(b)
+        x_sol = ldiv!!(d, fac, b)
+        @test x_sol === d
+        @test isempty(x_sol)
     end
 end
 

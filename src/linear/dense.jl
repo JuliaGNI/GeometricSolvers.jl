@@ -9,7 +9,8 @@ for (getrf, getrs, geqrf, ormqr, trtrs, gesvd, elty, relty) in (
     (:cgetrf_, :cgetrs_, :cgeqrf_, :cunmqr_, :ctrtrs_, :cgesvd_, :ComplexF32, :Float32))
     trans_q = elty === :ComplexF64 || elty === :ComplexF32 ? 'C' : 'T'
     @eval begin
-        function getrf!(A::StridedMatrix{$elty}, ipiv::AbstractVector{BlasInt};
+        function getrf!(A::StridedMatrix{$elty},
+                ipiv::AbstractVector{BlasInt} = Vector{BlasInt}(undef, min(size(A)...));
                 check::Bool = true)
             check && LAPACK.chkfinite(A)
             m, n = size(A)
@@ -98,8 +99,6 @@ for (getrf, getrs, geqrf, ormqr, trtrs, gesvd, elty, relty) in (
     end
 end
 
-getrf!(A::StridedMatrix{<:BlasFloat}; check::Bool = true) = LAPACK.getrf!(A; check = check)
-
 function qr_zero_diag(R::AbstractMatrix)
     n = min(size(R, 1), size(R, 2))
     @inbounds for i in 1:n
@@ -185,6 +184,7 @@ function ldiv!!(d::AbstractVector{T}, fac::DenseSVD{<:StridedMatrix{T}},
         r::AbstractVector{T}) where {T <: BlasFloat}
     R = real(T)
     n = length(fac.S)
+    n == 0 && return d
     cutoff = sqrt(R(n)) * eps(R) * fac.S[1]
     mul!(fac.tmp, adjoint(fac.U), r)
     @inbounds for i in 1:n

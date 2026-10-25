@@ -217,12 +217,12 @@ so that a compat-only bump can be told apart from an interface change.
   `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.
 
 - Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
-  pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x`, with factor
-  precision `factor_eltype(m, eltype(x))` and a right-hand-side conversion buffer `rhs` when that
-  precision differs from `eltype(x)`. On `BlasFloat` (`Float32`, `Float64`, `ComplexF32`,
+  pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
+  `T = eltype(x)`, with factor precision `TF = factor_eltype(m, T)` and a right-hand-side conversion
+  buffer `rhs` when `TF !== T`. On `BlasFloat` (`Float32`, `Float64`, `ComplexF32`,
   `ComplexF64`), `factorize!!` and `ldiv!!` call LAPACK's `getrf!`/`getrs!`, `geqrf!`/`ormqr!`
   (`unmqr!`) with triangular backsolve, and QR-iteration `gesvd!` with rank cutoff
-  `√n · eps(real(T)) · σ₁`, reusing the pre-allocated workspaces without allocation. On other
+  `√n · eps(real(TF)) · σ₁`, reusing the pre-allocated workspaces without allocation. On other
   `AbstractMatrix` element types (`BigFloat`), `DenseLU` and `DenseQR` use `LinearAlgebra.lu!` (with
   `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
   In mixed precision (`TF !== T`), `ldiv!!` scales the right-hand side by its infinity norm before

@@ -28,9 +28,6 @@ end
             bnd = bound(A, T, TF)
 
             for M in (LUFactorization, QRFactorization, SVDFactorization)
-                if M === SVDFactorization && κinf(A) > 1e3
-                    continue
-                end
                 m = M(TF)
                 fac = init(m, nothing, x, nothing)
                 copyto!(fac.factors, A)
