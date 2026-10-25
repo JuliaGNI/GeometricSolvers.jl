@@ -51,12 +51,37 @@ so that a compat-only bump can be told apart from an interface change.
   CI includes, is not measured.
 
 - Static `QRFactorization` (`factorize!!` in `src/linear/static/qr.jl`) fills the scaled subcolumn
-  buffer `x` over `1:N` in a single loop instead of zero-initialising `x` and looping over `k:N`
-  under `if !iszero(amax)`. On Julia 1.13 (`LLVM 20`, `Metal.jl` 1.11.1), the Metal shader compiler
-  miscompiled the peeled `k = 1:4` loop of the `4 × 4` `Float32` kernel so that the column-3 loads
-  after the norm computation read `0.0f0` on iteration `k = 3`, corrupting `τ[3]` and `R[:, 3:4]`
-  (`K9`). `scripts/spikes/metal_qr/` records the standalone reproducer (`probe.jl`) and root-cause
-  analysis (`README.md`).
+  buffer `x` in one loop over `1:N`: `x[i]` is `A[i, k] / amax` for `i >= k` when `amax` is
+  nonzero, and zero otherwise. The previous code zeros `x` and fills only `k:N`, under
+  `if !iszero(amax)`. On the host, the factors, `τ` and `info` are bitwise identical to the
+  previous fill on 64 random matrices per element type and size, and both versions allocate
+  nothing.
+  On Metal (Metal.jl 1.11.1) the fill repairs `Float32` QR on Julia 1.13.2 and breaks it on
+  Julia 1.12.7, which is the package's floor (`[compat] julia = "1.12"`). In a sweep over
+  `n = 1:12` of `Float32` static QR, a system counts as failed if it misses the bound of check 1
+  or returns `info ≠ 0`. The previous fill fails at `n = 7, 8` on 1.12.7 and at `n = 3:9` on
+  1.13.2; this fill fails at `n = 3:9` on 1.12.7 and at no `n` on 1.13.2. `ComplexF32` QR and
+  `LUFactorization` in both element types pass at every `n` in all four cases. In
+  `test/devices/metal_linear.jl`, the previous fill gives 139 passed and 5 failed on 1.13.2, and
+  this fill gives 144 passed; on 1.12.7 the previous fill gives 144 passed, and this fill gives
+  134 passed and 10 failed, all in `QRFactorization on Metal, Float32, n = 4`.
+  The defect is open and recorded as `K9` in `KNOWN_ISSUES.md`. The fill removes the failure on
+  1.13.2 in these measurements, but the cause is not located: no experiment separates Metal.jl's
+  lowering from Apple's shader compiler, and no upstream report exists. `K10` and `K11` record why
+  the Metal CI job does not see it: it runs with `--check-bounds=yes`, and its test sizes 1, 4,
+  16 and 24 reach only `n = 4` of the affected sizes. `scripts/spikes/metal_qr/` holds the 4 × 4
+  reproducer (`probe.jl`), the sweep (`sweep.jl`) and `README.md`, which compares five forms of
+  the fill on both Julia versions; none passes on both and stays free of heap allocation on the
+  host.
+  On the host, on Julia 1.13.2 (two cold runs, load average 9 to 12), the median time per
+  factorisation with this fill, relative to the previous one, is 1.81 to 1.86 for `Float64` at
+  `N = 2`, 1.95 for `Float32` at `N = 2`, 1.19 to 1.22 for `Float32` at `N = 4`, and 0.99 to 1.05
+  for every other pair of `T` in `Float64`, `Float32` and `ComplexF64` with `N` in 2, 4, 8 and 16.
+  One cold run on Julia 1.12.7 showed no slowdown (ratios 0.70 to 1.01). Only these sizes were
+  measured.
+  For a caller: on Metal, `Float32` static QR on Julia 1.13.2 gets the repair. On Julia 1.12.7 it
+  can miss the accuracy bound at `n = 3` to `9`, so a caller there should check the residual or
+  use `LUFactorization`, which passed the sweep in both element types, until K9 closes.
 
 ### New Features
 

@@ -21,9 +21,9 @@ function factorize!!(::Union{Nothing, StaticQR},
         for i in k:N
             amax = max(amax, abs(A[i, k]))
         end
-        # Fill `x` over `1:N` in one loop: a `memset` plus a conditional `k:N` loop between
-        # the `amax` reduction and `x₁ = A[k, k]` is miscompiled by the Metal shader compiler
-        # at `N = 4, Float32` on Julia 1.13 (losing column 3 of `A` on iteration `k = 3`).
+        # Fill `x` over `1:N` in one loop. On Metal in `Float32` this form gives correct factors
+        # at n = 1:12 on Julia 1.13.2 and wrong ones at n = 3:9 on Julia 1.12.7 (K9 in
+        # `KNOWN_ISSUES.md`; `scripts/spikes/metal_qr/README.md` compares other forms).
         x = MVector{N, F}(undef)
         for i in 1:N
             x[i] = (i >= k && !iszero(amax)) ? A[i, k] / amax : zero(F)
