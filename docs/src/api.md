@@ -152,7 +152,6 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 ```@docs
 init
 step!!
-refine!!
 LineFunction
 globalize!!
 LineSearch

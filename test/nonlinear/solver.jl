@@ -277,7 +277,12 @@ end
     p = SVector{2, T}(T(4), T(9))
     for m in (Newton(), Picard())
         @test (@inferred(solve(prob, x₀, m, p)); true)
-        @test solver_allocated(prob, x₀, m, p) == 0
+        # Under `--check-bounds=yes` a bounds check lets the local `MMatrix` and `MVector`
+        # of `StaticLU` escape to the heap, so the `Newton` check is skipped where a run
+        # forces `--check-bounds=yes`.
+        if Base.JLOptions().check_bounds != 1 || m isa Picard
+            @test solver_allocated(prob, x₀, m, p) == 0
+        end
     end
 end
 
