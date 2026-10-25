@@ -76,42 +76,27 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K9 · `QRFactorization` on Metal fails in `Float32` at some `n` on Julia 1.12.
-
-- **location:** `src/linear/static/qr.jl` (`factorize!!`, the fill of `x`)
-- **evidence:** `test/devices/metal_linear.jl` with Metal.jl 1.11.1 on an `AGXG16CDevice` and
-  `--check-bounds=auto` gives `134 passed, 10 failed` on Julia 1.12.7, every failure in
-  `QRFactorization on Metal, Float32, n = 4` (`info[k] == 0` evaluates `3 == 0`, `relerr` is `NaN`
-  or `Inf`), and `144 passed` on Julia 1.13.2. Over `n = 1:12`, `QRFactorization` in `Float32`
-  misses the bound of check 1 at `n = 3:9` on Julia 1.12.7 and at no `n` on Julia 1.13.2.
-  `ComplexF32` and `LUFactorization` pass at every `n` on both. The fill of `x` of `origin/main`
-  fails at `n = 7, 8` on Julia 1.12.7, where `test/devices/metal_linear.jl` passes, and at
-  `n = 3:9` on Julia 1.13.2, with `139 passed, 5 failed`. The fill of `x` decides the set:
-  `scripts/spikes/metal_qr/README.md` gives it for five forms, and none of them passes on both
-  versions and stays free of heap allocation on the host.
-- **kind:** defect
-- **found:** 2026-10-16
-
-### K10 · The Metal CI job cannot see K9.
+### K10 · The Metal CI job runs with bounds checks, which hide a Metal miscompilation of the static QR.
 
 - **location:** `.github/workflows/Metal.yml:73` (`julia-actions/julia-runtest@v1`)
 - **evidence:** the step sets no `check_bounds`, so `julia-runtest` runs the tests with
-  `--check-bounds=yes`, which restores the bounds checks that `@inbounds` removes. Job 121173589650
-  of run 40194921475 (Julia 1.12.7, `AppleParavirtDevice`, `check_bounds: yes`) reports
-  `Metal static LU and QR | 144 144` on the tree where K9 gives 10 failures locally. With
-  `--check-bounds=yes` locally, the fill of `x` of `origin/main` fails at no `n` in `1:12` on Julia
-  1.13.2, where it fails at `n = 3:9` with `--check-bounds=auto`.
-  The device of the runner differs from the local one, so the run does not show whether the
-  runner reproduces K9 at `--check-bounds=auto`.
+  `--check-bounds=yes` (the job log shows `check_bounds: yes`), which restores the bounds checks
+  that `@inbounds` removes. On Julia 1.13.2 with Metal.jl 1.11.1 on an `AGXG16CDevice`, a zeroed
+  `x` filled over `k:N` under `if !iszero(amax)`, in place of the fill of `x` in `factorize!!`,
+  makes `QRFactorization` in `Float32` miss the bound of check 1 at `n = 3:9` with
+  `--check-bounds=auto`, and at no `n` in `1:12` with `--check-bounds=yes`
+  (`scripts/spikes/metal_qr/README.md`, first row). A change of that kind therefore
+  passes the job. The runner's `AppleParavirtDevice` differs from the local device, so it is not
+  known whether the runner reproduces the failure at `--check-bounds=auto`.
 - **kind:** missing test
 - **found:** #24
 
-### K11 · The Metal test sizes reach one of the sizes that K9 affects.
+### K11 · The Metal test sizes reach one of the sizes at which a fill of `x` in the static QR fails.
 
 - **location:** `test/helpers/staticsystems.jl:21` (`STATIC_SIZES = (1, 4, 16, 24)`)
-- **evidence:** `test/devices/metal_linear.jl` runs `n = 1, 4, 16, 24`. Of the sizes at which a
-  fill of `x` fails on Metal (K9, and `scripts/spikes/metal_qr/README.md`: `n = 3:10` across the
-  forms and versions measured), it reaches only `n = 4`.
+- **evidence:** `test/devices/metal_linear.jl` runs `n = 1, 4, 16, 24`. On Julia 1.13.2, three of
+  the fills of `x` that `scripts/spikes/metal_qr/README.md` compares make `QRFactorization` in
+  `Float32` fail on Metal at `n = 3:9`, and the test reaches only `n = 4` of those sizes.
 - **kind:** missing test
 - **found:** #24
 

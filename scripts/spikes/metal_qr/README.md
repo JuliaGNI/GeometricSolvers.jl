@@ -30,7 +30,8 @@ version. `QRFactorization` in `ComplexF32` and `LUFactorization` pass at every `
 
 Each cell is the set of `n` that the criterion of `sweep.jl` gives for `QRFactorization` in
 `Float32`, with Metal.jl 1.11.1 on an `AGXG16CDevice`, `--check-bounds=auto`, one fresh process
-per cell. The third row is the only
+per cell. Julia 1.12.7 is below the package's floor, Julia 1.13; its column shows that the result
+depends on the Julia version. The third row is the only
 one with no failure, but on the host it puts `A` on the heap, because the closure captures it:
 `@allocated factorize!!(nothing, QRFactorization(), A)` is 80 bytes for a `4 × 4` `Float32` `A`,
 where `test/linear/static/qr.jl` asserts 0.
@@ -70,6 +71,5 @@ julia --startup-file=no --project=scripts/spikes/metal_qr scripts/spikes/metal_q
 julia --startup-file=no --project=scripts/spikes/metal_qr scripts/spikes/metal_qr/sweep.jl
 ```
 
-Put `+1.12` or `+1.13` after `julia` to select the version, and add `--check-bounds=yes` to run
-with bounds checks. A row of the table is measured with its form in place of the fill of `x` in
-`factorize!!`.
+Add `--check-bounds=yes` to run with bounds checks. A row of the table is measured with its form
+in place of the fill of `x` in `factorize!!`. The environment, as the package, needs Julia 1.13.
