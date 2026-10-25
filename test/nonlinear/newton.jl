@@ -120,6 +120,11 @@ end
         @test st_n isa SolverStatus{R}
         @test isapprox(x_n, T(2); rtol = 10 * sqrt(eps(R)))
     end
+    for ls in (LUFactorization(), QRFactorization())
+        x_nr, st_nr = solve(prob_num, T(3), Newton(; linsolve = ls, reuse = 2), T(4))
+        @test st_nr.code == SUCCESS
+        @test isapprox(x_nr, T(2); rtol = 10 * sqrt(eps(R)))
+    end
     x_n0, st_n0 = solve(prob_num, T(3), Newton(), T(4); f_reltol = zero(R))
     @test st_n0.code == SUCCESS
     @test st_n0 isa SolverStatus{R}
@@ -191,6 +196,22 @@ end
         max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
         x_abstol = zero(R), x_reltol = zero(R))
     @test xs₁ === T(2)
+
+    # A regularised step is not the Newton step, so the line search measures its slope:
+    # F = x - p, J = I, μ = 1 gives d = -F / 2, and Armijo with c₁ = 1/2 accepts α = 1
+    x₀_lin = SVector{2, T}(T(3), T(5))
+    p_lin = SVector{2, T}(T(4), T(9))
+    prob_lin = NonlinearProblem(
+        (y, q) -> y .- q, (y, q) -> diagonal_matrix(SVector{2, T}(one(T), one(T))))
+    m_lin = Newton(; regularization = 1, globalization = Backtracking(; c₁ = 0.5))
+    x_lin₁, _ = solve(
+        prob_lin, x₀_lin, m_lin, p_lin;
+        max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
+        x_abstol = zero(R), x_reltol = zero(R))
+    @test x_lin₁ === SVector{2, T}(T(7) / T(2), T(7))
+    x_lin, st_lin = solve(prob_lin, x₀_lin, m_lin, p_lin)
+    @test st_lin.code == SUCCESS
+    @test isapprox(x_lin, p_lin; rtol = 10 * sqrt(eps(R)))
 end
 
 @testset "Newton non-finite step, trial point, and Float32 overflow" begin

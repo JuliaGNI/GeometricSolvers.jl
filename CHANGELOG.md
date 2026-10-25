@@ -237,7 +237,8 @@ so that a compat-only bump can be told apart from an interface change.
   KernelAbstractions kernel, one system per thread. `solve(prob, x₀, method, p = nothing; options,
   kwargs...)` adapts `method` to `R = real(eltype(x₀))` through `ToReal{R}()`, builds `state` with
   `init(method_R, prob, x₀, p)`, runs `solve!!(state, prob, x₀, method_R, p, opt)`, and returns
-  `(x, status)`; `solve!!` returns `(x, status, state)`. In R1 `init` returns an `isbits` named tuple
+  `(x, status)`. Passing both `options` and keyword tolerances raises `ArgumentError`;
+  `solve!!` returns `(x, status, state)`. In R1 `init` returns an `isbits` named tuple
   `(; jacprep, jvpprep)` when `reuse === nothing`, or `(; jacprep, jvpprep, fac, age = Int32(0),
   stalled = false)` when `reuse` is an `Int32`. `LineFunction(prob, x, d, p, jvpprep; merit = norm2,
   xα = nothing, Fα = nothing, Jv = nothing)` evaluates the merit `φ(lf, α) = lf.merit(F(x + α*d, p))`
@@ -252,8 +253,10 @@ so that a compat-only bump can be told apart from an interface change.
   `regularization * I` to the diagonal when `regularization > 0`, factorises with `factorize!!`,
   solves `J * s = Fx` with `ldiv!!`, and sets `d₀ = -s` and `d = refine!!(nothing, refinement, ...)`.
   The step kind passed to `globalize!!` is `ExactStep()` on a fresh factorisation when `jacobian` is
-  `nothing` or an `AbstractADType`, `factor_eltype(linsolve, T) === T`, and `refinement isa
-  NoRefinement`, and `MeasuredSlope()` otherwise. When a line search returns `LINESEARCH_FAILED`
+  `nothing` or an `AbstractADType`, `regularization` is zero, `factor_eltype(linsolve, T) === T`,
+  and `refinement isa NoRefinement`, and `MeasuredSlope()` otherwise. A regularised step
+  `d = -(J + μI)⁻¹F` does not satisfy the `-2φ₀` slope of `ExactStep`, so it takes the measured
+  one. When a line search returns `LINESEARCH_FAILED`
   with a finite trial merit strictly below `φ₀ = norm2(Fx)`, `globalize!!` accepts the trial point
   and records `LINESEARCH_FAILED` in `step_failures`; otherwise the solver stops with
   `LINESEARCH_FAILED`. `Picard(; damping = 1, globalization = Static())` takes `d = -damping * Fx`

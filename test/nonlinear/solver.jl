@@ -120,6 +120,10 @@ end
         prob32, x32, Newton(), p32; options = Options(Float64; f_reltol = 1e-10))
     @test st32 isa SolverStatus{Float32}
     @test st32.code == SUCCESS
+
+    # Options and keyword tolerances together are rejected, not silently merged
+    @test_throws ArgumentError solve(
+        prob32, x32, Newton(), p32; options = Options(Float32), max_iterations = 1)
 end
 
 @testset "solve!! and solve: the six ReturnCode exits and edge cases, $T" for T in ELTYPES

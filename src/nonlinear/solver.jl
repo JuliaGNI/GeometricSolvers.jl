@@ -127,8 +127,9 @@ Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters
 
 `solve` adapts `method` to `real(eltype(x₀))` with [`ToReal`](@ref), builds [`Options`](@ref) in
 `eltype(x₀)` from `options` or `kwargs...`, calls [`init`](@ref), and delegates to
-[`solve!!`](@ref). In `Float32`, a residual norm above `sqrt(floatmax(Float32)) ≈ 1.8e19` overflows
-`norm2` to `Inf` and returns `NONFINITE`.
+[`solve!!`](@ref). Passing both `options` and keyword tolerances raises an `ArgumentError`. In
+`Float32`, a residual norm above `sqrt(floatmax(Float32)) ≈ 1.8e19` overflows `norm2` to `Inf` and
+returns `NONFINITE`.
 """
 function solve(
         prob::NonlinearProblem, x₀, method, p = nothing;
@@ -136,6 +137,8 @@ function solve(
     T = eltype(x₀)
     R = real(T)
     opt = if options !== nothing
+        isempty(kwargs) || throw(ArgumentError(
+            "pass either `options` or keyword tolerances to `solve`, not both"))
         convert(Options{R}, options)
     elseif isempty(kwargs)
         default_options(R)

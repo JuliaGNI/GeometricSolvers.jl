@@ -62,9 +62,7 @@ function Newton(;
         regularization::Real = 0,
         reuse::Union{Nothing, Integer} = nothing)
     reg = float(regularization)
-    r = reuse === nothing ? nothing :
-        (reuse >= 1 ? Int32(reuse) :
-         throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse")))
+    r = reuse === nothing ? nothing : Int32(reuse)
     return Newton(linsolve, globalization, jacobian, refinement, reg, r)
 end
 
@@ -155,6 +153,7 @@ end
 
 @inline function newton_stepkind(m::Newton, ::Type{T}, fresh::Bool) where {T}
     if fresh && (m.jacobian === nothing || m.jacobian isa AbstractADType) &&
+       iszero(m.regularization) &&
        factor_eltype(m.linsolve, T) === T && m.refinement isa NoRefinement
         return ExactStep()
     else
@@ -190,7 +189,7 @@ end
     if fresh
         Jmat = jacobian!!(nothing, state.jacprep, prob, x, p)
         Jreg = regularize_jacobian(Jmat, m.regularization)
-        fac = factorize!!(state.fac, m.linsolve, Jreg)
+        fac = factorize!!(nothing, m.linsolve, Jreg)
         age₊ = m.reuse == Int32(1) ? Int32(0) : Int32(1)
     else
         fac = state.fac
