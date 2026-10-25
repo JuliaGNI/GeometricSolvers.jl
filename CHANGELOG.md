@@ -35,6 +35,21 @@ so that a compat-only bump can be told apart from an interface change.
   older version (AMDGPU.jl 2.8.0 holds GPUArrays at 11), to resolve the spike's packages and the
   vendor package together in one environment outside the clone.
 
+- **Julia 1.12 is the floor** (`[compat] julia = "1.12"`, from 1.11). A breaking change under
+  this package's pre-1.0 convention: a caller on Julia 1.11 can no longer install this version.
+  The seven other environments of the repository (`test/gpu/cuda`, `test/gpu/metal`,
+  `test/gpu/rocm`, `test/enzyme`, `scripts/spikes/nextla`, `scripts/spikes/capabilities` and
+  `scripts/spikes/kernel_newton`) state the same floor. The repository records no reason for the
+  raise. The allocation tests of `test/base/bang.jl`, `test/base/reductions.jl`,
+  `test/ad/jacobian.jl`, `test/ad/forwarddiff_static.jl`, `test/linear/static/lu.jl` and
+  `test/linear/static/qr.jl` no longer go through a function barrier and a warm-up call: on Julia
+  1.12.7 a bare `@allocated` at testset scope reads the same figure as the barrier in every case
+  measured (zero for each call asserted to allocate nothing, a positive figure for each `collect`
+  control), and it does not count the compilation of a first call. The tolerances on the product
+  of static matrices in `test/base/bang.jl` stay: on Julia 1.12.7 on aarch64 the seam kernel's
+  product and the closure's still differ by up to 2 ulp in `ComplexF32`, and an x86_64 run, which
+  CI includes, is not measured.
+
 - Static `QRFactorization` (`factorize!!` in `src/linear/static/qr.jl`) fills the scaled subcolumn
   buffer `x` over `1:N` in a single loop instead of zero-initialising `x` and looping over `k:N`
   under `if !iszero(amax)`. On Julia 1.13 (`LLVM 20`, `Metal.jl` 1.11.1), the Metal shader compiler
@@ -130,8 +145,8 @@ so that a compat-only bump can be told apart from an interface change.
 - Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
   `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts
   every float of a method tree to `R` through `Adapt`.
-- `Adapt` is the first runtime dependency. The Julia floor is 1.11, for
-  `LAPACK.getrf!(A, ipiv)` with preallocated pivots.
+- `Adapt` is the first runtime dependency. `LAPACK.getrf!(A, ipiv)` with preallocated pivots
+  needs Julia 1.11 or later.
 - Device runs by hand, as no runner has a CUDA or ROCm GPU: `test/gpu/cuda`, `test/gpu/rocm` and
   `test/gpu/metal` are one environment per vendor, and `test/gpu/runtests.jl <backend>` runs a
   KernelAbstractions kernel on the device in `Float32` and `Float16` (and `Float64` on CUDA and
