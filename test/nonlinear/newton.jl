@@ -343,7 +343,7 @@ end
         options = opts)
     @test j_calls[] == 0
 
-    # linsolve = LUFactorization(Float32) on Float64 -> InexactStep{Float32} -> J called 2 times in Float64, 1 in Float32
+    # linsolve = LUFactorization(Float32) on Float64 -> MeasuredSlope -> J called 2 times in Float64, 1 in Float32
     j_calls[] = 0
     solve(
         prob, x₀, Newton(; linsolve = LUFactorization(Float32), globalization = bt), p;
