@@ -1,7 +1,6 @@
 using GeometricSolvers
 using GeometricSolvers: DenseLU, DenseQR, DenseSVD,
                         factor_eltype, factorize!!, init, ldiv!!, returncode
-using LinearAlgebra: I
 using Random: Xoshiro
 using Test
 
@@ -9,6 +8,11 @@ include("../helpers/matrix.jl")
 include("../helpers/staticsystems.jl")
 
 const MIXED_ELTYPES = filter(T -> sizeof(real(T)) == 8, ELTYPES)
+
+function mixed_factorize_allocs(fac::F, m::M, J::J_) where {F, M, J_}
+    factorize!!(fac, m, J)
+    return @allocated factorize!!(fac, m, J)
+end
 
 function mixed_ldiv_allocs(d::D, fac::F, r::R) where {D, F, R}
     ldiv!!(d, fac, r)
@@ -95,13 +99,26 @@ end
         end
     end
 
-    @testset "a Jacobian entry above floatmax(TF)" begin
-        A = 1e39 * Matrix{Float64}(I, 4, 4)
-        x = zeros(Float64, 4)
-        m = LUFactorization(Float32)
-        fac = init(m, nothing, x, nothing)
-        copyto!(fac.factors, A)
-        fac = factorize!!(fac, m, fac.factors)
-        @test !all(isfinite, fac.factors)
+    # Without the division by `2^e`, J overflows Float32 at c = 1e39 and is subnormal at c = 1e-40.
+    @testset "a Jacobian at an extreme scale ($T, c = $c)" for T in MIXED_ELTYPES,
+        c in (1e-40, 1e39)
+
+        TF = Float32
+        A = T(c) .* T[2 1 0; 1 3 1; 0 1 4]
+        b = T[1, -2, 3]
+        x = zeros(T, 3)
+
+        for M in (LUFactorization, QRFactorization, SVDFactorization)
+            m = M(TF)
+            fac = factorize!!(init(m, nothing, x, nothing), m, A)
+            @test returncode(fac) === SUCCESS
+            @test fac.scale_exponent == exponent(4c)
+            d = similar(b)
+            x_sol = ldiv!!(d, fac, b)
+            @test all(isfinite, x_sol)
+            @test relerr(x_sol, reference(A, b)) <= bound(A, T, TF)
+            @test mixed_factorize_allocs(fac, m, A) == 0
+            @test mixed_ldiv_allocs(d, fac, b) == 0
+        end
     end
 end

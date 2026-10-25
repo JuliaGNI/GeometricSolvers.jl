@@ -1,6 +1,6 @@
 # The `T ≠ TF` method of `ldiv!!` for dense factors: scales a finite, nonzero right-hand side by
 # `s = maximum(abs, r)` before converting to the factor element type `F`, solves in `fac.rhs`, and
-# converts and unscales the step into `d`.
+# converts the step into `d`, multiplied by `s` and by the `2^-e` of the factorisation.
 
 function ldiv!!(d::AbstractVector{T}, fac::Union{DenseLU, DenseQR, DenseSVD},
         r::AbstractVector{T}) where {T <: Number}
@@ -11,9 +11,10 @@ function ldiv!!(d::AbstractVector{T}, fac::Union{DenseLU, DenseQR, DenseSVD},
     @inbounds for i in eachindex(rhs, r)
         rhs[i] = F(r[i] / s)
     end
-    ldiv!!(rhs, fac, rhs)
+    backsolve!(fac, rhs)
+    e = fac.scale_exponent
     @inbounds for i in eachindex(d, rhs)
-        d[i] = T(rhs[i]) * s
+        d[i] = ldexp2(T(rhs[i]) * s, -e)
     end
     return d
 end

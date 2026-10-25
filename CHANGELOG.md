@@ -235,12 +235,18 @@ so that a compat-only bump can be told apart from an interface change.
   pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
   `T = eltype(x)`, with factor precision `TF = factor_eltype(m, T)` and a right-hand-side conversion
   buffer `rhs` when `TF !== T`. On `BlasFloat` (`Float32`, `Float64`, `ComplexF32`,
-  `ComplexF64`), `factorize!!` and `ldiv!!` call LAPACK's `getrf!`/`getrs!`, `geqrf!`/`ormqr!`
-  (`unmqr!`) with triangular backsolve, and QR-iteration `gesvd!` with rank cutoff
+  `ComplexF64`), `factorize!!` and `ldiv!!` call LAPACK's `getrf!`/`getrs!`, `geqrf!` with
+  `ormqr_adj!` and a `BLAS.trsv!` backsolve, and QR-iteration `gesvd!` with rank cutoff
   `√n · eps(real(TF)) · σ₁`, reusing the pre-allocated workspaces without allocation. On other
   `AbstractMatrix` element types (`BigFloat`), `DenseLU` and `DenseQR` use `LinearAlgebra.lu!` (with
   `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
-  In mixed precision (`TF !== T`), `ldiv!!` scales the right-hand side by its infinity norm before
-  converting to the factor precision and scales the solution back, returning zero directly on a zero
-  right-hand side. `LinearAlgebra` is now a direct dependency of the package.
+  In mixed precision (`TF !== T`), `ldiv!!` also scales the right-hand side by its infinity norm
+  before converting to the factor precision, and returns zero directly on a zero right-hand side.
+  Where the element type of `J` differs from the factor type, `factorize!!` divides `J` by the power
+  of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, as the static factorisation
+  does, and `ldiv!!` multiplies the step by `2^-e` in both paths. So a `Float64` or `ComplexF64` `J`
+  at a scale where its entries overflow or become subnormal in `TF`, such as `1e39` or `1e-40` for
+  `Float32`, solves to the factor precision's bound. Entries far below the largest of `J` can still
+  underflow, and an `Inf` in `J` gives a step that is not specified. `LinearAlgebra` is now a
+  direct dependency of the package.
 

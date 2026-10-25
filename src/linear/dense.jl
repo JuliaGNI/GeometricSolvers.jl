@@ -96,32 +96,56 @@ function qr_zero_diag(R::AbstractMatrix)
     return 0
 end
 
+# `J` into the factor buffer `A`, and the exponent `e` of the power of two that it was divided by,
+# as `factor_matrix` does for R1: 0 where `J` has the element type of `A`, which is then copied,
+# else `matrix_exponent(J)`.
+function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix) where {F}
+    if eltype(J) === F || isempty(J)
+        J === A || copyto!(A, J)
+        return 0
+    end
+    e = matrix_exponent(J)
+    A .= J .* ldexp(one(float(real(eltype(J)))), -e)
+    return e
+end
+
+const DenseFactor{A} = Union{DenseLU{A}, DenseQR{A}, DenseSVD{A}}
+
+# The `T == TF` method: `backsolve!` solves with the factors of `J / 2^e` in place, and the step
+# for `J` is that solution times `2^-e`.
+function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
+        r::AbstractVector{T}) where {T <: Number}
+    d === r || copyto!(d, r)
+    backsolve!(fac, d)
+    e = fac.scale_exponent
+    iszero(e) || map!(a -> ldexp2(a, -e), d, d)
+    return d
+end
+
 # --- DenseLU ---
 
 function factorize!!(fac::DenseLU{<:StridedMatrix{<:BlasFloat}}, ::LUFactorization,
         J::AbstractMatrix)
-    J === fac.factors || copyto!(fac.factors, J)
+    e = load_factors!(fac.factors, J)
     _, ipiv, info = getrf!(fac.factors, fac.ipiv; check = false)
-    return DenseLU(fac.factors, ipiv, fac.rhs, Int(info))
+    return DenseLU(fac.factors, ipiv, fac.rhs, Int(info), e)
 end
 
 function factorize!!(fac::DenseLU{<:AbstractMatrix}, ::LUFactorization, J::AbstractMatrix)
-    J === fac.factors || copyto!(fac.factors, J)
+    e = load_factors!(fac.factors, J)
     F = lu!(fac.factors, RowMaximum(); check = false)
     copyto!(fac.ipiv, F.ipiv)
-    return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info))
+    return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info), e)
 end
 
-function ldiv!!(d::AbstractVector{T}, fac::DenseLU{<:StridedMatrix{T}},
-        r::AbstractVector{T}) where {T <: BlasFloat}
-    d === r || copyto!(d, r)
+function backsolve!(fac::DenseLU{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:
+                                                                                   BlasFloat}
     LAPACK.getrs!('N', fac.factors, fac.ipiv, d)
     return d
 end
 
-function ldiv!!(d::AbstractVector{T}, fac::DenseLU{<:AbstractMatrix{T}},
-        r::AbstractVector{T}) where {T <: Number}
-    d === r || copyto!(d, r)
+function backsolve!(fac::DenseLU{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <:
+                                                                                    Number}
     ldiv!(LU(fac.factors, fac.ipiv, BlasInt(fac.info)), d)
     return d
 end
@@ -130,31 +154,29 @@ end
 
 function factorize!!(fac::DenseQR{<:StridedMatrix{<:BlasFloat}}, ::QRFactorization,
         J::AbstractMatrix)
-    J === fac.factors || copyto!(fac.factors, J)
+    e = load_factors!(fac.factors, J)
     geqrf!(fac.factors, fac.τ, fac.work)
     info = qr_zero_diag(fac.factors)
-    return DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, info)
+    return DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, info, e)
 end
 
 function factorize!!(fac::DenseQR{<:AbstractMatrix}, ::QRFactorization, J::AbstractMatrix)
-    J === fac.factors || copyto!(fac.factors, J)
+    e = load_factors!(fac.factors, J)
     F = qr!(fac.factors)
     copyto!(fac.τ, F.τ)
     info = qr_zero_diag(fac.factors)
-    return DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, info)
+    return DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, info, e)
 end
 
-function ldiv!!(d::AbstractVector{T}, fac::DenseQR{<:StridedMatrix{T}},
-        r::AbstractVector{T}) where {T <: BlasFloat}
-    d === r || copyto!(d, r)
+function backsolve!(fac::DenseQR{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:
+                                                                                   BlasFloat}
     ormqr_adj!(fac.factors, fac.τ, d, fac.work)
     BLAS.trsv!('U', 'N', 'N', fac.factors, d)
     return d
 end
 
-function ldiv!!(d::AbstractVector{T}, fac::DenseQR{<:AbstractMatrix{T}},
-        r::AbstractVector{T}) where {T <: Number}
-    d === r || copyto!(d, r)
+function backsolve!(fac::DenseQR{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <:
+                                                                                    Number}
     ldiv!(QR(fac.factors, fac.τ), d)
     return d
 end
@@ -163,19 +185,19 @@ end
 
 function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactorization,
         J::AbstractMatrix)
-    J === fac.factors || copyto!(fac.factors, J)
+    e = load_factors!(fac.factors, J)
     info = lapack_gesvd(fac.factors, fac.S, fac.U, fac.VT, fac.work, fac.rwork)
     return DenseSVD(
-        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, Int(info))
+        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, Int(info), e)
 end
 
-function ldiv!!(d::AbstractVector{T}, fac::DenseSVD{<:StridedMatrix{T}},
-        r::AbstractVector{T}) where {T <: BlasFloat}
+function backsolve!(fac::DenseSVD{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:
+                                                                                    BlasFloat}
     R = real(T)
     n = length(fac.S)
     n == 0 && return d
     cutoff = sqrt(R(n)) * eps(R) * fac.S[1]
-    mul!(fac.tmp, adjoint(fac.U), r)
+    mul!(fac.tmp, adjoint(fac.U), d)
     @inbounds for i in 1:n
         s = fac.S[i]
         fac.tmp[i] = s <= cutoff ? zero(T) : fac.tmp[i] / s

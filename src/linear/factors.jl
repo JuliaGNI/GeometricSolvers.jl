@@ -22,9 +22,11 @@ records the first zero pivot in `info`, QR the first zero diagonal entry of `R`,
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 
 For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
-built by [`init`](@ref). When `J !== fac.factors`, `J` is copied into `fac.factors`, and
-`fac.factors` is factorised in place. For [`DenseSVD`](@ref), `info` is `gesvd`'s non-convergence
-code, and a rank deficiency gives `info == 0` and `SUCCESS`.
+built by [`init`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
+matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
+place; `J === fac.factors` is factorised as it is. For [`DenseSVD`](@ref), `info` is `gesvd`'s
+non-convergence code, and a rank deficiency gives `info == 0` and `SUCCESS`. An `Inf` in a dense
+`J` does not throw, and the step that [`ldiv!!`](@ref) then gives is not specified.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -44,8 +46,9 @@ converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisat
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
 relative to the largest entry can still underflow. The scale takes no squares and overflows
 only where an entry's absolute value does. In the mixed-type path, a zero `r` returns a zero
-step without solving, and an `Inf` or `NaN` in `r` gives a non-finite step. For a static factor,
-the step is multiplied by `2^-e`, the power of two that [`factorize!!`](@ref) divided `J` by.
+step without solving, and an `Inf` or `NaN` in `r` gives a non-finite step. In both paths the
+step is multiplied by `2^-e`, the power of two that [`factorize!!`](@ref) divided `J` by, in the
+element type of `r`.
 """
 function ldiv!! end
 
@@ -98,7 +101,8 @@ end
 The LU factors with partial pivoting of a dense `n × n` matrix, with `factors` the `n × n`
 buffer in the factor element type, `ipiv` the `BlasInt` pivot vector of length `n`, `rhs` the
 right-hand-side buffer of the factor element type when that differs from the working element type
-and `nothing` otherwise, and `info` the index of the first zero pivot, or 0.
+and `nothing` otherwise, `info` the index of the first zero pivot, or 0, and `scale_exponent` the
+exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseLU{A <: AbstractMatrix, P <: AbstractVector,
     V <: Union{Nothing, AbstractVector}}
@@ -106,6 +110,7 @@ struct DenseLU{A <: AbstractMatrix, P <: AbstractVector,
     ipiv::P
     rhs::V
     info::Int
+    scale_exponent::Int
 end
 
 """
@@ -114,8 +119,9 @@ end
 The Householder QR factors of a dense `n × n` matrix, with `factors` the `n × n` buffer in the
 factor element type (`R` on and above the diagonal, reflectors below it), `τ` the reflector scale
 vector of length `n`, `work` the workspace buffer, `rhs` the right-hand-side buffer of the factor
-element type when that differs from the working element type and `nothing` otherwise, and `info`
-the index of the first zero diagonal entry of `R`, or 0.
+element type when that differs from the working element type and `nothing` otherwise, `info` the
+index of the first zero diagonal entry of `R`, or 0, and `scale_exponent` the exponent `e` of the
+power of two `2^e` that the matrix was divided by.
 """
 struct DenseQR{A <: AbstractMatrix, T <: AbstractVector, W <: AbstractVector,
     V <: Union{Nothing, AbstractVector}}
@@ -124,6 +130,7 @@ struct DenseQR{A <: AbstractMatrix, T <: AbstractVector, W <: AbstractVector,
     work::W
     rhs::V
     info::Int
+    scale_exponent::Int
 end
 
 """
@@ -133,8 +140,8 @@ The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n ×
 `factors` the `n × n` Jacobian buffer in the factor element type, `U` and `VT` the `n × n` unitary
 factors, `S` the vector of singular values in the real factor type, `work`, `rwork` and `tmp` the
 workspace buffers, `rhs` the right-hand-side buffer of the factor element type when that differs
-from the working element type and `nothing` otherwise, and `info` `gesvd`'s non-convergence code,
-or 0.
+from the working element type and `nothing` otherwise, `info` `gesvd`'s non-convergence code, or
+0, and `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     RW <: AbstractVector, T <: AbstractVector,
@@ -148,6 +155,7 @@ struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     tmp::T
     rhs::V
     info::Int
+    scale_exponent::Int
 end
 
 """
@@ -162,7 +170,7 @@ function init(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     factors = similar(x, F, n, n)
     ipiv = Vector{BlasInt}(undef, n)
     rhs = F === T ? nothing : similar(x, F, n)
-    return DenseLU(factors, ipiv, rhs, 0)
+    return DenseLU(factors, ipiv, rhs, 0, 0)
 end
 
 function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
@@ -172,7 +180,7 @@ function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     τ = similar(x, F, n)
     work = similar(x, F, max(1, 64 * n))
     rhs = F === T ? nothing : similar(x, F, n)
-    return DenseQR(factors, τ, work, rhs, 0)
+    return DenseQR(factors, τ, work, rhs, 0, 0)
 end
 
 function init(m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
@@ -187,7 +195,7 @@ function init(m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Nu
     rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : 0)
     tmp = similar(x, F, n)
     rhs = F === T ? nothing : similar(x, F, n)
-    return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0)
+    return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0)
 end
 
 """
@@ -209,10 +217,16 @@ ldexp2(a::Complex, e) = complex(ldexp2(real(a), e), ldexp2(imag(a), e))
 # `e` is clamped to the exponent range, so that `2^-e` is a float and the product with it is exact.
 function factor_matrix(::Type{F}, J::StaticMatrix{N, N, T}) where {F, N, T}
     F === T && return SMatrix{N, N, F}(J), Int32(0)
+    e = matrix_exponent(J)
+    return SMatrix{N, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
+end
+
+# The exponent of the largest |re| or |im| of a nonempty `J`, clamped to the exponent range, and 0
+# for a zero or non-finite `J`.
+function matrix_exponent(J::AbstractMatrix)
     m = float(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
     emax = exponent(floatmax(m))
-    e = isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
-    return SMatrix{N, N, F}(SMatrix(J) * ldexp(one(m), -e)), Int32(e)
+    return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
 end
 
 # The step for the matrix `J`, from the step `d` for `J / 2^e` that the stored factors solve.
