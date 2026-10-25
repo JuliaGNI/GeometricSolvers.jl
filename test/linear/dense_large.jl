@@ -15,7 +15,12 @@ include("../helpers/matrix.jl")
             rng = Xoshiro(10_000 + hash(T))
             x_ref = randn(rng, T, n)
             A = randn(rng, T, n, n)
-            b = T.(big.(A) * big.(x_ref))
+            # The exact right-hand side in row blocks, without a BigFloat copy of A
+            xb = big.(x_ref)
+            b = similar(x_ref)
+            for rows in Iterators.partition(axes(A, 1), 256)
+                b[rows] = T.(big.(view(A, rows, :)) * xb)
+            end
 
             A64 = Float64.(A)
             anorm = opnorm(A64, Inf)

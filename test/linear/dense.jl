@@ -134,6 +134,16 @@ end
             @test d_inplace == x1
         end
     end
+
+    @testset "a step vector with a stride ($T)" for T in ELTYPES
+        n = 4
+        A_s, b_s = first(conditioned_systems(251 + hash(T), T, Nothing, n))
+        A = Matrix(A_s)
+        b = Vector(b_s)
+        m = QRFactorization()
+        fac = factorize!!(init(m, nothing, zeros(T, n), nothing), m, A)
+        @test_throws ArgumentError ldiv!!(view(zeros(T, n, n), 1, :), fac, b)
+    end
 end
 
 @testset "No allocation per factorisation and solve (check 1)" begin
@@ -169,19 +179,20 @@ end
     @testset "which method" begin
         for T in ELTYPES
             x = zeros(T, 4)
-            for m in (LUFactorization(), QRFactorization(), SVDFactorization())
+            for (m, D) in ((LUFactorization(), DenseLU), (QRFactorization(), DenseQR),
+                (SVDFactorization(), DenseSVD))
                 fac = init(m, nothing, x, nothing)
                 w = which(factorize!!, Tuple{typeof(fac), typeof(m), typeof(fac.factors)})
-                @test occursin("StridedMatrix", string(w.sig))
+                @test w.sig <: Tuple{Any, D{<:StridedMatrix{<:BlasFloat}}, Any, Any}
             end
         end
 
         xb = zeros(BigFloat, 4)
-        for m in (LUFactorization(), QRFactorization())
+        for (m, D) in ((LUFactorization(), DenseLU), (QRFactorization(), DenseQR))
             fac = init(m, nothing, xb, nothing)
             w = which(factorize!!, Tuple{typeof(fac), typeof(m), typeof(fac.factors)})
-            @test !occursin("StridedMatrix", string(w.sig))
-            @test occursin("AbstractMatrix", string(w.sig))
+            @test !(w.sig <: Tuple{Any, D{<:StridedMatrix{<:BlasFloat}}, Any, Any})
+            @test w.sig <: Tuple{Any, D{<:AbstractMatrix}, Any, Any}
         end
     end
 
@@ -253,11 +264,18 @@ end
         fac = factorize!!(fac, m, fac.factors)
         @test fac.info == 2
         @test returncode(fac) === SINGULAR
+        if T <: BlasFloat
+            # The exact zero on the diagonal of `R` gives a non-finite step, as in LU.
+            @test !all(isfinite, ldiv!!(zeros(T, n), fac, ones(T, n)))
+        end
 
         copyto!(fac.factors, A_zero)
         fac_z = factorize!!(fac, m, fac.factors)
         @test fac_z.info == 1
         @test returncode(fac_z) === SINGULAR
+        if T <: BlasFloat
+            @test !all(isfinite, ldiv!!(zeros(T, n), fac_z, ones(T, n)))
+        end
     end
 
     @testset "two equal rows ($T)" for T in ELTYPES

@@ -2,11 +2,11 @@
 # `StridedMatrix{<:BlasFloat}` with held workspace buffers, and `LinearAlgebra`'s generic `lu!`
 # and `qr!` for any other `AbstractMatrix`.
 
-for (getrf, getrs, geqrf, ormqr, trtrs, gesvd, elty, relty) in (
-    (:dgetrf_, :dgetrs_, :dgeqrf_, :dormqr_, :dtrtrs_, :dgesvd_, :Float64, :Float64),
-    (:sgetrf_, :sgetrs_, :sgeqrf_, :sormqr_, :strtrs_, :sgesvd_, :Float32, :Float32),
-    (:zgetrf_, :zgetrs_, :zgeqrf_, :zunmqr_, :ztrtrs_, :zgesvd_, :ComplexF64, :Float64),
-    (:cgetrf_, :cgetrs_, :cgeqrf_, :cunmqr_, :ctrtrs_, :cgesvd_, :ComplexF32, :Float32))
+for (getrf, geqrf, ormqr, gesvd, elty, relty) in (
+    (:dgetrf_, :dgeqrf_, :dormqr_, :dgesvd_, :Float64, :Float64),
+    (:sgetrf_, :sgeqrf_, :sormqr_, :sgesvd_, :Float32, :Float32),
+    (:zgetrf_, :zgeqrf_, :zunmqr_, :zgesvd_, :ComplexF64, :Float64),
+    (:cgetrf_, :cgeqrf_, :cunmqr_, :cgesvd_, :ComplexF32, :Float32))
     trans_q = elty === :ComplexF64 || elty === :ComplexF32 ? 'C' : 'T'
     @eval begin
         function getrf!(A::StridedMatrix{$elty},
@@ -40,6 +40,8 @@ for (getrf, getrs, geqrf, ormqr, trtrs, gesvd, elty, relty) in (
 
         function ormqr_adj!(A::StridedMatrix{$elty}, tau::AbstractVector{$elty},
                 c::StridedVector{$elty}, work::AbstractVector{$elty})
+            stride(c, 1) == 1 ||
+                throw(ArgumentError("the QR step vector must have a unit stride"))
             m = length(c)
             k = length(tau)
             lda = max(1, stride(A, 2))
@@ -53,19 +55,6 @@ for (getrf, getrs, geqrf, ormqr, trtrs, gesvd, elty, relty) in (
                 'L', $trans_q, m, 1, k, A, lda, tau, c, max(1, m), work, lwork, info, 1, 1)
             LAPACK.chkargsok(info[])
             return c
-        end
-
-        function trtrs_upper!(A::StridedMatrix{$elty}, b::StridedVector{$elty})
-            n = size(A, 1)
-            lda = max(1, stride(A, 2))
-            info = Ref{BlasInt}()
-            ccall((BLAS.@blasfunc($trtrs), LAPACK.liblapack), Cvoid,
-                (Ref{UInt8}, Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt},
-                    Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt},
-                    Clong, Clong, Clong),
-                'U', 'N', 'N', n, 1, A, lda, b, max(1, n), info, 1, 1, 1)
-            LAPACK.chkargsok(info[])
-            return b
         end
 
         function lapack_gesvd(A::StridedMatrix{$elty}, S::AbstractVector{$relty},
@@ -159,7 +148,7 @@ function ldiv!!(d::AbstractVector{T}, fac::DenseQR{<:StridedMatrix{T}},
         r::AbstractVector{T}) where {T <: BlasFloat}
     d === r || copyto!(d, r)
     ormqr_adj!(fac.factors, fac.τ, d, fac.work)
-    trtrs_upper!(fac.factors, d)
+    BLAS.trsv!('U', 'N', 'N', fac.factors, d)
     return d
 end
 
