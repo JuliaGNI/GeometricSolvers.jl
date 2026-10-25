@@ -37,12 +37,12 @@ so that a compat-only bump can be told apart from an interface change.
 
 - **Julia 1.13 is the floor** (`[compat] julia = "1.13"`, from 1.11). A breaking change under
   this package's pre-1.0 convention: a caller on Julia 1.11 can no longer install this version.
-  The seven other environments of the repository (`test/gpu/cuda`, `test/gpu/metal`,
-  `test/gpu/rocm`, `test/enzyme`, `scripts/spikes/nextla`, `scripts/spikes/capabilities` and
-  `scripts/spikes/kernel_newton`) and `scripts/spikes/metal_qr` state the same floor. The reason
+  The eight other environments of the repository (`test/gpu/cuda`, `test/gpu/metal`,
+  `test/gpu/rocm`, `test/enzyme`, `scripts/spikes/nextla`, `scripts/spikes/capabilities`,
+  `scripts/spikes/kernel_newton` and `scripts/spikes/metal_qr`) state the same floor. The reason
   is Metal: with Metal.jl 1.11.1, static `QRFactorization` in `Float32` misses its accuracy bound
   on Julia 1.12.7 for every fill of the scaled subcolumn measured that keeps the factorisation
-  free of heap allocation on the host (origin/main's fill at `n = 7, 8`; this release's fill at
+  free of heap allocation on the host (the previous fill at `n = 7, 8`; this release's fill at
   `n = 3:9`). This release's fill passes at every `n` in `1:12` on Julia 1.13.2.
   `scripts/spikes/metal_qr/README.md` compares five fills. The allocation tests of
   `test/base/bang.jl`, `test/base/reductions.jl`, `test/ad/jacobian.jl`,

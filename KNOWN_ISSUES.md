@@ -81,10 +81,11 @@
 - **location:** `.github/workflows/Metal.yml:73` (`julia-actions/julia-runtest@v1`)
 - **evidence:** the step sets no `check_bounds`, so `julia-runtest` runs the tests with
   `--check-bounds=yes` (the job log shows `check_bounds: yes`), which restores the bounds checks
-  that `@inbounds` removes. On Julia 1.13.2 with Metal.jl 1.11.1 on an `AGXG16CDevice`, the fill
-  of `x` in `factorize!!` of `origin/main` makes `QRFactorization` in `Float32` miss the bound of
-  check 1 at `n = 3:9` with `--check-bounds=auto`, and at no `n` in `1:12` with
-  `--check-bounds=yes` (`scripts/spikes/metal_qr/README.md`). A change of that kind therefore
+  that `@inbounds` removes. On Julia 1.13.2 with Metal.jl 1.11.1 on an `AGXG16CDevice`, a zeroed
+  `x` filled over `k:N` under `if !iszero(amax)`, in place of the fill of `x` in `factorize!!`,
+  makes `QRFactorization` in `Float32` miss the bound of check 1 at `n = 3:9` with
+  `--check-bounds=auto`, and at no `n` in `1:12` with `--check-bounds=yes`
+  (`scripts/spikes/metal_qr/README.md`, first row). A change of that kind therefore
   passes the job. The runner's `AppleParavirtDevice` differs from the local device, so it is not
   known whether the runner reproduces the failure at `--check-bounds=auto`.
 - **kind:** missing test
