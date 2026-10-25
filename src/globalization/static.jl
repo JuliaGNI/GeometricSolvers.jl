@@ -20,6 +20,8 @@ Adapt.@adapt_structure Static
 
 function linesearch(
         ls::Static{R}, lf, step::StepKind{R}, φ₀::R, α::R, αmax::R = R(Inf)) where {R}
-    usable_ceiling(αmax) || return LineSearchResult{R}(ls.α, R(NaN), LINESEARCH_FAILED, 0)
-    LineSearchResult{R}(min(ls.α, αmax), R(NaN), SUCCESS, 0)
+    F₀ = anchor_residual(lf)
+    usable_ceiling(αmax) ||
+        return LineSearchResult{R, typeof(F₀)}(ls.α, R(NaN), LINESEARCH_FAILED, 0, F₀)
+    LineSearchResult{R, typeof(F₀)}(min(ls.α, αmax), R(NaN), SUCCESS, 0, F₀)
 end

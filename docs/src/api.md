@@ -80,7 +80,8 @@ returncode
 A line search is scalar code: [`linesearch`](@ref) sees the line only through the merit
 [`φ`](@ref) and its derivative [`φ′`](@ref), allocates nothing and never throws, so the same
 search runs on the host and inside a kernel. Its iteration cap, where it has one, is its own
-field.
+field. Along a [`LineFunction`](@ref) its [`LineSearchResult`](@ref) also carries the residual at
+the step, so the caller does not evaluate it again.
 
 ```@docs
 Static

@@ -377,6 +377,47 @@ end
     @test j_calls[] == 1
 end
 
+@testset "Residual evaluations of one globalized Newton step, $T" for T in ELTYPES
+    R = real(T)
+    x₀ = SVector{2, T}(T(3), T(5))
+    p = SVector{2, T}(T(4), T(9))
+    f_calls = Ref(0)
+    prob = NonlinearProblem(
+        (y, q) -> (f_calls[] += 1; y .* y .- q), (y, q) -> diagonal_matrix(y .+ y))
+    opts = Options(
+        T; max_iterations = 1, f_abstol = zero(R), f_reltol = zero(R),
+        x_abstol = zero(R), x_reltol = zero(R))
+    # F(x₀), and one F per trial: the accepted step reuses the residual of its trial. StrongWolfe
+    # evaluates F again in φ′(1) for the curvature condition.
+    for (glob, calls) in ((Static(), 2), (Backtracking(), 2), (StrongWolfe(), 3))
+        f_calls[] = 0
+        x₁, st = solve(prob, x₀, Newton(; globalization = glob), p; options = opts)
+        @test st.iterations == 1
+        @test x₁ != x₀
+        @test f_calls[] == calls
+    end
+end
+
+@testset "Newton reuse retries a failed line search from a fresh factor, $R" for R in REAL_ELTYPES
+    p = SVector{2, R}(R(1) / R(2), R(1) / R(2))
+    prob = NonlinearProblem((y, q) -> sin.(y) .- q)
+    m_fresh = Newton(; globalization = Backtracking())
+    m_reuse = Newton(; reuse = 3, globalization = Backtracking())
+
+    # From (-4.8, 0.3) the third chord direction does not descend; the retry refactorises
+    x_r, st_r = solve(prob, SVector{2, R}(R(-4.8), R(0.3)), m_reuse, p)
+    @test st_r.code == SUCCESS
+    @test all(isapprox.(sin.(x_r), R(1) / R(2); atol = 10 * sqrt(eps(R))))
+
+    # Every start that Newton solves, Newton with reuse solves too
+    lost = count(range(R(-6), R(6); length = 241)) do a
+        x₀ = SVector{2, R}(a, R(0.3))
+        solve(prob, x₀, m_fresh, p)[2].code == SUCCESS &&
+            solve(prob, x₀, m_reuse, p)[2].code != SUCCESS
+    end
+    @test lost == 0
+end
+
 @testset "Newton failed line search, two stalled steps, and stall refresh, $T" for T in ELTYPES
     R = real(T)
     p4 = SVector{2, T}(T(4), T(4))

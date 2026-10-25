@@ -1,9 +1,9 @@
 # The line function and globalization bridge.
 #
-# `LineFunction` wraps `(prob, x, d, p, jvpprep)` and evaluates the merit `φ(α) = ‖F(x + αd, p)‖²`
-# through `norm2` and its directional derivative `φ′(α) = 2 rdot(F(x + αd, p), J(x + αd, p)d)`
-# through `jvp!!`. It is a callable struct (not `<: Function`) with the merit as a type parameter,
-# so `isbits(lf)` holds when its fields are `isbits`.
+# `LineFunction` wraps `(prob, x, Fx, d, p, jvpprep)` and evaluates the merit
+# `φ(α) = ‖F(x + αd, p)‖²` through `norm2` and its directional derivative
+# `φ′(α) = 2 rdot(F(x + αd, p), J(x + αd, p)d)` through `jvp!!`. It is a callable struct (not
+# `<: Function`), so `isbits(lf)` holds when its fields are `isbits`.
 
 using Adapt: Adapt
 using ADTypes: AutoForwardDiff
@@ -35,12 +35,12 @@ const N_LF = 4
     sq_j(y, q) = diagonal_matrix(y .+ y)
     prob_sq = NonlinearProblem(sq_f, sq_j)
     st_sq = init(Newton(), prob_sq, x, p)
-    lf_sq = LineFunction(prob_sq, x, d, p, st_sq.jvpprep)
+    lf_sq = LineFunction(prob_sq, x, sq_f(x, p), d, p, st_sq.jvpprep)
     @test !(lf_sq isa Function)
     @test isbits(lf_sq)
 
     e₁ = SVector{N_LF, T}(one(T), zero(T), zero(T), zero(T))
-    lf_e₁ = LineFunction(prob_sq, x, e₁, p, st_sq.jvpprep)
+    lf_e₁ = LineFunction(prob_sq, x, sq_f(x, p), e₁, p, st_sq.jvpprep)
     for α in (zero(R), R(0.5), one(R))
         xα = update_iterate!!(nothing, x, α, d)
         Fα = sq_f(xα, p)
@@ -59,14 +59,10 @@ const N_LF = 4
         @test φ′(lf_e₁, α) == 2 * rdot(sq_f(xα_e, p), sq_j(xα_e, p) * e₁)
     end
 
-    lf_custom = LineFunction(prob_sq, x, d, p, st_sq.jvpprep; merit = y -> 3 * norm2(y))
-    @test isbits(lf_custom)
-    @test φ(lf_custom, zero(R)) == 3 * norm2(sq_f(x, p))
-
     # Member operator A != J: φ′ uses the problem's J, never the member's operator A
     id_op(y, q) = identity_matrix(T, N_LF)
     st_a = init(Newton(; jacobian = id_op), prob_sq, x, p)
-    lf_a = LineFunction(prob_sq, x, d, p, st_a.jvpprep)
+    lf_a = LineFunction(prob_sq, x, sq_f(x, p), d, p, st_a.jvpprep)
     F₀ = sq_f(x, p)
     if T <: Real
         @test φ′(lf_a, zero(R)) == 2 * rdot(F₀, sq_j(x, p) * d)
@@ -89,7 +85,7 @@ const N_LF = 4
     # AD-backed JVP on R1Coupled
     prob_ad = NonlinearProblem(R1Coupled(perm))
     jvpprep = prepare_ad(AutoForwardDiff(), prob_ad, nothing, x, p)
-    lf_ad = LineFunction(prob_ad, x, d, p, jvpprep)
+    lf_ad = LineFunction(prob_ad, x, prob_ad.F(x, p), d, p, jvpprep)
     @test !(lf_ad isa Function)
     @test isbits(lf_ad)
 
@@ -105,7 +101,7 @@ const N_LF = 4
 
     # Scalar iterate (Number)
     prob_s = NonlinearProblem(R1ScalarScaled(), r1_scalar_scaled_jacobian)
-    lf_s = LineFunction(prob_s, x[1], d[1], p[1], nothing)
+    lf_s = LineFunction(prob_s, x[1], prob_s.F(x[1], p[1]), d[1], p[1], nothing)
     @test isbits(lf_s)
     αs = R(1) / R(2)
     xαs = update_iterate!!(nothing, x[1], αs, d[1])
@@ -150,6 +146,7 @@ end
     for ls in (inR(Backtracking()), inR(Bisection()), inR(StrongWolfe()))
         x₊, F₊, _, info = globalize!!(nothing, ls, prob, x, Fx, d, p, nothing, ExactStep())
         @test info.code == SUCCESS
+        @test F₊ === prob.F(x₊, p)
         @test info.fnorm == rnorm(F₊)
         @test info.fnorm < rnorm(Fx)
         @test info.stepnorm > 0

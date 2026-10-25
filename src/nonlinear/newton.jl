@@ -21,6 +21,8 @@ regularisation `regularization`, and factor-reuse period `reuse`.
   factorisation when `μ > 0`.
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
   reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step).
+  A line search along a reused factor that fails without a step is retried once, in the same
+  step, from a fresh factor.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     linsolve::L
@@ -180,31 +182,48 @@ end
     return x₊, F₊, state, info
 end
 
-@inline function step!!(
-        state, m::Newton{L, G, J, RF, Reg, Int32},
-        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+@inline function newton_factor(m::Newton, state, prob, x, p)
+    Jmat = jacobian!!(nothing, state.jacprep, prob, x, p)
+    Jreg = regularize_jacobian(Jmat, m.regularization)
+    return factorize!!(nothing, m.linsolve, Jreg)
+end
+
+# The step from the factor `fac`, fresh or reused: `SINGULAR` for a singular factor, else the
+# globalized step along the refined direction.
+@inline function newton_globalize(m::Newton, state, prob, x, Fx, p, fac, fresh::Bool)
     T = eltype(x)
     R = real(T)
-    fresh = state.age == Int32(0) || state.stalled
-    if fresh
-        Jmat = jacobian!!(nothing, state.jacprep, prob, x, p)
-        Jreg = regularize_jacobian(Jmat, m.regularization)
-        fac = factorize!!(nothing, m.linsolve, Jreg)
-        age₊ = m.reuse == Int32(1) ? Int32(0) : Int32(1)
-    else
-        fac = state.fac
-        age₊ = state.age + one(Int32) >= m.reuse ? Int32(0) : state.age + one(Int32)
-    end
     if fac.info > Int32(0)
-        state_sing = (; state.jacprep, state.jvpprep, fac, age = Int32(0), stalled = false)
-        return x, Fx, state_sing,
-        StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false)
+        return x, Fx, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false)
     end
     d₀ = map!!(-, nothing, ldiv!!(nothing, fac, Fx))
     d = refine!!(nothing, m.refinement, prob, x, Fx, d₀, fac, p, state.jvpprep)
     sk = newton_stepkind(m, T, fresh)
     x₊, F₊, _, info = globalize!!(
         nothing, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
+    return x₊, F₊, info
+end
+
+@inline function step!!(
+        state, m::Newton{L, G, J, RF, Reg, Int32},
+        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+    fresh = state.age == Int32(0) || state.stalled
+    fac = fresh ? newton_factor(m, state, prob, x, p) : state.fac
+    age_fresh = m.reuse == Int32(1) ? Int32(0) : Int32(1)
+    age₊ = fresh ? age_fresh :
+           (state.age + one(Int32) >= m.reuse ? Int32(0) : state.age + one(Int32))
+    x₊, F₊, info = newton_globalize(m, state, prob, x, Fx, p, fac, fresh)
+    # A reused factor can give a direction that does not descend. A line search along it that
+    # fails without a step is retried once, in the same step, from a fresh factor.
+    if !fresh && info.code == LINESEARCH_FAILED && iszero(info.stepnorm)
+        fac = newton_factor(m, state, prob, x, p)
+        age₊ = age_fresh
+        x₊, F₊, info = newton_globalize(m, state, prob, x, Fx, p, fac, true)
+    end
+    if info.code == SINGULAR
+        state_sing = (; state.jacprep, state.jvpprep, fac, age = Int32(0), stalled = false)
+        return x₊, F₊, state_sing, info
+    end
     stalled₊ = info.code == STALLED
     state₊ = (; state.jacprep, state.jvpprep, fac, age = age₊, stalled = stalled₊)
     return x₊, F₊, state₊, info

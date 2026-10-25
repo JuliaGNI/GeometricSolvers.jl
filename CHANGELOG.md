@@ -240,12 +240,13 @@ so that a compat-only bump can be told apart from an interface change.
   `(x, status)`. Passing both `options` and keyword tolerances raises `ArgumentError`;
   `solve!!` returns `(x, status, state)`. In R1 `init` returns an `isbits` named tuple
   `(; jacprep, jvpprep)` when `reuse === nothing`, or `(; jacprep, jvpprep, fac, age = Int32(0),
-  stalled = false)` when `reuse` is an `Int32`. `LineFunction(prob, x, d, p, jvpprep; merit = norm2,
-  xα = nothing, Fα = nothing, Jv = nothing)` evaluates the merit `φ(lf, α) = lf.merit(F(x + α*d, p))`
-  (defaulting to `norm2`) and its derivative `φ′(lf, α) = 2 * rdot(F(x + α*d, p), jvp)` by one
-  pushforward (`jvp!!`). `globalize!!` dispatches on the line search: `Static(α)` evaluates
-  `F(x + α*d, p)` directly without building a `LineFunction`, while `Backtracking`, `Bisection` and
-  `StrongWolfe` build a `LineFunction` and call `linesearch`. In `linesearch`, `StepKind{R}` accepts
+  stalled = false)` when `reuse` is an `Int32`. `LineFunction(prob, x, Fx, d, p, jvpprep)` takes the residual `Fx` at `x` as a positional argument
+  and evaluates the merit `φ(lf, α) = norm2(F(x + α*d, p))`, which is always `norm2`, and its
+  derivative `φ′(lf, α) = 2 * rdot(F(x + α*d, p), jvp)` by one pushforward (`jvp!!`).
+  `globalize!!` dispatches on the line search: `Static(α)` evaluates `F(x + α*d, p)` directly
+  without building a `LineFunction`, while `Backtracking`, `Bisection` and `StrongWolfe` build a
+  `LineFunction` and call `linesearch`. A step that the search takes returns the residual the
+  search evaluated there, so an accepted step costs no second evaluation of `F`. In `linesearch`, `StepKind{R}` accepts
   an `InexactStep{R}` or raw slope `R` only when its element type matches the line search's `R`;
   another real type is a `MethodError`.
   `Newton(; linsolve, globalization, jacobian, refinement, regularization, reuse)` evaluates `J`
@@ -259,7 +260,10 @@ so that a compat-only bump can be told apart from an interface change.
   one. When a line search returns `LINESEARCH_FAILED`
   with a finite trial merit strictly below `φ₀ = norm2(Fx)`, `globalize!!` accepts the trial point
   and records `LINESEARCH_FAILED` in `step_failures`; otherwise the solver stops with
-  `LINESEARCH_FAILED`. `Picard(; damping = 1, globalization = Static())` takes `d = -damping * Fx`
+  `LINESEARCH_FAILED`. A line search along a reused factor that fails without a step is retried
+  once, in the same step, from a fresh factor: the iteration count does not grow, the step costs
+  one more Jacobian and factorisation, and a solve that stopped with `LINESEARCH_FAILED` after a
+  stale step now continues. `Picard(; damping = 1, globalization = Static())` takes `d = -damping * Fx`
   with `MeasuredSlope()`. On `SVector` and `Number` iterates, `solve` allocates zero bytes after
   warmup.
 

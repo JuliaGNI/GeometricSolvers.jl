@@ -94,14 +94,15 @@ end
 function search(ls::Backtracking{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, ceiling::R,
         n::Int32) where {R}
     αmin = smallest_step(d₀, τ)
-    αₐ, φₐ = α, R(NaN)    # the last trial and its merit
+    αₐ, φₐ, Fₐ = α, R(NaN), anchor_residual(lf)    # the last trial, its merit and residual
     αp, φp = R(NaN), R(NaN)
     frozen = 0             # consecutive trials whose merit equals φ₀ bit for bit
     code = LINESEARCH_FAILED
     done = false
     for _ in 1:ls.maxiter
         done && continue
-        αₐ, φₐ = α, φ(lf, α)
+        αₐ = α
+        φₐ, Fₐ = merit_and_residual(lf, α)
         n += Int32(1)
         # A merit equal to φ₀ is taken as a frozen trial point only for a step small enough that
         # x + αd may round to x; a larger step with φ = φ₀ is an ordinary rejected trial.
@@ -124,5 +125,5 @@ function search(ls::Backtracking{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, 
             αp, φp, α = α, φₐ, max(αₙ, αmin)
         end
     end
-    LineSearchResult{R}(αₐ, φₐ, code, n)
+    LineSearchResult{R, typeof(Fₐ)}(αₐ, φₐ, code, n, Fₐ)
 end

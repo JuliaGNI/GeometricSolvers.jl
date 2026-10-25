@@ -1,45 +1,42 @@
 """
-    LineFunction(prob, x, d, p, jvpprep; merit = norm2, xα = nothing, Fα = nothing, Jv = nothing)
+    LineFunction(prob, x, Fx, d, p, jvpprep)
 
 The line function along the ray from `x` in the direction `d` for [`NonlinearProblem`](@ref) `prob`
-with parameters `p` and Jacobian-vector preparation `jvpprep`. It is a callable struct with `merit`
-as a type parameter, not a subtype of `Function`, so `isbits` holds when its fields are `isbits`.
+with parameters `p` and Jacobian-vector preparation `jvpprep`; `Fx` is the residual at `x`. It is
+a callable struct, not a subtype of `Function`, so `isbits` holds when its fields are `isbits`.
 
 [`φ(lf, α)`](@ref φ) advances `x` along `d` by `α` through `update_iterate!!`, evaluates the
-residual through `residual!!`, and returns `lf.merit(Fα)` (which defaults to [`norm2`](@ref),
-``\\|F\\|_2^2``). [`φ′(lf, α)`](@ref φ′) evaluates the directional derivative of the squared
-Euclidean norm, ``2\\,\\mathrm{Re}\\langle F, J d\\rangle``, through `jvp!!` and [`rdot`](@ref).
-Calling `lf(α)` delegates to `φ(lf, α)`.
+residual through `residual!!`, and returns its merit [`norm2`](@ref), ``\\|F\\|_2^2``.
+[`φ′(lf, α)`](@ref φ′) evaluates the derivative of the merit,
+``2\\,\\mathrm{Re}\\langle F, J d\\rangle``, through `jvp!!` and [`rdot`](@ref). A line search
+along `lf` returns the residual at its step in its [`LineSearchResult`](@ref), and `Fx` for a step
+it did not evaluate. Calling `lf(α)` delegates to `φ(lf, α)`.
 """
-struct LineFunction{M, P, X, D, Q, JP, XA, FA, JV}
-    merit::M
+struct LineFunction{P, X, FX, D, Q, JP}
     prob::P
     x::X
+    Fx::FX
     d::D
     p::Q
     jvpprep::JP
-    xα::XA
-    Fα::FA
-    Jv::JV
 end
 
-function LineFunction(prob, x, d, p, jvpprep;
-        merit = norm2, xα = nothing, Fα = nothing, Jv = nothing)
-    return LineFunction(merit, prob, x, d, p, jvpprep, xα, Fα, Jv)
+@inline function merit_and_residual(lf::LineFunction, α)
+    xα = update_iterate!!(nothing, lf.x, α, lf.d)
+    Fα = residual!!(nothing, lf.prob, xα, lf.p)
+    return norm2(Fα), Fα
 end
 
-@inline function φ(lf::LineFunction, α)
-    xα = update_iterate!!(lf.xα, lf.x, α, lf.d)
-    Fα = residual!!(lf.Fα, lf.prob, xα, lf.p)
-    return lf.merit(Fα)
-end
+anchor_residual(lf::LineFunction) = lf.Fx
+
+@inline φ(lf::LineFunction, α) = merit_and_residual(lf, α)[1]
 
 @inline (lf::LineFunction)(α) = φ(lf, α)
 
 @inline function φ′(lf::LineFunction, α)
-    xα = update_iterate!!(lf.xα, lf.x, α, lf.d)
-    Fα = residual!!(lf.Fα, lf.prob, xα, lf.p)
-    Jv = jvp!!(lf.Jv, lf.jvpprep, lf.prob, xα, lf.d, lf.p)
+    xα = update_iterate!!(nothing, lf.x, α, lf.d)
+    Fα = residual!!(nothing, lf.prob, xα, lf.p)
+    Jv = jvp!!(nothing, lf.jvpprep, lf.prob, xα, lf.d, lf.p)
     return 2 * rdot(Fα, Jv)
 end
 
@@ -56,9 +53,10 @@ false))` without advancing the iterate or evaluating `F` at a non-finite trial p
 
 For [`Backtracking`](@ref), [`Bisection`](@ref) and [`StrongWolfe`](@ref), `globalize!!` returns
 `NONFINITE` immediately when `rnorm(d)` is not finite; otherwise it builds a
-[`LineFunction`](@ref) and calls [`linesearch`](@ref) from `α = 1`. A `LINESEARCH_FAILED` result
-whose `φ` is finite and strictly less than `φ₀ = norm2(Fx)` takes the step `res.α` and reports
-`failures = 1`; otherwise the iterate stays at `x` with `stepnorm = 0`.
+[`LineFunction`](@ref) and calls [`linesearch`](@ref) from `α = 1`. An accepted step returns the
+residual that the search evaluated at `res.α`, so it costs no further evaluation of `F`. A
+`LINESEARCH_FAILED` result whose `φ` is finite and strictly less than `φ₀ = norm2(Fx)` takes the
+step `res.α` and reports `failures = 1`; otherwise the iterate stays at `x` with `stepnorm = 0`.
 """
 @inline function globalize!!(
         g, ls::Static{R}, prob, x, Fx, d, p, jvpprep, stepkind = MeasuredSlope()) where {R}
@@ -84,20 +82,19 @@ end
     if !isfinite(dn)
         return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), dn, Int32(0), false)
     end
-    lf = LineFunction(prob, x, d, p, jvpprep)
+    lf = LineFunction(prob, x, Fx, d, p, jvpprep)
     φ₀ = norm2(Fx)
     res = linesearch(ls, lf, stepkind, φ₀, one(R))
     code = res.code
     if code == SUCCESS
         x₊ = update_iterate!!(nothing, x, res.α, d)
-        F₊ = residual!!(nothing, prob, x₊, p)
-        return x₊, F₊, g,
+        return x₊, res.residual, g,
         StepInfo{R}(SUCCESS, sqrt(res.φ), res.α * dn, Int32(0), false)
     elseif code == LINESEARCH_FAILED
         if isfinite(res.φ) && res.φ < φ₀
             x₊ = update_iterate!!(nothing, x, res.α, d)
-            F₊ = residual!!(nothing, prob, x₊, p)
-            return x₊, F₊, g,
+            return x₊, res.residual,
+            g,
             StepInfo{R}(LINESEARCH_FAILED, sqrt(res.φ), res.α * dn, Int32(1), false)
         else
             return x, Fx, g,
