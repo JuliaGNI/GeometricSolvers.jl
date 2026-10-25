@@ -20,6 +20,9 @@ export SolverStatus, StepInfo, Options
 export NonlinearProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
 export Static, Backtracking, Bisection, StrongWolfe
+export Newton, NoRefinement, Picard, solve
+
+public solve!!
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -47,5 +50,10 @@ include("ad/forwarddiff_static.jl")
 include("ad/di.jl")
 include("ad/chunked.jl")
 include("ad/jvp.jl")
+
+include("globalization/linefunction.jl")
+include("nonlinear/solver.jl")
+include("nonlinear/newton.jl")
+include("nonlinear/picard.jl")
 
 end

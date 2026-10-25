@@ -114,3 +114,11 @@
   forms and versions measured), it reaches only `n = 4`.
 - **kind:** missing test
 - **found:** #24
+
+### K12 · `test/globalization/linesearch.jl` exceeds the 60 s `core` file budget cold.
+
+- **location:** `test/globalization/linesearch.jl:1`
+- **evidence:** `run-tests.jl <worktree> globalization/linesearch.jl` on Julia 1.13.2 takes
+  `79.7s` cold (`1372 passed, 0 failed`), above the 60 s per-file `core` budget.
+- **kind:** found late
+- **found:** 2026-10-24

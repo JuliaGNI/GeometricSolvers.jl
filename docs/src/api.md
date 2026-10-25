@@ -86,13 +86,31 @@ returncode
 A line search is scalar code: [`linesearch`](@ref) sees the line only through the merit
 [`φ`](@ref) and its derivative [`φ′`](@ref), allocates nothing and never throws, so the same
 search runs on the host and inside a kernel. Its iteration cap, where it has one, is its own
-field.
+field. Along a [`LineFunction`](@ref) its [`LineSearchResult`](@ref) also carries the residual at
+the step, so the caller does not evaluate it again.
 
 ```@docs
 Static
 Backtracking
 Bisection
 StrongWolfe
+```
+
+## Nonlinear solvers
+
+A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,
+`refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
+[`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
+to `R = real(eltype(x₀))`, calls [`init`](@ref) and [`solve!!`](@ref), and returns `(x, status)`.
+[`solve!!`](@ref) takes a solver state from [`init`](@ref) and runs the loop on a `StaticVector`,
+`MVector` or `Number` iterate in R1.
+
+```@docs
+solve
+solve!!
+Newton
+Picard
+NoRefinement
 ```
 
 ## Automatic differentiation
@@ -139,6 +157,9 @@ jvp!!
 These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
+step!!
+LineFunction
+globalize!!
 LineSearch
 linesearch
 φ
@@ -163,3 +184,4 @@ norm2
 rnorm
 rdot
 ```
+

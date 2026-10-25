@@ -32,9 +32,19 @@ abstract type LineSearch{R <: Real} end
     φ(lf, α)
 
 The merit of the line function `lf` at the step `α`, ``φ(α) = \\|r(x + α d)\\|^2``, in the real
-type of `α`. A line search sees a line function only through this and [`φ′`](@ref).
+type of `α`. A line search sees a line function only through this and [`φ′`](@ref), and through
+`merit_and_residual` and `anchor_residual`, whose fallbacks call `φ` and return `nothing`.
 """
 function φ end
+
+# The merit at the step α and the residual it was computed from. A line function with no
+# residual returns `nothing` beside its merit; `LineFunction` returns its residual, so that the
+# caller of a search does not evaluate it again.
+merit_and_residual(lf, α) = (φ(lf, α), nothing)
+
+# The residual at α = 0, which a result carries for a step the search did not evaluate. It
+# gives every result of a search along `lf` the same type.
+anchor_residual(lf) = nothing
 
 """
     φ′(lf, α)
@@ -83,12 +93,13 @@ passes the number itself as the step kind, and no search evaluates it.
 """
 struct MeasuredSlope end
 
-const StepKind = Union{ExactStep, InexactStep, MeasuredSlope, Real}
+const StepKind{R} = Union{ExactStep, MeasuredSlope, InexactStep{R}, R}
 
 """
-    LineSearchResult{R <: Real}
+    LineSearchResult{R <: Real, Q}
 
-The result of one [`linesearch`](@ref). It is `isbits`.
+The result of one [`linesearch`](@ref). It is `isbits` when the residual is.
+`LineSearchResult{R}(α, φ, code, evaluations)` builds one with the residual `nothing`.
 
 # Fields
 
@@ -102,12 +113,19 @@ The result of one [`linesearch`](@ref). It is `isbits`.
   curvature condition. `φ` tells the caller whether the step of a failure still decreases the
   merit.
 - `evaluations::Int32`: the evaluations of [`φ`](@ref) and [`φ′`](@ref) together.
+- `residual::Q`: the residual at `α` that gave `φ`; the residual at ``α = 0`` where `φ` is `NaN`;
+  `nothing` for a line function with no residual.
 """
-struct LineSearchResult{R <: Real}
+struct LineSearchResult{R <: Real, Q}
     α::R
     φ::R
     code::ReturnCode
     evaluations::Int32
+    residual::Q
+end
+
+function LineSearchResult{R}(α, φ, code, evaluations) where {R <: Real}
+    LineSearchResult{R, Nothing}(α, φ, code, evaluations, nothing)
 end
 
 """
@@ -115,10 +133,10 @@ end
 
 Run the line search `ls` along the line function `lf` from the trial step `α`, and return a
 [`LineSearchResult{R}`](@ref LineSearchResult). `φ₀` is the merit at ``α = 0``, which the caller
-has; `step` is an [`ExactStep`](@ref), an [`InexactStep`](@ref), a [`MeasuredSlope`](@ref) or the
-slope ``φ′(0)`` itself; `αmax` is the caller's ceiling on the step. A trial step that is not
-positive or not finite is replaced by 1, and one below the step floor
-[`smallest_step`](@ref) is raised to it.
+has; `step` is an [`ExactStep`](@ref), an [`InexactStep{R}`](@ref InexactStep), a
+[`MeasuredSlope`](@ref) or the slope ``φ′(0)::R`` itself; `αmax` is the caller's ceiling on the
+step. A trial step that is not positive or not finite is replaced by 1, and one below the step
+floor [`smallest_step`](@ref) is raised to it.
 
 A non-positive or `NaN` `αmax` is a caller error. The search then evaluates nothing and returns
 `LINESEARCH_FAILED` with the trial step, bounded by the ceiling of the method.
@@ -128,15 +146,19 @@ runs the loop of the method. Each loop has exactly `ls.maxiter` trips with a don
 the threads of a warp stay together in a kernel; a trip after the flag is set evaluates nothing.
 [`Static`](@ref) has no loop.
 """
-function linesearch(ls::LineSearch{R}, lf, step::StepKind, φ₀::R, α::R,
+function linesearch(ls::LineSearch{R}, lf, step::StepKind{R}, φ₀::R, α::R,
         αmax::R = R(Inf)) where {R}
+    F₀ = anchor_residual(lf)
     usable_ceiling(αmax) ||
-        return LineSearchResult{R}(trial_step(α, method_αmax(ls)), R(NaN), LINESEARCH_FAILED, 0)
+        return LineSearchResult{R, typeof(F₀)}(
+            trial_step(α, method_αmax(ls)), R(NaN), LINESEARCH_FAILED, 0, F₀)
     ceiling = min(method_αmax(ls), αmax)
     α = trial_step(α, ceiling)
-    usable_step(step) || return LineSearchResult{R}(α, R(NaN), LINESEARCH_FAILED, 0)
+    usable_step(step) ||
+        return LineSearchResult{R, typeof(F₀)}(α, R(NaN), LINESEARCH_FAILED, 0, F₀)
     d₀, n = search_slope(ls, step, lf, φ₀)
-    usable_anchor(φ₀, d₀) || return LineSearchResult{R}(α, R(NaN), anchor_code(φ₀, d₀), n)
+    usable_anchor(φ₀, d₀) ||
+        return LineSearchResult{R, typeof(F₀)}(α, R(NaN), anchor_code(φ₀, d₀), n, F₀)
     τ = roundoff(φ₀)
     # a trial step below the step floor is raised to it, within the ceiling
     α = min(max(α, smallest_step(d₀, τ)), ceiling)
@@ -171,7 +193,7 @@ end
 # its own rule for a step kind adds a method of it.
 anchor_slope(::ExactStep, lf, φ₀) = (-2φ₀, Int32(0))
 anchor_slope(::Union{InexactStep, MeasuredSlope}, lf, φ₀) = (φ′(lf, zero(φ₀)), Int32(1))
-anchor_slope(d₀::Real, lf, φ₀) = (oftype(φ₀, d₀), Int32(0))
+anchor_slope(d₀::Real, lf, φ₀) = (d₀, Int32(0))
 search_slope(ls, step, lf, φ₀) = anchor_slope(step, lf, φ₀)
 
 """

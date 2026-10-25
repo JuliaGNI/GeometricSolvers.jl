@@ -98,14 +98,15 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
     top = min(ceiling, floatmax(R))    # without a ceiling the doubling stops at floatmax
     unknown = R(NaN)    # the slope at a trial where it was not evaluated
 
+    F₀ = anchor_residual(lf)
     # the previous trial of the bracketing phase, and the next one
-    αp, φp, dp = zero(R), φ₀, d₀
+    αp, φp, dp, Fp = zero(R), φ₀, d₀, F₀
     αi = α
     # the bracket of the zoom phase: `lo` has the lowest merit of the trials that meet `armijo`
-    lo, φlo, dlo = zero(R), φ₀, d₀
+    lo, φlo, dlo, Flo = zero(R), φ₀, d₀, F₀
     hi, φhi, dhi = zero(R), φ₀, d₀
-    # the step to return if no trial meets both conditions
-    αres, φres = α, R(NaN)
+    # the step to return if no trial meets both conditions, and its residual
+    αres, φres, Fres = α, R(NaN), F₀
     code = LINESEARCH_FAILED
     zooming = false
     bisect = false    # the last zoom trial shrank the bracket by less than 0.66
@@ -114,12 +115,12 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
     for _ in 1:ls.maxiter
         done && continue
         if !zooming
-            φi = φ(lf, αi)
+            φi, Fi = merit_and_residual(lf, αi)
             n += Int32(1)
-            αres, φres = αi, φi
+            αres, φres, Fres = αi, φi, Fi
             if !armijo(φi, φ₀, c₁, αi, d₀) || (!initial && φi ≥ φp)
                 zooming = true
-                lo, φlo, dlo = αp, φp, dp
+                lo, φlo, dlo, Flo = αp, φp, dp, Fp
                 hi, φhi, dhi = αi, φi, unknown
             else
                 di = φ′(lf, αi)
@@ -129,19 +130,19 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
                     done = true
                 elseif di ≥ zero(R)
                     zooming = true
-                    lo, φlo, dlo = αi, φi, di
+                    lo, φlo, dlo, Flo = αi, φi, di, Fi
                     hi, φhi, dhi = αp, φp, dp
                 elseif αi == top
                     code = floor_code(φi, φ₀, τ)
                     done = true
                 else
-                    αp, φp, dp = αi, φi, di
+                    αp, φp, dp, Fp = αi, φi, di, Fi
                     αi = min(2αi, top)
                 end
             end
             initial = false
             # entering the zoom, the best step so far is its lower end, if it is a step
-            zooming && lo > zero(R) && ((αres, φres) = (lo, φlo))
+            zooming && lo > zero(R) && ((αres, φres, Fres) = (lo, φlo, Flo))
         elseif abs(hi - lo) ≤ eps(R) * max(lo, hi) || max(lo, hi) ≤ αmin
             # a collapsed bracket, or one below the step floor
             code = floor_code(φres, φ₀, τ)
@@ -150,30 +151,30 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
             width = abs(hi - lo)
             # no trial below the step floor: there the merit cannot show the predicted decrease
             αj = max(bisect ? midpoint(lo, hi) : zoom_step(lo, φlo, dlo, hi, φhi, dhi), αmin)
-            φj = φ(lf, αj)
+            φj, Fj = merit_and_residual(lf, αj)
             n += Int32(1)
             # the round-off of the two merits compared, which may be far from φ₀
             τj = roundoff(max(abs(φj), abs(φlo)))
             if !armijo(φj, φ₀, c₁, αj, d₀) || φj > φlo + τj
                 hi, φhi, dhi = αj, φj, unknown
-                lo > zero(R) || ((αres, φres) = (αj, φj))
+                lo > zero(R) || ((αres, φres, Fres) = (αj, φj, Fj))
             else
                 dj = φ′(lf, αj)
                 n += Int32(1)
                 if curvature(dj, c₂, d₀)
-                    αres, φres = αj, φj
+                    αres, φres, Fres = αj, φj, Fj
                     code = classify(φj, φ₀, τ)
                     done = true
                 else
                     # the sign of φ′ at αj decides the side of the minimiser, also for a merit
                     # that ties with φlo within the round-off
                     samesign(dj, hi - lo) && ((hi, φhi, dhi) = (lo, φlo, dlo))
-                    lo, φlo, dlo = αj, φj, dj
-                    αres, φres = αj, φj
+                    lo, φlo, dlo, Flo = αj, φj, dj, Fj
+                    αres, φres, Fres = αj, φj, Fj
                 end
             end
             bisect = abs(hi - lo) > R(0.66) * width
         end
     end
-    LineSearchResult{R}(αres, φres, code, n)
+    LineSearchResult{R, typeof(Fres)}(αres, φres, code, n, Fres)
 end

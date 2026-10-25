@@ -264,6 +264,42 @@ so that a compat-only bump can be told apart from an interface change.
   ForwardDiff path allocates nothing. A method's own operator is a `JacobianFunction`, which
   `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.
 
+- `Newton`, `Picard`, `NoRefinement` and `solve` (exported), and `solve!!` (`public`), together with
+  the internal `init`, `step!!`, `refine!!`, `LineFunction` and `globalize!!`, run the nonlinear
+  solver loop in R1 (`StaticVector`, `MVector` or `Number` iterate) on the host and inside a
+  KernelAbstractions kernel, one system per thread. `solve(prob, x₀, method, p = nothing; options,
+  kwargs...)` adapts `method` to `R = real(eltype(x₀))` through `ToReal{R}()`, builds `state` with
+  `init(method_R, prob, x₀, p)`, runs `solve!!(state, prob, x₀, method_R, p, opt)`, and returns
+  `(x, status)`. Passing both `options` and keyword tolerances raises `ArgumentError`;
+  `solve!!` returns `(x, status, state)`. In R1 `init` returns an `isbits` named tuple
+  `(; jacprep, jvpprep)` when `reuse === nothing`, or `(; jacprep, jvpprep, fac, age = Int32(0),
+  stalled = false)` when `reuse` is an `Int32`. `LineFunction(prob, x, Fx, d, p, jvpprep)` takes the residual `Fx` at `x` as a positional argument
+  and evaluates the merit `φ(lf, α) = norm2(F(x + α*d, p))`, which is always `norm2`, and its
+  derivative `φ′(lf, α) = 2 * rdot(F(x + α*d, p), jvp)` by one pushforward (`jvp!!`).
+  `globalize!!` dispatches on the line search: `Static(α)` evaluates `F(x + α*d, p)` directly
+  without building a `LineFunction`, while `Backtracking`, `Bisection` and `StrongWolfe` build a
+  `LineFunction` and call `linesearch`. A step that the search takes returns the residual the
+  search evaluated there, so an accepted step costs no second evaluation of `F`. In `linesearch`, `StepKind{R}` accepts
+  an `InexactStep{R}` or raw slope `R` only when its element type matches the line search's `R`;
+  another real type is a `MethodError`.
+  `Newton(; linsolve, globalization, jacobian, refinement, regularization, reuse)` evaluates `J`
+  (or reuses `state.fac` while `0 < state.age < reuse` and `!state.stalled`), adds
+  `regularization * I` to the diagonal when `regularization > 0`, factorises with `factorize!!`,
+  solves `J * s = Fx` with `ldiv!!`, and sets `d₀ = -s` and `d = refine!!(nothing, refinement, ...)`.
+  The step kind passed to `globalize!!` is `ExactStep()` on a fresh factorisation when `jacobian` is
+  `nothing` or an `AbstractADType`, `regularization` is zero, `factor_eltype(linsolve, T) === T`,
+  and `refinement isa NoRefinement`, and `MeasuredSlope()` otherwise. A regularised step
+  `d = -(J + μI)⁻¹F` does not satisfy the `-2φ₀` slope of `ExactStep`, so it takes the measured
+  one. When a line search returns `LINESEARCH_FAILED`
+  with a finite trial merit strictly below `φ₀ = norm2(Fx)`, `globalize!!` accepts the trial point
+  and records `LINESEARCH_FAILED` in `step_failures`; otherwise the solver stops with
+  `LINESEARCH_FAILED`. A line search along a reused factor that fails without a step is retried
+  once, in the same step, from a fresh factor: the iteration count does not grow, the step costs
+  one more Jacobian and factorisation, and a solve that stopped with `LINESEARCH_FAILED` after a
+  stale step now continues. `Picard(; damping = 1, globalization = Static())` takes `d = -damping * Fx`
+  with `MeasuredSlope()`. On `SVector` and `Number` iterates, `solve` allocates zero bytes after
+  warmup.
+
 - Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
   pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
   `T = eltype(x)`, with factor precision `TF = factor_eltype(m, T)` and a right-hand-side conversion
