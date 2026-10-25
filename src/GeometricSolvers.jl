@@ -9,6 +9,8 @@ using Adapt: Adapt
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
+using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, ldiv!, lu!,
+                     mul!, qr!
 using StaticArrays: MMatrix, MVector, SMatrix, StaticArray, StaticMatrix, StaticVector,
                     SVector,
                     setindex
@@ -30,6 +32,8 @@ include("linear/methods.jl")
 include("linear/factors.jl")
 include("linear/static/lu.jl")
 include("linear/static/qr.jl")
+include("linear/dense.jl")
+include("linear/mixed.jl")
 
 include("globalization/linesearch.jl")
 include("globalization/static.jl")
