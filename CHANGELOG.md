@@ -50,6 +50,39 @@ so that a compat-only bump can be told apart from an interface change.
   product and the closure's still differ by up to 2 ulp in `ComplexF32`, and an x86_64 run, which
   CI includes, is not measured.
 
+- Static `QRFactorization` (`factorize!!` in `src/linear/static/qr.jl`) fills the scaled subcolumn
+  buffer `x` in one loop over `1:N`: `x[i]` is `A[i, k] / amax` for `i >= k` when `amax` is
+  nonzero, and zero otherwise. The previous code zeros `x` and fills only `k:N`, under
+  `if !iszero(amax)`. On the host, the factors, `τ` and `info` are bitwise identical to the
+  previous fill on 64 random matrices per element type and size, and both versions allocate
+  nothing.
+  On Metal (Metal.jl 1.11.1) the fill repairs `Float32` QR on Julia 1.13.2 and breaks it on
+  Julia 1.12.7, which is the package's floor (`[compat] julia = "1.12"`). In a sweep over
+  `n = 1:12` of `Float32` static QR, a system counts as failed if it misses the bound of check 1
+  or returns `info ≠ 0`. The previous fill fails at `n = 7, 8` on 1.12.7 and at `n = 3:9` on
+  1.13.2; this fill fails at `n = 3:9` on 1.12.7 and at no `n` on 1.13.2. `ComplexF32` QR and
+  `LUFactorization` in both element types pass at every `n` in all four cases. In
+  `test/devices/metal_linear.jl`, the previous fill gives 139 passed and 5 failed on 1.13.2, and
+  this fill gives 144 passed; on 1.12.7 the previous fill gives 144 passed, and this fill gives
+  134 passed and 10 failed, all in `QRFactorization on Metal, Float32, n = 4`.
+  The defect is open and recorded as `K9` in `KNOWN_ISSUES.md`. The fill removes the failure on
+  1.13.2 in these measurements, but the cause is not located: no experiment separates Metal.jl's
+  lowering from Apple's shader compiler, and no upstream report exists. `K10` and `K11` record why
+  the Metal CI job does not see it: it runs with `--check-bounds=yes`, and its test sizes 1, 4,
+  16 and 24 reach only `n = 4` of the affected sizes. `scripts/spikes/metal_qr/` holds the 4 × 4
+  reproducer (`probe.jl`), the sweep (`sweep.jl`) and `README.md`, which compares five forms of
+  the fill on both Julia versions; none passes on both and stays free of heap allocation on the
+  host.
+  On the host, on Julia 1.13.2 (two cold runs, load average 9 to 12), the median time per
+  factorisation with this fill, relative to the previous one, is 1.81 to 1.86 for `Float64` at
+  `N = 2`, 1.95 for `Float32` at `N = 2`, 1.19 to 1.22 for `Float32` at `N = 4`, and 0.99 to 1.05
+  for every other pair of `T` in `Float64`, `Float32` and `ComplexF64` with `N` in 2, 4, 8 and 16.
+  One cold run on Julia 1.12.7 showed no slowdown (ratios 0.70 to 1.01). Only these sizes were
+  measured.
+  For a caller: on Metal, `Float32` static QR on Julia 1.13.2 gets the repair. On Julia 1.12.7 it
+  can miss the accuracy bound at `n = 3` to `9`, so a caller there should check the residual or
+  use `LUFactorization`, which passed the sweep in both element types, until K9 closes.
+
 ### New Features
 
 - The empty package skeleton: `Project.toml`, the module and its
@@ -266,4 +299,23 @@ so that a compat-only bump can be told apart from an interface change.
   stale step now continues. `Picard(; damping = 1, globalization = Static())` takes `d = -damping * Fx`
   with `MeasuredSlope()`. On `SVector` and `Number` iterates, `solve` allocates zero bytes after
   warmup.
+
+- Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
+  pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
+  `T = eltype(x)`, with factor precision `TF = factor_eltype(m, T)` and a right-hand-side conversion
+  buffer `rhs` when `TF !== T`. On `BlasFloat` (`Float32`, `Float64`, `ComplexF32`,
+  `ComplexF64`), `factorize!!` and `ldiv!!` call LAPACK's `getrf!`/`getrs!`, `geqrf!` with
+  `ormqr_adj!` and a `BLAS.trsv!` backsolve, and QR-iteration `gesvd!` with rank cutoff
+  `√n · eps(real(TF)) · σ₁`, reusing the pre-allocated workspaces without allocation. On other
+  `AbstractMatrix` element types (`BigFloat`), `DenseLU` and `DenseQR` use `LinearAlgebra.lu!` (with
+  `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
+  In mixed precision (`TF !== T`), `ldiv!!` also scales the right-hand side by its infinity norm
+  before converting to the factor precision, and returns zero directly on a zero right-hand side.
+  Where the element type of `J` differs from the factor type, `factorize!!` divides `J` by the power
+  of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, as the static factorisation
+  does, and `ldiv!!` multiplies the step by `2^-e` in both paths. So a `Float64` or `ComplexF64` `J`
+  at a scale where its entries overflow or become subnormal in `TF`, such as `1e39` or `1e-40` for
+  `Float32`, solves to the factor precision's bound. Entries far below the largest of `J` can still
+  underflow, and an `Inf` in `J` gives a step that is not specified. `LinearAlgebra` is now a
+  direct dependency of the package.
 

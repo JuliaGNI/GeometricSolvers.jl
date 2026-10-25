@@ -76,30 +76,49 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K9 · `QRFactorization` on Metal fails in `Float32` at `n = 4` on Julia 1.13.
+### K9 · `QRFactorization` on Metal fails in `Float32` at some `n` on Julia 1.12.
 
-- **location:** `test/devices/metal_linear.jl:28`
-- **evidence:** `run-tests.jl <worktree> devices/metal_linear.jl` on Julia 1.13.2 gives
-  `139 passed, 5 failed, 0 errored, 0 broken` in the one testset *Metal static LU and QR*, in the
-  sub-row `GeometricSolvers.QRFactorization on Metal, Float32, n = 4`, where every failure is the
-  same line. Two of them:
-  `Expression: relerr(x[k], reference(A, b)) <= bound(A, T, Nothing)`,
-  `Evaluated: 3.209016409353227442164204849116473172581928563889892965447639635540318498057716 <=
-  2.604517060212300835169065004620252092783037480035186092144733663489957585888089e-5`, and
-  `Evaluated: 0.4238920024962149501405469427484310203890761122195790054648217829001240852179092 <=
-  0.0002651047319540524489503257446708858433467320775791476271978043854901525737284947`.
-  Both the `metal` file and the static kernels it exercises are unchanged in this branch, and the
-  same command on a tree of `origin/main` (`base-tree.jl` at `fea2905`) under 1.13.2 gives the
-  same `139 passed, 5 failed` and the same two `Evaluated:` lines; on Julia 1.11.9 every testset
-  of the full run passes.
-- **kind:** found late
+- **location:** `src/linear/static/qr.jl` (`factorize!!`, the fill of `x`)
+- **evidence:** `test/devices/metal_linear.jl` with Metal.jl 1.11.1 on an `AGXG16CDevice` and
+  `--check-bounds=auto` gives `134 passed, 10 failed` on Julia 1.12.7, every failure in
+  `QRFactorization on Metal, Float32, n = 4` (`info[k] == 0` evaluates `3 == 0`, `relerr` is `NaN`
+  or `Inf`), and `144 passed` on Julia 1.13.2. Over `n = 1:12`, `QRFactorization` in `Float32`
+  misses the bound of check 1 at `n = 3:9` on Julia 1.12.7 and at no `n` on Julia 1.13.2.
+  `ComplexF32` and `LUFactorization` pass at every `n` on both. The fill of `x` of `origin/main`
+  fails at `n = 7, 8` on Julia 1.12.7, where `test/devices/metal_linear.jl` passes, and at
+  `n = 3:9` on Julia 1.13.2, with `139 passed, 5 failed`. The fill of `x` decides the set:
+  `scripts/spikes/metal_qr/README.md` gives it for five forms, and none of them passes on both
+  versions and stays free of heap allocation on the host.
+- **kind:** defect
 - **found:** 2026-10-16
 
-### K10 · `test/globalization/linesearch.jl` exceeds the 60 s `core` file budget cold.
+### K10 · The Metal CI job cannot see K9.
+
+- **location:** `.github/workflows/Metal.yml:73` (`julia-actions/julia-runtest@v1`)
+- **evidence:** the step sets no `check_bounds`, so `julia-runtest` runs the tests with
+  `--check-bounds=yes`, which restores the bounds checks that `@inbounds` removes. Job 121173589650
+  of run 40194921475 (Julia 1.12.7, `AppleParavirtDevice`, `check_bounds: yes`) reports
+  `Metal static LU and QR | 144 144` on the tree where K9 gives 10 failures locally. With
+  `--check-bounds=yes` locally, the fill of `x` of `origin/main` fails at no `n` in `1:12` on Julia
+  1.13.2, where it fails at `n = 3:9` with `--check-bounds=auto`.
+  The device of the runner differs from the local one, so the run does not show whether the
+  runner reproduces K9 at `--check-bounds=auto`.
+- **kind:** missing test
+- **found:** #24
+
+### K11 · The Metal test sizes reach one of the sizes that K9 affects.
+
+- **location:** `test/helpers/staticsystems.jl:21` (`STATIC_SIZES = (1, 4, 16, 24)`)
+- **evidence:** `test/devices/metal_linear.jl` runs `n = 1, 4, 16, 24`. Of the sizes at which a
+  fill of `x` fails on Metal (K9, and `scripts/spikes/metal_qr/README.md`: `n = 3:10` across the
+  forms and versions measured), it reaches only `n = 4`.
+- **kind:** missing test
+- **found:** #24
+
+### K12 · `test/globalization/linesearch.jl` exceeds the 60 s `core` file budget cold.
 
 - **location:** `test/globalization/linesearch.jl:1`
 - **evidence:** `run-tests.jl <worktree> globalization/linesearch.jl` on Julia 1.13.2 takes
   `79.7s` cold (`1372 passed, 0 failed`), above the 60 s per-file `core` budget.
 - **kind:** found late
 - **found:** 2026-10-24
-

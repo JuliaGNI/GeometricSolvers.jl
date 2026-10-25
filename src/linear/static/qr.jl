@@ -21,11 +21,12 @@ function factorize!!(::Union{Nothing, StaticQR},
         for i in k:N
             amax = max(amax, abs(A[i, k]))
         end
-        x = zero(MVector{N, F})
-        if !iszero(amax)
-            for i in k:N
-                x[i] = A[i, k] / amax
-            end
+        # Fill `x` over `1:N` in one loop. On Metal in `Float32` this form gives correct factors
+        # at n = 1:12 on Julia 1.13.2 and wrong ones at n = 3:9 on Julia 1.12.7 (K9 in
+        # `KNOWN_ISSUES.md`; `scripts/spikes/metal_qr/README.md` compares other forms).
+        x = MVector{N, F}(undef)
+        for i in 1:N
+            x[i] = (i >= k && !iszero(amax)) ? A[i, k] / amax : zero(F)
         end
         σ = amax * rnorm(SVector(x))
         if !iszero(σ)

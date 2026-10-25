@@ -60,18 +60,24 @@ BF16
 
 ### Factorisation and solve
 
-A linear-solver method enters a solve through two functions, [`factorize!!`](@ref) and
-[`ldiv!!`](@ref). For a static matrix (R1) both return new `isbits` values, so they run inside a
-kernel: [`StaticLU`](@ref) is LU with partial pivoting and `Int32` pivots, [`StaticQR`](@ref)
-Householder QR without column pivoting. [`factorize!!`](@ref) states what a singular matrix
-gives. These names are not exported. Reach them as `GeometricSolvers.name`.
+A linear-solver method enters a solve through [`init`](@ref), [`factorize!!`](@ref) and
+[`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
+`isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
+`Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting. For a vector state (R3)
+[`init`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref), and
+[`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place. [`factorize!!`](@ref) states
+what a singular matrix gives. These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
+init
 factorize!!
 ldiv!!
 factor_eltype
 StaticLU
 StaticQR
+DenseLU
+DenseQR
+DenseSVD
 returncode
 ```
 
@@ -151,7 +157,6 @@ jvp!!
 These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
-init
 step!!
 LineFunction
 globalize!!
