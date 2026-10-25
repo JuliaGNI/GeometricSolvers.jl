@@ -3,9 +3,9 @@
 #
 # Seven of the nine have their value method in `src/base/bang.jl`; `factorize!!` and `ldiv!!` have
 # theirs there too, for a `Number` `J`, and forward to the `1 × 1` factors that part I builds. Each
-# returns what §4.1's table promises, each is `@inferred`, and each allocates nothing through a
-# function barrier. The seam then runs inside a KernelAbstractions kernel on `CPU()`, which is
-# where a host-only operation or a heap buffer would show.
+# returns what §4.1's table promises, each is `@inferred`, and each allocates nothing. The seam
+# then runs inside a KernelAbstractions kernel on `CPU()`, which is where a host-only operation or
+# a heap buffer would show.
 
 using ADTypes: AutoForwardDiff
 using JET: JET, @test_opt
@@ -26,38 +26,6 @@ const N_BANG = 4
 function mmatrix(::Type{T}, n::Int) where {T}
     return MMatrix{n, n, T}(T[(i + 2j) / (n + 3) for i in 1:n for j in 1:n])
 end
-
-# The allocation assertions go through a function barrier whose arguments all have concrete
-# types, and which calls the function once before it measures: at testset scope Julia 1.11 boxes
-# the captured values and the assertion fails although the code allocates nothing.
-#
-# A value iterate of a `Number` or an `SVector` is `isbits`, so the compiler keeps the result in
-# registers; an `MVector` is a value too, but `x + α d` and `map` on a mutable array return a new
-# mutable array, which the heap holds, so nothing is asserted about its cost (`KNOWN_ISSUES.md`
-# K7). `buffer` returns no array at all, and is asserted for a static matrix as well.
-buffer_allocations(x::X) where {X} = (buffer(x); @allocated buffer(x))
-function residual_allocations(y::Y, prob::P, x::X, p::Q) where {Y, P, X, Q}
-    (residual!!(y, prob, x, p); @allocated residual!!(y, prob, x, p))
-end
-function update_allocations(x::X, α::A, d::D) where {X, A, D}
-    (update_iterate!!(nothing, x, α, d); @allocated update_iterate!!(nothing, x, α, d))
-end
-map_allocations(x::X) where {X} = (map!!(-, nothing, x); @allocated map!!(-, nothing, x))
-function map2_allocations(x::X, z::Z) where {X, Z}
-    (map!!(+, nothing, x, z); @allocated map!!(+, nothing, x, z))
-end
-function mul_allocations(a::A, b::B) where {A, B}
-    (mul!!(nothing, a, b); @allocated mul!!(nothing, a, b))
-end
-function factorize_allocations(m::M, jac::J) where {M, J}
-    (factorize!!(nothing, m, jac); @allocated factorize!!(nothing, m, jac))
-end
-function ldiv_allocations(fac::F, r::R) where {F, R}
-    (ldiv!!(nothing, fac, r); @allocated ldiv!!(nothing, fac, r))
-end
-
-"the control: the barrier sees an allocation where there is one"
-collect_allocations(v::V) where {V} = (collect(v); @allocated collect(v))
 
 # On a Julia it does not support, JET loads empty stubs that throw. JET 0.12 exports
 # `JET_AVAILABLE` to say so; JET 0.9 and 0.10 name the same flag `JET_LOADABLE`.
@@ -94,8 +62,9 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
     @test map!!(+, nothing, x, x) == map(+, x, x)
     @test mul!!(nothing, s, x) == s * x
     # The product of two static matrices is a chain of `muladd`s, and whether the compiler
-    # contracts it into FMAs is its own choice in each compilation context: on the Julia 1.11 floor
-    # on x86_64 the two sides differ by 1 ulp in `Float32`. So the product is compared entry by
+    # contracts it into FMAs is its own choice in each compilation context. On Julia 1.12.7 on
+    # aarch64 the two sides agree to the bit for this matrix in every element type. CI runs
+    # x86_64 as well, which that measurement does not reach, so the product is compared entry by
     # entry at one ulp of the working precision, `rtol = eps(real(T))`, which every 1-ulp
     # difference meets because `eps(x) ≤ eps(real(T)) * abs(x)`.
     @test all(isapprox.(mul!!(nothing, s, s), s * s; rtol = eps(real(T))))
@@ -114,7 +83,10 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
     @test all(isapprox.(@inferred(mul!!(nothing, s, s)), s * s; rtol = eps(real(T))))
 end
 
-# The value-returning calls of this testset are asserted for a value iterate of the working
+# A value iterate of a `Number` or an `SVector` is `isbits`, so the compiler keeps the result in
+# registers; an `MVector` is a value too, but `x + α d` and `map` on a mutable array return a new
+# mutable array, which the heap holds, so nothing is asserted about its cost (`KNOWN_ISSUES.md`
+# K7). The value-returning calls of this testset are asserted for a value iterate of the working
 # element type, where the result is `isbits`, and `buffer` is asserted for a static matrix as
 # well, because it returns no array at all and so cannot allocate whatever the bounds-check flag
 # is.
@@ -123,16 +95,18 @@ end
     m = mmatrix(T, N_BANG)
     s = SMatrix(m)
     prob = r1_scaled_problem()
-    @test collect_allocations([one(T)]) > 0
-    @test buffer_allocations(x) == 0
-    @test buffer_allocations(one(T)) == 0
-    @test buffer_allocations(m) == 0
-    @test residual_allocations(nothing, prob, x, p) == 0
-    @test update_allocations(x, T(2), x) == 0
-    @test map_allocations(x) == 0
-    @test map2_allocations(x, x) == 0
-    @test mul_allocations(s, x) == 0
-    @test mul_allocations(s, s) == 0
+    one_T = [one(T)]
+    # the control: `@allocated` sees an allocation where there is one
+    @test (@allocated collect(one_T)) > 0
+    @test (@allocated buffer(x)) == 0
+    @test (@allocated buffer(one(T))) == 0
+    @test (@allocated buffer(m)) == 0
+    @test (@allocated residual!!(nothing, prob, x, p)) == 0
+    @test (@allocated update_iterate!!(nothing, x, T(2), x)) == 0
+    @test (@allocated map!!(-, nothing, x)) == 0
+    @test (@allocated map!!(+, nothing, x, x)) == 0
+    @test (@allocated mul!!(nothing, s, x)) == 0
+    @test (@allocated mul!!(nothing, s, s)) == 0
 end
 
 @testset "a Number J factorises through part I's 1 × 1 factors, $T" for T in ELTYPES
@@ -147,8 +121,8 @@ end
         # where a run forces `--check-bounds=yes` — the same guard, and the same reason, as
         # `test/linear/static/lu.jl`.
         if Base.JLOptions().check_bounds != 1
-            @test factorize_allocations(method, T(2)) == 0
-            @test ldiv_allocations(fac, T(4)) == 0
+            @test (@allocated factorize!!(nothing, method, T(2))) == 0
+            @test (@allocated ldiv!!(nothing, fac, T(4))) == 0
         end
     end
 
@@ -243,9 +217,10 @@ end
     # a static vector from a chain of `muladd`s (`matrix_multiply_add.combine_products`), and
     # Julia's `muladd` reaches the backend as `fmul contract` and `fadd contract`: whether the
     # compiler contracts the chain into an FMA or leaves the two roundings is its own choice, and
-    # the choice is not the same in every compilation context. On the Julia 1.11 floor — the
-    # `[compat]` lower bound — the kernel's product and this closure's then differ by up to 2 ulp
-    # for `ComplexF32` alone, where 1.13.2 makes the same choice in both and agrees to the bit.
+    # the choice is not the same in every compilation context. On Julia 1.12.7 on aarch64 the
+    # kernel's product and this closure's differ by up to 2 ulp for `ComplexF32` alone, and agree
+    # to the bit in `Float32`, `Float64` and `ComplexF64`. CI runs x86_64 as well, which that
+    # measurement does not reach, so the tolerance below stays as it is.
     # `test/gpu/runtests.jl` carries a tolerance for the same reason. So the product is compared
     # at the ulp level of the working precision, and the five fields above it are what a wrong
     # `r`, `y`, `d`, `α` or factor has to move.
