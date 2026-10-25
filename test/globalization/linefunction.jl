@@ -39,6 +39,8 @@ const N_LF = 4
     @test !(lf_sq isa Function)
     @test isbits(lf_sq)
 
+    e₁ = SVector{N_LF, T}(one(T), zero(T), zero(T), zero(T))
+    lf_e₁ = LineFunction(prob_sq, x, e₁, p, st_sq.jvpprep)
     for α in (zero(R), R(0.5), one(R))
         xα = update_iterate!!(nothing, x, α, d)
         Fα = sq_f(xα, p)
@@ -48,7 +50,13 @@ const N_LF = 4
         end
         @test φ(lf_sq, α) == norm2(Fα)
         @test lf_sq(α) == norm2(Fα)
-        @test φ′(lf_sq, α) == 2 * rdot(Fα, Jd)
+        if T <: Real
+            @test φ′(lf_sq, α) == 2 * rdot(Fα, Jd)
+        else
+            @test isapprox(φ′(lf_sq, α), 2 * rdot(Fα, Jd); rtol = 8 * eps(R))
+        end
+        xα_e = update_iterate!!(nothing, x, α, e₁)
+        @test φ′(lf_e₁, α) == 2 * rdot(sq_f(xα_e, p), sq_j(xα_e, p) * e₁)
     end
 
     lf_custom = LineFunction(prob_sq, x, d, p, st_sq.jvpprep; merit = y -> 3 * norm2(y))
@@ -60,7 +68,11 @@ const N_LF = 4
     st_a = init(Newton(; jacobian = id_op), prob_sq, x, p)
     lf_a = LineFunction(prob_sq, x, d, p, st_a.jvpprep)
     F₀ = sq_f(x, p)
-    @test φ′(lf_a, zero(R)) == 2 * rdot(F₀, sq_j(x, p) * d)
+    if T <: Real
+        @test φ′(lf_a, zero(R)) == 2 * rdot(F₀, sq_j(x, p) * d)
+    else
+        @test isapprox(φ′(lf_a, zero(R)), 2 * rdot(F₀, sq_j(x, p) * d); rtol = 8 * eps(R))
+    end
     @test φ′(lf_a, zero(R)) != 2 * rdot(F₀, id_op(x, p) * d)
 
     j_calls = Ref(0)
