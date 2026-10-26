@@ -10,7 +10,7 @@ using StaticArrays: MVector, SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, Bisection, LINESEARCH_FAILED, LUFactorization,
+using GeometricSolvers: Backtracking, Bisection, DogLeg, LINESEARCH_FAILED, LUFactorization,
                         MAXITERS, NONFINITE, Newton, NoRefinement, NonlinearProblem,
                         Options, Picard, QRFactorization, SINGULAR, STALLED, SUCCESS,
                         SolverStatus, Static, StrongWolfe, ToReal, init, jacobian!!, rnorm,
@@ -82,6 +82,33 @@ end
     for bad_reuse in (0, -1, -5)
         @test_throws ArgumentError Newton(; reuse = bad_reuse)
     end
+
+    # any value is a globalization, but a `DogLeg` takes no factor reuse
+    @test Newton(; globalization = :anything).globalization === :anything
+    @test Newton(; globalization = DogLeg()).reuse === nothing
+    for reuse in (1, 3)
+        err = try
+            Newton(; globalization = DogLeg(), reuse)
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DogLeg", err.msg) && occursin("reuse", err.msg)
+    end
+end
+
+@testset "Newton state for each globalization and reuse" begin
+    prob = NonlinearProblem((x, p) -> x * x - 4)
+    st = init(Newton(), prob, 3.0)
+    @test keys(st) == (:jacprep, :jvpprep)
+    @test isbits(st)
+    st_reuse = init(Newton(; reuse = 3), prob, 3.0)
+    @test keys(st_reuse) == (:jacprep, :jvpprep, :fac, :age, :stalled)
+    @test isbits(st_reuse)
+    st_dl = init(Newton(; globalization = DogLeg()), prob, 3.0)
+    @test keys(st_dl) == (:jacprep, :jvpprep, :radius)
+    @test st_dl.radius isa Float64
+    @test isbits(st_dl)
 end
 
 @testset "Newton solves coupled nonlinear systems on SVector, MVector, and Number, $T" for T in ELTYPES

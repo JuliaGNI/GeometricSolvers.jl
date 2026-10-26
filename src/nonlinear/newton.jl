@@ -4,7 +4,8 @@
 
 Newton's method for [`NonlinearProblem`](@ref), with linear solver `linsolve`
 ([`LUFactorization`](@ref) or [`QRFactorization`](@ref) in R1), globalization `globalization`
-([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref) or [`StrongWolfe`](@ref)), Jacobian
+([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
+trust region [`DogLeg`](@ref)), Jacobian
 selector `jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref)), diagonal
 regularisation `regularization`, and factor-reuse period `reuse`.
 
@@ -22,7 +23,8 @@ regularisation `regularization`, and factor-reuse period `reuse`.
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
   reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step).
   A line search along a reused factor that fails without a step is retried once, in the same
-  step, from a fresh factor.
+  step, from a fresh factor. A [`DogLeg`](@ref) globalization takes no reuse: its model needs the
+  Jacobian of the current iterate, and the constructor raises an `ArgumentError`.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     linsolve::L
@@ -41,6 +43,8 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
         if reuse !== nothing
             reuse >= Int32(1) ||
                 throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse"))
+            globalization isa DogLeg &&
+                throw(ArgumentError("Newton with a DogLeg globalization takes no reuse, got reuse = $reuse"))
         end
         new{L, G, J, RF, R, K}(
             linsolve, globalization, jacobian, refinement, regularization, reuse)
@@ -138,6 +142,15 @@ function init(
     return (; jacprep, jvpprep, fac, age = Int32(0), stalled = false)
 end
 
+function init(
+        m::Newton{L, G, J, RF, R, Nothing}, prob::NonlinearProblem, x, p = nothing) where {
+        L, G <: DogLeg, J, RF, R}
+    jacprep = newton_jacprep(m, prob, x, p)
+    jvpprep = newton_jvpprep(m, prob, x, p)
+    radius = dogleg_initial_radius(m.globalization, real(eltype(x)))
+    return (; jacprep, jvpprep, radius)
+end
+
 @inline function regularize_jacobian(J::SMatrix{N, N, T}, μ) where {N, T}
     iszero(μ) && return J
     shift = T(μ)
@@ -180,6 +193,22 @@ end
     x₊, F₊, _, info = globalize!!(
         nothing, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
     return x₊, F₊, state, info
+end
+
+# The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
+# `dogleg_step` on the regularised Jacobian that was factorised. A singular factor or a Newton step
+# that is not finite leaves the Cauchy step.
+@inline function step!!(
+        state, m::Newton{L, G, J, RF, Reg, Nothing},
+        prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
+    Jmat = jacobian!!(nothing, state.jacprep, prob, x, p)
+    Jreg = regularize_jacobian(Jmat, m.regularization)
+    fac = factorize!!(nothing, m.linsolve, Jreg)
+    d₀ = map!!(-, nothing, ldiv!!(nothing, fac, Fx))
+    d = refine!!(nothing, m.refinement, prob, x, Fx, d₀, fac, p, state.jvpprep)
+    newton = fac.info == Int32(0) && isfinite(rnorm(d))
+    x₊, F₊, radius, info = dogleg_step(prob, x, Fx, p, Jreg, d, newton, state.radius)
+    return x₊, F₊, (; state.jacprep, state.jvpprep, radius), info
 end
 
 @inline function newton_factor(m::Newton, state, prob, x, p)

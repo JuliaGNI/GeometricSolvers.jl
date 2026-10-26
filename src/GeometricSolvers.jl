@@ -19,7 +19,7 @@ export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_F
 export SolverStatus, StepInfo, Options
 export NonlinearProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
-export Static, Backtracking, Bisection, StrongWolfe
+export Static, Backtracking, Bisection, StrongWolfe, DogLeg
 export Newton, NoRefinement, Picard, solve
 
 public solve!!
@@ -52,6 +52,7 @@ include("ad/chunked.jl")
 include("ad/jvp.jl")
 
 include("globalization/linefunction.jl")
+include("globalization/dogleg.jl")
 include("nonlinear/solver.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
