@@ -214,7 +214,7 @@ end
     sIN = p.A \ p.b
     @test isfinite(rnorm(sIN))
     @test !isfinite(rnorm(sIN / R(0.51)))
-    x₊, _, st₊, info = one_step(
+    x₊, _, _, info = one_step(
         NonlinearProblem(lin_F, lin_J), zero(SVector{2, R}), p, dogleg_newton(0.51))
     @test info.code == SUCCESS
     @test rnorm(x₊) ≈ R(0.51) rtol = 8 * eps(R)
@@ -324,7 +324,7 @@ end
         @test st.code == SUCCESS
         @test x == 2
         @test st.iterations == k
-        xs, sts = solve(prob, x₀, Newton(); min_iterations = k)
+        _, sts = solve(prob, x₀, Newton(); min_iterations = k)
         @test sts.code == SUCCESS
         @test sts.iterations == k
     end
