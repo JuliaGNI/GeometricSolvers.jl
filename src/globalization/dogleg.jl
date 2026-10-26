@@ -18,12 +18,17 @@ on the same curve, with no new Jacobian or solve. A rejection at ``δ = 10^{-6}`
 when the Newton step ``s^{N}`` is shorter than ``δ`` and to ``\\max(δ/4, 10^{-6})`` otherwise, and
 ``ρ > 0.75`` on the boundary sets it to ``\\min(4δ, 10^{10})``.
 
-`radius` is the initial radius, clamped to ``[10^{-6}, 10^{10}]``. With `nothing`, the first step
-starts it at the norm of the first Newton step, clamped the same way. A singular factor, or a Newton
-step that is not finite, gives no Newton step: the step is then the Cauchy step scaled to the
-radius, and a first radius starts at the length of the Cauchy point. Where the Cauchy point is
-needed and ``J^* F`` or ``J J^* F`` is zero, or ``J^* F`` overflows, the step returns `STALLED` with
-the iterate kept.
+`radius` is the initial radius. It must be positive and finite as given; `DogLeg` stores it
+converted to `float(typeof(radius))`, and [`ToReal`](@ref) to the iterate's real type, clamped to
+``[10^{-6}, 10^{10}]`` after each conversion. With `nothing`, the first step starts the radius at
+the norm of the first Newton step, clamped the same way. A singular factor, or a Newton step that
+is not finite, gives no Newton step: the step is then the Cauchy step scaled to the radius, and a
+first radius starts at the length of the Cauchy point. The Cauchy direction is formed from the unit
+residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of ``J^* F`` occurs, and a common scale of
+``F`` and ``J`` leaves the Cauchy point unchanged up to rounding. Where the Cauchy point is needed
+and ``\\tilde g`` is zero or not finite, or ``J \\tilde g / \\|\\tilde g\\|`` is zero, the step
+returns `STALLED` with the iterate kept. At ``F(x) = 0`` the step returns `SUCCESS` with the
+iterate and the radius kept, and makes no trial.
 
 `DogLeg` takes no factor reuse: `Newton(; globalization = DogLeg(), reuse = k)` raises an
 `ArgumentError`.
@@ -35,14 +40,14 @@ struct DogLeg{R <: Real, D <: Union{Nothing, R}}
             radius > 0 && isfinite(radius) ||
                 throw(ArgumentError("the radius of DogLeg must be positive and finite, got $radius"))
         end
-        r = radius === nothing ? nothing : R(radius)
+        r = radius === nothing ? nothing : dogleg_clamp(R(radius))
         new{R, typeof(r)}(r)
     end
 end
 
-DogLeg(radius::Real) = DogLeg{float(typeof(radius))}(radius)
-DogLeg(::Nothing) = DogLeg{Float64}(nothing)
-DogLeg(; radius::Union{Nothing, Real} = nothing) = DogLeg(radius)
+function DogLeg(; radius::Union{Nothing, Real} = nothing)
+    radius === nothing ? DogLeg{Float64}(nothing) : DogLeg{float(typeof(radius))}(radius)
+end
 
 Adapt.adapt_structure(::ToReal{R}, dl::DogLeg) where {R} = DogLeg{R}(dl.radius)
 
@@ -53,7 +58,7 @@ Adapt.adapt_structure(::ToReal{R}, dl::DogLeg) where {R} = DogLeg{R}(dl.radius)
 @inline dogleg_grow(δ::R) where {R} = min(R(4) * δ, dogleg_bounds(R)[2])
 
 @inline function dogleg_initial_radius(dl::DogLeg, ::Type{R}) where {R}
-    return dl.radius === nothing ? zero(R) : dogleg_clamp(R(dl.radius))
+    return dl.radius === nothing ? zero(R) : R(dl.radius)
 end
 
 # The trial loop of `DogLeg` at `(x, Fx)`, with the model matrix `J`, the Newton step `sN` (read
@@ -61,16 +66,21 @@ end
 @inline function dogleg_step(prob, x, Fx, p, J, sN, newton::Bool, δ::R) where {R}
     lo = dogleg_bounds(R)[1]
     fnorm = rnorm(Fx)
+    # at an exact root there is nothing to reduce: the iterate stays, and so does the radius
+    if iszero(fnorm)
+        return x, Fx, δ, StepInfo{R}(SUCCESS, fnorm, zero(R), Int32(0), false)
+    end
     nN = newton ? rnorm(sN) : R(Inf)
-    # The Cauchy point minimises the model norm along `-g`, `g = J' F`; from the unit `ĝ`, its
-    # length is `‖g‖ / ‖J ĝ‖²`, and no square of an unscaled norm occurs. A `g` that is zero or
-    # overflows, or a `J ĝ` that underflows, gives no Cauchy point.
-    g = J' * Fx
-    gnorm = rnorm(g)
-    ĝ = g / gnorm
+    # The Cauchy point minimises the model norm along `-g`, `g = J' F`. Its direction is formed
+    # from the unit residual, `g̃ = J' (F / ‖F‖)` and `ĝ = g̃ / ‖g̃‖`, and its length
+    # `‖g‖ / ‖J ĝ‖² = ‖F‖ ‖g̃‖ / ‖J ĝ‖²`, so that no norm of the product `J' F` occurs. A `g̃`
+    # that is zero or not finite, or a `J ĝ` that is zero, gives no Cauchy point.
+    g̃ = J' * (Fx / fnorm)
+    gnorm = rnorm(g̃)
+    ĝ = g̃ / gnorm
     jnorm = rnorm(J * ĝ)
     cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm)
-    nC = (gnorm / jnorm) / jnorm
+    nC = fnorm * ((gnorm / jnorm) / jnorm)
     if iszero(δ) && (newton || cauchy)
         δ = dogleg_clamp(newton ? nN : nC)
     end
@@ -84,16 +94,19 @@ end
             s = -δ * ĝ
             boundary = true
         else
-            # the point of norm `δ` on the segment from the Cauchy point to the Newton step, in
-            # units of `δ`: the root `τ ∈ [0, 1]` of `‖a + τ b‖ = 1`, where `‖a‖ < 1 < ‖a + b‖`.
-            # The Newton step minimises the model, so `Re⟨a, b⟩ ≥ 0` (Nocedal and Wright,
-            # Lemma 4.2), and this form of the root does not cancel.
+            # the point of norm `δ` on the segment from the Cauchy point `δ a` to the Newton step,
+            # in units of `δ` and along the unit `b̂` from the one to the other: the root `t ≥ 0`
+            # of `‖a + t b̂‖ = 1`, where `‖a‖ < 1`; the root lies on the segment because the
+            # Newton step is longer than `δ`. The Newton step minimises the model, so
+            # `Re⟨a, b̂⟩ ≥ 0` (Nocedal and Wright, Lemma 4.2), and this form of the root does not
+            # cancel. No norm of the Newton step in units of `δ` occurs.
             a = -(nC / δ) * ĝ
-            b = sN / δ - a
-            aa, bb, ab = norm2(a), norm2(b), rdot(a, b)
-            c = 1 - aa
-            τ = c / (ab + sqrt(ab * ab + bb * c))
-            s = δ * (a + τ * b)
+            b = sN + nC * ĝ
+            b̂ = b / rnorm(b)
+            ab = rdot(a, b̂)
+            c = 1 - norm2(a)
+            t = c / (ab + sqrt(ab * ab + c))
+            s = δ * (a + t * b̂)
             boundary = true
         end
         pred = fnorm - rnorm(Fx + J * s)

@@ -82,9 +82,20 @@ cosine(a, b) = real(dot(a, b)) / (rnorm(a) * rnorm(b))
     @test d2.radius === 2.0
     @test isbits(d2)
 
-    for bad in (0, 0.0, -1.0, NaN, Inf, -Inf)
+    d32 = DogLeg(; radius = 2.0f0)
+    @test d32 isa DogLeg{Float32}
+    @test d32.radius === 2.0f0
+    @test isbits(d32)
+
+    # the radius is checked as given, before any conversion
+    for bad in (0, 0.0, -1.0, NaN, Inf, -Inf, big(0.0), big(-1.0))
         @test_throws ArgumentError DogLeg(; radius = bad)
     end
+
+    # and stored converted and clamped to `[10⁻⁶, 10¹⁰]`
+    @test DogLeg(; radius = 1e12).radius === 1e10
+    @test DogLeg(; radius = 1e-12).radius === 1e-6
+    @test DogLeg(; radius = 1.0f-12).radius === Float32(1e-6)
 
     a = Adapt.adapt(ToReal{Float32}(), DogLeg(; radius = 2.0))
     @test a isa DogLeg{Float32}
@@ -92,6 +103,22 @@ cosine(a, b) = real(dot(a, b)) / (rnorm(a) * rnorm(b))
     a0 = Adapt.adapt(ToReal{Float32}(), DogLeg())
     @test a0 isa DogLeg{Float32}
     @test a0.radius === nothing
+    # a radius that is positive and finite as given, but not in `Float32`, is clamped after the
+    # conversion
+    @test Adapt.adapt(ToReal{Float32}(), DogLeg(; radius = 1e50)).radius === 1.0f10
+    @test Adapt.adapt(ToReal{Float32}(), DogLeg(; radius = 1e-50)).radius === Float32(1e-6)
+    @test DogLeg{Float32}(1e50).radius === 1.0f10
+    @test DogLeg{Float32}(1e-50).radius === Float32(1e-6)
+
+    # a `BigFloat` radius gives a `DogLeg{BigFloat}`, which adapts to a bits type
+    db = DogLeg(; radius = big(2.0))
+    @test db isa DogLeg{BigFloat}
+    @test db.radius == 2
+    @test DogLeg(; radius = big(1e12)).radius == 1e10
+    da = Adapt.adapt(ToReal{Float64}(), db)
+    @test da isa DogLeg{Float64}
+    @test da.radius === 2.0
+    @test isbits(da)
 
     m = Adapt.adapt(ToReal{Float32}(), Newton(; globalization = DogLeg(; radius = 3)))
     @test m.globalization isa DogLeg{Float32}
@@ -178,6 +205,22 @@ end
     end
 end
 
+@testset "the segment point of a Newton step far outside the radius, $R" for R in REAL_ELTYPES
+    # `A = diag(1, ε)`, `b = (1/2, 1)`: the Cauchy point has length about 1/2 and the Newton step
+    # `(1/2, 1/ε)` has a finite norm, but the Newton step in units of a radius 0.51 does not: the
+    # segment point still has norm 0.51
+    ε = R === Float32 ? R(1e-19) : R(1e-154)
+    p = (; A = SMatrix{2, 2, R}(1, 0, 0, ε), b = SVector{2, R}(0.5, 1))
+    sIN = p.A \ p.b
+    @test isfinite(rnorm(sIN))
+    @test !isfinite(rnorm(sIN / R(0.51)))
+    x₊, _, st₊, info = one_step(
+        NonlinearProblem(lin_F, lin_J), zero(SVector{2, R}), p, dogleg_newton(0.51))
+    @test info.code == SUCCESS
+    @test rnorm(x₊) ≈ R(0.51) rtol = 8 * eps(R)
+    @test x₊[1] > 0 && x₊[2] > 0
+end
+
 @testset "Jacobian evaluations equal Newton iterations, $R" for R in REAL_ELTYPES
     jcount, fcount = Ref(0), Ref(0)
     Jc = (x, s) -> (jcount[] += 1; rosen_J(x, s))
@@ -248,6 +291,60 @@ end
     @test st₊.radius == R(1e-6)
 end
 
+@testset "a rejected trial shrinks the radius by 0.25, also inside it, $R" for R in REAL_ELTYPES
+    # the Newton step is 10 and `F` is worse at every `x ≥ 5`: the trials at 10 (radius 80), 10
+    # (radius 20) and 5 (radius 5, the Cauchy step) are rejected, and the trial at 1.25 is
+    # accepted with `ρ = 1` on the boundary. A rejection that shrank to `‖s^IN‖ / 4` would accept
+    # 2.5 instead.
+    count = Ref(0)
+    F5 = counted((x, p) -> iszero(x) ? -R(10) : (x >= 5 ? -R(10.5) : x - 10), count)
+    x₊, _, st₊, info = one_step(NonlinearProblem(F5, pw_J), zero(R), nothing, dogleg_newton(80))
+    @test info.code == SUCCESS
+    @test x₊ == R(1.25)
+    @test count[] == 5  # `F(x₀)`, three rejected trials and the accepted one
+    @test st₊.radius == 5
+end
+
+@testset "the model is the regularised Jacobian that was factorised, $R" for R in REAL_ELTYPES
+    # `J = 1` and `μ = 1`: the model matrix is `J + μ = 2`, the Newton step of `x − 10` from 0 is
+    # 5, and `pred = 10 − |−10 + 2 · 5| = 10`, so `ρ = 5/10` keeps the radius 5. The unregularised
+    # model has `pred = 5` and `ρ = 1`, and would grow it to 20.
+    prob = NonlinearProblem((x, p) -> x - 10, pw_J)
+    x₊, _, st₊, info = one_step(prob, zero(R), nothing, dogleg_newton(5; regularization = 1))
+    @test info.code == SUCCESS
+    @test x₊ == 5
+    @test st₊.radius == 5
+end
+
+@testset "an exact root before min_iterations, $R" for R in REAL_ELTYPES
+    # at `F(x) == 0` the step keeps the iterate and succeeds, as a fixed step does
+    for (F, x₀, k) in (((x, p) -> x * x - 4, R(2), 1), ((x, p) -> 2x - 4, zero(R), 3))
+        prob = NonlinearProblem(F)
+        x, st = solve(prob, x₀, dogleg_newton(); min_iterations = k)
+        @test st.code == SUCCESS
+        @test x == 2
+        @test st.iterations == k
+        xs, sts = solve(prob, x₀, Newton(); min_iterations = k)
+        @test sts.code == SUCCESS
+        @test sts.iterations == k
+    end
+
+    # one step at the root: no trial, the iterate, residual and radius stay, and `J` is
+    # evaluated once
+    fcount, jcount = Ref(0), Ref(0)
+    prob = NonlinearProblem(
+        counted((x, p) -> x * x - 4, fcount), (x, p) -> (jcount[] += 1; 2x))
+    x₊, F₊, st₊, info = one_step(prob, R(2), nothing, dogleg_newton(3))
+    @test info.code == SUCCESS
+    @test info.stepnorm == 0
+    @test info.failures == 0
+    @test x₊ === R(2)
+    @test F₊ === zero(R)
+    @test st₊.radius == 3
+    @test fcount[] == 1  # `F(x₀)` in `one_step`
+    @test jcount[] == 1
+end
+
 @testset "the radius update: shrink, grow, keep, $R" for R in REAL_ELTYPES
     prob = NonlinearProblem(pw_F, pw_J)
     F₀ = -R(10)  # the Newton step is 10, `‖s^IN‖ = 10`
@@ -258,7 +355,7 @@ end
         (R(10), -R(9), R(10)),      # the Newton step on the boundary, ρ = 1/10: kept
         (R(10), -R(2.5), R(10)),    # the Newton step on the boundary, ρ = 3/4: kept
         (R(10), -R(9.9), R(2.5)),   # the Newton step on the boundary, ρ = 0.01 < 0.1: 0.25 δ
-        (R(40), -R(9.9), R(10)),    # ‖s^IN‖ < δ, ρ = 0.01 < 0.1: max(‖s^IN‖, 10⁻⁶)
+        (R(80), -R(9.9), R(10)),    # ‖s^IN‖ < δ, ρ = 0.01 < 0.1: max(‖s^IN‖, 10⁻⁶), not 0.25 δ
         (R(40), -R(1), R(40)))      # ‖s^IN‖ < δ, ρ = 0.9 > 0.75, inside: kept
     for (δ, Fs, expected) in cases
         x₊, _, st₊, info = one_step(prob, zero(R), (F₀, Fs), dogleg_newton(δ))
@@ -337,27 +434,50 @@ end
     @test x₊ == 0
     @test st₊.radius == 0
 
-    # an `‖J ĝ‖` that underflows to zero is a zero direction, though `J' F` is not zero
-    j, F₀ = R === Float32 ? (R(1e-30), R(1e10)) : (R(1e-170), R(1e100))
-    @test !iszero(rnorm(j * F₀))
-    @test iszero(rnorm(j))
-    lin1 = NonlinearProblem((x, q) -> F₀ + j * x, (x, q) -> j)
-    x₊, _, _, info = one_step(lin1, zero(R), nothing, dogleg_newton())
-    @test info.code == STALLED
-    @test info.stepnorm == 0
-    @test x₊ == 0
+    # the direction `g̃ = J' (F / ‖F‖)` and its image `J ĝ` underflow: a `g̃` whose norm is zero is
+    # a zero direction, and so is a `g̃` whose squared norm is a subnormal and whose `‖J ĝ‖` is zero
+    j₀, j₁ = R === Float32 ? (R(1e-30), R(3e-23)) : (R(1e-170), R(1.6e-162))
+    @test iszero(rnorm(j₀))
+    @test !iszero(rnorm(j₁))
+    @test iszero(rnorm(j₁ * (j₁ / rnorm(j₁))))
+    for j in (j₀, j₁)
+        lin1 = NonlinearProblem((x, q) -> 1 + j * x, (x, q) -> j)
+        x₊, _, _, info = one_step(lin1, zero(R), nothing, dogleg_newton())
+        @test info.code == STALLED
+        @test info.stepnorm == 0
+        @test x₊ == 0
+    end
 
-    # a `J' F` that overflows gives no Cauchy direction either: a singular `J` near `floatmax`
+    # a `g̃` whose norm overflows gives no Cauchy direction either: a singular `J` near `floatmax`
     # stalls, and the trial loop does not run on a radius that is not a number
     big_j = R === Float32 ? R(1e30) : R(1e300)
     J = SMatrix{2, 2, R}(big_j, big_j, big_j, big_j)
     p = (; A = J, b = SVector{2, R}(-1e10, 0))
     x₀ = zero(SVector{2, R})
-    @test !isfinite(rnorm(J' * lin_F(x₀, p)))
+    F₀ = lin_F(x₀, p)
+    @test !isfinite(rnorm(J' * (F₀ / rnorm(F₀))))
     x₊, _, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
     @test info.code == STALLED
     @test x₊ == x₀
     @test st₊.radius == 0
+end
+
+@testset "a non-finite Jacobian, $R" for R in REAL_ELTYPES
+    # a `NaN` or `Inf` in `J` makes `g̃` not finite, so the Cauchy point is undefined: the solve
+    # ends with the iterate kept, and nothing throws
+    for bad in (R(NaN), R(Inf))
+        scalar = (NonlinearProblem((x, p) -> x * x - 4, (x, p) -> bad), R(3))
+        system = (
+            NonlinearProblem((x, p) -> SVector(x[1] - 1, x[2] - 2),
+                (x, p) -> SMatrix{2, 2, R}(bad, 0, 0, 1)),
+            zero(SVector{2, R}))
+        for (prob, x₀) in (scalar, system)
+            x, st = solve(prob, x₀, dogleg_newton())
+            @test x == x₀
+            @test st.code ∉ (SUCCESS, SINGULAR, NONFINITE)
+            isnan(bad) && @test st.code == STALLED
+        end
+    end
 end
 
 @testset "a non-finite Newton step and a non-finite trial, $R" for R in REAL_ELTYPES
@@ -398,11 +518,14 @@ end
 @testset "scaled residuals in Float32" begin
     R = Float32
     # the two systems converge, and the cubic stops at the minimum of `|F|`, at every scale
+    # `10^k` of `F` and `J`, `k ∈ {−16, −12, −8, 8, 12, 16}`, with the code and the iteration count
+    # of the unscaled problem
+    scales = (1, 1e-16, 1e-12, 1e-8, 1e8, 1e12, 1e16)
     cases = ((NonlinearProblem(rosen_F, rosen_J), SVector{2, R}(-1.2, 1), SUCCESS),
         (NonlinearProblem(ds_F, ds_J), SVector{2, R}(2, 0.5), SUCCESS),
         (NonlinearProblem(cubic_F, cubic_J), zero(R), LINESEARCH_FAILED))
     for (prob, x₀, code) in cases
-        results = map((1, 1e8, 1e-8)) do s
+        results = map(scales) do s
             solve(prob, x₀, dogleg_newton(), R(s))[2]
         end
         @test all(st -> st.code == code, results)

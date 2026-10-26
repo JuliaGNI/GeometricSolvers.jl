@@ -107,3 +107,14 @@
   `79.7s` cold (`1372 passed, 0 failed`), above the 60 s per-file `core` budget.
 - **kind:** found late
 - **found:** 2026-10-24
+
+### K13 · `Newton` with `Static()` returns `SUCCESS` at a non-root when the Jacobian is infinite.
+
+- **location:** `src/nonlinear/newton.jl:179` (`step!!` of `Newton` with `reuse = nothing`)
+- **evidence:** `solve(NonlinearProblem((x, p) -> x * x - 4, (x, p) -> R(Inf)), R(3), Newton())`
+  gives `SUCCESS` with `x == 3` after 1 iteration, in `Float32` and `Float64` (Julia 1.13.2). The
+  factor of `Inf` is not singular, the step `-F / Inf` is `-0.0`, and `converged` in
+  `src/base/options.jl` reads the zero `stepnorm` as `stepnorm ≤ x_reltol · ‖x‖`, although
+  `‖F(3)‖ = 5`. `DogLeg` does not take this path: it returns `LINESEARCH_FAILED` there.
+- **kind:** defect
+- **found:** 2026-10-26
