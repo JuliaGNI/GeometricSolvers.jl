@@ -22,7 +22,8 @@ when the Newton step ``s^{N}`` is shorter than ``δ`` and to ``\\max(δ/4, 10^{-
 starts it at the norm of the first Newton step, clamped the same way. A singular factor, or a Newton
 step that is not finite, gives no Newton step: the step is then the Cauchy step scaled to the
 radius, and a first radius starts at the length of the Cauchy point. Where the Cauchy point is
-needed and ``J^* F`` or ``J J^* F`` is zero, the step returns `STALLED` with the iterate kept.
+needed and ``J^* F`` or ``J J^* F`` is zero, or ``J^* F`` overflows, the step returns `STALLED` with
+the iterate kept.
 
 `DogLeg` takes no factor reuse: `Newton(; globalization = DogLeg(), reuse = k)` raises an
 `ArgumentError`.

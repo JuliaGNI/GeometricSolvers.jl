@@ -110,7 +110,7 @@ end
     A = SMatrix{2, 2, R}(2, 0, 0, 4)
     p = (; A, b = SVector{2, R}(2, 4))
     x₀ = zero(SVector{2, R})
-    x₊, F₊, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
+    x₊, _, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
     @test x₊ == SVector{2, R}(1, 1)
     @test info.code == SUCCESS
     @test info.failures == 0
@@ -191,16 +191,17 @@ end
     # accepts `ared ≥ 10⁻³`. A trial with `ared = 2 · 10⁻³` is accepted at once.
     count = Ref(0)
     prob = NonlinearProblem(counted(pw_F, count), pw_J)
-    x₊, _, st₊, info = one_step(prob, zero(R), (-R(10), -R(10) + R(2e-3)), dogleg_newton())
+    x₊, _, _, info = one_step(prob, zero(R), (-R(10), -R(10) + R(2e-3)), dogleg_newton())
     @test info.code == SUCCESS
     @test x₊ == R(10)
     @test count[] == 2  # `F(x₀)` in `one_step`, and one trial
 
     # A trial with `ared = 8 · 10⁻⁴` fails the unsquared test, while a squared one —
     # `‖F‖² − ‖F₊‖² = 0.016 ≥ 10⁻⁴ pred² = 0.01`, or the same with `pred` squared as a
-    # difference of squares — would accept it. It is rejected, and the radius shrinks to 2.5.
+    # difference of squares — would accept it. It is rejected, the radius shrinks to 2.5, and
+    # the next trial, at 2.5, is accepted.
     count[] = 0
-    x₊, _, st₊, info = one_step(prob, zero(R), (-R(10), -R(10) + R(8e-4)), dogleg_newton())
+    x₊, _, _, info = one_step(prob, zero(R), (-R(10), -R(10) + R(8e-4)), dogleg_newton())
     @test info.code == SUCCESS
     @test x₊ == R(2.5)
     @test count[] == 3
@@ -356,7 +357,8 @@ end
 
 @testset "a non-finite Newton step and a non-finite trial, $R" for R in REAL_ELTYPES
     # an upper-triangular `J` whose last pivot is the smallest subnormal: the factor has
-    # `info == 0`, and back substitution gives `-Inf`, `Inf` and `Inf − Inf = NaN`
+    # `info == 0`, and back substitution gives infinite last two entries of opposite sign and
+    # `Inf − Inf = NaN` in the first
     t = nextfloat(zero(R))
     J = SMatrix{3, 3, R}(1, 0, 0, 1, 1, 0, 1, 1, t)
     p = (; A = J, b = -SVector{3, R}(1, 1, 1))

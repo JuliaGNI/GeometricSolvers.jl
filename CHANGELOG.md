@@ -299,6 +299,26 @@ so that a compat-only bump can be told apart from an interface change.
   with `MeasuredSlope()`. On `SVector` and `Number` iterates, `solve` allocates zero bytes after
   warmup.
 
+- `DogLeg(; radius = nothing)` (exported), the trust-region globalization of `Newton`:
+  `Newton(; globalization = DogLeg())`, with the defaults of Procedure 4.1 of Pawlowski, Simonis,
+  Walker and Shadid (2008). Each step evaluates and factorises `J` once and solves for the Newton
+  step once; the step is the Newton step inside the radius, else the Cauchy step along `-J' F`
+  scaled to the radius, else the point of the radius on the segment between them. `J` is the
+  factorised, regularised matrix, and its adjoint serves a complex `T`. A trial is accepted at
+  `ared ≥ 10⁻⁴ pred` with unsquared norms; a rejected trial shrinks the radius by 0.25 and chooses
+  again on the same curve with no new Jacobian, and a rejection at the floor `10⁻⁶` returns
+  `LINESEARCH_FAILED` with the iterate kept. The radius, in `[10⁻⁶, 10¹⁰]`, starts at the first
+  Newton step's norm unless `radius` gives it, and lives in the `Newton` state,
+  `(; jacprep, jvpprep, radius)`. A singular factor or a non-finite Newton step takes the Cauchy
+  step; where the Cauchy point is needed and `J' F` or `J J' F` is zero, or `J' F` overflows,
+  the step returns `STALLED`. `Newton` refuses `DogLeg` with `reuse` with
+  an `ArgumentError`, because a reused factor makes the model stale. `DogLeg` solves `atan(x)`
+  from 10, where a fixed step diverges, and the Rosenbrock system from `(−1.2, 1)`, in `Float32`
+  and `Float64`, on the host and in a KernelAbstractions kernel, and
+  allocates nothing. On `x³ − 2x + 2` from 0 it stops with `LINESEARCH_FAILED` at `√(2/3)`, the
+  local minimum of `|F|`: the root lies beyond a local maximum of `|F|` above `|F(0)|`, so no
+  monotone step reaches it.
+
 - Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
   pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
   `T = eltype(x)`, with factor precision `TF = factor_eltype(m, T)` and a right-hand-side conversion
