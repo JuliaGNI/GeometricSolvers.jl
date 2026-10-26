@@ -1,7 +1,7 @@
 # `DogLeg`, the trust-region globalization of `Newton`: the method type and its adaptation, the
 # initial radius, the three branches of the dogleg curve, acceptance and the trial loop, the radius
 # update and its bounds, singular and degenerate Jacobians, scale invariance, convergence where a
-# fixed step fails, and the kernel path.
+# fixed step fails, the stop at a minimum of `‖F‖` that is not a root, and the kernel path.
 #
 # Most cases run one `step!!` on a problem with an analytic `J`, so that the step, the predicted
 # reduction and the ratio are known in closed form. The one-dimensional problems `pw_F` take their
@@ -31,8 +31,13 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
 rosen_F(x, s) = s * SVector(10 * (x[2] - x[1]^2), 1 - x[1])
 rosen_J(x, s) = s * SMatrix{2, 2}(-20 * x[1], -one(x[1]), 10 * one(x[1]), zero(x[1]))
 
-# `x³ − 2x + 2`, on which a fixed Newton step cycles `0 → 1 → 0`, and `atan`, on which it diverges
-# from 10; both scaled by `s`.
+# The Dennis–Schnabel system, scaled by `s`: root `(1, 1)`. A fixed Newton step from `(2, 0.5)`
+# ends `NONFINITE`.
+ds_F(x, s) = s * SVector(x[1]^2 + x[2]^2 - 2, exp(x[1] - 1) + x[2]^3 - 2)
+ds_J(x, s) = s * SMatrix{2, 2}(2 * x[1], exp(x[1] - 1), 2 * x[2], 3 * x[2]^2)
+
+# `x³ − 2x + 2`, on which a fixed Newton step cycles `0 → 1 → 0` and whose root no monotone method
+# reaches from 0, and `atan`, on which a fixed step diverges from 10; both scaled by `s`.
 cubic_F(x, s) = s * (x^3 - 2x + 2)
 cubic_J(x, s) = s * (3x^2 - 2)
 atan_F(x, s) = s * atan(x)
@@ -392,23 +397,22 @@ end
 
 @testset "scaled residuals in Float32" begin
     R = Float32
-    for (prob, x₀) in ((NonlinearProblem(rosen_F, rosen_J), SVector{2, R}(-1.2, 1)),
-        (NonlinearProblem(cubic_F, cubic_J), zero(R)))
+    # the two systems converge, and the cubic stops at the minimum of `|F|`, at every scale
+    cases = ((NonlinearProblem(rosen_F, rosen_J), SVector{2, R}(-1.2, 1), SUCCESS),
+        (NonlinearProblem(ds_F, ds_J), SVector{2, R}(2, 0.5), SUCCESS),
+        (NonlinearProblem(cubic_F, cubic_J), zero(R), LINESEARCH_FAILED))
+    for (prob, x₀, code) in cases
         results = map((1, 1e8, 1e-8)) do s
             solve(prob, x₀, dogleg_newton(), R(s))[2]
         end
-        @test all(st -> st.code == results[1].code, results)
+        @test all(st -> st.code == code, results)
         @test all(st -> st.iterations == results[1].iterations, results)
     end
-    # the Rosenbrock system converges at every scale
-    rosen = NonlinearProblem(rosen_F, rosen_J)
-    @test all(
-        s -> solve(rosen, SVector{2, R}(-1.2, 1), dogleg_newton(), R(s))[2].code == SUCCESS,
-        (1, 1e8, 1e-8))
 end
 
 @testset "convergence where a fixed step fails, $R" for R in REAL_ELTYPES
     problems = ((NonlinearProblem(atan_F), R(10), zero(R)),
+        (NonlinearProblem(ds_F), SVector{2, R}(2, 0.5), SVector{2, R}(1, 1)),
         (NonlinearProblem(rosen_F), SVector{2, R}(-1.2, 1), SVector{2, R}(1, 1)))
     for (prob, x₀, root) in problems, linsolve in (LUFactorization(), QRFactorization())
 
@@ -419,8 +423,8 @@ end
         @test rnorm(x - root) ≤ 100 * sqrt(eps(R)) * (1 + rnorm(root))
     end
     # a fixed step does not converge on the first two
-    for (prob, x₀) in ((NonlinearProblem(cubic_F), zero(R)), (
-        NonlinearProblem(atan_F), R(10)))
+    for (prob, x₀) in ((NonlinearProblem(atan_F), R(10)),
+        (NonlinearProblem(ds_F), SVector{2, R}(2, 0.5)))
         @test solve(prob, x₀, Newton(), one(R); max_iterations = 50)[2].code != SUCCESS
     end
 end
