@@ -10,13 +10,15 @@ The defaults are Procedure 4.1 of Pawlowski, Simonis, Walker and Shadid (2008). 
 Newton step when it lies in the radius ``δ``, else the Cauchy step along ``-J^* F`` scaled to ``δ``
 when the Cauchy point lies outside ``δ``, else the point of norm ``δ`` on the segment from the
 Cauchy point to the Newton step. ``J`` is the matrix that was factorised, regularisation included.
-A trial is accepted when ``\\|F(x)\\| - \\|F(x + s)\\| ≥ 10^{-4} (\\|F(x)\\| - \\|F(x) + J s\\|)``,
-with unsquared norms; a rejected trial shrinks ``δ`` to ``\\max(δ/4, 10^{-6})`` and chooses again
-on the same curve, with no new Jacobian or solve. A rejection at ``δ = 10^{-6}`` returns
-`LINESEARCH_FAILED` with the iterate kept. After an accepted step with ratio
-``ρ = \\mathrm{ared} / \\mathrm{pred}``, ``ρ < 0.1`` sets ``δ`` to ``\\max(\\|s^{N}\\|, 10^{-6})``
-when the Newton step ``s^{N}`` is shorter than ``δ`` and to ``\\max(δ/4, 10^{-6})`` otherwise, and
-``ρ > 0.75`` on the boundary sets it to ``\\min(4δ, 10^{10})``.
+A trial is accepted when the predicted reduction ``\\mathrm{pred} = \\|F(x)\\| - \\|F(x) + J s\\|``
+is positive and the actual reduction ``\\mathrm{ared} = \\|F(x)\\| - \\|F(x + s)\\|`` satisfies
+``\\mathrm{ared} ≥ 10^{-4} \\mathrm{pred}``, with unsquared norms; a rejected trial shrinks ``δ``
+to ``\\max(δ/4, 10^{-6})`` and chooses again on the same curve, with no new Jacobian or solve. A
+rejection at ``δ = 10^{-6}`` returns `LINESEARCH_FAILED` with the iterate kept. After an accepted
+step with ratio ``ρ = \\mathrm{ared} / \\mathrm{pred}``, ``ρ < 0.1`` sets ``δ`` to
+``\\max(\\|s^{N}\\|, 10^{-6})`` when the Newton step ``s^{N}`` is shorter than ``δ`` and to
+``\\max(δ/4, 10^{-6})`` otherwise, and ``ρ > 0.75`` on the boundary sets it to
+``\\min(4δ, 10^{10})``.
 
 `radius` is the initial radius. It must be positive and finite as given; `DogLeg` stores it
 converted to `float(typeof(radius))`, and [`ToReal`](@ref) to the iterate's real type, clamped to

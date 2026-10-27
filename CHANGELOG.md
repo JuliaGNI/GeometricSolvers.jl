@@ -305,7 +305,8 @@ so that a compat-only bump can be told apart from an interface change.
   step once; the step is the Newton step inside the radius, else the Cauchy step along `-J' F`
   scaled to the radius, else the point of the radius on the segment between them. `J` is the
   factorised, regularised matrix, and its adjoint serves a complex `T`. A trial is accepted at
-  `ared ≥ 10⁻⁴ pred` with unsquared norms; a rejected trial shrinks the radius by 0.25 and chooses
+  `pred > 0` and `ared ≥ 10⁻⁴ pred`, with `pred = ‖F‖ − ‖F + J s‖` and `ared = ‖F‖ − ‖F(x + s)‖`
+  in unsquared norms; a rejected trial shrinks the radius by 0.25 and chooses
   again on the same curve with no new Jacobian, and a rejection at the floor `10⁻⁶` returns
   `LINESEARCH_FAILED` with the iterate kept. The radius, in `[10⁻⁶, 10¹⁰]`, starts at the first
   Newton step's norm unless `radius` gives it, and lives in the `Newton` state,
@@ -317,8 +318,8 @@ so that a compat-only bump can be told apart from an interface change.
   unscaled Rosenbrock, Dennis–Schnabel and cubic problems. Where the Cauchy point is needed and
   that direction is zero or its norm is not finite, or `J` maps it to zero, the step returns
   `STALLED`; at `F(x) = 0` it returns `SUCCESS` with the iterate kept. `Newton` refuses `DogLeg`
-  with `reuse` with an `ArgumentError`, because a reused factor makes the model stale. `DogLeg` solves
-  `atan(x)` from 10 and the Dennis–Schnabel system from `(2, 0.5)`, where a fixed step diverges or
+  with `reuse` with an `ArgumentError`, because a reused factor makes the model stale. `DogLeg`
+  solves `atan(x)` from 10 and the Dennis–Schnabel system from `(2, 0.5)`, where a fixed step diverges or
   ends `NONFINITE`, and the Rosenbrock system from `(−1.2, 1)`, in `Float32` and `Float64`; on the
   Rosenbrock system a KernelAbstractions kernel gives the host's result bit for bit, and a solve
   allocates nothing. On `x³ − 2x + 2` from 0 it stops with `LINESEARCH_FAILED` at `√(2/3)`, the

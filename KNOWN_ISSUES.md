@@ -131,8 +131,8 @@
   `floatmax(Float32)`. The first trial, the whole Newton step, is rejected, so the next trial needs
   the Cauchy point, which this norm leaves undefined: the step returns `STALLED` with `x₀` kept. At
   the same scales `Newton()` with `Static()` gives `NONFINITE` after 1 iteration, and with
-  `Backtracking()` `MAXITERS` or `NONFINITE`. The
-  Dennis–Schnabel system from `(2, 0.5)` gives `SUCCESS` after 4 iterations at every one of these
-  scales. The tested scales are `10^k`, `k ∈ {−16, −12, −8, 8, 12, 16}`.
+  `Backtracking()` `MAXITERS` or `NONFINITE`. The Dennis–Schnabel system from `(2, 0.5)` gives
+  `SUCCESS` after 4 iterations at every one of these scales. The tested scales are `10^k`,
+  `k ∈ {−16, −12, −8, 8, 12, 16}`.
 - **kind:** found late
 - **found:** 2026-10-27

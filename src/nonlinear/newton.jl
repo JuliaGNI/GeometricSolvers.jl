@@ -5,9 +5,9 @@
 Newton's method for [`NonlinearProblem`](@ref), with linear solver `linsolve`
 ([`LUFactorization`](@ref) or [`QRFactorization`](@ref) in R1), globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
-trust region [`DogLeg`](@ref)), Jacobian
-selector `jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref)), diagonal
-regularisation `regularization`, and factor-reuse period `reuse`.
+trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refinement `refinement`
+([`NoRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
+`reuse`.
 
 # Fields
 
