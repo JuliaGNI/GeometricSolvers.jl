@@ -477,6 +477,21 @@ end
     @test info.code == STALLED
     @test x₊ == x₀
     @test st₊.radius == 0
+
+    # and so does a `J ĝ` whose norm overflows while the norm of `g̃` is finite: with
+    # `J = diag(d, 0)` and `F = (−1, −1)`, `‖g̃‖ = d/√2` and `‖J ĝ‖ = d`, and the Cauchy length would
+    # be zero, so that every trial would be a zero step
+    d = R === Float32 ? R(2e19) : R(1.6e154)
+    J = SMatrix{2, 2, R}(d, 0, 0, 0)
+    p = (; A = J, b = SVector{2, R}(1, 1))
+    F₀ = lin_F(x₀, p)
+    g̃ = J' * (F₀ / rnorm(F₀))
+    @test isfinite(rnorm(g̃))
+    @test !isfinite(rnorm(J * (g̃ / rnorm(g̃))))
+    x₊, _, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
+    @test info.code == STALLED
+    @test x₊ == x₀
+    @test st₊.radius == 0
 end
 
 @testset "a non-finite Jacobian, $R" for R in REAL_ELTYPES

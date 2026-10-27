@@ -33,8 +33,8 @@ radius when it lies outside, and a first radius starts at the length of the Cauc
 direction is formed from the unit residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of
 ``J^* F`` occurs, and a common scale of ``F`` and ``J`` leaves the Cauchy point unchanged up to
 rounding, as long as the norm of ``\\tilde g`` is finite. Where the Cauchy point is needed and
-``\\tilde g`` is zero or its norm is not finite, or ``J \\tilde g / \\|\\tilde g\\|`` is zero, the
-step returns `STALLED` with the iterate kept. At ``F(x) = 0`` the step returns `SUCCESS` with the
+``\\tilde g`` is zero or its norm is not finite, or ``J \\tilde g / \\|\\tilde g\\|`` is zero or its
+norm is not finite, the step returns `STALLED` with the iterate kept. At ``F(x) = 0`` the step returns `SUCCESS` with the
 iterate and the radius kept, and makes no trial.
 
 `DogLeg` takes no factor reuse: `Newton(; globalization = DogLeg(), reuse = k)` raises an
@@ -81,12 +81,13 @@ end
     # The Cauchy point minimises the model norm along `-g`, `g = J' F`. Its direction is formed
     # from the unit residual, `g̃ = J' (F / ‖F‖)` and `ĝ = g̃ / ‖g̃‖`, and its length
     # `‖g‖ / ‖J ĝ‖² = ‖F‖ ‖g̃‖ / ‖J ĝ‖²`, so that no norm of the product `J' F` occurs. A `g̃`
-    # that is zero or whose norm is not finite, or a `J ĝ` that is zero, gives no Cauchy point.
+    # that is zero or whose norm is not finite, or a `J ĝ` that is zero or whose norm is not finite,
+    # gives no Cauchy point.
     g̃ = J' * (Fx / fnorm)
     gnorm = rnorm(g̃)
     ĝ = g̃ / gnorm
     jnorm = rnorm(J * ĝ)
-    cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm)
+    cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm) && isfinite(jnorm)
     nC = fnorm * ((gnorm / jnorm) / jnorm)
     if iszero(δ) && (newton || cauchy)
         n₀ = newton ? nN : nC

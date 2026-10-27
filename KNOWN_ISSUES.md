@@ -136,3 +136,15 @@
   `k ∈ {−16, −12, −8, 8, 12, 16}`.
 - **kind:** found late
 - **found:** 2026-10-27
+
+### K16 · `DogLeg` stalls where the norm of `J ĝ` overflows in the Cauchy length, although a descent step exists.
+
+- **location:** `src/globalization/dogleg.jl` (`dogleg_step`, `jnorm = rnorm(J * ĝ)`)
+- **evidence:** in `Float32`, `F(x) = s · (2x₁ − 1, −1)` with `J = s · diag(2, 0)` from `(0, 0)`
+  moves to the minimum of `‖F‖` at `x₁ = 0.5` at `s = 1e17` and `1e18`. At `s = 1e19`,
+  `J ĝ = (−2e19, 0)` and `rnorm(J ĝ)` is `Inf`, because the square of its entry exceeds
+  `floatmax(Float32)`. The Cauchy point is then undefined, and the step returns `STALLED` with the
+  iterate kept (Julia 1.13.3). `rnorm` squares its entries with no scaling, as in K14. A scaled
+  `rnorm` closes both: issue #29 proposes one.
+- **kind:** defect
+- **found:** #28; one fix with K14
