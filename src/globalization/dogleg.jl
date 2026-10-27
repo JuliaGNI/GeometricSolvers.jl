@@ -13,25 +13,29 @@ Cauchy point to the Newton step. ``J`` is the matrix that was factorised, regula
 A trial is accepted when the predicted reduction ``\\mathrm{pred} = \\|F(x)\\| - \\|F(x) + J s\\|``
 is positive and the actual reduction ``\\mathrm{ared} = \\|F(x)\\| - \\|F(x + s)\\|`` satisfies
 ``\\mathrm{ared} ≥ 10^{-4} \\mathrm{pred}``, with unsquared norms; a rejected trial shrinks ``δ``
-to ``\\max(δ/4, 10^{-6})`` and chooses again on the same curve, with no new Jacobian or solve. A
-rejection at ``δ = 10^{-6}`` returns `LINESEARCH_FAILED` with the iterate kept. After an accepted
-step with ratio ``ρ = \\mathrm{ared} / \\mathrm{pred}``, ``ρ < 0.1`` sets ``δ`` to
-``\\max(\\|s^{N}\\|, 10^{-6})`` when the Newton step ``s^{N}`` is shorter than ``δ`` and to
-``\\max(δ/4, 10^{-6})`` otherwise, and ``ρ > 0.75`` on the boundary sets it to
-``\\min(4δ, 10^{10})``.
+to ``\\max(δ/4, 10^{-6})`` and chooses again on the same curve, with no new Jacobian or solve. So
+a rejected Newton step that lies well inside ``δ`` is tried again, at one evaluation of `F` each
+time, until ``δ`` falls below its norm. A rejection at ``δ = 10^{-6}`` returns
+`LINESEARCH_FAILED` with the iterate kept. After an accepted step with ratio
+``ρ = \\mathrm{ared} / \\mathrm{pred}``, ``ρ < 0.1`` sets ``δ`` to ``\\max(\\|s^{N}\\|, 10^{-6})``
+when the Newton step ``s^{N}`` is shorter than ``δ`` and to ``\\max(δ/4, 10^{-6})`` otherwise,
+and ``ρ > 0.75`` on the boundary sets it to ``\\min(4δ, 10^{10})``. An accepted step other than
+the whole Newton step sets `limited` in its [`StepInfo`](@ref): the radius, not the distance to a
+root, sets its norm, so the solve applies only the residual test after it.
 
 `radius` is the initial radius. It must be positive and finite as given; `DogLeg` stores it
 converted to `float(typeof(radius))`, and [`ToReal`](@ref) to the iterate's real type, clamped to
 ``[10^{-6}, 10^{10}]`` after each conversion. With `nothing`, the first step starts the radius at
-the norm of the first Newton step, clamped the same way. A singular factor, or a Newton step whose
-norm is not finite, gives no Newton step: the step is then the Cauchy step scaled to the radius,
-and a first radius starts at the length of the Cauchy point. The Cauchy direction is formed from
-the unit residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of ``J^* F`` occurs, and a common
-scale of ``F`` and ``J`` leaves the Cauchy point unchanged up to rounding, as long as the norm of
-``\\tilde g`` is finite. Where the Cauchy point is needed and ``\\tilde g`` is zero or its norm is
-not finite, or ``J \\tilde g / \\|\\tilde g\\|`` is zero, the step returns `STALLED` with the
-iterate kept. At ``F(x) = 0`` the step returns `SUCCESS` with the iterate and the radius kept, and
-makes no trial.
+the norm of the first Newton step, clamped the same way, except that a norm below ``10^{-6}``
+starts it at ``2 \\cdot 10^{-6}``, as Procedure 4.1 does. A singular factor, or a Newton step
+whose norm is not finite, gives no Newton step: the step is then the Cauchy step scaled to the
+radius, and a first radius starts at the length of the Cauchy point, by the same rule. The Cauchy
+direction is formed from the unit residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of
+``J^* F`` occurs, and a common scale of ``F`` and ``J`` leaves the Cauchy point unchanged up to
+rounding, as long as the norm of ``\\tilde g`` is finite. Where the Cauchy point is needed and
+``\\tilde g`` is zero or its norm is not finite, or ``J \\tilde g / \\|\\tilde g\\|`` is zero, the
+step returns `STALLED` with the iterate kept. At ``F(x) = 0`` the step returns `SUCCESS` with the
+iterate and the radius kept, and makes no trial.
 
 `DogLeg` takes no factor reuse: `Newton(; globalization = DogLeg(), reuse = k)` raises an
 `ArgumentError`.
@@ -71,7 +75,7 @@ end
     fnorm = rnorm(Fx)
     # at an exact root there is nothing to reduce: the iterate stays, and so does the radius
     if iszero(fnorm)
-        return x, Fx, δ, StepInfo{R}(SUCCESS, fnorm, zero(R), Int32(0), false)
+        return x, Fx, δ, StepInfo{R}(SUCCESS, fnorm, zero(R), Int32(0), false, false)
     end
     nN = newton ? rnorm(sN) : R(Inf)
     # The Cauchy point minimises the model norm along `-g`, `g = J' F`. Its direction is formed
@@ -85,14 +89,15 @@ end
     cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm)
     nC = fnorm * ((gnorm / jnorm) / jnorm)
     if iszero(δ) && (newton || cauchy)
-        δ = dogleg_clamp(newton ? nN : nC)
+        n₀ = newton ? nN : nC
+        δ = n₀ < lo ? 2 * lo : dogleg_clamp(n₀)
     end
     while true
         if newton && nN <= δ
             s = sN
             boundary = nN >= δ
         elseif !cauchy
-            return x, Fx, δ, StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false)
+            return x, Fx, δ, StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
         elseif !newton || nC >= δ
             s = -δ * ĝ
             boundary = true
@@ -119,16 +124,20 @@ end
         ared = fnorm - fnorm₊
         # a non-finite `F₊` gives an `ared` of `-Inf` or `NaN`, which fails the test
         if pred > 0 && ared >= R(1e-4) * pred
+            # a step other than the whole Newton step is truncated by the radius
+            limited = !(newton && nN <= δ)
             ρ = ared / pred
             if ρ < R(0.1)
                 δ = nN < δ ? max(nN, lo) : dogleg_shrink(δ)
             elseif ρ > R(0.75) && boundary
                 δ = dogleg_grow(δ)
             end
-            return x₊, F₊, δ, StepInfo{R}(SUCCESS, fnorm₊, rnorm(s), Int32(0), false)
+            return x₊, F₊, δ,
+            StepInfo{R}(SUCCESS, fnorm₊, rnorm(s), Int32(0), false, limited)
         end
         if δ == lo
-            return x, Fx, δ, StepInfo{R}(LINESEARCH_FAILED, fnorm, zero(R), Int32(1), false)
+            return x, Fx, δ,
+            StepInfo{R}(LINESEARCH_FAILED, fnorm, zero(R), Int32(1), false, false)
         end
         δ = dogleg_shrink(δ)
     end

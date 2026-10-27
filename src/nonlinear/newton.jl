@@ -185,7 +185,8 @@ end
     Jreg = regularize_jacobian(Jmat, m.regularization)
     fac = factorize!!(nothing, m.linsolve, Jreg)
     if fac.info > Int32(0)
-        return x, Fx, state, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false)
+        return x, Fx, state,
+        StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false, false)
     end
     d₀ = map!!(-, nothing, ldiv!!(nothing, fac, Fx))
     d = refine!!(nothing, m.refinement, prob, x, Fx, d₀, fac, p, state.jvpprep)
@@ -223,7 +224,7 @@ end
     T = eltype(x)
     R = real(T)
     if fac.info > Int32(0)
-        return x, Fx, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false)
+        return x, Fx, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false, false)
     end
     d₀ = map!!(-, nothing, ldiv!!(nothing, fac, Fx))
     d = refine!!(nothing, m.refinement, prob, x, Fx, d₀, fac, p, state.jvpprep)

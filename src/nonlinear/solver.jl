@@ -63,7 +63,9 @@ Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`rec
 `LINESEARCH_FAILED`; one that decreased the merit keeps its new iterate, increments
 `status.step_failures`, and continues. After a `STALLED` step, only the residual tolerance test
 can declare `SUCCESS`, so a zero stepnorm never satisfies `x_abstol` or `x_reltol` by accident;
-`options.max_stalls` consecutive `STALLED` steps return `STALLED`. Reaching
+`options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose `limited`
+is set, only the residual tolerance test can declare `SUCCESS` too, because a radius, not the
+distance to a root, sets its norm; such a step is not a stall. Reaching
 `options.max_iterations` without convergence returns `MAXITERS`.
 """
 function solve!!(
@@ -92,7 +94,7 @@ function solve!!(
         if info.code == LINESEARCH_FAILED && iszero(info.stepnorm)
             return x, status, state
         end
-        is_conv = if info.code == STALLED
+        is_conv = if info.code == STALLED || info.limited
             residual_converged(options, status, fnorm₀)
         else
             converged(options, status, fnorm₀, rnorm(x))

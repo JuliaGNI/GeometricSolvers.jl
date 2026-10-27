@@ -150,8 +150,9 @@ end
     @test info.stepnorm ≈ sqrt(R(2)) rtol = 8 * eps(R)
     @test st₊.radius ≈ 4 * sqrt(R(2)) rtol = 8 * eps(R)
 
-    # and that start is clamped at each end: a Newton step of 10¹² starts the radius at 10¹⁰, and
-    # the step is truncated there; one of 10⁻⁹ starts it at 10⁻⁶, and the step inside it keeps it
+    # and that start is bounded at each end: a Newton step of 10¹² starts the radius at 10¹⁰, and
+    # the step is truncated there; one of 10⁻⁹ starts it at 2 · 10⁻⁶, as Procedure 4.1 does, and
+    # the step inside it keeps it
     one_d = NonlinearProblem(pw_F, pw_J)
     x₊, _, st₊, info = one_step(one_d, zero(R), (-R(1e12), zero(R)), dogleg_newton())
     @test x₊ == R(1e10)
@@ -159,7 +160,7 @@ end
     @test st₊.radius == R(1e10)
     x₊, _, st₊, info = one_step(one_d, zero(R), (-R(1e-9), zero(R)), dogleg_newton())
     @test x₊ == R(1e-9)
-    @test st₊.radius == R(1e-6)
+    @test st₊.radius == 2 * R(1e-6)
 end
 
 @testset "the three branches of the dogleg curve, $T" for T in ELTYPES
@@ -551,6 +552,30 @@ end
         (NonlinearProblem(ds_F), SVector{2, R}(2, 0.5)))
         @test solve(prob, x₀, Newton(), one(R); max_iterations = 50)[2].code != SUCCESS
     end
+end
+
+@testset "a step that the radius limits does not pass the step test, $R" for R in REAL_ELTYPES
+    # `F = x − (x₀ + 1)` from `x₀` with radius 10⁻⁶: the first step is the Newton step `1`
+    # truncated to 10⁻⁶, which lies below `x_reltol ‖x₀‖ = 2 eps(R) x₀`. Such a step is no measure
+    # of the distance to the root, so the solve goes on to the root.
+    x₀ = R === Float32 ? R(10) : R(1e10)
+    @test R(1e-6) <= 2 * eps(R) * x₀
+    prob = NonlinearProblem((x, p) -> x - (x₀ + 1))
+    x₊, _, _, info = one_step(prob, x₀, nothing, dogleg_newton(1e-6))
+    @test info.code == SUCCESS
+    @test info.limited
+    @test x₊ != x₀
+    x, st = solve(prob, x₀, dogleg_newton(R(1e-6)))
+    @test st.code == SUCCESS
+    @test st.iterations > 1
+    @test x == x₀ + 1
+    @test st.fnorm == 0
+
+    # the whole Newton step is not limited
+    x₊, _, _, info = one_step(prob, x₀, nothing, dogleg_newton(2))
+    @test info.code == SUCCESS
+    @test !info.limited
+    @test x₊ == x₀ + 1
 end
 
 @testset "x³ − 2x + 2 from 0 ends at the stationary point of ‖F‖, $R" for R in REAL_ELTYPES
