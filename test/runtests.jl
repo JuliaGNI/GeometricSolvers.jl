@@ -22,6 +22,7 @@ if "core" in GROUPS
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
     @safetestset "Line function and globalization" include("globalization/linefunction.jl")
+    @safetestset "DogLeg" include("globalization/dogleg.jl")
     @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
     @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
     @safetestset "Newton" include("nonlinear/newton.jl")

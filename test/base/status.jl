@@ -13,7 +13,7 @@ end
 
 @testset "SolverStatus and StepInfo are isbits" for R in REAL_ELTYPES
     st = SolverStatus{R}(SUCCESS, Int32(0), one(R), zero(R), Int32(0), false)
-    info = StepInfo{R}(SUCCESS, one(R), zero(R), Int32(0), false)
+    info = StepInfo{R}(SUCCESS, one(R), zero(R), Int32(0), false, false)
     @test isbits(st)
     @test isbits(info)
     @test isbitstype(SolverStatus{R})
@@ -22,9 +22,9 @@ end
 
 @testset "record folds a step into the status" begin
     st = SolverStatus{Float64}(MAXITERS, Int32(0), 4.0, 0.0, Int32(0), false)
-    st = record(st, StepInfo{Float64}(MAXITERS, 2.0, 1.5, Int32(1), false))
-    st = record(st, StepInfo{Float64}(SUCCESS, 0.5, 0.25, Int32(2), true))
-    st = record(st, StepInfo{Float64}(SUCCESS, 0.1, 0.125, Int32(0), false))
+    st = record(st, StepInfo{Float64}(MAXITERS, 2.0, 1.5, Int32(1), false, false))
+    st = record(st, StepInfo{Float64}(SUCCESS, 0.5, 0.25, Int32(2), true, false))
+    st = record(st, StepInfo{Float64}(SUCCESS, 0.1, 0.125, Int32(0), false, false))
     @test st.code == SUCCESS
     @test st.iterations === Int32(3)
     @test st.fnorm == 0.1
@@ -33,6 +33,7 @@ end
     @test st.promoted             # once set, it stays set
     @test isconverged(st)
     @test !isstalled(st)
-    @test (@inferred record(st, StepInfo{Float64}(STALLED, 0.1, 0.0, Int32(0), false))) isa
+    @test (@inferred record(st, StepInfo{Float64}(
+        STALLED, 0.1, 0.0, Int32(0), false, false))) isa
           SolverStatus{Float64}
 end

@@ -41,6 +41,8 @@ The result of one step, which [`record`](@ref) folds into a [`SolverStatus`](@re
 - `stepnorm::R`: ``\\|x₊ - x\\|``.
 - `failures::Int32`: the step-rule failures inside this step, those of its members included.
 - `promoted::Bool`: the step factorised in a higher precision than its method's.
+- `limited::Bool`: the step was accepted, but a trust-region radius truncated it, so its norm is
+  set by the radius and does not measure the distance to a root.
 """
 struct StepInfo{R <: Real}
     code::ReturnCode
@@ -48,6 +50,7 @@ struct StepInfo{R <: Real}
     stepnorm::R
     failures::Int32
     promoted::Bool
+    limited::Bool
 end
 
 """

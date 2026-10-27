@@ -130,7 +130,7 @@ end
         @test F₊ === F_exp
         @test g₊ === nothing
         @test info ===
-              StepInfo{R}(SUCCESS, rnorm(F_exp), abs(α) * rnorm(d), Int32(0), false)
+              StepInfo{R}(SUCCESS, rnorm(F_exp), abs(α) * rnorm(d), Int32(0), false, false)
     end
 
     # Static on non-finite trial residual keeps last finite iterate x and Fx
@@ -140,7 +140,7 @@ end
         nothing, inR(Static()), prob_nf, x, Fx_nf, d, p, nothing)
     @test x_nf === x
     @test F_nf === Fx_nf
-    @test info_nf === StepInfo{R}(NONFINITE, rnorm(Fx_nf), rnorm(d), Int32(0), false)
+    @test info_nf === StepInfo{R}(NONFINITE, rnorm(Fx_nf), rnorm(d), Int32(0), false, false)
 
     # Backtracking, Bisection, StrongWolfe accept a step that decreases the merit
     for ls in (inR(Backtracking()), inR(Bisection()), inR(StrongWolfe()))

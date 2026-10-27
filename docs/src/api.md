@@ -96,6 +96,14 @@ Bisection
 StrongWolfe
 ```
 
+A trust region is the other globalization of [`Newton`](@ref). [`DogLeg`](@ref) is no line search:
+it needs the Jacobian, its factor and a radius that lives across iterations, so `Newton` keeps the
+radius in its state and runs the trial loop on the dogleg curve itself.
+
+```@docs
+DogLeg
+```
+
 ## Nonlinear solvers
 
 A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,

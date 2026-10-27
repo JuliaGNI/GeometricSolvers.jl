@@ -49,7 +49,7 @@ Advance `x` along `d` under the globalization method `ls` and return `(x₊, F�
 For [`Static`](@ref), `globalize!!` takes the fixed step `ls.α` through `update_iterate!!` and
 evaluates `residual!!` once, without a line-search loop. When the step `d` or the new residual norm
 is not finite, it returns `(x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), abs(ls.α) * rnorm(d), 0,
-false))` without advancing the iterate or evaluating `F` at a non-finite trial point.
+false, false))` without advancing the iterate or evaluating `F` at a non-finite trial point.
 
 For [`Backtracking`](@ref), [`Bisection`](@ref) and [`StrongWolfe`](@ref), `globalize!!` returns
 `NONFINITE` immediately when `rnorm(d)` is not finite; otherwise it builds a
@@ -64,15 +64,15 @@ step `res.α` and reports `failures = 1`; otherwise the iterate stays at `x` wit
     dn = rnorm(d)
     stepnorm = abs(s) * dn
     if !isfinite(stepnorm)
-        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false)
+        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false, false)
     end
     x₊ = update_iterate!!(nothing, x, s, d)
     F₊ = residual!!(nothing, prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     if !isfinite(fnorm₊)
-        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false)
+        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false, false)
     end
-    return x₊, F₊, g, StepInfo{R}(SUCCESS, fnorm₊, stepnorm, Int32(0), false)
+    return x₊, F₊, g, StepInfo{R}(SUCCESS, fnorm₊, stepnorm, Int32(0), false, false)
 end
 
 @inline function globalize!!(
@@ -80,7 +80,7 @@ end
         jvpprep, stepkind = MeasuredSlope()) where {R}
     dn = rnorm(d)
     if !isfinite(dn)
-        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), dn, Int32(0), false)
+        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), dn, Int32(0), false, false)
     end
     lf = LineFunction(prob, x, Fx, d, p, jvpprep)
     φ₀ = norm2(Fx)
@@ -88,21 +88,23 @@ end
     code = res.code
     if code == SUCCESS
         x₊ = update_iterate!!(nothing, x, res.α, d)
-        return x₊, res.residual, g,
-        StepInfo{R}(SUCCESS, sqrt(res.φ), res.α * dn, Int32(0), false)
+        return x₊, res.residual,
+        g,
+        StepInfo{R}(SUCCESS, sqrt(res.φ), res.α * dn, Int32(0), false, false)
     elseif code == LINESEARCH_FAILED
         if isfinite(res.φ) && res.φ < φ₀
             x₊ = update_iterate!!(nothing, x, res.α, d)
             return x₊, res.residual,
             g,
-            StepInfo{R}(LINESEARCH_FAILED, sqrt(res.φ), res.α * dn, Int32(1), false)
+            StepInfo{R}(LINESEARCH_FAILED, sqrt(res.φ), res.α * dn, Int32(1), false, false)
         else
-            return x, Fx, g,
-            StepInfo{R}(LINESEARCH_FAILED, sqrt(φ₀), zero(R), Int32(1), false)
+            return x, Fx,
+            g,
+            StepInfo{R}(LINESEARCH_FAILED, sqrt(φ₀), zero(R), Int32(1), false, false)
         end
     elseif code == STALLED
-        return x, Fx, g, StepInfo{R}(STALLED, sqrt(φ₀), zero(R), Int32(0), false)
+        return x, Fx, g, StepInfo{R}(STALLED, sqrt(φ₀), zero(R), Int32(0), false, false)
     else
-        return x, Fx, g, StepInfo{R}(NONFINITE, sqrt(φ₀), zero(R), Int32(0), false)
+        return x, Fx, g, StepInfo{R}(NONFINITE, sqrt(φ₀), zero(R), Int32(0), false, false)
     end
 end
