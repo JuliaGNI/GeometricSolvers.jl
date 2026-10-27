@@ -136,3 +136,15 @@
   `k ∈ {−16, −12, −8, 8, 12, 16}`.
 - **kind:** found late
 - **found:** 2026-10-27
+
+### K15 · No test covers the `2 · 10⁻⁶` start of the `DogLeg` radius from a short Cauchy point.
+
+- **location:** `src/globalization/dogleg.jl:93` (`dogleg_step`, the initial radius)
+- **evidence:** with `radius = nothing`, `δ = n₀ < lo ? 2 * lo : dogleg_clamp(n₀)` starts the
+  radius at `2 · 10⁻⁶` when `n₀` is below `10⁻⁶`. Procedure 4.1 states this rule for the norm of
+  the first Newton step, and `dogleg_step` applies it also to the length of the Cauchy point, when
+  there is no Newton step (`n₀ = nC`), as the `DogLeg` docstring says. The test "the initial
+  radius" in `test/globalization/dogleg.jl` covers the Newton case only; no test starts from a
+  Cauchy point shorter than `10⁻⁶`.
+- **kind:** missing test
+- **found:** #28
