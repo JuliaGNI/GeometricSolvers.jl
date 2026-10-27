@@ -309,17 +309,17 @@ so that a compat-only bump can be told apart from an interface change.
   `pred = ‖F‖ − ‖F + J s‖` and `ared = ‖F‖ − ‖F(x + s)‖` in unsquared norms; a rejected trial
   shrinks the radius by 0.25 and chooses again on the same curve with no new Jacobian, and a
   rejection at the floor `10⁻⁶` returns `LINESEARCH_FAILED` with the iterate kept. After an
-  accepted step that the radius truncates, only the residual test can end the solve with
+  accepted step other than the whole Newton step, only the residual test can end the solve with
   `SUCCESS`, as after a stall, and the step is not counted as a stall. The radius, in
   `[10⁻⁶, 10¹⁰]`, starts at the first Newton step's norm (the Cauchy length without one), or
   at `2·10⁻⁶` when that norm is below `10⁻⁶`, as Procedure 4.1 has it, unless `radius` gives
   it, and lives in the `Newton` state, `(; jacprep, jvpprep, radius)`. `DogLeg` refuses a `radius`
   that is not positive and finite as given, and stores it clamped to `[10⁻⁶, 10¹⁰]` after each
-  conversion. A singular factor or a Newton step whose norm is not finite takes the Cauchy step.
-  The Cauchy
-  direction is formed from the unit residual, `J' (F / ‖F‖)`, so no norm of `J' F` occurs: in
-  `Float32`, a scale of `F` and `J` by `10^k`, `k ∈ {−16, −12, −8, 8, 12, 16}`, gives the code
-  and the iteration count of the unscaled Rosenbrock, Dennis–Schnabel and cubic problems. Where the
+  conversion. A singular factor or a Newton step whose norm is not finite takes the Cauchy point,
+  cut to the radius when it lies outside it. The Cauchy direction is formed from the unit
+  residual, `J' (F / ‖F‖)`, so no norm of `J' F` occurs: in `Float32`, a scale of `F` and `J` by
+  `10^k`, `k ∈ {−16, −12, −8, 8, 12, 16}`, gives the code and the iteration count of the unscaled
+  Rosenbrock, Dennis–Schnabel and cubic problems. Where the
   Cauchy point is needed and that direction is zero or its norm is not finite, or `J` maps it to
   zero, the step returns `STALLED`; at `F(x) = 0` it returns `SUCCESS` with the iterate kept.
   `Newton` refuses `DogLeg` with `reuse` with an `ArgumentError`, because a reused factor makes the

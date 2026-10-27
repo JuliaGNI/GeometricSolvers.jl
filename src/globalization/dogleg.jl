@@ -20,16 +20,16 @@ time, until ``δ`` falls below its norm. A rejection at ``δ = 10^{-6}`` returns
 ``ρ = \\mathrm{ared} / \\mathrm{pred}``, ``ρ < 0.1`` sets ``δ`` to ``\\max(\\|s^{N}\\|, 10^{-6})``
 when the Newton step ``s^{N}`` is shorter than ``δ`` and to ``\\max(δ/4, 10^{-6})`` otherwise,
 and ``ρ > 0.75`` on the boundary sets it to ``\\min(4δ, 10^{10})``. An accepted step other than
-the whole Newton step sets `limited` in its [`StepInfo`](@ref): the radius, not the distance to a
-root, sets its norm, so the solve applies only the residual test after it.
+the whole Newton step sets `limited` in its [`StepInfo`](@ref): the radius or the Cauchy point, not
+the distance to a root, sets its norm, so the solve applies only the residual test after it.
 
 `radius` is the initial radius. It must be positive and finite as given; `DogLeg` stores it
 converted to `float(typeof(radius))`, and [`ToReal`](@ref) to the iterate's real type, clamped to
 ``[10^{-6}, 10^{10}]`` after each conversion. With `nothing`, the first step starts the radius at
 the norm of the first Newton step, clamped the same way, except that a norm below ``10^{-6}``
 starts it at ``2 \\cdot 10^{-6}``, as Procedure 4.1 does. A singular factor, or a Newton step
-whose norm is not finite, gives no Newton step: the step is then the Cauchy step scaled to the
-radius, and a first radius starts at the length of the Cauchy point, by the same rule. The Cauchy
+whose norm is not finite, gives no Newton step: the step is then the Cauchy point, cut to the
+radius when it lies outside, and a first radius starts at the length of the Cauchy point, by the same rule. The Cauchy
 direction is formed from the unit residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of
 ``J^* F`` occurs, and a common scale of ``F`` and ``J`` leaves the Cauchy point unchanged up to
 rounding, as long as the norm of ``\\tilde g`` is finite. Where the Cauchy point is needed and
@@ -99,8 +99,9 @@ end
         elseif !cauchy
             return x, Fx, δ, StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
         elseif !newton || nC >= δ
-            s = -δ * ĝ
-            boundary = true
+            # the Cauchy point, cut to the radius; with a Newton step, this branch has `nC ≥ δ`
+            s = -min(nC, δ) * ĝ
+            boundary = nC >= δ
         else
             # the point of norm `δ` on the segment from the Cauchy point `δ a` to the Newton step,
             # in units of `δ` and along the unit `b̂` from the one to the other: the root `t ≥ 0`
@@ -124,7 +125,7 @@ end
         ared = fnorm - fnorm₊
         # a non-finite `F₊` gives an `ared` of `-Inf` or `NaN`, which fails the test
         if pred > 0 && ared >= R(1e-4) * pred
-            # a step other than the whole Newton step is truncated by the radius
+            # the radius or the Cauchy point, not a root, sets the norm of any other step
             limited = !(newton && nN <= δ)
             ρ = ared / pred
             if ρ < R(0.1)

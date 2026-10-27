@@ -161,6 +161,21 @@ end
     x₊, _, st₊, info = one_step(one_d, zero(R), (-R(1e-9), zero(R)), dogleg_newton())
     @test x₊ == R(1e-9)
     @test st₊.radius == 2 * R(1e-6)
+
+    # with no Newton step, a Cauchy point of 10⁻⁷ starts the radius at 2 · 10⁻⁶ by the same rule,
+    # and the step is the Cauchy point inside it, here the root, not a step of the whole radius
+    A₀ = SMatrix{2, 2, R}(1, 0, 0, 0)
+    p₀ = (; A = A₀, b = SVector{2, R}(1e-7, 0))
+    prob₀ = NonlinearProblem(lin_F, lin_J)
+    x₊, F₊, st₊, info = one_step(prob₀, x₀, p₀, dogleg_newton())
+    @test x₊ == SVector{2, R}(1e-7, 0)
+    @test iszero(F₊)
+    @test info.code == SUCCESS
+    @test info.limited
+    @test st₊.radius == 2 * R(1e-6)
+    x, st = solve(prob₀, x₀, dogleg_newton(), p₀)
+    @test st.code == SUCCESS
+    @test x == SVector{2, R}(1e-7, 0)
 end
 
 @testset "the three branches of the dogleg curve, $T" for T in ELTYPES
@@ -408,10 +423,10 @@ end
     @test isfinite(st₊.radius)
     @test st₊.radius ≈ sqrt(R(2)) rtol = 8 * eps(R)
 
-    # with no Newton step, the step is the Cauchy direction scaled to the radius, here beyond the
-    # Cauchy point, and `ρ < 0.1` shrinks the radius by 0.25
+    # with no Newton step, a radius beyond the Cauchy point does not lengthen the step: the step is
+    # the Cauchy point `(1/4, 1/4)`, and `ρ < 0.1` shrinks the radius by 0.25
     δ = R(1) / 2
-    s = δ * SVector{2, R}(1, 1) / sqrt(R(2))
+    s = SVector{2, R}(1, 1) / 4
     F₀ = lin_F(x₀, p)
     pred = rnorm(F₀) - rnorm(F₀ + J * s)
     sing = NonlinearProblem(pw_F, (x, q) -> J)
