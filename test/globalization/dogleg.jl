@@ -36,8 +36,9 @@ rosen_J(x, s) = s * SMatrix{2, 2}(-20 * x[1], -one(x[1]), 10 * one(x[1]), zero(x
 ds_F(x, s) = s * SVector(x[1]^2 + x[2]^2 - 2, exp(x[1] - 1) + x[2]^3 - 2)
 ds_J(x, s) = s * SMatrix{2, 2}(2 * x[1], exp(x[1] - 1), 2 * x[2], 3 * x[2]^2)
 
-# `x³ − 2x + 2`, on which a fixed Newton step cycles `0 → 1 → 0` and whose root no monotone method
-# reaches from 0, and `atan`, on which a fixed step diverges from 10; both scaled by `s`.
+# `x³ − 2x + 2`, on which a fixed Newton step cycles `0 → 1 → 0` and whose root no path along which
+# `|F|` decreases reaches from 0, and `atan`, on which a fixed step diverges from 10; both scaled by
+# `s`.
 cubic_F(x, s) = s * (x^3 - 2x + 2)
 cubic_J(x, s) = s * (3x^2 - 2)
 atan_F(x, s) = s * atan(x)
@@ -554,8 +555,8 @@ end
 
 @testset "x³ − 2x + 2 from 0 ends at the stationary point of ‖F‖, $R" for R in REAL_ELTYPES
     # `|F|` falls from 2 at 0 to its local minimum 0.911 at `√(2/3)`, and the root −1.769 lies
-    # beyond the local maximum `|F(−√(2/3))| = 3.09`: no step that decreases `‖F‖` reaches it.
-    # The dogleg descends to the minimum, where every trial is rejected down to the floor.
+    # beyond the local maximum `|F(−√(2/3))| = 3.09`: no path along which `‖F‖` decreases reaches
+    # it. The dogleg descends to the minimum, where every trial is rejected down to the floor.
     prob = NonlinearProblem(cubic_F)
     for linsolve in (LUFactorization(), QRFactorization())
         x, st = solve(prob, zero(R), dogleg_newton(; linsolve), one(R))
