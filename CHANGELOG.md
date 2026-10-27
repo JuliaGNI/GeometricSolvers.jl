@@ -312,19 +312,19 @@ so that a compat-only bump can be told apart from an interface change.
   `[10⁻⁶, 10¹⁰]`, starts at the first Newton step's norm unless `radius` gives it, and lives in the
   `Newton` state, `(; jacprep, jvpprep, radius)`. `DogLeg` refuses a `radius` that is not
   positive and finite as given, and stores it clamped to `[10⁻⁶, 10¹⁰]` after each conversion. A
-  singular factor or a Newton step whose norm is not finite takes the Cauchy step. The Cauchy direction is formed from
-  the unit residual, `J' (F / ‖F‖)`, so no norm of `J' F` occurs: in `Float32`, a scale of `F` and
-  `J` by `10^k`, `k ∈ {−16, −12, −8, 8, 12, 16}`, gives the code and the iteration count of the
-  unscaled Rosenbrock, Dennis–Schnabel and cubic problems. Where the Cauchy point is needed and
-  that direction is zero or its norm is not finite, or `J` maps it to zero, the step returns
-  `STALLED`; at `F(x) = 0` it returns `SUCCESS` with the iterate kept. `Newton` refuses `DogLeg`
-  with `reuse` with an `ArgumentError`, because a reused factor makes the model stale. `DogLeg`
-  solves `atan(x)` from 10 and the Dennis–Schnabel system from `(2, 0.5)`, where a fixed step
-  diverges or ends `NONFINITE`, and the Rosenbrock system from `(−1.2, 1)`, in `Float32` and
-  `Float64`; on the Rosenbrock system a KernelAbstractions kernel gives the host's result bit for
-  bit, and a solve allocates nothing. On `x³ − 2x + 2` from 0 it stops with `LINESEARCH_FAILED` at
-  `√(2/3)`, the local minimum of `|F|`: the root lies beyond a local maximum of `|F|` above
-  `|F(0)|`, so no path along which `|F|` decreases reaches it.
+  singular factor or a Newton step whose norm is not finite takes the Cauchy step. The Cauchy
+  direction is formed from the unit residual, `J' (F / ‖F‖)`, so no norm of `J' F` occurs: in
+  `Float32`, a scale of `F` and `J` by `10^k`, `k ∈ {−16, −12, −8, 8, 12, 16}`, gives the code
+  and the iteration count of the unscaled Rosenbrock, Dennis–Schnabel and cubic problems. Where the
+  Cauchy point is needed and that direction is zero or its norm is not finite, or `J` maps it to
+  zero, the step returns `STALLED`; at `F(x) = 0` it returns `SUCCESS` with the iterate kept.
+  `Newton` refuses `DogLeg` with `reuse` with an `ArgumentError`, because a reused factor makes the
+  model stale. `DogLeg` solves `atan(x)` from 10 and the Dennis–Schnabel system from `(2, 0.5)`,
+  where a fixed step diverges or ends `NONFINITE`, and the Rosenbrock system from `(−1.2, 1)`, in
+  `Float32` and `Float64`; on the Rosenbrock system a KernelAbstractions kernel gives the host's
+  result bit for bit, and a solve allocates nothing. On `x³ − 2x + 2` from 0 it stops with
+  `LINESEARCH_FAILED` at `√(2/3)`, the local minimum of `|F|`: the root lies beyond a local maximum
+  of `|F|` above `|F(0)|`, so no path along which `|F|` decreases reaches it.
 
 - Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
   pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
