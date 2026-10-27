@@ -21,14 +21,15 @@ when the Newton step ``s^{N}`` is shorter than ``δ`` and to ``\\max(δ/4, 10^{-
 `radius` is the initial radius. It must be positive and finite as given; `DogLeg` stores it
 converted to `float(typeof(radius))`, and [`ToReal`](@ref) to the iterate's real type, clamped to
 ``[10^{-6}, 10^{10}]`` after each conversion. With `nothing`, the first step starts the radius at
-the norm of the first Newton step, clamped the same way. A singular factor, or a Newton step that
-is not finite, gives no Newton step: the step is then the Cauchy step scaled to the radius, and a
-first radius starts at the length of the Cauchy point. The Cauchy direction is formed from the unit
-residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of ``J^* F`` occurs, and a common scale of
-``F`` and ``J`` leaves the Cauchy point unchanged up to rounding. Where the Cauchy point is needed
-and ``\\tilde g`` is zero or not finite, or ``J \\tilde g / \\|\\tilde g\\|`` is zero, the step
-returns `STALLED` with the iterate kept. At ``F(x) = 0`` the step returns `SUCCESS` with the
-iterate and the radius kept, and makes no trial.
+the norm of the first Newton step, clamped the same way. A singular factor, or a Newton step whose
+norm is not finite, gives no Newton step: the step is then the Cauchy step scaled to the radius,
+and a first radius starts at the length of the Cauchy point. The Cauchy direction is formed from
+the unit residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of ``J^* F`` occurs, and a common
+scale of ``F`` and ``J`` leaves the Cauchy point unchanged up to rounding, as long as the norm of
+``\\tilde g`` is finite. Where the Cauchy point is needed and ``\\tilde g`` is zero or its norm is
+not finite, or ``J \\tilde g / \\|\\tilde g\\|`` is zero, the step returns `STALLED` with the
+iterate kept. At ``F(x) = 0`` the step returns `SUCCESS` with the iterate and the radius kept, and
+makes no trial.
 
 `DogLeg` takes no factor reuse: `Newton(; globalization = DogLeg(), reuse = k)` raises an
 `ArgumentError`.
@@ -74,7 +75,7 @@ end
     # The Cauchy point minimises the model norm along `-g`, `g = J' F`. Its direction is formed
     # from the unit residual, `g̃ = J' (F / ‖F‖)` and `ĝ = g̃ / ‖g̃‖`, and its length
     # `‖g‖ / ‖J ĝ‖² = ‖F‖ ‖g̃‖ / ‖J ĝ‖²`, so that no norm of the product `J' F` occurs. A `g̃`
-    # that is zero or not finite, or a `J ĝ` that is zero, gives no Cauchy point.
+    # that is zero or whose norm is not finite, or a `J ĝ` that is zero, gives no Cauchy point.
     g̃ = J' * (Fx / fnorm)
     gnorm = rnorm(g̃)
     ĝ = g̃ / gnorm

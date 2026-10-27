@@ -197,7 +197,7 @@ end
 
 # The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
 # `dogleg_step` on the regularised Jacobian that was factorised. A singular factor or a Newton step
-# that is not finite leaves the Cauchy step.
+# whose norm is not finite leaves the Cauchy step.
 @inline function step!!(
         state, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}

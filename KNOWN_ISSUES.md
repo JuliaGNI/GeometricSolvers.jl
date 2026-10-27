@@ -118,3 +118,21 @@
   `‖F(3)‖ = 5`. `DogLeg` does not take this path: it returns `LINESEARCH_FAILED` there.
 - **kind:** defect
 - **found:** 2026-10-26
+
+### K14 · `DogLeg` stalls on the Rosenbrock system in `Float32` scaled by 1e18 to 3e18.
+
+- **location:** `src/globalization/dogleg.jl` (`dogleg_step`, the Cauchy direction `g̃`)
+- **evidence:** `solve` with `Newton(; globalization = DogLeg())` on the Rosenbrock system
+  `s · (10 (x₂ − x₁²), 1 − x₁)` with its analytic `J`, from `(−1.2, 1)` in `Float32`, gives
+  `SUCCESS` after 9 iterations at `s = 1e16`, `1e17` and `3e17`, and `STALLED` after 2 at
+  `s = 1e18`, `2e18` and `3e18`, where `‖F(x₀)‖` is 4.9e18 to 1.5e19, below the overflow of the
+  norm of `F` near 1.8e19 (Julia 1.13.3). At `s = 1e18` the entries of `g̃ = J' (F / ‖F‖)` at
+  `x₀` are finite, `(−2.19e19, −8.94e18)`, but `rnorm(g̃)` is `Inf`, because their squares exceed
+  `floatmax(Float32)`. The first trial, the whole Newton step, is rejected, so the next trial needs
+  the Cauchy point, which this norm leaves undefined: the step returns `STALLED` with `x₀` kept. At
+  the same scales `Newton()` with `Static()` gives `NONFINITE` after 1 iteration, and with
+  `Backtracking()` `MAXITERS` or `NONFINITE`. The
+  Dennis–Schnabel system from `(2, 0.5)` gives `SUCCESS` after 4 iterations at every one of these
+  scales. The tested scales are `10^k`, `k ∈ {−16, −12, −8, 8, 12, 16}`.
+- **kind:** found late
+- **found:** 2026-10-27
