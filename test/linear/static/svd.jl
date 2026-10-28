@@ -88,9 +88,7 @@ end
             @test fac.σ[r] > tol * fac.σ[1]
         end
         # the columns of `U` past the rank are zeroed rather than normalized: the divisor of a
-        # null direction is its rounding noise, and dividing by it is what puts a `NaN` into the
-        # factor. The `StaticSVD` docstring and the changelog state the zeroing, which round 1
-        # found no test of: the doubted `if true` mutant survived (blocking defect 4)
+        # null direction is its rounding noise, and dividing by it can put a `NaN` into the factor
         @test all(isfinite, fac.factors)
         for j in (r + 1):n
             @test all(iszero, fac.factors[:, j])
@@ -223,11 +221,10 @@ end
 
     @testset "a singular value above floatmax(R) leaves the solve finite, $T" for T in REAL_ELTYPES
 
-        # Round 1's r4: every entry of `A` is finite, and `σ₁` is not representable in `R` — a
-        # full matrix of `floatmax/2` has a `σ₁` near `2·floatmax`. The stored `σ` overflows,
-        # which the `StaticSVD` docstring states; the solve divides by the scaled singular value
-        # instead, so the step is the one the check-1 bound gives and not the zero step with
-        # `SUCCESS` that round 1 measured there, where LU gives 0.1176
+        # Every entry of `A` is finite, and `σ₁` is not representable in `R` — a full matrix of
+        # `floatmax/2` has a `σ₁` near `2·floatmax`. The stored `σ` overflows, as the `StaticSVD`
+        # docstring states, while the solve divides by the scaled singular value `σ̂` and returns
+        # the step within the check-1 bound.
         n = 4
         m = svd_method(Nothing)
         A = SMatrix{n, n, T}(fill(floatmax(T) / 2, n, n)) +

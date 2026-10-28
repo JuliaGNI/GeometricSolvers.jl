@@ -96,6 +96,26 @@ function low_rank_skew(seed, ::Type{T}, N, r) where {T}
 end
 
 """
+    floor_skew(T, N)
+
+A real skew `N × N` matrix in `T` with `M[1, 2] = 1`, `M[2, 1] = -1` and `5 · eps(T)` on every
+off-diagonal pair of `3:N`, so that each entry of that block sits above the `eps(T)` pair floor
+and below `√N · eps(T)` at `N = 16`.
+"""
+function floor_skew(::Type{T}, N) where {T}
+    M = zero(MMatrix{N, N, T})
+    M[1, 2] = one(T)
+    M[2, 1] = -one(T)
+    δ = 5 * eps(T)
+    for j in 3:N, i in (j + 1):N
+
+        M[i, j] = δ
+        M[j, i] = -δ
+    end
+    return SMatrix(M)
+end
+
+"""
     big_exp(A)
 
 `exp(A)` in `BigFloat`, real or complex, by scaling and squaring with a Taylor series:
@@ -125,10 +145,16 @@ end
 
 @testset "check 4: jacobi_eigen on im·M for a real skew M, and on a Hermitian matrix" begin
     @testset "a real skew M, $T, N = $N, $(form)" for T in REAL_ELTYPES,
-        (N, form, seed) in ((2, "one block", 21), (16, "eight blocks", 23), (
-            8, "equal blocks", 24))
+        (N, form, seed) in ((2, "one block", 21), (16, "eight blocks", 23),
+            (8, "equal blocks", 24), (16, "near-floor block", 0))
 
-        M = form == "equal blocks" ? equal_blocks(seed, T, N ÷ 2) : skew_matrix(seed, T, N)
+        M = if form == "equal blocks"
+            equal_blocks(seed, T, N ÷ 2)
+        elseif form == "near-floor block"
+            floor_skew(T, N)
+        else
+            skew_matrix(seed, T, N)
+        end
         H = im * M
         λ, V, status = jacobi_eigen(H)
         @test status === SUCCESS
@@ -187,23 +213,29 @@ end
         @test !all(isfinite, λ)
         # the same for a diagonal `Inf`, whose off-diagonal entries are exactly zero: the scale
         # of the pair test is not finite either, so no pair is skipped and the rotation of the
-        # pair is not finite. Round 1 found this case returning `SUCCESS` (other defect 2)
+        # pair is not finite
         for v in (T(Inf), -T(Inf))
             B = SMatrix{2, 2, T}(v, zero(T), zero(T), one(T))
             λb, _, statusb = jacobi_eigen(B)
             @test statusb === MAXITERS
             @test !all(isfinite, λb)
         end
+        # at N = 1 there is no off-diagonal pair, so a NaN or an Inf returns SUCCESS
+        for v in (T(NaN), T(Inf), -T(Inf))
+            λ1, V1, status1 = jacobi_eigen(SMatrix{1, 1, T}(v))
+            @test status1 === SUCCESS
+            @test !isfinite(λ1[1])
+            @test V1 == one(SMatrix{1, 1, T})
+        end
     end
 end
 
 @testset "the stopping test terminates on a rank-deficient or a low-rank matrix" begin
-    # The two reproducers of round 1's blocking defect 1. A pair of diagonal entries that hold
-    # nothing but the rounding noise of the rotations never satisfies a relative test — each
-    # rotation regenerates as much noise as it removes — so the sweep reaches its cap of 30
-    # sweeps and the unitarity bound of check 4 is missed. The absolute floor of the pair test is
-    # what ends it, as the SVD's negligible-column guard ends its sweep.
-    @testset "a rank-deficient Hermitian matrix, $T, rank $r" for T in ELTYPES, r in (1, 5)
+    # A pair of diagonal entries that hold nothing but the rounding noise of the rotations never
+    # satisfies a relative test — each rotation regenerates as much noise as it removes — so the
+    # absolute floor `eps(R) * ‖H‖_F` of the pair test is what ends the sweep.
+    @testset "a rank-deficient Hermitian matrix, $T, rank $r" for T in ELTYPES,
+        r in (0, 1, 5)
 
         N = 16
         H = rank_deficient_hermitian(3, T, N, r)
@@ -230,21 +262,48 @@ end
     @testset "a negligible off-diagonal beside a diagonal difference, $T" for T in REAL_ELTYPES
 
         # `ζ = (β − α)/2|γ|` squares to `Inf` for an `|γ|` at the bottom of the type's range, so
-        # the rotation is the identity (`t = 0`) although `|γ|` is not zero, and the sweep counts
-        # it as a rotation and reaches its cap: `probe_misc.jl` of round 1a, `[1 1e-160; 1e-160 0]`
+        # an unguarded rotation degenerates to the identity (`t = 0`); the pair floor skips any
+        # `|γ| ≤ eps(T) * ‖H‖_F` on sweep 1.
         H = SMatrix{2, 2, T}(one(T), nextfloat(zero(T)), nextfloat(zero(T)), zero(T))
         λ, V, status = jacobi_eigen(H)
         @test status === SUCCESS
         @test norm(V' * V - I) <= 8 * eps(T)
         @test isapprox(sort(Vector(λ)), [zero(T), one(T)]; atol = 8 * eps(T))
     end
+
+    @testset "the pair floor eps(R) * ‖H‖_F is pinned from both sides at N = 16, $T" for T in ELTYPES
+        N = 16
+        R = real(T)
+        for unit in (T <: Complex ? (one(T), T(im)) : (one(T),))
+            # below the floor: `|γ| = 0.75 * eps(R) <= eps(R) * ‖H‖_F` is skipped without rotation
+            γ_below = unit * R(0.75) * eps(R)
+            H_below = zero(MMatrix{N, N, T})
+            H_below[1, 1] = one(T)
+            H_below[2, 1] = γ_below
+            H_below[1, 2] = conj(γ_below)
+            _, V_below, status_below = jacobi_eigen(SMatrix(H_below))
+            @test status_below === SUCCESS
+            @test iszero(V_below[2, 1])
+            @test V_below == one(SMatrix{N, N, T})
+
+            # above the floor: `|γ| = 1.5 * eps(R) > eps(R) * ‖H‖_F` is rotated on sweep 1
+            γ_above = unit * R(1.5) * eps(R)
+            H_above = zero(MMatrix{N, N, T})
+            H_above[1, 1] = one(T)
+            H_above[2, 1] = γ_above
+            H_above[1, 2] = conj(γ_above)
+            _, V_above, status_above = jacobi_eigen(SMatrix(H_above))
+            @test status_above === SUCCESS
+            @test !iszero(V_above[2, 1])
+            @test isapprox(abs(V_above[2, 1]), abs(γ_above); rtol = 8 * eps(R))
+        end
+    end
 end
 
 @testset "the lower triangle is read, and the upper triangle filled from it, $T" for T in ELTYPES
-    # The contract the docstring states, which round 1 read the other way: the matrix is assumed
-    # Hermitian, and the conjugate of the lower triangle is what the upper triangle is set to on
-    # entry. `[1 2; 0 3]` is not Hermitian: the lower triangle is the diagonal `[1 0; 0 3]`, and
-    # the call returns its eigenvalues 1 and 3, not those of the upper triangle's `[1 2; 2 3]`
+    # The matrix is assumed Hermitian, and the upper triangle is set to the conjugate of the lower
+    # triangle on entry. `[1 2; 0 3]` is not Hermitian: its lower triangle is the diagonal
+    # `[1 0; 0 3]`, so the call returns the eigenvalues 1 and 3.
     A = SMatrix{2, 2, T}(one(T), T(2), zero(T), T(3))
     λ, V, status = jacobi_eigen(A)
     H = Hermitian(A, :L)
