@@ -68,12 +68,20 @@ function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
         status.promoted | info.promoted)
 end
 
+const ReturnCodeCounts = NamedTuple{
+    (:SUCCESS, :STALLED, :MAXITERS, :SINGULAR, :NONFINITE, :LINESEARCH_FAILED),
+    NTuple{6, Int}
+}
+
 """
     isconverged(status::SolverStatus)
+    isconverged(counts::NamedTuple{(:SUCCESS, :STALLED, :MAXITERS, :SINGULAR, :NONFINITE, :LINESEARCH_FAILED)})
 
-Whether the solve ended with `SUCCESS`.
+Whether the solve ended with `SUCCESS`, or whether every system in a batch return-code count
+summary ended with `SUCCESS` (`counts.SUCCESS == sum(counts)`).
 """
 isconverged(status::SolverStatus) = status.code == SUCCESS
+isconverged(counts::ReturnCodeCounts) = counts.SUCCESS == sum(counts)
 
 """
     isstalled(status::SolverStatus)

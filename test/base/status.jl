@@ -37,3 +37,20 @@ end
         STALLED, 0.1, 0.0, Int32(0), false, false))) isa
           SolverStatus{Float64}
 end
+
+@testset "isconverged on ReturnCode counts NamedTuple" begin
+    all_ok = (SUCCESS = 10, STALLED = 0, MAXITERS = 0, SINGULAR = 0,
+        NONFINITE = 0, LINESEARCH_FAILED = 0)
+    @test isconverged(all_ok) === true
+    @test (@inferred isconverged(all_ok)) === true
+
+    empty_counts = (SUCCESS = 0, STALLED = 0, MAXITERS = 0, SINGULAR = 0,
+        NONFINITE = 0, LINESEARCH_FAILED = 0)
+    @test isconverged(empty_counts) === true
+
+    for k in (:STALLED, :MAXITERS, :SINGULAR, :NONFINITE, :LINESEARCH_FAILED)
+        bad = merge(all_ok, (k => 1,))
+        @test isconverged(bad) === false
+        @test (@inferred isconverged(bad)) === false
+    end
+end

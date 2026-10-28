@@ -1,15 +1,17 @@
-# The R1 nonlinear loop inside a `@kernel` on Metal.
+# The R1 nonlinear loop and R2 batched solve! on Metal.
 
 using Adapt: Adapt
+using GPUArraysCore: GPUArraysCore
 using KernelAbstractions: @index, @kernel, get_backend, synchronize
 using Metal: Metal
 using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, LUFactorization, Newton, NonlinearProblem, Options,
-                        Picard, QRFactorization, SINGULAR, SUCCESS, Static, ToReal, init,
-                        solve, solve!!
+using GeometricSolvers: Backtracking, DogLeg, LUFactorization, Newton, NonlinearProblem,
+                        Options, PerSystem, Picard, QRFactorization, SINGULAR, SUCCESS,
+                        SolverStatus, Static, ToReal, init, isconverged, solve, solve!,
+                        solve!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -180,6 +182,92 @@ end
         @test eltype(xs_p_got[1]) === Float32
         @test all(
             x -> isapprox(x, p_p; rtol = 10 * sqrt(eps(Float32))), xs_p_got)
+
+        # 5. R2 batched solve! on Metal (per-system status and return-code count forms)
+        @testset "Metal R2 batched solve!" begin
+            GPUArraysCore.allowscalar(false)
+            for T in filter(T -> real(T) === Float32, ELTYPES)
+                R = real(T)
+                perm = r1_shift(T, N_METAL_NL)
+                x₀, p₀ = r1_inputs(T, N_METAL_NL)
+                xs_host = [x₀ .+ T(k) / T(20) for k in 1:B_METAL_NL]
+                ps_host = [p₀ .+ T(k) / T(30) for k in 1:B_METAL_NL]
+                prob_j = NonlinearProblem(
+                    R1Coupled(perm), (y, q) -> r1_coupled_jacobian(y, q, perm))
+                prob_ad = NonlinearProblem(R1Coupled(perm))
+
+                for m in (
+                        Newton(),
+                        Newton(; globalization = DogLeg()),
+                        Newton(; reuse = 2)
+                    ),
+                    prob in (prob_j, prob_ad)
+
+                    m_dev = Adapt.adapt(ToReal{R}(), m)
+                    opt = Options(R)
+                    state₀ = init(m_dev, prob, x₀, p₀)
+
+                    X_dev = Metal.MtlArray(xs_host)
+                    S_dev = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
+                    P_dev = PerSystem(Metal.MtlArray(ps_host))
+
+                    ret_S = solve!(X_dev, S_dev, prob, m, P_dev)
+                    @test ret_S === S_dev
+
+                    xs_got = Array(X_dev)
+                    st_got = Array(S_dev)
+                    for k in 1:B_METAL_NL
+                        x_ref, st_ref, _ = solve!!(
+                            state₀, prob, xs_host[k], m_dev, ps_host[k], opt)
+                        @test st_got[k].code == SUCCESS
+                        @test st_got[k].code == st_ref.code
+                        @test st_got[k].iterations == st_ref.iterations
+                        @test isapprox(
+                            xs_got[k], x_ref; rtol = 8 * eps(R), atol = 8 * eps(R))
+                    end
+
+                    X_dev2 = Metal.MtlArray(xs_host)
+                    counts = solve!(X_dev2, prob, m, P_dev)
+                    @test isconverged(counts)
+                    @test counts.SUCCESS == B_METAL_NL
+                    @test sum(counts) == B_METAL_NL
+                    xs_got2 = Array(X_dev2)
+                    for k in 1:B_METAL_NL
+                        @test isapprox(
+                            xs_got2[k], xs_got[k]; rtol = 8 * eps(R), atol = 8 * eps(R))
+                    end
+                end
+
+                # Picard(; damping = 0.7) on R1Scaled
+                prob_pic = NonlinearProblem(R1Scaled())
+                ps_pic_host = [SVector{N_METAL_NL, T}([T(1) / T(2) for _ in 1:N_METAL_NL])
+                               for _ in 1:B_METAL_NL]
+                m_pic = Picard(; damping = 0.7)
+                m_pic_dev = Adapt.adapt(ToReal{R}(), m_pic)
+                opt_pic = Options(R)
+                state_pic = init(m_pic_dev, prob_pic, x₀, ps_pic_host[1])
+
+                X_pic = Metal.MtlArray(xs_host)
+                S_pic = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
+                P_pic = PerSystem(Metal.MtlArray(ps_pic_host))
+                solve!(X_pic, S_pic, prob_pic, m_pic, P_pic)
+                xs_pic_got = Array(X_pic)
+                st_pic_got = Array(S_pic)
+                for k in 1:B_METAL_NL
+                    x_ref, st_ref, _ = solve!!(
+                        state_pic, prob_pic, xs_host[k], m_pic_dev, ps_pic_host[k], opt_pic)
+                    @test st_pic_got[k].code == SUCCESS
+                    @test st_pic_got[k].iterations == st_ref.iterations
+                    @test isapprox(
+                        xs_pic_got[k], x_ref; rtol = 8 * eps(R), atol = 8 * eps(R))
+                end
+
+                X_pic2 = Metal.MtlArray(xs_host)
+                counts_pic = solve!(X_pic2, prob_pic, m_pic, P_pic)
+                @test isconverged(counts_pic)
+                @test counts_pic.SUCCESS == B_METAL_NL
+            end
+        end
     else
         @test_skip Metal.functional()
     end
