@@ -11,15 +11,18 @@
 Factorise the matrix `J` with the linear-solver method `method` and return the factors.
 
 For a static matrix (R1), `fac` is `nothing` or an earlier factor of the same type, whose value
-is not used, and the result is a new [`StaticLU`](@ref) or [`StaticQR`](@ref). `J` is converted
-to the element type of the factors, [`factor_eltype`](@ref). Where that is not the element type
-of `J`, `J` is first divided by the power of two `2^e` that brings its largest `|re|` or `|im|`
-into `[1, 2)`, or as close as the exponent range allows, and `e` is kept in the factor, so that
-the overall scale of `J` neither overflows nor underflows in the factor type. A zero or
-non-finite `J` gives `e = 0`. A singular `J` does not throw. LU
+is not used, and the result is a new [`StaticLU`](@ref), [`StaticQR`](@ref) or
+[`StaticSVD`](@ref). `J` is converted to the element type of the factors,
+[`factor_eltype`](@ref). Where that is not the element type of `J`, `J` is first divided by the
+power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
+exponent range allows, and `e` is kept in the factor, so that the overall scale of `J` neither
+overflows nor underflows in the factor type. A zero or non-finite `J` gives `e = 0`. A singular
+`J` does not throw. LU
 records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, and
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
+The SVD records the first singular value that its rank cutoff `√n · eps(TF) · σ₁` counts as zero,
+and it is prescaled at the working precision too, because the sweep squares the entries.
 
 For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
 built by [`init`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
@@ -48,7 +51,8 @@ relative to the largest entry can still underflow. The scale takes no squares an
 only where an entry's absolute value does. In the mixed-type path, a zero `r` returns a zero
 step without solving, and an `Inf` or `NaN` in `r` gives a non-finite step. In both paths the
 step is multiplied by `2^-e`, the power of two that [`factorize!!`](@ref) divided `J` by, in the
-element type of `r`.
+element type of `r`. The SVD's solve leaves out the directions that its rank cutoff counted as
+zero, so that a rank-deficient system gives a finite, truncated step rather than an enormous one.
 """
 function ldiv!! end
 
@@ -92,6 +96,36 @@ struct StaticQR{N, TF, L}
     factors::SMatrix{N, N, TF, L}
     τ::SVector{N, TF}
     info::Int32
+    scale_exponent::Int32
+end
+
+"""
+    StaticSVD{N, TF, R, L}
+
+The singular value decomposition of an `N × N` static matrix, in element type `TF`, computed by
+the one-sided Jacobi iteration of `src/linear/static/svd.jl`. `factors` holds `U`, `V` holds the
+right singular vectors as columns, and `σ` holds the `N` singular values in non-increasing order
+in `R = real(TF)`. `info` is the index of the first singular value that the rank cutoff
+`√N · eps(TF) · σ₁` counts as zero, or 0 where there is none, so that
+[`returncode`](@ref) gives `SINGULAR` for a rank-deficient matrix as it does for the LU and QR
+factors; the truncated directions are zeroed in `U`, and the solve of [`ldiv!!`](@ref) leaves
+their coordinates out. `converged` is `false` where the sweep reached its cap of 30 sweeps
+before the columns were orthogonal. `scale_exponent` is the exponent `e` of the power of two
+`2^e` that the matrix was divided by, and `σ` holds the singular values of the matrix as it was
+passed, not of the scaled one: a `σ₁` above `floatmax(R)` — every entry of the matrix finite —
+is not representable there, and `σ` then holds `Inf`. `σ̂` holds the singular values of the scaled
+matrix, the ones the sweep computed and the ones the solve divides by, so that the limit of `σ`
+is the limit of the report alone and not of the step.
+
+`L = N * N` makes the `SMatrix` fields concrete, so the factor is `isbits`.
+"""
+struct StaticSVD{N, TF, R, L}
+    factors::SMatrix{N, N, TF, L}
+    V::SMatrix{N, N, TF, L}
+    σ::SVector{N, R}
+    σ̂::SVector{N, R}
+    info::Int32
+    converged::Bool
     scale_exponent::Int32
 end
 
@@ -203,7 +237,8 @@ end
 
 `SUCCESS` for a factor with `info == 0`, and `SINGULAR` otherwise.
 """
-function returncode(fac::Union{StaticLU, StaticQR, DenseLU, DenseQR, DenseSVD})
+function returncode(
+        fac::Union{StaticLU, StaticQR, StaticSVD, DenseLU, DenseQR, DenseSVD})
     return iszero(fac.info) ? SUCCESS : SINGULAR
 end
 
@@ -235,13 +270,13 @@ function unscale(fac, d)
     return iszero(e) ? d : map(a -> ldexp2(a, -e), d)
 end
 
-function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}},
+function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSVD{N, TF}},
         r::StaticVector{N, TF}) where {N, TF}
     return unscale(fac, backsolve(fac, SVector{N, TF}(r)))
 end
 
 # The `T ≠ TF` method: the right-hand side has another element type than the factors.
-function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}},
+function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSVD{N, TF}},
         r::StaticVector{N, T}) where {N, TF, T}
     s = maximum(abs, r)
     iszero(s) && return zero(SVector{N, T})

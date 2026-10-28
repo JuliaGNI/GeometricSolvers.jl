@@ -18,6 +18,7 @@ if "core" in GROUPS
     @safetestset "Static factors" include("linear/factors.jl")
     @safetestset "Static LU" include("linear/static/lu.jl")
     @safetestset "Static QR" include("linear/static/qr.jl")
+    @safetestset "Jacobi eigensolver" include("linear/static/eigen.jl")
     @safetestset "Dense linear solvers" include("linear/dense.jl")
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
@@ -33,6 +34,7 @@ if "core" in GROUPS
 end
 if "slow" in GROUPS
     @safetestset "Dense linear solvers (large)" include("linear/dense_large.jl")
+    @safetestset "Static SVD" include("linear/static/svd.jl")
 end
 if "doctests" in GROUPS
     @safetestset "Doctests" include("quality/doctests.jl")
@@ -40,5 +42,6 @@ end
 if "metal" in GROUPS
     @safetestset "Metal" include("devices/metal.jl")
     @safetestset "Metal static LU and QR" include("devices/metal_linear.jl")
+    @safetestset "Metal static SVD and Jacobi eigensolver" include("devices/metal_svd.jl")
     @safetestset "Metal R1 nonlinear" include("devices/metal_nonlinear.jl")
 end

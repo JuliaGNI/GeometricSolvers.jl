@@ -148,3 +148,18 @@
   `rnorm` closes both: issue #29 proposes one.
 - **kind:** defect
 - **found:** #28; one fix with K14
+
+### K17 · A `StaticSVD`'s reported `σ` holds `Inf` where `σ₁` exceeds `floatmax(real(TF))`.
+
+- **location:** `src/linear/static/svd.jl:218`
+- **evidence:** `test/linear/static/svd.jl`, the testset *a singular value above `floatmax(R)`
+  leaves the solve finite*: at a full `floatmax(T)/2` matrix in `Float32` and `Float64` it asserts
+  `@test !isfinite(fac.σ[1])` beside `all(isfinite, x)` and the `4n · eps(TF) · κ∞` solve bound.
+  `σ` is the `SVector{N, R}` of the singular values of the matrix as it was passed, in
+  `R = real(TF)`, and `factorize!!` unscales them by the power of two it divided the matrix by;
+  that product overflows `R` although every entry of the matrix is finite — the `σ₁` there is
+  `≈ 2.125 · floatmax`. The solve is not affected: `ldiv!!` divides by `σ̂`, the singular values
+  the sweep computed. Reporting a `σ₁` above `floatmax(R)` needs a field wider than the factor
+  type.
+- **kind:** found late
+- **found:** 2026-10-16
