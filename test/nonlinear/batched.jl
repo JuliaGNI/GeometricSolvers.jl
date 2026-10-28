@@ -191,6 +191,12 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test_throws DimensionMismatch solve!(
             copy(X), prob, Newton(), p0; order = [1, 2, 3])
 
+        # order that is not a permutation of 1:length(X): a duplicate, an out-of-range index
+        @test_throws ArgumentError solve!(
+            copy(X), S_good, prob, Newton(), p0; order = [1, 1])
+        @test_throws ArgumentError solve!(
+            copy(X), prob, Newton(), p0; order = [1, 3])
+
         # Empty batch (length(X) == 0)
         X_empty = SVector{2, Float64}[]
         S_empty = SolverStatus{Float64}[]
@@ -524,17 +530,18 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
             end
         end
 
-        # Spy AbstractVector{Int} on CPU() verifies every index 1:length(X) is read by the kernel
+        # Spy AbstractVector{Int} on CPU() verifies every index 1:length(X) is read once by the
+        # permutation check and once by the kernel
         spy = SpyOrderVector(copy(perm), zeros(Int, N))
         X_spy = copy(x0_vec)
         S_spy = Vector{SolverStatus{Float64}}(undef, N)
         solve!(X_spy, S_spy, prob, Newton(), PerSystem(copy(p_vec)); order = spy)
-        @test spy.reads == ones(Int, N)
+        @test spy.reads == fill(2, N)
 
         spy2 = SpyOrderVector(copy(perm), zeros(Int, N))
         X_spy2 = copy(x0_vec)
         solve!(X_spy2, prob, Newton(), PerSystem(copy(p_vec)); order = spy2)
-        @test spy2.reads == ones(Int, N)
+        @test spy2.reads == fill(2, N)
     end
 
     @testset "Order adaptation and kernel synchronization" begin

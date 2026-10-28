@@ -392,12 +392,13 @@ so that a compat-only bump can be told apart from an interface change.
   `solve!` adapts `method` with `Adapt.adapt(ToReal{R}(), method)`, converts or constructs
   `Options{R}`, and builds `state₀ = init(m, prob, zero(eltype(X)), nothing)` once by value so
   `Newton(; reuse = k)` carries its chord factor across steps inside each work-item. When `order`
-  is an integer vector of length `length(X)`, work-item `i` solves system `idx = order[i]`; an
-  `isbits` range is passed by value, and a non-`isbits` host `order` vector passed with a device
-  `X` is copied to `get_backend(X)` before kernel launch. A length mismatch in `S`, `PerSystem`, or
-  `order` raises `DimensionMismatch`, and passing both `options` and keyword tolerances raises
-  `ArgumentError`. `scripts/r2_throughput.jl` benchmarks R2 `solve!` (`Newton()` and
-  `Newton(; reuse = 4)`) against a threaded CPU R1 loop and reports the R4 crossover dimension `n`.
-  `KernelAbstractions` (0.9) is now a direct dependency of the package.
-
-
+  is a permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; an `isbits` range
+  is passed by value, and a non-`isbits` host `order` vector passed with a device `X` is copied to
+  `get_backend(X)` before kernel launch. A length mismatch in `S`, `PerSystem`, or `order` raises
+  `DimensionMismatch`. An `order` of the right length that repeats an index or holds one outside
+  `1:length(X)` raises `ArgumentError`; the check reads a device `order` on the host, one copy per
+  call. Passing both `options` and keyword tolerances also raises `ArgumentError`.
+  `scripts/r2_throughput.jl` benchmarks R2 `solve!` (`Newton()` and `Newton(; reuse = 4)`) against
+  a threaded CPU R1 loop and reports the R4 crossover dimension `n`.
+  `KernelAbstractions` (0.9.15 or later, the first release whose compat admits Adapt 4) is now a
+  direct dependency of the package.

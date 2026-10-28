@@ -141,7 +141,6 @@ Picard
 NoRefinement
 ```
 
-
 ## Automatic differentiation
 
 In R1, [`prepare_ad`](@ref) returns the `AutoForwardDiff()` back end itself for a `StaticVector`

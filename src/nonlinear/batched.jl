@@ -64,6 +64,9 @@ function _validate_batch(
         throw(DimensionMismatch(
             "order length $(length(order)) does not match batch length $(length(X))"))
     end
+    if order !== nothing && !isperm(Adapt.adapt(Array, order))
+        throw(ArgumentError("order is not a permutation of 1:$(length(X))"))
+    end
     if options !== nothing && !isempty(kwargs)
         throw(ArgumentError("pass either `options` or keyword arguments, not both"))
     end
@@ -162,8 +165,9 @@ work-item per system.
 
 Each element `X[idx]` is the initial guess for system `idx` and is overwritten with its final
 iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref) so system `idx`
-receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is an integer
-vector of length `length(X)`, work-item `i` solves system `idx = order[i]`.
+receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is a
+permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any other `order`
+throws.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
@@ -211,16 +215,7 @@ function solve!(
 )
     _validate_batch(X, p, order, options, kwargs)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
-    if isempty(X)
-        return (
-            SUCCESS = 0,
-            STALLED = 0,
-            MAXITERS = 0,
-            SINGULAR = 0,
-            NONFINITE = 0,
-            LINESEARCH_FAILED = 0
-        )
-    end
+    isempty(X) && return _tally_return_codes(ReturnCode[])
     backend = get_backend(X)
     codes = allocate(backend, ReturnCode, length(X))
     order_dev = _adapt_order(backend, order)
