@@ -23,11 +23,13 @@
             if !iszero(σ)
                 x₁ = A[k, k]
                 phase = iszero(x₁) ? one(F) : x₁ / abs(x₁)
-                v₁ = phase * (σ + abs(x₁))
-                τk = (σ + abs(x₁)) / σ
+                s_norm = σ / amax
+                u₁ = abs(x₁) / amax
+                v₁ = phase * (s_norm + u₁)
+                τk = (s_norm + u₁) / s_norm
                 τ[k] = F(τk)
                 for i in (k + 1):n
-                    A[i, k] = A[i, k] / v₁
+                    A[i, k] = (A[i, k] / amax) / v₁
                 end
                 A[k, k] = -phase * σ
             else
@@ -46,14 +48,15 @@ end
     @inbounds begin
         τk = τ[k]
         if !iszero(τk)
-            s = A[k, j]
+            akj = A[k, j]
+            s = zero(akj)
             for i in (k + 1):n
                 s += conj(A[i, k]) * A[i, j]
             end
-            s *= τk
-            A[k, j] -= s
+            A[k, j] = (one(τk) - τk) * akj - τk * s
             for i in (k + 1):n
-                A[i, j] -= A[i, k] * s
+                tik = A[i, k] * τk
+                A[i, j] -= tik * akj + tik * s
             end
         end
     end
@@ -66,14 +69,15 @@ end
             for k in 1:n
                 τk = τ[k]
                 if !iszero(τk)
-                    s = d[k]
+                    dk = d[k]
+                    s = zero(dk)
                     for i in (k + 1):n
                         s += conj(A[i, k]) * d[i]
                     end
-                    s *= τk
-                    d[k] -= s
+                    d[k] = (one(τk) - τk) * dk - τk * s
                     for i in (k + 1):n
-                        d[i] -= A[i, k] * s
+                        tik = A[i, k] * τk
+                        d[i] -= tik * dk + tik * s
                     end
                 end
             end
@@ -109,11 +113,6 @@ function ka_factorize_qr!(fac::DenseQR, J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     info = ka_qr!(fac.factors, fac.τ, fac.work)
     return DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, info, e)
-end
-
-function factorize!!(fac::DenseQR{<:AbstractGPUArray{<:BlasFloat}}, ::QRFactorization,
-        J::AbstractMatrix)
-    return ka_factorize_qr!(fac, J)
 end
 
 function factorize!!(fac::DenseQR{<:AbstractGPUArray}, ::QRFactorization, J::AbstractMatrix)

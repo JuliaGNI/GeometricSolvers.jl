@@ -11,16 +11,26 @@
 
 const MODE = isempty(ARGS) ? "auto" : lowercase(first(ARGS))
 
-if MODE != "cpu" && Base.find_package("Metal") === nothing
-    default_env = joinpath(homedir(), ".local", "share", "research-harness", "julia")
-    harness_env = get(ENV, "RESEARCH_HARNESS_JULIA", default_env)
-    if isdir(harness_env) && !(harness_env in LOAD_PATH)
-        push!(LOAD_PATH, harness_env)
-    end
+delete!(ENV, "JULIA_LOAD_PATH")
+empty!(LOAD_PATH)
+append!(LOAD_PATH, ["@", "@v#.#", "@stdlib"])
+
+if Base.find_package("GeometricSolvers") === nothing ||
+   (MODE != "cpu" && Base.find_package("Metal") === nothing)
+    repo_root = normpath(joinpath(@__DIR__, "..", "..", ".."))
+    metal_env = joinpath(repo_root, "test", "gpu", "metal")
     try
-        @eval using TestEnv
-        Base.invokelatest(TestEnv.activate)
+        @eval Main using Pkg
+        if isfile(joinpath(metal_env, "Project.toml"))
+            @eval Main Base.invokelatest(Pkg.activate, $metal_env; io = devnull)
+            @eval Main Base.invokelatest(Pkg.instantiate; io = devnull)
+        else
+            @eval Main Base.invokelatest(Pkg.activate, $repo_root; io = devnull)
+        end
     catch
+    end
+    if Base.find_package("GeometricSolvers") === nothing && !(repo_root in LOAD_PATH)
+        pushfirst!(LOAD_PATH, repo_root)
     end
 end
 
@@ -34,8 +44,8 @@ const LENGTHS = (10^6, 10^7, 10^8)
 function detect_metal(mode::AbstractString)
     mode == "cpu" && return false
     return try
-        @eval using Metal
-        Base.invokelatest(() -> Main.Metal.functional())
+        @eval Main using Metal
+        @eval Main Base.invokelatest(Metal.functional)
     catch
         false
     end

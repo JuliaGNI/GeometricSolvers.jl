@@ -6,7 +6,7 @@ function ldiv!!(d::AbstractVector{T}, fac::Union{DenseLU, DenseQR, DenseSVD},
         r::AbstractVector{T}) where {T <: Number}
     s = maximum(abs, r)
     iszero(s) && return fill!(d, zero(T))
-    rhs = fac.rhs
+    rhs = fac.rhs::AbstractVector
     F = eltype(rhs)
     rhs .= F.(r ./ s)
     backsolve!(fac, rhs)

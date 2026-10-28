@@ -148,3 +148,27 @@
   `rnorm` closes both: issue #29 proposes one.
 - **kind:** defect
 - **found:** #28; one fix with K14
+
+### K17 · Mixed-precision `ldiv!!` for dense factors throws `ArgumentError` on an empty right-hand side (`n = 0`).
+
+- **location:** `src/linear/mixed.jl:7` (`ldiv!!`, `s = maximum(abs, r)`)
+- **evidence:** `x0 = zeros(Float64, 0); prob0 = NonlinearProblem(x0, (r, y, p) -> nothing);
+  fac0 = factorize!!(init(LUFactorization(Float32), prob0, x0, nothing), LUFactorization(Float32),
+  zeros(Float64, 0, 0)); ldiv!!(similar(x0), fac0, zeros(Float64, 0))` raises `ArgumentError:
+  reducing over an empty collection is not allowed` (Julia 1.13.3), whereas the same-precision
+  `ldiv!!` method in `src/linear/dense.jl:116` returns the empty vector `d`.
+- **kind:** found late
+- **found:** 2026-10-28
+
+### K18 · Mixed-precision `ldiv!!` for dense factors multiplies `T.(rhs) .* s` before scaling by `2^(-e)`, which overflows when `s` is near `floatmax(T)` and `|rhs[i]| > 1`.
+
+- **location:** `src/linear/mixed.jl:14` (`ldiv!!`, `d .= ldexp2.(T.(rhs) .* s, -e)`)
+- **evidence:** for `s = 0.6 * floatmax(Float64)`, `J = Float64[s 0.0; 0.0 0.25 * s]` and
+  `r = Float64[s, s]`, `x = zeros(Float64, 2)`, `m = LUFactorization(Float32)`, `fac =
+  factorize!!(init(m, NonlinearProblem(x, (res, y, p) -> nothing), x, nothing), m, J)` and
+  `d = ldiv!!(similar(x), fac, r)` give `d == [1.0, Inf]` instead of `[1.0, 4.0]` (Julia 1.13.3),
+  because `T(rhs[2]) * s = 4.0 * s` overflows `Float64` to `Inf` before `ldexp2` scales by
+  `2^(-e)` with `e = 1024`.
+- **kind:** found late
+- **found:** 2026-10-28
+

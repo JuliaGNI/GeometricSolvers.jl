@@ -99,11 +99,6 @@ function ka_factorize_lu!(fac::DenseLU, J::AbstractMatrix)
     return DenseLU(fac.factors, fac.ipiv, fac.rhs, info, e, status)
 end
 
-function factorize!!(fac::DenseLU{<:AbstractGPUArray{<:BlasFloat}}, ::LUFactorization,
-        J::AbstractMatrix)
-    return ka_factorize_lu!(fac, J)
-end
-
 function factorize!!(fac::DenseLU{<:AbstractGPUArray}, ::LUFactorization, J::AbstractMatrix)
     return ka_factorize_lu!(fac, J)
 end

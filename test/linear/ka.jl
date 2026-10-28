@@ -1,6 +1,6 @@
-using GPUArraysCore: allowscalar
+using GPUArraysCore: AbstractGPUArray, allowscalar
 using JLArrays: JLArray, JLMatrix, JLVector
-using LinearAlgebra: I, cond, norm, opnorm
+using LinearAlgebra: BlasFloat, I, cond, norm, opnorm
 using Random: Xoshiro
 using Test
 
@@ -141,6 +141,26 @@ end
                     x_ref = big.(A_cpu) \ big.(b_cpu)
                     rel = Float64(norm(big.(x_h) - x_ref, Inf) / norm(x_ref, Inf))
                     @test rel <= 8 * n * Float64(eps(Float32)) * κ
+
+                    # Same-precision ldiv!! (T == TF) when factorize!! scaled a wider Jacobian (e != 0)
+                    F = T <: Complex ? ComplexF32 : Float32
+                    sb_f32 = sA < 1 ? 1e-20 : 1e20
+                    b_f32_cpu = F.(T(sb_f32) .* b0)
+                    x_f32 = JLArray(zeros(F, n))
+                    b_f32 = JLArray(copy(b_f32_cpu))
+                    prob_f32 = NonlinearProblem(x_f32, (r, y, p) -> nothing)
+                    m_f32 = M()
+                    fac_f32 = init(m_f32, prob_f32, x_f32, nothing)
+                    fac_f32 = factorize!!(fac_f32, m_f32, JLArray(A_cpu))
+                    @test fac_f32.info == 0
+                    @test fac_f32.scale_exponent != 0
+                    d_f32 = ldiv!!(similar(x_f32), fac_f32, b_f32)
+                    x_f32_h = Array(d_f32)
+                    @test all(isfinite, x_f32_h)
+                    x_f32_ref = big.(A_cpu) \ big.(b_f32_cpu)
+                    rel_f32 = Float64(norm(big.(x_f32_h) - x_f32_ref, Inf) /
+                                      norm(x_f32_ref, Inf))
+                    @test rel_f32 <= 8 * n * Float64(eps(Float32)) * κ
                 end
             end
         end
@@ -180,6 +200,15 @@ end
                 @test fac.info == 0
                 d = @inferred ldiv!!(similar(x_dev), fac, b_dev)
                 @test all(isfinite, Array(d))
+                if TF === Nothing
+                    fac_sc = fac isa DenseLU ?
+                             DenseLU(
+                        fac.factors, fac.ipiv, fac.rhs, fac.info, 3, fac.status) :
+                             DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, fac.info, 3)
+                    d_sc = ldiv!!(similar(x_dev), fac_sc, b_dev)
+                    @test isapprox(Array(d_sc), Array(d) ./ real(T)(8); rtol = 8 *
+                                                                               eps(real(T)))
+                end
             end
         end
     end
@@ -294,6 +323,31 @@ end
             end
         end
 
+        # Near-floatmax (0.6 * floatmax(RT)) reflector, trailing apply, and solve without intermediate overflow
+        s_hi = RT(0.6) * floatmax(RT)
+        for (A_hi, x_hi) in (
+            (T[T(s_hi) zero(T); zero(T) T(s_hi)], T[one(T), one(T)]),
+            (T[T(s_hi) T(s_hi); zero(T) T(s_hi)], T[one(T), zero(T)]),
+            (T[T(s_hi) zero(T); T(s_hi) T(s_hi)], T[one(T), zero(T)]),
+            (T[T(s_hi) zero(T); T(s_hi) T(s_hi)], T[T(RT(0.5)), T(RT(0.5))])
+        )
+            b_hi = A_hi * x_hi
+            for m in (LUFactorization(), QRFactorization())
+                x2 = JLArray(zeros(T, 2))
+                prob2 = NonlinearProblem(x2, (r, y, p) -> nothing)
+                fac_hi = init(m, prob2, x2, nothing)
+                fac_hi = factorize!!(fac_hi, m, JLArray(A_hi))
+                @test returncode(fac_hi) === SUCCESS
+                @test all(isfinite, Array(fac_hi.factors))
+                if m isa QRFactorization
+                    @test all(isfinite, Array(fac_hi.τ))
+                end
+                d_hi = ldiv!!(similar(x2), fac_hi, JLArray(b_hi))
+                @test all(isfinite, Array(d_hi))
+                @test isapprox(Array(d_hi), x_hi; rtol = sqrt(eps(RT)))
+            end
+        end
+
         # Complex overflow-safe multiplier in LU when pivot and subdiagonal are near floatmax
         if T <: Complex
             big_val = floatmax(RT) / RT(8)
@@ -355,11 +409,24 @@ end
         @test fac_col2_nz.info == 2
         @test all(isfinite, Array(fac_col2_nz.factors))
 
-        # (c) 2 x 2 matrix with two equal rows (unscaled and near floatmax) -> info == 2 for LU
+        # (c) 2 x 2 matrix with two equal rows (scaled and random draws) -> info == 2 for LU
+        x2 = JLArray(zeros(T, 2))
+        prob2 = NonlinearProblem(x2, (r, y, p) -> nothing)
         for scale in (one(RT), floatmax(RT) / RT(8))
             A_eq = T[T(scale) T(2 * scale); T(scale) T(2 * scale)]
-            x2 = JLArray(zeros(T, 2))
-            prob2 = NonlinearProblem(x2, (r, y, p) -> nothing)
+            fac_eq = init(m, prob2, x2, nothing)
+            copyto!(fac_eq.factors, JLArray(A_eq))
+            fac_eq = factorize!!(fac_eq, m, fac_eq.factors)
+            if M === LUFactorization
+                @test fac_eq.info == 2
+                @test returncode(fac_eq) === SINGULAR
+            end
+            @test all(isfinite, Array(fac_eq.factors))
+        end
+        rng_eq = Xoshiro(42)
+        for _ in 1:20
+            r_eq = randn(rng_eq, T, 2)
+            A_eq = T[r_eq[1] r_eq[2]; r_eq[1] r_eq[2]]
             fac_eq = init(m, prob2, x2, nothing)
             copyto!(fac_eq.factors, JLArray(A_eq))
             fac_eq = factorize!!(fac_eq, m, fac_eq.factors)
