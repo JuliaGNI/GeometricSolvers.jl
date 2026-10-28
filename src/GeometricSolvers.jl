@@ -21,6 +21,7 @@ export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_F
 export SolverStatus, StepInfo, Options
 export NonlinearProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
+export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg
 export Newton, NoRefinement, PerSystem, Picard, solve, solve!
 
@@ -37,6 +38,8 @@ include("linear/methods.jl")
 include("linear/factors.jl")
 include("linear/static/lu.jl")
 include("linear/static/qr.jl")
+include("linear/static/svd.jl")
+include("linear/static/eigen.jl")
 include("linear/dense.jl")
 include("linear/mixed.jl")
 

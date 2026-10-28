@@ -63,7 +63,9 @@ BF16
 A linear-solver method enters a solve through [`init`](@ref), [`factorize!!`](@ref) and
 [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
 `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
-`Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting. For a vector state (R3)
+`Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
+a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
+`√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
 [`init`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref), and
 [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place. [`factorize!!`](@ref) states
 what a singular matrix gives. These names are not exported. Reach them as `GeometricSolvers.name`.
@@ -75,10 +77,24 @@ ldiv!!
 factor_eltype
 StaticLU
 StaticQR
+StaticSVD
 DenseLU
 DenseQR
 DenseSVD
 returncode
+```
+
+### Eigensolver
+
+[`jacobi_eigen`](@ref) is a function on a matrix and not a linear-solver method: cyclic two-sided
+Jacobi for a Hermitian or a real symmetric matrix, on the rotations and the round-robin ordering of
+the Jacobi SVD with a Frobenius-norm pair floor `eps(R) * ‖H‖_F`, for the case
+`jacobi_eigen(im * M)` of a real skew `M` that the `ProjectedSkew` exponential algorithm of
+GeometricOptimizers needs. It adds no method to `LinearAlgebra.eigen`, because a method of `eigen`
+for a `StaticArrays` type would be type piracy.
+
+```@docs
+jacobi_eigen
 ```
 
 ## Line searches
@@ -188,6 +204,7 @@ classify
 backtrack_step
 zoom_step
 LinearMethod
+jacobi_rotation
 ToReal
 parameters
 record
@@ -198,5 +215,3 @@ norm2
 rnorm
 rdot
 ```
-
-
