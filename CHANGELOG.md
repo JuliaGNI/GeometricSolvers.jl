@@ -385,13 +385,20 @@ so that a compat-only bump can be told apart from an interface change.
   entries through the overflow-safe `multiplier(num, den)`. Unpivoted Householder QR scales each
   subcolumn by its largest entry magnitude `amax = maximum(abs, A[k:n, k])` before forming the
   reflector norm and records the first zero diagonal entry of `R` in `info`. Triangular backsolves
-  (`L`, `U` and `R`) and Householder applications (`Qᴴ`) run in a single workgroup (`ndrange = 1`)
-  on the device. In mixed precision (`TF !== T`), `ldiv!!` converts and scales the right-hand side
-  and the step by broadcasts without host scalar indexing. `norm2(a)` and `rdot(a, b)` call `sum`
+  (`L`, `U` and `R`) and the application of `Qᴴ` to the right-hand side run in one work-item (`ndrange = 1`) on the device;
+  the factorisations' column updates are parallel over the trailing matrix. In mixed precision
+  (`TF !== T`), `ldiv!!` converts and scales the right-hand side and the step by broadcasts without
+  host scalar indexing. The public `solve` does not reach these
+  kernels: its `init` for `Newton` builds no dense factor from the iterate, and its step factorises
+  with `nothing`, which has methods for static matrices only. The device path is reached only through
+  the internal `init`, `factorize!!` and `ldiv!!`, which a device-resident R3 `solve` would call.
+  `norm2(a)` and `rdot(a, b)` call `sum`
   without an `init` keyword (`isempty(a) ? zero(R) : R(sum(...))`), so `Array` and `Broadcasted`
   reductions use Base's pairwise `_mapreduce` rather than sequential `mapfoldl_impl`.
   `scripts/spikes/metal_reductions/run.jl` measures `norm2` and `rdot` on `MtlVector{Float32}` at
   `n = 10⁶, 10⁷, 10⁸` against a `Float64` host reference on positive-mean (`rand`) and zero-mean
   (`randn`) inputs: every relative error stays within the `⌈log₂(n)⌉ · eps(Float32)` pairwise
   tree-reduction bound (`20`, `24` and `27 · eps(Float32)`), so no custom `KernelAbstractions`
-  reduction kernel is needed. `KernelAbstractions` (0.9 or later) moves from `[extras]` to `[deps]`.
+  reduction kernel is needed. `KernelAbstractions` moves from `test/Project.toml` to the package's `[deps]`, at compat
+  `0.9.15` (`[0.9.15, 0.10)`): 0.9.15 is the lowest release that accepts `Adapt` 4, which the package
+  requires.
