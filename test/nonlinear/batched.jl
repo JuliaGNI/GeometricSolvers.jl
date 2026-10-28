@@ -178,6 +178,10 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         # length(S) != length(X)
         @test_throws DimensionMismatch solve!(copy(X), S_bad, prob, Newton(), p0)
 
+        # S on another backend than X: a host S with a device X, and a device S with a host X
+        @test_throws ArgumentError solve!(JLArray(copy(X)), S_good, prob, Newton(), p0)
+        @test_throws ArgumentError solve!(copy(X), JLArray(S_good), prob, Newton(), p0)
+
         # options !== nothing && !isempty(kwargs)
         opt = Options(Float64; max_iterations = 20)
         @test_throws ArgumentError solve!(

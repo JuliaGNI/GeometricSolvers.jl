@@ -4,6 +4,10 @@
 #
 # Usage:
 #   julia --startup-file=no --threads=auto --project=. scripts/r2_throughput.jl [backend] [N_sys] [n]
+#
+# `backend` is `cpu` (the default), `metal` or `cuda`. The package depends on neither Metal.jl nor
+# CUDA.jl: install the one you select in an environment on the load path, such as the default
+# `@v1.x` environment, or `import Metal` / `import CUDA` fails before the benchmark starts.
 
 using GeometricSolvers
 using GeometricSolvers: Adapt, Options, SolverStatus, ToReal, init, isconverged, solve!!

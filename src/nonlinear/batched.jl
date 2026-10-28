@@ -170,7 +170,7 @@ permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any 
 throws.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
-`R === real(eltype(eltype(X)))`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
+`R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
 buffer on `get_backend(X)`, copies the codes once to the host after kernel completion, and returns
 the six outcome counts as a `NamedTuple`.
 """
@@ -192,6 +192,10 @@ function solve!(
     if length(S) != length(X)
         throw(DimensionMismatch(
             "status vector length $(length(S)) does not match batch length $(length(X))"))
+    end
+    if get_backend(S) != get_backend(X)
+        throw(ArgumentError(
+            "status vector backend $(get_backend(S)) does not match batch backend $(get_backend(X))"))
     end
     _validate_batch(X, p, order, options, kwargs)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)

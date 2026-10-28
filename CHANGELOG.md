@@ -383,7 +383,9 @@ so that a compat-only bump can be told apart from an interface change.
   to device arrays.
   `solve!(X, S, prob, method, p = nothing; order = nothing, options = nothing, kwargs...) -> S`
   writes each system's `SolverStatus{R}` into `S[idx]` and returns `S`, raising `ArgumentError`
-  when `R !== real(eltype(eltype(X)))`.
+  when `R !== real(eltype(eltype(X)))`, or when `get_backend(S) != get_backend(X)`: a host `S` with
+  a device `X`, or a device `S` with a host `X`, is refused, so no kernel writes a status into a
+  host `S`.
   `solve!(X, prob, method, p = nothing; order = nothing, options = nothing, kwargs...)` allocates a
   1-byte-per-system `ReturnCode` buffer on `get_backend(X)`, copies the codes once to the host
   after `synchronize(backend)`, and returns the six outcome counts as a `NamedTuple`
