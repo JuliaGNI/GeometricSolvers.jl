@@ -203,10 +203,27 @@ end
         r = search(Backtracking(), linear, R; step = InexactStep(η))
         @test r == LineSearchResult{R}(1, (1 - (1 - η))^2, SUCCESS, 1)
         @test isempty(linear.atφ′)
-        # an η of a wider type converts to the type of the merit, as a slope passed as a number does
-        @test linesearch(
-            inR(R, Backtracking()), linear.lf, InexactStep(Float64(η)), one(R),
-            one(R)) == r
+        # an η or slope of another real type raises MethodError on linesearch
+        Other = R === Float32 ? Float64 : Float32
+        for ls in (inR(R, Backtracking()), inR(R, Static()))
+            err_η = try
+                linesearch(ls, linear.lf, InexactStep(Other(η)), one(R), one(R))
+                nothing
+            catch e
+                e
+            end
+            @test err_η isa MethodError
+            @test err_η.f === linesearch
+
+            err_s = try
+                linesearch(ls, linear.lf, Other(-2), one(R), one(R))
+                nothing
+            catch e
+                e
+            end
+            @test err_s isa MethodError
+            @test err_s.f === linesearch
+        end
         @test search(Backtracking(), linear, R; step = ExactStep()).α < 1
 
         # A backtrack must update η ← 1 - θ(1 - η): the step accepted here decreases the merit by

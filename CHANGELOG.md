@@ -35,6 +35,53 @@ so that a compat-only bump can be told apart from an interface change.
   older version (AMDGPU.jl 2.8.0 holds GPUArrays at 11), to resolve the spike's packages and the
   vendor package together in one environment outside the clone.
 
+- **Julia 1.13 is the floor** (`[compat] julia = "1.13"`, from 1.11). A breaking change under
+  this package's pre-1.0 convention: a caller on Julia 1.11 can no longer install this version.
+  The eight other environments of the repository (`test/gpu/cuda`, `test/gpu/metal`,
+  `test/gpu/rocm`, `test/enzyme`, `scripts/spikes/nextla`, `scripts/spikes/capabilities`,
+  `scripts/spikes/kernel_newton` and `scripts/spikes/metal_qr`) state the same floor. The reason
+  is Metal: with Metal.jl 1.11.1, static `QRFactorization` in `Float32` misses its accuracy bound
+  on Julia 1.12.7 for every fill of the scaled subcolumn measured that keeps the factorisation
+  free of heap allocation on the host (the previous fill at `n = 7, 8`; this release's fill at
+  `n = 3:9`). This release's fill passes at every `n` in `1:12` on Julia 1.13.2.
+  `scripts/spikes/metal_qr/README.md` compares five fills. The allocation tests of
+  `test/base/bang.jl`, `test/base/reductions.jl`, `test/ad/jacobian.jl`,
+  `test/ad/forwarddiff_static.jl`, `test/linear/static/lu.jl` and
+  `test/linear/static/qr.jl` no longer go through a function barrier and a warm-up call: on Julia
+  1.12.7 a bare `@allocated` at testset scope reads the same figure as the barrier in every case
+  measured (zero for each call asserted to allocate nothing, a positive figure for each `collect`
+  control), and it does not count the compilation of a first call. The tolerances on the product
+  of static matrices in `test/base/bang.jl` stay: on Julia 1.12.7 on aarch64 the seam kernel's
+  product and the closure's still differ by up to 2 ulp in `ComplexF32`, and an x86_64 run, which
+  CI includes, is not measured. Both sets of figures are from Julia 1.12.7, now below the floor,
+  and no run on 1.13 measured either the allocation reading or the 2 ulp difference, so the
+  tolerances stay.
+
+- Static `QRFactorization` (`factorize!!` in `src/linear/static/qr.jl`) fills the scaled subcolumn
+  buffer `x` in one loop over `1:N`: `x[i]` is `A[i, k] / amax` for `i >= k` when `amax` is
+  nonzero, and zero otherwise. The previous code zeros `x` and fills only `k:N`, under
+  `if !iszero(amax)`. On Metal (Metal.jl 1.11.1) this repairs `Float32` QR on Julia 1.13. In a
+  sweep over `n = 1:12` of `conditioned_systems(1000n + 1, Float32, Nothing, n)`, a system counts
+  as failed if it misses the bound of check 1 or returns `info ≠ 0`: the previous fill fails at
+  `n = 3:9`, and this fill fails at no `n`. In `test/devices/metal_linear.jl` on Julia 1.13.2, the
+  previous fill gives 139 passed and 5 failed, all in `QRFactorization on Metal, Float32, n = 4`,
+  and this fill gives 144 passed. With this fill the sweep has no failing `n` for QR or LU, in
+  `Float32` or `ComplexF32`. This closes `K9` in `KNOWN_ISSUES.md`. The cause is not located: no
+  experiment separates Metal.jl's lowering from Apple's Metal compiler, and no upstream report
+  exists. `K10` and `K11` stay open. `K10`: the Metal CI job runs with `--check-bounds=yes`, which
+  hides this failure; with that flag the previous fill passes every `n` on Julia 1.13.2. `K11`:
+  the Metal test sizes 1, 4, 16 and 24 reach only `n = 4` of the failing sizes.
+  `scripts/spikes/metal_qr/` holds the 4 × 4 reproducer (`probe.jl`), the sweep (`sweep.jl`) and
+  `README.md`, which compares five fills.
+  On the host, the factors, `τ` and `info` are bitwise identical to the previous fill on 64 random
+  matrices per element type (`Float64`, `Float32`, `ComplexF64`) and size (`N` in 2, 4, 8 and 16),
+  and both fills allocate nothing. The median time per factorisation, this fill relative to the
+  previous one on Julia 1.13.2 (two cold runs, load average 9 to 12), is 1.81 to 1.86 for `Float64`
+  at `N = 2`, 1.95 for `Float32` at `N = 2`, 1.19 to 1.22 for `Float32` at `N = 4`, and 0.99 to
+  1.05 for every other pair measured. So a caller of static QR at `N = 2` in `Float64` or
+  `Float32`, or at `N = 4` in `Float32`, should expect the factorisation to take 1.2 to 2 times as
+  long. Only `N` in 2, 4, 8 and 16 was measured.
+
 ### New Features
 
 - The empty package skeleton: `Project.toml`, the module and its
@@ -143,8 +190,8 @@ so that a compat-only bump can be told apart from an interface change.
 - Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
   `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts
   every float of a method tree to `R` through `Adapt`.
-- `Adapt` is the first runtime dependency. The Julia floor is 1.11, for
-  `LAPACK.getrf!(A, ipiv)` with preallocated pivots.
+- `Adapt` is the first runtime dependency. `LAPACK.getrf!(A, ipiv)` with preallocated pivots
+  needs Julia 1.11 or later.
 - Device runs by hand, as no runner has a CUDA or ROCm GPU: `test/gpu/cuda`, `test/gpu/rocm` and
   `test/gpu/metal` are one environment per vendor, and `test/gpu/runtests.jl <backend>` runs a
   KernelAbstractions kernel on the device in `Float32` and `Float16` (and `Float64` on CUDA and
@@ -214,3 +261,112 @@ so that a compat-only bump can be told apart from an interface change.
   `Enzyme` workflow, which is not a required status check: an Enzyme break then fails that job
   alone and blocks no merge. Runtime activity is what a `Constant` parameter context needs from
   Enzyme's forward mode; a plain `AutoEnzyme()` raises `EnzymeRuntimeActivityError`.
+
+- `NonlinearProblem(F)` and `NonlinearProblem(F, J)`, exported, hold the residual `F` of a nonlinear
+  system and, optionally, its derivative `J`. A problem holds functions only, with no parameters
+  and no iterate, so it is `isbits` when `F` and `J` are, and one problem serves every call that
+  passes other parameters. The value method of `residual!!` calls `F(x, p)` for every iterate it is
+  handed — an `SVector`, an `MVector`, a `Number`, and an `Array` with the value slot `nothing` —
+  because the iterate's type is read nowhere: the dispatch is on the storage slot and on nothing
+  else.
+
+- Internal: the storage seam, the functions an algorithm calls on its iterate, its residual, its
+  update and its factorisation: `residual!!`, `update_iterate!!`, `map!!`, `mul!!`, `buffer`,
+  `factorize!!` and `ldiv!!`. Each has a value method for a `StaticArray` or a `Number` iterate, so
+  an algorithm written against them is written once for both storages. A `Number` Jacobian is
+  factorised as a `1 × 1` matrix.
+
+- Internal: `jacobian!!` and `jvp!!` for a `StaticVector` or a `Number` iterate. With the
+  source `nothing`, `jacobian!!` returns the problem's `J` and `jvp!!` returns `J(x, p) * v`; with
+  `AutoForwardDiff()`, `jacobian!!` differentiates the residual with ForwardDiff, and `jvp!!` takes
+  one dual evaluation of it. The R1 direction has the element type and the length of the iterate,
+  as the line-search slope does: a direction of another element type is a host `MethodError`. The
+  ForwardDiff path allocates nothing. A method's own operator is a `JacobianFunction`, which
+  `jacobian!!` calls in place of `J`, and `jvp!!` never reads it.
+
+- `Newton`, `Picard`, `NoRefinement` and `solve` (exported), and `solve!!` (`public`), together with
+  the internal `init`, `step!!`, `refine!!`, `LineFunction` and `globalize!!`, run the nonlinear
+  solver loop in R1 (`StaticVector`, `MVector` or `Number` iterate) on the host and inside a
+  KernelAbstractions kernel, one system per thread. `solve(prob, x₀, method, p = nothing; options,
+  kwargs...)` adapts `method` to `R = real(eltype(x₀))` through `ToReal{R}()`, builds `state` with
+  `init(method_R, prob, x₀, p)`, runs `solve!!(state, prob, x₀, method_R, p, opt)`, and returns
+  `(x, status)`. Passing both `options` and keyword tolerances raises `ArgumentError`;
+  `solve!!` returns `(x, status, state)`. In R1 `init` returns an `isbits` named tuple
+  `(; jacprep, jvpprep)` when `reuse === nothing`, or `(; jacprep, jvpprep, fac, age = Int32(0),
+  stalled = false)` when `reuse` is an `Int32`. `LineFunction(prob, x, Fx, d, p, jvpprep)` takes the residual `Fx` at `x` as a positional argument
+  and evaluates the merit `φ(lf, α) = norm2(F(x + α*d, p))`, which is always `norm2`, and its
+  derivative `φ′(lf, α) = 2 * rdot(F(x + α*d, p), jvp)` by one pushforward (`jvp!!`).
+  `globalize!!` dispatches on the line search: `Static(α)` evaluates `F(x + α*d, p)` directly
+  without building a `LineFunction`, while `Backtracking`, `Bisection` and `StrongWolfe` build a
+  `LineFunction` and call `linesearch`. A step that the search takes returns the residual the
+  search evaluated there, so an accepted step costs no second evaluation of `F`. In `linesearch`, `StepKind{R}` accepts
+  an `InexactStep{R}` or raw slope `R` only when its element type matches the line search's `R`;
+  another real type is a `MethodError`.
+  `Newton(; linsolve, globalization, jacobian, refinement, regularization, reuse)` evaluates `J`
+  (or reuses `state.fac` while `0 < state.age < reuse` and `!state.stalled`), adds
+  `regularization * I` to the diagonal when `regularization > 0`, factorises with `factorize!!`,
+  solves `J * s = Fx` with `ldiv!!`, and sets `d₀ = -s` and `d = refine!!(nothing, refinement, ...)`.
+  The step kind passed to `globalize!!` is `ExactStep()` on a fresh factorisation when `jacobian` is
+  `nothing` or an `AbstractADType`, `regularization` is zero, `factor_eltype(linsolve, T) === T`,
+  and `refinement isa NoRefinement`, and `MeasuredSlope()` otherwise. A regularised step
+  `d = -(J + μI)⁻¹F` does not satisfy the `-2φ₀` slope of `ExactStep`, so it takes the measured
+  one. When a line search returns `LINESEARCH_FAILED`
+  with a finite trial merit strictly below `φ₀ = norm2(Fx)`, `globalize!!` accepts the trial point
+  and records `LINESEARCH_FAILED` in `step_failures`; otherwise the solver stops with
+  `LINESEARCH_FAILED`. A line search along a reused factor that fails without a step is retried
+  once, in the same step, from a fresh factor: the iteration count does not grow, the step costs
+  one more Jacobian and factorisation, and a solve that stopped with `LINESEARCH_FAILED` after a
+  stale step now continues. `Picard(; damping = 1, globalization = Static())` takes `d = -damping * Fx`
+  with `MeasuredSlope()`. On `SVector` and `Number` iterates, `solve` allocates zero bytes after
+  warmup.
+
+- `DogLeg(; radius = nothing)` (exported), the trust-region globalization of `Newton`:
+  `Newton(; globalization = DogLeg())`, with the defaults of Procedure 4.1 of Pawlowski, Simonis,
+  Walker and Shadid (2008). Each step evaluates and factorises `J` once and solves for the Newton
+  step once; the step is the Newton step inside the radius, else the Cauchy step along `-J' F`
+  scaled to the radius when the Cauchy point lies outside it, else the point of the radius on the
+  segment between them. `J` is the factorised, regularised matrix, and its adjoint serves a
+  complex `T`. A trial is accepted at `pred > 0` and `ared ≥ 10⁻⁴ pred`, with
+  `pred = ‖F‖ − ‖F + J s‖` and `ared = ‖F‖ − ‖F(x + s)‖` in unsquared norms; a rejected trial
+  shrinks the radius by 0.25 and chooses again on the same curve with no new Jacobian, and a
+  rejection at the floor `10⁻⁶` returns `LINESEARCH_FAILED` with the iterate kept. After an
+  accepted step other than the whole Newton step, only the residual test can end the solve with
+  `SUCCESS`, as after a stall, and the step is not counted as a stall. The radius, in
+  `[10⁻⁶, 10¹⁰]`, starts at the first Newton step's norm (the Cauchy length without one), or
+  at `2·10⁻⁶` when that norm is below `10⁻⁶`, as Procedure 4.1 has it, unless `radius` gives
+  it, and lives in the `Newton` state, `(; jacprep, jvpprep, radius)`. `DogLeg` refuses a `radius`
+  that is not positive and finite as given, and stores it clamped to `[10⁻⁶, 10¹⁰]` after each
+  conversion. A singular factor or a Newton step whose norm is not finite takes the Cauchy point,
+  cut to the radius when it lies outside it. The Cauchy direction is formed from the unit
+  residual, `J' (F / ‖F‖)`, so no norm of `J' F` occurs: in `Float32`, a scale of `F` and `J` by
+  `10^k`, `k ∈ {−16, −12, −8, 8, 12, 16}`, gives the code and the iteration count of the unscaled
+  Rosenbrock, Dennis–Schnabel and cubic problems. Where the Cauchy point is needed and that
+  direction is zero or its norm is not finite, or `J` maps it to zero or to a vector whose norm is
+  not finite, the step returns `STALLED`; at `F(x) = 0` it returns `SUCCESS` with the iterate kept.
+  `Newton` refuses `DogLeg` with `reuse` with an `ArgumentError`, because a reused factor makes the
+  model stale. `DogLeg` solves `atan(x)` from 10 and the Dennis–Schnabel system from `(2, 0.5)`,
+  where a fixed step diverges or ends `NONFINITE`, and the Rosenbrock system from `(−1.2, 1)`, in
+  `Float32` and `Float64`; on the Rosenbrock system a KernelAbstractions kernel gives the host's
+  result bit for bit, and a solve allocates nothing. On `x³ − 2x + 2` from 0 it stops with
+  `LINESEARCH_FAILED` at `√(2/3)`, the local minimum of `|F|`: the root lies beyond a local maximum
+  of `|F|` above `|F(0)|`, so no path along which `|F|` decreases reaches it.
+
+- Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
+  pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
+  `T = eltype(x)`, with factor precision `TF = factor_eltype(m, T)` and a right-hand-side conversion
+  buffer `rhs` when `TF !== T`. On `BlasFloat` (`Float32`, `Float64`, `ComplexF32`,
+  `ComplexF64`), `factorize!!` and `ldiv!!` call LAPACK's `getrf!`/`getrs!`, `geqrf!` with
+  `ormqr_adj!` and a `BLAS.trsv!` backsolve, and QR-iteration `gesvd!` with rank cutoff
+  `√n · eps(real(TF)) · σ₁`, reusing the pre-allocated workspaces without allocation. On other
+  `AbstractMatrix` element types (`BigFloat`), `DenseLU` and `DenseQR` use `LinearAlgebra.lu!` (with
+  `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
+  In mixed precision (`TF !== T`), `ldiv!!` also scales the right-hand side by its infinity norm
+  before converting to the factor precision, and returns zero directly on a zero right-hand side.
+  Where the element type of `J` differs from the factor type, `factorize!!` divides `J` by the power
+  of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, as the static factorisation
+  does, and `ldiv!!` multiplies the step by `2^-e` in both paths. So a `Float64` or `ComplexF64` `J`
+  at a scale where its entries overflow or become subnormal in `TF`, such as `1e39` or `1e-40` for
+  `Float32`, solves to the factor precision's bound. Entries far below the largest of `J` can still
+  underflow, and an `Inf` in `J` gives a step that is not specified. `LinearAlgebra` is now a
+  direct dependency of the package.
+

@@ -179,22 +179,3 @@ function kernel_solve(AT, m, As, bs)
         KernelAbstractions.synchronize(backend)
     return Array(x), Array(info)
 end
-
-# The allocation assertions go through a function barrier whose arguments have concrete types,
-# and which calls the function once before it measures: at testset scope Julia 1.11 boxes the
-# captured values and the assertion fails although the code allocates nothing.
-function factorize_allocations(m::M, A::A_) where {M, A_}
-    factorize!!(nothing, m, A)
-    return @allocated factorize!!(nothing, m, A)
-end
-
-function ldiv_allocations(fac::F, b::B) where {F, B}
-    ldiv!!(nothing, fac, b)
-    return @allocated ldiv!!(nothing, fac, b)
-end
-
-# the control: the barrier sees an allocation where there is one
-function collect_allocations(b::B) where {B}
-    collect(b)
-    return @allocated collect(b)
-end

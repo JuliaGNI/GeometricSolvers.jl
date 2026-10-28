@@ -74,7 +74,7 @@ function newton(F, J, x, opt::Options{R}) where {R}
         d = -(J(x) \ Fx)
         x = x + d
         Fx = F(x)
-        st = record(st, StepInfo{R}(MAXITERS, rnorm(Fx), rnorm(d), Int32(0), false))
+        st = record(st, StepInfo{R}(MAXITERS, rnorm(Fx), rnorm(d), Int32(0), false, false))
     end
     return x, st, converged(opt, st, fnorm₀, rnorm(x))
 end

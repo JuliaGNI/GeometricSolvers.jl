@@ -62,7 +62,94 @@
 - **kind:** found late
 - **found:** 2026-10-15
 
-### K7 · A `StaticSVD`'s reported `σ` holds `Inf` where `σ₁` exceeds `floatmax(real(TF))`.
+### K7 · A value iterate that is a mutable static array allocates on every update.
+
+- **location:** `src/base/bang.jl` (`update_iterate!!`, `map!!`)
+- **evidence:** `update_iterate!!(nothing, v, α, v)` with an `MVector{4, Float64}` allocates 48
+  bytes, 32 in `Float32`, 48 in `ComplexF32` and 80 in `ComplexF64`, and `map!!(-, nothing, v)` the
+  same, measured with `@allocated` at testset scope in a cold process on Julia 1.13.2. `buffer(v)`
+  is `nothing` and allocates nothing. The result of an arithmetic operation on a mutable static
+  array is a new mutable array, which the heap holds, so no method of the seam can avoid this while
+  the iterate keeps its type. An `MVector` is a value iterate for the call form and for the value
+  methods, and the zero-allocated-bytes target of the R1 regime names `SVector` and `Number`, so
+  the target does not cover this case.
+- **kind:** found late
+- **found:** 2026-10-16
+
+### K10 · The Metal CI job runs with bounds checks, which hide a Metal miscompilation of the static QR.
+
+- **location:** `.github/workflows/Metal.yml:73` (`julia-actions/julia-runtest@v1`)
+- **evidence:** the step sets no `check_bounds`, so `julia-runtest` runs the tests with
+  `--check-bounds=yes` (the job log shows `check_bounds: yes`), which restores the bounds checks
+  that `@inbounds` removes. On Julia 1.13.2 with Metal.jl 1.11.1 on an `AGXG16CDevice`, a zeroed
+  `x` filled over `k:N` under `if !iszero(amax)`, in place of the fill of `x` in `factorize!!`,
+  makes `QRFactorization` in `Float32` miss the bound of check 1 at `n = 3:9` with
+  `--check-bounds=auto`, and at no `n` in `1:12` with `--check-bounds=yes`
+  (`scripts/spikes/metal_qr/README.md`, first row). A change of that kind therefore
+  passes the job. The runner's `AppleParavirtDevice` differs from the local device, so it is not
+  known whether the runner reproduces the failure at `--check-bounds=auto`.
+- **kind:** missing test
+- **found:** #24
+
+### K11 · The Metal test sizes reach one of the sizes at which a fill of `x` in the static QR fails.
+
+- **location:** `test/helpers/staticsystems.jl:21` (`STATIC_SIZES = (1, 4, 16, 24)`)
+- **evidence:** `test/devices/metal_linear.jl` runs `n = 1, 4, 16, 24`. On Julia 1.13.2, three of
+  the fills of `x` that `scripts/spikes/metal_qr/README.md` compares make `QRFactorization` in
+  `Float32` fail on Metal at `n = 3:9`, and the test reaches only `n = 4` of those sizes.
+- **kind:** missing test
+- **found:** #24
+
+### K12 · `test/globalization/linesearch.jl` exceeds the 60 s `core` file budget cold.
+
+- **location:** `test/globalization/linesearch.jl:1`
+- **evidence:** `run-tests.jl <worktree> globalization/linesearch.jl` on Julia 1.13.2 takes
+  `79.7s` cold (`1372 passed, 0 failed`), above the 60 s per-file `core` budget.
+- **kind:** found late
+- **found:** 2026-10-24
+
+### K13 · `Newton` with `Static()` returns `SUCCESS` at a non-root when the Jacobian is infinite.
+
+- **location:** `src/nonlinear/newton.jl:179` (`step!!` of `Newton` with `reuse = nothing`)
+- **evidence:** `solve(NonlinearProblem((x, p) -> x * x - 4, (x, p) -> R(Inf)), R(3), Newton())`
+  gives `SUCCESS` with `x == 3` after 1 iteration, in `Float32` and `Float64` (Julia 1.13.2). The
+  factor of `Inf` is not singular, the step `-F / Inf` is `-0.0`, and `converged` in
+  `src/base/options.jl` reads the zero `stepnorm` as `stepnorm ≤ x_reltol · ‖x‖`, although
+  `‖F(3)‖ = 5`. `DogLeg` does not take this path: it returns `LINESEARCH_FAILED` there.
+- **kind:** defect
+- **found:** 2026-10-26
+
+### K14 · `DogLeg` stalls on the Rosenbrock system in `Float32` scaled by 1e18 to 3e18.
+
+- **location:** `src/globalization/dogleg.jl` (`dogleg_step`, the Cauchy direction `g̃`)
+- **evidence:** `solve` with `Newton(; globalization = DogLeg())` on the Rosenbrock system
+  `s · (10 (x₂ − x₁²), 1 − x₁)` with its analytic `J`, from `(−1.2, 1)` in `Float32`, gives
+  `SUCCESS` after 9 iterations at `s = 1e16`, `1e17` and `3e17`, and `STALLED` after 2 at
+  `s = 1e18`, `2e18` and `3e18`, where `‖F(x₀)‖` is 4.9e18 to 1.5e19, below the overflow of the
+  norm of `F` near 1.8e19 (Julia 1.13.3). At `s = 1e18` the entries of `g̃ = J' (F / ‖F‖)` at
+  `x₀` are finite, `(−2.19e19, −8.94e18)`, but `rnorm(g̃)` is `Inf`, because their squares exceed
+  `floatmax(Float32)`. The first trial, the whole Newton step, is rejected, so the next trial needs
+  the Cauchy point, which this norm leaves undefined: the step returns `STALLED` with `x₀` kept. At
+  the same scales `Newton()` with `Static()` gives `NONFINITE` after 1 iteration, and with
+  `Backtracking()` `MAXITERS` or `NONFINITE`. The Dennis–Schnabel system from `(2, 0.5)` gives
+  `SUCCESS` after 4 iterations at every one of these scales. The tested scales are `10^k`,
+  `k ∈ {−16, −12, −8, 8, 12, 16}`.
+- **kind:** found late
+- **found:** 2026-10-27
+
+### K16 · `DogLeg` stalls where the norm of `J ĝ` overflows in the Cauchy length, although a descent step exists.
+
+- **location:** `src/globalization/dogleg.jl` (`dogleg_step`, `jnorm = rnorm(J * ĝ)`)
+- **evidence:** in `Float32`, `F(x) = s · (2x₁ − 1, −1)` with `J = s · diag(2, 0)` from `(0, 0)`
+  moves to the minimum of `‖F‖` at `x₁ = 0.5` at `s = 1e17` and `1e18`. At `s = 1e19`,
+  `J ĝ = (−2e19, 0)` and `rnorm(J ĝ)` is `Inf`, because the square of its entry exceeds
+  `floatmax(Float32)`. The Cauchy point is then undefined, and the step returns `STALLED` with the
+  iterate kept (Julia 1.13.3). `rnorm` squares its entries with no scaling, as in K14. A scaled
+  `rnorm` closes both: issue #29 proposes one.
+- **kind:** defect
+- **found:** #28; one fix with K14
+
+### K17 · A `StaticSVD`'s reported `σ` holds `Inf` where `σ₁` exceeds `floatmax(real(TF))`.
 
 - **location:** `src/linear/static/svd.jl:220`
 - **evidence:** `test/linear/static/svd.jl`, the testset *a singular value above `floatmax(R)`

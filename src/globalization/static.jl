@@ -19,7 +19,9 @@ Static(α::Real = 1.0) = Static{float(typeof(α))}(float(α))
 Adapt.@adapt_structure Static
 
 function linesearch(
-        ls::Static{R}, lf, step::StepKind, φ₀::R, α::R, αmax::R = R(Inf)) where {R}
-    usable_ceiling(αmax) || return LineSearchResult{R}(ls.α, R(NaN), LINESEARCH_FAILED, 0)
-    LineSearchResult{R}(min(ls.α, αmax), R(NaN), SUCCESS, 0)
+        ls::Static{R}, lf, step::StepKind{R}, φ₀::R, α::R, αmax::R = R(Inf)) where {R}
+    F₀ = anchor_residual(lf)
+    usable_ceiling(αmax) ||
+        return LineSearchResult{R, typeof(F₀)}(ls.α, R(NaN), LINESEARCH_FAILED, 0, F₀)
+    LineSearchResult{R, typeof(F₀)}(min(ls.α, αmax), R(NaN), SUCCESS, 0, F₀)
 end

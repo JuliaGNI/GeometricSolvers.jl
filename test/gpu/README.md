@@ -16,7 +16,8 @@ the output to a results branch. The maintainer then records the output and delet
 
 `test/gpu/<backend>/Project.toml` is one environment for each vendor: `cuda`, `rocm` and `metal`.
 A machine instantiates only its own, so it never installs another vendor's stack. Each environment
-has `GeometricSolvers` from this clone, through `[sources]`, which needs Julia 1.11 or later.
+has `GeometricSolvers` from this clone, through `[sources]`, and needs Julia 1.13 or later, the floor
+of `GeometricSolvers` itself.
 
 The spike environments in `scripts/spikes/<spike>/` are backend-neutral: they have no vendor
 package. A spike run stacks the vendor environment behind the spike's own through

@@ -81,7 +81,8 @@ function search(ls::Bisection{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, cei
         end
     end
     done || (αres = iszero(lo) ? hi : lo)
-    φres = φ(lf, αres)
+    φres, Fres = merit_and_residual(lf, αres)
     n += Int32(1)
-    LineSearchResult{R}(αres, φres, done ? classify(φres, φ₀, τ) : LINESEARCH_FAILED, n)
+    LineSearchResult{R, typeof(Fres)}(
+        αres, φres, done ? classify(φres, φ₀, τ) : LINESEARCH_FAILED, n, Fres)
 end

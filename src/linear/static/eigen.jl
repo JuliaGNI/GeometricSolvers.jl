@@ -17,7 +17,7 @@ own.
 
 The call returns `(values, vectors, status)`: `values` holds the `N` eigenvalues in
 `real(eltype(A))`, `vectors` the columns of the unitary `V` with `A = V * Diagonal(values) * V'`,
-and `status` is [`SUCCESS`](@ref) where the sweep reached its fixed point, or [`MAXITERS`](@ref)
+and `status` is `SUCCESS` where the sweep reached its fixed point, or `MAXITERS`
 where it reached its cap of 30 sweeps first. All three are `isbits`, so the call runs inside a
 kernel.
 
@@ -25,7 +25,7 @@ The matrix is assumed Hermitian: the call reads its lower triangle and sets the 
 the conjugate of the lower one on entry, so a matrix that is not Hermitian gives the eigensystem
 of that Hermitian part and not the one of `A`. A `NaN` or an `Inf` entry is not checked: nothing
 throws, and the sweep reaches its cap for `N ≥ 2`; at `N = 1` there is no pair, so the call
-returns [`SUCCESS`](@ref).
+returns `SUCCESS`.
 
 For a real skew matrix `M`, the Hermitian matrix is `im * M`, with the eigenvalues `Λ` of
 `im * M` and
