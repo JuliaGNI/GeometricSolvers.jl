@@ -149,16 +149,20 @@
 - **kind:** defect
 - **found:** #28; one fix with K14
 
-### K17 · Mixed-precision `ldiv!!` for dense factors throws `ArgumentError` on an empty right-hand side (`n = 0`).
+### K17 · A `StaticSVD`'s reported `σ` holds `Inf` where `σ₁` exceeds `floatmax(real(TF))`.
 
-- **location:** `src/linear/mixed.jl:7` (`ldiv!!`, `s = maximum(abs, r)`)
-- **evidence:** `x0 = zeros(Float64, 0); prob0 = NonlinearProblem(x0, (r, y, p) -> nothing);
-  fac0 = factorize!!(init(LUFactorization(Float32), prob0, x0, nothing), LUFactorization(Float32),
-  zeros(Float64, 0, 0)); ldiv!!(similar(x0), fac0, zeros(Float64, 0))` raises `ArgumentError:
-  reducing over an empty collection is not allowed` (Julia 1.13.3), whereas the same-precision
-  `ldiv!!` method in `src/linear/dense.jl:116` returns the empty vector `d`.
+- **location:** `src/linear/static/svd.jl:218`
+- **evidence:** `test/linear/static/svd.jl`, the testset *a singular value above `floatmax(R)`
+  leaves the solve finite*: at a full `floatmax(T)/2` matrix in `Float32` and `Float64` it asserts
+  `@test !isfinite(fac.σ[1])` beside `all(isfinite, x)` and the `4n · eps(TF) · κ∞` solve bound.
+  `σ` is the `SVector{N, R}` of the singular values of the matrix as it was passed, in
+  `R = real(TF)`, and `factorize!!` unscales them by the power of two it divided the matrix by;
+  that product overflows `R` although every entry of the matrix is finite — the `σ₁` there is
+  `≈ 2.125 · floatmax`. The solve is not affected: `ldiv!!` divides by `σ̂`, the singular values
+  the sweep computed. Reporting a `σ₁` above `floatmax(R)` needs a field wider than the factor
+  type.
 - **kind:** found late
-- **found:** 2026-10-28
+- **found:** 2026-10-16
 
 ### K18 · Mixed-precision `ldiv!!` for dense factors multiplies `T.(rhs) .* s` before scaling by `2^(-e)`, which overflows when `s` is near `floatmax(T)` and `|rhs[i]| > 1`.
 
@@ -166,9 +170,8 @@
 - **evidence:** for `s = 0.6 * floatmax(Float64)`, `J = Float64[s 0.0; 0.0 0.25 * s]` and
   `r = Float64[s, s]`, `x = zeros(Float64, 2)`, `m = LUFactorization(Float32)`, `fac =
   factorize!!(init(m, NonlinearProblem(x, (res, y, p) -> nothing), x, nothing), m, J)` and
-  `d = ldiv!!(similar(x), fac, r)` give `d == [1.0, Inf]` instead of `[1.0, 4.0]` (Julia 1.13.3),
-  because `T(rhs[2]) * s = 4.0 * s` overflows `Float64` to `Inf` before `ldexp2` scales by
-  `2^(-e)` with `e = 1024`.
+  `d = ldiv!!(similar(x), fac, r)` give `d == [0.9999999761581418, Inf]` (Julia 1.13.3) for the
+  solution `[1.0, 4.0]`. With `e = 1023` and `fac.rhs == Float32[0.8333333, 3.3333333]`,
+  `T(rhs[2]) * s ≈ 3.33 * s` overflows `Float64` to `Inf` before `ldexp2` scales by `2^(-e)`.
 - **kind:** found late
 - **found:** 2026-10-28
-
