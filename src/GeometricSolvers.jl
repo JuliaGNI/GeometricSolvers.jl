@@ -9,6 +9,7 @@ using Adapt: Adapt
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
+using KernelAbstractions: @Const, @index, @kernel, get_backend, isgpu, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, ldiv!, lu!,
                      mul!, qr!
 using StaticArrays: MMatrix, MVector, SMatrix, StaticArray, StaticMatrix, StaticVector,
@@ -36,6 +37,8 @@ include("linear/factors.jl")
 include("linear/static/lu.jl")
 include("linear/static/qr.jl")
 include("linear/dense.jl")
+include("linear/ka/lu.jl")
+include("linear/ka/qr.jl")
 include("linear/mixed.jl")
 
 include("globalization/linesearch.jl")

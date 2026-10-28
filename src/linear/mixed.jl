@@ -8,13 +8,9 @@ function ldiv!!(d::AbstractVector{T}, fac::Union{DenseLU, DenseQR, DenseSVD},
     iszero(s) && return fill!(d, zero(T))
     rhs = fac.rhs
     F = eltype(rhs)
-    @inbounds for i in eachindex(rhs, r)
-        rhs[i] = F(r[i] / s)
-    end
+    rhs .= F.(r ./ s)
     backsolve!(fac, rhs)
     e = fac.scale_exponent
-    @inbounds for i in eachindex(d, rhs)
-        d[i] = ldexp2(T(rhs[i]) * s, -e)
-    end
+    d .= ldexp2.(T.(rhs) .* s, -e)
     return d
 end

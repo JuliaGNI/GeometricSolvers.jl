@@ -8,7 +8,10 @@
 
 The squared Euclidean norm ``\\sum_i |a_i|^2`` in `real(eltype(a))`.
 """
-norm2(a) = sum(abs2, a; init = zero(real(eltype(a))))
+function norm2(a)
+    R = real(eltype(a))
+    return isempty(a) ? zero(R) : R(sum(abs2, a))
+end
 
 """
     rnorm(a)
@@ -29,7 +32,8 @@ function rdot(a, b)
     # The broadcast below would otherwise extend a length-1 or a row argument without an error.
     axes(a) == axes(b) || throw(DimensionMismatch("rdot arguments have different axes"))
     R = real(promote_type(eltype(a), eltype(b)))
+    isempty(a) && return zero(R)
     # A lazy broadcast: `mapreduce` over two `Array`s materialises `map(f, a, b)` first.
     products = Broadcast.instantiate(Broadcast.broadcasted((x, y) -> real(conj(x) * y), a, b))
-    sum(products; init = zero(R))
+    return R(sum(products))
 end

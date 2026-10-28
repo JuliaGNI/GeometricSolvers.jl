@@ -96,21 +96,28 @@ struct StaticQR{N, TF, L}
 end
 
 """
-    DenseLU{A, P, V}
+    DenseLU{A, P, V, S}
 
 The LU factors with partial pivoting of a dense `n × n` matrix, with `factors` the `n × n`
-buffer in the factor element type, `ipiv` the `BlasInt` pivot vector of length `n`, `rhs` the
-right-hand-side buffer of the factor element type when that differs from the working element type
-and `nothing` otherwise, `info` the index of the first zero pivot, or 0, and `scale_exponent` the
-exponent `e` of the power of two `2^e` that the matrix was divided by.
+buffer in the factor element type, `ipiv` the pivot vector of length `n` (`BlasInt` on the host,
+`Int32` on a device), `rhs` the right-hand-side buffer of the factor element type when that differs
+from the working element type and `nothing` otherwise, `info` the index of the first zero pivot, or
+0, `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by, and
+`status` the 1-element `Int32` status buffer on a device array and `nothing` on the host.
 """
 struct DenseLU{A <: AbstractMatrix, P <: AbstractVector,
-    V <: Union{Nothing, AbstractVector}}
+    V <: Union{Nothing, AbstractVector}, S <: Union{Nothing, AbstractVector{Int32}}}
     factors::A
     ipiv::P
     rhs::V
     info::Int
     scale_exponent::Int
+    status::S
+end
+
+function DenseLU(factors::AbstractMatrix, ipiv::AbstractVector,
+        rhs::Union{Nothing, AbstractVector}, info::Int, scale_exponent::Int)
+    return DenseLU(factors, ipiv, rhs, info, scale_exponent, nothing)
 end
 
 """
@@ -118,7 +125,8 @@ end
 
 The Householder QR factors of a dense `n × n` matrix, with `factors` the `n × n` buffer in the
 factor element type (`R` on and above the diagonal, reflectors below it), `τ` the reflector scale
-vector of length `n`, `work` the workspace buffer, `rhs` the right-hand-side buffer of the factor
+vector of length `n`, `work` the workspace buffer (the LAPACK workspace on the host, and the
+1-element `Int32` status buffer on a device), `rhs` the right-hand-side buffer of the factor
 element type when that differs from the working element type and `nothing` otherwise, `info` the
 index of the first zero diagonal entry of `R`, or 0, and `scale_exponent` the exponent `e` of the
 power of two `2^e` that the matrix was divided by.
@@ -168,9 +176,10 @@ function init(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
-    ipiv = Vector{BlasInt}(undef, n)
+    ipiv = x isa AbstractGPUArray ? similar(x, Int32, n) : Vector{BlasInt}(undef, n)
     rhs = F === T ? nothing : similar(x, F, n)
-    return DenseLU(factors, ipiv, rhs, 0, 0)
+    status = x isa AbstractGPUArray ? similar(x, Int32, 1) : nothing
+    return DenseLU(factors, ipiv, rhs, 0, 0, status)
 end
 
 function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
@@ -178,7 +187,7 @@ function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     n = length(x)
     factors = similar(x, F, n, n)
     τ = similar(x, F, n)
-    work = similar(x, F, max(1, 64 * n))
+    work = x isa AbstractGPUArray ? similar(x, Int32, 1) : similar(x, F, max(1, 64 * n))
     rhs = F === T ? nothing : similar(x, F, n)
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end

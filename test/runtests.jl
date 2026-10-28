@@ -19,6 +19,7 @@ if "core" in GROUPS
     @safetestset "Static LU" include("linear/static/lu.jl")
     @safetestset "Static QR" include("linear/static/qr.jl")
     @safetestset "Dense linear solvers" include("linear/dense.jl")
+    @safetestset "KA dense linear solvers" include("linear/ka.jl")
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
     @safetestset "Line function and globalization" include("globalization/linefunction.jl")
@@ -40,5 +41,6 @@ end
 if "metal" in GROUPS
     @safetestset "Metal" include("devices/metal.jl")
     @safetestset "Metal static LU and QR" include("devices/metal_linear.jl")
+    @safetestset "Metal KA LU and QR" include("devices/metal_ka.jl")
     @safetestset "Metal R1 nonlinear" include("devices/metal_nonlinear.jl")
 end
