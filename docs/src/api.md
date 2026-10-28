@@ -55,10 +55,10 @@ returncode
 ### Eigensolver
 
 [`jacobi_eigen`](@ref) is a function on a matrix and not a linear-solver method: cyclic two-sided
-Jacobi for a Hermitian or a real symmetric matrix, on the rotations, the round-robin ordering and
-the stopping test of the Jacobi SVD (decision 27), for the `ProjectedSkew` case
+Jacobi for a Hermitian or a real symmetric matrix, on the rotations and the round-robin ordering of
+the Jacobi SVD with a Frobenius-norm pair floor `eps(R) * ‖H‖_F`, for the `ProjectedSkew` case
 `jacobi_eigen(im * M)` of a real skew `M`. It adds no method to `LinearAlgebra.eigen`, because a
-method of `eigen` for a `StaticArrays` type would be type piracy (decision 38).
+method of `eigen` for a `StaticArrays` type would be type piracy.
 
 ```@docs
 jacobi_eigen

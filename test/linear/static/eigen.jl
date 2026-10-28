@@ -1,5 +1,5 @@
 # The R1 cyclic two-sided Jacobi eigensolver of `src/linear/static/eigen.jl` (decision 27): the
-# rotations, the round-robin ordering and the stopping test of the Jacobi SVD of
+# rotations and the round-robin ordering of the Jacobi SVD of
 # `src/linear/static/svd.jl`, applied to a Hermitian matrix from both sides.
 #
 # The check is the one of decision 27, `jacobi_eigen(im * M)` for a real skew `M`, which is the

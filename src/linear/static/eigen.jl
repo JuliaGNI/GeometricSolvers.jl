@@ -1,20 +1,19 @@
-# The R1 cyclic two-sided Jacobi eigensolver for a Hermitian — or a real symmetric — matrix
-# (decision 27): the rotations, the round-robin ordering and the stopping test of the Jacobi SVD
-# of `svd.jl`, applied to both sides of the matrix at once. It is a function on a matrix and not
-# a `linsolve` value (decision 38), it is the only consumer of the SVD's rotations and of nothing
-# else in this package, and it adds no method to `LinearAlgebra.eigen`: a method on a
-# `StaticArrays` type would be type piracy, which check 5 asserts.
+# The R1 cyclic two-sided Jacobi eigensolver for a Hermitian — or a real symmetric — matrix:
+# the rotations and the round-robin ordering of the Jacobi SVD of `svd.jl`, applied to both sides
+# of the matrix at once. It is a function on a matrix and not a `linsolve` value, it is the only
+# consumer of the SVD's rotations and of nothing else in this package, and it adds no method to
+# `LinearAlgebra.eigen`: a method on a `StaticArrays` type would be type piracy.
 
 """
     jacobi_eigen(A)
 
 The eigenvalues and the eigenvectors of the Hermitian matrix `A`, or of a real symmetric one,
-by cyclic two-sided Jacobi: the rotations, the round-robin ordering and the stopping test of the
-Jacobi SVD of [`SVDFactorization`](@ref), applied to the rows and the columns of `A` at once. The
-eigenvectors are unitary to working precision, which is what `ProjectedSkew` needs of them
-(decision 27). A pair whose off-diagonal entry is negligible against the Frobenius norm of `A` is
-skipped, which is what ends the sweep on a rank-deficient or low-rank matrix, as the SVD's
-negligible-column guard ends its own.
+by cyclic two-sided Jacobi: the rotations and the round-robin ordering of the Jacobi SVD of
+[`SVDFactorization`](@ref), applied to the rows and the columns of `A` at once. The eigenvectors
+are unitary to working precision, which is what `ProjectedSkew` needs of them. A pair whose
+off-diagonal entry is at or below `eps(real(eltype(A))) * ‖A‖_F` is skipped, which is what ends
+the sweep on a rank-deficient or low-rank matrix, as the SVD's negligible-column guard ends its
+own.
 
 The call returns `(values, vectors, status)`: `values` holds the `N` eigenvalues in
 `real(eltype(A))`, `vectors` the columns of the unitary `V` with `A = V * Diagonal(values) * V'`,
@@ -33,8 +32,7 @@ For a real skew matrix `M`, the Hermitian matrix is `im * M`, with the eigenvalu
 
     exp(M) == real(V * Diagonal(exp.(-im .* values)) * V')
 
-to working precision — the `ProjectedSkew` case of decision 27, which is what `jacobi_eigen`
-exists for.
+to working precision — the `ProjectedSkew` case, which is what `jacobi_eigen` exists for.
 """
 function jacobi_eigen(A::StaticMatrix{N, N, T}) where {N, T}
     H = MMatrix{N, N, T, N * N}(A)

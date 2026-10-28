@@ -2,23 +2,23 @@
 # compiler keeps off the heap on the CPU, on Metal and on CUDA, as the LU of `lu.jl`.
 #
 # The sweep rotates pairs of columns until they are mutually orthogonal, in a round-robin order:
-# `n/2` disjoint pairs per round, and `n(n-1)/2` pairs per sweep (§5.2), which is the order the
-# device kernel of part Q runs the same rotations in. A rotation is built from the Gram matrix of
+# `n/2` disjoint pairs per round, and `n(n-1)/2` pairs per sweep, which is the order a parallel
+# device kernel runs the same rotations in. A rotation is built from the Gram matrix of
 # the pair — `α = ‖a_p‖²`, `β = ‖a_q‖²`, `γ = a_pᴴ a_q` — and it is the same rotation that a
 # two-sided Jacobi eigensolver applies to a Hermitian matrix, so `eigen.jl` reuses it.
 #
-# The algorithm carries two known traps (§5.2), and each has its check:
+# The algorithm guards against two numerical traps:
 #
 # - The squared norms of the sweep underflow for a subnormal entry, so the matrix is first
 #   divided by a power of two that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close
 #   as the exponent range allows. The division is exact, so the factors are those of the original
 #   matrix up to that power of two. The exponent is clamped to the range of the type, because
 #   `ldexp(one(T), -exponent(m) - 1)` is `Inf` for a subnormal `m`, and an infinite prescale
-#   turns the whole matrix into `Inf` (check 1).
+#   turns the whole matrix into `Inf`.
 # - A pair of columns that hold nothing but rounding noise — the null directions of a
 #   rank-deficient matrix — is asked to become orthogonal to each other, and each rotation
 #   regenerates as much noise as it removes, so a per-pair relative test alone never terminates
-#   there (check 2). A pair whose two columns are negligible against the largest column of the
+#   there. A pair whose two columns are negligible against the largest column of the
 #   matrix is skipped, which is what ends the sweep.
 
 # The number of sweeps the iteration will run before giving up, the same cap LAPACK's `gesvj`
@@ -47,7 +47,7 @@ function jacobi_rotation(α, β, γ)
     # `copysign` and not `sign`: the two agree everywhere except at ζ = 0, where the two diagonal
     # entries are equal and the rotation that diagonalizes the pair is the full π/4 that a `sign`
     # reports as no rotation at all. A Hermitian matrix with a zero diagonal — `im * M` for a
-    # real skew `M` — has ζ = 0 for every pair (check 4).
+    # real skew `M` — has ζ = 0 for every pair.
     t = copysign(one(ζ), ζ) / (abs(ζ) + sqrt(one(ζ) + ζ * ζ))
     cs = inv(sqrt(one(t) + t * t))
     return cs, (γ / abs(γ)) * (cs * t)
@@ -185,8 +185,8 @@ function factorize!!(::Union{Nothing, StaticSVD},
         end
     end
 
-    # the rank cutoff of §5.2: `σᵢ ≤ √n · eps(TF) · σ₁` counts as zero, which is the tolerance of
-    # the sweep, so that R1 and R3 agree on the rank (§13.O). `info` is the index of the first
+    # the rank cutoff: `σᵢ ≤ √n · eps(TF) · σ₁` counts as zero, which is the tolerance of
+    # the sweep. `info` is the index of the first
     # such entry, as it is for the LU and QR factors.
     cutoff = tol * σ[1]
     info = Int32(0)
@@ -198,8 +198,7 @@ function factorize!!(::Union{Nothing, StaticSVD},
     end
 
     # `A` becomes `U`. Beyond the rank the column is zeroed rather than normalized, which keeps
-    # a division by rounding noise out of the solve and leaves a `NaN` out of a zero quotient
-    # (check 3).
+    # a division by rounding noise out of the solve and leaves a `NaN` out of a zero quotient.
     for j in 1:N
         if info == 0 || j < info
             @inbounds for i in 1:N
