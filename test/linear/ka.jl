@@ -187,6 +187,28 @@ end
         @test endswith(replace(String(m_qr_bs.file), '\\' => '/'), "src/linear/ka/qr.jl")
     end
 
+    @testset "non-BLAS element type Float16 solves through src/linear/ka/" begin
+        T = Float16
+        n = 4
+        A_cpu, b_cpu = ka_well_conditioned(T, n)
+        κ = Float64(cond(big.(A_cpu), Inf))
+        x_ref = big.(A_cpu) \ big.(b_cpu)
+        for (M, file) in ((LUFactorization, "src/linear/ka/lu.jl"),
+            (QRFactorization, "src/linear/ka/qr.jl"))
+            m = M()
+            x = JLArray(zeros(T, n))
+            prob = NonlinearProblem(x, (r, y, p) -> nothing)
+            fac = factorize!!(init(m, prob, x, nothing), m, JLArray(A_cpu))
+            @test fac.info == 0
+            m_bs = which(backsolve!, (typeof(fac), JLVector{T}))
+            @test endswith(replace(String(m_bs.file), '\\' => '/'), file)
+            d = ldiv!!(similar(x), fac, JLArray(b_cpu))
+            @test d isa JLVector{T}
+            rel = Float64(norm(big.(Array(d)) - x_ref, Inf) / norm(x_ref, Inf))
+            @test rel <= 8 * n * Float64(eps(T)) * κ
+        end
+    end
+
     @testset "no scalar indexing and type inference in init, factorize!!, ldiv!!" begin
         for (T, TF) in PRECISION_PAIRS
             for M in (LUFactorization, QRFactorization)
