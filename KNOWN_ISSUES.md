@@ -163,3 +163,16 @@
   type.
 - **kind:** found late
 - **found:** 2026-10-16
+
+### K18 · `_adapt_order(backend, order::AbstractRange{<:Integer})` is redundant with the `isbitstype` branch of `_adapt_order(backend, order::AbstractVector{<:Integer})`.
+
+- **location:** `src/nonlinear/batched.jl:30`
+- **evidence:** `_adapt_order(backend, order::AbstractRange{<:Integer}) = return order` at lines
+  30–32 is redundant with the `isbitstype(typeof(order)) && return order` guard at line 35 of
+  `_adapt_order(backend, order::AbstractVector{<:Integer})`, because standard integer ranges
+  (`UnitRange{Int}`, `StepRange{Int,Int}`, `OneTo{Int}`) are `isbitstype`
+  `AbstractVector{<:Integer}`. Mutating `isbitstype(typeof(order)) && return order` to
+  `false && return order` in `src/nonlinear/batched.jl:35` survives `nonlinear/batched.jl` because
+  `AbstractRange{<:Integer}` intercepts range inputs at line 30.
+- **kind:** dead code
+- **found:** 2026-10-28

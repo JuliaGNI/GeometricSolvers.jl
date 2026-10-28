@@ -129,11 +129,15 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init`](@ref) and [`solve!!`](@ref), and returns `(x, status)`.
 [`solve!!`](@ref) takes a solver state from [`init`](@ref) and runs the loop on a `StaticVector`,
-`MVector` or `Number` iterate in R1.
+`MVector` or `Number` iterate in R1. [`solve!`](@ref) solves a batch of independent small systems in
+place on `get_backend(X)` with one work-item per system, and [`PerSystem`](@ref) wraps an indexable
+collection of per-system parameters so system `i` receives `p.data[i]`.
 
 ```@docs
 solve
+solve!
 solve!!
+PerSystem
 Newton
 Picard
 NoRefinement
@@ -203,6 +207,7 @@ zoom_step
 LinearMethod
 jacobi_rotation
 ToReal
+parameters
 record
 converged
 isconverged

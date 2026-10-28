@@ -9,7 +9,8 @@ using Adapt: Adapt
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
-using KernelAbstractions: @Const, @index, @kernel, get_backend, isgpu, synchronize
+using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
+                          get_backend, isgpu, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, ldiv!, lu!,
                      mul!, qr!
 using StaticArrays: MMatrix, MVector, SMatrix, StaticArray, StaticMatrix, StaticVector,
@@ -22,7 +23,7 @@ export NonlinearProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg
-export Newton, NoRefinement, Picard, solve
+export Newton, NoRefinement, PerSystem, Picard, solve, solve!
 
 public solve!!
 
@@ -62,5 +63,6 @@ include("globalization/dogleg.jl")
 include("nonlinear/solver.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
+include("nonlinear/batched.jl")
 
 end
