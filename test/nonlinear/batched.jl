@@ -14,7 +14,6 @@ using StaticArrays
 using Test
 
 include("../helpers/matrix.jl")
-include("../helpers/r1problems.jl")
 
 allowscalar(false)
 
@@ -112,6 +111,14 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test parameters(nothing, 5) === nothing
         @test parameters((a = 1, b = 2), 2) === (a = 1, b = 2)
 
+        # Tuple / NTuple and non-Vector PerSystem
+        ps_tup = PerSystem((1.0, 2.0, 3.0))
+        @test ps_tup.data === (1.0, 2.0, 3.0)
+        @test isbits(ps_tup)
+        @test parameters(ps_tup, 1) === 1.0
+        @test parameters(ps_tup, 2) === 2.0
+        @test parameters(ps_tup, 3) === 3.0
+
         # Adapt.@adapt_structure PerSystem
         jl_ps = Adapt.adapt(JLArray, ps)
         @test jl_ps isa PerSystem{<:JLVector{Int}}
@@ -201,6 +208,21 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
             X_empty, S_empty, prob, Newton(), p0; order = [1])
         @test_throws ArgumentError solve!(
             X_empty, S_empty, prob, Newton(), p0; options = opt, f_reltol = 1e-4)
+
+        # Mismatched SolverStatus{R} vs real(eltype(eltype(X))) throws ArgumentError on empty and non-empty batch
+        X_f32_empty = SVector{2, Float32}[]
+        @test_throws ArgumentError solve!(X_f32_empty, S_empty, prob, Newton(), p0)
+        X_f32 = [SVector(2.0f0, 1.0f0), SVector(1.5f0, 0.5f0)]
+        @test_throws ArgumentError solve!(X_f32, S_good, prob, Newton(), p0)
+
+        # isconverged on ReturnCodeCounts NamedTuple
+        all_ok = (SUCCESS = 10, STALLED = 0, MAXITERS = 0, SINGULAR = 0,
+            NONFINITE = 0, LINESEARCH_FAILED = 0)
+        @test isconverged(all_ok) === true
+        for k in (:STALLED, :MAXITERS, :SINGULAR, :NONFINITE, :LINESEARCH_FAILED)
+            bad = merge(all_ok, (k => 1,))
+            @test isconverged(bad) === false
+        end
     end
 
     @testset "Bitwise agreement, exact root, and reuse across backends, eltypes, methods" begin
@@ -338,7 +360,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
     end
 
     @testset "Host conversion ToReal{R} and Options{R} on Float32 / ComplexF32" begin
-        prob = _r2_coupled_problem()
+        prob_coupled = _r2_coupled_problem()
         for B in ARRAY_BACKENDS, T in filter(T -> real(T) === Float32, ELTYPES)
 
             R = real(T)
@@ -347,15 +369,24 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 SVector{2, T}(T(1.5f0), T(0.8f0))
             ])
             S = B(Vector{SolverStatus{R}}(undef, 2))
-            p = Adapt.adapt(B,
+            p_coupled = Adapt.adapt(B,
                 PerSystem(SVector{2, T}[
                     SVector{2, T}(T(2.125f0), T(1.5f0)),
                     SVector{2, T}(T(1.25f0), T(2.0f0))
                 ]))
-            # Float64 default method and Float64 Options / keyword tolerances converted on host
-            m_f64 = Picard(; damping = 0.2)
+            # Float64 Picard(; damping = 0.7) and Float64 Options / keyword tolerances converted on host
+            m_f64 = Picard(; damping = 0.7)
             opt_f64 = Options(Float64; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
-            solve!(X, S, prob, m_f64, p; options = opt_f64)
+            m_prep, opt_prep, state_prep = GeometricSolvers._prepare_batch(
+                X, prob_coupled, m_f64, opt_f64, (;))
+            @test m_prep === Picard(0.7f0, Static(1.0f0))
+            @test typeof(m_prep.damping) === Float32
+            @test isbits(m_prep)
+            @test opt_prep isa Options{Float32}
+            @test isbits(opt_prep)
+            @test isbits(state_prep)
+
+            solve!(X, S, prob_coupled, m_f64, p_coupled; options = opt_f64)
             @test all(isconverged, Array(S))
             @test eltype(eltype(X)) === T
             @test eltype(S) === SolverStatus{Float32}
@@ -365,8 +396,22 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 SVector{2, T}(T(1.5f0), T(0.8f0))
             ])
             counts = solve!(
-                X2, prob, m_f64, p; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
+                X2, prob_coupled, m_f64, p_coupled;
+                f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
             @test isconverged(counts)
+
+            if B === Array && T === Float32
+                # Newton(; globalization = Backtracking()) holds Float64 line-search fields
+                # that fail dispatch on Float32 unless ToReal{Float32}() runs on the host
+                X_bt = B(SVector{2, Float32}[
+                    SVector(2.0f0, 1.0f0),
+                    SVector(1.5f0, 0.8f0)
+                ])
+                S_bt = B(Vector{SolverStatus{Float32}}(undef, 2))
+                m_bt_f64 = Newton(; globalization = Backtracking())
+                solve!(X_bt, S_bt, prob_coupled, m_bt_f64, p_coupled; options = opt_f64)
+                @test all(isconverged, Array(S_bt))
+            end
         end
     end
 
@@ -440,6 +485,29 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 @test Array(X_ord_host) == Array(X_unord)
                 @test Array(S_ord_host) == Array(S_unord)
 
+                # AbstractRange order (1:N and N:-1:1) and non-Array host view under allowscalar(false)
+                if B === JLArray
+                    for rng in (1:N, N:-1:1)
+                        X_rng = B(copy(x0_vec))
+                        S_rng = B(Vector{SolverStatus{Float64}}(undef, N))
+                        solve!(X_rng, S_rng, prob, Newton(), P_dev; order = rng)
+                        @test Array(X_rng) == Array(X_unord)
+                        @test Array(S_rng) == Array(S_unord)
+
+                        X_rng_cnt = B(copy(x0_vec))
+                        counts_rng = solve!(X_rng_cnt, prob, Newton(), P_dev; order = rng)
+                        @test Array(X_rng_cnt) == Array(X_unord)
+                        @test counts_rng.SUCCESS == N
+                    end
+
+                    perm_view = @view perm[1:N]
+                    X_vw = B(copy(x0_vec))
+                    S_vw = B(Vector{SolverStatus{Float64}}(undef, N))
+                    solve!(X_vw, S_vw, prob, Newton(), P_dev; order = perm_view)
+                    @test Array(X_vw) == Array(X_unord)
+                    @test Array(S_vw) == Array(S_unord)
+                end
+
                 # (b) Permuted inputs X₀[perm] and PerSystem(P[perm]) followed by invperm(perm)
                 X_perm_in = B(x0_vec[perm])
                 S_perm_in = B(Vector{SolverStatus{Float64}}(undef, N))
@@ -478,10 +546,16 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         jl_backend = KernelAbstractions.get_backend(ord_jl)
         @test GeometricSolvers._adapt_order(jl_backend, nothing) === nothing
         @test GeometricSolvers._adapt_order(jl_backend, ord_jl) === ord_jl
+        @test GeometricSolvers._adapt_order(jl_backend, 3:-1:1) === 3:-1:1
+        @test GeometricSolvers._adapt_order(jl_backend, 1:3) === 1:3
 
         ord_adapted = GeometricSolvers._adapt_order(jl_backend, ord_cpu)
         @test ord_adapted isa JLArray{Int, 1}
         @test Array(ord_adapted) == ord_cpu
+
+        ord_view_adapted = GeometricSolvers._adapt_order(jl_backend, @view(ord_cpu[1:3]))
+        @test ord_view_adapted isa JLArray{Int, 1}
+        @test Array(ord_view_adapted) == ord_cpu
 
         for sig in (
             Tuple{
@@ -530,21 +604,55 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test counts.SUCCESS == 2
     end
 
-    @testset "Type stability (@inferred) and JET (@test_opt)" begin
+    @testset "Type stability (@inferred), allocations (@allocated == 0), and JET (@test_opt)" begin
+        allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+        allocations(f::F, a::A, b::B) where {F, A, B} = (f(a, b); @allocated f(a, b))
+
         prob = _r2_coupled_problem()
         X = [SVector(2.0, 1.0), SVector(1.5, 0.8)]
         S = Vector{SolverStatus{Float64}}(undef, 2)
         ps = PerSystem([SVector(2.125, 1.5), SVector(1.25, 2.0)])
+        ps_tup = PerSystem((SVector(2.125, 1.5), SVector(1.25, 2.0)))
         opt = Options(Float64)
+        codes = [SUCCESS, SINGULAR, MAXITERS]
 
         @test (@inferred parameters(ps, 1)) === SVector(2.125, 1.5)
+        @test (@inferred parameters(ps_tup, 1)) === SVector(2.125, 1.5)
         @test (@inferred parameters(1.0, 1)) === 1.0
+        @test (@inferred GeometricSolvers._system_index(nothing, 1)) === 1
+        @test (@inferred GeometricSolvers._system_index([2, 1], 1)) === 2
+        @test (@inferred GeometricSolvers._system_index(2:-1:1, 1)) === 2
+        @test (@inferred GeometricSolvers._tally_return_codes(codes)) === (
+            SUCCESS = 1, STALLED = 0, MAXITERS = 1,
+            SINGULAR = 1, NONFINITE = 0, LINESEARCH_FAILED = 0)
         @test (@inferred solve!(copy(X), S, prob, Newton(), ps; options = opt)) === S
         counts = @inferred solve!(copy(X), prob, Newton(), ps; options = opt)
         @test (@inferred isconverged(counts)) === true
 
+        # Allocation assertions via function barrier after warmup
+        @test allocations(collect, 1:4) > 0
+        @test allocations(parameters, ps, 1) == 0
+        @test allocations(parameters, ps_tup, 1) == 0
+        @test allocations(parameters, SVector(2.125, 1.5), 1) == 0
+        @test allocations(GeometricSolvers._system_index, nothing, 1) == 0
+        @test allocations(GeometricSolvers._system_index, [2, 1], 1) == 0
+        @test allocations(GeometricSolvers._system_index, 2:-1:1, 1) == 0
+        @test allocations(GeometricSolvers._tally_return_codes, codes) == 0
+        @test allocations(isconverged, counts) == 0
+
         JET.@test_opt target_modules = (GeometricSolvers,) parameters(ps, 1)
+        JET.@test_opt target_modules = (GeometricSolvers,) parameters(ps_tup, 1)
         JET.@test_opt target_modules = (GeometricSolvers,) parameters(1.0, 1)
+        JET.@test_opt target_modules = (GeometricSolvers,) GeometricSolvers._system_index(
+            nothing, 1)
+        JET.@test_opt target_modules = (GeometricSolvers,) GeometricSolvers._system_index(
+            [2, 1], 1)
+        JET.@test_opt target_modules = (GeometricSolvers,) GeometricSolvers._system_index(
+            2:-1:1, 1)
+        JET.@test_opt target_modules = (GeometricSolvers,) GeometricSolvers._prepare_batch(
+            X, prob, Newton(), opt, (;))
+        JET.@test_opt target_modules = (GeometricSolvers,) GeometricSolvers._tally_return_codes(
+            codes)
         JET.@test_opt target_modules = (GeometricSolvers,) isconverged(counts)
     end
 end

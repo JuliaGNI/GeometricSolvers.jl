@@ -352,11 +352,13 @@ so that a compat-only bump can be told apart from an interface change.
 - `PerSystem` and `solve!` (exported), together with the internal `GeometricSolvers.parameters`,
   run the R1 nonlinear solver loop across a batch of independent small systems in place on
   `get_backend(X)` through KernelAbstractions, one work-item per system. `PerSystem(data)` wraps an
-  `AbstractVector` of per-system parameters so system `i` receives `data[i]`; any parameter value
-  not wrapped in `PerSystem` (including a plain `AbstractVector` or `SVector`) is shared unchanged
-  across every system, and `Adapt.@adapt_structure PerSystem` adapts `PerSystem` to device arrays.
+  indexable collection of per-system parameters so system `i` receives `data[i]`; any parameter
+  value not wrapped in `PerSystem` (including a plain `AbstractVector`, `Tuple` or `SVector`) is
+  shared unchanged across every system, and `Adapt.@adapt_structure PerSystem` adapts `PerSystem`
+  to device arrays.
   `solve!(X, S, prob, method, p = nothing; order = nothing, options = nothing, kwargs...) -> S`
-  writes each system's `SolverStatus{R}` into `S[idx]` and returns `S`.
+  writes each system's `SolverStatus{R}` into `S[idx]` and returns `S`, raising `ArgumentError`
+  when `R !== real(eltype(eltype(X)))`.
   `solve!(X, prob, method, p = nothing; order = nothing, options = nothing, kwargs...)` allocates a
   1-byte-per-system `ReturnCode` buffer on `get_backend(X)`, copies the codes once to the host
   after `synchronize(backend)`, and returns the six outcome counts as a `NamedTuple`
@@ -365,11 +367,12 @@ so that a compat-only bump can be told apart from an interface change.
   `solve!` adapts `method` with `Adapt.adapt(ToReal{R}(), method)`, converts or constructs
   `Options{R}`, and builds `state₀ = init(m, prob, zero(eltype(X)), nothing)` once by value so
   `Newton(; reuse = k)` carries its chord factor across steps inside each work-item. When `order`
-  is an integer vector of length `length(X)`, work-item `i` solves system `idx = order[i]`; a host
-  `order` vector passed with a device `X` is copied to `get_backend(X)` before kernel launch. A
-  length mismatch in `S`, `PerSystem`, or `order` raises `DimensionMismatch`, and passing both
-  `options` and keyword tolerances raises `ArgumentError`. `scripts/r2_throughput.jl` benchmarks
-  R2 `solve!` (`Newton()` and `Newton(; reuse = 4)`) against a threaded CPU R1 loop and reports the
-  R4 crossover dimension `n`. `KernelAbstractions` (0.9) is now a direct dependency of the package.
+  is an integer vector of length `length(X)`, work-item `i` solves system `idx = order[i]`; an
+  `isbits` range is passed by value, and a non-`isbits` host `order` vector passed with a device
+  `X` is copied to `get_backend(X)` before kernel launch. A length mismatch in `S`, `PerSystem`, or
+  `order` raises `DimensionMismatch`, and passing both `options` and keyword tolerances raises
+  `ArgumentError`. `scripts/r2_throughput.jl` benchmarks R2 `solve!` (`Newton()` and
+  `Newton(; reuse = 4)`) against a threaded CPU R1 loop and reports the R4 crossover dimension `n`.
+  `KernelAbstractions` (0.9) is now a direct dependency of the package.
 
 

@@ -9,7 +9,7 @@ using Adapt: Adapt
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
-using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
+using KernelAbstractions: KernelAbstractions, @index, @kernel, allocate,
                           get_backend, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, ldiv!, lu!,
                      mul!, qr!

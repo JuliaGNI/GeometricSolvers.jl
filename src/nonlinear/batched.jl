@@ -1,11 +1,11 @@
 """
-    PerSystem(data::AbstractVector)
+    PerSystem(data)
 
-Wrap an `AbstractVector` of per-system parameters so [`solve!`](@ref) passes `data[i]` to system
-`i`. Any parameter value not wrapped in `PerSystem` — a number, a tuple, an `SVector`, or a plain
-`AbstractVector` — is shared unchanged across every system in the batch.
+Wrap an indexable collection of per-system parameters so [`solve!`](@ref) passes `data[i]` to
+system `i`. Any parameter value not wrapped in `PerSystem` — a number, a tuple, an `SVector`, or
+a plain `AbstractVector` — is shared unchanged across every system in the batch.
 """
-struct PerSystem{P <: AbstractVector}
+struct PerSystem{P}
     data::P
 end
 
@@ -27,12 +27,25 @@ function _adapt_order(backend, ::Nothing)
     return nothing
 end
 
+function _adapt_order(backend, order::AbstractRange{<:Integer})
+    return order
+end
+
 function _adapt_order(backend, order::AbstractVector{<:Integer})
-    if backend isa KernelAbstractions.CPU || get_backend(order) == backend
+    if backend isa KernelAbstractions.CPU || isbitstype(typeof(order))
+        return order
+    end
+    order_backend = try
+        get_backend(order)
+    catch
+        KernelAbstractions.CPU()
+    end
+    if order_backend == backend
         return order
     end
     order_dev = allocate(backend, eltype(order), length(order))
-    copyto!(order_dev, order)
+    copyto!(order_dev, order_backend isa KernelAbstractions.CPU && !(order isa Array) ?
+                       Array(order) : order)
     return order_dev
 end
 
@@ -73,7 +86,7 @@ function _prepare_batch(
 end
 
 @kernel function _solve_status_kernel!(
-        X, S, @Const(prob), @Const(m), @Const(p), @Const(opt), @Const(state₀), @Const(order))
+        X, S, prob, m, p, opt, state₀, order)
     i = @index(Global, Linear)
     @inbounds begin
         idx = _system_index(order, i)
@@ -84,8 +97,7 @@ end
 end
 
 @kernel function _solve_codes_kernel!(
-        X, codes, @Const(prob), @Const(m), @Const(p),
-        @Const(opt), @Const(state₀), @Const(order))
+        X, codes, prob, m, p, opt, state₀, order)
     i = @index(Global, Linear)
     @inbounds begin
         idx = _system_index(order, i)
@@ -149,14 +161,14 @@ Solve a batch of independent small nonlinear systems in place on `get_backend(X)
 work-item per system.
 
 Each element `X[idx]` is the initial guess for system `idx` and is overwritten with its final
-iterate. Wrap a per-system parameter vector in [`PerSystem`](@ref) so system `idx` receives
-`p.data[idx]`; any other `p` is shared across all systems. When `order` is an integer vector of
-length `length(X)`, work-item `i` solves system `idx = order[i]`.
+iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref) so system `idx`
+receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is an integer
+vector of length `length(X)`, work-item `i` solves system `idx = order[i]`.
 
-The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S`. The
-second form allocates a 1-byte-per-system [`ReturnCode`](@ref) buffer on `get_backend(X)`, copies
-the codes once to the host after kernel completion, and returns the six outcome counts as a
-`NamedTuple`.
+The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
+`R === real(eltype(eltype(X)))`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
+buffer on `get_backend(X)`, copies the codes once to the host after kernel completion, and returns
+the six outcome counts as a `NamedTuple`.
 """
 function solve!(
         X::AbstractVector{<:Union{SVector, Number}},
@@ -168,6 +180,11 @@ function solve!(
         options::Union{Nothing, Options} = nothing,
         kwargs...
 ) where {R <: Real}
+    R_X = real(eltype(eltype(X)))
+    if R !== R_X
+        throw(ArgumentError(
+            "SolverStatus real type $R does not match batch real element type $R_X"))
+    end
     if length(S) != length(X)
         throw(DimensionMismatch(
             "status vector length $(length(S)) does not match batch length $(length(X))"))
