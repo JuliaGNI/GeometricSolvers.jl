@@ -284,11 +284,15 @@ function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSV
     return unscale(fac, backsolve(fac, SVector{N, TF}(r)))
 end
 
-# The `T ≠ TF` method: the right-hand side has another element type than the factors.
+# The `T ≠ TF` method: the right-hand side has another element type than the factors. With
+# `s = frac · 2^ex` and `frac` in `[0.5, 1)`, the step is multiplied by `frac` and then by
+# `2^(ex - e)` in one step, with `e` the scale exponent of the factors, so that it overflows only
+# where the solution itself does.
 function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSVD{N, TF}},
         r::StaticVector{N, T}) where {N, TF, T}
     s = maximum(abs, r)
     iszero(s) && return zero(SVector{N, T})
     d = backsolve(fac, SVector{N, TF}(SVector{N, T}(r) / s))
-    return unscale(fac, SVector{N, T}(d) * s)
+    frac, ex = frexp(s)
+    return map(a -> ldexp2(T(a) * frac, ex - fac.scale_exponent), d)
 end

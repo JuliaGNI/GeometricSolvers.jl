@@ -121,4 +121,26 @@ end
             @test mixed_ldiv_allocs(d, fac, b) == 0
         end
     end
+
+    # A right-hand side near floatmax(T) and a step entry above 1 in the scaled system: the step
+    # times s overflows T unless the power of two of s and the 2^-e of J are applied together.
+    @testset "a right-hand side near floatmax ($T)" for T in MIXED_ELTYPES
+        TF = Float32
+        s = 0.6 * floatmax(real(T))
+        A0 = T[1 0.1; 0.1 0.25]
+        A = T(s) .* A0
+        r = T[s, s]
+        x = zeros(T, 2)
+
+        for M in (LUFactorization, QRFactorization, SVDFactorization)
+            m = M(TF)
+            fac = factorize!!(init(m, nothing, x, nothing), m, A)
+            @test returncode(fac) === SUCCESS
+            d = similar(x)
+            x_sol = ldiv!!(d, fac, r)
+            @test all(isfinite, x_sol)
+            @test relerr(x_sol, reference(A, r)) <= bound(A0, T, TF)
+            @test mixed_ldiv_allocs(d, fac, r) == 0
+        end
+    end
 end

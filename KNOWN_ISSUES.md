@@ -163,15 +163,3 @@
   type.
 - **kind:** found late
 - **found:** 2026-10-16
-
-### K18 · Mixed-precision `ldiv!!` for dense factors multiplies `T.(rhs) .* s` before scaling by `2^(-e)`, which overflows when `s` is near `floatmax(T)` and `|rhs[i]| > 1`.
-
-- **location:** `src/linear/mixed.jl:14` (`ldiv!!`, `d .= ldexp2.(T.(rhs) .* s, -e)`)
-- **evidence:** for `s = 0.6 * floatmax(Float64)`, `J = Float64[s 0.0; 0.0 0.25 * s]` and
-  `r = Float64[s, s]`, `x = zeros(Float64, 2)`, `m = LUFactorization(Float32)`, `fac =
-  factorize!!(init(m, NonlinearProblem(x, (res, y, p) -> nothing), x, nothing), m, J)` and
-  `d = ldiv!!(similar(x), fac, r)` give `d == [0.9999999761581418, Inf]` (Julia 1.13.3) for the
-  solution `[1.0, 4.0]`. With `e = 1023` and `fac.rhs == Float32[0.8333333, 3.3333333]`,
-  `T(rhs[2]) * s ≈ 3.33 * s` overflows `Float64` to `Inf` before `ldexp2` scales by `2^(-e)`.
-- **kind:** found late
-- **found:** 2026-10-28
