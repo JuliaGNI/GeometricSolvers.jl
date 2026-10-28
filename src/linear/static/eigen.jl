@@ -1,8 +1,7 @@
 # The R1 cyclic two-sided Jacobi eigensolver for a Hermitian — or a real symmetric — matrix:
 # the rotations and the round-robin ordering of the Jacobi SVD of `svd.jl`, applied to both sides
-# of the matrix at once. It is a function on a matrix and not a `linsolve` value, it is the only
-# consumer of the SVD's rotations and of nothing else in this package, and it adds no method to
-# `LinearAlgebra.eigen`: a method on a `StaticArrays` type would be type piracy.
+# of the matrix at once. It is a function on a matrix and not a `linsolve` value. It adds no
+# method to `LinearAlgebra.eigen`: a method on a `StaticArrays` type would be type piracy.
 
 """
     jacobi_eigen(A)
@@ -10,7 +9,8 @@
 The eigenvalues and the eigenvectors of the Hermitian matrix `A`, or of a real symmetric one,
 by cyclic two-sided Jacobi: the rotations and the round-robin ordering of the Jacobi SVD of
 [`SVDFactorization`](@ref), applied to the rows and the columns of `A` at once. The eigenvectors
-are unitary to working precision, which is what `ProjectedSkew` needs of them. A pair whose
+are unitary to working precision, which is what the `ProjectedSkew` exponential algorithm of
+GeometricOptimizers needs of them. A pair whose
 off-diagonal entry is at or below `eps(real(eltype(A))) * ‖A‖_F` is skipped, which is what ends
 the sweep on a rank-deficient or low-rank matrix, as the SVD's negligible-column guard ends its
 own.
@@ -27,26 +27,37 @@ of that Hermitian part and not the one of `A`. A `NaN` or an `Inf` entry is not 
 throws, and the sweep reaches its cap for `N ≥ 2`; at `N = 1` there is no pair, so the call
 returns `SUCCESS`.
 
-For a real skew matrix `M`, the Hermitian matrix is `im * M`, with the eigenvalues `Λ` of
+For a real skew matrix `M`, the Hermitian matrix is `im * M`, with the eigenvalues `values` of
 `im * M` and
 
-    exp(M) == real(V * Diagonal(exp.(-im .* values)) * V')
+    exp(M) ≈ real(V * Diagonal(exp.(-im .* values)) * V')
 
 to working precision — the `ProjectedSkew` case, which is what `jacobi_eigen` exists for.
 """
 function jacobi_eigen(A::StaticMatrix{N, N, T}) where {N, T}
+    R = real(T)
+    # `A` is divided by the power of two `2^e` that brings its largest `|re|` or `|im|` into
+    # `[1, 2)`, as the SVD's `svd_matrix` divides its matrix: the division is exact, and the
+    # rotations of the sweep neither overflow near `floatmax` nor lose their digits in the
+    # subnormal range. The eigenvalues are multiplied back by `2^e`; the eigenvectors are those of
+    # `A` itself.
+    e = matrix_exponent(A)
+    c = ldexp(one(R), -e)
     H = MMatrix{N, N, T, N * N}(A)
+    @inbounds for j in 1:N, i in j:N
+
+        H[i, j] *= c
+    end
     @inbounds for j in 1:N, i in (j + 1):N
 
         H[j, i] = conj(H[i, j])
     end
     V = one(MMatrix{N, N, T, N * N})
-    R = real(T)
     # The pair floor `eps(R) * ‖H‖_F`, taken once on entry so no rotation changes it. A pair of
     # zero eigenvalues holds only rounding noise on the diagonal, which a relative test never
     # satisfies, whereas `√|α| · √|β| ≤ ‖H‖_F` means the Frobenius floor subsumes it. Scaling
     # by the largest `|re|` or `|im|` keeps `s * sqrt(a)` finite across the range of `R`, and a
-    # `NaN` or an `Inf` entry makes `floor` `NaN` so no pair is skipped.
+    # `NaN` or an `Inf` entry makes `pair_floor` `NaN` so no pair is skipped.
     s = zero(R)
     @inbounds for j in 1:N, i in 1:N
 
@@ -55,11 +66,11 @@ function jacobi_eigen(A::StaticMatrix{N, N, T}) where {N, T}
     a = zero(R)
     @inbounds for j in 1:N, i in 1:N
 
-        re = abs(real(H[i, j])) / s
-        im = abs(imag(H[i, j])) / s
-        a += re * re + im * im
+        x = abs(real(H[i, j])) / s
+        y = abs(imag(H[i, j])) / s
+        a += x * x + y * y
     end
-    floor = iszero(s) ? zero(R) : eps(R) * s * sqrt(a)
+    pair_floor = iszero(s) ? zero(R) : eps(R) * s * sqrt(a)
     # The sweep is written out here rather than in a function of its own, as the sweeps of
     # `lu.jl` and `qr.jl` are: a call that is not inlined over a local `MMatrix` lets the matrix
     # escape, and an escaped matrix is a heap allocation of `n²` values — 4096 bytes for the two
@@ -79,9 +90,9 @@ function jacobi_eigen(A::StaticMatrix{N, N, T}) where {N, T}
             β = @inbounds real(H[q, q])
             γ = @inbounds H[p, q]
             # `|β − α| ≤ 2‖H‖_F` bounds `|ζ| = |β − α| / (2|γ|)` of `jacobi_rotation` by
-            # `1 / eps(R)` whenever `|γ| > floor`, well below the `ζ²` overflow threshold where a
-            # rotation degenerates to the identity (`t = 0`).
-            abs(γ) ≤ floor && continue
+            # `1 / eps(R)` whenever `|γ| > pair_floor`, well below the `ζ²` overflow threshold
+            # where a rotation degenerates to the identity (`t = 0`).
+            abs(γ) ≤ pair_floor && continue
             cs, sn = jacobi_rotation(α, β, γ)
             rotate_columns!(H, p, q, cs, sn)
             rotate_rows!(H, p, q, cs, sn)
@@ -98,7 +109,7 @@ function jacobi_eigen(A::StaticMatrix{N, N, T}) where {N, T}
     # `SVector` and is a heap allocation.
     λ = zero(SVector{N, real(T)})
     @inbounds for i in 1:N
-        λ = setindex(λ, real(H[i, i]), i)
+        λ = setindex(λ, ldexp(real(H[i, i]), e), i)
     end
     return λ, SMatrix(V), converged ? SUCCESS : MAXITERS
 end

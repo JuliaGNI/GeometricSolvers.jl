@@ -88,9 +88,10 @@ returncode
 
 [`jacobi_eigen`](@ref) is a function on a matrix and not a linear-solver method: cyclic two-sided
 Jacobi for a Hermitian or a real symmetric matrix, on the rotations and the round-robin ordering of
-the Jacobi SVD with a Frobenius-norm pair floor `eps(R) * ‖H‖_F`, for the `ProjectedSkew` case
-`jacobi_eigen(im * M)` of a real skew `M`. It adds no method to `LinearAlgebra.eigen`, because a
-method of `eigen` for a `StaticArrays` type would be type piracy.
+the Jacobi SVD with a Frobenius-norm pair floor `eps(R) * ‖H‖_F`, for the case
+`jacobi_eigen(im * M)` of a real skew `M` that the `ProjectedSkew` exponential algorithm of
+GeometricOptimizers needs. It adds no method to `LinearAlgebra.eigen`, because a method of `eigen`
+for a `StaticArrays` type would be type piracy.
 
 ```@docs
 jacobi_eigen

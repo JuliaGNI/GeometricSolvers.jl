@@ -38,7 +38,7 @@ The rotation `(cs, sn)` that makes the Hermitian `2 × 2` matrix `[α γ; γ̄ �
 `θ` with `tan θ = t` is at most `π/4` in modulus, which is what makes the sweep converge rather
 than merely rearrange.
 
-`γ` may be zero, which the caller must have excluded: the phase of the rotation is `γ / |γ|`.
+`γ` must not be zero: the phase of the rotation is `γ / |γ|`.
 """
 function jacobi_rotation(α, β, γ)
     # t solves t² + 2ζt - 1 = 0 with ζ = (β - α)/2|γ|, and the root of smaller modulus is
@@ -83,13 +83,11 @@ end
 # it at `TF = T` too, because it squares the entries. Dividing in `T` before the conversion is
 # what keeps a `Float64` matrix below the `Float32` range solvable at `TF = Float32`.
 function svd_matrix(::Type{F}, J::StaticMatrix{N, N, T}) where {F, N, T}
-    m = float(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
-    emax = exponent(floatmax(m))
-    e = isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
+    e = matrix_exponent(J)
     S = SMatrix{N, N, T}(J)
     # one return type for both branches: a `Union` of two static types here would make the
     # `MMatrix` below a runtime type construction, and the factorisation allocate
-    return SMatrix{N, N, F}(iszero(e) ? S : S * ldexp(one(m), -e)), Int32(e)
+    return SMatrix{N, N, F}(iszero(e) ? S : S * ldexp(one(float(real(T))), -e)), Int32(e)
 end
 
 # The squared norm of column `j` through the reduction seam of `reductions.jl`: the column is

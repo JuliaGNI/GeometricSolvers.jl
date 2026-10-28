@@ -151,7 +151,7 @@
 
 ### K17 · A `StaticSVD`'s reported `σ` holds `Inf` where `σ₁` exceeds `floatmax(real(TF))`.
 
-- **location:** `src/linear/static/svd.jl:220`
+- **location:** `src/linear/static/svd.jl:218`
 - **evidence:** `test/linear/static/svd.jl`, the testset *a singular value above `floatmax(R)`
   leaves the solve finite*: at a full `floatmax(T)/2` matrix in `Float32` and `Float64` it asserts
   `@test !isfinite(fac.σ[1])` beside `all(isfinite, x)` and the `4n · eps(TF) · κ∞` solve bound.

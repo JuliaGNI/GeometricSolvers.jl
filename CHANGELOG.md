@@ -180,12 +180,16 @@ so that a compat-only bump can be told apart from an interface change.
 
 - `jacobi_eigen(A)`, exported, is a cyclic two-sided Jacobi eigensolver for a Hermitian or real
   symmetric static matrix, on the rotations and round-robin ordering of the SVD, with a
-  Frobenius-norm pair floor `eps(R) * ‖H‖_F`. It returns `(values, vectors, status)`: the real
-  eigenvalues, the unitary `vectors` with `A = V * Diagonal(values) * V'`, and `status`, which is
-  `SUCCESS`, or `MAXITERS` at the cap of 30 sweeps. It is `isbits` and allocates nothing unless
-  bounds checks are forced, so it runs in a kernel. For a real skew `M`, `jacobi_eigen(im * M)`
-  gives `exp(M)` as `real(V * Diagonal(exp.(-im .* values)) * V')`, to working precision. It is a
-  function on a matrix and adds no method to `LinearAlgebra.eigen`.
+  Frobenius-norm pair floor `eps(R) * ‖H‖_F`. The matrix is first divided by a power of two that
+  brings its largest `|re|` or `|im|` into `[1, 2)`, and the eigenvalues are multiplied back, so
+  a matrix with entries near `floatmax` or in the subnormal range converges, with unitary vectors
+  and eigenvalues to working precision wherever they are representable. It returns
+  `(values, vectors, status)`: the real eigenvalues, the unitary `vectors` with
+  `A = V * Diagonal(values) * V'`, and `status`, which is `SUCCESS`, or `MAXITERS` at the cap of
+  30 sweeps. It is `isbits` and allocates nothing unless bounds checks are forced, so it runs in
+  a kernel. For a real skew `M`, `jacobi_eigen(im * M)` gives `exp(M)` as
+  `real(V * Diagonal(exp.(-im .* values)) * V')`, to working precision. It is a function on a
+  matrix and adds no method to `LinearAlgebra.eigen`.
 
 - Internal: the one reduction seam (`norm2`, `rnorm`, `rdot`, each returning `real(T)` on an
   `Array`, a GPU array and an `SVector` in a kernel), and the `ToReal{R}` adaptor, which converts

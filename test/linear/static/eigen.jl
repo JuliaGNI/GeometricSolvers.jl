@@ -300,10 +300,32 @@ end
     end
 end
 
+@testset "the ends of the floating-point range, $T, 2^$k" for (T, k) in (
+    (Float64, 1020), (Float64, -1060), (Float32, 126), (Float32, -145),
+    (ComplexF64, 1020), (ComplexF64, -1060), (ComplexF32, 125), (ComplexF32, -145))
+    # A Hermitian matrix whose largest `|re|` or `|im|` is `2^k`: a largest eigenvalue near
+    # `floatmax` for a positive `k`, subnormal entries for a negative one. `A / 2^k` is exact, and
+    # the eigenvalues of `LinearAlgebra` on it are the reference. The bound adds the spacing of
+    # the subnormal numbers, which is all the precision a subnormal eigenvalue can hold.
+    N = 16
+    R = real(T)
+    scale(a, e) = T <: Complex ? complex(ldexp(real(a), e), ldexp(imag(a), e)) : ldexp(a, e)
+    B = Matrix(hermitian_matrix(51, T, N))
+    m = maximum(a -> max(abs(real(a)), abs(imag(a))), B)
+    A = SMatrix{N, N, T}(scale.(B, k - exponent(m)))
+    λ, V, status = jacobi_eigen(A)
+    As = scale.(Matrix(A), -k)
+    @test status === SUCCESS
+    @test norm(V' * V - I) <= 4 * N * eps(R)
+    @test norm(sort(ldexp.(Vector(λ), -k)) - sort(eigvals(Hermitian(As)))) <=
+          4 * N * eps(R) * norm(As) + sqrt(N) * ldexp(nextfloat(zero(R)), -k)
+end
+
 @testset "the lower triangle is read, and the upper triangle filled from it, $T" for T in ELTYPES
     # The matrix is assumed Hermitian, and the upper triangle is set to the conjugate of the lower
-    # triangle on entry. `[1 2; 0 3]` is not Hermitian: its lower triangle is the diagonal
-    # `[1 0; 0 3]`, so the call returns the eigenvalues 1 and 3.
+    # triangle on entry. The column-major `A` is `[1 0; 2 3]`, which is not Hermitian: the call
+    # reads its lower triangle and returns the eigensystem of `[1 2; 2 3]`, with the eigenvalues
+    # `2 ∓ √5`. A call that read the upper triangle would return the eigenvalues 1 and 3.
     A = SMatrix{2, 2, T}(one(T), T(2), zero(T), T(3))
     λ, V, status = jacobi_eigen(A)
     H = Hermitian(A, :L)
@@ -376,8 +398,8 @@ end
         @test isbits(result)
         if Base.JLOptions().check_bounds != 1
             @test eigen_allocations(A) == 0
-            # the control: the allocation barrier sees an allocation where there is one
-            @test collect_allocations(A) > 0
+            # the control: `@allocated` sees an allocation where there is one
+            @test (@allocated collect(A)) > 0
         end
         # an MMatrix input gives the same result
         @test jacobi_eigen(MMatrix(A)) === result
