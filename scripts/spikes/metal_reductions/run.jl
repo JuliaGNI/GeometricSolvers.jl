@@ -19,15 +19,12 @@ if Base.find_package("GeometricSolvers") === nothing ||
    (MODE != "cpu" && Base.find_package("Metal") === nothing)
     repo_root = normpath(joinpath(@__DIR__, "..", "..", ".."))
     metal_env = joinpath(repo_root, "test", "gpu", "metal")
-    try
-        @eval Main using Pkg
-        if isfile(joinpath(metal_env, "Project.toml"))
-            @eval Main Base.invokelatest(Pkg.activate, $metal_env; io = devnull)
-            @eval Main Base.invokelatest(Pkg.instantiate; io = devnull)
-        else
-            @eval Main Base.invokelatest(Pkg.activate, $repo_root; io = devnull)
-        end
-    catch
+    @eval Main using Pkg
+    if isfile(joinpath(metal_env, "Project.toml"))
+        @eval Main Base.invokelatest(Pkg.activate, $metal_env; io = devnull)
+        @eval Main Base.invokelatest(Pkg.instantiate; io = devnull)
+    else
+        @eval Main Base.invokelatest(Pkg.activate, $repo_root; io = devnull)
     end
     if Base.find_package("GeometricSolvers") === nothing && !(repo_root in LOAD_PATH)
         pushfirst!(LOAD_PATH, repo_root)
@@ -95,6 +92,8 @@ function measure_case(to_vec, n::Int, dist::Symbol)
 end
 
 function run_suite(mode::AbstractString)
+    mode == "metal" && !METAL_FUNCTIONAL &&
+        error("mode metal was requested, but Metal is not functional")
     all_ok = true
     if mode == "cpu" || !METAL_FUNCTIONAL
         println("CPU smoke check (Vector{Float32}, n in $LENGTHS):")
