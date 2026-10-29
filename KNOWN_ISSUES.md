@@ -78,7 +78,7 @@
 
 ### K10 · The Metal CI job runs with bounds checks, which hide a Metal miscompilation of the static QR.
 
-- **location:** `.github/workflows/Metal.yml:73` (`julia-actions/julia-runtest@v1`)
+- **location:** `.github/workflows/Metal.yml:75` (`julia-actions/julia-runtest@v1`)
 - **evidence:** the step sets no `check_bounds`, so `julia-runtest` runs the tests with
   `--check-bounds=yes` (the job log shows `check_bounds: yes`), which restores the bounds checks
   that `@inbounds` removes. On Julia 1.13.2 with Metal.jl 1.11.1 on an `AGXG16CDevice`, a zeroed

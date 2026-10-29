@@ -87,8 +87,8 @@ so that a compat-only bump can be told apart from an interface change.
   `test/helpers/metal_device.jl` detects a virtual device with `Metal.MTL.is_virtual`, and each
   skip is recorded as `@test_skip` against issue #34. The paravirtual GPU of the GitHub macOS
   runners throws a device exception at random in a kernel late in the Metal group; which kernel
-  throws depends on the test order, and each one passes when it runs early, on a real GPU and on
-  the CPU. Until issue #34 closes, the Metal workflow and the macOS-latest CI jobs run no device
+  throws depends on the test order, and each one passes when it runs early and on a real GPU, and
+  its algorithm passes on the CPU. Until issue #34 closes, the Metal workflow and the macOS-latest CI jobs run no device
   test, so a green macOS-latest check does not exercise Metal. `.github/workflows/Metal.yml` and
   `test/gpu/README.md` say so.
 
