@@ -4,7 +4,7 @@
 # `info > 0` in the kernel, as on the host. `runtests.jl` runs this file in the `metal` group.
 #
 # Where `Metal.functional()` is `false`, as inside a sandbox, the file runs no test and records the
-# device skip.
+# device skip. On a virtualized GPU it runs no test and records a skip for issue #34.
 
 using GeometricSolvers
 using Metal, Test

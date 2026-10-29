@@ -1,5 +1,5 @@
-# Device tests, run by hand on a machine with the GPU, and for Metal in CI; `README.md` in this
-# directory is the procedure.
+# Device tests, run by hand on a machine with the GPU; `README.md` in this directory is the
+# procedure.
 #
 # Usage, from the repository root:
 #   julia --startup-file=no --project=test/gpu/<backend> test/gpu/runtests.jl <backend>

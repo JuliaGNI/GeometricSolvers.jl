@@ -6,7 +6,8 @@
 # eigenvalues of the host within working precision, with a unitary `V`.
 #
 # `runtests.jl` runs this file in the `metal` group. Where `Metal.functional()` is `false`, as
-# inside a sandbox, the file runs no test and records the device skip.
+# inside a sandbox, the file runs no test and records the device skip. On a virtualized GPU it runs
+# no test and records a skip for issue #34.
 
 using GeometricSolvers
 using GeometricSolvers: factorize!!, ldiv!!, jacobi_eigen
