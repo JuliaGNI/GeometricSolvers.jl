@@ -12,7 +12,7 @@
 
 ### K2 · A sandboxed run with no matching Metal cache fails at the Metal precompile instead of skipping
 
-- **location:** `test/devices/metal.jl:13` (`using Metal, Test`)
+- **location:** `test/devices/metal.jl:14` (`using Metal, Test`)
 - **evidence:** Metal.jl 1.11.1's precompile workload (`src/precompile.jl:18`) calls
   `mtlfunction(identity, Tuple{Nothing})`, which calls `device()`. In the Bash sandbox
   `Metal.devices()` is empty, so Metal cannot precompile there, and `test/devices/metal.jl` never
@@ -78,7 +78,7 @@
 
 ### K10 · The Metal CI job runs with bounds checks, which hide a Metal miscompilation of the static QR.
 
-- **location:** `.github/workflows/Metal.yml:73` (`julia-actions/julia-runtest@v1`)
+- **location:** `.github/workflows/Metal.yml:75` (`julia-actions/julia-runtest@v1`)
 - **evidence:** the step sets no `check_bounds`, so `julia-runtest` runs the tests with
   `--check-bounds=yes` (the job log shows `check_bounds: yes`), which restores the bounds checks
   that `@inbounds` removes. On Julia 1.13.2 with Metal.jl 1.11.1 on an `AGXG16CDevice`, a zeroed
