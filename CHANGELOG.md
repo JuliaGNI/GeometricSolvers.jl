@@ -461,8 +461,10 @@ so that a compat-only bump can be told apart from an interface change.
   `x₀` when `x₀` is not a `StaticArray` or a `Number`, so `x₀` is never mutated.
   The internal storage seam (`src/base/bang.jl`) adds the array methods of `buffer`, `residual!!`,
   `update_iterate!!`, `map!!` and `mul!!`, and the value and array methods of `copy!!`, `scale!!`,
-  `axpby!!` and `regularize!!` (which updates `view(J, diagind(J))` by broadcast so device arrays
-  perform no scalar indexing). In `src/ad/`, `jacobian!!` adds its `AbstractMatrix` methods for
+  `axpby!!` and `regularize!!` (which shifts the diagonal in a loop on a `Matrix` so
+  bounds-checked runs allocate nothing, and updates `view(J, diagind(J))` by broadcast on any other
+  `AbstractMatrix` so device arrays perform no scalar indexing). In `src/ad/`, `jacobian!!` adds its
+  `AbstractMatrix` methods for
   `::Nothing` (`prob.J(J, x, p)`) and `JacobianFunction` (`s.f(J, x, p)`), `JacobianMatrixJVP`
   evaluates `prob.J(prep.J, x, p)` and `mul!!(Jv, prep.J, v)` in place for `jvp!!`, and
   `Newton`'s `init` shares one `ChunkedForwardDiff` between `jacprep` and `jvpprep` when

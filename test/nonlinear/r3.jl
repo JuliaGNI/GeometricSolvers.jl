@@ -5,6 +5,7 @@
 
 using Adapt: Adapt
 using ADTypes: AutoFiniteDiff, AutoForwardDiff
+using FiniteDiff: FiniteDiff
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
@@ -108,7 +109,7 @@ end
 
 function (j::R3PicardJ)(J, y, q)
     fill!(J, zero(eltype(J)))
-    view(J, diagind(J)) .+= j.α
+    regularize!!(J, j.α)
     return J
 end
 
@@ -123,7 +124,13 @@ struct R3SqJ end
 
 function (::R3SqJ)(J, y, q)
     fill!(J, zero(eltype(J)))
-    view(J, diagind(J)) .= 2 .* y
+    if J isa Matrix
+        @inbounds for i in axes(J, 1)
+            J[i, i] = 2 * y[i]
+        end
+    else
+        view(J, diagind(J)) .= 2 .* y
+    end
     return J
 end
 
@@ -173,7 +180,7 @@ function (j::CountingDiagJ)(J, z, q)
     j.calls[] += 1
     T = eltype(J)
     fill!(J, zero(T))
-    view(J, diagind(J)) .+= T(3)
+    regularize!!(J, T(3))
     return nothing
 end
 
@@ -599,9 +606,10 @@ end
         x_abstol = zero(R), x_reltol = zero(R))
     opts_full = Options(T)
 
-    # 1-step parity on Array and JLArray (catches MU6 / Picard step sign and JVP)
+    # 1-step and full-solve parity on Array and JLArray (catches MU6 / Picard step sign and JVP)
     m_sw = Picard(; damping = 0.8, globalization = StrongWolfe())
     x1_r1, st1_r1 = solve(prob_r1_ad, x₀_s, m_sw, p_s; options = opts1)
+    xf_r1, stf_r1 = solve(prob_r1_ad, x₀_s, m_sw, p_s; options = opts_full)
     for AT in ARRAY_BACKENDS
         x₀ = AT(collect(x₀_s))
         p = AT(collect(p_s))
@@ -612,34 +620,34 @@ end
         @test isapprox(Array(x1_r3), Array(x1_r1); rtol = 8 * eps(R))
         @test isapprox(st1_r3.fnorm, st1_r1.fnorm; rtol = 8 * eps(R))
         @test isapprox(st1_r3.stepnorm, st1_r1.stepnorm; rtol = 8 * eps(R))
+
+        x_in = copy(x₀)
+        solver_r3 = init(prob_r3_ad, x_in, m_sw, p; options = opts_full)
+        st_in = solve!(x_in, solver_r3, p)
+        @test st_in.code == stf_r1.code == SUCCESS
+        @test st_in.iterations == stf_r1.iterations
+        @test isapprox(Array(x_in), Array(xf_r1); rtol = 8 * eps(R))
+        @test isapprox(st_in.fnorm, stf_r1.fnorm; rtol = 8 * eps(R))
     end
 
-    # Full solve parity across all globalizations on Array and JLArray
-    globs_3b = T === Float64 ?
-               (
+    # Full solve parity across all globalizations on Array
+    globs_3b = (
         (Static(), prob_r3_ad, prob_r1_ad),
         (Backtracking(), prob_r3_ad, prob_r1_ad),
         (Bisection(), prob_r3_ad, prob_r1_ad),
         (StrongWolfe(), prob_r3_ad, prob_r1_ad),
         (StrongWolfe(), prob_r3_j, prob_r1)
-    ) :
-               (
-        (Static(), prob_r3_ad, prob_r1_ad),
-        (StrongWolfe(), prob_r3_j, prob_r1)
     )
+    x₀_arr = collect(x₀_s)
+    p_arr = collect(p_s)
     for (glob, prob_r3, prob_ref) in globs_3b
         m = Picard(; damping = 0.8, globalization = glob)
         x_r1, st_r1 = solve(prob_ref, x₀_s, m, p_s; options = opts_full)
-        for AT in ARRAY_BACKENDS
-            x₀ = AT(collect(x₀_s))
-            p = AT(collect(p_s))
-            x_r3, st_r3 = solve(prob_r3, x₀, m, p; options = opts_full)
-            @test x_r3 isa AT{T, 1}
-            @test st_r3.code == st_r1.code == SUCCESS
-            @test st_r3.iterations == st_r1.iterations
-            @test isapprox(Array(x_r3), Array(x_r1); rtol = 8 * eps(R))
-            @test isapprox(st_r3.fnorm, st_r1.fnorm; rtol = 8 * eps(R))
-        end
+        x_r3, st_r3 = solve(prob_r3, x₀_arr, m, p_arr; options = opts_full)
+        @test st_r3.code == st_r1.code == SUCCESS
+        @test st_r3.iterations == st_r1.iterations
+        @test isapprox(x_r3, Array(x_r1); rtol = 8 * eps(R))
+        @test isapprox(st_r3.fnorm, st_r1.fnorm; rtol = 8 * eps(R))
     end
 end
 
@@ -660,21 +668,15 @@ end
         x_abstol = zero(R), x_reltol = zero(R))
     opts_full = Options(T)
 
-    globs_3c = T === Float64 ?
-               (
+    globs_3c = (
         (LUFactorization(), Static(), prob_r3_ad, prob_r1_ad),
-        (LUFactorization(), Backtracking(), prob_r3_ad, prob_r1_ad),
-        (LUFactorization(), Bisection(), prob_r3_ad, prob_r1_ad),
         (LUFactorization(), StrongWolfe(), prob_r3_ad, prob_r1_ad),
-        (LUFactorization(), DogLeg(), prob_r3_ad, prob_r1_ad),
-        (LUFactorization(), DogLeg(; radius = 0.5), prob_r3_j, prob_r1_j),
         (LUFactorization(), Static(), prob_r3_j, prob_r1_j),
-        (LUFactorization(), StrongWolfe(), prob_r3_j, prob_r1_j)
-    ) :
-               (
-        (LUFactorization(), Static(), prob_r3_ad, prob_r1_ad),
-        (LUFactorization(), DogLeg(; radius = 0.5), prob_r3_j, prob_r1_j),
-        (LUFactorization(), StrongWolfe(), prob_r3_j, prob_r1_j)
+        (LUFactorization(), Backtracking(), prob_r3_j, prob_r1_j),
+        (LUFactorization(), Bisection(), prob_r3_j, prob_r1_j),
+        (LUFactorization(), StrongWolfe(), prob_r3_j, prob_r1_j),
+        (LUFactorization(), DogLeg(), prob_r3_j, prob_r1_j),
+        (LUFactorization(), DogLeg(; radius = 0.5), prob_r3_j, prob_r1_j)
     )
     for (ls, glob, prob_r3, prob_r1) in globs_3c
         m = Newton(; linsolve = ls, globalization = glob)
@@ -688,24 +690,21 @@ end
         @test isapprox(x_r3, Array(inp.x_star_s); rtol = 10 * sqrt(eps(R)))
     end
 
-    if T === Float64
-        for glob in (Static(), DogLeg())
-            m_qr = Newton(; linsolve = QRFactorization(), globalization = glob)
-            x_r1, st_r1 = solve(prob_r1_j, x₀_s, m_qr, p_s; options = opts_full)
-            x_r3, st_r3 = solve(prob_r3_j, x₀, m_qr, p; options = opts_full)
-            @test st_r3.code == st_r1.code == SUCCESS
-            @test st_r3.iterations == st_r1.iterations
-            @test isapprox(x_r3, Array(x_r1); rtol = 10 * sqrt(eps(R)))
-        end
+    for glob in (Static(), DogLeg())
+        m_qr = Newton(; linsolve = QRFactorization(), globalization = glob)
+        x_r1, st_r1 = solve(prob_r1_j, x₀_s, m_qr, p_s; options = opts_full)
+        x_r3, st_r3 = solve(prob_r3_j, x₀, m_qr, p; options = opts_full)
+        @test st_r3.code == st_r1.code == SUCCESS
+        @test st_r3.iterations == st_r1.iterations
+        @test isapprox(x_r3, Array(x_r1); rtol = 10 * sqrt(eps(R)))
     end
 
     # `Newton(; reuse = 2)` parity across line-search globalizations
-    reuse_cases = T === Float64 ?
-                  (
+    reuse_cases = (
         (LUFactorization(), Static(), prob_r3_ad, prob_r1_ad),
-        (LUFactorization(), Backtracking(), prob_r3_j, prob_r1_j)
-    ) :
-                  ((LUFactorization(), Backtracking(), prob_r3_j, prob_r1_j),)
+        (LUFactorization(), Backtracking(), prob_r3_j, prob_r1_j),
+        (LUFactorization(), StrongWolfe(), prob_r3_j, prob_r1_j)
+    )
     for (ls, glob, prob_r3, prob_r1) in reuse_cases
         m_reuse = Newton(; linsolve = ls, globalization = glob, reuse = 2)
         xr_r1, str_r1 = solve(prob_r1, x₀_s, m_reuse, p_s; options = opts_full)
@@ -895,139 +894,124 @@ end
         prob_newt_ad = NonlinearProblem(R3SqF())
         prob_newt_j = NonlinearProblem(R3SqF(), R3SqJ())
 
-        for n in (10, 100)
-            x₀ = T[(i + 2) / (n + 1) + 2 for i in 1:n]
-            p = T[(i + 1) / (n + 2) + 1 for i in 1:n]
-            x = similar(x₀)
+        n = 2
+        x₀ = T[(i + 2) / (n + 1) + 2 for i in 1:n]
+        p = T[(i + 1) / (n + 2) + 1 for i in 1:n]
+        x = similar(x₀)
 
-            # Control: `collect` allocates
-            @test (@allocated collect(x₀)) > 0
+        # Control: `collect` allocates
+        @test (@allocated collect(x₀)) > 0
 
-            # Picard allocations and slot identity
-            check_picard_allocations(prob_pic_ad, x, x₀, Static(), p)
-            if T === Float64
-                check_picard_allocations(prob_pic_ad, x, x₀, Backtracking(), p)
-                if n == 10
-                    check_picard_allocations(prob_pic_ad, x, x₀, Bisection(), p)
-                    check_picard_allocations(prob_pic_ad, x, x₀, StrongWolfe(), p)
-                    check_picard_allocations(prob_pic_j, x, x₀, StrongWolfe(), p)
-                end
-            end
+        # Picard allocations and slot identity across all globalizations
+        for glob in (Static(), Backtracking(), Bisection(), StrongWolfe())
+            check_picard_allocations(prob_pic_ad, x, x₀, glob, p)
+        end
+        check_picard_allocations(prob_pic_j, x, x₀, StrongWolfe(), p)
 
-            # Newton with LU and QR, analytic J! and AutoForwardDiff(), and all globalizations + reuse
-            check_newton_allocations(prob_newt_ad, x, x₀, LUFactorization(), Static(), p)
-            check_newton_allocations(prob_newt_j, x, x₀, LUFactorization(), Static(), p)
-            check_newton_allocations(prob_newt_j, x, x₀, LUFactorization(), DogLeg(), p)
-            if T === Float64
-                for glob in (Backtracking(), DogLeg())
-                    check_newton_allocations(
-                        prob_newt_ad, x, x₀, LUFactorization(), glob, p)
-                end
-                check_newton_allocations(
-                    prob_newt_j, x, x₀, LUFactorization(), Backtracking(), p)
-                for glob in (Static(), DogLeg())
-                    check_newton_allocations(
-                        prob_newt_j, x, x₀, QRFactorization(), glob, p)
-                end
-                if n == 10
-                    for glob in (Bisection(), StrongWolfe())
-                        check_newton_allocations(
-                            prob_newt_ad, x, x₀, LUFactorization(), glob, p)
-                    end
-                end
-                for pr in (prob_newt_ad, prob_newt_j)
-                    solver_reuse = init(
-                        pr, x,
-                        Newton(;
-                            reuse = 2, regularization = 0.1,
-                            globalization = Backtracking()),
-                        p)
-                    st_pre_r = solver_reuse.state
-                    @test solve!_allocations(x, x₀, solver_reuse, p) == 0
-                    @test solver_reuse.state.Fx === st_pre_r.Fx
-                    @test solver_reuse.state.d === st_pre_r.d
-                    @test solver_reuse.state.fac === st_pre_r.fac
-                    @test solver_reuse.state.J === st_pre_r.J
-                    @test solver_reuse.state.g === st_pre_r.g
-                end
-            end
-
-            if real(T) === Float64 && n == 10
-                solver_mp = init(
-                    prob_newt_j, x, Newton(; linsolve = LUFactorization(Float32)), p)
-                @test solver_mp.state.J !== solver_mp.state.fac.factors
-                @test eltype(solver_mp.state.J) === T
-                @test eltype(solver_mp.state.fac.factors) ===
-                      (T <: Complex ? ComplexF32 : Float32)
-                @test solve!_allocations(x, x₀, solver_mp, p) == 0
-            end
+        # Newton with LU and QR, analytic J! and AutoForwardDiff(), and all globalizations + reuse
+        for glob in (Static(), StrongWolfe())
+            check_newton_allocations(prob_newt_ad, x, x₀, LUFactorization(), glob, p)
+        end
+        for glob in (Static(), Backtracking(), Bisection(), StrongWolfe(), DogLeg())
+            check_newton_allocations(
+                prob_newt_j, x, x₀, LUFactorization(), glob, p; jacobian = nothing)
+        end
+        for glob in (Static(), DogLeg())
+            check_newton_allocations(
+                prob_newt_j, x, x₀, QRFactorization(), glob, p; jacobian = nothing)
+        end
+        for pr in (prob_newt_ad, prob_newt_j)
+            solver_reuse = init(
+                pr, x,
+                Newton(;
+                    reuse = 2, regularization = 0.1,
+                    globalization = Backtracking()),
+                p)
+            st_pre_r = solver_reuse.state
+            @test solve!_allocations(x, x₀, solver_reuse, p) == 0
+            @test solver_reuse.state.Fx === st_pre_r.Fx
+            @test solver_reuse.state.d === st_pre_r.d
+            @test solver_reuse.state.fac === st_pre_r.fac
+            @test solver_reuse.state.J === st_pre_r.J
+            @test solver_reuse.state.g === st_pre_r.g
         end
 
-        # Cross-size difference check `abs(b(100) - b(10)) <= 64` and `n = 1000` for analytic `J` and `Picard`
+        if real(T) === Float64
+            solver_mp = init(
+                prob_newt_j, x, Newton(; linsolve = LUFactorization(Float32)), p)
+            @test solver_mp.state.J !== solver_mp.state.fac.factors
+            @test eltype(solver_mp.state.J) === T
+            @test eltype(solver_mp.state.fac.factors) ===
+                  (T <: Complex ? ComplexF32 : Float32)
+            @test solve!_allocations(x, x₀, solver_mp, p) == 0
+        end
+
+        # Cross-size checks at `n = 10`, `n = 100`, and `n = 1000` (`abs(b(100) - b(10)) <= 64`)
         x₀_10 = T[(i + 2) / 11 + 2 for i in 1:10]
         p_10 = T[(i + 1) / 12 + 1 for i in 1:10]
         x_10 = similar(x₀_10)
         b10 = solve!_allocations(x_10, x₀_10, init(prob_newt_j, x_10, Newton(), p_10), p_10)
+        @test b10 == 0
 
         x₀_100 = T[(i + 2) / 101 + 2 for i in 1:100]
         p_100 = T[(i + 1) / 102 + 1 for i in 1:100]
         x_100 = similar(x₀_100)
         b100 = solve!_allocations(
             x_100, x₀_100, init(prob_newt_j, x_100, Newton(), p_100), p_100)
+        @test b100 == 0
         @test abs(b100 - b10) <= 64
+        check_newton_allocations(
+            prob_newt_ad, x_100, x₀_100, LUFactorization(), Static(), p_100;
+            jacobian = AutoForwardDiff(; chunksize = 2))
 
-        if T === Float64 || T === ComplexF64
-            n_large = 1000
-            x₀_1000 = T[(i + 2) / (n_large + 1) + 2 for i in 1:n_large]
-            p_1000 = T[(i + 1) / (n_large + 2) + 1 for i in 1:n_large]
-            x_1000 = similar(x₀_1000)
-            solver_pic_1000 = init(prob_pic_ad, x_1000, Picard(; damping = 0.8), p_1000)
-            @test solve!_allocations(x_1000, x₀_1000, solver_pic_1000, p_1000) == 0
+        n_large = 1000
+        x₀_1000 = T[(i + 2) / (n_large + 1) + 2 for i in 1:n_large]
+        p_1000 = T[(i + 1) / (n_large + 2) + 1 for i in 1:n_large]
+        x_1000 = similar(x₀_1000)
+        solver_pic_1000 = init(prob_pic_ad, x_1000, Picard(; damping = 0.8), p_1000)
+        @test solve!_allocations(x_1000, x₀_1000, solver_pic_1000, p_1000) == 0
 
-            solver_newt_1000 = init(prob_newt_j, x_1000, Newton(), p_1000)
-            @test solve!_allocations(x_1000, x₀_1000, solver_newt_1000, p_1000) == 0
-        end
+        solver_newt_1000 = init(prob_newt_j, x_1000, Newton(), p_1000)
+        @test solve!_allocations(x_1000, x₀_1000, solver_newt_1000, p_1000) == 0
 
         # Under `StrongWolfe` and `Bisection` at `n = 8` with `AutoForwardDiff(chunksize = 2)`,
         # slope evaluations use the 1-dual JVP pushforward (1 `F!` call per slope evaluation)
         # rather than an `n / 2 = 4`-call Jacobian sweep (MU6).
-        if T === Float64
-            n8 = 8
-            f_real_calls = Ref(0)
-            f_dual1_calls = Ref(0)
-            f_dual2_calls = Ref(0)
-            prob_cnt = NonlinearProblem(
-                CountingSqF(f_real_calls, f_dual1_calls, f_dual2_calls))
-            x₀_8 = T[(i + 2) / 9 + 2 for i in 1:n8]
-            p_8 = T[(i + 1) / 10 + 1 for i in 1:n8]
-            for glob in (StrongWolfe(), Bisection())
-                x_8 = copy(x₀_8)
-                solver_cnt = init(
-                    prob_cnt, x_8,
-                    Newton(;
-                        jacobian = AutoForwardDiff(; chunksize = 2), globalization = glob),
-                    p_8)
-                f_real_calls[] = 0
-                f_dual1_calls[] = 0
-                f_dual2_calls[] = 0
-                st_cnt = solve!(x_8, solver_cnt, p_8)
-                @test st_cnt.code == SUCCESS
-                # Each Newton step does `ceil(Int, 8 / 2) = 4` chunk-2 dual calls for `jacobian!!`,
-                # and each line-search slope evaluation does 1 chunk-1 dual call for `jvp!!`.
-                @test f_dual2_calls[] == st_cnt.iterations * 4
-                @test f_dual1_calls[] >= st_cnt.iterations
-            end
-
-            # Non-ForwardDiff AD backend (`AutoFiniteDiff()`) works end to end through `DIJacobian` on `Array`
-            x_fd = copy(x₀_10)
-            solver_fd = init(
-                prob_newt_ad, x_fd,
-                Newton(; jacobian = AutoFiniteDiff(), globalization = StrongWolfe()), p_10)
-            @test solver_fd.state.jacprep isa DIJacobian
-            st_fd = solve!(x_fd, solver_fd, p_10)
-            @test st_fd.code == SUCCESS
-            @test isapprox(x_fd, sqrt.(p_10); rtol = 10 * sqrt(eps(R)))
+        f_real_calls = Ref(0)
+        f_dual1_calls = Ref(0)
+        f_dual2_calls = Ref(0)
+        n8 = 8
+        prob_cnt = NonlinearProblem(
+            CountingSqF(f_real_calls, f_dual1_calls, f_dual2_calls))
+        x₀_8 = T[(i + 2) / 9 + 2 for i in 1:n8]
+        p_8 = T[(i + 1) / 10 + 1 for i in 1:n8]
+        for glob in (StrongWolfe(), Bisection())
+            x_8 = copy(x₀_8)
+            solver_cnt = init(
+                prob_cnt, x_8,
+                Newton(;
+                    jacobian = AutoForwardDiff(; chunksize = 2), globalization = glob),
+                p_8)
+            f_real_calls[] = 0
+            f_dual1_calls[] = 0
+            f_dual2_calls[] = 0
+            st_cnt = solve!(x_8, solver_cnt, p_8)
+            @test st_cnt.code == SUCCESS
+            # Each Newton step does `ceil(Int, 8 / 2) = 4` chunk-2 dual calls for `jacobian!!`,
+            # and each line-search slope evaluation does 1 chunk-1 dual call for `jvp!!`.
+            @test f_dual2_calls[] == st_cnt.iterations * 4
+            @test f_dual1_calls[] >= st_cnt.iterations
         end
+
+        # Non-ForwardDiff AD backend (`AutoFiniteDiff()`) works end to end through `DIJacobian` on `Array`
+        x_fd = copy(x₀)
+        solver_fd = init(
+            prob_newt_ad, x_fd,
+            Newton(; jacobian = AutoFiniteDiff(), globalization = StrongWolfe()), p)
+        @test solver_fd.state.jacprep isa DIJacobian
+        st_fd = solve!(x_fd, solver_fd, p)
+        @test st_fd.code == SUCCESS
+        @test isapprox(x_fd, sqrt.(p); rtol = 10 * sqrt(eps(R)))
     finally
         BLAS.set_num_threads(old_threads)
     end

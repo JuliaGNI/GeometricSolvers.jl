@@ -82,7 +82,7 @@ is set, only the residual tolerance test can declare `SUCCESS` too, because a ra
 distance to a root, sets its norm; such a step is not a stall. Reaching
 `options.max_iterations` without convergence returns `MAXITERS`.
 """
-@inline function solve!!(
+function solve!!(
         state, prob::NonlinearProblem, x₀, method, p = nothing,
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
     state = reset_state(state)

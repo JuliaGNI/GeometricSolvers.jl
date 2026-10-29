@@ -109,8 +109,9 @@ end
     regularize!!(J, μ)
 
 Add `μ * I` to the Jacobian `J` in its storage, and return it. When `iszero(μ)` holds, `J` is
-returned untouched. On an `AbstractMatrix`, the diagonal view `view(J, diagind(J))` is updated by
-broadcast so device arrays perform no scalar indexing.
+returned untouched. On a `Matrix` the diagonal is shifted in a loop so bounds-checked runs
+allocate nothing; on any other `AbstractMatrix` the diagonal view `view(J, diagind(J))` is updated
+by broadcast so device arrays perform no scalar indexing.
 """
 function regularize!!(J::SMatrix{N, N, T, L}, μ) where {N, T, L}
     iszero(μ) && return J
@@ -124,7 +125,16 @@ end
 regularize!!(J::T, μ) where {T <: Number} = iszero(μ) ? J : J + T(μ)
 
 function regularize!!(J::AbstractMatrix{T}, μ) where {T}
-    iszero(μ) || (view(J, diagind(J)) .+= T(μ))
+    if !iszero(μ)
+        μT = T(μ)
+        if J isa Matrix
+            @inbounds for i in axes(J, 1)
+                J[i, i] += μT
+            end
+        else
+            view(J, diagind(J)) .+= μT
+        end
+    end
     return J
 end
 

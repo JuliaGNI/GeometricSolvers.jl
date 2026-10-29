@@ -140,7 +140,7 @@ end
     return init(ls, prob, x, p)
 end
 
-@inline function init_newton_J(m::Newton, fac, x::AbstractVector)
+@inline function init_newton_J(m::Newton, fac, x)
     if !(m.globalization isa DogLeg) && factor_eltype(m.linsolve, eltype(x)) === eltype(x)
         return fac.factors
     end
@@ -148,7 +148,7 @@ end
     return buffer(x, eltype(x), n, n)
 end
 
-function init(
+@inline function init(
         m::Newton{L, G, J, RF, R, Nothing}, prob::NonlinearProblem, x, p = nothing) where {
         L, G, J, RF, R}
     Fx = buffer(x)
@@ -162,7 +162,7 @@ function init(
     end
 end
 
-function init(
+@inline function init(
         m::Newton{L, G, J, RF, R, Int32}, prob::NonlinearProblem, x, p = nothing) where {
         L, G, J, RF, R}
     Fx = buffer(x)
@@ -177,7 +177,7 @@ function init(
     end
 end
 
-function init(
+@inline function init(
         m::Newton{L, G, J, RF, R, Nothing}, prob::NonlinearProblem, x, p = nothing) where {
         L, G <: DogLeg, J, RF, R}
     Fx = buffer(x)

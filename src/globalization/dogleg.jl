@@ -70,7 +70,7 @@ Adapt.adapt_structure(::ToReal{R}, dl::DogLeg) where {R} = DogLeg{R}(dl.radius)
     return dl.radius === nothing ? zero(R) : R(dl.radius)
 end
 
-function init_globalization(::DogLeg, x)
+@inline function init_globalization(::DogLeg, x)
     return (; g̃ = buffer(x), ĝ = buffer(x), Jg = buffer(x), s = buffer(x),
         xt = buffer(x), Ft = buffer(x))
 end

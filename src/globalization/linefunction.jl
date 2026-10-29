@@ -48,8 +48,17 @@ anchor_residual(lf::LineFunction) = lf.Fx
     return 2 * rdot(Fα, Jv)
 end
 
-init_globalization(::Static, x) = (; xt = buffer(x), Ft = buffer(x))
-init_globalization(::LineSearch, x) = (; xt = buffer(x), Ft = buffer(x), Jv = buffer(x))
+"""
+    init_globalization(g, x)
+
+Allocate the workspace named tuple for globalization method `g` at iterate `x` through
+[`buffer(x)`](@ref buffer): `(; xt, Ft)` for [`Static`](@ref), `(; xt, Ft, Jv)` for a
+[`LineSearch`](@ref), and `(; g̃, ĝ, Jg, s, xt, Ft)` for [`DogLeg`](@ref). In R1 every slot is
+`nothing`; in R3 each slot is a preallocated vector like `x`.
+"""
+@inline init_globalization(::Static, x) = (; xt = buffer(x), Ft = buffer(x))
+@inline init_globalization(::LineSearch, x) = (;
+    xt = buffer(x), Ft = buffer(x), Jv = buffer(x))
 
 @inline g_xt(::Nothing) = nothing
 @inline g_xt(g) = g.xt

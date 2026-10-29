@@ -40,7 +40,7 @@ Adapt.@adapt_structure Picard
     end
 end
 
-function init(m::Picard, prob::NonlinearProblem, x, p = nothing)
+@inline function init(m::Picard, prob::NonlinearProblem, x, p = nothing)
     Fx = buffer(x)
     jvpprep = picard_jvpprep(prob, Fx, x, p)
     if Fx === nothing
