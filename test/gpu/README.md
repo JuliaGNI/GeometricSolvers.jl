@@ -1,8 +1,9 @@
 # Device runs by hand
 
-Only the Metal case has device CI, in the `Metal` workflow. The GPU machines are reachable
-only inside the institute. A person runs the device tests, or a spike, on the machine, and pushes
-the output to a results branch. The maintainer then records the output and deletes the branch.
+No case has device CI: the `Metal` workflow runs on the virtualized GPU of the GitHub runners,
+where the device tests skip (issue #34). The GPU machines are reachable only inside the institute.
+A person runs the device tests, or a spike, on the machine, and pushes the output to a results
+branch. The maintainer then records the output and deletes the branch.
 **A results branch is never merged.**
 
 | machine | slug | backend |
