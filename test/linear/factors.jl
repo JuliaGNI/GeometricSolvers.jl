@@ -58,6 +58,17 @@ const LOWER_PAIRS = filter(p -> p[2] !== Nothing, PRECISION_PAIRS)
         @test all(isfinite, x)
         @test relerr(x, reference(A, r)) <= bound(A0, T, TF)
     end
+
+    # T narrower than TF: the step entry 2^-24 of the scaled system is the smallest subnormal
+    # Float16, and half of it rounds to 0 unless frac and the power of two of s are applied before
+    # the conversion to T. The identity returns r.
+    @testset "T narrower than TF, $M" for M in (STATIC_METHODS..., SVDFactorization)
+        A = SMatrix{2, 2, Float16}(1, 0, 0, 1)
+        r = SVector{2, Float16}(floatmin(Float16), 1024)
+        x = ldiv!!(nothing, factorize!!(nothing, M(Float32), A), r)
+        @test eltype(x) === Float16
+        @test all(isapprox.(x, r; rtol = 8 * eps(Float16)))
+    end
 end
 
 @testset "the factor element type is TF, made complex for a complex T" begin

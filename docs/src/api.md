@@ -69,8 +69,8 @@ a one-sided Jacobi singular value decomposition whose solve truncates at the ran
 [`init`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref), and
 [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on a host
 `Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref) and
-[`DenseQR`](@ref). [`factorize!!`](@ref) states
-what a singular matrix gives. These names are not exported. Reach them as `GeometricSolvers.name`.
+[`DenseQR`](@ref). [`factorize!!`](@ref) states what a singular matrix gives. These names are not
+exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 init

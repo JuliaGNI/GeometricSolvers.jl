@@ -366,6 +366,9 @@ so that a compat-only bump can be told apart from an interface change.
   `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
   In mixed precision (`TF !== T`), `ldiv!!` also scales the right-hand side by its infinity norm
   before converting to the factor precision, and returns zero directly on a zero right-hand side.
+  The scale `s` of the right-hand side is split as `s = frac · 2^ex` with `frac` in `[0.5, 1)`. The
+  step is multiplied by `frac` and then by `2^(ex - e)` in one `ldexp`, so a right-hand side near
+  `floatmax(T)` makes the step overflow only where the solution itself does.
   Where the element type of `J` differs from the factor type, `factorize!!` divides `J` by the power
   of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, as the static factorisation
   does, and `ldiv!!` multiplies the step by `2^-e` in both paths. So a `Float64` or `ComplexF64` `J`

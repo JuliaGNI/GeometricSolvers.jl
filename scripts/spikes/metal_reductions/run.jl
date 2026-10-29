@@ -1,7 +1,7 @@
 # Metal Float32 reduction accuracy spike for `norm2` and `rdot`.
 #
 # Usage:
-#   julia --startup-file=no --project=test/gpu/metal scripts/spikes/metal_reductions/run.jl [metal|cpu]
+#   julia --startup-file=no --project=test/gpu/metal scripts/spikes/metal_reductions/run.jl [auto|metal|cpu]
 #
 # Measures `norm2(a)` and `rdot(a, b)` on `MtlVector{Float32}` (and on `Vector{Float32}` in CPU
 # smoke mode) with random signs at `n = 10^6, 10^7, 10^8` against a host `Float64` reference
@@ -10,6 +10,8 @@
 # `27 * eps(Float32)` at `10^8`).
 
 const MODE = isempty(ARGS) ? "auto" : lowercase(first(ARGS))
+MODE in ("auto", "metal", "cpu") ||
+    error("unknown mode $(repr(MODE)): use auto, metal or cpu")
 
 delete!(ENV, "JULIA_LOAD_PATH")
 empty!(LOAD_PATH)
