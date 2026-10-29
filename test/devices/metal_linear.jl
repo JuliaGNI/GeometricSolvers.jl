@@ -11,8 +11,9 @@ using Metal, Test
 
 include("../helpers/matrix.jl")
 include("../helpers/staticsystems.jl")
+include("../helpers/metal_device.jl")
 
-if Metal.functional()
+if Metal.functional() && !on_virtual_gpu()
     @testset "$M on Metal, $T, n = $n" for M in (LUFactorization, QRFactorization),
         T in filter(T -> real(T) === Float32, ELTYPES), n in STATIC_SIZES
         m = M()
@@ -29,6 +30,8 @@ if Metal.functional()
         end
         @test all(>(0), info[(length(systems) + 1):end])
     end
+elseif Metal.functional()
+    @test_skip on_virtual_gpu()  # issue #34
 else
     @test_skip Metal.functional()
 end

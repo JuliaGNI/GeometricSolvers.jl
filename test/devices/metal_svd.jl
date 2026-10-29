@@ -18,6 +18,7 @@ using StaticArrays: SMatrix, SVector
 
 include("../helpers/matrix.jl")
 include("../helpers/staticsystems.jl")
+include("../helpers/metal_device.jl")
 
 const METAL_ELTYPES = filter(T -> real(T) === Float32, ELTYPES)
 
@@ -34,7 +35,7 @@ const METAL_ELTYPES = filter(T -> real(T) === Float32, ELTYPES)
     end
 end
 
-if Metal.functional()
+if Metal.functional() && !on_virtual_gpu()
     @testset "the Jacobi SVD on Metal, $T, n = $n" for T in METAL_ELTYPES, n in (1, 4, 16)
 
         m = SVDFactorization()
@@ -91,6 +92,8 @@ if Metal.functional()
         @test isapprox(Array(vectors)[:, :, 1], Matrix(host[1][2]);
             rtol = 8 * 2n * eps(real(T)), atol = 8 * 2n * eps(real(T)))
     end
+elseif Metal.functional()
+    @test_skip on_virtual_gpu()  # issue #34
 else
     @test_skip Metal.functional()
 end

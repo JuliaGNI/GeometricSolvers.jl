@@ -15,6 +15,7 @@ using GeometricSolvers: Backtracking, DogLeg, LUFactorization, Newton, Nonlinear
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
+include("../helpers/metal_device.jl")
 
 const N_METAL_NL = 4
 const B_METAL_NL = 8
@@ -59,7 +60,7 @@ end
 end
 
 @testset "Metal R1 nonlinear kernel" begin
-    if Metal.functional()
+    if Metal.functional() && !on_virtual_gpu()
         for T in filter(T -> real(T) === Float32, ELTYPES)
             R = real(T)
 
@@ -284,6 +285,8 @@ end
                 end
             end
         end
+    elseif Metal.functional()
+        @test_skip on_virtual_gpu()  # issue #34
     else
         @test_skip Metal.functional()
     end

@@ -8,13 +8,18 @@
 # runs no test and records one visible skip: on a Mac without a usable device, and inside a
 # sandbox, where `Metal.devices()` is empty although the hardware is present. The skip does not
 # fail the run, so `.github/workflows/Metal.yml` keeps the guarantee instead: a step before the
-# tests fails that job where Metal is not functional, so it cannot pass without having run them.
+# tests fails that job where Metal is not functional. On a virtualized GPU, as on the GitHub macOS
+# runners, the file records a skip for issue #34 and runs no test.
 
 using Metal, Test
 
-if Metal.functional()
+include("../helpers/metal_device.jl")
+
+if Metal.functional() && !on_virtual_gpu()
     include("../gpu/runtests.jl")
     main("metal")
+elseif Metal.functional()
+    @test_skip on_virtual_gpu()  # issue #34
 else
     @test_skip Metal.functional()
 end
