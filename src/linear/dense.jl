@@ -128,14 +128,14 @@ function factorize!!(fac::DenseLU{<:StridedMatrix{<:BlasFloat}}, ::LUFactorizati
         J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     _, ipiv, info = getrf!(fac.factors, fac.ipiv; check = false)
-    return DenseLU(fac.factors, ipiv, fac.rhs, Int(info), e)
+    return DenseLU(fac.factors, ipiv, fac.rhs, Int(info), e, fac.status)
 end
 
 function factorize!!(fac::DenseLU{<:AbstractMatrix}, ::LUFactorization, J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     F = lu!(fac.factors, RowMaximum(); check = false)
     copyto!(fac.ipiv, F.ipiv)
-    return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info), e)
+    return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info), e, fac.status)
 end
 
 function backsolve!(fac::DenseLU{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:

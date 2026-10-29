@@ -94,9 +94,8 @@ end
 
 function ka_factorize_lu!(fac::DenseLU, J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
-    status = fac.status === nothing ? similar(fac.factors, Int32, 1) : fac.status
-    info = ka_lu!(fac.factors, fac.ipiv, status)
-    return DenseLU(fac.factors, fac.ipiv, fac.rhs, info, e, status)
+    info = ka_lu!(fac.factors, fac.ipiv, fac.status)
+    return DenseLU(fac.factors, fac.ipiv, fac.rhs, info, e, fac.status)
 end
 
 function factorize!!(fac::DenseLU{<:AbstractGPUArray}, ::LUFactorization, J::AbstractMatrix)

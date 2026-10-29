@@ -149,11 +149,6 @@ struct DenseLU{A <: AbstractMatrix, P <: AbstractVector,
     status::S
 end
 
-function DenseLU(factors::AbstractMatrix, ipiv::AbstractVector,
-        rhs::Union{Nothing, AbstractVector}, info::Int, scale_exponent::Int)
-    return DenseLU(factors, ipiv, rhs, info, scale_exponent, nothing)
-end
-
 """
     DenseQR{A, T, W, V}
 
