@@ -181,7 +181,7 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
     end
     # When `Fres` is a shared buffer (`lf.Ft`), a rejected trial after `αres` overwrote its contents;
     # re-evaluating at `αres` restores `F(x + αres * d)` without changing the search count `n`.
-    if !(Fres === F₀) && isfinite(φres) && αres != αlast
+    if shared_trial_residual(lf) && !(Fres === F₀) && isfinite(φres) && αres != αlast
         _, Fres = merit_and_residual(lf, αres)
     end
     LineSearchResult{R, typeof(Fres)}(αres, φres, code, n, Fres)

@@ -37,6 +37,8 @@ end
 
 anchor_residual(lf::LineFunction) = lf.Fx
 
+shared_trial_residual(lf::LineFunction) = !(lf.Ft === nothing)
+
 @inline φ(lf::LineFunction, α) = merit_and_residual(lf, α)[1]
 
 @inline (lf::LineFunction)(α) = φ(lf, α)

@@ -46,6 +46,10 @@ merit_and_residual(lf, α) = (φ(lf, α), nothing)
 # gives every result of a search along `lf` the same type.
 anchor_residual(lf) = nothing
 
+# Whether the trials of a search along `lf` share one residual buffer, so that a later trial
+# overwrites the residual of an earlier one. A line function with no residual shares none.
+shared_trial_residual(lf) = false
+
 """
     φ′(lf, α)
 
