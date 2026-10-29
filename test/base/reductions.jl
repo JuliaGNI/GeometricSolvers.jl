@@ -33,6 +33,20 @@ include("../helpers/matrix.jl")
     @test abs(rdot(A, B) - refd) <= γ(n + 2, R) * sum(abs.(big.(a)) .* abs.(big.(b)))
 end
 
+# The pairwise sum has an error that grows like log2(n) u, a sequential fold one that grows like
+# n u. On this positive uniform data, a sequential `Float32` fold misses the bound below by more
+# than 50 times. All-ones data does not separate the two: its sum is exact below 2^24.
+@testset "pairwise reduction: Float32, n = 10^6, within ceil(log2(n)) eps" begin
+    n = 10^6
+    a, b = rand(Xoshiro(1), Float32, n), rand(Xoshiro(2), Float32, n)
+    bound = ceil(log2(n)) * eps(Float32)
+    a64, b64 = Float64.(a), Float64.(b)
+    ref2 = sum(abs2, a64)
+    refd = sum(a64 .* b64)
+    @test abs(norm2(a) - ref2) <= bound * ref2
+    @test abs(rdot(a, b) - refd) <= bound * refd
+end
+
 @testset "a JLArray refuses scalar indexing" begin
     @test_throws ErrorException JLArray(zeros(Float32, 2))[1]
 end
