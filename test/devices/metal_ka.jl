@@ -9,8 +9,9 @@ using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization
 using GeometricSolvers: backsolve!, factorize!!, init, ldiv!!, returncode
 
 include("../helpers/matrix.jl")
+include("../helpers/metal_device.jl")
 
-if Metal.functional()
+if Metal.functional() && !on_virtual_gpu()
     allowscalar(false)
 
     const METAL_ELTYPES = filter(T -> real(T) === Float32, ELTYPES)
@@ -133,6 +134,8 @@ if Metal.functional()
             @test d_nan isa MtlVector{T}
         end
     end
+elseif Metal.functional()
+    @test_skip on_virtual_gpu()  # issue #34
 else
     @test_skip Metal.functional()
 end
