@@ -17,8 +17,9 @@ NonlinearProblem
 ## The storage seam
 
 The storage seam lets an algorithm read each function's result rather than the storage itself,
-so the storage-specific operations stay at the leaves. The value methods, for a `StaticArray` or
-a `Number` iterate, are the ones this page documents.
+so the storage-specific operations stay at the leaves. Each function has a value method for a
+`StaticArray` or a `Number` iterate (R1) and an in-place method for an `AbstractArray` buffer slot
+(R3).
 
 These names are not exported. Reach them as `GeometricSolvers.name`.
 
@@ -28,6 +29,10 @@ residual!!
 update_iterate!!
 map!!
 mul!!
+copy!!
+scale!!
+axpby!!
+regularize!!
 ```
 
 ## Status and stopping test
@@ -69,8 +74,8 @@ a one-sided Jacobi singular value decomposition whose solve truncates at the ran
 [`init`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref), and
 [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on a host
 `Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref) and
-[`DenseQR`](@ref). [`factorize!!`](@ref) states what a singular matrix gives. These names are not
-exported. Reach them as `GeometricSolvers.name`.
+[`DenseQR`](@ref). [`factorize!!`](@ref) states what a singular matrix gives. [`init`](@ref) is
+exported; the remaining names are not exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
 init
@@ -127,13 +132,17 @@ DogLeg
 A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,
 `refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
-to `R = real(eltype(x₀))`, calls [`init`](@ref) and [`solve!!`](@ref), and returns `(x, status)`.
-[`solve!!`](@ref) takes a solver state from [`init`](@ref) and runs the loop on a `StaticVector`,
-`MVector` or `Number` iterate in R1. [`solve!`](@ref) solves a batch of independent small systems in
-place on `get_backend(X)` with one work-item per system, and [`PerSystem`](@ref) wraps an indexable
-collection of per-system parameters so system `i` receives `p.data[i]`.
+to `R = real(eltype(x₀))`, calls [`init`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when `x₀`
+is an array, and returns `(x, status)`. For an `AbstractVector` iterate in R3,
+`init(prob, x, method, p; options, kwargs...)` pre-allocates a [`NonlinearSolver`](@ref) and
+[`solve!`](@ref) mutates `x` in place and returns `status`. [`solve!!`](@ref) takes a solver state
+from `init(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch `X` of
+independent small systems, [`solve!`](@ref) solves each in place on `get_backend(X)` with one
+work-item per system, and [`PerSystem`](@ref) wraps an indexable collection of per-system
+parameters so system `i` receives `p.data[i]`.
 
 ```@docs
+NonlinearSolver
 solve
 solve!
 solve!!
@@ -157,9 +166,11 @@ mode on every array type, and any other back end goes through
 [DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl) on a CPU
 iterate, so every ADTypes back end works with no line of source here. A device array iterate takes
 `AutoForwardDiff()` only, because DifferentiationInterface's `jacobian!` raises a scalar-indexing
-error on an `MtlArray`, a `CuArray` and a `JLArray`. [`jacobian!!`](@ref) and [`jvp!!`](@ref) then
-dispatch on the object the preparation returned, so the solver makes no runtime choice and carries
-no `ad` keyword.
+error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies an analytic
+3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
+matrix buffer and multiplies by the direction in place. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
+then dispatch on the object the preparation returned, so the solver makes no runtime choice and
+carries no `ad` keyword.
 
 In R3 the iterate is a vector; another shape raises `ArgumentError` where the preparation is
 built. The parameters may be replaced on every call, which is what lets one preparation serve a
@@ -178,6 +189,7 @@ prepare_ad
 DIJacobian
 ChunkedForwardDiff
 JacobianFunction
+JacobianMatrixJVP
 jacobian!!
 jvp!!
 ```
@@ -188,6 +200,7 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 step!!
+init_globalization
 LineFunction
 globalize!!
 LineSearch

@@ -72,3 +72,10 @@ function jacobian!!(J, prep::DIJacobian, prob, x, p)
     DI.jacobian!(prob.F, prep.y, J, prep.jacprep, prep.backend, x, DI.Constant(p))
     return J
 end
+
+jacobian!!(J::AbstractMatrix, ::Nothing, prob, x::AbstractVector, p) = (prob.J(J, x, p); J)
+function jacobian!!(
+        J::AbstractMatrix, s::JacobianFunction, prob, x::AbstractVector, p)
+    s.f(J, x, p)
+    return J
+end

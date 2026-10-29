@@ -444,3 +444,29 @@ so that a compat-only bump can be told apart from an interface change.
   a threaded CPU R1 loop and reports the R4 crossover dimension `n`.
   `KernelAbstractions` (0.9.15 or later, the first release whose compat admits Adapt 4) is now a
   direct dependency of the package.
+
+- `NonlinearSolver`, `init` and `solve!` (exported), together with `solve`, run `Newton` and
+  `Picard` in R3 on an `AbstractVector` iterate (`Array` and device arrays), sharing `solve!!` and
+  `step!!` with R1 through the storage seam. `init(prob, x, method, p = nothing; options, kwargs...)`
+  adapts `method` to `R = real(eltype(x))` and builds a `NonlinearSolver` holding `prob`, the
+  adapted `method`, `Options{R}` and the pre-allocated workspace state without mutating `x`. In R3,
+  `Newton` holds its factorisation buffer in `state.fac` (`init(m.linsolve, prob, x, p)`), aliases
+  `state.J` to `state.fac.factors` when `!(m.globalization isa DogLeg)` and
+  `factor_eltype(m.linsolve, eltype(x)) === eltype(x)`, and allocates a separate `n × n` Jacobian
+  buffer `state.J` when `m.globalization isa DogLeg` or the factor and working element types differ.
+  `solve!(x, solver, p = nothing)` resets per-solve scalar state (`age = Int32(0)` and
+  `stalled = false` for `Newton` with `reuse`, and `radius = radius₀` for `Newton` with `DogLeg`),
+  mutates `x` in place and returns `SolverStatus{R}` with zero steady-state heap allocations on
+  `Array` once `solver` is built. `solve(prob, x₀, method, p = nothing; options, kwargs...)` copies
+  `x₀` when `x₀` is not a `StaticArray` or a `Number`, so `x₀` is never mutated.
+  The internal storage seam (`src/base/bang.jl`) adds the array methods of `buffer`, `residual!!`,
+  `update_iterate!!`, `map!!` and `mul!!`, and the value and array methods of `copy!!`, `scale!!`,
+  `axpby!!` and `regularize!!` (which updates `view(J, diagind(J))` by broadcast so device arrays
+  perform no scalar indexing). In `src/ad/`, `jacobian!!` adds its `AbstractMatrix` methods for
+  `::Nothing` (`prob.J(J, x, p)`) and `JacobianFunction` (`s.f(J, x, p)`), `JacobianMatrixJVP`
+  evaluates `prob.J(prep.J, x, p)` and `mul!!(Jv, prep.J, v)` in place for `jvp!!`, and
+  `Newton`'s `init` shares one `ChunkedForwardDiff` between `jacprep` and `jvpprep` when
+  `prob.J === nothing` and `m.jacobian` is `nothing` or `AutoForwardDiff()`. In `StrongWolfe`,
+  when `search` returns an earlier trial `αres != αlast` after a later trial overwrote the shared
+  residual buffer `Ft`, `merit_and_residual(lf, αres)` refreshes `Ft` before returning so
+  `globalize!!` copies the residual at `x + αres * d`.

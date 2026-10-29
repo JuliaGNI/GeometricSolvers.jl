@@ -43,6 +43,18 @@ end
         status.step_failures, status.promoted)
 end
 
+@inline state_Fx(state) = hasproperty(state, :Fx) ? state.Fx : nothing
+
+@inline function reset_state(state)
+    if hasproperty(state, :age)
+        return (; state..., age = Int32(0), stalled = false)
+    elseif hasproperty(state, :radius) && hasproperty(state, :radius₀)
+        return (; state..., radius = state.radius₀)
+    else
+        return state
+    end
+end
+
 """
     solve!!(state, prob::NonlinearProblem, x₀, method, p = nothing, options = Options(eltype(x₀)))
 
@@ -51,7 +63,9 @@ Run the nonlinear solver loop from `x₀` using `state = init(method, prob, x₀
 `KernelAbstractions.@kernel`, a caller prepares `state₀ = init(m, prob, x₀, p)` on the host and
 calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 
-Before the loop, `solve!!` evaluates `Fx = residual!!(nothing, prob, x₀, p)` and `fnorm₀ = rnorm(Fx)`.
+At the start of each call, `solve!!` resets per-solve state counters (`age = 0, stalled = false`
+under factor reuse, and `radius = radius₀` under [`DogLeg`](@ref)), evaluates
+`Fx = residual!!(state_Fx(state), prob, x₀, p)`, and computes `fnorm₀ = rnorm(Fx)`.
 When `fnorm₀` is not finite — including in `Float32` when `‖F‖ > sqrt(floatmax(Float32)) ≈ 1.8e19`,
 where `norm2` overflows to `Inf` — it returns `NONFINITE` with `0` iterations. When
 `converged(options, status, fnorm₀, rnorm(x₀))` already holds at `0` iterations, it returns
@@ -68,11 +82,12 @@ is set, only the residual tolerance test can declare `SUCCESS` too, because a ra
 distance to a root, sets its norm; such a step is not a stall. Reaching
 `options.max_iterations` without convergence returns `MAXITERS`.
 """
-function solve!!(
+@inline function solve!!(
         state, prob::NonlinearProblem, x₀, method, p = nothing,
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
+    state = reset_state(state)
     x = x₀
-    Fx = residual!!(nothing, prob, x, p)
+    Fx = residual!!(state_Fx(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
     status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)
     if !isfinite(fnorm₀)
@@ -121,11 +136,73 @@ end
         zero(R), sqrt(eps(R)), zero(R), 2 * eps(R), Int32(0), Int32(100), Int32(2))
 end
 
+@inline function resolve_options(
+        x₀, options::Union{Nothing, Options}, kwargs, caller::Symbol)
+    T = eltype(x₀)
+    R = real(T)
+    if options !== nothing
+        isempty(kwargs) || throw(ArgumentError(
+            "pass either `options` or keyword tolerances to `$caller`, not both"))
+        return convert(Options{R}, options)
+    elseif isempty(kwargs)
+        return default_options(R)
+    else
+        return Options(T; kwargs...)
+    end
+end
+
+"""
+    NonlinearSolver(prob, method, options, state)
+
+A preallocated nonlinear solver for [`NonlinearProblem`](@ref) `prob` with `method` and
+[`Options`](@ref) `options`, holding the workspace and AD preparation in `state`. Build it with
+[`init(prob, x, method, p; options = nothing, kwargs...)`](@ref init) and solve in place with
+[`solve!(x, solver, p)`](@ref solve!).
+"""
+mutable struct NonlinearSolver{P <: NonlinearProblem, M, O <: Options, S}
+    const prob::P
+    const method::M
+    const options::O
+    state::S
+end
+
+"""
+    init(prob::NonlinearProblem, x::AbstractVector, method, p = nothing;
+         options = nothing, kwargs...)
+
+Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` at a template iterate `x`
+and representative parameters `p`, without mutating `x`. Passing both `options` and keyword
+tolerances raises an `ArgumentError`.
+"""
+function init(
+        prob::NonlinearProblem, x::AbstractVector, method, p = nothing;
+        options::Union{Nothing, Options} = nothing, kwargs...)
+    R = real(eltype(x))
+    opt = resolve_options(x, options, kwargs, :init)
+    m = Adapt.adapt(ToReal{R}(), method)
+    state = init(m, prob, x, p)
+    return NonlinearSolver(prob, m, opt, state)
+end
+
+"""
+    solve!(x::AbstractVector, solver::NonlinearSolver, p = nothing)
+
+Solve `solver.prob` in place into `x` using the preallocated workspace and AD preparation in
+`solver`, and return `status::SolverStatus`.
+"""
+function solve!(x::AbstractVector, solver::NonlinearSolver, p = nothing)
+    _, status, state = solve!!(
+        solver.state, solver.prob, x, solver.method, p, solver.options)
+    solver.state === state || (solver.state = state)
+    return status
+end
+
 """
     solve(prob::NonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
 
 Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters `p`, and return
-`(x, status)` where `status` is a [`SolverStatus`](@ref).
+`(x, status)` where `status` is a [`SolverStatus`](@ref). For an R3 array iterate `x₀`, `solve`
+copies `x₀` so the caller's initial guess is not mutated.
 
 `solve` adapts `method` to `real(eltype(x₀))` with [`ToReal`](@ref), builds [`Options`](@ref) in
 `eltype(x₀)` from `options` or `kwargs...`, calls [`init`](@ref), and delegates to
@@ -136,19 +213,11 @@ returns `NONFINITE`.
 function solve(
         prob::NonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
-    T = eltype(x₀)
-    R = real(T)
-    opt = if options !== nothing
-        isempty(kwargs) || throw(ArgumentError(
-            "pass either `options` or keyword tolerances to `solve`, not both"))
-        convert(Options{R}, options)
-    elseif isempty(kwargs)
-        default_options(R)
-    else
-        Options(T; kwargs...)
-    end
+    R = real(eltype(x₀))
+    opt = resolve_options(x₀, options, kwargs, :solve)
     m = Adapt.adapt(ToReal{R}(), method)
-    state = init(m, prob, x₀, p)
-    x, status, _ = solve!!(state, prob, x₀, m, p, opt)
+    x = x₀ isa Union{StaticArray, Number} ? x₀ : copy(x₀)
+    state = init(m, prob, x, p)
+    x, status, _ = solve!!(state, prob, x, m, p, opt)
     return x, status
 end

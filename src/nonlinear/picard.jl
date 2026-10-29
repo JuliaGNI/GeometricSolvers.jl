@@ -31,19 +31,34 @@ end
 
 Adapt.@adapt_structure Picard
 
-@inline function picard_jvpprep(prob::NonlinearProblem, x, p)
-    return prob.J !== nothing ? nothing :
-           prepare_ad(AutoForwardDiff(), prob, nothing, x, p)
+@inline function picard_jvpprep(prob::NonlinearProblem, Fx, x, p)
+    if prob.J !== nothing
+        return Fx === nothing ? nothing :
+               JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+    else
+        return prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+    end
 end
 
 function init(m::Picard, prob::NonlinearProblem, x, p = nothing)
-    return (; jacprep = nothing, jvpprep = picard_jvpprep(prob, x, p))
+    Fx = buffer(x)
+    jvpprep = picard_jvpprep(prob, Fx, x, p)
+    if Fx === nothing
+        return (; jacprep = nothing, jvpprep)
+    else
+        d = buffer(x)
+        g = init_globalization(m.globalization, x)
+        return (; jacprep = nothing, jvpprep, Fx, d, g)
+    end
 end
+
+@inline state_d(state) = hasproperty(state, :d) ? state.d : nothing
+@inline state_g(state) = hasproperty(state, :g) ? state.g : nothing
 
 @inline function step!!(state, m::Picard, prob::NonlinearProblem, x, Fx, p)
     ω = eltype(x)(m.damping)
-    d = map!!(fi -> -ω * fi, nothing, Fx)
+    d = map!!(fi -> -ω * fi, state_d(state), Fx)
     x₊, F₊, _, info = globalize!!(
-        nothing, m.globalization, prob, x, Fx, d, p, state.jvpprep, MeasuredSlope())
+        state_g(state), m.globalization, prob, x, Fx, d, p, state.jvpprep, MeasuredSlope())
     return x₊, F₊, state, info
 end
