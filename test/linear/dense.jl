@@ -338,6 +338,22 @@ end
             end
         end
     end
+
+    @testset "scaled-column same-precision ldiv!! ($T)" for T in ELTYPES
+        RT = real(T)
+        s = RT === Float32 ? 1.0f20 : 1.0e200
+        A_sc = T[T(s) one(T); T(2 * s) T(3)]
+        x_expected = T[one(T) / T(s), T(2)]
+        b_sc = A_sc * x_expected
+        x = zeros(T, 2)
+        for m in (LUFactorization(), QRFactorization())
+            fac = init(m, nothing, x, nothing)
+            fac = factorize!!(fac, m, A_sc)
+            @test returncode(fac) === SUCCESS
+            d = ldiv!!(similar(b_sc), fac, b_sc)
+            @test isapprox(d, x_expected; rtol = 16 * eps(RT))
+        end
+    end
 end
 
 @testset "The rank-revealing SVD solve (check 5)" begin

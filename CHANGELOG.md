@@ -82,15 +82,15 @@ so that a compat-only bump can be told apart from an interface change.
   `Float32`, or at `N = 4` in `Float32`, should expect the factorisation to take 1.2 to 2 times as
   long. Only `N` in 2, 4, 8 and 16 was measured.
 
-- The Metal device tests in `test/devices/` (`metal.jl`, `metal_linear.jl`, `metal_svd.jl` and
-  `metal_nonlinear.jl`) skip on a virtualized GPU and run on a real Apple GPU.
+- The Metal device tests in `test/devices/` (`metal.jl`, `metal_linear.jl`, `metal_svd.jl`,
+  `metal_nonlinear.jl` and `metal_ka.jl`) skip on a virtualized GPU and run on a real Apple GPU.
   `test/helpers/metal_device.jl` detects a virtual device with `Metal.MTL.is_virtual`, and each
   skip is recorded as `@test_skip` against issue #34. The paravirtual GPU of the GitHub macOS
   runners throws a device exception at random in a kernel late in the Metal group; which kernel
   throws depends on the test order, and each one passes when it runs early and on a real GPU, and
-  its algorithm passes on the CPU. Until issue #34 closes, the Metal workflow and the macOS-latest CI jobs run no device
-  test, so a green macOS-latest check does not exercise Metal. `.github/workflows/Metal.yml` and
-  `test/gpu/README.md` say so.
+  its algorithm passes on the CPU. Until issue #34 closes, the Metal workflow and the macOS-latest
+  CI jobs run no device test, so a green macOS-latest check does not exercise Metal.
+  `.github/workflows/Metal.yml` and `test/gpu/README.md` say so.
 
 ### New Features
 
@@ -376,6 +376,9 @@ so that a compat-only bump can be told apart from an interface change.
   `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
   In mixed precision (`TF !== T`), `ldiv!!` also scales the right-hand side by its infinity norm
   before converting to the factor precision, and returns zero directly on a zero right-hand side.
+  The scale `s` of the right-hand side is split as `s = frac · 2^ex` with `frac` in `[0.5, 1)`. The
+  step is multiplied by `frac` and then by `2^(ex - e)` in one `ldexp`, so a right-hand side near
+  `floatmax(T)` makes the step overflow only where the solution itself does.
   Where the element type of `J` differs from the factor type, `factorize!!` divides `J` by the power
   of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, as the static factorisation
   does, and `ldiv!!` multiplies the step by `2^-e` in both paths. So a `Float64` or `ComplexF64` `J`
@@ -383,6 +386,33 @@ so that a compat-only bump can be told apart from an interface change.
   `Float32`, solves to the factor precision's bound. Entries far below the largest of `J` can still
   underflow, and an `Inf` in `J` gives a step that is not specified. `LinearAlgebra` is now a
   direct dependency of the package.
+
+- Internal: R3 dense `KernelAbstractions` linear solvers on `AbstractGPUArray`
+  (`src/linear/ka/lu.jl` and `src/linear/ka/qr.jl`). For a device vector iterate `x isa
+  AbstractGPUArray`, `init(m, prob, x, p)` builds `DenseLU` or `DenseQR` with `Int32` pivot and
+  status buffers on the same device (`similar(x, Int32, n)` and `similar(x, Int32, 1)`), and
+  `factorize!!` and `ldiv!!` run column-stepped `KernelAbstractions` kernels in place of the host
+  `LAPACK` / `LinearAlgebra` methods, with zero host scalar indexing
+  (`GPUArraysCore.allowscalar(false)`) and one `Array(status)` readback per `factorize!!` call
+  (`0` on `ldiv!!`). Partial-pivoting LU selects its pivot by `abs1(z) = abs(real(z)) +
+  abs(imag(z))` (as LAPACK's `ixamax` does) and divides subdiagonal entries through the
+  overflow-safe `multiplier(num, den)`. Unpivoted Householder QR scales each subcolumn by its
+  largest entry magnitude `amax = maximum(abs, A[k:n, k])` before forming the reflector norm and
+  records the first zero diagonal entry of `R` in `info`. Triangular backsolves (`L`, `U` and `R`)
+  and the application of `Qᴴ` to the right-hand side run in one work-item (`ndrange = 1`) on the
+  device; the factorisations' column updates are parallel over the trailing matrix. In mixed
+  precision (`TF !== T`), `ldiv!!` converts and scales the right-hand side and the step by
+  broadcasts without host scalar indexing. The public `solve` does not reach these kernels: its
+  `init` for `Newton` builds no dense factor from the iterate, and its step factorises with
+  `nothing`, which has methods for static matrices only. The device path is reached only through
+  the internal `init`, `factorize!!` and `ldiv!!`, which a device-resident R3 `solve` would call.
+  `norm2(a)` and `rdot(a, b)` call `sum` without an `init` keyword (`isempty(a) ? zero(R) :
+  R(sum(...))`), so `Array` and `Broadcasted` reductions use Base's pairwise `_mapreduce` rather
+  than sequential `mapfoldl_impl`. `scripts/spikes/metal_reductions/run.jl` measures `norm2` and
+  `rdot` on `MtlVector{Float32}` at `n = 10⁶, 10⁷, 10⁸` against a `Float64` host reference on
+  positive-mean (`rand`) and zero-mean (`randn`) inputs: every relative error stays within the
+  `⌈log₂(n)⌉ · eps(Float32)` pairwise tree-reduction bound (`20`, `24` and `27 · eps(Float32)`),
+  so no custom `KernelAbstractions` reduction kernel is needed.
 
 - `PerSystem` and `solve!` (exported), together with the internal `GeometricSolvers.parameters`,
   run the R1 nonlinear solver loop across a batch of independent small systems in place on
