@@ -10,7 +10,7 @@ using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
 using LinearAlgebra: BLAS, Diagonal, I, diagind, mul!
-using StaticArrays: SMatrix, SVector
+using StaticArrays: MVector, SMatrix, SVector
 using Test
 
 using GeometricSolvers
@@ -787,6 +787,10 @@ end
     @test solver.method === Adapt.adapt(ToReal{R}(), Newton(; reuse = 4))
     @test solver.options isa Options{R}
 
+    # `init` rejects a `StaticArray` iterate, which `solve!` cannot update in place
+    @test_throws ArgumentError init(prob, SVector{2, T}(x₀), Newton(), p₁)
+    @test_throws ArgumentError init(prob, MVector{2, T}(x₀), Newton(), p₁)
+
     # First `solve!(x, solver, p₁)` converges in place to `[2, 3]` and leaves `age > 0`
     st₁ = solve!(x, solver, p₁)
     @test st₁ isa SolverStatus{R}
@@ -851,6 +855,18 @@ end
         st_in = solve!(x_in, solver_in, p₁_at)
         @test Array(x_out) == Array(x_in)
         @test st_out === st_in
+    end
+
+    # R3 `Newton` on a non-`Array` backend, with LU and QR, a line search and DogLeg
+    prob_ad = NonlinearProblem(R3SqF())
+    for m in (Newton(), Newton(; globalization = StrongWolfe()),
+        Newton(; globalization = DogLeg()), Newton(; linsolve = QRFactorization()))
+        x_jl = JLArray(copy(x₀))
+        p_jl = JLArray(copy(p₁))
+        solver_jl = init(prob_ad, x_jl, m, p_jl)
+        st_jl = solve!(x_jl, solver_jl, p_jl)
+        @test st_jl.code == SUCCESS
+        @test isapprox(Array(x_jl), T[2, 3]; rtol = 10 * sqrt(eps(R)))
     end
 end
 

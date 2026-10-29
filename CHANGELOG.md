@@ -449,7 +449,9 @@ so that a compat-only bump can be told apart from an interface change.
   `Picard` in R3 on an `AbstractVector` iterate (`Array` and device arrays), sharing `solve!!` and
   `step!!` with R1 through the storage seam. `init(prob, x, method, p = nothing; options, kwargs...)`
   adapts `method` to `R = real(eltype(x))` and builds a `NonlinearSolver` holding `prob`, the
-  adapted `method`, `Options{R}` and the pre-allocated workspace state without mutating `x`. In R3,
+  adapted `method`, `Options{R}` and the pre-allocated workspace state without mutating `x`. A
+  `StaticArray` `x` raises `ArgumentError`, because `solve!` cannot write the solution into it;
+  `solve` takes one. In R3,
   `Newton` holds its factorisation buffer in `state.fac` (`init(m.linsolve, prob, x, p)`), aliases
   `state.J` to `state.fac.factors` when `!(m.globalization isa DogLeg)` and
   `factor_eltype(m.linsolve, eltype(x)) === eltype(x)`, and allocates a separate `n × n` Jacobian
@@ -467,8 +469,11 @@ so that a compat-only bump can be told apart from an interface change.
   `AbstractMatrix` methods for
   `::Nothing` (`prob.J(J, x, p)`) and `JacobianFunction` (`s.f(J, x, p)`), `JacobianMatrixJVP`
   evaluates `prob.J(prep.J, x, p)` and `mul!!(Jv, prep.J, v)` in place for `jvp!!`, and
-  `Newton`'s `init` shares one `ChunkedForwardDiff` between `jacprep` and `jvpprep` when
-  `prob.J === nothing` and `m.jacobian` is `nothing` or `AutoForwardDiff()`. In `StrongWolfe`,
+  `Newton`'s `init` shares one AD preparation between `jacprep` and `jvpprep` when
+  `prob.J === nothing` and `m.jacobian` is `nothing` or an `AbstractADType`. With `nothing` it is
+  `prepare_ad(AutoForwardDiff(), …)`; with an `AbstractADType` it is `prepare_ad(m.jacobian, …)`,
+  which on an array iterate is a `ChunkedForwardDiff` for `AutoForwardDiff()` and a `DIJacobian`
+  for another back end (an `ArgumentError` on a device iterate). In `StrongWolfe`,
   when `search` returns an earlier trial `αres != αlast` after a later trial overwrote the shared
   residual buffer `Ft`, `merit_and_residual(lf, αres)` refreshes `Ft` before returning so
   `globalize!!` copies the residual at `x + αres * d`.

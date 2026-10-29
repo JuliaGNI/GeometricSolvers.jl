@@ -172,11 +172,14 @@ end
 
 Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` at a template iterate `x`
 and representative parameters `p`, without mutating `x`. Passing both `options` and keyword
-tolerances raises an `ArgumentError`.
+tolerances raises an `ArgumentError`. A `StaticArray` `x` raises an `ArgumentError` too, because
+[`solve!`](@ref) cannot write the solution into it; solve it with [`solve`](@ref).
 """
 function init(
         prob::NonlinearProblem, x::AbstractVector, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
+    x isa StaticArray && throw(ArgumentError(
+        "`init` builds a solver for an array iterate; solve a `StaticArray` iterate with `solve`"))
     R = real(eltype(x))
     opt = resolve_options(x, options, kwargs, :init)
     m = Adapt.adapt(ToReal{R}(), method)
