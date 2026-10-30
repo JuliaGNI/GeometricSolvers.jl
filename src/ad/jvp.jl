@@ -20,6 +20,34 @@ function jvp!!(Jv, prep::ChunkedForwardDiff, prob, x, v, p)
     return Jv
 end
 
+"""
+    JacobianMatrixJVP(J)
+
+The R3 JVP preparation when the problem provides an analytic Jacobian `prob.J(J, x, p)`: a preallocated
+`n × n` matrix buffer `J` into which [`jvp!!`](@ref) evaluates `prob.J(J, x, p)` and multiplies by `v`
+via [`mul!!`](@ref). Because this buffer is distinct from Newton's Jacobian buffer, evaluating a
+line-search slope under Jacobian reuse (`reuse > 1`) leaves the held Newton Jacobian untouched.
+"""
+struct JacobianMatrixJVP{M <: AbstractMatrix}
+    J::M
+end
+
+# The R3 JVP preparation from an analytic Jacobian under globalization `g`. Only a line search
+# that searches takes the slope of the merit, so `Static`, `DogLeg` and every other
+# globalization get `nothing` and no `n × n` buffer.
+function jacobian_matrix_jvp(::LineSearch, x)
+    JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+end
+jacobian_matrix_jvp(g, x) = nothing
+jacobian_matrix_jvp(::Static, x) = nothing
+
+function jvp!!(Jv::AbstractVector, prep::JacobianMatrixJVP, prob,
+        x::AbstractVector, v::AbstractVector, p)
+    prob.J(prep.J, x, p)
+    mul!!(Jv, prep.J, v)
+    return Jv
+end
+
 # The R1 value methods. The preparation is built from the problem and never from a method's
 # operator, so `nothing` is the problem's own `J` and an `AutoForwardDiff` one dual
 # evaluation of `F` — one partial, one residual evaluation, and no buffer. A `JacobianFunction`

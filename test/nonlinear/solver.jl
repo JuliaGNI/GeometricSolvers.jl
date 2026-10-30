@@ -306,7 +306,8 @@ end
         "src/nonlinear/solver.jl",
         "src/nonlinear/newton.jl",
         "src/nonlinear/picard.jl",
-        "src/globalization/linefunction.jl"
+        "src/globalization/linefunction.jl",
+        "src/globalization/dogleg.jl"
     )
     bad_storage = r"(\.=|\bsetindex!\b|\bcopyto!\b|\bfill!\b|\bmul!\b|\b[A-Za-z_][A-Za-z0-9_]*\[[^]]+\]\s*=[^=])"
     bad_update = r"[+-]\s*α[A-Za-z0-9_₀-₉]*\s*\*"

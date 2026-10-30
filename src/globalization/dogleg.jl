@@ -59,19 +59,39 @@ end
 Adapt.adapt_structure(::ToReal{R}, dl::DogLeg) where {R} = DogLeg{R}(dl.radius)
 
 # The constants of Procedure 4.1: the radius bounds, and the shrink and growth factors.
-@inline dogleg_bounds(::Type{R}) where {R} = (R(1e-6), R(1e10))
-@inline dogleg_clamp(δ::R) where {R} = clamp(δ, dogleg_bounds(R)...)
-@inline dogleg_shrink(δ::R) where {R} = max(R(0.25) * δ, dogleg_bounds(R)[1])
-@inline dogleg_grow(δ::R) where {R} = min(R(4) * δ, dogleg_bounds(R)[2])
+@inline dogleg_lo(::Type{R}) where {R} = R(1e-6)
+@inline dogleg_hi(::Type{R}) where {R} = R(1e10)
+@inline dogleg_bounds(::Type{R}) where {R} = (dogleg_lo(R), dogleg_hi(R))
+@inline dogleg_clamp(δ::R) where {R} = clamp(δ, dogleg_lo(R), dogleg_hi(R))
+@inline dogleg_shrink(δ::R) where {R} = max(R(0.25) * δ, dogleg_lo(R))
+@inline dogleg_grow(δ::R) where {R} = min(R(4) * δ, dogleg_hi(R))
 
 @inline function dogleg_initial_radius(dl::DogLeg, ::Type{R}) where {R}
     return dl.radius === nothing ? zero(R) : R(dl.radius)
 end
 
+@inline function init_globalization(::DogLeg, x)
+    return (; g̃ = buffer(x), ĝ = buffer(x), Jg = buffer(x), s = buffer(x),
+        xt = buffer(x), Ft = buffer(x))
+end
+
+@inline g_g̃(::Nothing) = nothing
+@inline g_g̃(g) = g.g̃
+@inline g_ĝ(::Nothing) = nothing
+@inline g_ĝ(g) = g.ĝ
+@inline g_Jg(::Nothing) = nothing
+@inline g_Jg(g) = g.Jg
+@inline g_s(::Nothing) = nothing
+@inline g_s(g) = g.s
+
 # The trial loop of `DogLeg` at `(x, Fx)`, with the model matrix `J`, the Newton step `sN` (read
 # only when `newton` is `true`) and the radius `δ` (`0` when unset). Returns `(x₊, F₊, δ₊, info)`.
 @inline function dogleg_step(prob, x, Fx, p, J, sN, newton::Bool, δ::R) where {R}
-    lo = dogleg_bounds(R)[1]
+    return dogleg_step(nothing, prob, x, Fx, p, J, sN, newton, δ)
+end
+
+@inline function dogleg_step(g, prob, x, Fx, p, J, sN, newton::Bool, δ::R) where {R}
+    lo = dogleg_lo(R)
     fnorm = rnorm(Fx)
     # at an exact root there is nothing to reduce: the iterate stays, and so does the radius
     if iszero(fnorm)
@@ -83,10 +103,12 @@ end
     # `‖g‖ / ‖J ĝ‖² = ‖F‖ ‖g̃‖ / ‖J ĝ‖²`, so that no norm of the product `J' F` occurs. A `g̃`
     # that is zero or whose norm is not finite, or a `J ĝ` that is zero or whose norm is not finite,
     # gives no Cauchy point.
-    g̃ = J' * (Fx / fnorm)
+    u = scale!!(g_s(g), inv(fnorm), Fx)
+    g̃ = mul!!(g_g̃(g), J', u)
     gnorm = rnorm(g̃)
-    ĝ = g̃ / gnorm
-    jnorm = rnorm(J * ĝ)
+    ĝ = scale!!(g_ĝ(g), inv(gnorm), g̃)
+    Jg = mul!!(g_Jg(g), J, ĝ)
+    jnorm = rnorm(Jg)
     cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm) && isfinite(jnorm)
     nC = fnorm * ((gnorm / jnorm) / jnorm)
     if iszero(δ) && (newton || cauchy)
@@ -101,7 +123,7 @@ end
             return x, Fx, δ, StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
         elseif !newton || nC >= δ
             # the Cauchy point, cut to the radius; with a Newton step, this branch has `nC ≥ δ`
-            s = -min(nC, δ) * ĝ
+            s = scale!!(g_s(g), -min(nC, δ), ĝ)
             boundary = nC >= δ
         else
             # the point of norm `δ` on the segment from the Cauchy point `δ a` to the Newton step,
@@ -110,18 +132,21 @@ end
             # Newton step is longer than `δ`. The Newton step minimises the model, so
             # `Re⟨a, b̂⟩ ≥ 0` (Nocedal and Wright, Lemma 4.2), and this form of the root does not
             # cancel. No norm of the Newton step in units of `δ` occurs.
-            a = -(nC / δ) * ĝ
-            b = sN + nC * ĝ
-            b̂ = b / rnorm(b)
+            a = scale!!(g_g̃(g), -(nC / δ), ĝ)
+            b = axpby!!(g_Jg(g), one(R), sN, nC, ĝ)
+            b̂ = scale!!(g_Jg(g), inv(rnorm(b)), b)
             ab = rdot(a, b̂)
             c = 1 - norm2(a)
-            t = c / (ab + sqrt(ab * ab + c))
-            s = δ * (a + t * b̂)
+            ab2 = ab * ab
+            t = c / (ab + sqrt(ab2 + c))
+            s = axpby!!(g_s(g), δ, a, δ * t, b̂)
             boundary = true
         end
-        pred = fnorm - rnorm(Fx + J * s)
-        x₊ = update_iterate!!(nothing, x, one(R), s)
-        F₊ = residual!!(nothing, prob, x₊, p)
+        Js = mul!!(g_Jg(g), J, s)
+        Flin = axpby!!(g_Ft(g), one(R), Fx, one(R), Js)
+        pred = fnorm - rnorm(Flin)
+        x₊ = update_iterate!!(g_xt(g), x, one(R), s)
+        F₊ = residual!!(g_Ft(g), prob, x₊, p)
         fnorm₊ = rnorm(F₊)
         ared = fnorm - fnorm₊
         # a non-finite `F₊` gives an `ared` of `-Inf` or `NaN`, which fails the test
@@ -134,8 +159,11 @@ end
             elseif ρ > R(0.75) && boundary
                 δ = dogleg_grow(δ)
             end
-            return x₊, F₊, δ,
-            StepInfo{R}(SUCCESS, fnorm₊, rnorm(s), Int32(0), false, limited)
+            stepnorm = rnorm(s)
+            x = copy!!(x, x₊)
+            Fx = copy!!(Fx, F₊)
+            return x, Fx, δ,
+            StepInfo{R}(SUCCESS, fnorm₊, stepnorm, Int32(0), false, limited)
         end
         if δ == lo
             return x, Fx, δ,

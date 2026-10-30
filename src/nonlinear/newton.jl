@@ -74,24 +74,29 @@ end
 
 Adapt.@adapt_structure Newton
 
-@inline function newton_jacprep(m::Newton, prob::NonlinearProblem, x, p)
-    if m.jacobian === nothing
-        return prob.J !== nothing ? nothing :
-               prepare_ad(AutoForwardDiff(), prob, nothing, x, p)
-    elseif m.jacobian isa AbstractADType
-        return prepare_ad(m.jacobian, prob, nothing, x, p)
+@inline function newton_ad_preps(m::Newton, prob::NonlinearProblem, Fx, x, p)
+    if m.jacobian === nothing && prob.J === nothing
+        prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+        return prep, prep
+    elseif m.jacobian isa AbstractADType && prob.J === nothing
+        prep = prepare_ad(m.jacobian, prob, Fx, x, p)
+        return prep, prep
     else
-        return JacobianFunction(m.jacobian)
-    end
-end
-
-@inline function newton_jvpprep(m::Newton, prob::NonlinearProblem, x, p)
-    if prob.J !== nothing
-        return nothing
-    elseif m.jacobian isa AbstractADType
-        return prepare_ad(m.jacobian, prob, nothing, x, p)
-    else
-        return prepare_ad(AutoForwardDiff(), prob, nothing, x, p)
+        jacprep = if m.jacobian === nothing
+            nothing
+        elseif m.jacobian isa AbstractADType
+            prepare_ad(m.jacobian, prob, Fx, x, p)
+        else
+            JacobianFunction(m.jacobian)
+        end
+        jvpprep = if prob.J !== nothing
+            Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x)
+        elseif m.jacobian isa AbstractADType
+            prepare_ad(m.jacobian, prob, Fx, x, p)
+        else
+            prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+        end
+        return jacprep, jvpprep
     end
 end
 
@@ -125,46 +130,70 @@ end
     return StaticQR{1, TF, 1}(z, τ, Int32(0), Int32(0))
 end
 
-function init(
-        m::Newton{L, G, J, RF, R, Nothing}, prob::NonlinearProblem, x, p = nothing) where {
-        L, G, J, RF, R}
-    jacprep = newton_jacprep(m, prob, x, p)
-    jvpprep = newton_jvpprep(m, prob, x, p)
-    return (; jacprep, jvpprep)
+@inline function init_factor(
+        ls::Union{LUFactorization, QRFactorization}, prob, x::Union{StaticVector, Number}, p)
+    return empty_static_factor(ls, x)
 end
 
-function init(
+@inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p)
+    return init(ls, prob, x, p)
+end
+
+@inline function init_newton_J(m::Newton, fac, x)
+    if !(m.globalization isa DogLeg) && factor_eltype(m.linsolve, eltype(x)) === eltype(x)
+        return fac.factors
+    end
+    n = length(x)
+    return buffer(x, eltype(x), n, n)
+end
+
+@inline function init(
+        m::Newton{L, G, J, RF, R, Nothing}, prob::NonlinearProblem, x, p = nothing) where {
+        L, G, J, RF, R}
+    Fx = buffer(x)
+    jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
+    if Fx === nothing
+        return (; jacprep, jvpprep)
+    else
+        fac = init_factor(m.linsolve, prob, x, p)
+        return (; jacprep, jvpprep, Fx, d = buffer(x), fac,
+            J = init_newton_J(m, fac, x), g = init_globalization(m.globalization, x))
+    end
+end
+
+@inline function init(
         m::Newton{L, G, J, RF, R, Int32}, prob::NonlinearProblem, x, p = nothing) where {
         L, G, J, RF, R}
-    jacprep = newton_jacprep(m, prob, x, p)
-    jvpprep = newton_jvpprep(m, prob, x, p)
-    fac = empty_static_factor(m.linsolve, x)
-    return (; jacprep, jvpprep, fac, age = Int32(0), stalled = false)
+    Fx = buffer(x)
+    jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
+    fac = init_factor(m.linsolve, prob, x, p)
+    if Fx === nothing
+        return (; jacprep, jvpprep, fac, age = Int32(0), stalled = false)
+    else
+        return (; jacprep, jvpprep, fac, age = Int32(0), stalled = false,
+            Fx, d = buffer(x), J = init_newton_J(m, fac, x),
+            g = init_globalization(m.globalization, x))
+    end
 end
 
-function init(
+@inline function init(
         m::Newton{L, G, J, RF, R, Nothing}, prob::NonlinearProblem, x, p = nothing) where {
         L, G <: DogLeg, J, RF, R}
-    jacprep = newton_jacprep(m, prob, x, p)
-    jvpprep = newton_jvpprep(m, prob, x, p)
+    Fx = buffer(x)
+    jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     radius = dogleg_initial_radius(m.globalization, real(eltype(x)))
-    return (; jacprep, jvpprep, radius)
+    if Fx === nothing
+        return (; jacprep, jvpprep, radius)
+    else
+        fac = init_factor(m.linsolve, prob, x, p)
+        return (; jacprep, jvpprep, radius, radius₀ = radius, Fx, d = buffer(x),
+            fac, J = init_newton_J(m, fac, x),
+            g = init_globalization(m.globalization, x))
+    end
 end
 
-@inline function regularize_jacobian(J::SMatrix{N, N, T}, μ) where {N, T}
-    iszero(μ) && return J
-    shift = T(μ)
-    return SMatrix{N, N, T, N * N}(ntuple(Val(N * N)) do k
-        i = (k - 1) % N + 1
-        j = (k - 1) ÷ N + 1
-        @inbounds i == j ? J[k] + shift : J[k]
-    end)
-end
-
-@inline function regularize_jacobian(J::T, μ) where {T <: Number}
-    iszero(μ) && return J
-    return J + T(μ)
-end
+@inline state_J(state) = hasproperty(state, :J) ? state.J : nothing
+@inline state_fac(state) = hasproperty(state, :fac) ? state.fac : nothing
 
 @inline function newton_stepkind(m::Newton, ::Type{T}, fresh::Bool) where {T}
     if fresh && (m.jacobian === nothing || m.jacobian isa AbstractADType) &&
@@ -181,19 +210,25 @@ end
         prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     T = eltype(x)
     R = real(T)
-    Jmat = jacobian!!(nothing, state.jacprep, prob, x, p)
-    Jreg = regularize_jacobian(Jmat, m.regularization)
-    fac = factorize!!(nothing, m.linsolve, Jreg)
+    Jmat = jacobian!!(state_J(state), state.jacprep, prob, x, p)
+    Jreg = regularize!!(Jmat, m.regularization)
+    fac = factorize!!(state_fac(state), m.linsolve, Jreg)
+    state₊ = if hasproperty(state, :fac) && !(fac === state.fac)
+        (; state..., fac)
+    else
+        state
+    end
     if fac.info > Int32(0)
-        return x, Fx, state,
+        return x, Fx, state₊,
         StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false, false)
     end
-    d₀ = map!!(-, nothing, ldiv!!(nothing, fac, Fx))
-    d = refine!!(nothing, m.refinement, prob, x, Fx, d₀, fac, p, state.jvpprep)
+    d₀ = ldiv!!(state_d(state), fac, Fx)
+    d₁ = map!!(-, state_d(state), d₀)
+    d = refine!!(state_d(state), m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
     sk = newton_stepkind(m, T, true)
     x₊, F₊, _, info = globalize!!(
-        nothing, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
-    return x₊, F₊, state, info
+        state_g(state), m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
+    return x₊, F₊, state₊, info
 end
 
 # The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
@@ -202,20 +237,32 @@ end
 @inline function step!!(
         state, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
-    Jmat = jacobian!!(nothing, state.jacprep, prob, x, p)
-    Jreg = regularize_jacobian(Jmat, m.regularization)
-    fac = factorize!!(nothing, m.linsolve, Jreg)
-    d₀ = map!!(-, nothing, ldiv!!(nothing, fac, Fx))
-    d = refine!!(nothing, m.refinement, prob, x, Fx, d₀, fac, p, state.jvpprep)
-    newton = fac.info == Int32(0) && isfinite(rnorm(d))
-    x₊, F₊, radius, info = dogleg_step(prob, x, Fx, p, Jreg, d, newton, state.radius)
-    return x₊, F₊, (; state.jacprep, state.jvpprep, radius), info
+    Jmat = jacobian!!(state_J(state), state.jacprep, prob, x, p)
+    Jreg = regularize!!(Jmat, m.regularization)
+    fac = factorize!!(state_fac(state), m.linsolve, Jreg)
+    if fac.info == Int32(0)
+        d₀ = ldiv!!(state_d(state), fac, Fx)
+        d₁ = map!!(-, state_d(state), d₀)
+        d = refine!!(state_d(state), m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
+        newton = isfinite(rnorm(d))
+    else
+        d = Fx
+        newton = false
+    end
+    x₊, F₊, radius, info = dogleg_step(
+        state_g(state), prob, x, Fx, p, Jreg, d, newton, state.radius)
+    state₊ = if hasproperty(state, :fac)
+        (; state..., fac, radius)
+    else
+        (; state.jacprep, state.jvpprep, radius)
+    end
+    return x₊, F₊, state₊, info
 end
 
 @inline function newton_factor(m::Newton, state, prob, x, p)
-    Jmat = jacobian!!(nothing, state.jacprep, prob, x, p)
-    Jreg = regularize_jacobian(Jmat, m.regularization)
-    return factorize!!(nothing, m.linsolve, Jreg)
+    Jmat = jacobian!!(state_J(state), state.jacprep, prob, x, p)
+    Jreg = regularize!!(Jmat, m.regularization)
+    return factorize!!(state_fac(state), m.linsolve, Jreg)
 end
 
 # The step from the factor `fac`, fresh or reused: `SINGULAR` for a singular factor, else the
@@ -226,11 +273,12 @@ end
     if fac.info > Int32(0)
         return x, Fx, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false, false)
     end
-    d₀ = map!!(-, nothing, ldiv!!(nothing, fac, Fx))
-    d = refine!!(nothing, m.refinement, prob, x, Fx, d₀, fac, p, state.jvpprep)
+    d₀ = ldiv!!(state_d(state), fac, Fx)
+    d₁ = map!!(-, state_d(state), d₀)
+    d = refine!!(state_d(state), m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
     sk = newton_stepkind(m, T, fresh)
     x₊, F₊, _, info = globalize!!(
-        nothing, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
+        state_g(state), m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
     return x₊, F₊, info
 end
 
@@ -251,10 +299,10 @@ end
         x₊, F₊, info = newton_globalize(m, state, prob, x, Fx, p, fac, true)
     end
     if info.code == SINGULAR
-        state_sing = (; state.jacprep, state.jvpprep, fac, age = Int32(0), stalled = false)
+        state_sing = (; state..., fac, age = Int32(0), stalled = false)
         return x₊, F₊, state_sing, info
     end
     stalled₊ = info.code == STALLED
-    state₊ = (; state.jacprep, state.jvpprep, fac, age = age₊, stalled = stalled₊)
+    state₊ = (; state..., fac, age = age₊, stalled = stalled₊)
     return x₊, F₊, state₊, info
 end

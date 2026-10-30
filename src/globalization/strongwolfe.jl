@@ -107,6 +107,7 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
     hi, φhi, dhi = zero(R), φ₀, d₀
     # the step to return if no trial meets both conditions, and its residual
     αres, φres, Fres = α, R(NaN), F₀
+    αlast = zero(R)
     code = LINESEARCH_FAILED
     zooming = false
     bisect = false    # the last zoom trial shrank the bracket by less than 0.66
@@ -116,6 +117,7 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
         done && continue
         if !zooming
             φi, Fi = merit_and_residual(lf, αi)
+            αlast = αi
             n += Int32(1)
             αres, φres, Fres = αi, φi, Fi
             if !armijo(φi, φ₀, c₁, αi, d₀) || (!initial && φi ≥ φp)
@@ -152,6 +154,7 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
             # no trial below the step floor: there the merit cannot show the predicted decrease
             αj = max(bisect ? midpoint(lo, hi) : zoom_step(lo, φlo, dlo, hi, φhi, dhi), αmin)
             φj, Fj = merit_and_residual(lf, αj)
+            αlast = αj
             n += Int32(1)
             # the round-off of the two merits compared, which may be far from φ₀
             τj = roundoff(max(abs(φj), abs(φlo)))
@@ -175,6 +178,11 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
             end
             bisect = abs(hi - lo) > R(0.66) * width
         end
+    end
+    # When `Fres` is a shared buffer (`lf.Ft`), a rejected trial after `αres` overwrote its contents;
+    # re-evaluating at `αres` restores `F(x + αres * d)` without changing the search count `n`.
+    if shared_trial_residual(lf) && !(Fres === F₀) && isfinite(φres) && αres != αlast
+        _, Fres = merit_and_residual(lf, αres)
     end
     LineSearchResult{R, typeof(Fres)}(αres, φres, code, n, Fres)
 end

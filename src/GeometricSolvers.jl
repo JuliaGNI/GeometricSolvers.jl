@@ -11,8 +11,8 @@ using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
 using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
                           get_backend, isgpu, synchronize
-using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, ldiv!, lu!,
-                     mul!, qr!
+using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, ldiv!,
+                     lu!, mul!, qr!
 using StaticArrays: MMatrix, MVector, SMatrix, StaticArray, StaticMatrix, StaticVector,
                     SVector,
                     setindex
@@ -23,7 +23,7 @@ export NonlinearProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg
-export Newton, NoRefinement, PerSystem, Picard, solve, solve!
+export Newton, NoRefinement, PerSystem, Picard, NonlinearSolver, init, solve, solve!
 
 public solve!!
 

@@ -16,8 +16,8 @@ using GeometricSolvers: Backtracking, Bisection, ExactStep, LineFunction, LINESE
                         MeasuredSlope, NONFINITE, Newton, NonlinearProblem, STALLED,
                         SUCCESS,
                         Static, StepInfo, StrongWolfe, ToReal, globalize!!, init, jvp!!,
-                        norm2, prepare_ad, rdot, residual!!, rnorm, solve, update_iterate!!,
-                        φ, φ′
+                        linesearch, norm2, prepare_ad, rdot, residual!!, rnorm, solve,
+                        update_iterate!!, φ, φ′
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -175,4 +175,24 @@ end
     @test F_up === Fx
     @test info_up.fnorm === rnorm(Fx)
     @test iszero(info_up.stepnorm)
+end
+
+# In R1 each trial residual is its own value, so a search that ends on an earlier trial than its
+# last returns that trial's residual without evaluating F again: one evaluation of F per counted
+# evaluation. The search here enters the zoom with a step below its last trial and stops at its
+# iteration cap.
+@testset "an R1 StrongWolfe search evaluates F once per counted evaluation" begin
+    calls = Ref(0)
+    c = -0.6785714285714286
+    F(y, q) = (calls[] += 1; sin(q * y) + c)
+    J(y, q) = q * cos(q * y)
+    prob = NonlinearProblem(F, J)
+    x, a = 0.1, 0.3
+    Fx = sin(a * x) + c
+    lf = LineFunction(prob, x, Fx, -Fx / J(x, a), a, nothing)
+    calls[] = 0
+    r = linesearch(StrongWolfe(; c₂ = 0.1, maxiter = 3), lf, MeasuredSlope(), Fx^2, 4.0)
+    @test r.evaluations == 5
+    @test calls[] == r.evaluations
+    @test r.residual == sin(a * (x + r.α * lf.d)) + c
 end
