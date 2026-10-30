@@ -13,8 +13,8 @@
 
 using Test
 
-# The element-type names a tuple is checked for. `Float16`, `BFloat16` and `ComplexF16` stay in
-# the set although 16-bit element types are not supported, so that a return of one is seen.
+# The element-type names a tuple is checked for. `Float16`, `BFloat16` and `ComplexF16` are in
+# the set, so that a tuple of 16-bit element types is seen too.
 const ELTYPE_NAMES = (:Float16, :BFloat16, :Float32, :Float64, :ComplexF16, :ComplexF32,
     :ComplexF64)
 
