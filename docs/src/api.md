@@ -73,9 +73,10 @@ a one-sided Jacobi singular value decomposition whose solve truncates at the ran
 `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
 [`init`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref), and
 [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on a host
-`Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref) and
-[`DenseQR`](@ref). [`factorize!!`](@ref) states what a singular matrix gives. [`init`](@ref) is
-exported; the remaining names are not exported and are reached as `GeometricSolvers.name`.
+`Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref),
+[`DenseQR`](@ref) and [`DenseSVD`](@ref). [`factorize!!`](@ref) states what a singular matrix
+gives. [`init`](@ref) is exported; the remaining names are not exported and are reached as
+`GeometricSolvers.name`.
 
 ```@docs
 init

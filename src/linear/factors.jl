@@ -27,9 +27,12 @@ and it is prescaled at the working precision too, because the sweep squares the 
 For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
 built by [`init`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
-place; `J === fac.factors` is factorised as it is. For [`DenseSVD`](@ref), `info` is `gesvd`'s
-non-convergence code, and a rank deficiency gives `info == 0` and `SUCCESS`. An `Inf` in a dense
-`J` does not throw, and the step that [`ldiv!!`](@ref) then gives is not specified.
+place; `J === fac.factors` is factorised as it is. On a device [`DenseSVD`](@ref), `J` is divided
+by `2^e` unconditionally into `fac.U` before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
+`info` is `gesvd`'s non-convergence code on the host, or `1` when the device Jacobi sweep reaches
+its sweep cap without converging or meets a non-finite entry, and a rank deficiency gives
+`info == 0` and `SUCCESS`. An `Inf` in a dense `J` does not throw, and the step that
+[`ldiv!!`](@ref) then gives is not specified.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -174,11 +177,15 @@ end
     DenseSVD{A, S, W, RW, T, V}
 
 The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` matrix, with
-`factors` the `n × n` Jacobian buffer in the factor element type, `U` and `VT` the `n × n` unitary
-factors, `S` the vector of singular values in the real factor type, `work`, `rwork` and `tmp` the
-workspace buffers, `rhs` the right-hand-side buffer of the factor element type when that differs
-from the working element type and `nothing` otherwise, `info` `gesvd`'s non-convergence code, or
-0, and `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by.
+`factors` the `n × n` Jacobian buffer in the factor element type (which holds `V` during the
+device Jacobi sweep), `U` and `VT` the `n × n` unitary factors, `S` the vector of singular values
+in the real factor type, `work` (the LAPACK workspace on the host, and the 1-element `Int32`
+rotation-flag buffer on a device), `rwork` (the real LAPACK workspace on the host, and the
+length-`n` scaled singular-value vector `σ̂` on a device) and `tmp` the workspace buffers, `rhs`
+the right-hand-side buffer of the factor element type when that differs from the working element
+type and `nothing` otherwise, `info` `gesvd`'s non-convergence code on the host, `1` when the
+device Jacobi sweep reaches its sweep cap without converging or meets a non-finite entry, or `0`,
+and `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     RW <: AbstractVector, T <: AbstractVector,
@@ -229,8 +236,9 @@ function init(m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Nu
     U = similar(x, F, n, n)
     S = similar(x, R, n)
     VT = similar(x, F, n, n)
-    work = similar(x, F, max(1, 128 * n))
-    rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : 0)
+    work = x isa AbstractGPUArray ? similar(x, Int32, 1) : similar(x, F, max(1, 128 * n))
+    rwork = x isa AbstractGPUArray ? similar(x, R, n) :
+            similar(x, R, F <: Complex ? max(1, 5 * n) : 0)
     tmp = similar(x, F, n)
     rhs = F === T ? nothing : similar(x, F, n)
     return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0)
@@ -247,8 +255,46 @@ function returncode(
 end
 
 # `a · 2^e`, exact unless the result leaves the floating-point range; by component for a complex `a`.
-ldexp2(a::Real, e) = ldexp(float(a), e)
-ldexp2(a::Complex, e) = complex(ldexp2(real(a), e), ldexp2(imag(a), e))
+# Bitwise on `IEEEFloat` so that a device with flush-to-zero enabled (Metal) preserves subnormals.
+@inline function ldexp2(x::T, e::Integer) where {T <: Base.IEEEFloat}
+    xu = reinterpret(Unsigned, x)
+    U = typeof(xu)
+    sign = xu & Base.sign_mask(T)
+    xs = xu & ~Base.sign_mask(T)
+    xs >= Base.exponent_mask(T) && return x
+    xs == zero(U) && return x
+    sig_bits = Base.significand_bits(T)
+    k = Int(xs >> sig_bits)
+    if k == 0
+        m = leading_zeros(xs) - Base.exponent_bits(T)
+        xs <<= unsigned(m)
+        k = 1 - m
+    end
+    sig = (xs & Base.significand_mask(T)) | (one(U) << sig_bits)
+    k += Int(e)
+    if k >= Base.exponent_raw_max(T)
+        return reinterpret(T, sign | Base.exponent_mask(T))
+    elseif k > 0
+        return reinterpret(T, sign | (U(k) << sig_bits) | (sig & Base.significand_mask(T)))
+    elseif k <= -sig_bits - 1
+        return reinterpret(T, sign)
+    else
+        shift = 1 - k
+        lower = sig & ((one(U) << shift) - one(U))
+        half = one(U) << (shift - 1)
+        sub = sig >> shift
+        if lower > half || (lower == half && isodd(sub))
+            sub += one(U)
+        end
+        return reinterpret(T, sign | sub)
+    end
+end
+@inline ldexp2(a::AbstractFloat, e::Integer) = ldexp(a, e)
+@inline ldexp2(a::Real, e::Integer) = ldexp2(float(a), e)
+@inline ldexp2(a::Complex, e::Integer) = complex(ldexp2(real(a), e), ldexp2(imag(a), e))
+
+@inline abs_bits(x::T) where {T <: Base.IEEEFloat} = reinterpret(Unsigned, x) &
+                                                     ~Base.sign_mask(T)
 
 # `J` in the factor element type `F`, as an `SMatrix`, which keeps the conversion off the heap, and
 # the exponent `e` of the power of two that `J` was divided by: 0 where `F` is the element type of
@@ -263,7 +309,12 @@ end
 # The exponent of the largest |re| or |im| of a nonempty `J`, clamped to the exponent range, and 0
 # for a zero or non-finite `J`.
 function matrix_exponent(J::AbstractMatrix)
-    m = float(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
+    R = real(eltype(J))
+    m = if R <: Base.IEEEFloat
+        reinterpret(R, maximum(a -> max(abs_bits(real(a)), abs_bits(imag(a))), J))
+    else
+        float(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
+    end
     emax = exponent(floatmax(m))
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
 end

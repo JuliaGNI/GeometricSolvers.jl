@@ -37,6 +37,7 @@ if "core" in GROUPS
 end
 if "slow" in GROUPS
     @safetestset "Dense linear solvers (large)" include("linear/dense_large.jl")
+    @safetestset "KA dense linear solvers (large)" include("linear/ka_large.jl")
     @safetestset "Static SVD" include("linear/static/svd.jl")
 end
 if "doctests" in GROUPS

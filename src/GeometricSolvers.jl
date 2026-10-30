@@ -43,6 +43,7 @@ include("linear/static/eigen.jl")
 include("linear/dense.jl")
 include("linear/ka/lu.jl")
 include("linear/ka/qr.jl")
+include("linear/ka/svd.jl")
 include("linear/mixed.jl")
 
 include("globalization/linesearch.jl")

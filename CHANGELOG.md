@@ -486,3 +486,28 @@ so that a compat-only bump can be told apart from an interface change.
   residual buffer `Ft`, `merit_and_residual(lf, αres)` refreshes `Ft` before returning so
   `globalize!!` copies the residual at `x + αres * d`; this evaluation of `F` is not counted in
   `evaluations`.
+
+- Internal: R3 device `KernelAbstractions` `SVDFactorization` on `AbstractGPUArray`
+  (`src/linear/ka/svd.jl`). For a device vector iterate `x isa AbstractGPUArray`,
+  `init(m::SVDFactorization, prob, x, p)` allocates `fac.work = similar(x, Int32, 1)` (the
+  per-sweep rotation-flag buffer) and `fac.rwork = similar(x, real(F), n)` (column norms squared
+  during the sweep, and the sorted scaled singular values `σ̂` of `J / 2^e` after it).
+  `factorize!!` prescales `J` unconditionally by `2^-e` (`e = matrix_exponent(J)`) into `fac.U`
+  through `ldexp2` before initializing `fac.factors` (`V`) to the identity so that
+  `J === fac.factors` is safe, and runs up to `JACOBI_MAX_SWEEPS` (`30`) sweeps of the round-robin
+  schedule `jacobi_pair` with `m ÷ 2` disjoint parallel column pairs per round (`m = n + isodd(n)`),
+  skipping negligible columns (`α <= maximum(fac.rwork) * jacobi_tolerance(n, R)^2` or
+  `β <= maximum(fac.rwork) * jacobi_tolerance(n, R)^2`) and nearly orthogonal pairs
+  (`abs(γ) <= jacobi_tolerance(n, R) * √(α * β)`) and, once per sweep, reading the scalar
+  `maximum(fac.rwork)` (a non-finite value ends the sweep with `info == 1`) and `Array(fac.work)[1]`.
+  After convergence, `fac.rwork` (`σ̂`), `fac.U` and `fac.factors` (`V`) are sorted in
+  non-increasing order, `fac.S` stores `ldexp2.(σ̂, e)`, columns of `fac.U` with
+  `σ̂ⱼ <= jacobi_tolerance(n, R) * σ̂₁` are zeroed, `fac.VT` stores `V'`, and `info` is `0` when the
+  sweep converges with finite singular values (including rank-deficient and zero matrices) and `1`
+  when the sweep cap is reached or a non-finite entry is present. `ldexp2` and `matrix_exponent`
+  operate on the unsigned bit pattern of `Base.IEEEFloat` so that devices with hardware
+  flush-to-zero (such as Metal) preserve subnormal entries and singular values. `backsolve!`
+  divides by the scaled singular values `fac.rwork` above `jacobi_tolerance(n, R) * fac.rwork[1]` in
+  two parallel `KernelAbstractions` kernels with zero host-device scalar indexing
+  (`GPUArraysCore.allowscalar(false)`), so a matrix with finite entries and `σ₁ > floatmax(R)` still
+  solves to a finite step.

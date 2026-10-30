@@ -30,6 +30,12 @@ const JACOBI_MAX_SWEEPS = 30
 # `R = real(TF)`. `√n` and not a constant, because `n` roundings accumulate along a column.
 jacobi_tolerance(n, ::Type{R}) where {R <: Real} = sqrt(R(n)) * eps(R)
 
+# The real accumulator type of an `O(n)` reduction of the sweep and the solve over a real type
+# `R`: `Float32` for `Float16`, whose own dot products stop near `32 · eps(Float16)`, above the
+# sweep tolerance, so the sweep would not converge, and `R` otherwise.
+jacobi_acc_type(::Type{R}) where {R <: Real} = R
+jacobi_acc_type(::Type{Float16}) = Float32
+
 """
     jacobi_rotation(α, β, γ)
 
@@ -93,9 +99,10 @@ end
 # The squared norm of column `j` through the reduction seam of `reductions.jl`: the column is
 # copied into a local `MVector` first, and not passed as a `view`. The parent of a `SubArray`
 # escapes into the generic reduction, and an `MMatrix` that escapes is a heap allocation of `n²`
-# values — the LU and QR kernels of the same kind take their norms the same way.
+# values — the LU and QR kernels of the same kind take their norms the same way. The copy is in
+# the accumulator type of `jacobi_acc_type`, so the norm is too.
 @inline function column_norm2(A::MMatrix{N, N, F}, j) where {N, F}
-    x = zero(MVector{N, F})
+    x = zero(MVector{N, promote_type(F, jacobi_acc_type(real(F)))})
     @inbounds for i in 1:N
         x[i] = A[i, j]
     end
@@ -110,7 +117,8 @@ end
 # lets the matrix escape, and each escaped matrix is a heap allocation of `n²` values (measured
 # with `--track-allocation=user`: 144 bytes at `n = 4` for each).
 @inline function jacobi_sweep!(A::MMatrix{N, N, F}, V::MMatrix{N, N, F}, tol) where {N, F}
-    R = real(F)
+    R = jacobi_acc_type(real(F))
+    W = promote_type(F, R)
     αmax = zero(R)
     for j in 1:N
         αmax = max(αmax, column_norm2(A, j))
@@ -129,9 +137,9 @@ end
         (α ≤ negligible || β ≤ negligible) && continue
         # the pair's own inner product, through no seam of `reductions.jl`: `rdot` returns its
         # real part alone, and the rotation needs the phase of the complex one
-        γ = zero(F)
+        γ = zero(W)
         @inbounds for i in 1:N
-            γ += conj(A[i, p]) * A[i, q]
+            γ += conj(W(A[i, p])) * W(A[i, q])
         end
         abs(γ) ≤ tol * sqrt(α * β) && continue
         cs, sn = jacobi_rotation(α, β, γ)
@@ -231,18 +239,19 @@ function backsolve(fac::StaticSVD{N, TF}, r::SVector{N, TF}) where {N, TF}
     # the directions the rank cutoff counted as zero contribute nothing: dividing by their
     # rounding noise is what turns a null direction into an enormous step, or into a `NaN`
     rank = fac.info == 0 ? N : Int(fac.info) - 1
-    d = zero(MVector{N, TF})
+    W = promote_type(TF, jacobi_acc_type(real(TF)))
+    d = zero(MVector{N, W})
     for j in 1:rank
-        s = zero(TF)
+        s = zero(W)
         @inbounds for i in 1:N
-            s += conj(U[i, j]) * r[i]
+            s += conj(W(U[i, j])) * W(r[i])
         end
         d[j] = s / fac.σ̂[j]
     end
-    x = zero(MVector{N, TF})
+    x = zero(MVector{N, W})
     @inbounds for i in 1:N, j in 1:N
 
-        x[i] += V[i, j] * d[j]
+        x[i] += W(V[i, j]) * d[j]
     end
-    return SVector(x)
+    return SVector{N, TF}(x)
 end
