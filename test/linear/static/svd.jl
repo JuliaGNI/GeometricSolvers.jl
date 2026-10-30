@@ -4,12 +4,13 @@
 #
 # The SVD runs in `Float32`, `Float64`, `ComplexF32` and `ComplexF64`, at the working precision
 # and with `TF = Float32` for the two `Float64` element types (`PRECISION_PAIRS`), over the array
-# backends and on the KernelAbstractions `CPU()` backend of `test/helpers/matrix.jl`.
+# backends and on the KernelAbstractions `CPU()` backend of `test/helpers/matrix.jl`. One testset
+# runs `TF = Float16` on general matrices, for a `Float16` and a `Float32` element type.
 
 using GeometricSolvers
 using GeometricSolvers: factorize!!, ldiv!!, returncode, StaticSVD
 using JET: JET
-using LinearAlgebra: Diagonal, norm, opnorm
+using LinearAlgebra: Diagonal, norm, opnorm, svdvals
 using Random: Xoshiro, randn
 using StaticArrays: MMatrix, SMatrix, SVector, setindex
 using Test
@@ -131,6 +132,27 @@ end
         fac = factorize!!(nothing, m, A)
         @test !fac.converged
         @test fac.info == 1
+    end
+end
+
+@testset "a general matrix converges with TF = Float16, $T, n = $n" for T in (Float16, Float32),
+    n in (2, 3, 4, 8)
+
+    # `randn` with no diagonal shift: the columns are far from orthogonal, and the sweep converges
+    # on them only when its reductions accumulate in `Float32`
+    m = svd_method(Float16)
+    for seed in 1:3
+        A = SMatrix{n, n, T}(randn(Xoshiro(seed), T, n, n))
+        fac = factorize!!(nothing, m, A)
+        @test fac.converged
+        Af = Float64.(Matrix(A))
+        σ_ref = svdvals(Af)
+        @test maximum(abs.(Float64.(fac.σ) .- σ_ref)) <=
+              8 * n * Float64(eps(Float16)) * σ_ref[1]
+        U = Float64.(Matrix(fac.factors))
+        V = Float64.(Matrix(fac.V))
+        @test opnorm(U * Diagonal(Float64.(fac.σ)) * V' - Af) <=
+              8 * n * Float64(eps(Float16)) * opnorm(Af)
     end
 end
 

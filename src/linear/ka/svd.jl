@@ -1,16 +1,10 @@
 # KernelAbstractions parallel round-robin one-sided Jacobi SVD for DenseSVD on AbstractGPUArray.
 #
-# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `jacobi_rotation` and `jacobi_pair` from
-# `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.factors`
+# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `jacobi_acc_type`, `jacobi_rotation` and
+# `jacobi_pair` from `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.factors`
 # holds the right singular vectors `V`, `fac.work` is the 1-element `Int32` rotation flag, and
 # `fac.rwork` holds the column norms squared during the sweep and the sorted scaled singular values
 # `σ̂` of `J / 2^e` after it.
-
-# The real accumulator type of an `O(n)` reduction over a real type `R`: `Float32` for `Float16`,
-# whose own dot products stop near `32 · eps(Float16)`, above the sweep tolerance, so the sweep
-# would not converge, and `R` otherwise.
-ka_acc_type(::Type{R}) where {R <: Real} = R
-ka_acc_type(::Type{Float16}) = Float32
 
 @inline function ka_rotate_columns!(A, n::Int, p::Int, q::Int, c, s)
     sc = conj(s)
@@ -37,8 +31,8 @@ end
                 V[i, j] = ifelse(i == j, one(F), zero(F))
             end
         end
-        A = promote_type(F, ka_acc_type(R))
-        s = zero(ka_acc_type(R))
+        A = promote_type(F, jacobi_acc_type(R))
+        s = zero(jacobi_acc_type(R))
         for i in 1:n
             s += abs2(A(U[i, j]))
         end
@@ -56,7 +50,7 @@ end
         p, q = jacobi_pair(n, r, k - 1)
         if p <= n
             F = eltype(U)
-            R = ka_acc_type(real(F))
+            R = jacobi_acc_type(real(F))
             A = promote_type(F, R)
             α = zero(R)
             β = zero(R)
@@ -165,9 +159,9 @@ function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R
                 col_norms2_kernel!(
                     rwork_k, work_k, U_k, V_k, n, neg_e, sweep == 1, false; ndrange = n)
                 # `max` propagates `NaN`, so one reduction tests every column norm for finiteness.
-                max_norm2 = ka_acc_type(R)(maximum(rwork_k))
+                max_norm2 = jacobi_acc_type(R)(maximum(rwork_k))
                 isfinite(max_norm2) || break
-                negligible = max_norm2 * ka_acc_type(R)(tol)^2
+                negligible = max_norm2 * jacobi_acc_type(R)(tol)^2
                 for r in 0:(m - 2)
                     round_kernel!(
                         U_k, V_k, work_k, n, r, tol, negligible; ndrange = n_pairs)
@@ -220,7 +214,7 @@ end
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(tmp)
-        A = promote_type(F, ka_acc_type(real(F)))
+        A = promote_type(F, jacobi_acc_type(real(F)))
         σj = rwork[j]
         if σj > tol * rwork[1]
             acc = zero(A)
@@ -238,7 +232,7 @@ end
     i = @index(Global, Linear)
     @inbounds if i <= n
         F = eltype(d)
-        A = promote_type(F, ka_acc_type(real(F)))
+        A = promote_type(F, jacobi_acc_type(real(F)))
         acc = zero(A)
         for j in 1:n
             acc += conj(A(VT[j, i])) * A(tmp[j])
