@@ -498,7 +498,8 @@ so that a compat-only bump can be told apart from an interface change.
   schedule `jacobi_pair` with `m ÷ 2` disjoint parallel column pairs per round (`m = n + isodd(n)`),
   skipping negligible columns (`α <= maximum(fac.rwork) * jacobi_tolerance(n, R)^2` or
   `β <= maximum(fac.rwork) * jacobi_tolerance(n, R)^2`) and nearly orthogonal pairs
-  (`abs(γ) <= jacobi_tolerance(n, R) * √(α * β)`) and reading `Array(fac.work)[1]` once per sweep.
+  (`abs(γ) <= jacobi_tolerance(n, R) * √(α * β)`) and, once per sweep, reading the scalar
+  `maximum(fac.rwork)` (a non-finite value ends the sweep with `info == 1`) and `Array(fac.work)[1]`.
   After convergence, `fac.rwork` (`σ̂`), `fac.U` and `fac.factors` (`V`) are sorted in
   non-increasing order, `fac.S` stores `ldexp2.(σ̂, e)`, columns of `fac.U` with
   `σ̂ⱼ <= jacobi_tolerance(n, R) * σ̂₁` are zeroed, `fac.VT` stores `V'`, and `info` is `0` when the
