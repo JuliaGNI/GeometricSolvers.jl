@@ -1027,7 +1027,7 @@ end
             @test ka_count_nz(Array(fac16.VT)) == n16
         end
 
-        for T in (Float32, Float64, Float16)
+        for T in (REAL_ELTYPES..., Float16)
             n = 16
             tol = jacobi_tolerance(n, T)
             ε = T(0.5) * tol
