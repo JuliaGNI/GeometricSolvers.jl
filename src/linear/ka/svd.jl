@@ -6,6 +6,12 @@
 # `fac.rwork` holds the column norms squared during the sweep and the sorted scaled singular values
 # `σ̂` of `J / 2^e` after it.
 
+# The real accumulator type of an `O(n)` reduction over a real type `R`: `Float32` for `Float16`,
+# whose own dot products stop near `32 · eps(Float16)`, above the sweep tolerance, so the sweep
+# would not converge, and `R` otherwise.
+ka_acc_type(::Type{R}) where {R <: Real} = R
+ka_acc_type(::Type{Float16}) = Float32
+
 @inline function ka_rotate_columns!(A, n::Int, p::Int, q::Int, c, s)
     sc = conj(s)
     @inbounds for i in 1:n
@@ -31,11 +37,12 @@ end
                 V[i, j] = ifelse(i == j, one(F), zero(F))
             end
         end
-        s = zero(R)
+        A = promote_type(F, ka_acc_type(R))
+        s = zero(ka_acc_type(R))
         for i in 1:n
-            s += abs2(U[i, j])
+            s += abs2(A(U[i, j]))
         end
-        rwork[j] = ifelse(take_sqrt, sqrt(s), s)
+        rwork[j] = R(ifelse(take_sqrt, sqrt(s), s))
         if !take_sqrt && j == 1
             work[1] = Int32(0)
         end
@@ -49,13 +56,14 @@ end
         p, q = jacobi_pair(n, r, k - 1)
         if p <= n
             F = eltype(U)
-            R = real(F)
+            R = ka_acc_type(real(F))
+            A = promote_type(F, R)
             α = zero(R)
             β = zero(R)
-            γ = zero(F)
+            γ = zero(A)
             for i in 1:n
-                up = U[i, p]
-                uq = U[i, q]
+                up = A(U[i, p])
+                uq = A(U[i, q])
                 α += abs2(up)
                 β += abs2(uq)
                 γ += conj(up) * uq
@@ -156,9 +164,10 @@ function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R
             for sweep in 1:JACOBI_MAX_SWEEPS
                 col_norms2_kernel!(
                     rwork_k, work_k, U_k, V_k, n, neg_e, sweep == 1, false; ndrange = n)
-                all(isfinite, ka_host_vec(rwork_k)) || break
-                max_norm2 = maximum(rwork_k)
-                negligible = max_norm2 * tol * tol
+                # `max` propagates `NaN`, so one reduction tests every column norm for finiteness.
+                max_norm2 = ka_acc_type(R)(maximum(rwork_k))
+                isfinite(max_norm2) || break
+                negligible = max_norm2 * ka_acc_type(R)(tol)^2
                 for r in 0:(m - 2)
                     round_kernel!(
                         U_k, V_k, work_k, n, r, tol, negligible; ndrange = n_pairs)
@@ -180,7 +189,7 @@ function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R
         ka_jacobi_finalize_svd_kernel!(kbackend)(
             U_k, S_k, VT_k, V_k, rwork_k, n, e, tol; ndrange = n)
         synchronize(kbackend)
-        return (converged && all(isfinite, ka_host_vec(rwork_k))) ? 0 : 1
+        return (converged && isfinite(maximum(rwork_k))) ? 0 : 1
     end
 end
 
@@ -194,7 +203,7 @@ function ka_factorize_svd!(fac::DenseSVD, J::AbstractMatrix)
         J === fac.U || copyto!(fac.U, J)
         neg_e = -e
     else
-        fac.U .= J .* ldexp(one(float(real(eltype(J)))), -e)
+        fac.U .= ldexp2.(J, -e)
         neg_e = 0
     end
     info = ka_svd!(fac.U, fac.factors, fac.S, fac.VT, fac.work, fac.rwork, e, neg_e)
@@ -211,13 +220,14 @@ end
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(tmp)
+        A = promote_type(F, ka_acc_type(real(F)))
         σj = rwork[j]
         if σj > tol * rwork[1]
-            acc = zero(F)
+            acc = zero(A)
             for i in 1:n
-                acc += conj(U[i, j]) * d[i]
+                acc += conj(A(U[i, j])) * A(d[i])
             end
-            tmp[j] = acc / σj
+            tmp[j] = F(acc / σj)
         else
             tmp[j] = zero(F)
         end
@@ -228,11 +238,12 @@ end
     i = @index(Global, Linear)
     @inbounds if i <= n
         F = eltype(d)
-        acc = zero(F)
+        A = promote_type(F, ka_acc_type(real(F)))
+        acc = zero(A)
         for j in 1:n
-            acc += conj(VT[j, i]) * tmp[j]
+            acc += conj(A(VT[j, i])) * A(tmp[j])
         end
-        d[i] = acc
+        d[i] = F(acc)
     end
 end
 

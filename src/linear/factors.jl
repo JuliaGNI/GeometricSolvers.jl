@@ -30,8 +30,9 @@ matrix where its element type is not that of `fac.factors`, and `fac.factors` is
 place; `J === fac.factors` is factorised as it is. On a device [`DenseSVD`](@ref), `J` is divided
 by `2^e` unconditionally into `fac.U` before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
 `info` is `gesvd`'s non-convergence code on the host, or `1` when the device Jacobi sweep reaches
-its sweep cap without converging, and a rank deficiency gives `info == 0` and `SUCCESS`. An `Inf`
-in a dense `J` does not throw, and the step that [`ldiv!!`](@ref) then gives is not specified.
+its sweep cap without converging or meets a non-finite entry, and a rank deficiency gives
+`info == 0` and `SUCCESS`. An `Inf` in a dense `J` does not throw, and the step that
+[`ldiv!!`](@ref) then gives is not specified.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -183,8 +184,8 @@ rotation-flag buffer on a device), `rwork` (the real LAPACK workspace on the hos
 length-`n` scaled singular-value vector `σ̂` on a device) and `tmp` the workspace buffers, `rhs`
 the right-hand-side buffer of the factor element type when that differs from the working element
 type and `nothing` otherwise, `info` `gesvd`'s non-convergence code on the host, `1` when the
-device Jacobi sweep reaches its sweep cap without converging, or `0`, and `scale_exponent` the
-exponent `e` of the power of two `2^e` that the matrix was divided by.
+device Jacobi sweep reaches its sweep cap without converging or meets a non-finite entry, or `0`,
+and `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     RW <: AbstractVector, T <: AbstractVector,

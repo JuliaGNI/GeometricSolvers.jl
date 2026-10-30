@@ -509,6 +509,25 @@ end
         end
     end
 
+    # No diagonal shift: the columns of a plain `randn` matrix are far from orthogonal, and the
+    # sweep converges on them only with a `Float32` accumulator.
+    @testset "general Float16 matrices converge in src/linear/ka/svd.jl, n = $n" for n in (2, 5, 8, 16)
+        T = Float16
+        m = SVDFactorization()
+        for seed in 1:3
+            A_cpu = randn(Xoshiro(seed), T, n, n)
+            x = JLArray(zeros(T, n))
+            prob = NonlinearProblem(x, ka_noop)
+            fac = factorize!!(init(m, prob, x, nothing), m, JLArray(A_cpu))
+            @test fac.info == 0
+            S = Array(fac.S)
+            σ_ref = _ka_svd_ref_f64(Float64.(A_cpu))
+            @test maximum(abs.(Float64.(S) .- σ_ref)) <= 8 * n * Float64(eps(T)) * σ_ref[1]
+            _, _, err_rec = ka_svd_orth_and_recon_errs(Array(fac.U), S, Array(fac.VT), A_cpu)
+            @test err_rec <= 8 * n * Float64(eps(T)) * ka_opnorm_inf(A_cpu)
+        end
+    end
+
     # JET.@test_opt on init, factorize!!, and ldiv!! is in test/linear/ka_large.jl (slow group)
     @testset "no scalar indexing and type inference in init, factorize!!, ldiv!!" begin
         T = Float64
