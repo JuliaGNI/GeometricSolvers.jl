@@ -191,7 +191,9 @@ end
     solve!(x::AbstractVector, solver::NonlinearSolver, p = nothing)
 
 Solve `solver.prob` in place into `x` using the preallocated workspace and AD preparation in
-`solver`, and return `status::SolverStatus`.
+`solver`, and return `status::SolverStatus`. The solver does not keep the `p` given to
+[`init`](@ref): pass the parameters to every call, because `solve!(x, solver)` solves with
+`p = nothing`.
 """
 function solve!(x::AbstractVector, solver::NonlinearSolver, p = nothing)
     _, status, state = solve!!(

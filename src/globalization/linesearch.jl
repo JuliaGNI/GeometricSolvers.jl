@@ -116,7 +116,9 @@ The result of one [`linesearch`](@ref). It is `isbits` when the residual is.
   an increase of the merit, an invalid `αmax`, or a [`StrongWolfe`](@ref) step without the
   curvature condition. `φ` tells the caller whether the step of a failure still decreases the
   merit.
-- `evaluations::Int32`: the evaluations of [`φ`](@ref) and [`φ′`](@ref) together.
+- `evaluations::Int32`: the evaluations of [`φ`](@ref) and [`φ′`](@ref) together. A
+  [`StrongWolfe`](@ref) search whose trials share one residual buffer evaluates `F` once more at
+  a result step that is not its last trial, to restore `residual`; that evaluation is not counted.
 - `residual::Q`: the residual at `α` that gave `φ`; the residual at ``α = 0`` where `φ` is `NaN`;
   `nothing` for a line function with no residual.
 """

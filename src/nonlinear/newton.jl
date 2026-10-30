@@ -90,8 +90,7 @@ Adapt.@adapt_structure Newton
             JacobianFunction(m.jacobian)
         end
         jvpprep = if prob.J !== nothing
-            Fx === nothing ? nothing :
-            JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+            Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x)
         elseif m.jacobian isa AbstractADType
             prepare_ad(m.jacobian, prob, Fx, x, p)
         else

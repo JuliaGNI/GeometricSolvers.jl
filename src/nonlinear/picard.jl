@@ -31,10 +31,9 @@ end
 
 Adapt.@adapt_structure Picard
 
-@inline function picard_jvpprep(prob::NonlinearProblem, Fx, x, p)
+@inline function picard_jvpprep(m::Picard, prob::NonlinearProblem, Fx, x, p)
     if prob.J !== nothing
-        return Fx === nothing ? nothing :
-               JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+        return Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x)
     else
         return prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
     end
@@ -42,7 +41,7 @@ end
 
 @inline function init(m::Picard, prob::NonlinearProblem, x, p = nothing)
     Fx = buffer(x)
-    jvpprep = picard_jvpprep(prob, Fx, x, p)
+    jvpprep = picard_jvpprep(m, prob, Fx, x, p)
     if Fx === nothing
         return (; jacprep = nothing, jvpprep)
     else

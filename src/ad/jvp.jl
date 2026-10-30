@@ -32,6 +32,15 @@ struct JacobianMatrixJVP{M <: AbstractMatrix}
     J::M
 end
 
+# The R3 JVP preparation from an analytic Jacobian under globalization `g`. Only a line search
+# that searches takes the slope of the merit, so `Static`, `DogLeg` and every other
+# globalization get `nothing` and no `n × n` buffer.
+function jacobian_matrix_jvp(::LineSearch, x)
+    JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+end
+jacobian_matrix_jvp(g, x) = nothing
+jacobian_matrix_jvp(::Static, x) = nothing
+
 function jvp!!(Jv::AbstractVector, prep::JacobianMatrixJVP, prob,
         x::AbstractVector, v::AbstractVector, p)
     prob.J(prep.J, x, p)

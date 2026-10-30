@@ -523,7 +523,8 @@ end
     end
 
     # `init(::Newton, ...)` shares one `ChunkedForwardDiff` when both `jacprep` and `jvpprep` use AD,
-    # and builds `JacobianMatrixJVP` when `prob.J !== nothing`
+    # and builds `JacobianMatrixJVP` when `prob.J !== nothing` under a line search, and no JVP
+    # preparation under any other globalization
     if AT === Array
         st_ad = init(Newton(), prob_ad, x, p)
         @test st_ad.jacprep isa ChunkedForwardDiff
@@ -533,23 +534,28 @@ end
         @test st_ad_explicit.jacprep isa ChunkedForwardDiff
         @test st_ad_explicit.jacprep === st_ad_explicit.jvpprep
 
-        st_j = init(Newton(), prob_j, x, p)
+        st_j = init(Newton(; globalization = Backtracking()), prob_j, x, p)
         @test st_j.jacprep === nothing
         @test st_j.jvpprep isa JacobianMatrixJVP
         @test size(st_j.jvpprep.J) == (N_R3, N_R3)
+        @test init(Newton(), prob_j, x, p).jvpprep === nothing
+        @test init(Newton(; globalization = DogLeg()), prob_j, x, p).jvpprep === nothing
 
-        st_op_j = init(Newton(; jacobian = A_member!), prob_j, x, p)
+        st_op_j = init(
+            Newton(; jacobian = A_member!, globalization = Backtracking()), prob_j, x, p)
         @test st_op_j.jacprep === JacobianFunction(A_member!)
         @test st_op_j.jvpprep isa JacobianMatrixJVP
+        @test init(Newton(; jacobian = A_member!), prob_j, x, p).jvpprep === nothing
 
         st_op_ad = init(Newton(; jacobian = A_member!), prob_ad, x, p)
         @test st_op_ad.jacprep === JacobianFunction(A_member!)
         @test st_op_ad.jvpprep isa ChunkedForwardDiff
     end
 
-    st_pic_j = init(Picard(), prob_j, x, p)
+    st_pic_j = init(Picard(; globalization = Bisection()), prob_j, x, p)
     @test st_pic_j.jvpprep isa JacobianMatrixJVP
     @test size(st_pic_j.jvpprep.J) == (N_R3, N_R3)
+    @test init(Picard(), prob_j, x, p).jvpprep === nothing
     st_pic_ad = init(Picard(), prob_ad, x, p)
     @test st_pic_ad.jvpprep isa ChunkedForwardDiff
 end
