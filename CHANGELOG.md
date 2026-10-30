@@ -473,7 +473,12 @@ so that a compat-only bump can be told apart from an interface change.
   `prob.J === nothing` and `m.jacobian` is `nothing` or an `AbstractADType`. With `nothing` it is
   `prepare_ad(AutoForwardDiff(), …)`; with an `AbstractADType` it is `prepare_ad(m.jacobian, …)`,
   which on an array iterate is a `ChunkedForwardDiff` for `AutoForwardDiff()` and a `DIJacobian`
-  for another back end (an `ArgumentError` on a device iterate). In `StrongWolfe`,
+  for another back end (an `ArgumentError` on a device iterate). With an analytic `prob.J`,
+  `Newton` and `Picard` `init` build the `JacobianMatrixJVP` (an `n × n` buffer) only when the
+  globalization is a searching line search (`Backtracking`, `Bisection` or `StrongWolfe`); under
+  `Static`, `DogLeg` or any other globalization the `jvpprep` is `nothing`, because only a
+  searching line search calls `jvp!!`. In `StrongWolfe`,
   when `search` returns an earlier trial `αres != αlast` after a later trial overwrote the shared
   residual buffer `Ft`, `merit_and_residual(lf, αres)` refreshes `Ft` before returning so
-  `globalize!!` copies the residual at `x + αres * d`.
+  `globalize!!` copies the residual at `x + αres * d`; this evaluation of `F` is not counted in
+  `evaluations`.
