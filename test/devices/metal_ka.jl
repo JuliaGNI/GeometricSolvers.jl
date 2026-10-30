@@ -1,5 +1,5 @@
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, Diagonal, I, cond, norm, opnorm
+using LinearAlgebra: BLAS, Diagonal, I, cond, norm, opnorm, qr
 using Metal
 using Random: Xoshiro
 using Test
@@ -9,7 +9,6 @@ using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDF
 using GeometricSolvers: backsolve!, factorize!!, init, jacobi_tolerance, ldiv!!, returncode
 
 include("../helpers/matrix.jl")
-include("../helpers/staticsystems.jl")
 include("../helpers/metal_device.jl")
 
 if Metal.functional() && !on_virtual_gpu()
@@ -32,6 +31,16 @@ if Metal.functional() && !on_virtual_gpu()
         return A, b
     end
 
+    function metal_rank_deficient(seed::Integer, ::Type{T}, n::Int, r::Int) where {T}
+        rng = Xoshiro(seed)
+        U = Matrix{T}(qr(randn(rng, T, n, n)).Q)
+        V = Matrix{T}(qr(randn(rng, T, n, n)).Q)
+        Σ = real(T)[i <= r ? real(T)(0.5)^(i - 1) : zero(real(T)) for i in 1:n]
+        return U * Diagonal(Σ) * V'
+    end
+
+    metal_wide_eltype(::Type{T}) where {T <: Real} = Float64
+    metal_wide_eltype(::Type{T}) where {T <: Complex} = ComplexF64
     metal_noop(r, y, p) = nothing
 
     @testset "Metal KA LU and QR agree with CPU solves at n = $n" for n in (1, 16, 256)
@@ -116,6 +125,7 @@ if Metal.functional() && !on_virtual_gpu()
 
     @testset "Metal KA SVD bit-identical repeated runs and traps: $T" for T in METAL_ELTYPES
         m = SVDFactorization()
+        W = metal_wide_eltype(T)
         for n in (15, 16)
             A_cpu, b_cpu = metal_well_conditioned(T, n, 0x2222 + n)
             x1 = MtlArray(zeros(T, n))
@@ -153,15 +163,15 @@ if Metal.functional() && !on_virtual_gpu()
         A_hi = fill(T(0.5f0 * floatmax(Float32)), 4, 4) +
                Matrix{T}(Diagonal(fill(T(0.125f0 * floatmax(Float32)), 4)))
         b_hi = fill(T(0.25f0 * floatmax(Float32)), 4)
-        x_hi_ref = big.(A_hi) \ big.(b_hi)
-        κ_hi = Float64(cond(big.(A_hi), Inf))
+        x_hi_ref = fill(2.0 / 17.0, 4)
+        κ_hi = 17.0
         fac_hi = factorize!!(init(m, prob4, x4, nothing), m, MtlArray(A_hi))
         @test fac_hi.info == 0
         @test !isfinite(Array(fac_hi.S)[1])
         @test all(isfinite, Array(fac_hi.rwork))
         d_hi = ldiv!!(similar(x4), fac_hi, MtlArray(b_hi))
         @test all(isfinite, Array(d_hi))
-        rel_hi = Float64(norm(big.(Array(d_hi)) - x_hi_ref, Inf) / norm(x_hi_ref, Inf))
+        rel_hi = norm(W.(Array(d_hi)) - x_hi_ref, Inf) / norm(x_hi_ref, Inf)
         @test rel_hi <= 8 * 4 * Float64(eps(Float32)) * κ_hi
 
         # Rank-deficient matrices at n = 16 for r in (5, 1, 0)
@@ -170,7 +180,7 @@ if Metal.functional() && !on_virtual_gpu()
         x16 = MtlArray(zeros(T, n16))
         prob16 = NonlinearProblem(x16, metal_noop)
         for r in (5, 1, 0)
-            A_rk = Matrix(rank_deficient(100r + n16, T, n16, r))
+            A_rk = metal_rank_deficient(100r + n16, T, n16, r)
             fac_rk = factorize!!(init(m, prob16, x16, nothing), m, MtlArray(A_rk))
             @test fac_rk.info == 0
             @test returncode(fac_rk) === SUCCESS
@@ -187,12 +197,12 @@ if Metal.functional() && !on_virtual_gpu()
                 @test all(iszero, x_rk)
             else
                 @test norm(A_rk * x_rk - b_rk) <=
-                      4 * n16 * eps(Float32) * opnorm(A_rk) * norm(x_rk)
+                      4 * n16 * eps(Float32) * S_rk[1] * norm(x_rk)
                 @test norm(x_rk) <= (1 + 4 * n16 * eps(Float32)) * norm(x0_rk)
             end
         end
 
-        # Negligible column of norm 0.5 * eps(Float32)
+        # Negligible column of norm 0.5 * eps(Float32) and 2 * eps(Float32) at n = 16
         ε32 = 0.5f0 * eps(Float32)
         A_neg = Matrix{T}(I, 4, 4)
         A_neg[4, 4] = zero(T)
@@ -201,12 +211,37 @@ if Metal.functional() && !on_virtual_gpu()
         @test fac_neg.info == 0
         @test Array(fac_neg.S)[4] == ε32
         @test all(iszero, Array(fac_neg.U)[:, 4])
+        @test count(!iszero, Array(fac_neg.VT)) == 4
 
-        # Non-finite NaN sets info == 1
+        ε16 = 2.0f0 * eps(Float32)
+        A_neg16 = Matrix{T}(I, n16, n16)
+        A_neg16[n16, n16] = zero(T)
+        A_neg16[1, n16] = T(ε16)
+        fac_neg16 = factorize!!(init(m, prob16, x16, nothing), m, MtlArray(A_neg16))
+        @test fac_neg16.info == 0
+        @test Array(fac_neg16.S)[n16] == ε16
+        @test all(iszero, Array(fac_neg16.U)[:, n16])
+        @test count(!iszero, Array(fac_neg16.VT)) == n16
+
+        # Non-finite NaN (at n = 1, n = 4, and partial-NaN 2x2) sets info == 1
+        x1 = MtlArray(zeros(T, 1))
+        prob1 = NonlinearProblem(x1, metal_noop)
+        fac_nan1 = factorize!!(
+            init(m, prob1, x1, nothing), m, MtlArray(fill(T(NaN32), 1, 1)))
+        @test fac_nan1.info == 1
+        @test returncode(fac_nan1) === SINGULAR
+
         A_nan = fill(T(NaN32), 4, 4)
         fac_nan = factorize!!(init(m, prob4, x4, nothing), m, MtlArray(A_nan))
         @test fac_nan.info == 1
         @test returncode(fac_nan) === SINGULAR
+
+        x2 = MtlArray(zeros(T, 2))
+        prob2 = NonlinearProblem(x2, metal_noop)
+        A_part = T[zero(T) T(NaN32); zero(T) zero(T)]
+        fac_part = factorize!!(init(m, prob2, x2, nothing), m, MtlArray(A_part))
+        @test fac_part.info == 1
+        @test returncode(fac_part) === SINGULAR
 
         # Dispatch and workspace sizes on MtlArray
         @test length(fac_sub.work) == 1
@@ -219,6 +254,7 @@ if Metal.functional() && !on_virtual_gpu()
     end
 
     @testset "Metal pivot search, scaling, singular, and non-finite: $T" for T in METAL_ELTYPES
+        W = metal_wide_eltype(T)
         for M in (LUFactorization, QRFactorization)
             m = M()
             n = 6
@@ -230,8 +266,8 @@ if Metal.functional() && !on_virtual_gpu()
                 A_tiny[row, k] = T(2) + T(k) / T(n)
             end
             b_tiny = T[T(k) for k in 1:n]
-            x_ref = big.(A_tiny) \ big.(b_tiny)
-            κ = Float64(cond(big.(A_tiny), Inf))
+            x_ref = W.(A_tiny) \ W.(b_tiny)
+            κ = cond(W.(A_tiny), Inf)
 
             x_dev = MtlArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, metal_noop)
@@ -240,7 +276,7 @@ if Metal.functional() && !on_virtual_gpu()
             fac = factorize!!(fac, m, fac.factors)
             @test fac.info == 0
             d = ldiv!!(similar(x_dev), fac, MtlArray(b_tiny))
-            rel = Float64(norm(big.(Array(d)) - x_ref, Inf) / norm(x_ref, Inf))
+            rel = norm(W.(Array(d)) - x_ref, Inf) / norm(x_ref, Inf)
             @test rel <= 8 * n * Float64(eps(Float32)) * κ
 
             # Column scaled by 1.0f20

@@ -17,28 +17,26 @@
     return nothing
 end
 
-@kernel function ka_jacobi_init_v_kernel!(U, V, @Const(J), n::Int, neg_e::Int)
+@kernel function ka_jacobi_col_norms2_kernel!(
+        rwork, work, U, V, n::Int, neg_e::Int, init_v::Bool, take_sqrt::Bool)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(U)
-        for i in 1:n
-            jij = J[i, j]
-            U[i, j] = F(ldexp2(jij, neg_e))
-            V[i, j] = ifelse(i == j, one(F), zero(F))
-        end
-    end
-end
-
-@kernel function ka_jacobi_col_norms2_kernel!(rwork, work, @Const(U), n::Int)
-    j = @index(Global, Linear)
-    @inbounds if j <= n
         R = eltype(rwork)
+        if init_v
+            for i in 1:n
+                if neg_e != 0
+                    U[i, j] = ldexp2(U[i, j], neg_e)
+                end
+                V[i, j] = ifelse(i == j, one(F), zero(F))
+            end
+        end
         s = zero(R)
         for i in 1:n
             s += abs2(U[i, j])
         end
-        rwork[j] = s
-        if j == 1
+        rwork[j] = ifelse(take_sqrt, sqrt(s), s)
+        if !take_sqrt && j == 1
             work[1] = Int32(0)
         end
     end
@@ -72,18 +70,6 @@ end
     end
 end
 
-@kernel function ka_jacobi_col_norms_kernel!(rwork, @Const(U), n::Int)
-    j = @index(Global, Linear)
-    @inbounds if j <= n
-        R = eltype(rwork)
-        s = zero(R)
-        for i in 1:n
-            s += abs2(U[i, j])
-        end
-        rwork[j] = sqrt(s)
-    end
-end
-
 @kernel function ka_jacobi_sort_columns_kernel!(rwork, U, V, n::Int)
     idx = @index(Global, Linear)
     @inbounds if idx == 1
@@ -114,7 +100,7 @@ end
 end
 
 @kernel function ka_jacobi_finalize_svd_kernel!(
-        U, VT, S, @Const(V), @Const(rwork), n::Int, tol, e::Int)
+        U, S, VT, @Const(V), @Const(rwork), n::Int, e::Int, tol)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(U)
@@ -144,54 +130,74 @@ end
 @inline ka_kernel_array(::Val{true}, A::AbstractArray) = A
 @inline ka_kernel_array(::Val{false}, A::AbstractArray) = unsafe_wrap(Array, pointer(A), size(A))
 
-function ka_factorize_svd!(fac::DenseSVD, J::AbstractMatrix)
-    n = size(fac.U, 1)
-    n == 0 && return DenseSVD(
-        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, 0, 0)
-    F = eltype(fac.U)
-    R = real(F)
-    e = matrix_exponent(J)
-    backend = get_backend(fac.U)
+@inline ka_host_vec(v::Array) = v
+@inline ka_host_vec(v::AbstractArray) = Array(v)
+
+function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R},
+        VT::AbstractMatrix{F}, work::AbstractVector{Int32}, rwork::AbstractVector{R},
+        e::Int, neg_e::Int) where {F, R}
+    n = size(U, 1)
+    backend = get_backend(U)
     kbackend = ka_kernel_backend(backend)
     tol = jacobi_tolerance(n, R)
     m = n + Int(isodd(n))
     n_pairs = m ÷ 2
     converged = n <= 1
-    GC.@preserve fac J begin
-        U_k = ka_kernel_array(backend, fac.U)
-        V_k = ka_kernel_array(backend, fac.factors)
-        VT_k = ka_kernel_array(backend, fac.VT)
-        S_k = ka_kernel_array(backend, fac.S)
-        work_k = ka_kernel_array(backend, fac.work)
-        rwork_k = ka_kernel_array(backend, fac.rwork)
-        J_k = ka_kernel_array(backend, J)
-        ka_jacobi_init_v_kernel!(kbackend)(U_k, V_k, J_k, n, -e; ndrange = n)
+    GC.@preserve U V S VT work rwork begin
+        U_k = ka_kernel_array(backend, U)
+        V_k = ka_kernel_array(backend, V)
+        VT_k = ka_kernel_array(backend, VT)
+        S_k = ka_kernel_array(backend, S)
+        work_k = ka_kernel_array(backend, work)
+        rwork_k = ka_kernel_array(backend, rwork)
+        col_norms2_kernel! = ka_jacobi_col_norms2_kernel!(kbackend)
         if n >= 2
-            col_norms2_kernel! = ka_jacobi_col_norms2_kernel!(kbackend)
             round_kernel! = ka_jacobi_svd_round_kernel!(kbackend)
-            for _ in 1:JACOBI_MAX_SWEEPS
-                col_norms2_kernel!(rwork_k, work_k, U_k, n; ndrange = n)
-                max_norm2 = maximum(fac.rwork)
-                negligible = (eps(R) * sqrt(max_norm2))^2
+            for sweep in 1:JACOBI_MAX_SWEEPS
+                col_norms2_kernel!(
+                    rwork_k, work_k, U_k, V_k, n, neg_e, sweep == 1, false; ndrange = n)
+                all(isfinite, ka_host_vec(rwork_k)) || break
+                max_norm2 = maximum(rwork_k)
+                negligible = max_norm2 * tol * tol
                 for r in 0:(m - 2)
                     round_kernel!(
                         U_k, V_k, work_k, n, r, tol, negligible; ndrange = n_pairs)
                 end
-                if iszero(Array(fac.work)[1])
+                if iszero(ka_host_vec(work_k)[1])
                     converged = true
                     break
                 end
             end
+            col_norms2_kernel!(
+                rwork_k, work_k, U_k, V_k, n, 0, false, true; ndrange = n)
+        else
+            col_norms2_kernel!(
+                rwork_k, work_k, U_k, V_k, n, neg_e, true, true; ndrange = n)
         end
-        ka_jacobi_col_norms_kernel!(kbackend)(rwork_k, U_k, n; ndrange = n)
         if n >= 2
             ka_jacobi_sort_columns_kernel!(kbackend)(rwork_k, U_k, V_k, n; ndrange = 1)
         end
         ka_jacobi_finalize_svd_kernel!(kbackend)(
-            U_k, VT_k, S_k, V_k, rwork_k, n, tol, e; ndrange = n)
+            U_k, S_k, VT_k, V_k, rwork_k, n, e, tol; ndrange = n)
+        synchronize(kbackend)
+        return (converged && all(isfinite, ka_host_vec(rwork_k))) ? 0 : 1
     end
-    isgpu(backend) && synchronize(backend)
-    info = converged ? 0 : 1
+end
+
+function ka_factorize_svd!(fac::DenseSVD, J::AbstractMatrix)
+    n = size(fac.U, 1)
+    n == 0 && return DenseSVD(
+        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, 0, 0)
+    F = eltype(fac.U)
+    e = matrix_exponent(J)
+    if eltype(J) === F
+        J === fac.U || copyto!(fac.U, J)
+        neg_e = -e
+    else
+        fac.U .= J .* ldexp(one(float(real(eltype(J)))), -e)
+        neg_e = 0
+    end
+    info = ka_svd!(fac.U, fac.factors, fac.S, fac.VT, fac.work, fac.rwork, e, neg_e)
     return DenseSVD(
         fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, info, e)
 end
@@ -246,7 +252,7 @@ function ka_svd_backsolve!(fac::DenseSVD, d::AbstractVector{T}) where {T <: Numb
         ka_svd_ut_mul_scale_kernel!(kbackend)(tmp_k, U_k, rwork_k, d_k, n, tol; ndrange = n)
         ka_svd_v_mul_kernel!(kbackend)(d_k, VT_k, tmp_k, n; ndrange = n)
     end
-    isgpu(backend) && synchronize(backend)
+    synchronize(kbackend)
     return d
 end
 
@@ -258,4 +264,31 @@ end
 function backsolve!(
         fac::DenseSVD{<:AbstractGPUArray{T}}, d::AbstractVector{T}) where {T <: Number}
     return ka_svd_backsolve!(fac, d)
+end
+
+if ccall(:jl_generating_output, Cint, ()) == 1
+    let kbackend = KernelAbstractions.CPU(), work_k = zeros(Int32, 1)
+        for F in (Float32, Float64, ComplexF32, ComplexF64, Float16)
+            R = real(F)
+            U_k = zeros(F, 2, 2)
+            V_k = zeros(F, 2, 2)
+            VT_k = zeros(F, 2, 2)
+            S_k = zeros(R, 2)
+            rwork_k = zeros(R, 2)
+            tmp_k = zeros(F, 2)
+            d_k = zeros(F, 2)
+            tol = jacobi_tolerance(2, R)
+            ka_jacobi_col_norms2_kernel!(kbackend)(
+                rwork_k, work_k, U_k, V_k, 2, 0, true, false; ndrange = 2)
+            ka_jacobi_svd_round_kernel!(kbackend)(
+                U_k, V_k, work_k, 2, 0, tol, tol * tol; ndrange = 1)
+            ka_jacobi_sort_columns_kernel!(kbackend)(rwork_k, U_k, V_k, 2; ndrange = 1)
+            ka_jacobi_finalize_svd_kernel!(kbackend)(
+                U_k, S_k, VT_k, V_k, rwork_k, 2, 0, tol; ndrange = 2)
+            ka_svd_ut_mul_scale_kernel!(kbackend)(
+                tmp_k, U_k, rwork_k, d_k, 2, tol; ndrange = 2)
+            ka_svd_v_mul_kernel!(kbackend)(d_k, VT_k, tmp_k, 2; ndrange = 2)
+        end
+        synchronize(kbackend)
+    end
 end

@@ -1,14 +1,18 @@
 using GPUArraysCore: allowscalar
+using JET: JET
 using JLArrays: JLArray, JLVector
 using LinearAlgebra: BLAS, I, LAPACK, norm, opnorm
 using Random: Xoshiro
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: NonlinearProblem, SVDFactorization
+using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
 using GeometricSolvers: factorize!!, init, ldiv!!, returncode
 
 include("../helpers/matrix.jl")
+
+const PRECISION_PAIRS = (map(T -> (T, Nothing), ELTYPES)...,
+    map(T -> (T, Float32), filter(T -> real(T) === Float64, ELTYPES))...)
 
 allowscalar(false)
 
@@ -66,5 +70,23 @@ ka_noop(r, y, p) = nothing
         end
     finally
         BLAS.set_num_threads(old_threads)
+    end
+end
+
+@testset "JET.@test_opt on init, factorize!!, and ldiv!! for KA factorizations on JLArray" begin
+    for (T, TF) in PRECISION_PAIRS
+        for M in (LUFactorization, QRFactorization, SVDFactorization)
+            m = TF === Nothing ? M() : M(TF)
+            x_dev = JLArray(zeros(T, 4))
+            b_dev = JLArray(ones(T, 4))
+            prob_dev = NonlinearProblem(x_dev, ka_noop)
+            JET.@test_opt target_modules = (GeometricSolvers,) init(
+                m, prob_dev, x_dev, nothing)
+            fac = init(m, prob_dev, x_dev, nothing)
+            JET.@test_opt target_modules = (GeometricSolvers,) factorize!!(
+                fac, m, fac.factors)
+            JET.@test_opt target_modules = (GeometricSolvers,) ldiv!!(
+                similar(x_dev), fac, b_dev)
+        end
     end
 end
