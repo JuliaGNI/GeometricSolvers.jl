@@ -193,9 +193,15 @@ end
 Solve `solver.prob` in place into `x` using the preallocated workspace and AD preparation in
 `solver`, and return `status::SolverStatus`. The solver does not keep the `p` given to
 [`init`](@ref): pass the parameters to every call, because `solve!(x, solver)` solves with
-`p = nothing`.
+`p = nothing`. An `x` whose element type or length differs from the template given to `init`
+raises an `ArgumentError`.
 """
 function solve!(x::AbstractVector, solver::NonlinearSolver, p = nothing)
+    Fx = solver.state.Fx
+    eltype(x) === eltype(Fx) && length(x) == length(Fx) || throw(ArgumentError(
+        "`solve!` needs an iterate like the template given to `init`, of length " *
+        "$(length(Fx)) and element type $(eltype(Fx)); got length $(length(x)) and " *
+        "element type $(eltype(x))"))
     _, status, state = solve!!(
         solver.state, solver.prob, x, solver.method, p, solver.options)
     solver.state === state || (solver.state = state)

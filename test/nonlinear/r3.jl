@@ -797,6 +797,13 @@ end
     @test_throws ArgumentError init(prob, SVector{2, T}(x₀), Newton(), p₁)
     @test_throws ArgumentError init(prob, MVector{2, T}(x₀), Newton(), p₁)
 
+    # `solve!` rejects an iterate whose element type or length differs from the template
+    T_other = T <: Complex ? real(T) : complex(T)
+    x_other = T_other.(x₀)
+    @test_throws ArgumentError solve!(x_other, solver, p₁)
+    @test x_other == T_other.(x₀)
+    @test_throws ArgumentError solve!(T[3, 5, 7], solver, p₁)
+
     # First `solve!(x, solver, p₁)` converges in place to `[2, 3]` and leaves `age > 0`
     st₁ = solve!(x, solver, p₁)
     @test st₁ isa SolverStatus{R}
