@@ -5,7 +5,7 @@
 # The SVD runs in `Float32`, `Float64`, `ComplexF32` and `ComplexF64`, at the working precision
 # and with `TF = Float32` for the two `Float64` element types (`PRECISION_PAIRS`), over the array
 # backends and on the KernelAbstractions `CPU()` backend of `test/helpers/matrix.jl`. One testset
-# runs `TF = Float16` on general matrices, for a `Float16` and a `Float32` element type.
+# runs `TF = Float16` on general matrices, for `Float16` and the real element types.
 
 using GeometricSolvers
 using GeometricSolvers: factorize!!, ldiv!!, returncode, StaticSVD
@@ -135,7 +135,8 @@ end
     end
 end
 
-@testset "a general matrix converges with TF = Float16, $T, n = $n" for T in (Float16, Float32),
+@testset "a general matrix converges with TF = Float16, $T, n = $n" for T in (
+        REAL_ELTYPES..., Float16),
     n in (2, 3, 4, 8)
 
     # `randn` with no diagonal shift: the columns are far from orthogonal, and the sweep converges
