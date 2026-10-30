@@ -787,7 +787,8 @@ end
     # `init(prob, x, method, p)` builds `NonlinearSolver` without mutating `x`
     x = copy(x₀)
     solver = init(prob, x, Newton(; reuse = 4), p₁)
-    @test solver isa NonlinearSolver
+    @test solver isa NonlinearSolver{T}
+    @test solver.n == 2
     @test x == x₀
     @test solver.prob === prob
     @test solver.method === Adapt.adapt(ToReal{R}(), Newton(; reuse = 4))
@@ -803,6 +804,10 @@ end
     @test_throws ArgumentError solve!(x_other, solver, p₁)
     @test x_other == T_other.(x₀)
     @test_throws ArgumentError solve!(T[3, 5, 7], solver, p₁)
+    # the check reads the template from the solver, not from the state, which may have no `Fx`
+    solver_nofx = NonlinearSolver(prob, x₀, Newton(), solver.options, (;))
+    @test_throws ArgumentError solve!(x_other, solver_nofx, p₁)
+    @test_throws ArgumentError solve!(T[3, 5, 7], solver_nofx, p₁)
 
     # First `solve!(x, solver, p₁)` converges in place to `[2, 3]` and leaves `age > 0`
     st₁ = solve!(x, solver, p₁)

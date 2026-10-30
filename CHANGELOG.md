@@ -449,7 +449,8 @@ so that a compat-only bump can be told apart from an interface change.
   `Picard` in R3 on an `AbstractVector` iterate (`Array` and device arrays), sharing `solve!!` and
   `step!!` with R1 through the storage seam. `init(prob, x, method, p = nothing; options, kwargs...)`
   adapts `method` to `R = real(eltype(x))` and builds a `NonlinearSolver` holding `prob`, the
-  adapted `method`, `Options{R}` and the pre-allocated workspace state without mutating `x`. A
+  adapted `method`, `Options{R}`, the element type and length of `x`, and the pre-allocated
+  workspace state without mutating `x`. A
   `StaticArray` `x` raises `ArgumentError`, because `solve!` cannot write the solution into it;
   `solve` takes one. In R3,
   `Newton` holds its factorisation buffer in `state.fac` (`init(m.linsolve, prob, x, p)`), aliases

@@ -152,18 +152,24 @@ end
 end
 
 """
-    NonlinearSolver(prob, method, options, state)
+    NonlinearSolver(prob, x, method, options, state)
 
 A preallocated nonlinear solver for [`NonlinearProblem`](@ref) `prob` with `method` and
-[`Options`](@ref) `options`, holding the workspace and AD preparation in `state`. Build it with
-[`init(prob, x, method, p; options = nothing, kwargs...)`](@ref init) and solve in place with
-[`solve!(x, solver, p)`](@ref solve!).
+[`Options`](@ref) `options`, holding the workspace and AD preparation in `state`. It keeps the
+element type `T` and the length `n` of the template iterate `x`, which [`solve!`](@ref) checks.
+Build it with [`init(prob, x, method, p; options = nothing, kwargs...)`](@ref init) and solve in
+place with [`solve!(x, solver, p)`](@ref solve!).
 """
-mutable struct NonlinearSolver{P <: NonlinearProblem, M, O <: Options, S}
+mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S}
     const prob::P
     const method::M
     const options::O
+    const n::Int
     state::S
+    function NonlinearSolver(prob::P, x::AbstractVector{T}, method::M, options::O,
+            state::S) where {T, P <: NonlinearProblem, M, O <: Options, S}
+        new{T, P, M, O, S}(prob, method, options, length(x), state)
+    end
 end
 
 """
@@ -184,7 +190,7 @@ function init(
     opt = resolve_options(x, options, kwargs, :init)
     m = Adapt.adapt(ToReal{R}(), method)
     state = init(m, prob, x, p)
-    return NonlinearSolver(prob, m, opt, state)
+    return NonlinearSolver(prob, x, m, opt, state)
 end
 
 """
@@ -196,11 +202,10 @@ Solve `solver.prob` in place into `x` using the preallocated workspace and AD pr
 `p = nothing`. An `x` whose element type or length differs from the template given to `init`
 raises an `ArgumentError`.
 """
-function solve!(x::AbstractVector, solver::NonlinearSolver, p = nothing)
-    Fx = solver.state.Fx
-    eltype(x) === eltype(Fx) && length(x) == length(Fx) || throw(ArgumentError(
+function solve!(x::AbstractVector, solver::NonlinearSolver{T}, p = nothing) where {T}
+    eltype(x) === T && length(x) == solver.n || throw(ArgumentError(
         "`solve!` needs an iterate like the template given to `init`, of length " *
-        "$(length(Fx)) and element type $(eltype(Fx)); got length $(length(x)) and " *
+        "$(solver.n) and element type $T; got length $(length(x)) and " *
         "element type $(eltype(x))"))
     _, status, state = solve!!(
         solver.state, solver.prob, x, solver.method, p, solver.options)
