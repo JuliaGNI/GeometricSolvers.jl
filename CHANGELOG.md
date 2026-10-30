@@ -459,8 +459,11 @@ so that a compat-only bump can be told apart from an interface change.
   `solve!(x, solver, p = nothing)` resets per-solve scalar state (`age = Int32(0)` and
   `stalled = false` for `Newton` with `reuse`, and `radius = radius₀` for `Newton` with `DogLeg`),
   mutates `x` in place and returns `SolverStatus{R}` with zero steady-state heap allocations on
-  `Array` once `solver` is built. `solve(prob, x₀, method, p = nothing; options, kwargs...)` copies
-  `x₀` when `x₀` is not a `StaticArray` or a `Number`, so `x₀` is never mutated.
+  `Array` once `solver` is built. An `x` whose element type or length differs from the template
+  given to `init` raises `ArgumentError` before any evaluation. The solver does not keep the `p`
+  of `init`, so `solve!(x, solver)` solves with `p = nothing`.
+  `solve(prob, x₀, method, p = nothing; options, kwargs...)` copies `x₀` when `x₀` is not a
+  `StaticArray` or a `Number`, so `x₀` is never mutated.
   The internal storage seam (`src/base/bang.jl`) adds the array methods of `buffer`, `residual!!`,
   `update_iterate!!`, `map!!` and `mul!!`, and the value and array methods of `copy!!`, `scale!!`,
   `axpby!!` and `regularize!!` (which shifts the diagonal in a loop on a `Matrix` so
