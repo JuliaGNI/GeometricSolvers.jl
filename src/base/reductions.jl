@@ -18,7 +18,7 @@ end
 
 The Euclidean norm ``\\sqrt{\\sum_i |a_i|^2}`` in `real(eltype(a))`.
 
-Where `norm2(a)` is finite and at least `floatmin(R) / eps(R)`, it is `sqrt(norm2(a))`, one
+Where `norm2(a)` is finite and at least `length(a) * floatmin(R)`, it is `sqrt(norm2(a))`, one
 reduction. Otherwise it scales the entries by ``2^{-e}``, where ``2^e`` is the power of two of the
 largest ``|a_i|`` (of the largest real or imaginary part for a complex `a`), so that it neither
 overflows where the norm is finite nor underflows to zero where the norm is positive. That path
@@ -31,10 +31,11 @@ in the last bits at most. A `NaN` entry gives `NaN`, an `Inf` entry and no `NaN`
 function rnorm(a)
     R = real(eltype(a))
     R <: AbstractFloat || return sqrt(norm2(a))
-    # The unscaled sum is accurate to the last bits when it is finite and at least `floatmin / eps`:
-    # a subnormal square then loses at most `eps` of the sum, relatively.
+    # The unscaled sum is accurate to the last bits when it is finite and at least
+    # `length(a) * floatmin`: a square below `floatmin` loses at most `floatmin * eps / 2`, and an
+    # entry has at most two such squares, so together they lose at most `eps` of the sum, relatively.
     s = norm2(a)
-    isfinite(s) && s >= floatmin(R) / eps(R) && return sqrt(s)
+    isfinite(s) && s >= length(a) * floatmin(R) && return sqrt(s)
     isempty(a) && return zero(R)
     m = R(maximum(x -> max(abs(real(x)), abs(imag(x))), a))
     (iszero(m) || !isfinite(m)) && return m

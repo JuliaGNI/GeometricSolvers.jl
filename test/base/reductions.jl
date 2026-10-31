@@ -99,8 +99,8 @@ end
     end
 end
 
-# Where the unscaled sum is finite and at least `floatmin / eps`, `rnorm` returns its square root
-# and takes no scaled path, for every length.
+# Where the unscaled sum is finite and at least `length * floatmin`, `rnorm` returns its square
+# root and takes no scaled path, for every length.
 @testset "rnorm is sqrt(norm2) where the squares stay in range: $R" for R in REAL_ELTYPES
     rng = Xoshiro(29)
     for k in -8:8, n in (5, 1000), _ in 1:20
@@ -120,6 +120,15 @@ end
     v = fill(Float16(128), 10^5)
     @test norm2(v) === Float16(Inf)
     @test rnorm(v) ≈ Float16(128 * sqrt(1e5)) rtol = 2eps(Float16)
+end
+
+# The square of 2^-13 underflows to zero in `Float16`, so the unscaled sum is 1/16, and each of the
+# 10^5 small entries drops 2^-26 from it: a relative 2.4 % in total. The norm is
+# √(1/16 + 10^5 · 2^-26).
+@testset "rnorm of a long Float16 vector whose squares underflow" begin
+    v = [Float16(0.25); fill(Float16(2.0^-13), 10^5)]
+    @test norm2(v) === Float16(1 / 16)
+    @test rnorm(v) ≈ Float16(sqrt(1 / 16 + 1e5 * 2.0^-26)) rtol = 2eps(Float16)
 end
 
 @testset "rnorm of empty, zero and non-finite vectors: $T" for T in ELTYPES

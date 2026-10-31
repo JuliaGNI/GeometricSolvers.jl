@@ -179,8 +179,8 @@ end
 
     # A residual whose square overflows has a finite norm: the failure reports that norm, not
     # sqrt(φ₀) = Inf
-    big = floatmax(R) / 4
-    xb = SVector{2, T}(T(big), T(big))
+    huge = floatmax(R) / 4
+    xb = SVector{2, T}(T(huge), T(huge))
     prob_big = NonlinearProblem((y, q) -> y, (y, q) -> diagonal_matrix(one.(y)))
     @test norm2(xb) === R(Inf)
     for ls in (inR(Backtracking()), inR(Bisection()), inR(StrongWolfe()))
