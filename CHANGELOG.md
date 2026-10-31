@@ -42,9 +42,10 @@ so that a compat-only bump can be told apart from an interface change.
   and keywords in one function, with one message when both are passed: "pass either `options` or
   keyword arguments, not both".
 
-- The batched `solve!` runs one kernel for both forms, counts the return codes over
-  `instances(ReturnCode)`, and calls `get_backend` on an `order` without catching its error: an
-  `order` whose backend cannot be read raises, where it fell back to the CPU, and an `order` on a
+- The batched `solve!` runs one kernel for both forms, waits for it with
+  `isgpu(backend) && synchronize(backend)` as the KA factorisations do, counts the return codes
+  over `instances(ReturnCode)`, and calls `get_backend` on an `order` without catching its error:
+  an `order` whose backend cannot be read raises, where it fell back to the CPU, and an `order` on a
   device with a batch on the host is copied to the host. The range method of `_adapt_order`,
   which the `isbits` branch already covered, is gone (K18 leaves `KNOWN_ISSUES.md`).
 
@@ -139,9 +140,11 @@ so that a compat-only bump can be told apart from an interface change.
   its innermost frame and a fragment of JET's message, with its reason. Four are the launch of a
   kernel and `synchronize` on a KernelAbstractions `GPU` backend, which the backend package
   defines; one is a `nothing` status that the one caller of `ka_factorize_lu!` never passes. A
-  report outside the list, or an entry that names no report or more than one, fails the file. A
-  call of an undefined function added to `rnorm` or to `isconverged` now fails it. A JET that
-  fails to load fails the file, on a pre-release Julia too. This closes `K1` in
+  report outside the list, or an entry that names more than one report, fails the file; so does
+  an entry that names none, unless it is a launch or a `synchronize`, whose method a backend
+  package loaded earlier in the same process (JLArrays, Metal) can define. A call of an
+  undefined function added to `rnorm` or to `isconverged` now fails it. A JET that fails to load
+  fails the file, on a pre-release Julia too. This closes `K1` in
   `KNOWN_ISSUES.md`.
 
 - The test environment sets Metal's `precompile` preference to `false` in `test/Project.toml`,

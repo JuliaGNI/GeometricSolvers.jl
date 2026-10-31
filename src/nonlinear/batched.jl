@@ -93,7 +93,7 @@ function _launch!(X, out, prob, m, p, opt, state₀, order)
     backend = get_backend(X)
     order_dev = _adapt_order(backend, order)
     _solve_kernel!(backend)(X, out, prob, m, p, opt, state₀, order_dev; ndrange = length(X))
-    applicable(synchronize, backend) && synchronize(backend)
+    isgpu(backend) && synchronize(backend)
     return out
 end
 
