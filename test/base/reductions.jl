@@ -1,4 +1,5 @@
 using GeometricSolvers: norm2, rnorm, rdot
+using ForwardDiff: ForwardDiff, Dual
 using JET: JET, @test_opt
 using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions, @kernel, @index
@@ -225,4 +226,19 @@ allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
         @test allocations(rnorm, x) == 0
     end
     @test allocations(rnorm, randn(Xoshiro(1), T, 100)) == 0
+end
+
+# The scaled path needs a floating-point `R`: it converts its scaled sum back to an integer `R`,
+# which raises an `InexactError`, and its `ldexp` recurses without end on a `Dual`. For these
+# element types `rnorm` is `sqrt(norm2(a))`. The `Dual` cases come last.
+@testset "rnorm of a non-float Number gives the base's value" begin
+    @test rnorm(3) === 3.0
+    @test rnorm([1, 2, 2]) === 3.0
+    @test rnorm(Int32[3, 4]) === 5.0
+    @test rnorm(3 + 4im) === 5.0
+    @test rnorm(Int[]) === 0.0
+    @test rnorm(Dual(3.0, 1.0)) === Dual(3.0, 1.0)
+    r = rnorm(SVector(Dual(3.0, 1.0), Dual(4.0, 0.0)))
+    @test ForwardDiff.value(r) === 5.0
+    @test abs(ForwardDiff.partials(r)[1] - 0.6) <= 8eps()
 end

@@ -23,10 +23,12 @@ It scales the entries by ``2^{-e}``, where ``2^e`` is the power of two of the la
 norm is finite nor underflows to zero where the norm is positive. The scale is exact: where no
 square leaves the floating-point range, scaled or not, the result is `sqrt(norm2(a))` bit for
 bit. It takes two reductions, the largest entry and the sum. A `NaN` entry gives `NaN`, an `Inf`
-entry and no `NaN` gives `Inf`.
+entry and no `NaN` gives `Inf`. Where `real(eltype(a))` is no `AbstractFloat`, such as an
+integer or a `ForwardDiff.Dual`, it is the unscaled `sqrt(norm2(a))`.
 """
 function rnorm(a)
     R = real(eltype(a))
+    R <: AbstractFloat || return sqrt(norm2(a))
     isempty(a) && return zero(R)
     m = R(maximum(x -> max(abs(real(x)), abs(imag(x))), a))
     (iszero(m) || !isfinite(m)) && return m

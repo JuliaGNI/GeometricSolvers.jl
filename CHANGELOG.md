@@ -131,7 +131,9 @@ so that a compat-only bump can be told apart from an interface change.
   `2 eps(R)`. The scale is exact, so where no square leaves the range, scaled or not, the result
   is the earlier `sqrt(norm2(a))` bit for bit. It takes two reductions, the largest entry and the
   sum. `norm2`, the merit `‖F‖²` of the line searches, stays unscaled, so a line search above
-  `‖F‖ = sqrt(floatmax(R))` still returns `NONFINITE`.
+  `‖F‖ = sqrt(floatmax(R))` still returns `NONFINITE`. Where `real(eltype(a))` is no
+  `AbstractFloat`, such as an integer or a `ForwardDiff.Dual`, `rnorm` stays the unscaled
+  `sqrt(norm2(a))`.
 
 - `K14` and `K16` leave `KNOWN_ISSUES.md`: with the scaled norm, `DogLeg` in `Float32` solves the
   Rosenbrock system scaled by `1e18` to `3e18` to its root, and stops on `s · (2x₁ − 1, −1)` at
