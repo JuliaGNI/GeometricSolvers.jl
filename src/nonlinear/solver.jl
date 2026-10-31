@@ -68,7 +68,8 @@ under factor reuse, and `radius = radius₀` under [`DogLeg`](@ref)), evaluates
 `Fx = residual!!(state_Fx(state), prob, x₀, p)`, and computes `fnorm₀ = rnorm(Fx)`.
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
 returns `NONFINITE` with `0` iterations. When `converged(options, status, fnorm₀, rnorm(x₀))`
-already holds at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it returns `MAXITERS` with `0` iterations.
+already holds at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it
+returns `MAXITERS` with `0` iterations.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
