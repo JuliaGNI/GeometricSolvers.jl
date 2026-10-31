@@ -17,8 +17,22 @@ end
     rnorm(a)
 
 The Euclidean norm ``\\sqrt{\\sum_i |a_i|^2}`` in `real(eltype(a))`.
+
+It scales the entries by ``2^{-e}``, where ``2^e`` is the power of two of the largest ``|a_i|``
+(of the largest real or imaginary part for a complex `a`), so that it neither overflows where the
+norm is finite nor underflows to zero where the norm is positive. The scale is exact: where no
+square leaves the floating-point range, scaled or not, the result is `sqrt(norm2(a))` bit for
+bit. It takes two reductions, the largest entry and the sum. A `NaN` entry gives `NaN`, an `Inf`
+entry and no `NaN` gives `Inf`.
 """
-rnorm(a) = sqrt(norm2(a))
+function rnorm(a)
+    R = real(eltype(a))
+    isempty(a) && return zero(R)
+    m = R(maximum(x -> max(abs(real(x)), abs(imag(x))), a))
+    (iszero(m) || !isfinite(m)) && return m
+    e = exponent(m)
+    return ldexp2(sqrt(R(sum(x -> abs2(ldexp2(x, -e)), a))), e)
+end
 
 """
     rdot(a, b)
