@@ -511,3 +511,19 @@ so that a compat-only bump can be told apart from an interface change.
   two parallel `KernelAbstractions` kernels with zero host-device scalar indexing
   (`GPUArraysCore.allowscalar(false)`), so a matrix with finite entries and `σ₁ > floatmax(R)` still
   solves to a finite step.
+
+- The standard test set runs in the `core` group, under the label "Standard test set". It is the
+  23 problems of NonlinearProblemLibrary.jl 0.1.8 (Burkardt's `test_nonlin`, after Moré, Garbow
+  and Hillstrom), copied into `test/helpers/standard_problems.jl` with every non-integer constant
+  in the element type of the iterate, from the starts `u0`, `10 u0` and `100 u0` (67 starts). It
+  solves each start with nine columns — `Newton` with `Static`, `Backtracking`, `Bisection`,
+  `StrongWolfe` and `DogLeg` on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
+  `reuse = 3`, and `Picard` with `Backtracking` — in `Float32` and `Float64`, with
+  `max_iterations = 200`: 1206 cells. `test/verification/standard.jl` fails when a cell's return
+  code differs from the committed table `test/verification/standard_reference.csv`, when its
+  iteration count differs by more than 1 (unless the table flags the cell `platform`), or when a
+  cell is in only one of the run and the table; it prints the `SUCCESS` cells per column and element type. A
+  change that moves a cell regenerates the table with `scripts/standard/update_reference.jl`, so
+  each later fix shows its effect as a list of changed cells. The library is no dependency:
+  `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
+  against it.
