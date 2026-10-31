@@ -3,11 +3,10 @@
 # `target_modules = (GeometricSolvers,)` keeps the reports whose innermost frame is in this
 # package; a report raised inside a dependency is not this file's concern. The file fails where
 # the reports differ from `KNOWN_FALSE_POSITIVES`: a report that no entry names, or an entry
-# that names no report or more than one. JET can fail to load on a pre-release Julia, so there
-# alone the file records one skip and runs no analysis; on a released Julia, a JET that fails
-# to load fails the file.
+# that names no report or more than one. A JET that fails to load fails the file.
 
 using GeometricSolvers
+using JET
 using Test
 
 # KernelAbstractions leaves the launch of a kernel on a `GPU` backend and `synchronize(::GPU)`
@@ -29,38 +28,30 @@ const KNOWN_FALSE_POSITIVES = [
                  "holds the `Int32` status vector that `init` gives a GPU array")
 ]
 
-if !isempty(VERSION.prerelease)
-    @testset "JET report_package" begin
-        @test_skip isempty(VERSION.prerelease)  # JET on a pre-release: aviatesk/JET.jl#796
-    end
-else
-    using JET
+# The name of the function of a report's innermost frame, with the `#name#n` of a keyword
+# body read as `name`, so that the name does not depend on the number that lowering gives
+# the keyword body.
+function frame_name(report)
+    name = string(last(report.vst).linfo.def.name)
+    m = match(r"^#(.+)#\d+$", name)
+    return m === nothing ? name : m.captures[1]
+end
 
-    # The name of the function of a report's innermost frame, with the `#name#n` of a keyword
-    # body read as `name`, so that the name does not depend on the number that lowering gives
-    # the keyword body.
-    function frame_name(report)
-        name = string(last(report.vst).linfo.def.name)
-        m = match(r"^#(.+)#\d+$", name)
-        return m === nothing ? name : m.captures[1]
-    end
+# A toplevel report has no frames, and no entry names it.
+function names_report(entry, report)
+    report isa JET.InferenceErrorReport || return false
+    return entry.f == frame_name(report) &&
+           occursin(entry.msg, sprint(JET.print_report_message, report))
+end
 
-    # A toplevel report has no frames, and no entry names it.
-    function names_report(entry, report)
-        report isa JET.InferenceErrorReport || return false
-        return entry.f == frame_name(report) &&
-               occursin(entry.msg, sprint(JET.print_report_message, report))
-    end
-
-    @testset "JET report_package" begin
-        result = JET.report_package(GeometricSolvers; target_modules = (GeometricSolvers,),
-            toplevel_logger = nothing)
-        reports = JET.get_reports(result)
-        unlisted = filter(r -> !any(e -> names_report(e, r), KNOWN_FALSE_POSITIVES), reports)
-        counts = [count(r -> names_report(e, r), reports) for e in KNOWN_FALSE_POSITIVES]
-        miscounted = [e.f => n for (e, n) in zip(KNOWN_FALSE_POSITIVES, counts) if n != 1]
-        isempty(unlisted) || show(result)
-        @test isempty(unlisted)
-        @test isempty(miscounted)
-    end
+@testset "JET report_package" begin
+    result = JET.report_package(GeometricSolvers; target_modules = (GeometricSolvers,),
+        toplevel_logger = nothing)
+    reports = JET.get_reports(result)
+    unlisted = filter(r -> !any(e -> names_report(e, r), KNOWN_FALSE_POSITIVES), reports)
+    counts = [count(r -> names_report(e, r), reports) for e in KNOWN_FALSE_POSITIVES]
+    miscounted = [e.f => n for (e, n) in zip(KNOWN_FALSE_POSITIVES, counts) if n != 1]
+    isempty(unlisted) || show(result)
+    @test isempty(unlisted)
+    @test isempty(miscounted)
 end

@@ -100,8 +100,9 @@ so that a compat-only bump can be told apart from an interface change.
   kernel and `synchronize` on a KernelAbstractions `GPU` backend, which the backend package
   defines; one is a `nothing` status that the one caller of `ka_factorize_lu!` never passes. A
   report outside the list, or an entry that names no report or more than one, fails the file. A
-  call of an undefined function added to `rnorm` or to `isconverged` now fails it. Only a
-  pre-release Julia records a skip. This closes `K1` in `KNOWN_ISSUES.md`.
+  call of an undefined function added to `rnorm` or to `isconverged` now fails it. A JET that
+  fails to load fails the file, on a pre-release Julia too. This closes `K1` in
+  `KNOWN_ISSUES.md`.
 
 - The test environment sets Metal's `precompile` preference to `false` in `test/Project.toml`,
   and `test/devices/metal.jl` asserts that the test process reads it. Metal.jl 1.11.1 then
