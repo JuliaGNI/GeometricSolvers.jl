@@ -524,14 +524,15 @@ so that a compat-only bump can be told apart from an interface change.
   `test/verification/standard_reference.csv`, when its iteration count differs by more than 1, or
   when a cell is in only one of the run and the table; it prints the `SUCCESS` cells per column
   and element type. A cell whose outcome round-off decides is flagged `unstable` and checked only
-  for its presence and a code other than `ERROR`: the update script runs each cell 20 more times,
-  with the start, the residual or the Newton direction moved by 1 to 4 ulps, and flags the cell
-  where a run returns another code, an iteration count that differs by more than 1, or a final
-  iterate farther than `√eps(T) · max(1, ‖x‖)`. It flags 133 of the 1206 cells, among them the
-  42 cells in which the Linux and Windows runners of CI differed from a table written on Apple
-  silicon; a cell that a runner moves and the marker leaves is flagged `platform` by hand, with
-  the same check. `scripts/standard/README.md` reports the diagnosis: round-off amplification,
-  seeded by CPU-dependent OpenBLAS and LAPACK kernels. A change that moves a cell regenerates the
-  table with `scripts/standard/update_reference.jl`, so each later fix shows its effect as a list
-  of changed cells. The library is no dependency: `scripts/standard/check_transcription.jl`, in
-  an environment of its own, checks the copy against it.
+  for its presence and a code other than `ERROR`: the update script runs each cell 20 more times
+  (16 for `Picard`), with the start, the residual or the Newton direction moved by 1 to 4 ulps,
+  and flags the cell where a run returns another code, an iteration count that differs by more
+  than 1, or a final iterate farther than `√eps(T) · max(1, ‖x‖)`. It flags 133 of the 1206
+  cells, among them the 42 cells in which the Linux and Windows runners of CI differed from a
+  table written on Apple silicon; a cell that a runner moves and the marker leaves is flagged
+  `platform` by hand, with the same check. `scripts/standard/README.md` reports the diagnosis:
+  round-off amplification, seeded by CPU-dependent OpenBLAS and LAPACK kernels. A change that
+  moves a cell regenerates the table with `scripts/standard/update_reference.jl`, so each later
+  fix shows its effect as a list of changed cells. The library is no dependency:
+  `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
+  against it.

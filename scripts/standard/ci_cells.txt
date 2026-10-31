@@ -1,6 +1,7 @@
 # The cells of the standard test set that CI run 41196978054 (commit 6482c10, JuliaGNI/GeometricSolvers.jl)
 # reported as different from a reference written on Apple M4 Max, one line per cell and job:
 # the value on the runner, then the reference's. 42 cells in the union; diagnose.jl reads the keys.
+# Julia min - windows-latest reported the 23 lines of Julia 1 - windows-latest, values included.
 ## Julia 1 - ubuntu-latest (34 cells)
 (1, "u0", "Newton reuse 3 Backtracking LU", "Float32"): 155 iterations, reference 157
 (11, "100u0", "Newton Backtracking LU", "Float32"): 17 iterations, reference 12

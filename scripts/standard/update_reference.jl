@@ -5,11 +5,11 @@
 #     julia --project=test -e 'using Pkg; Pkg.instantiate()'
 #     julia --project=test scripts/standard/update_reference.jl
 #
-# It runs every cell of `test/helpers/standard_cells.jl` with its 20 perturbed runs, sets the
-# `unstable` flag of each cell that the marker marks, and writes the table. A cell that the old
-# table flags `platform` keeps the flag and its comment, which holds the values observed on the
-# CI runners. It prints the summary, the number of `unstable` cells, and every cell that differs
-# from the old table, for the pull request that changes the table.
+# It runs every cell of `test/helpers/standard_cells.jl` with its 20 perturbed runs (16 for
+# `Picard`), sets the `unstable` flag of each cell that the marker marks, and writes the table. A
+# cell that the old table flags `platform` keeps the flag and its comment, which holds the values
+# observed on the CI runners. It prints the summary, the number of `unstable` cells, and every
+# cell that differs from the old table, for the pull request that changes the table.
 
 include(joinpath(@__DIR__, "..", "..", "test", "helpers", "standard_cells.jl"))
 

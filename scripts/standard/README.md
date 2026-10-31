@@ -9,7 +9,8 @@
 | `trace.jl` | one cell traced with LAPACK and with pure Julia, line-search trials included |
 | `ci_cells.txt` | the 42 cells that CI run 41196978054 reported as different, with their values on each runner |
 
-Each script runs from the root of the repository, in the environment that its header names.
+Each script runs from the root of the repository, in the environment that its header names;
+`generic_lapack.jl` runs only as an `include` of `diagnose.jl` and `trace.jl`.
 
 ## Why cells differ between runners
 
