@@ -29,6 +29,7 @@ if "core" in GROUPS
     @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
     @safetestset "Newton" include("nonlinear/newton.jl")
     @safetestset "Picard" include("nonlinear/picard.jl")
+    @safetestset "Solver loop hooks" include("nonlinear/hooks.jl")
     @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")
     @safetestset "R3 nonlinear" include("nonlinear/r3.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")

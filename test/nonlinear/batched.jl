@@ -28,6 +28,16 @@ function Base.getindex(v::SpyOrderVector, i::Int)
     v.reads[i] += 1
     return v.perm[i]
 end
+KernelAbstractions.get_backend(::SpyOrderVector) = KernelAbstractions.CPU()
+
+# A host vector with no `get_backend` method.
+struct UnreadOrderVector <: AbstractVector{Int}
+    perm::Vector{Int}
+end
+
+Base.size(v::UnreadOrderVector) = size(v.perm)
+Base.IndexStyle(::Type{UnreadOrderVector}) = IndexLinear()
+Base.getindex(v::UnreadOrderVector, i::Int) = v.perm[i]
 
 @inline function _r2_hetero_res(x::SVector{2, T}, code::Int) where {T}
     R = real(T)
@@ -182,11 +192,12 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test_throws ArgumentError solve!(JLArray(copy(X)), S_good, prob, Newton(), p0)
         @test_throws ArgumentError solve!(copy(X), JLArray(S_good), prob, Newton(), p0)
 
-        # options !== nothing && !isempty(kwargs)
+        # options !== nothing && !isempty(kwargs), with the message of `solve` and `init`
         opt = Options(Float64; max_iterations = 20)
-        @test_throws ArgumentError solve!(
+        both = ArgumentError("pass either `options` or keyword arguments, not both")
+        @test_throws both solve!(
             copy(X), S_good, prob, Newton(), p0; options = opt, max_iterations = 10)
-        @test_throws ArgumentError solve!(
+        @test_throws both solve!(
             copy(X), prob, Newton(), p0; options = opt, max_iterations = 10)
 
         # length(order) != length(X)
@@ -568,6 +579,27 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test ord_view_adapted isa JLArray{Int, 1}
         @test Array(ord_view_adapted) == ord_cpu
 
+        # an order on a device, with a batch on the host, is copied to the host
+        ord_host = GeometricSolvers._adapt_order(KernelAbstractions.CPU(), ord_jl)
+        @test ord_host isa Vector{Int}
+        @test ord_host == ord_cpu
+
+        # an order whose backend cannot be read raises the error of `get_backend`
+        unread = UnreadOrderVector([3, 1, 2])
+        @test_throws ArgumentError KernelAbstractions.get_backend(unread)
+        @test_throws ArgumentError GeometricSolvers._adapt_order(
+            KernelAbstractions.CPU(), unread)
+        @test_throws ArgumentError solve!(
+            [SVector(2.0, 1.0) for _ in 1:3], _r2_coupled_problem(), Newton(),
+            SVector(2.125, 1.5); order = unread)
+
+        # both forms launch through `_launch!`, which waits for the kernel
+        ci = only(Base.code_lowered(GeometricSolvers._launch!))
+        @test any(
+            stmt -> stmt == GlobalRef(GeometricSolvers, :synchronize) ||
+                    stmt == KernelAbstractions.synchronize,
+            ci.code
+        )
         for sig in (
             Tuple{
             Vector{SVector{2, Float64}},
@@ -585,11 +617,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         )
             bf = Base.bodyfunction(which(solve!, sig))
             ci = first(Base.code_lowered(bf))
-            @test any(
-                stmt -> stmt == GlobalRef(GeometricSolvers, :synchronize) ||
-                        stmt == KernelAbstractions.synchronize,
-                ci.code
-            )
+            @test any(stmt -> stmt == GlobalRef(GeometricSolvers, :_launch!), ci.code)
         end
     end
 

@@ -38,12 +38,17 @@ end
     @test convert(Options{Float32}, opt) === opt
 end
 
-@testset "convert raises a relative tolerance to the default of R" begin
+@testset "convert raises a relative tolerance to eps(R) and 2 eps(R)" begin
     # the Float64 defaults, √eps(Float64) and 2 eps(Float64), are below eps(Float32)
     opt = convert(Options{Float32}, Options(Float64))
-    @test opt.f_reltol === sqrt(eps(Float32))
+    @test opt.f_reltol === eps(Float32)
     @test opt.x_reltol === 2 * eps(Float32)
-    @test opt.f_reltol >= eps(Float32)
+    opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-12, x_reltol = 0))
+    @test opt.f_reltol === eps(Float32)
+    @test opt.x_reltol === 2 * eps(Float32)
+    # a tolerance between eps(Float32) and √eps(Float32) is kept
+    opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-6))
+    @test opt.f_reltol === 1.0f-6
     # a looser tolerance is kept
     opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-3, x_reltol = 1e-5))
     @test opt.f_reltol === 1.0f-3
@@ -52,6 +57,14 @@ end
     opt = convert(Options{Float64}, Options(Float32))
     @test opt.f_reltol === Float64(sqrt(eps(Float32)))
     @test opt.x_reltol === Float64(2 * eps(Float32))
+end
+
+@testset "convert to the same R returns its input, $T" for T in ELTYPES
+    R = real(T)
+    for opt in (Options(T), Options(T; f_reltol = 0, x_reltol = 0),
+        Options(T; f_abstol = 1, max_stalls = 5))
+        @test convert(Options{R}, opt) === opt
+    end
 end
 
 @testset "invalid values raise an ArgumentError" begin
@@ -129,6 +142,9 @@ end
     # before the first step, a zero `stepnorm` means no step, not a converged one
     st₀ = SolverStatus{Float64}(MAXITERS, Int32(0), 1.0, 0.0, Int32(0), false)
     @test !converged(Options(Float64), st₀, 1.0, 1.0)
+    # after a step, a zero `stepnorm` means no progress: the step test needs a nonzero step
     st₁ = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 0.0, Int32(0), false)
+    @test !converged(Options(Float64), st₁, 1.0, 1.0)
+    st₁ = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 1e-20, Int32(0), false)
     @test converged(Options(Float64), st₁, 1.0, 1.0)
 end

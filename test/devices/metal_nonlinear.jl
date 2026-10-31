@@ -10,7 +10,8 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: Backtracking, DogLeg, LUFactorization, Newton, NonlinearProblem,
                         Options, PerSystem, Picard, QRFactorization, SINGULAR, SUCCESS,
-                        SolverStatus, Static, ToReal, init, isconverged, solve, solve!,
+                        SolverStatus, Static, ToReal, init_state, isconverged, solve,
+                        solve!,
                         solve!!
 
 include("../helpers/matrix.jl")
@@ -115,7 +116,7 @@ end
                 prob in (prob_ad, prob_j)
                 m = Adapt.adapt(
                     ToReal{R}(), Newton(; linsolve = ls, globalization = glob))
-                state₀ = init(m, prob, x₀, p₀)
+                state₀ = init_state(m, prob, x₀, p₀)
                 @test isbits(prob)
                 @test isbits(m)
                 @test isbits(state₀)
@@ -148,7 +149,7 @@ end
             for glob in (Static(), Backtracking())
                 m_pic = Adapt.adapt(
                     ToReal{R}(), Picard(; damping = 0.8, globalization = glob))
-                state_pic = init(m_pic, prob_pic, x₀, ps_pic_host[1])
+                state_pic = init_state(m_pic, prob_pic, x₀, ps_pic_host[1])
                 @test isbits(m_pic)
                 @test isbits(state_pic)
 
@@ -206,7 +207,7 @@ end
 
                     m_dev = Adapt.adapt(ToReal{R}(), m)
                     opt = Options(R)
-                    state₀ = init(m_dev, prob, x₀, p₀)
+                    state₀ = init_state(m_dev, prob, x₀, p₀)
 
                     X_dev = Metal.MtlArray(xs_host)
                     S_dev = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
@@ -247,7 +248,7 @@ end
                 m_pic_dev = Adapt.adapt(ToReal{R}(), m_pic)
                 opt_pic_f64 = Options(Float64; f_abstol = 1e-5, f_reltol = 1e-5)
                 opt_pic = convert(Options{R}, opt_pic_f64)
-                state_pic = init(m_pic_dev, prob_pic, x₀, ps_pic_host[1])
+                state_pic = init_state(m_pic_dev, prob_pic, x₀, ps_pic_host[1])
 
                 X_pic = Metal.MtlArray(xs_host)
                 S_pic = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))

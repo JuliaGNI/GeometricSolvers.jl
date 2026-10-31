@@ -65,17 +65,6 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K13 · `Newton` with `Static()` returns `SUCCESS` at a non-root when the Jacobian is infinite.
-
-- **location:** `src/nonlinear/newton.jl:209` (`step!!` of `Newton` with `reuse = nothing`)
-- **evidence:** `solve(NonlinearProblem((x, p) -> x * x - 4, (x, p) -> R(Inf)), R(3), Newton())`
-  gives `SUCCESS` with `x == 3` after 1 iteration, in `Float32` and `Float64` (Julia 1.13.2). The
-  factor of `Inf` is not singular, the step `-F / Inf` is `-0.0`, and `converged` in
-  `src/base/options.jl` reads the zero `stepnorm` as `stepnorm ≤ x_reltol · ‖x‖`, although
-  `‖F(3)‖ = 5`. `DogLeg` does not take this path: it returns `LINESEARCH_FAILED` there.
-- **kind:** defect
-- **found:** 2026-10-26
-
 ### K14 · `DogLeg` stalls on the Rosenbrock system in `Float32` scaled by 1e18 to 3e18.
 
 - **location:** `src/globalization/dogleg.jl` (`dogleg_step`, the Cauchy direction `g̃`)
@@ -120,16 +109,3 @@
   type.
 - **kind:** found late
 - **found:** 2026-10-16
-
-### K18 · `_adapt_order(backend, order::AbstractRange{<:Integer})` is redundant with the `isbitstype` branch of `_adapt_order(backend, order::AbstractVector{<:Integer})`.
-
-- **location:** `src/nonlinear/batched.jl:30`
-- **evidence:** `_adapt_order(backend, order::AbstractRange{<:Integer}) = return order` at lines
-  30–32 is redundant with the `isbitstype(typeof(order)) && return order` guard at line 35 of
-  `_adapt_order(backend, order::AbstractVector{<:Integer})`, because standard integer ranges
-  (`UnitRange{Int}`, `StepRange{Int,Int}`, `OneTo{Int}`) are `isbitstype`
-  `AbstractVector{<:Integer}`. Mutating `isbitstype(typeof(order)) && return order` to
-  `false && return order` in `src/nonlinear/batched.jl:35` survives `nonlinear/batched.jl` because
-  `AbstractRange{<:Integer}` intercepts range inputs at line 30.
-- **kind:** dead code
-- **found:** 2026-10-28

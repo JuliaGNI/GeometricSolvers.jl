@@ -8,7 +8,8 @@ using Test
 
 using GeometricSolvers
 using GeometricSolvers: Backtracking, Bisection, NonlinearProblem, Options, Picard, SUCCESS,
-                        Static, StrongWolfe, ToReal, init, rnorm, solve, solve!!
+                        Static, StrongWolfe, ToReal, init_state, rnorm, solve, solve!!,
+                        step!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -78,6 +79,48 @@ end
         prob_s, T(3), Picard(; damping = 0.8, globalization = Backtracking()), T(1))
     @test sts.code == SUCCESS
     @test isapprox(xs, T(1); rtol = 10 * sqrt(eps(R)))
+end
+
+@testset "the Picard state of a value iterate is isbits and allocation-free, $T" for T in ELTYPES
+    allocations(f::F, a::A, b::B, c::C, d::D) where {F, A, B, C, D} = (f(a, b, c, d);
+        @allocated f(a, b, c, d))
+    prob = NonlinearProblem((y, q) -> y .* y .- q)
+    m = Adapt.adapt(ToReal{real(T)}(), Picard())
+    for x in (SVector{2, T}(3, 5), T(3))
+        s = @inferred init_state(m, prob, x, nothing)
+        @test isbits(s)
+        @test !(s isa NamedTuple)
+        @test allocations(init_state, m, prob, x, nothing) == 0
+    end
+end
+
+@testset "the damping of a complex problem is real" begin
+    # with a complex damping, -ω F gives the real part -(0.5 * 0.0 - 0.0 * 1.0) = +0.0, and the
+    # iterate's -0.0 + 0.0 = +0.0; with a real damping it gives -0.0, and the iterate stays -0.0
+    for T in filter(t -> t <: Complex, ELTYPES)
+        R = real(T)
+        x₀ = T(complex(-zero(R), zero(R)))
+        f₀ = T(complex(zero(R), one(R)))
+        m = Adapt.adapt(ToReal{R}(), Picard(; damping = 0.5))
+        expected = x₀ - R(0.5) * f₀
+        @test isequal(real(expected), -zero(R))
+        # a value iterate
+        for x in (SVector(x₀), x₀)
+            prob = NonlinearProblem((y, q) -> x isa Number ? f₀ : SVector(f₀))
+            s = init_state(m, prob, x, nothing)
+            x₁, _, _, _ = @inferred step!!(s, m, prob, x, prob.F(x, nothing), nothing)
+            @test isequal(x₁, x .- R(0.5) .* prob.F(x, nothing))
+            @test isequal(real(x₁[1]), -zero(R))
+            xs, _ = solve(prob, x, m; max_iterations = 1)
+            @test isequal(xs, x₁)
+        end
+        # an array iterate
+        prob! = NonlinearProblem((y, x, q) -> (y .= f₀; y))
+        xa = [x₀]
+        s = init_state(m, prob!, xa, nothing)
+        x₁, _, _, _ = @inferred step!!(s, m, prob!, xa, [f₀], nothing)
+        @test isequal(x₁, [expected])
+    end
 end
 
 @testset "Picard Float32 inference and KernelAbstractions kernel" begin

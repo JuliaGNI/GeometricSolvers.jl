@@ -19,7 +19,8 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: DogLeg, LINESEARCH_FAILED, LUFactorization, LineSearch, NONFINITE,
                         Newton, NonlinearProblem, QRFactorization, SINGULAR, STALLED,
-                        SUCCESS, ToReal, factorize!!, init, ldiv!!, rnorm, solve, step!!
+                        SUCCESS, ToReal, factorize!!, init_state, ldiv!!, rnorm, solve,
+                        step!!
 
 include("../helpers/matrix.jl")
 
@@ -60,7 +61,7 @@ end
 function one_step(prob, x₀, p, m)
     R = real(eltype(x₀))
     ma = Adapt.adapt(ToReal{R}(), m)
-    st = init(ma, prob, x₀, p)
+    st = init_state(ma, prob, x₀, p)
     Fx = prob.F(x₀, p)
     return step!!(st, ma, prob, x₀, Fx, p)
 end
@@ -131,10 +132,10 @@ end
     prob = NonlinearProblem(cubic_F)
     for (radius, expected) in ((nothing, zero(R)), (R(1e-12), R(1e-6)), (R(1e12), R(1e10)))
         m = Adapt.adapt(ToReal{R}(), dogleg_newton(radius))
-        st = init(m, prob, R(3), one(R))
-        @test keys(st) == (:jacprep, :jvpprep, :radius)
-        @test st.radius isa R
-        @test st.radius == expected
+        st = init_state(m, prob, R(3), one(R))
+        @test st.rule isa GeometricSolvers.TrustRadius{R}
+        @test st.rule.radius == expected
+        @test st.rule.radius₀ == expected
         @test isbits(st)
     end
 
@@ -148,7 +149,9 @@ end
     @test info.code == SUCCESS
     @test info.failures == 0
     @test info.stepnorm ≈ sqrt(R(2)) rtol = 8 * eps(R)
-    @test st₊.radius ≈ 4 * sqrt(R(2)) rtol = 8 * eps(R)
+    @test st₊.rule.radius ≈ 4 * sqrt(R(2)) rtol = 8 * eps(R)
+    # the step keeps the initial radius, which the next solve starts from
+    @test st₊.rule.radius₀ == 0
 
     # and that start is bounded at each end: a Newton step of 10¹² starts the radius at 10¹⁰, and
     # the step is truncated there; one of 10⁻⁹ starts it at 2 · 10⁻⁶, as Procedure 4.1 does, and
@@ -157,10 +160,10 @@ end
     x₊, _, st₊, info = one_step(one_d, zero(R), (-R(1e12), zero(R)), dogleg_newton())
     @test x₊ == R(1e10)
     @test info.code == SUCCESS
-    @test st₊.radius == R(1e10)
+    @test st₊.rule.radius == R(1e10)
     x₊, _, st₊, info = one_step(one_d, zero(R), (-R(1e-9), zero(R)), dogleg_newton())
     @test x₊ == R(1e-9)
-    @test st₊.radius == 2 * R(1e-6)
+    @test st₊.rule.radius == 2 * R(1e-6)
 
     # with no Newton step, a Cauchy point of 10⁻⁷ starts the radius at 2 · 10⁻⁶ by the same rule,
     # and the step is the Cauchy point inside it, here the root, not a step of the whole radius
@@ -172,7 +175,7 @@ end
     @test iszero(F₊)
     @test info.code == SUCCESS
     @test info.limited
-    @test st₊.radius == 2 * R(1e-6)
+    @test st₊.rule.radius == 2 * R(1e-6)
     x, st = solve(prob₀, x₀, dogleg_newton(), p₀)
     @test st.code == SUCCESS
     @test x == SVector{2, R}(1e-7, 0)
@@ -208,16 +211,16 @@ end
         if branch === :cauchy
             @test rnorm(s) ≈ δ rtol = 8 * eps(R)
             @test 1 - cosine(s, T.(-g)) ≤ 8 * eps(R)
-            @test st₊.radius == 4δ
+            @test st₊.rule.radius == 4δ
         elseif branch === :segment
             @test rnorm(s) ≈ δ rtol = 8 * eps(R)
             τ = real(dot(sIN - sCP, s - sCP)) / rnorm(sIN - sCP)^2
             @test 0 ≤ τ ≤ 1
             @test 1 - cosine(s - sCP, sIN - sCP) ≤ 64 * eps(R)
-            @test st₊.radius == 4δ
+            @test st₊.rule.radius == 4δ
         else
             @test rnorm(A * x₊ - b) ≤ 8 * eps(R) * rnorm(b)
-            @test st₊.radius == δ
+            @test st₊.rule.radius == δ
         end
     end
 end
@@ -296,7 +299,7 @@ end
     x₀ = zero(R)
     F₀ = -one(R)
     m = Adapt.adapt(ToReal{R}(), dogleg_newton(1e-6))
-    st = init(m, prob, x₀, (F₀, -R(2)))
+    st = init_state(m, prob, x₀, (F₀, -R(2)))
     count[] = 0
     x₊, F₊, st₊, info = step!!(st, m, prob, x₀, F₀, (F₀, -R(2)))
     @test info.code == LINESEARCH_FAILED
@@ -305,7 +308,7 @@ end
     @test x₊ === x₀
     @test F₊ === F₀
     @test count[] == 1
-    @test st₊.radius == R(1e-6)
+    @test st₊.rule.radius == R(1e-6)
 end
 
 @testset "a rejected trial shrinks the radius by 0.25, also inside it, $R" for R in REAL_ELTYPES
@@ -319,7 +322,7 @@ end
     @test info.code == SUCCESS
     @test x₊ == R(1.25)
     @test count[] == 5  # `F(x₀)`, three rejected trials and the accepted one
-    @test st₊.radius == 5
+    @test st₊.rule.radius == 5
 end
 
 @testset "the model is the regularised Jacobian that was factorised, $R" for R in REAL_ELTYPES
@@ -330,7 +333,7 @@ end
     x₊, _, st₊, info = one_step(prob, zero(R), nothing, dogleg_newton(5; regularization = 1))
     @test info.code == SUCCESS
     @test x₊ == 5
-    @test st₊.radius == 5
+    @test st₊.rule.radius == 5
 end
 
 @testset "an exact root before min_iterations, $R" for R in REAL_ELTYPES
@@ -357,7 +360,7 @@ end
     @test info.failures == 0
     @test x₊ === R(2)
     @test F₊ === zero(R)
-    @test st₊.radius == 3
+    @test st₊.rule.radius == 3
     @test fcount[] == 1  # `F(x₀)` in `one_step`
     @test jcount[] == 1
 end
@@ -378,7 +381,7 @@ end
         x₊, _, st₊, info = one_step(prob, zero(R), (F₀, Fs), dogleg_newton(δ))
         @test info.code == SUCCESS
         @test x₊ == min(δ, R(10))
-        @test st₊.radius == expected
+        @test st₊.rule.radius == expected
     end
 end
 
@@ -388,21 +391,21 @@ end
     x₊, _, st₊, info = one_step(prob, zero(R), (-R(2e10), -R(1e10)), dogleg_newton(1e10))
     @test info.code == SUCCESS
     @test x₊ == R(1e10)
-    @test st₊.radius == R(1e10)
+    @test st₊.rule.radius == R(1e10)
     # at 10⁻⁶, a step with ρ ≈ 0.05 does not shrink it
     F₀ = -R(1e-5)
     x₊, _, st₊, info = one_step(
         prob, zero(R), (F₀, F₀ + R(1e-6) / 20), dogleg_newton(1e-6))
     @test info.code == SUCCESS
     @test x₊ == R(1e-6)
-    @test st₊.radius == R(1e-6)
+    @test st₊.rule.radius == R(1e-6)
     # and a Newton step of 10⁻⁹ inside it, with ρ ≈ 0.05, leaves it at 10⁻⁶, not at 10⁻⁹
     F₀ = -R(1e-9)
     x₊, _, st₊, info = one_step(
         prob, zero(R), (F₀, F₀ + R(1e-9) / 20), dogleg_newton(1e-6))
     @test info.code == SUCCESS
     @test x₊ == R(1e-9)
-    @test st₊.radius == R(1e-6)
+    @test st₊.rule.radius == R(1e-6)
 end
 
 @testset "a singular Jacobian at the start takes the Cauchy step, $R" for R in REAL_ELTYPES
@@ -420,8 +423,8 @@ end
     # the start of the radius is the length of the Cauchy point, √2/4, and the step has that length;
     # the model is exact, so `ρ = 1` on the boundary grows the radius by 4
     @test rnorm(s) ≈ sqrt(R(2)) / 4 rtol = 8 * eps(R)
-    @test isfinite(st₊.radius)
-    @test st₊.radius ≈ sqrt(R(2)) rtol = 8 * eps(R)
+    @test isfinite(st₊.rule.radius)
+    @test st₊.rule.radius ≈ sqrt(R(2)) rtol = 8 * eps(R)
 
     # with no Newton step, a radius beyond the Cauchy point does not lengthen the step: the step is
     # the Cauchy point `(1/4, 1/4)`, and `ρ < 0.1` shrinks the radius by 0.25
@@ -434,7 +437,7 @@ end
         sing, x₀, (F₀, SVector{2, R}(0, -(1 - pred / 20))), dogleg_newton(δ))
     @test info.code == SUCCESS
     @test x₊ ≈ s rtol = 8 * eps(R)
-    @test st₊.radius == δ / 4
+    @test st₊.rule.radius == δ / 4
 end
 
 @testset "a zero steepest-descent direction stalls, $R" for R in REAL_ELTYPES
@@ -449,7 +452,7 @@ end
     @test info.code == STALLED
     @test info.stepnorm == 0
     @test x₊ == 0
-    @test st₊.radius == 0
+    @test st₊.rule.radius == 0
 
     # the direction `g̃ = J' (F / ‖F‖)` and its image `J ĝ` underflow: a `g̃` whose norm is zero is
     # a zero direction, and so is a `g̃` whose squared norm is a subnormal and whose `‖J ĝ‖` is zero
@@ -476,7 +479,7 @@ end
     x₊, _, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
     @test info.code == STALLED
     @test x₊ == x₀
-    @test st₊.radius == 0
+    @test st₊.rule.radius == 0
 
     # and so does a `J ĝ` whose norm overflows while the norm of `g̃` is finite: with
     # `J = diag(d, 0)` and `F = (−1, −1)`, `‖g̃‖ = d/√2` and `‖J ĝ‖ = d`, and the Cauchy length would
@@ -491,7 +494,7 @@ end
     x₊, _, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
     @test info.code == STALLED
     @test x₊ == x₀
-    @test st₊.radius == 0
+    @test st₊.rule.radius == 0
 end
 
 @testset "a non-finite Jacobian, $R" for R in REAL_ELTYPES
@@ -531,7 +534,7 @@ end
     @test 1 - cosine(s, -g) ≤ 8 * eps(R)
     # the radius starts at the Cauchy length `‖g‖³ / ‖J g‖² = 27/41`, and grows by 4
     @test rnorm(s) ≈ R(27) / 41 rtol = 8 * eps(R)
-    @test st₊.radius ≈ 4 * R(27) / 41 rtol = 8 * eps(R)
+    @test st₊.rule.radius ≈ 4 * R(27) / 41 rtol = 8 * eps(R)
 
     # `F` is `Inf` beyond 2: the first trial, at 4, is rejected; the radius shrinks to 1 and
     # the next trial, on the same curve, is accepted
@@ -544,7 +547,7 @@ end
     @test x₊ == 1
     @test F₊ == -9
     @test count[] == 3  # `F(x₀)`, the rejected trial and the accepted one
-    @test st₊.radius == 4
+    @test st₊.rule.radius == 4
 end
 
 @testset "scaled residuals in Float32" begin

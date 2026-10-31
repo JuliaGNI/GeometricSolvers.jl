@@ -1,4 +1,5 @@
-# The nonlinear solver loop: `init`, `solve!!`, `solve`, and the six `ReturnCode` exits.
+# The nonlinear solver loop: `init_state`, `solve!!`, `solve`, the options, the step test, and
+# the six `ReturnCode` exits.
 
 using Adapt: Adapt
 using ADTypes: AutoForwardDiff
@@ -12,7 +13,7 @@ using GeometricSolvers: Backtracking, Bisection, JacobianFunction, LINESEARCH_FA
                         LUFactorization, MAXITERS, NONFINITE, Newton, NoRefinement,
                         NonlinearProblem, Options, Picard, QRFactorization, SINGULAR,
                         STALLED, SUCCESS, SolverStatus, Static, StrongWolfe, ToReal, init,
-                        rnorm, solve, solve!!
+                        init_state, rnorm, solve, solve!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -56,45 +57,44 @@ end
     b = AutoForwardDiff()
 
     # The six combinations of m.jacobian and prob.J
-    s1 = init(Newton(), prob_with_j, x, p)
-    @test s1 isa NamedTuple
+    s1 = init_state(Newton(), prob_with_j, x, p)
+    @test !(s1 isa NamedTuple)
     @test s1.jacprep === nothing
     @test s1.jvpprep === nothing
     @test isbits(s1)
 
-    s2 = init(Newton(), prob_no_j, x, p)
+    s2 = init_state(Newton(), prob_no_j, x, p)
     @test s2.jacprep === b
     @test s2.jvpprep === b
     @test isbits(s2)
 
-    s3 = init(Newton(; jacobian = b), prob_no_j, x, p)
+    s3 = init_state(Newton(; jacobian = b), prob_no_j, x, p)
     @test s3.jacprep === b
     @test s3.jvpprep === b
     @test isbits(s3)
 
-    s4 = init(Newton(; jacobian = b), prob_with_j, x, p)
+    s4 = init_state(Newton(; jacobian = b), prob_with_j, x, p)
     @test s4.jacprep === b
     @test s4.jvpprep === nothing
     @test isbits(s4)
 
-    s5 = init(Newton(; jacobian = custom_j), prob_with_j, x, p)
+    s5 = init_state(Newton(; jacobian = custom_j), prob_with_j, x, p)
     @test s5.jacprep === JacobianFunction(custom_j)
     @test s5.jvpprep === nothing
     @test isbits(s5)
 
-    s6 = init(Newton(; jacobian = custom_j), prob_no_j, x, p)
+    s6 = init_state(Newton(; jacobian = custom_j), prob_no_j, x, p)
     @test s6.jacprep === JacobianFunction(custom_j)
     @test s6.jvpprep === b
     @test isbits(s6)
 
     # Picard prepares only jvpprep
-    sp1 = init(Picard(), prob_with_j, x, p)
-    @test sp1.jacprep === nothing
+    sp1 = init_state(Picard(), prob_with_j, x, p)
+    @test !hasfield(typeof(sp1), :jacprep)
     @test sp1.jvpprep === nothing
     @test isbits(sp1)
 
-    sp2 = init(Picard(), prob_no_j, x, p)
-    @test sp2.jacprep === nothing
+    sp2 = init_state(Picard(), prob_no_j, x, p)
     @test sp2.jvpprep === b
     @test isbits(sp2)
 end
@@ -106,7 +106,7 @@ end
     prob_c = NonlinearProblem(Fc)
     for m in (Newton(), Picard())
         @test isbits(m)
-        @test isbits(init(m, prob_c, x, [1.0]))
+        @test isbits(init_state(m, prob_c, x, [1.0]))
         @test isbits(solve(prob_c, x, m, [1.0])[2])
     end
 
@@ -126,6 +126,88 @@ end
         prob32, x32, Newton(), p32; options = Options(Float32), max_iterations = 1)
 end
 
+@testset "options and keywords together raise one message from solve and init" begin
+    pr = NonlinearProblem((x, p) -> x .* x .- 2)
+    both = (; options = Options(Float64), f_reltol = 1e-3)
+    for call in (() -> solve(pr, [1.0], Newton(); both...),
+        () -> solve(pr, SVector(1.0), Newton(); both...),
+        () -> init(pr, [1.0], Newton(); both...))
+        err = try
+            call()
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test err.msg == "pass either `options` or keyword arguments, not both"
+    end
+end
+
+@testset "an f_reltol by keyword or by Options of either precision solves alike (F4)" begin
+    prob = NonlinearProblem((x, p) -> SVector(x[1]^2 - 2.0f0))
+    sts = [solve(prob, SVector(10.0f0), Newton(); kw...)[2]
+           for kw in ((; f_reltol = 1e-6), (; options = Options(Float32; f_reltol = 1e-6)),
+        (; options = Options(Float64; f_reltol = 1e-6)))]
+    @test all(st -> st.code == SUCCESS, sts)
+    @test allequal(st.iterations for st in sts)
+    @test allequal(st.fnorm for st in sts)
+end
+
+@testset "a zero step returns STALLED at once (K13), $R" for R in REAL_ELTYPES
+    # the factor of an infinite Jacobian is not singular, and the step -F / Inf is zero
+    prob = NonlinearProblem((x, p) -> x * x - 4, (x, p) -> R(Inf))
+    x, st = solve(prob, R(3), Newton())
+    @test st.code == STALLED
+    @test st.iterations == 1
+    @test x == 3
+    @test st.fnorm == 5
+    @test iszero(st.stepnorm)
+    # `min_iterations` bounds it: the same zero step repeats until then
+    x, st = solve(prob, R(3), Newton(); min_iterations = 3)
+    @test st.code == STALLED
+    @test st.iterations == 3
+    @test x == 3
+end
+
+@testset "the step test returns STALLED where the residual test fails, $T" for T in ELTYPES
+    R = real(T)
+    prob = NonlinearProblem((x, p) -> x * x - 2)
+    # Newton's iteration for √2 from 10, by hand: the first step whose norm is at most |x₊| / 2
+    x = T(10)
+    k = 0
+    while true
+        d = (x * x - 2) / (2x)
+        x -= d
+        k += 1
+        abs(d) <= abs(x) / 2 && break
+    end
+    @test k == 4
+    x₄, st = solve(prob, T(10), Newton(); x_reltol = 0.5, f_reltol = 1e-12)
+    @test st.code == STALLED
+    @test st.iterations == k
+    @test x₄ ≈ x rtol = 8 * eps(R)
+    @test st.fnorm > R(1e-12) * rnorm(prob.F(T(10), nothing))
+    @test st.fnorm > R(0.08)
+    # `min_iterations` bounds the step test
+    _, st₆ = solve(
+        prob, T(10), Newton(); x_reltol = 0.5, f_reltol = 1e-12, min_iterations = 6)
+    @test st₆.code == STALLED
+    @test st₆.iterations == 6
+    # a step that a radius cuts is no step test: from 1 on x - 2, DogLeg's radius starts at 1e-6
+    # and grows by 4 a step, each step far below |x| / 2, and the solve runs to MAXITERS
+    if T <: Real
+        lin = NonlinearProblem((x, p) -> x - 2, (x, p) -> one(x))
+        x_dl, st_dl = solve(lin, T(1), Newton(; globalization = DogLeg(; radius = 1e-6));
+            x_reltol = 0.5, max_iterations = 3)
+        @test st_dl.code == MAXITERS
+        @test st_dl.iterations == 3
+        @test 1 < x_dl < 1 + R(1e-4)
+    end
+    # with the default options the residual test ends the solve
+    _, st_ok = solve(prob, T(10), Newton())
+    @test st_ok.code == SUCCESS
+    @test st_ok.fnorm <= sqrt(eps(R)) * rnorm(prob.F(T(10), nothing))
+end
+
 @testset "solve!! and solve: the six ReturnCode exits and edge cases, $T" for T in ELTYPES
     R = real(T)
     x₀ = SVector{2, T}(T(3), T(5))
@@ -135,7 +217,7 @@ end
     # 1. SUCCESS: residual convergence and agreement between solve and solve!!
     x_sol, st_sol = solve(prob, x₀, Newton(), p)
     m_r = Adapt.adapt(ToReal{R}(), Newton())
-    state₀ = init(m_r, prob, x₀, p)
+    state₀ = init_state(m_r, prob, x₀, p)
     x_sol2, st_sol2, _ = solve!!(state₀, prob, x₀, m_r, p, Options(T))
     @test x_sol === x_sol2
     @test st_sol === st_sol2

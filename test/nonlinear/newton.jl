@@ -13,8 +13,8 @@ using GeometricSolvers
 using GeometricSolvers: Backtracking, Bisection, DogLeg, LINESEARCH_FAILED, LUFactorization,
                         MAXITERS, NONFINITE, Newton, NoRefinement, NonlinearProblem,
                         Options, Picard, QRFactorization, SINGULAR, STALLED, SUCCESS,
-                        SolverStatus, Static, StrongWolfe, ToReal, init, jacobian!!, rnorm,
-                        solve, solve!!, step!!
+                        SolverStatus, Static, StrongWolfe, ToReal, init_state, jacobian!!,
+                        rnorm, solve, solve!!, step!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -99,16 +99,60 @@ end
 
 @testset "Newton state for each globalization and reuse" begin
     prob = NonlinearProblem((x, p) -> x * x - 4)
-    st = init(Newton(), prob, 3.0)
-    @test keys(st) == (:jacprep, :jvpprep)
+    st = init_state(Newton(), prob, 3.0, nothing)
+    @test st.rule === nothing
+    @test st.fac === nothing
     @test isbits(st)
-    st_reuse = init(Newton(; reuse = 3), prob, 3.0)
-    @test keys(st_reuse) == (:jacprep, :jvpprep, :fac, :age, :stalled)
+    st_reuse = init_state(Newton(; reuse = 3), prob, 3.0, nothing)
+    @test st_reuse.rule === GeometricSolvers.FactorAge(Int32(0), false)
+    @test st_reuse.fac isa GeometricSolvers.StaticLU
     @test isbits(st_reuse)
-    st_dl = init(Newton(; globalization = DogLeg()), prob, 3.0)
-    @test keys(st_dl) == (:jacprep, :jvpprep, :radius)
-    @test st_dl.radius isa Float64
+    st_dl = init_state(Newton(; globalization = DogLeg()), prob, 3.0, nothing)
+    @test st_dl.rule === GeometricSolvers.TrustRadius(0.0, 0.0)
     @test isbits(st_dl)
+    @test typeof(st).name === typeof(st_reuse).name === typeof(st_dl).name
+end
+
+@testset "the Newton state of a value iterate is isbits and allocation-free, $T" for T in ELTYPES
+    allocations(f::F, a::A, b::B, c::C, d::D) where {F, A, B, C, D} = (f(a, b, c, d);
+        @allocated f(a, b, c, d))
+    prob = NonlinearProblem((y, q) -> y .* y .- q)
+    for m in (Newton(), Newton(; reuse = 3), Newton(; globalization = DogLeg()),
+        Newton(; globalization = Backtracking()))
+        mT = Adapt.adapt(ToReal{real(T)}(), m)
+        for x in (SVector{2, T}(3, 5), T(3))
+            s = @inferred init_state(mT, prob, x, nothing)
+            @test isbits(s)
+            @test !(s isa NamedTuple)
+            @test allocations(init_state, mT, prob, x, nothing) == 0
+        end
+    end
+end
+
+@testset "start!! of Newton resets its rule state" begin
+    prob = NonlinearProblem((x, p) -> x * x - 4)
+    GS = GeometricSolvers
+    st = GS.init_state(Newton(; reuse = 3), prob, 3.0, nothing)
+    aged = GS.NewtonState(st.jacprep, st.jvpprep, st.Fx, st.d, st.fac, st.J, st.g,
+        GS.FactorAge(Int32(2), true))
+    @test GS.start!!(aged, Newton(; reuse = 3), prob, 3.0, 5.0, nothing, 5.0).rule ===
+          GS.FactorAge(Int32(0), false)
+    st_dl = GS.init_state(Newton(; globalization = DogLeg(; radius = 2.0)), prob, 3.0, nothing)
+    @test st_dl.rule === GS.TrustRadius(2.0, 2.0)
+    moved = GS.NewtonState(st_dl.jacprep, st_dl.jvpprep, st_dl.Fx, st_dl.d, st_dl.fac,
+        st_dl.J, st_dl.g, GS.TrustRadius(8.0, 2.0))
+    @test GS.start!!(moved, Newton(; globalization = DogLeg()), prob, 3.0, 5.0, nothing,
+        5.0).rule === GS.TrustRadius(2.0, 2.0)
+end
+
+@testset "a singular step with reuse resets the age" begin
+    GS = GeometricSolvers
+    prob = NonlinearProblem((x, p) -> x * x - 4, (x, p) -> zero(x))
+    m = Newton(; reuse = 3)
+    st = GS.init_state(m, prob, 3.0, nothing)
+    _, _, st₊, info = step!!(st, m, prob, 3.0, 5.0, nothing)
+    @test info.code == SINGULAR
+    @test st₊.rule === GS.FactorAge(Int32(0), false)
 end
 
 @testset "Newton solves coupled nonlinear systems on SVector, MVector, and Number, $T" for T in ELTYPES
@@ -173,7 +217,7 @@ end
     x₀ = x_star .+ SVector{2, T}(T(1) / T(4), -T(1) / T(5))
     prob = NonlinearProblem((y, q) -> y .* y .- q, (y, q) -> diagonal_matrix(y .+ y))
     m = Adapt.adapt(ToReal{R}(), Newton())
-    st = init(m, prob, x₀, p)
+    st = init_state(m, prob, x₀, p)
     Fx = prob.F(x₀, p)
     x₁, Fx₁, st, _ = step!!(st, m, prob, x₀, Fx, p)
     x₂, _, st, _ = step!!(st, m, prob, x₁, Fx₁, p)

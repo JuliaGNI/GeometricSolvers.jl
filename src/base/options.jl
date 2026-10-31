@@ -14,9 +14,10 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 
 [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
 type `T` of the iterate, so the caller never names `R`, and `convert` turns an `Options` of
-another `R` into `Options{R}`. The conversion raises `f_reltol` to at least `√eps(R)` and
-`x_reltol` to at least `2 eps(R)`, the defaults of `R`, because a smaller relative tolerance
-cannot be met in `R`.
+another `R` into `Options{R}`. The conversion converts every field and raises `f_reltol` to at
+least `eps(R)` and `x_reltol` to at least `2 eps(R)`, because a smaller relative tolerance cannot
+be met in `R`. A conversion to the same `R` returns its input unchanged, so a tolerance below
+these floors that the caller sets in `R` itself is kept.
 """
 struct Options{R <: Real}
     f_abstol::R
@@ -26,6 +27,11 @@ struct Options{R <: Real}
     min_iterations::Int32
     max_iterations::Int32
     max_stalls::Int32
+end
+
+@inline function nonnegative(name::Symbol, tol::Real)
+    tol >= 0 || throw(ArgumentError("$name must be non-negative, got $tol"))
+    return nothing
 end
 
 """
@@ -78,10 +84,11 @@ function Options(::Type{T};
         max_iterations::Integer = 100,
         max_stalls::Integer = 2) where {T <: Number}
     R = real(T)
-    for (name, tol) in ((:f_abstol, f_abstol), (:f_reltol, f_reltol),
-        (:x_abstol, x_abstol), (:x_reltol, x_reltol))
-        tol >= 0 || throw(ArgumentError("$name must be non-negative, got $tol"))
-    end
+    # one call per tolerance, because a loop over their mixed types allocates
+    nonnegative(:f_abstol, f_abstol)
+    nonnegative(:f_reltol, f_reltol)
+    nonnegative(:x_abstol, x_abstol)
+    nonnegative(:x_reltol, x_reltol)
     min_iterations >= 0 ||
         throw(ArgumentError("min_iterations must be non-negative, got $min_iterations"))
     max_iterations >= min_iterations ||
@@ -92,10 +99,12 @@ function Options(::Type{T};
         Int32(min_iterations), Int32(max_iterations), Int32(max_stalls))
 end
 
-# A relative tolerance below the default of `R` cannot be met in `R`: the `Float64` default
-# `f_reltol = √eps(Float64)` lies below `eps(Float32)`. So each is raised to that default.
+Base.convert(::Type{Options{R}}, opt::Options{R}) where {R <: Real} = opt
+
+# A relative tolerance below `eps(R)` cannot be met in `R`: the `Float64` default
+# `f_reltol = √eps(Float64)` lies below `eps(Float32)`. So each is raised to its floor in `R`.
 function Base.convert(::Type{Options{R}}, opt::Options) where {R <: Real}
-    Options{R}(R(opt.f_abstol), max(R(opt.f_reltol), sqrt(eps(R))),
+    Options{R}(R(opt.f_abstol), max(R(opt.f_reltol), eps(R)),
         R(opt.x_abstol), max(R(opt.x_reltol), 2 * eps(R)),
         opt.min_iterations, opt.max_iterations, opt.max_stalls)
 end
@@ -105,13 +114,16 @@ end
 
 The stopping test of [`Options`](@ref) at `status`, for a start with residual norm `fnorm₀` and
 an iterate of norm `xnorm`. It holds once `min_iterations` steps are taken and either the residual
-test or, after the first step, the step test holds. At 0 iterations it is the test before the
-first step: the relative residual test then holds only for ``F(x₀) = 0``, so a start passes it
-through `f_abstol`.
+test or, after a step of nonzero norm, the step test holds. At 0 iterations it is the test before
+the first step: the relative residual test then holds only for ``F(x₀) = 0``, so a start passes it
+through `f_abstol`. A zero step is no progress, so it never passes the step test.
+
+[`solve!!`](@ref) returns `SUCCESS` only through the residual test: a step test that holds while
+the residual test fails returns `STALLED`.
 """
 function converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R, xnorm::R) where {R}
     status.iterations >= options.min_iterations || return false
     status.fnorm <= max(options.f_abstol, options.f_reltol * fnorm₀) && return true
-    status.iterations > 0 &&
+    status.iterations > 0 && status.stepnorm > 0 &&
         status.stepnorm <= max(options.x_abstol, options.x_reltol * xnorm)
 end

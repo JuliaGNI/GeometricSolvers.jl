@@ -11,6 +11,46 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Each nonlinear method has one state type, and the loop has two hooks** (decision 47 of the
+  design). The state builder of a method is now `GeometricSolvers.init_state(method, prob, x, p)`,
+  with four positional arguments, in place of `init(method, prob, x, p = nothing)`; `init` keeps
+  the solver (`init(prob, x, method, p; ...)`) and the linear factor. `init_state` returns a
+  `NewtonState` or a `PicardState`, not a `NamedTuple`, and for an `SVector` or a `Number` it is
+  `isbits` and allocates nothing. `Newton`'s reuse age and stalled flag, and `DogLeg`'s radius
+  and its initial radius, are its field `rule`: `state.rule.age`, `state.rule.radius`.
+  `solve!!` calls `start!!(state, method, prob, x, Fx, p, fnorm₀)` once before its stopping test
+  at 0 iterations, and `finish!!(state, method, prob, x, Fx, status)` at every return, and
+  returns what `finish!!` returns; a method's own `residual_buffer(state)` names the slot of
+  `F(x₀)`. `Newton`'s `start!!` resets its rule state, which `solve!!` did by field name before.
+  These four names are internal and documented beside `step!!`. Every `Newton` step factorises
+  through one function, and the iterates of the `Newton` tests are unchanged.
+
+- **A step test that holds while the residual test fails returns `STALLED`, not `SUCCESS`**
+  (decision 54). `SUCCESS` now always means that the residual test holds. A `SUCCESS` step of
+  zero norm, which leaves the iterate where the next step starts, also returns `STALLED` at that
+  iteration: `solve(NonlinearProblem((x, p) -> x * x - 4, (x, p) -> Inf), 3.0, Newton())`
+  returns `STALLED` after 1 iteration at `x = 3`, where it returned `SUCCESS` (K13 leaves
+  `KNOWN_ISSUES.md`). `min_iterations` bounds both rules, and `converged` holds through the step
+  test only after a step of nonzero norm. No cell of the standard test set changes: the
+  regenerated `test/verification/standard_reference.csv` equals the old one.
+
+- **`convert(Options{R}, opt)` returns `opt` for an `Options{R}`, and floors at `eps(R)`.** From
+  another real type it raises `f_reltol` to at least `eps(R)`, from `√eps(R)`, and `x_reltol` to
+  at least `2 eps(R)`. So `f_reltol = 1e-6` by keyword, in `Options(Float32; ...)` and in
+  `Options(Float64; ...)` solves a `Float32` problem alike, where the `Float64` form was raised to
+  `√eps(Float32) ≈ 3.5e-4`. `solve`, `init` and both batched `solve!` methods resolve `options`
+  and keywords in one function, with one message when both are passed: "pass either `options` or
+  keyword arguments, not both".
+
+- The batched `solve!` runs one kernel for both forms, counts the return codes over
+  `instances(ReturnCode)`, and calls `get_backend` on an `order` without catching its error: an
+  `order` whose backend cannot be read raises, where it fell back to the CPU, and an `order` on a
+  device with a batch on the host is copied to the host. The range method of `_adapt_order`,
+  which the `isbits` branch already covered, is gone (K18 leaves `KNOWN_ISSUES.md`).
+
+- `Picard` scales its direction by a damping in `real(T)`, so a complex problem gets a real
+  damping (decision 24): one step from a real part `-0.0` keeps `-0.0`, as `x .- 0.5 .* F` does.
+
 - `Pkg.test()` no longer runs the doctests. `test/quality/doctests.jl` is now the group
   `doctests`, which an empty `ARGS` does not run; `Pkg.test(test_args = ["doctests"])` runs it.
   In CI the Doctests job stays their runner, so the test matrix no longer runs them a second

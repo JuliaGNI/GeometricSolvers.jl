@@ -27,22 +27,12 @@ function _adapt_order(backend, ::Nothing)
     return nothing
 end
 
-function _adapt_order(backend, order::AbstractRange{<:Integer})
-    return order
-end
-
+# An `isbits` order, such as a range, goes to the kernel by value; another order is copied to the
+# backend of the batch unless it is there already.
 function _adapt_order(backend, order::AbstractVector{<:Integer})
-    if backend isa KernelAbstractions.CPU || isbitstype(typeof(order))
-        return order
-    end
-    order_backend = try
-        get_backend(order)
-    catch
-        KernelAbstractions.CPU()
-    end
-    if order_backend == backend
-        return order
-    end
+    isbitstype(typeof(order)) && return order
+    order_backend = get_backend(order)
+    order_backend == backend && return order
     order_dev = allocate(backend, eltype(order), length(order))
     copyto!(order_dev, order_backend isa KernelAbstractions.CPU && !(order isa Array) ?
                        Array(order) : order)
@@ -52,9 +42,7 @@ end
 function _validate_batch(
         X::AbstractVector,
         p,
-        order::Union{Nothing, AbstractVector{<:Integer}},
-        options::Union{Nothing, Options},
-        kwargs
+        order::Union{Nothing, AbstractVector{<:Integer}}
 )
     if p isa PerSystem && length(p.data) != length(X)
         throw(DimensionMismatch(
@@ -66,9 +54,6 @@ function _validate_batch(
     end
     if order !== nothing && !isperm(Adapt.adapt(Array, order))
         throw(ArgumentError("order is not a permutation of 1:$(length(X))"))
-    end
-    if options !== nothing && !isempty(kwargs)
-        throw(ArgumentError("pass either `options` or keyword arguments, not both"))
     end
     return nothing
 end
@@ -82,64 +67,38 @@ function _prepare_batch(
 )
     T = eltype(eltype(X))
     R = real(T)
-    opt = options === nothing ? Options(R; kwargs...) : convert(Options{R}, options)
+    opt = resolve_options(T, options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
-    state₀ = init(m, prob, zero(eltype(X)), nothing)
+    state₀ = init_state(m, prob, zero(eltype(X)), nothing)
     return m, opt, state₀
 end
 
-@kernel function _solve_status_kernel!(
-        X, S, prob, m, p, opt, state₀, order)
+# The result of system `idx` in the output of each form: its status, or its code.
+@inline _write_result!(S::AbstractVector{<:SolverStatus}, idx, st) = (@inbounds S[idx] = st)
+@inline _write_result!(codes::AbstractVector{ReturnCode}, idx, st) = (@inbounds codes[idx] = st.code)
+
+@kernel function _solve_kernel!(X, out, prob, m, p, opt, state₀, order)
     i = @index(Global, Linear)
     @inbounds begin
         idx = _system_index(order, i)
         x, st, _ = solve!!(state₀, prob, X[idx], m, parameters(p, idx), opt)
         X[idx] = x
-        S[idx] = st
+        _write_result!(out, idx, st)
     end
 end
 
-@kernel function _solve_codes_kernel!(
-        X, codes, prob, m, p, opt, state₀, order)
-    i = @index(Global, Linear)
-    @inbounds begin
-        idx = _system_index(order, i)
-        x, st, _ = solve!!(state₀, prob, X[idx], m, parameters(p, idx), opt)
-        X[idx] = x
-        codes[idx] = st.code
-    end
+# Solve every system of `X` in one launch on `get_backend(X)`, write each result into `out`, and
+# wait for the kernel.
+function _launch!(X, out, prob, m, p, opt, state₀, order)
+    backend = get_backend(X)
+    order_dev = _adapt_order(backend, order)
+    _solve_kernel!(backend)(X, out, prob, m, p, opt, state₀, order_dev; ndrange = length(X))
+    applicable(synchronize, backend) && synchronize(backend)
+    return out
 end
 
 function _tally_return_codes(codes_host::Vector{ReturnCode})
-    n_success = 0
-    n_stalled = 0
-    n_maxiters = 0
-    n_singular = 0
-    n_nonfinite = 0
-    n_linesearch_failed = 0
-    @inbounds for c in codes_host
-        if c == SUCCESS
-            n_success += 1
-        elseif c == STALLED
-            n_stalled += 1
-        elseif c == MAXITERS
-            n_maxiters += 1
-        elseif c == SINGULAR
-            n_singular += 1
-        elseif c == NONFINITE
-            n_nonfinite += 1
-        else
-            n_linesearch_failed += 1
-        end
-    end
-    return (
-        SUCCESS = n_success,
-        STALLED = n_stalled,
-        MAXITERS = n_maxiters,
-        SINGULAR = n_singular,
-        NONFINITE = n_nonfinite,
-        LINESEARCH_FAILED = n_linesearch_failed
-    )
+    return ReturnCodeCounts(map(c -> count(==(c), codes_host), instances(ReturnCode)))
 end
 
 """
@@ -197,15 +156,10 @@ function solve!(
         throw(ArgumentError(
             "status vector backend $(get_backend(S)) does not match batch backend $(get_backend(X))"))
     end
-    _validate_batch(X, p, order, options, kwargs)
+    _validate_batch(X, p, order)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return S
-    backend = get_backend(X)
-    order_dev = _adapt_order(backend, order)
-    _solve_status_kernel!(backend)(
-        X, S, prob, m, p, opt, state₀, order_dev; ndrange = length(X))
-    applicable(synchronize, backend) && synchronize(backend)
-    return S
+    return _launch!(X, S, prob, m, p, opt, state₀, order)
 end
 
 function solve!(
@@ -217,14 +171,9 @@ function solve!(
         options::Union{Nothing, Options} = nothing,
         kwargs...
 )
-    _validate_batch(X, p, order, options, kwargs)
+    _validate_batch(X, p, order)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return _tally_return_codes(ReturnCode[])
-    backend = get_backend(X)
-    codes = allocate(backend, ReturnCode, length(X))
-    order_dev = _adapt_order(backend, order)
-    _solve_codes_kernel!(backend)(
-        X, codes, prob, m, p, opt, state₀, order_dev; ndrange = length(X))
-    applicable(synchronize, backend) && synchronize(backend)
-    return _tally_return_codes(Array(codes))
+    codes = allocate(get_backend(X), ReturnCode, length(X))
+    return _tally_return_codes(Array(_launch!(X, codes, prob, m, p, opt, state₀, order)))
 end
