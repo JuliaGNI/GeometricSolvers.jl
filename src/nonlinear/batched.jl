@@ -126,7 +126,8 @@ Each element `X[idx]` is the initial guess for system `idx` and is overwritten w
 iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref) so system `idx`
 receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is a
 permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any other `order`
-throws.
+throws. An `order` that is not `isbits` needs a method of `get_backend`, and an `order` on another
+backend than `X` is copied to the backend of `X`.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)

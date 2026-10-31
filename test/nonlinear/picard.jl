@@ -95,8 +95,8 @@ end
 end
 
 @testset "the damping of a complex problem is real" begin
-    # with a complex damping, -ω F gives the real part -(0.5 * 0.0 - 0.0 * 1.0) = +0.0, and the
-    # iterate's -0.0 + 0.0 = +0.0; with a real damping it gives -0.0, and the iterate stays -0.0
+    # with a complex damping, (-ω) F gives the real part (-0.5) * 0.0 - (-0.0) * 1.0 = +0.0, and
+    # the iterate's -0.0 + 0.0 = +0.0; with a real damping it gives -0.0, and the iterate stays -0.0
     for T in filter(t -> t <: Complex, ELTYPES)
         R = real(T)
         x₀ = T(complex(-zero(R), zero(R)))
