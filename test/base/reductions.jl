@@ -100,7 +100,9 @@ end
 end
 
 # A power of two scales without rounding, so where no square overflows or underflows the scaled
-# norm is the unscaled one, bit for bit.
+# norm is the unscaled one, bit for bit, as long as `sum` adds both sets of squares in the
+# same order. It does for these five entries; from 16 entries on, a `Vector` can differ in the
+# last bits.
 @testset "rnorm adds no rounding where the squares stay in range: $R" for R in REAL_ELTYPES
     rng = Xoshiro(29)
     for k in -8:8, _ in 1:20

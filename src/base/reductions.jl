@@ -20,9 +20,10 @@ The Euclidean norm ``\\sqrt{\\sum_i |a_i|^2}`` in `real(eltype(a))`.
 
 It scales the entries by ``2^{-e}``, where ``2^e`` is the power of two of the largest ``|a_i|``
 (of the largest real or imaginary part for a complex `a`), so that it neither overflows where the
-norm is finite nor underflows to zero where the norm is positive. The scale is exact: where no
-square leaves the floating-point range, scaled or not, the result is `sqrt(norm2(a))` bit for
-bit. It takes two reductions, the largest entry and the sum. A `NaN` entry gives `NaN`, an `Inf`
+norm is finite nor underflows to zero where the norm is positive. The scale is exact and adds no
+rounding: where no square leaves the floating-point range, scaled or not, the result can differ
+from `sqrt(norm2(a))` only in the last bits, through the order in which `sum` adds the squares.
+It takes two reductions, the largest entry and the sum. A `NaN` entry gives `NaN`, an `Inf`
 entry and no `NaN` gives `Inf`. Where `real(eltype(a))` is no `AbstractFloat`, such as an
 integer or a `ForwardDiff.Dual`, it is the unscaled `sqrt(norm2(a))`.
 """
