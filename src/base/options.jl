@@ -98,13 +98,9 @@ function Options(::Type{T};
         Int32(min_iterations), Int32(max_iterations), Int32(max_stalls))
 end
 
-"""
-    check_options(T, options)
-
-Return `nothing` when `options` is an `Options{real(T)}`, the options of an iterate of element
-type `T`, and raise an `ArgumentError` otherwise. `R` and `T` are types, so the test is a constant
-where `solve!!` runs in a kernel.
-"""
+# `nothing` when `options` is an `Options{real(T)}`, the options of an iterate of element type
+# `T`, and an `ArgumentError` otherwise. `R` and `T` are types, so the test is a constant where
+# `solve!!` runs in a kernel.
 @inline function check_options(::Type{T}, ::Options{R}) where {T, R}
     R === real(T) || throw(ArgumentError(
         "options are Options{$R}, but the iterate has element type $T: pass Options($T; …)"))
@@ -128,23 +124,15 @@ function converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R, xn
            step_converged(options, status, xnorm)
 end
 
-"""
-    residual_converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R)
-
-The residual test of [`Options`](@ref), once `min_iterations` steps are taken.
-"""
+# The residual test of `Options`, once `min_iterations` steps are taken.
 @inline function residual_converged(
         options::Options{R}, status::SolverStatus{R}, fnorm₀::R) where {R}
     status.iterations >= options.min_iterations || return false
     return status.fnorm <= max(options.f_abstol, options.f_reltol * fnorm₀)
 end
 
-"""
-    step_converged(options::Options{R}, status::SolverStatus{R}, xnorm::R)
-
-The step test of [`Options`](@ref) for an iterate of norm `xnorm`, once `min_iterations` steps are
-taken. It needs a step of nonzero norm.
-"""
+# The step test of `Options` for an iterate of norm `xnorm`, once `min_iterations` steps are taken.
+# It needs a step of nonzero norm.
 @inline function step_converged(
         options::Options{R}, status::SolverStatus{R}, xnorm::R) where {R}
     status.iterations >= options.min_iterations || return false
