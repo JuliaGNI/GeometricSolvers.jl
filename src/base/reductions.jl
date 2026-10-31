@@ -22,9 +22,9 @@ Where `norm2(a)` is finite and at least `floatmin(R) / eps(R)`, it is `sqrt(norm
 reduction. Otherwise it scales the entries by ``2^{-e}``, where ``2^e`` is the power of two of the
 largest ``|a_i|`` (of the largest real or imaginary part for a complex `a`), so that it neither
 overflows where the norm is finite nor underflows to zero where the norm is positive. That path
-takes two reductions, the largest entry and the sum, and sums in at least `Float32`. Scaling can
-round entries much smaller than the largest to zero, so the result can differ from
-`sqrt(norm2(a))` in the last bits. A `NaN` entry gives `NaN`, an `Inf` entry and no `NaN` gives
+takes two more reductions, the largest entry and the sum, and sums in at least `Float32`. Scaling
+can round the squares of entries much smaller than the largest to zero, which changes the result
+in the last bits at most. A `NaN` entry gives `NaN`, an `Inf` entry and no `NaN` gives
 `Inf`. Where `real(eltype(a))` is no `AbstractFloat`, such as an integer or a
 `ForwardDiff.Dual`, it is the unscaled `sqrt(norm2(a))`.
 """
@@ -39,8 +39,8 @@ function rnorm(a)
     m = R(maximum(x -> max(abs(real(x)), abs(imag(x))), a))
     (iszero(m) || !isfinite(m)) && return m
     e = exponent(m)
-    # Every scaled square is at most one, so a `Float16` sum of them overflows from 65505 entries
-    # on: it accumulates in `Float32`.
+    # Every scaled square is below 8, below 4 for a real entry, so a `Float16` sum of them can
+    # overflow from 8200 entries on: it accumulates in `Float32`.
     S = promote_type(R, Float32)
     return R(ldexp2(sqrt(sum(x -> S(abs2(ldexp2(x, -e))), a)), e))
 end

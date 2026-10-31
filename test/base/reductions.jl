@@ -114,9 +114,9 @@ end
     end
 end
 
-# Scaled squares are at most one, so a `Float16` sum of them overflows from 65505 entries on, while
-# the norm of this vector is finite: 128 √(10^5) ≈ 40480. The unscaled sum overflows as well.
-@testset "rnorm of a long Float16 vector whose squares overflow" begin
+# 128 is a power of two, so each scaled square is 1, and a `Float16` sum of 10^5 of them overflows,
+# while the norm of this vector is finite: 128 √(10^5) ≈ 40480. The unscaled sum overflows as well.
+@testset "rnorm of a long Float16 vector whose sum of squares overflows" begin
     v = fill(Float16(128), 10^5)
     @test norm2(v) === Float16(Inf)
     @test rnorm(v) ≈ Float16(128 * sqrt(1e5)) rtol = 2eps(Float16)

@@ -130,8 +130,9 @@ so that a compat-only bump can be told apart from an interface change.
   `floatmax(R) / 4`, `1`, `floatmin(R)` or subnormal, it agrees with `LinearAlgebra.norm` to
   `2 eps(R)`. Where `norm2(a)` is finite and at least `floatmin(R) / eps(R)`, `rnorm` is
   `sqrt(norm2(a))` as before, one reduction; only otherwise does it take the scaled path, with
-  two reductions, and that path sums in at least `Float32`, so a `Float16` vector of more than
-  65504 entries does not overflow its sum of scaled squares. `norm2`, the merit `‖F‖²` of the
+  two more reductions, and that path sums in at least `Float32`, so a `Float16` sum of scaled
+  squares does not overflow from about 8200 complex or 16400 real entries on:
+  `rnorm(fill(Float16(1.99), 20000))` was `Inf16` and is `281.5`. `norm2`, the merit `‖F‖²` of the
   line searches, stays unscaled, so a line search above `‖F‖ = sqrt(floatmax(R))` still returns
   `NONFINITE`; the `StepInfo` of its `LINESEARCH_FAILED`, `STALLED` and `NONFINITE` results then
   reports `rnorm(Fx)`, finite, where it reported `sqrt(φ₀) = Inf`. Where `real(eltype(a))` is no
