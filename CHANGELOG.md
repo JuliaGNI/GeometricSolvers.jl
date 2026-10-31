@@ -128,13 +128,13 @@ so that a compat-only bump can be told apart from an interface change.
   overflows to `Inf` above `sqrt(floatmax(R))` (`rnorm(SVector(1f20, 0f0))` is `1f20`, not `Inf`)
   nor underflows to `0` below `sqrt(floatmin(R))`. On the tested vectors, whose largest entry is
   `floatmax(R) / 4`, `1`, `floatmin(R)` or subnormal, it agrees with `LinearAlgebra.norm` to
-  `2 eps(R)`. The scale is exact, but where no square leaves the range, scaled or not, the
-  result can differ from the earlier `sqrt(norm2(a))` in the last bits, through the order in
-  which `sum` adds the squares: in measurements on 50 random vectors each, the two agree bit
-  for bit in every vector shorter than 16 entries, and from 16 entries on they differ in 6 to
-  45 of the 50, by at most 8 ulp. It takes two reductions, the largest entry and the
-  sum. `norm2`, the merit `‖F‖²` of the line searches, stays unscaled, so a line search above
-  `‖F‖ = sqrt(floatmax(R))` still returns `NONFINITE`. Where `real(eltype(a))` is no
+  `2 eps(R)`. Where `norm2(a)` is finite and at least `floatmin(R) / eps(R)`, `rnorm` is
+  `sqrt(norm2(a))` as before, one reduction; only otherwise does it take the scaled path, with
+  two reductions, and that path sums in at least `Float32`, so a `Float16` vector of more than
+  65504 entries does not overflow its sum of scaled squares. `norm2`, the merit `‖F‖²` of the
+  line searches, stays unscaled, so a line search above `‖F‖ = sqrt(floatmax(R))` still returns
+  `NONFINITE`; the `StepInfo` of its `LINESEARCH_FAILED`, `STALLED` and `NONFINITE` results then
+  reports `rnorm(Fx)`, finite, where it reported `sqrt(φ₀) = Inf`. Where `real(eltype(a))` is no
   `AbstractFloat`, such as an integer or a `ForwardDiff.Dual`, `rnorm` stays the unscaled
   `sqrt(norm2(a))`.
 

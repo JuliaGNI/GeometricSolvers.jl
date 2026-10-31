@@ -175,6 +175,21 @@ end
     @test F_up === Fx
     @test info_up.fnorm === rnorm(Fx)
     @test iszero(info_up.stepnorm)
+
+    # A residual whose square overflows has a finite norm: the failure reports that norm, not
+    # sqrt(φ₀) = Inf
+    big = floatmax(R) / 4
+    xb = SVector{2, T}(T(big), T(big))
+    prob_big = NonlinearProblem((y, q) -> y, (y, q) -> diagonal_matrix(one.(y)))
+    @test norm2(xb) === R(Inf)
+    for ls in (inR(Backtracking()), inR(Bisection()), inR(StrongWolfe()))
+        x_b, F_b, _, info_b = globalize!!(
+            nothing, ls, prob_big, xb, xb, -xb ./ 2, p, nothing, ExactStep())
+        @test info_b.code == NONFINITE
+        @test isfinite(info_b.fnorm)
+        @test info_b.fnorm === rnorm(xb)
+        @test x_b === xb
+    end
 end
 
 # In R1 each trial residual is its own value, so a search that ends on an earlier trial than its
