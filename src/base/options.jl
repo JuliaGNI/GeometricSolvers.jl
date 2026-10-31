@@ -13,11 +13,10 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 - `max_stalls::Int32`: the number of consecutive stalled steps after which the solve stops.
 
 [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
-type `T` of the iterate, so the caller never names `R`, and `convert` turns an `Options` of
-another `R` into `Options{R}`. The conversion converts every field and raises `f_reltol` to at
-least `eps(R)` and `x_reltol` to at least `2 eps(R)`, because a smaller relative tolerance cannot
-be met in `R`. A conversion to the same `R` returns its input unchanged, so a tolerance below
-these floors that the caller sets in `R` itself is kept.
+type `T` of the iterate, so the caller never names `R`. A solve takes only an `Options{R}` for
+`R = real(T)` and raises an `ArgumentError` for any other: the tolerances of another precision do
+not carry over, because the `Float64` default `f_reltol = √eps(Float64)` lies below `eps(Float32)`
+and a `Float32` solve cannot reach it.
 """
 struct Options{R <: Real}
     f_abstol::R
@@ -99,14 +98,17 @@ function Options(::Type{T};
         Int32(min_iterations), Int32(max_iterations), Int32(max_stalls))
 end
 
-Base.convert(::Type{Options{R}}, opt::Options{R}) where {R <: Real} = opt
+"""
+    check_options(T, options)
 
-# A relative tolerance below `eps(R)` cannot be met in `R`: the `Float64` default
-# `f_reltol = √eps(Float64)` lies below `eps(Float32)`. So each is raised to its floor in `R`.
-function Base.convert(::Type{Options{R}}, opt::Options) where {R <: Real}
-    Options{R}(R(opt.f_abstol), max(R(opt.f_reltol), eps(R)),
-        R(opt.x_abstol), max(R(opt.x_reltol), 2 * eps(R)),
-        opt.min_iterations, opt.max_iterations, opt.max_stalls)
+Return `nothing` when `options` is an `Options{real(T)}`, the options of an iterate of element
+type `T`, and raise an `ArgumentError` otherwise. `R` and `T` are types, so the test is a constant
+where `solve!!` runs in a kernel.
+"""
+@inline function check_options(::Type{T}, ::Options{R}) where {T, R}
+    R === real(T) || throw(ArgumentError(
+        "options are Options{$R}, but the iterate has element type $T: pass Options($T; …)"))
+    return nothing
 end
 
 """

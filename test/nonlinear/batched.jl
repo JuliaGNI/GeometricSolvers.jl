@@ -380,7 +380,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         end
     end
 
-    @testset "Host conversion ToReal{R} and Options{R} on Float32 / ComplexF32" begin
+    @testset "Host conversion ToReal{R}, and Options of another precision, on Float32 / ComplexF32" begin
         prob_coupled = _r2_coupled_problem()
         for B in ARRAY_BACKENDS, T in filter(T -> real(T) === Float32, ELTYPES)
 
@@ -395,19 +395,25 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                     SVector{2, T}(T(2.125f0), T(1.5f0)),
                     SVector{2, T}(T(1.25f0), T(2.0f0))
                 ]))
-            # Float64 Picard(; damping = 0.7) and Float64 Options / keyword tolerances converted on host
+            # Float64 Picard(; damping = 0.7) converted on host; the options are Options{Float32}
             m_f64 = Picard(; damping = 0.7)
-            opt_f64 = Options(Float64; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
+            opt_r = Options(T; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
             m_prep, opt_prep, state_prep = GeometricSolvers._prepare_batch(
-                X, prob_coupled, m_f64, opt_f64, (;))
+                X, prob_coupled, m_f64, opt_r, (;))
             @test m_prep === Picard(0.7f0, Static(1.0f0))
             @test typeof(m_prep.damping) === Float32
             @test isbits(m_prep)
+            @test opt_prep === opt_r
             @test opt_prep isa Options{Float32}
             @test isbits(opt_prep)
             @test isbits(state_prep)
 
-            solve!(X, S, prob_coupled, m_f64, p_coupled; options = opt_f64)
+            # Options of another precision are an error, not a conversion
+            opt_f64 = Options(Float64; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
+            @test_throws ArgumentError solve!(
+                X, S, prob_coupled, m_f64, p_coupled; options = opt_f64)
+
+            solve!(X, S, prob_coupled, m_f64, p_coupled; options = opt_r)
             @test all(isconverged, Array(S))
             @test eltype(eltype(X)) === T
             @test eltype(S) === SolverStatus{Float32}
@@ -430,7 +436,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 ])
                 S_bt = B(Vector{SolverStatus{Float32}}(undef, 2))
                 m_bt_f64 = Newton(; globalization = Backtracking())
-                solve!(X_bt, S_bt, prob_coupled, m_bt_f64, p_coupled; options = opt_f64)
+                solve!(X_bt, S_bt, prob_coupled, m_bt_f64, p_coupled; options = opt_r)
                 @test all(isconverged, Array(S_bt))
             end
         end

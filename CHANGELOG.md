@@ -34,13 +34,15 @@ so that a compat-only bump can be told apart from an interface change.
   test only after a step of nonzero norm. No cell of the standard test set changes: the
   regenerated `test/verification/standard_reference.csv` equals the old one.
 
-- **`convert(Options{R}, opt)` returns `opt` for an `Options{R}`, and floors at `eps(R)`.** From
-  another real type it raises `f_reltol` to at least `eps(R)`, from `√eps(R)`, and `x_reltol` to
-  at least `2 eps(R)`. So `f_reltol = 1e-6` by keyword, in `Options(Float32; ...)` and in
-  `Options(Float64; ...)` solves a `Float32` problem alike, where the `Float64` form was raised to
-  `√eps(Float32) ≈ 3.5e-4`. `solve`, `init` and both batched `solve!` methods resolve `options`
-  and keywords in one function, with one message when both are passed: "pass either `options` or
-  keyword arguments, not both".
+- **A solve takes only an `Options{R}` for `R = real(eltype(x₀))`, and raises an `ArgumentError`
+  for any other.** `solve`, `init`, both batched `solve!` methods and `solve!!` check it; there is
+  no `convert` between `Options` of different `R`. The `Float64` defaults `f_reltol = √eps(Float64)`
+  and `x_reltol = 2 eps(Float64)` lie below `eps(Float32)`, so a `Float32` solve could not reach
+  them: with `Options(Float64)` converted, `x² − 2` from 1000 starts in `[1, 3]` returned `STALLED`
+  from 366, and with `Options(Float32)` it returned `SUCCESS` from all 1000. A `Float32` problem
+  takes `Options(Float32; …)` or keyword tolerances. `solve`, `init` and both batched `solve!`
+  methods resolve `options` and keywords in one function, with one message when both are passed:
+  "pass either `options` or keyword arguments, not both".
 
 - The batched `solve!` runs one kernel for both forms, waits for it with
   `isgpu(backend) && synchronize(backend)` as the KA factorisations do, counts the return codes
@@ -245,8 +247,8 @@ so that a compat-only bump can be told apart from an interface change.
   `NONFINITE`, `LINESEARCH_FAILED`); `SolverStatus{R}`, with `step_failures` counting every
   step-rule failure and `promoted` recording a factorisation above its method's precision;
   `StepInfo{R}`, which `GeometricSolvers.record` folds into a status; and `Options{R}`, the
-  stopping test only, built by `Options(T; kwargs...)` and converted to another `R` by `convert`,
-  which raises a relative tolerance below the default of `R` to that default.
+  stopping test only, built by `Options(T; kwargs...)`, which a solve of another element type
+  rejects with an `ArgumentError`.
   The default residual test is relative (`f_reltol = √eps(R)`, `f_abstol = 0`), because the
   attainable residual depends on the scale of the problem, and `min_iterations` is `0`, so a
   start that already passes the test takes no step.

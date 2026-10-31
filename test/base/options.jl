@@ -26,8 +26,8 @@ end
     @test opt.max_iterations === Int32(20)
 end
 
-@testset "Options converted from Float64 to Float32 has only Float32 fields" begin
-    opt = convert(Options{Float32}, Options(Float64; f_abstol = 1e-9, max_stalls = 5))
+@testset "Options(Float32) has only Float32 fields" begin
+    opt = Options(Float32; f_abstol = 1e-9, max_stalls = 5)
     @test opt isa Options{Float32}
     for name in (:f_abstol, :f_reltol, :x_abstol, :x_reltol)
         @test getfield(opt, name) isa Float32
@@ -35,36 +35,23 @@ end
     @test all(T -> T === Float32 || T === Int32, fieldtypes(typeof(opt)))
     @test opt.f_abstol === 1.0f-9
     @test opt.max_stalls === Int32(5)
-    @test convert(Options{Float32}, opt) === opt
 end
 
-@testset "convert raises a relative tolerance to eps(R) and 2 eps(R)" begin
-    # the Float64 defaults, √eps(Float64) and 2 eps(Float64), are below eps(Float32)
-    opt = convert(Options{Float32}, Options(Float64))
-    @test opt.f_reltol === eps(Float32)
-    @test opt.x_reltol === 2 * eps(Float32)
-    opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-12, x_reltol = 0))
-    @test opt.f_reltol === eps(Float32)
-    @test opt.x_reltol === 2 * eps(Float32)
-    # a tolerance between eps(Float32) and √eps(Float32) is kept
-    opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-6))
-    @test opt.f_reltol === 1.0f-6
-    # a looser tolerance is kept
-    opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-3, x_reltol = 1e-5))
-    @test opt.f_reltol === 1.0f-3
-    @test opt.x_reltol === 1.0f-5
-    # towards a finer type, every value is kept
-    opt = convert(Options{Float64}, Options(Float32))
-    @test opt.f_reltol === Float64(sqrt(eps(Float32)))
-    @test opt.x_reltol === Float64(2 * eps(Float32))
+# The Float64 defaults, √eps(Float64) and 2 eps(Float64), are below eps(Float32): no `Options`
+# converts to another `R`, and a solve raises an `ArgumentError` for options of another precision.
+@testset "no Options converts to another R" begin
+    @test_throws MethodError convert(Options{Float32}, Options(Float64))
+    @test_throws MethodError convert(Options{Float64}, Options(Float32))
 end
 
-@testset "convert to the same R returns its input, $T" for T in ELTYPES
+@testset "check_options accepts Options{real(T)} only: $T" for T in ELTYPES
     R = real(T)
-    for opt in (Options(T), Options(T; f_reltol = 0, x_reltol = 0),
-        Options(T; f_abstol = 1, max_stalls = 5))
-        @test convert(Options{R}, opt) === opt
+    other = R === Float32 ? Float64 : Float32
+    for opt in (Options(T), Options(T; f_reltol = 0, x_reltol = 0))
+        @test GeometricSolvers.check_options(T, opt) === nothing
     end
+    @test_throws ArgumentError GeometricSolvers.check_options(T, Options(other))
+    @test_throws ArgumentError GeometricSolvers.check_options(T, Options(Complex{other}))
 end
 
 @testset "invalid values raise an ArgumentError" begin

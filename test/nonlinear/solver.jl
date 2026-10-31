@@ -110,14 +110,14 @@ end
         @test isbits(solve(prob_c, x, m, [1.0])[2])
     end
 
-    # Options passed whole converts to Options{Float32}
+    # Options{Float32} passed whole solve a Float32 problem
     prob32 = NonlinearProblem(
         (y, q) -> y .^ 2 .- q,
         (y, q) -> SMatrix{2, 2, Float32}(2 * y[1], 0.0f0, 0.0f0, 2 * y[2]))
     x32 = SVector{2, Float32}(3.0f0, 5.0f0)
     p32 = SVector{2, Float32}(4.0f0, 9.0f0)
     _, st32 = solve(
-        prob32, x32, Newton(), p32; options = Options(Float64; f_reltol = 1e-10))
+        prob32, x32, Newton(), p32; options = Options(Float32; f_reltol = 1e-5))
     @test st32 isa SolverStatus{Float32}
     @test st32.code == SUCCESS
 
@@ -142,14 +142,40 @@ end
     end
 end
 
-@testset "an f_reltol by keyword or by Options of either precision solves alike (F4)" begin
+@testset "an f_reltol by keyword or by Options(Float32) solves alike (F4)" begin
     prob = NonlinearProblem((x, p) -> SVector(x[1]^2 - 2.0f0))
     sts = [solve(prob, SVector(10.0f0), Newton(); kw...)[2]
-           for kw in ((; f_reltol = 1e-6), (; options = Options(Float32; f_reltol = 1e-6)),
-        (; options = Options(Float64; f_reltol = 1e-6)))]
+           for kw in ((; f_reltol = 1e-6), (; options = Options(Float32; f_reltol = 1e-6)))]
     @test all(st -> st.code == SUCCESS, sts)
     @test allequal(st.iterations for st in sts)
     @test allequal(st.fnorm for st in sts)
+end
+
+# The default `f_reltol = √eps(Float64)` lies below `eps(Float32)`, so a `Float32` solve that took
+# `Options(Float64)` would stall on 37 % of the starts of `x² − 2`. No precision converts to another.
+@testset "options of another precision than the iterate raise an ArgumentError: $T" for T in REAL_ELTYPES
+    O = T === Float32 ? Float64 : Float32
+    prob = NonlinearProblem((x, p) -> x .* x .- T(2))
+    x₀ = SVector(T(1.5))
+    m = Adapt.adapt(ToReal{T}(), Newton())
+    wrong = Options(O)
+    @test_throws ArgumentError solve(prob, x₀, Newton(); options = wrong)
+    @test_throws ArgumentError init(prob, [T(1.5)], Newton(); options = wrong)
+    @test_throws ArgumentError solve!!(
+        init_state(m, prob, x₀, nothing), prob, x₀, m, nothing, wrong)
+    err = try
+        solve(prob, x₀, Newton(); options = wrong)
+    catch e
+        e
+    end
+    @test occursin("Options{$O}", err.msg)
+    @test occursin("Options($T", err.msg)
+
+    # the options of the iterate's own precision solve it
+    right = Options(T)
+    @test solve(prob, x₀, Newton(); options = right)[2].code == SUCCESS
+    @test solve!!(init_state(m, prob, x₀, nothing), prob, x₀, m, nothing, right)[2].code ==
+          SUCCESS
 end
 
 @testset "a zero step returns STALLED at once (K13), $R" for R in REAL_ELTYPES

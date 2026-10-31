@@ -90,7 +90,8 @@ that `finish!!` returns.
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
 returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds
 at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it returns `MAXITERS`
-with `0` iterations.
+with `0` iterations. `options` must be an `Options{real(eltype(x₀))}`; any other raises an
+`ArgumentError`.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
@@ -108,6 +109,7 @@ convergence returns `MAXITERS`.
 function solve!!(
         state, prob::NonlinearProblem, x₀, method, p = nothing,
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
+    check_options(eltype(x₀), options)
     x = x₀
     Fx = residual!!(residual_buffer(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
@@ -159,14 +161,15 @@ function solve!!(
     end
 end
 
-# The options of a solve whose iterate has element type `T`: the keywords, or `options` converted
-# to `real(T)`, never both.
+# The options of a solve whose iterate has element type `T`: the keywords, or an `Options{real(T)}`,
+# never both.
 @inline function resolve_options(
         ::Type{T}, options::Union{Nothing, Options}, kwargs) where {T}
     options === nothing && return Options(T; kwargs...)
     isempty(kwargs) ||
         throw(ArgumentError("pass either `options` or keyword arguments, not both"))
-    return convert(Options{real(T)}, options)
+    check_options(T, options)
+    return options
 end
 
 """
@@ -196,7 +199,8 @@ end
 
 Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` at a template iterate `x`
 and representative parameters `p`, without mutating `x`. Passing both `options` and keyword
-tolerances raises an `ArgumentError`. A `StaticArray` `x` raises an `ArgumentError` too, because
+tolerances raises an `ArgumentError`, and so does an `options` that is not an
+`Options{real(eltype(x))}`. A `StaticArray` `x` raises an `ArgumentError` too, because
 [`solve!`](@ref) cannot write the solution into it; solve it with [`solve`](@ref).
 """
 function init(
@@ -239,8 +243,11 @@ Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters
 copies `x₀` so the caller's initial guess is not mutated.
 
 `solve` adapts `method` to `real(eltype(x₀))` with [`ToReal`](@ref), builds [`Options`](@ref) in
-`eltype(x₀)` from `options` or `kwargs...`, calls [`init_state`](@ref), and delegates to
-[`solve!!`](@ref). Passing both `options` and keyword tolerances raises an `ArgumentError`. The
+`eltype(x₀)` from `kwargs...` or takes `options`, calls [`init_state`](@ref), and delegates to
+[`solve!!`](@ref). Passing both `options` and keyword tolerances raises an `ArgumentError`, and
+so does an `options` that is not an `Options{real(eltype(x₀))}`: a `Float32` iterate takes
+`Options(Float32; …)`, because the default tolerances of `Options(Float64)` are below what a
+`Float32` solve reaches. The
 residual norm `rnorm` is finite up to `floatmax`, but the merit `‖F‖²` of a line search overflows
 to `Inf` above `‖F‖ = sqrt(floatmax)`, and a solve with a line search then returns `NONFINITE`.
 """
