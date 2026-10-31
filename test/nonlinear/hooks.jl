@@ -1,5 +1,6 @@
 # The loop hooks `start!!` and `finish!!` of `solve!!`, through `Wrapped`, a test-only method that
-# runs a member method and records what the hooks receive.
+# runs a member method and records what the hooks receive; and the loop's step test after a
+# `STALLED` or `limited` step, through `Creep`, a test-only method whose step is fixed.
 
 using Adapt: Adapt
 using LinearAlgebra: Diagonal
@@ -7,8 +8,9 @@ using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: MAXITERS, NONFINITE, Newton, NonlinearProblem, Options, SUCCESS,
-                        SolverStatus, ToReal, init, rnorm, solve, solve!, solve!!
+using GeometricSolvers: MAXITERS, NONFINITE, Newton, NonlinearProblem, Options, STALLED,
+                        SUCCESS, SolverStatus, StepInfo, ToReal, init, rnorm, solve, solve!,
+                        solve!!
 
 const GS = GeometricSolvers
 
@@ -150,4 +152,45 @@ end
         @test x === x₀
         @test HOOK_LOG == [:start, :finish]
     end
+end
+
+# A method whose every step adds `h` to each component of `x` and returns `code`, `limited` and
+# the step norm `h`, so that the loop's response to the step's code and flag is seen alone.
+struct Creep
+    code::GS.ReturnCode
+    h::Float64
+    limited::Bool
+end
+
+struct CreepState end
+
+GS.init_state(::Creep, prob, x, p) = CreepState()
+GS.residual_buffer(::CreepState) = nothing
+
+function GS.step!!(s::CreepState, c::Creep, prob, x, Fx, p)
+    R = real(eltype(x))
+    x₊ = x .+ R(c.h)
+    F₊ = prob.F(x₊, p)
+    return x₊, F₊, s, StepInfo{R}(c.code, rnorm(F₊), R(c.h), Int32(0), false, c.limited)
+end
+
+@testset "a STALLED or limited step of nonzero norm skips the step test, $T" for T in ELTYPES
+    # `F ≡ 1` never meets the residual test, and `0 < h ≤ x_abstol` meets the step test
+    prob = NonlinearProblem((x, p) -> one.(x))
+    x₀ = SVector{2, T}(1, 1)
+    options = Options(T; x_abstol = 1, max_stalls = 3, max_iterations = 10)
+    creep(c) = solve!!(GS.init_state(c, prob, x₀, nothing), prob, x₀, c, nothing, options)
+    # a STALLED step only counts towards `max_stalls`
+    x, st, _ = creep(Creep(STALLED, 1e-3, false))
+    @test st.code == STALLED
+    @test st.iterations == 3
+    @test x != x₀
+    # the same step with SUCCESS meets the step test at once
+    _, st, _ = creep(Creep(SUCCESS, 1e-3, false))
+    @test st.code == STALLED
+    @test st.iterations == 1
+    # a limited step never meets the step test, and is no stall
+    _, st, _ = creep(Creep(SUCCESS, 1e-3, true))
+    @test st.code == MAXITERS
+    @test st.iterations == 10
 end
