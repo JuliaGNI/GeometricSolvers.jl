@@ -1,6 +1,6 @@
 # Regenerate the reference table of the standard test set,
-# `test/verification/standard_reference.csv`. This script is the table's only writer. From the
-# root of the repository:
+# `test/verification/standard_reference.csv`. This script writes the table; only the `platform`
+# flag and its comment are set by hand. From the root of the repository:
 #
 #     julia --project=test -e 'using Pkg; Pkg.instantiate()'
 #     julia --project=test scripts/standard/update_reference.jl

@@ -2,7 +2,7 @@
 
 | file | what it does |
 |:--|:--|
-| `update_reference.jl` | regenerates the reference table of `test/verification/standard.jl`, the `unstable` flags included; the table's only writer |
+| `update_reference.jl` | regenerates the reference table of `test/verification/standard.jl`, the `unstable` flags included; only the `platform` flag and its comment are set by hand |
 | `check_transcription.jl` | compares the 23 copied problems with NonlinearProblemLibrary.jl 0.1.8, in the environment of `Project.toml` |
 | `diagnose.jl` | the diagnosis below: the perturbation families, and the reruns with other kernels |
 | `generic_lapack.jl` | LAPACK's LU and QR replaced by pure Julia, for `diagnose.jl` and `trace.jl` |

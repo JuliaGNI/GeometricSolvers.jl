@@ -55,11 +55,13 @@ end
     source = read(joinpath(@__DIR__, "..", "helpers", "standard_problems.jl"), String)
     @test isempty(float_literals_outside_T(Meta.parseall(source)))
 
+    # An untyped output keeps the type of each computed component; a `Vector{Float32}` would
+    # convert a `Float64` component when it is stored.
     for sp in STANDARD_PROBLEMS
         x = sp.u0(Float32)
-        y = zeros(Float32, sp.n)
+        y = Vector{Any}(undef, sp.n)
         @test sp.prob.F(y, x, nothing) === nothing
-        @test y isa Vector{Float32}
+        @test all(v -> v isa Float32, y)
         @test all(isfinite, y)
     end
 end
@@ -311,6 +313,9 @@ end
     reference = read_table(STANDARD_REFERENCE)
     differences = compare_tables(reference, cells)
     foreach(d -> println("standard test set: ", d), differences)
+    # The CPU selects the BLAS and LAPACK kernels, which decide the round-off of a cell.
+    isempty(differences) ||
+        println("standard test set: CPU ", Sys.cpu_info()[1].model, " (", Sys.CPU_NAME, ")")
     @test isempty(differences)
 
     # The summary counts the SUCCESS cells of each column and element type out of 67.
