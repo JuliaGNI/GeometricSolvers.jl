@@ -9,7 +9,7 @@
 | `trace.jl` | one cell traced with LAPACK and with pure Julia, line-search trials included |
 | `ci_cells.txt` | the 42 cells that CI run 41196978054 reported as different, with their values on each runner |
 
-Each script runs from the root of the repository, in the test environment, as its header says.
+Each script runs from the root of the repository, in the environment that its header names.
 
 ## Why cells differ between runners
 
@@ -46,8 +46,9 @@ cell, because one ulp of input changes its code or its count by up to about 100.
 direction), and flags it `unstable` where a perturbed run returns another code, an iteration count
 that differs by more than 1, or a final iterate farther than `√eps(T) · max(1, ‖x‖)` from the
 unperturbed one. `test/verification/standard.jl` checks an `unstable` cell only for its presence
-and for a code other than `ERROR`, and every other cell exactly. `diagnose.jl perturb` reports
-133 of 1206 cells marked, the 42 CI cells among them. The Newton direction is perturbed through
-the `refinement` of `Newton` (`PerturbedDirection` in `test/helpers/standard_cells.jl`), so no
-file of `src/` changes. A cell that a runner reports as different and that the marker leaves is
-flagged `platform` by hand, with the observed values in its comment.
+and for a code other than `ERROR`, and every other cell for its code and for its iteration count
+to within 1. `diagnose.jl perturb` reports 133 of 1206 cells marked, the 42 CI cells among them.
+The Newton direction is perturbed through the `refinement` of `Newton` (`PerturbedDirection` in
+`test/helpers/standard_cells.jl`), so no file of `src/` changes. A cell that a runner reports as
+different and that the marker leaves is flagged `platform` by hand, with the observed values in
+its comment.

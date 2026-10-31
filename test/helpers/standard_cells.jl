@@ -24,8 +24,8 @@ const STANDARD_MAX_ITERATIONS = 200
     STANDARD_COLUMNS
 
 The nine columns of the standard test set, each a name and a method: `Newton` with each
-globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with `reuse = 3`,
-and `Picard` with `Backtracking`.
+globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with `reuse = 3`
+and `Backtracking` on LU, and `Picard` with `Backtracking`.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),

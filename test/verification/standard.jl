@@ -210,8 +210,8 @@ end
 end
 
 @testset "The marker" begin
-    # Three cells that the diagnosis of `scripts/standard/README.md` found round-off-sensitive,
-    # and three that no perturbation of it changed, in three other columns.
+    # Three `Float32` cells that the diagnosis of `scripts/standard/README.md` found
+    # round-off-sensitive, and three that the marker leaves.
     sensitive = [(21, "u0", "Newton Backtracking LU"), (11, "100u0", "Newton Static LU"),
         (8, "u0", "Newton Backtracking LU")]
     stable = [(1, "u0", "Newton Backtracking LU"), (7, "u0", "Newton Bisection LU"),
