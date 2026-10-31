@@ -77,6 +77,13 @@ end
     y = zeros(2)
     STANDARD_PROBLEMS[3].prob.F(y, r, nothing)
     @test 1e-7 < norm(y, Inf) < 1e-6
+
+    # The residual of a root does not see a coefficient of a term that vanishes there, such as
+    # the 10 of the generalized Rosenbrock function, whose terms 10 (x[i+1] − x[i]²) are zero at
+    # the root. At u0 = (−1.2, 1, …, 1) the residual is (2.2, −4.4, 0, …, 0) by hand.
+    y = zeros(10)
+    STANDARD_PROBLEMS[1].prob.F(y, STANDARD_PROBLEMS[1].u0(Float64), nothing)
+    @test y ≈ [2.2; -4.4; zeros(8)] rtol = 8 * eps(Float64)
 end
 
 @testset "The cell runner" begin
@@ -157,6 +164,9 @@ end
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
     @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1206
     @test all(c -> c.code in codes, cells)
+    # Every cell runs with max_iterations = 200.
+    @test any(c -> c.code == "MAXITERS", cells)
+    @test all(c -> c.code != "MAXITERS" || c.iterations == 200, cells)
 
     reference = read_table(STANDARD_REFERENCE)
     differences = compare_tables(reference, cells)
@@ -183,6 +193,9 @@ end
         @test near_root(rosenbrock, ones(T, 10))
         @test near_root(rosenbrock, ones(T, 10) .+ sqrt(eps(T)) / 10)
         @test !near_root(rosenbrock, ones(T, 10) .+ 2 * sqrt(eps(T)))
+        # A root of norm below 1 is measured in absolute distance.
+        @test near_root(STANDARD_PROBLEMS[19], fill(sqrt(eps(T)) / 10, 2))
+        @test !near_root(STANDARD_PROBLEMS[19], fill(sqrt(eps(T)), 2))
         @test near_root(STANDARD_PROBLEMS[6], zeros(T, 2)) === nothing
     end
 end

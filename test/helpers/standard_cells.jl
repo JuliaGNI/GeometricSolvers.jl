@@ -99,8 +99,8 @@ function run_cell(sp, start::AbstractString, x₀, column::AbstractString, metho
         counter.primal, counter.dual, fnorm, false, comment)
     try
         x, status = solve(prob, x₀, method; max_iterations = STANDARD_MAX_ITERATIONS)
-        return cell(string(status.code), Int(status.iterations), Float64(status.fnorm), ""),
-        x
+        c = cell(string(status.code), Int(status.iterations), Float64(status.fnorm), "")
+        return c, x
     catch e
         return cell("ERROR", 0, NaN, string(nameof(typeof(e)))), nothing
     end
