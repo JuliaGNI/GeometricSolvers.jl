@@ -68,9 +68,10 @@ so that a compat-only bump can be told apart from an interface change.
   and this fill gives 144 passed. With this fill the sweep has no failing `n` for QR or LU, in
   `Float32` or `ComplexF32`. This closes `K9` in `KNOWN_ISSUES.md`. The cause is not located: no
   experiment separates Metal.jl's lowering from Apple's Metal compiler, and no upstream report
-  exists. `K10` and `K11` stay open. `K10`: the Metal CI job runs with `--check-bounds=yes`, which
-  hides this failure; with that flag the previous fill passes every `n` on Julia 1.13.2. `K11`:
-  the Metal test sizes 1, 4, 16 and 24 reach only `n = 4` of the failing sizes.
+  exists. This change leaves `K10` and `K11`, which entries below close. `K10`: the Metal CI
+  job runs with `--check-bounds=yes`, which hides this failure; with that flag the previous fill
+  passes every `n` on Julia 1.13.2. `K11`: the Metal test sizes 1, 4, 16 and 24 reach only
+  `n = 4` of the failing sizes.
   `scripts/spikes/metal_qr/` holds the 4 × 4 reproducer (`probe.jl`), the sweep (`sweep.jl`) and
   `README.md`, which compares five fills.
   On the host, the factors, `τ` and `info` are bitwise identical to the previous fill on 64 random

@@ -37,7 +37,8 @@ else
     using JET
 
     # The name of the function of a report's innermost frame, with the `#name#n` of a keyword
-    # body read as `name`, so that the name does not depend on the order of compilation.
+    # body read as `name`, so that the name does not depend on the number that lowering gives
+    # the keyword body.
     function frame_name(report)
         name = string(last(report.vst).linfo.def.name)
         m = match(r"^#(.+)#\d+$", name)
