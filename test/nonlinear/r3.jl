@@ -20,7 +20,8 @@ using GeometricSolvers: Backtracking, Bisection, ChunkedForwardDiff, DIJacobian,
                         MeasuredSlope, NONFINITE, Newton, NonlinearProblem, NonlinearSolver,
                         Options, Picard, QRFactorization, SINGULAR, STALLED, SUCCESS,
                         SolverStatus, Static, StrongWolfe, ToReal, axpby!!, buffer, copy!!,
-                        globalize!!, init, jacobian!!, jvp!!, linesearch, map!!, mul!!,
+                        globalize!!, init, init_state, jacobian!!, jvp!!, linesearch, map!!,
+                        mul!!,
                         norm2, prepare_ad, rdot, regularize!!, residual!!, rnorm, roundoff,
                         scale!!, solve, solve!, solve!!, step!!, update_iterate!!, φ, φ′
 
@@ -522,41 +523,42 @@ end
         @test seam_jvp_alloc(Jvs, jvps, prob_scaled_j, xs, vs, ps) == 0
     end
 
-    # `init(::Newton, ...)` shares one `ChunkedForwardDiff` when both `jacprep` and `jvpprep` use AD,
-    # and builds `JacobianMatrixJVP` when `prob.J !== nothing` under a line search, and no JVP
-    # preparation under any other globalization
+    # `init_state(::Newton, ...)` shares one `ChunkedForwardDiff` when both `jacprep` and
+    # `jvpprep` use AD, and builds `JacobianMatrixJVP` when `prob.J !== nothing` under a line
+    # search, and no JVP preparation under any other globalization
     if AT === Array
-        st_ad = init(Newton(), prob_ad, x, p)
+        st_ad = init_state(Newton(), prob_ad, x, p)
         @test st_ad.jacprep isa ChunkedForwardDiff
         @test st_ad.jacprep === st_ad.jvpprep
 
-        st_ad_explicit = init(Newton(; jacobian = AutoForwardDiff()), prob_ad, x, p)
+        st_ad_explicit = init_state(Newton(; jacobian = AutoForwardDiff()), prob_ad, x, p)
         @test st_ad_explicit.jacprep isa ChunkedForwardDiff
         @test st_ad_explicit.jacprep === st_ad_explicit.jvpprep
 
-        st_j = init(Newton(; globalization = Backtracking()), prob_j, x, p)
+        st_j = init_state(Newton(; globalization = Backtracking()), prob_j, x, p)
         @test st_j.jacprep === nothing
         @test st_j.jvpprep isa JacobianMatrixJVP
         @test size(st_j.jvpprep.J) == (N_R3, N_R3)
-        @test init(Newton(), prob_j, x, p).jvpprep === nothing
-        @test init(Newton(; globalization = DogLeg()), prob_j, x, p).jvpprep === nothing
+        @test init_state(Newton(), prob_j, x, p).jvpprep === nothing
+        @test init_state(Newton(; globalization = DogLeg()), prob_j, x, p).jvpprep ===
+              nothing
 
-        st_op_j = init(
+        st_op_j = init_state(
             Newton(; jacobian = A_member!, globalization = Backtracking()), prob_j, x, p)
         @test st_op_j.jacprep === JacobianFunction(A_member!)
         @test st_op_j.jvpprep isa JacobianMatrixJVP
-        @test init(Newton(; jacobian = A_member!), prob_j, x, p).jvpprep === nothing
+        @test init_state(Newton(; jacobian = A_member!), prob_j, x, p).jvpprep === nothing
 
-        st_op_ad = init(Newton(; jacobian = A_member!), prob_ad, x, p)
+        st_op_ad = init_state(Newton(; jacobian = A_member!), prob_ad, x, p)
         @test st_op_ad.jacprep === JacobianFunction(A_member!)
         @test st_op_ad.jvpprep isa ChunkedForwardDiff
     end
 
-    st_pic_j = init(Picard(; globalization = Bisection()), prob_j, x, p)
+    st_pic_j = init_state(Picard(; globalization = Bisection()), prob_j, x, p)
     @test st_pic_j.jvpprep isa JacobianMatrixJVP
     @test size(st_pic_j.jvpprep.J) == (N_R3, N_R3)
-    @test init(Picard(), prob_j, x, p).jvpprep === nothing
-    st_pic_ad = init(Picard(), prob_ad, x, p)
+    @test init_state(Picard(), prob_j, x, p).jvpprep === nothing
+    st_pic_ad = init_state(Picard(), prob_ad, x, p)
     @test st_pic_ad.jvpprep isa ChunkedForwardDiff
 end
 
@@ -814,7 +816,7 @@ end
     @test st₁ isa SolverStatus{R}
     @test st₁.code == SUCCESS
     @test isapprox(x, T[2, 3]; rtol = 10 * sqrt(eps(R)))
-    @test solver.state.age > 0
+    @test solver.state.rule.age > 0
 
     # Second `solve!(x, solver, p₂)` on a new initial guess and new parameter resets `age = 0`
     # and `stalled = false`, so step 1 refactorises at the new `(x, p₂)` (catches MU4!)
@@ -824,7 +826,7 @@ end
         f_abstol = zero(R), f_reltol = zero(R), x_abstol = zero(R), x_reltol = zero(R))
     x_s1 = copy(x₀)
     solve!(x_s1, solver_1step, p₁)
-    @test solver_1step.state.age == Int32(1)
+    @test solver_1step.state.rule.age == Int32(1)
     j_calls[] = 0
     x_s2 = T[5, 6]
     st_s2 = solve!(x_s2, solver_1step, p₂)
@@ -840,14 +842,14 @@ end
     @test st₂.code == SUCCESS
     @test isapprox(x_re, T[4, 5]; rtol = 10 * sqrt(eps(R)))
 
-    # Re-solve with `DogLeg()` resets `solver.state.radius` at the start of `solve!`
+    # Re-solve with `DogLeg()` resets `solver.state.rule.radius` at the start of `solve!`
     solver_dl = init(
         prob, copy(x₀), Newton(; globalization = DogLeg()), p₁;
         min_iterations = 1, max_iterations = 1,
         f_abstol = zero(R), f_reltol = zero(R), x_abstol = zero(R), x_reltol = zero(R))
     x_dl1 = copy(x₀)
     solve!(x_dl1, solver_dl, p₁)
-    @test solver_dl.state.radius > zero(R)
+    @test solver_dl.state.rule.radius > zero(R)
     x_dl2 = T[5, 6]
     solve!(x_dl2, solver_dl, p₂)
     x_dl2_fresh, _ = solve(

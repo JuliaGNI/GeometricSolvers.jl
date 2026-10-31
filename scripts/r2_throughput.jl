@@ -10,7 +10,8 @@
 # `@v1.x` environment, or `import Metal` / `import CUDA` fails before the benchmark starts.
 
 using GeometricSolvers
-using GeometricSolvers: Adapt, Options, SolverStatus, ToReal, init, isconverged, solve!!
+using GeometricSolvers: Adapt, Options, SolverStatus, ToReal, init_state, isconverged,
+                        solve!!
 using KernelAbstractions
 using LinearAlgebra
 using Printf
@@ -67,7 +68,7 @@ function cpu_threaded_loop!(
         opt::Options{R}
 ) where {N, T, R}
     m = Adapt.adapt(ToReal{R}(), method)
-    state0 = init(m, prob, zero(SVector{N, T}), nothing)
+    state0 = init_state(m, prob, zero(SVector{N, T}), nothing)
     Threads.@threads :static for i in eachindex(X)
         @inbounds begin
             x, st, _ = solve!!(state0, prob, X[i], m, B[i], opt)
