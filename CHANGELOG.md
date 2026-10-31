@@ -112,8 +112,8 @@ so that a compat-only bump can be told apart from an interface change.
 
 - `test/devices/metal_linear.jl` runs `QRFactorization` in `Float32` and `ComplexF32` at every
   `n` in `1:12` beside `STATIC_SIZES`, because other fills of `x` in the static QR fail on Metal
-  at sizes in `3:10`. This closes `K11` in `KNOWN_ISSUES.md`. The file skips on a virtual GPU and in a
-  sandbox; it runs by hand on a real Apple GPU.
+  at sizes in `3:10`. This closes `K11` in `KNOWN_ISSUES.md`. The file skips on a virtual GPU and
+  in a sandbox; it runs by hand on a real Apple GPU.
 
 - `K10` and `K12` leave `KNOWN_ISSUES.md`. `K10`: since the Metal device tests skip on a
   virtualized GPU, the Metal CI job runs no device test, so its `--check-bounds=yes` hides no
