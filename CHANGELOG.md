@@ -68,9 +68,10 @@ so that a compat-only bump can be told apart from an interface change.
   and this fill gives 144 passed. With this fill the sweep has no failing `n` for QR or LU, in
   `Float32` or `ComplexF32`. This closes `K9` in `KNOWN_ISSUES.md`. The cause is not located: no
   experiment separates Metal.jl's lowering from Apple's Metal compiler, and no upstream report
-  exists. `K10` and `K11` stay open. `K10`: the Metal CI job runs with `--check-bounds=yes`, which
-  hides this failure; with that flag the previous fill passes every `n` on Julia 1.13.2. `K11`:
-  the Metal test sizes 1, 4, 16 and 24 reach only `n = 4` of the failing sizes.
+  exists. This change leaves `K10` and `K11`, which entries below close. `K10`: the Metal CI
+  job runs with `--check-bounds=yes`, which hides this failure; with that flag the previous fill
+  passes every `n` on Julia 1.13.2. `K11`: the Metal test sizes 1, 4, 16 and 24 reach only
+  `n = 4` of the failing sizes.
   `scripts/spikes/metal_qr/` holds the 4 × 4 reproducer (`probe.jl`), the sweep (`sweep.jl`) and
   `README.md`, which compares five fills.
   On the host, the factors, `τ` and `info` are bitwise identical to the previous fill on 64 random
@@ -91,6 +92,36 @@ so that a compat-only bump can be told apart from an interface change.
   its algorithm passes on the CPU. Until issue #34 closes, the Metal workflow and the macOS-latest
   CI jobs run no device test, so a green macOS-latest check does not exercise Metal.
   `.github/workflows/Metal.yml` and `test/gpu/README.md` say so.
+
+- `test/quality/jet.jl` fails on a JET report in this package's own code. It runs
+  `JET.report_package` with `target_modules = (GeometricSolvers,)`, with no `try` around it, and
+  compares the reports with `KNOWN_FALSE_POSITIVES`: five reports, each named by the function of
+  its innermost frame and a fragment of JET's message, with its reason. Four are the launch of a
+  kernel and `synchronize` on a KernelAbstractions `GPU` backend, which the backend package
+  defines; one is a `nothing` status that the one caller of `ka_factorize_lu!` never passes. A
+  report outside the list, or an entry that names no report or more than one, fails the file. A
+  call of an undefined function added to `rnorm` or to `isconverged` now fails it. A JET that
+  fails to load fails the file, on a pre-release Julia too. This closes `K1` in
+  `KNOWN_ISSUES.md`.
+
+- The test environment sets Metal's `precompile` preference to `false` in `test/Project.toml`,
+  and `test/devices/metal.jl` asserts that the test process reads it. Metal.jl 1.11.1 then
+  precompiles where `Metal.devices()` is empty, as in a sandbox, and the Metal files record their
+  device skip; with the preference `true` and no Metal cache for it, the sandboxed run fails with
+  `Failed to precompile Metal`. `K2` stays in `KNOWN_ISSUES.md`, worked around: the upstream fix,
+  Metal.jl 1.12.0, needs KernelAbstractions 0.10.
+
+- `test/devices/metal_linear.jl` runs `QRFactorization` in `Float32` and `ComplexF32` at every
+  `n` in `1:12` beside `STATIC_SIZES`, because other fills of `x` in the static QR fail on Metal
+  at sizes in `3:10`. This closes `K11` in `KNOWN_ISSUES.md`. The file skips on a virtual GPU and
+  in a sandbox; it runs by hand on a real Apple GPU.
+
+- `K10` and `K12` leave `KNOWN_ISSUES.md`. `K10`: since the Metal device tests skip on a
+  virtualized GPU, the Metal CI job runs no device test, so its `--check-bounds=yes` hides no
+  device result; run 41114546419 on `main` records one `Broken` and no other test in each of the
+  five files of the `metal` group, in both jobs. `K12`: a cold `run-tests.jl . core` passes
+  213741 assertions in 265 s on Julia 1.13.3, and its slowest file,
+  `globalization/linesearch.jl`, takes 44.5 s, under the 60 s budget of a `core` file.
 
 ### New Features
 
