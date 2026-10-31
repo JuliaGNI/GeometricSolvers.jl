@@ -183,7 +183,7 @@ end
     prob_big = NonlinearProblem((y, q) -> y, (y, q) -> diagonal_matrix(one.(y)))
     @test norm2(xb) === R(Inf)
     for ls in (inR(Backtracking()), inR(Bisection()), inR(StrongWolfe()))
-        x_b, F_b, _, info_b = globalize!!(
+        x_b, _, _, info_b = globalize!!(
             nothing, ls, prob_big, xb, xb, -xb ./ 2, p, nothing, ExactStep())
         @test info_b.code == NONFINITE
         @test isfinite(info_b.fnorm)
