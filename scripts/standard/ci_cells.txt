@@ -1,0 +1,86 @@
+# The cells of the standard test set that CI run 41196978054 (commit 6482c10, JuliaGNI/GeometricSolvers.jl)
+# reported as different from a reference written on Apple M4 Max, one line per cell and job:
+# the value on the runner, then the reference's. 42 cells in the union; diagnose.jl reads the keys.
+## Julia 1 - ubuntu-latest (34 cells)
+(1, "u0", "Newton reuse 3 Backtracking LU", "Float32"): 155 iterations, reference 157
+(11, "100u0", "Newton Backtracking LU", "Float32"): 17 iterations, reference 12
+(11, "100u0", "Newton Backtracking QR", "Float32"): 18 iterations, reference 9
+(11, "100u0", "Newton Backtracking QR", "Float64"): code STALLED, reference LINESEARCH_FAILED
+(11, "100u0", "Newton reuse 3 Backtracking LU", "Float32"): 35 iterations, reference 37
+(11, "100u0", "Newton Static LU", "Float32"): code SUCCESS, reference MAXITERS
+(11, "100u0", "Newton Static LU", "Float64"): code SUCCESS, reference MAXITERS
+(11, "100u0", "Newton StrongWolfe LU", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(11, "100u0", "Newton StrongWolfe LU", "Float64"): 47 iterations, reference 45
+(11, "10u0", "Newton Backtracking LU", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(11, "10u0", "Newton Backtracking QR", "Float32"): 36 iterations, reference 116
+(11, "10u0", "Newton Backtracking QR", "Float64"): code LINESEARCH_FAILED, reference STALLED
+(11, "10u0", "Newton reuse 3 Backtracking LU", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(11, "10u0", "Newton reuse 3 Backtracking LU", "Float64"): 34 iterations, reference 32
+(11, "10u0", "Newton Static LU", "Float64"): code SUCCESS, reference MAXITERS
+(11, "10u0", "Newton StrongWolfe LU", "Float32"): 50 iterations, reference 43
+(11, "u0", "Newton DogLeg LU", "Float32"): 28 iterations, reference 21
+(12, "100u0", "Newton Backtracking QR", "Float32"): code SINGULAR, reference NONFINITE
+(14, "10u0", "Newton Bisection LU", "Float64"): 149 iterations, reference 147
+(21, "100u0", "Newton Backtracking QR", "Float64"): code LINESEARCH_FAILED, reference STALLED
+(21, "10u0", "Newton Backtracking QR", "Float32"): code LINESEARCH_FAILED, reference STALLED
+(21, "u0", "Newton Backtracking LU", "Float32"): code LINESEARCH_FAILED, reference STALLED
+(21, "u0", "Newton Backtracking QR", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(21, "u0", "Newton Backtracking QR", "Float64"): code LINESEARCH_FAILED, reference STALLED
+(21, "u0", "Newton Static LU", "Float32"): 57 iterations, reference 37
+(21, "u0", "Newton StrongWolfe LU", "Float32"): code LINESEARCH_FAILED, reference STALLED
+(22, "100u0", "Newton Backtracking SVD", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(22, "100u0", "Newton Static LU", "Float32"): code MAXITERS, reference SUCCESS
+(22, "100u0", "Newton Static LU", "Float64"): code SUCCESS, reference MAXITERS
+(22, "10u0", "Newton Backtracking QR", "Float32"): 16 iterations, reference 19
+(6, "u0", "Newton Bisection LU", "Float64"): 40 iterations, reference 43
+(8, "100u0", "Newton reuse 3 Backtracking LU", "Float32"): 104 iterations, reference 175
+(8, "u0", "Newton Backtracking LU", "Float32"): code LINESEARCH_FAILED, reference SUCCESS
+(8, "u0", "Newton Backtracking SVD", "Float32"): code SUCCESS, reference STALLED
+## Julia min - ubuntu-latest (23 cells)
+(11, "100u0", "Newton Backtracking LU", "Float32"): 16 iterations, reference 12
+(11, "100u0", "Newton Backtracking QR", "Float32"): 15 iterations, reference 9
+(11, "100u0", "Newton reuse 3 Backtracking LU", "Float32"): 32 iterations, reference 37
+(11, "100u0", "Newton Static LU", "Float32"): code SUCCESS, reference MAXITERS
+(11, "100u0", "Newton StrongWolfe LU", "Float32"): 35 iterations, reference 23
+(11, "10u0", "Newton Backtracking LU", "Float32"): 114 iterations, reference 29
+(11, "10u0", "Newton Backtracking QR", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(11, "10u0", "Newton Backtracking QR", "Float64"): code LINESEARCH_FAILED, reference STALLED
+(11, "10u0", "Newton Backtracking SVD", "Float32"): 116 iterations, reference 19
+(11, "10u0", "Newton reuse 3 Backtracking LU", "Float32"): 18 iterations, reference 20
+(11, "10u0", "Newton StrongWolfe LU", "Float64"): code STALLED, reference LINESEARCH_FAILED
+(14, "10u0", "Newton Bisection LU", "Float64"): 149 iterations, reference 147
+(21, "10u0", "Newton Backtracking QR", "Float32"): code LINESEARCH_FAILED, reference STALLED
+(21, "u0", "Newton Backtracking SVD", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(22, "100u0", "Newton Backtracking SVD", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(22, "10u0", "Newton Backtracking LU", "Float32"): code STALLED, reference SUCCESS
+(22, "10u0", "Newton Backtracking SVD", "Float32"): code LINESEARCH_FAILED, reference SUCCESS
+(6, "u0", "Newton Bisection LU", "Float64"): 41 iterations, reference 43
+(8, "100u0", "Newton reuse 3 Backtracking LU", "Float32"): 89 iterations, reference 175
+(8, "u0", "Newton Backtracking LU", "Float32"): 10 iterations, reference 13
+(8, "u0", "Newton Backtracking QR", "Float32"): code LINESEARCH_FAILED, reference SUCCESS
+(8, "u0", "Newton Backtracking SVD", "Float32"): 10 iterations, reference 12
+(8, "u0", "Newton reuse 3 Backtracking LU", "Float32"): 14 iterations, reference 17
+## Julia 1 - windows-latest (23 cells)
+(11, "100u0", "Newton Backtracking LU", "Float32"): 16 iterations, reference 12
+(11, "100u0", "Newton Backtracking QR", "Float32"): 15 iterations, reference 9
+(11, "100u0", "Newton Backtracking SVD", "Float64"): code STALLED, reference LINESEARCH_FAILED
+(11, "100u0", "Newton reuse 3 Backtracking LU", "Float32"): 32 iterations, reference 37
+(11, "100u0", "Newton Static LU", "Float32"): code SUCCESS, reference MAXITERS
+(11, "100u0", "Newton StrongWolfe LU", "Float32"): 35 iterations, reference 23
+(11, "10u0", "Newton Backtracking LU", "Float32"): 114 iterations, reference 29
+(11, "10u0", "Newton Backtracking QR", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(11, "10u0", "Newton Backtracking SVD", "Float32"): 116 iterations, reference 19
+(11, "10u0", "Newton reuse 3 Backtracking LU", "Float32"): 18 iterations, reference 20
+(11, "10u0", "Newton StrongWolfe LU", "Float64"): code STALLED, reference LINESEARCH_FAILED
+(14, "10u0", "Newton Bisection LU", "Float64"): 149 iterations, reference 147
+(21, "10u0", "Newton Backtracking QR", "Float32"): code LINESEARCH_FAILED, reference STALLED
+(21, "u0", "Newton Backtracking SVD", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(22, "100u0", "Newton Backtracking SVD", "Float32"): code STALLED, reference LINESEARCH_FAILED
+(22, "10u0", "Newton Backtracking LU", "Float32"): code STALLED, reference SUCCESS
+(22, "10u0", "Newton Backtracking SVD", "Float32"): code LINESEARCH_FAILED, reference SUCCESS
+(6, "u0", "Newton Bisection LU", "Float64"): 41 iterations, reference 43
+(8, "100u0", "Newton reuse 3 Backtracking LU", "Float32"): 89 iterations, reference 175
+(8, "u0", "Newton Backtracking LU", "Float32"): 10 iterations, reference 13
+(8, "u0", "Newton Backtracking QR", "Float32"): code LINESEARCH_FAILED, reference SUCCESS
+(8, "u0", "Newton Backtracking SVD", "Float32"): 10 iterations, reference 12
+(8, "u0", "Newton reuse 3 Backtracking LU", "Float32"): 14 iterations, reference 17
