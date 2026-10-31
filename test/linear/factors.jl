@@ -20,9 +20,9 @@ const LOWER_PAIRS = filter(p -> p[2] !== Nothing, PRECISION_PAIRS)
         A, b = first(conditioned_systems(4000n + 1, T, TF, n))
         fac = factorize!!(nothing, m, A)
         @test eltype(fac.factors) === F
-        # 1e-40 is below floatmin(Float32), 1e40 above floatmax(Float32); rnorm(r) gives 0 for
-        # fill(1e-163, n) and Inf for fill(1e155, n) in Float64, so the scale is no 2-norm; a
-        # purely imaginary r has no real part to scale by
+        # 1e-40 is below floatmin(Float32), 1e40 above floatmax(Float32); the unscaled
+        # sqrt(norm2(r)) gives 0 for fill(1e-163, n) and Inf for fill(1e155, n) in Float64, so
+        # the scale is no unscaled 2-norm; a purely imaginary r has no real part to scale by
         rs = SVector{n, T}[T.(s * b / maximum(abs, b)) for s in (1e-40, 1e40)]
         append!(rs, [fill(T(1e-163), n), fill(T(1e155), n)])
         T <: Complex &&

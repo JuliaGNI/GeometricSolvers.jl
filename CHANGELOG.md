@@ -167,6 +167,37 @@ so that a compat-only bump can be told apart from an interface change.
   213741 assertions in 265 s on Julia 1.13.3, and its slowest file,
   `globalization/linesearch.jl`, takes 44.5 s, under the 60 s budget of a `core` file.
 
+- `rnorm` scales the entries by the power of two of the largest `|a_i|` (of the largest real or
+  imaginary part for a complex entry) before it squares them, as proposed in #29. It no longer
+  overflows to `Inf` above `sqrt(floatmax(R))` (`rnorm(SVector(1f20, 0f0))` is `1f20`, not `Inf`)
+  nor underflows to `0` below `sqrt(floatmin(R))`. On the tested vectors, whose largest entry is
+  `floatmax(R) / 4`, `1`, `floatmin(R)` or subnormal, it agrees with `LinearAlgebra.norm` to
+  `2 eps(R)`. The scale is exact, but where no square leaves the range, scaled or not, the
+  result can differ from the earlier `sqrt(norm2(a))` in the last bits, through the order in
+  which `sum` adds the squares: in measurements on 50 random vectors each, the two agree bit
+  for bit in every vector shorter than 16 entries, and from 16 entries on they differ in 6 to
+  45 of the 50, by at most 8 ulp. It takes two reductions, the largest entry and the
+  sum. `norm2`, the merit `‖F‖²` of the line searches, stays unscaled, so a line search above
+  `‖F‖ = sqrt(floatmax(R))` still returns `NONFINITE`. Where `real(eltype(a))` is no
+  `AbstractFloat`, such as an integer or a `ForwardDiff.Dual`, `rnorm` stays the unscaled
+  `sqrt(norm2(a))`.
+
+- `K14` and `K16` leave `KNOWN_ISSUES.md`: with the scaled norm, `DogLeg` in `Float32` solves the
+  Rosenbrock system scaled by `1e18` to `3e18` to its root, and stops on `s · (2x₁ − 1, −1)` at
+  `s = 1e19` at the minimum of `‖F‖`, `(0.5, 0)`, after 3 iterations as at `s = 1e17`.
+  `test/globalization/dogleg.jl` runs both. A `Newton` solve with `Static()` or `DogLeg()` no
+  longer returns `NONFINITE` only because `‖F‖` lies between `sqrt(floatmax(R))` and
+  `floatmax(R)`: `1f20 · (y² − q)` from `(3, 5)` now converges. The tests that asserted the
+  overflow and the underflow of the unscaled norm assert the scaled values.
+
+- `test/verification/standard_reference.csv` is regenerated. 14 cells change, each `NONFINITE`
+  before, where an unscaled norm left the range: in `Float32`, problem 1 with `Static` LU
+  from `u0` and `10u0` ends `SINGULAR`, and from `100u0` with `Backtracking`, `Bisection`,
+  `StrongWolfe` and reuse-3 `Backtracking` LU and problem 12 from `100u0` with `Backtracking` QR
+  end `LINESEARCH_FAILED`; problems 8 (`u0`, `100u0`) and 18 (`10u0`, `100u0`) with `Static` LU
+  end `SUCCESS`. In `Float64`, problem 1 with `Static` LU stays `NONFINITE` after more
+  iterations. 138 cells are flagged `unstable`, 133 before.
+
 ### New Features
 
 - The empty package skeleton: `Project.toml`, the module and its

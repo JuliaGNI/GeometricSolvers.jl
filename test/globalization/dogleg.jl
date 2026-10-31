@@ -226,14 +226,15 @@ end
 end
 
 @testset "the segment point of a Newton step far outside the radius, $R" for R in REAL_ELTYPES
-    # `A = diag(1, ε)`, `b = (1/2, 1)`: the Cauchy point has length about 1/2 and the Newton step
-    # `(1/2, 1/ε)` has a finite norm, but the Newton step in units of a radius 0.51 does not: the
-    # segment point still has norm 0.51
+    # `A = diag(1, ε)`, `b = (1/2, 1)`: the Cauchy point has length about 1/2, the Newton step
+    # `(1/2, 1/ε)` has a finite norm, and so has the Newton step in units of a radius 0.51, though
+    # its square overflows: the segment point has norm 0.51
     ε = R === Float32 ? R(1e-19) : R(1e-154)
     p = (; A = SMatrix{2, 2, R}(1, 0, 0, ε), b = SVector{2, R}(0.5, 1))
     sIN = p.A \ p.b
     @test isfinite(rnorm(sIN))
-    @test !isfinite(rnorm(sIN / R(0.51)))
+    @test isinf(rnorm(sIN / R(0.51))^2)
+    @test rnorm(sIN / R(0.51)) ≈ rnorm(sIN) / R(0.51) rtol = 8 * eps(R)
     x₊, _, _, info = one_step(
         NonlinearProblem(lin_F, lin_J), zero(SVector{2, R}), p, dogleg_newton(0.51))
     @test info.code == SUCCESS
@@ -453,48 +454,54 @@ end
     @test info.stepnorm == 0
     @test x₊ == 0
     @test st₊.rule.radius == 0
+end
 
-    # the direction `g̃ = J' (F / ‖F‖)` and its image `J ĝ` underflow: a `g̃` whose norm is zero is
-    # a zero direction, and so is a `g̃` whose squared norm is a subnormal and whose `‖J ĝ‖` is zero
+@testset "a steepest-descent direction whose squares leave the range, $R" for R in REAL_ELTYPES
+    # `J = j` and `F = 1 + j x` at 0: the squares of `g̃ = J' (F / ‖F‖) = j` and of `J ĝ` underflow,
+    # but their norms do not, so the direction is defined; the decrease along it, about `j²`, is
+    # below the round-off of `‖F‖ = 1`, and the step fails with the iterate kept
     j₀, j₁ = R === Float32 ? (R(1e-30), R(3e-23)) : (R(1e-170), R(1.6e-162))
-    @test iszero(rnorm(j₀))
-    @test !iszero(rnorm(j₁))
-    @test iszero(rnorm(j₁ * (j₁ / rnorm(j₁))))
+    @test iszero(j₀^2)
+    @test rnorm(j₀) == j₀
+    @test rnorm(j₁ * (j₁ / rnorm(j₁))) == j₁
     for j in (j₀, j₁)
         lin1 = NonlinearProblem((x, q) -> 1 + j * x, (x, q) -> j)
         x₊, _, _, info = one_step(lin1, zero(R), nothing, dogleg_newton())
-        @test info.code == STALLED
-        @test info.stepnorm == 0
+        @test info.code == LINESEARCH_FAILED
         @test x₊ == 0
     end
 
-    # a `g̃` whose norm overflows gives no Cauchy direction either: a singular `J` near `floatmax`
-    # stalls, and the trial loop does not run on a radius that is not a number
+    # a singular `J` near `floatmax`: the norm of `g̃` is finite though its square overflows, and
+    # the step is the Cauchy step along `−g̃`
     big_j = R === Float32 ? R(1e30) : R(1e300)
     J = SMatrix{2, 2, R}(big_j, big_j, big_j, big_j)
     p = (; A = J, b = SVector{2, R}(-1e10, 0))
     x₀ = zero(SVector{2, R})
     F₀ = lin_F(x₀, p)
-    @test !isfinite(rnorm(J' * (F₀ / rnorm(F₀))))
+    g̃ = J' * (F₀ / rnorm(F₀))
+    @test isinf(rnorm(g̃)^2)
+    @test rnorm(g̃) ≈ sqrt(R(2)) * big_j rtol = 8 * eps(R)
     x₊, _, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
-    @test info.code == STALLED
-    @test x₊ == x₀
-    @test st₊.rule.radius == 0
+    @test info.code == SUCCESS
+    @test !iszero(x₊)
+    @test 1 - cosine(x₊ - x₀, -g̃) ≤ 8 * eps(R)
+    @test isfinite(st₊.rule.radius) && st₊.rule.radius > 0
 
-    # and so does a `J ĝ` whose norm overflows while the norm of `g̃` is finite: with
-    # `J = diag(d, 0)` and `F = (−1, −1)`, `‖g̃‖ = d/√2` and `‖J ĝ‖ = d`, and the Cauchy length would
-    # be zero, so that every trial would be a zero step
+    # and a `J ĝ` whose square overflows while that of `g̃` is finite: with `J = diag(d, 0)` and
+    # `F = (−1, −1)`, `‖g̃‖ = d/√2` and `‖J ĝ‖ = d`
     d = R === Float32 ? R(2e19) : R(1.6e154)
     J = SMatrix{2, 2, R}(d, 0, 0, 0)
     p = (; A = J, b = SVector{2, R}(1, 1))
     F₀ = lin_F(x₀, p)
     g̃ = J' * (F₀ / rnorm(F₀))
-    @test isfinite(rnorm(g̃))
-    @test !isfinite(rnorm(J * (g̃ / rnorm(g̃))))
+    @test rnorm(g̃) ≈ d / sqrt(R(2)) rtol = 8 * eps(R)
+    @test rnorm(J * (g̃ / rnorm(g̃))) ≈ d rtol = 8 * eps(R)
+    @test isinf(d^2)
     x₊, _, st₊, info = one_step(NonlinearProblem(lin_F, lin_J), x₀, p, dogleg_newton())
-    @test info.code == STALLED
-    @test x₊ == x₀
-    @test st₊.rule.radius == 0
+    @test info.code == SUCCESS
+    @test !iszero(x₊)
+    @test 1 - cosine(x₊ - x₀, -g̃) ≤ 8 * eps(R)
+    @test isfinite(st₊.rule.radius) && st₊.rule.radius > 0
 end
 
 @testset "a non-finite Jacobian, $R" for R in REAL_ELTYPES
@@ -565,6 +572,29 @@ end
         end
         @test all(st -> st.code == code, results)
         @test all(st -> st.iterations == results[1].iterations, results)
+    end
+end
+
+@testset "a Cauchy point whose squared norms overflow in Float32" begin
+    R = Float32
+    # the Rosenbrock system at `s ≥ 1e18`, where the squares of the entries of `g̃ = J' (F / ‖F‖)`
+    # at `x₀` overflow, converges to its root
+    for s in (1.0f18, 2.0f18, 3.0f18)
+        x, st = solve(NonlinearProblem(rosen_F, rosen_J), SVector{2, R}(-1.2, 1), dogleg_newton(), s)
+        @test st.code == SUCCESS
+        @test x == SVector{2, R}(1, 1)
+    end
+
+    # `F = s (2x₁ − 1, −1)` with `J = s diag(2, 0)` has no root; from 0 the solve stops at the
+    # minimum of `‖F‖`, `(1/2, 0)`, where `J' F = 0`, at `s = 1e17` and at `s = 1e19`, where the
+    # square of `‖J ĝ‖ = 2e19` overflows, alike
+    flat_F(x, s) = s * SVector(2 * x[1] - 1, -one(x[1]))
+    flat_J(x, s) = s * SMatrix{2, 2}(2 * one(x[1]), zero(x[1]), zero(x[1]), zero(x[1]))
+    for s in (1.0f17, 1.0f19)
+        x, st = solve(NonlinearProblem(flat_F, flat_J), zero(SVector{2, R}), dogleg_newton(), s)
+        @test st.code == STALLED
+        @test x == SVector{2, R}(0.5, 0)
+        @test st.iterations == 3
     end
 end
 

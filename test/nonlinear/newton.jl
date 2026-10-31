@@ -312,12 +312,15 @@ end
     end
 
     # Float32 overflow of residual norm
+    # the square of `‖F(x₀)‖ ≈ 1.7e21` overflows, its norm does not: Newton converges near
+    # `(2, 3)`, where the default residual test `‖F‖ ≤ √eps ‖F(x₀)‖` stops it
     x₀_ov = SVector{2, Float32}(3.0f0, 5.0f0)
     p_ov = SVector{2, Float32}(4.0f0, 9.0f0)
     prob_ov = NonlinearProblem((y, q) -> 1.0f20 .* (y .* y .- q))
+    @test isinf(rnorm(prob_ov.F(x₀_ov, p_ov))^2)
     x_ov, st_ov = solve(prob_ov, x₀_ov, Newton(), p_ov)
-    @test st_ov.code == NONFINITE
-    @test x_ov === x₀_ov
+    @test st_ov.code == SUCCESS
+    @test x_ov ≈ SVector{2, Float32}(2, 3) rtol = sqrt(eps(Float32))
 
     # Scale invariance in Float32
     iters_scale = Int32[]
