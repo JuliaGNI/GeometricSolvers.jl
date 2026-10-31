@@ -45,7 +45,9 @@ else
         return m === nothing ? name : m.captures[1]
     end
 
+    # A toplevel report has no frames, and no entry names it.
     function names_report(entry, report)
+        report isa JET.InferenceErrorReport || return false
         return entry.f == frame_name(report) &&
                occursin(entry.msg, sprint(JET.print_report_message, report))
     end
