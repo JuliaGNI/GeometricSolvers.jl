@@ -1,7 +1,9 @@
 using GeometricSolvers: norm2, rnorm, rdot
+using ForwardDiff: ForwardDiff, Dual
 using JET: JET, @test_opt
 using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions, @kernel, @index
+using LinearAlgebra: norm
 using Random: Xoshiro
 using StaticArrays: SVector
 using Test
@@ -54,6 +56,91 @@ end
 @testset "empty arrays reduce to zero(R)" for T in ELTYPES
     @test norm2(T[]) === zero(real(T))
     @test rdot(T[], T[]) === zero(real(T))
+end
+
+# A vector whose largest |re| or |im| is `top`, with smaller entries, and complex entries for a
+# complex `T`. `LinearAlgebra.norm` scales its sum, so it is finite and positive at every `top`.
+function range_vector(::Type{T}, top) where {T}
+    T <: Complex && return T[top, im * top / 3, 0, (1 + im) * top / 7]
+    return T[top, top / 3, 0, top / 7]
+end
+
+range_tops(R) = (floatmax(R) / 4, one(R), floatmin(R), 4nextfloat(zero(R)))
+
+@testset "rnorm agrees with norm across the range: $T, $(AT)" for T in ELTYPES,
+    AT in (ARRAY_BACKENDS..., SVector)
+
+    R = real(T)
+    for top in range_tops(R)
+        v = range_vector(T, top)
+        ref = norm(v)
+        a = AT === SVector ? SVector{4}(v) : AT(v)
+        r = rnorm(a)
+        @test r isa R
+        @test abs(r - ref) <= 2eps(R) * ref
+    end
+end
+
+@testset "rnorm of a scalar and of an SVector above √floatmax" begin
+    @test rnorm(SVector(1.0f20, 0.0f0)) === 1.0f20
+    for R in REAL_ELTYPES
+        @test rnorm(R(-3)) === R(3)
+        @test rnorm(floatmin(R) / 8) === floatmin(R) / 8
+        @test rnorm(Complex{R}(3, -4)) === R(5)
+    end
+end
+
+# The scale takes the larger of the real and the imaginary part of each entry: a scale from one
+# part alone overflows on the other where the two are `floatmax / floatmin` apart.
+@testset "rnorm scales by the larger part of a complex entry: $R" for R in REAL_ELTYPES
+    hi, lo = floatmax(R) / 4, floatmin(R)
+    for v in (Complex{R}[complex(lo, hi)], Complex{R}[complex(hi, lo)])
+        @test rnorm(v) ≈ norm(v) rtol = 2eps(R)
+    end
+end
+
+# A power of two scales without rounding, so where no square overflows or underflows the scaled
+# norm is the unscaled one, bit for bit, as long as `sum` adds both sets of squares in the
+# same order. It does for these five entries; from 16 entries on, a `Vector` can differ in the
+# last bits.
+@testset "rnorm adds no rounding where the squares stay in range: $R" for R in REAL_ELTYPES
+    rng = Xoshiro(29)
+    for k in -8:8, _ in 1:20
+
+        v = R.((0.5 .+ 1.5 .* rand(rng, 5)) .* 10.0^k)
+        @test rnorm(v) === sqrt(norm2(v))
+        s = SVector{5}(v)
+        @test rnorm(s) === sqrt(norm2(s))
+    end
+end
+
+@testset "rnorm of empty, zero and non-finite vectors: $T" for T in ELTYPES
+    R = real(T)
+    @test rnorm(T[]) === zero(R)
+    @test rnorm(zeros(T, 3)) === zero(R)
+    @test rnorm(SVector{3, T}(0, 0, 0)) === zero(R)
+    @test isnan(rnorm(T[1, NaN]))
+    @test rnorm(T[1, Inf]) === R(Inf)
+    @test rnorm(T[Inf, 1]) === R(Inf)
+    @test isnan(rnorm(T[Inf, NaN]))
+    @test isnan(rnorm(T[NaN, Inf]))
+end
+
+@testset "rnorm of a subnormal vector: $T" for T in ELTYPES
+    R = real(T)
+    t = nextfloat(zero(R))
+    for v in (T[t, 3t], fill(T(floatmin(R)), 3))
+        r = rnorm(v)
+        @test r > 0
+        @test abs(r - norm(v)) <= 2eps(R) * norm(v)
+    end
+end
+
+# The squared norm stays unscaled: finite where its true value is below `floatmax(R)`.
+@testset "norm2 is finite below floatmax and Inf above it: $R" for R in REAL_ELTYPES
+    h = sqrt(floatmax(R) / 3)
+    @test isfinite(norm2(R[h, h]))
+    @test norm2(R[2h, 2h]) === R(Inf)
 end
 
 @testset "SVector: inferred and allocation-free, $T" for T in ELTYPES
@@ -119,4 +206,41 @@ end
     KernelAbstractions.synchronize(backend)
     @test n2 == norm2.(xs)
     @test d == rdot.(xs, ys)
+end
+
+@kernel function rnorm_kernel!(r, xs)
+    i = @index(Global)
+    @inbounds r[i] = rnorm(xs[i])
+end
+
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+
+@testset "rnorm of an SVector in a kernel and behind a barrier, $T" for T in ELTYPES
+    R = real(T)
+    xs = [SVector{4}(range_vector(T, top)) for top in range_tops(R)]
+    r = zeros(R, length(xs))
+    rnorm_kernel!(KA_BACKEND)(r, xs; ndrange = length(xs))
+    KernelAbstractions.synchronize(KA_BACKEND)
+    @test all(abs.(r .- norm.(xs)) .<= 2eps(R) .* norm.(xs))
+    @test allocations(collect, xs[1]) > 0    # the control
+    for x in xs
+        @test @inferred(rnorm(x)) isa R
+        @test allocations(rnorm, x) == 0
+    end
+    @test allocations(rnorm, randn(Xoshiro(1), T, 100)) == 0
+end
+
+# The scaled path needs a floating-point `R`: it converts its scaled sum back to an integer `R`,
+# which raises an `InexactError`, and its `ldexp` recurses without end on a `Dual`. For these
+# element types `rnorm` is `sqrt(norm2(a))`. The `Dual` cases come last.
+@testset "rnorm of a non-float Number gives the base's value" begin
+    @test rnorm(3) === 3.0
+    @test rnorm([1, 2, 2]) === 3.0
+    @test rnorm(Int32[3, 4]) === 5.0
+    @test rnorm(3 + 4im) === 5.0
+    @test rnorm(Int[]) === 0.0
+    @test rnorm(Dual(3.0, 1.0)) === Dual(3.0, 1.0)
+    r = rnorm(SVector(Dual(3.0, 1.0), Dual(4.0, 0.0)))
+    @test ForwardDiff.value(r) === 5.0
+    @test abs(ForwardDiff.partials(r)[1] - 0.6) <= 8eps()
 end

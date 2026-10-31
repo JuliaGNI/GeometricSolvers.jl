@@ -66,10 +66,10 @@ calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 At the start of each call, `solve!!` resets per-solve state counters (`age = 0, stalled = false`
 under factor reuse, and `radius = radius₀` under [`DogLeg`](@ref)), evaluates
 `Fx = residual!!(state_Fx(state), prob, x₀, p)`, and computes `fnorm₀ = rnorm(Fx)`.
-When `fnorm₀` is not finite — including in `Float32` when `‖F‖ > sqrt(floatmax(Float32)) ≈ 1.8e19`,
-where `norm2` overflows to `Inf` — it returns `NONFINITE` with `0` iterations. When
-`converged(options, status, fnorm₀, rnorm(x₀))` already holds at `0` iterations, it returns
-`SUCCESS`. When `options.max_iterations == 0`, it returns `MAXITERS` with `0` iterations.
+When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
+returns `NONFINITE` with `0` iterations. When `converged(options, status, fnorm₀, rnorm(x₀))`
+already holds at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it
+returns `MAXITERS` with `0` iterations.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
@@ -222,9 +222,9 @@ copies `x₀` so the caller's initial guess is not mutated.
 
 `solve` adapts `method` to `real(eltype(x₀))` with [`ToReal`](@ref), builds [`Options`](@ref) in
 `eltype(x₀)` from `options` or `kwargs...`, calls [`init`](@ref), and delegates to
-[`solve!!`](@ref). Passing both `options` and keyword tolerances raises an `ArgumentError`. In
-`Float32`, a residual norm above `sqrt(floatmax(Float32)) ≈ 1.8e19` overflows `norm2` to `Inf` and
-returns `NONFINITE`.
+[`solve!!`](@ref). Passing both `options` and keyword tolerances raises an `ArgumentError`. The
+residual norm `rnorm` is finite up to `floatmax`, but the merit `‖F‖²` of a line search overflows
+to `Inf` above `‖F‖ = sqrt(floatmax)`, and a solve with a line search then returns `NONFINITE`.
 """
 function solve(
         prob::NonlinearProblem, x₀, method, p = nothing;
