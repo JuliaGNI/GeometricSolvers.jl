@@ -174,15 +174,19 @@ so that a compat-only bump can be told apart from an interface change.
   overflows to `Inf` above `sqrt(floatmax(R))` (`rnorm(SVector(1f20, 0f0))` is `1f20`, not `Inf`)
   nor underflows to `0` below `sqrt(floatmin(R))`. On the tested vectors, whose largest entry is
   `floatmax(R) / 4`, `1`, `floatmin(R)` or subnormal, it agrees with `LinearAlgebra.norm` to
-  `2 eps(R)`. The scale is exact, but where no square leaves the range, scaled or not, the
-  result can differ from the earlier `sqrt(norm2(a))` in the last bits, through the order in
-  which `sum` adds the squares: in measurements on 50 random vectors each, the two agree bit
-  for bit in every vector shorter than 16 entries, and from 16 entries on they differ in 6 to
-  45 of the 50, by at most 8 ulp. It takes two reductions, the largest entry and the
-  sum. `norm2`, the merit `‖F‖²` of the line searches, stays unscaled, so a line search above
-  `‖F‖ = sqrt(floatmax(R))` still returns `NONFINITE`. Where `real(eltype(a))` is no
-  `AbstractFloat`, such as an integer or a `ForwardDiff.Dual`, `rnorm` stays the unscaled
-  `sqrt(norm2(a))`.
+  `2 eps(R)`. Where `norm2(a)` is finite and at least `length(a) * floatmin(R)`, `rnorm` is
+  `sqrt(norm2(a))`, one reduction: at that size the subnormal squares lose at most `eps(R)` of
+  the sum. Only otherwise does it take the scaled path, with two more reductions, and that path
+  sums in at least `Float32`, so a `Float16` sum of scaled squares does not overflow from about
+  8200 complex or 16400 real entries on: `rnorm(fill(Float16(1.99), 20000))` was `Inf16` and is
+  `281.5`. `norm2`, the merit `‖F‖²` of the line searches, stays unscaled, so a line search above
+  `‖F‖ = sqrt(floatmax(R))` still returns `NONFINITE`, and its `NONFINITE` result reports
+  `rnorm(Fx)`, finite, where it reported `sqrt(φ₀) = Inf`. Its `STALLED` result, and a
+  `LINESEARCH_FAILED` that keeps no step, report `rnorm(Fx)` too. At a finite `φ₀` this is
+  `sqrt(φ₀)` exactly, unless `φ₀ < length(Fx) * floatmin(R)`; there `rnorm(Fx)` takes the scaled
+  path, and the two can differ by more than the last bits, as `φ₀` sums subnormal squares. Where
+  `real(eltype(a))` is no `AbstractFloat`, such as an integer or a `ForwardDiff.Dual`, `rnorm`
+  stays the unscaled `sqrt(norm2(a))`.
 
 - `K14` and `K16` leave `KNOWN_ISSUES.md`: with the scaled norm, `DogLeg` in `Float32` solves the
   Rosenbrock system scaled by `1e18` to `3e18` to its root, and stops on `s · (2x₁ − 1, −1)` at

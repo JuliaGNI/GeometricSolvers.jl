@@ -135,11 +135,11 @@ end
         else
             return x, Fx,
             g,
-            StepInfo{R}(LINESEARCH_FAILED, sqrt(φ₀), zero(R), Int32(1), false, false)
+            StepInfo{R}(LINESEARCH_FAILED, rnorm(Fx), zero(R), Int32(1), false, false)
         end
     elseif code == STALLED
-        return x, Fx, g, StepInfo{R}(STALLED, sqrt(φ₀), zero(R), Int32(0), false, false)
+        return x, Fx, g, StepInfo{R}(STALLED, rnorm(Fx), zero(R), Int32(0), false, false)
     else
-        return x, Fx, g, StepInfo{R}(NONFINITE, sqrt(φ₀), zero(R), Int32(0), false, false)
+        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), zero(R), Int32(0), false, false)
     end
 end

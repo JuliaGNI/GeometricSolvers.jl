@@ -99,19 +99,36 @@ end
     end
 end
 
-# A power of two scales without rounding, so where no square overflows or underflows the scaled
-# norm is the unscaled one, bit for bit, as long as `sum` adds both sets of squares in the
-# same order. It does for these five entries; from 16 entries on, a `Vector` can differ in the
-# last bits.
-@testset "rnorm adds no rounding where the squares stay in range: $R" for R in REAL_ELTYPES
+# Where the unscaled sum is finite and at least `length * floatmin`, `rnorm` returns its square
+# root and takes no scaled path, for every length.
+@testset "rnorm is sqrt(norm2) where the squares stay in range: $R" for R in REAL_ELTYPES
     rng = Xoshiro(29)
+    for k in -8:8, n in (5, 1000), _ in 1:20
+        v = R.((0.5 .+ 1.5 .* rand(rng, n)) .* 10.0^k)
+        @test rnorm(v) === sqrt(norm2(v))
+    end
     for k in -8:8, _ in 1:20
 
-        v = R.((0.5 .+ 1.5 .* rand(rng, 5)) .* 10.0^k)
-        @test rnorm(v) === sqrt(norm2(v))
-        s = SVector{5}(v)
+        s = SVector{5}(R.((0.5 .+ 1.5 .* rand(rng, 5)) .* 10.0^k))
         @test rnorm(s) === sqrt(norm2(s))
     end
+end
+
+# 128 is a power of two, so each scaled square is 1, and a `Float16` sum of 10^5 of them overflows,
+# while the norm of this vector is finite: 128 √(10^5) ≈ 40480. The unscaled sum overflows as well.
+@testset "rnorm of a long Float16 vector whose sum of squares overflows" begin
+    v = fill(Float16(128), 10^5)
+    @test norm2(v) === Float16(Inf)
+    @test rnorm(v) ≈ Float16(128 * sqrt(1e5)) rtol = 2eps(Float16)
+end
+
+# The square of 2^-13 underflows to zero in `Float16`, so the unscaled sum is 1/16, and each of the
+# 10^5 small entries drops 2^-26 from it: a relative 2.4 % in total. The norm is
+# √(1/16 + 10^5 · 2^-26).
+@testset "rnorm of a long Float16 vector whose squares underflow" begin
+    v = [Float16(0.25); fill(Float16(2.0^-13), 10^5)]
+    @test norm2(v) === Float16(1 / 16)
+    @test rnorm(v) ≈ Float16(sqrt(1 / 16 + 1e5 * 2.0^-26)) rtol = 2eps(Float16)
 end
 
 @testset "rnorm of empty, zero and non-finite vectors: $T" for T in ELTYPES
