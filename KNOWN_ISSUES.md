@@ -80,15 +80,6 @@
 - **kind:** missing test
 - **found:** #24
 
-### K11 · The Metal test sizes reach one of the sizes at which a fill of `x` in the static QR fails.
-
-- **location:** `test/helpers/staticsystems.jl:21` (`STATIC_SIZES = (1, 4, 16, 24)`)
-- **evidence:** `test/devices/metal_linear.jl` runs `n = 1, 4, 16, 24`. On Julia 1.13.2, three of
-  the fills of `x` that `scripts/spikes/metal_qr/README.md` compares make `QRFactorization` in
-  `Float32` fail on Metal at `n = 3:9`, and the test reaches only `n = 4` of those sizes.
-- **kind:** missing test
-- **found:** #24
-
 ### K12 · `test/globalization/linesearch.jl` exceeds the 60 s `core` file budget cold.
 
 - **location:** `test/globalization/linesearch.jl:1`
