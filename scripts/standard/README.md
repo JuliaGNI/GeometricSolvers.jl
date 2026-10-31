@@ -36,10 +36,10 @@ other way.
 **A traced flip.** `trace.jl 21 u0 "Newton Backtracking LU" Float32` gives `STALLED` after 6
 iterations with LAPACK, and `LINESEARCH_FAILED` after 5 with the pure-Julia LU. The points of the
 two runs agree to 1 ulp for 8 primal evaluations, differ by 14 ulps at the 9th, and by thousands
-of ulps from the 10th. In the last line search both
-reach the smallest step with `τ = 4 eps φ₀`: with LAPACK `φ(α) − φ₀` is −3 ulps of `φ₀` and the
-step is accepted as `STALLED`; with pure Julia it is +27 ulps and the search ends at its floor as
-`LINESEARCH_FAILED`. The code of this cell is a classification of round-off.
+of ulps from the 10th. In the last line search both reach the smallest step with `τ = 4 eps φ₀`:
+with LAPACK `φ(α) − φ₀` is −3 ulps of `φ₀` and the step is accepted as `STALLED`; with pure Julia
+it is +27 ulps and the search ends at its floor as `LINESEARCH_FAILED`. The code of this cell is a
+classification of round-off.
 
 **What follows for the comparison.** A tolerance of a few ulps on the outcome cannot hold such a
 cell, because one ulp of input changes its code or its count by up to about 100. So
