@@ -119,7 +119,7 @@ so that a compat-only bump can be told apart from an interface change.
   virtualized GPU, the Metal CI job runs no device test, so its `--check-bounds=yes` hides no
   device result; run 41114546419 on `main` records one `Broken` and no other test in each of the
   five files of the `metal` group, in both jobs. `K12`: a cold `run-tests.jl . core` passes
-  213741 assertions in 275 s on Julia 1.13.3, and its slowest file,
+  213741 assertions in 265 s on Julia 1.13.3, and its slowest file,
   `globalization/linesearch.jl`, takes 44.5 s, under the 60 s budget of a `core` file.
 
 ### New Features
