@@ -21,8 +21,9 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The columns of the standard test set: a name and a method, for every nonlinear method,
-globalisation and linear method of the package.
+The nine columns of the standard test set, each a name and a method: `Newton` with each
+globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with `reuse = 3`,
+and `Picard` with `Backtracking`.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),
@@ -42,10 +43,11 @@ const STANDARD_COLUMNS = (
     CountedResidual(f)
 
 A residual `f(y, x, p)` that counts its calls: `primal` where `eltype(x)` is a floating-point
-type, `dual` otherwise, which is every call with the dual numbers of the chunked forward mode.
+type, `dual` otherwise, which is every call with dual numbers: the Jacobian chunks of the chunked
+forward mode and the directional derivatives that a line search or `Picard` takes.
 
 The field `f` is typed `Function`, so that every problem shares one `NonlinearProblem` type and
-`solve` compiles once per column and element type, not once per problem.
+`solve` is not compiled again for the residual type of each problem.
 """
 mutable struct CountedResidual
     f::Function

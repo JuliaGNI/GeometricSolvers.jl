@@ -26,8 +26,8 @@ const NPOINTS = 100
 const TOLERANCE = 4
 
 # The largest difference of the two residuals at `x`, in units of `eps(Float64) · max(1, ‖f‖∞)`
-# of the library's residual `f`. A component that is not finite in both residuals agrees where
-# the two are `isequal`.
+# of the library's residual `f`. A component where the library's residual is not finite agrees
+# where the two are `isequal`.
 function scaled_difference(sp, f_library!, x)
     a = zeros(length(x))
     b = zeros(length(x))
