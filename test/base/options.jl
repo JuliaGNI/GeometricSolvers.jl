@@ -1,5 +1,5 @@
 using GeometricSolvers
-using GeometricSolvers: converged, record, rnorm
+using GeometricSolvers: converged, record, residual_converged, rnorm, step_converged
 using StaticArrays: SVector, SMatrix
 using Test
 
@@ -134,4 +134,27 @@ end
     @test !converged(Options(Float64), st₁, 1.0, 1.0)
     st₁ = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 1e-20, Int32(0), false)
     @test converged(Options(Float64), st₁, 1.0, 1.0)
+end
+
+# `converged` is the residual test or the step test, and each holds alone.
+@testset "residual_converged and step_converged, and converged is their union" begin
+    opt = Options(Float64)
+    # a small residual and a large step: only the residual test holds
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1e-20, 1.0, Int32(0), false)
+    @test residual_converged(opt, st, 1.0) && !step_converged(opt, st, 1.0)
+    # a large residual and a tiny step: only the step test holds
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 1e-20, Int32(0), false)
+    @test !residual_converged(opt, st, 1.0) && step_converged(opt, st, 1.0)
+    # neither holds
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 1.0, Int32(0), false)
+    @test !residual_converged(opt, st, 1.0) && !step_converged(opt, st, 1.0)
+    @test !converged(opt, st, 1.0, 1.0)
+    # min_iterations defers both
+    opt₂ = Options(Float64; min_iterations = 2)
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1e-20, 1e-20, Int32(0), false)
+    @test !residual_converged(opt₂, st, 1.0) && !step_converged(opt₂, st, 1.0)
+    @test !converged(opt₂, st, 1.0, 1.0)
+    # a zero step is no step, at any iteration
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 0.0, Int32(0), false)
+    @test !step_converged(opt, st, 1.0)
 end

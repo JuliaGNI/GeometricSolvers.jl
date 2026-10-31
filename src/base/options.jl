@@ -124,8 +124,30 @@ through `f_abstol`. A zero step is no progress, so it never passes the step test
 the residual test fails returns `STALLED`.
 """
 function converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R, xnorm::R) where {R}
+    return residual_converged(options, status, fnorm₀) ||
+           step_converged(options, status, xnorm)
+end
+
+"""
+    residual_converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R)
+
+The residual test of [`Options`](@ref), once `min_iterations` steps are taken.
+"""
+@inline function residual_converged(
+        options::Options{R}, status::SolverStatus{R}, fnorm₀::R) where {R}
     status.iterations >= options.min_iterations || return false
-    status.fnorm <= max(options.f_abstol, options.f_reltol * fnorm₀) && return true
-    status.iterations > 0 && status.stepnorm > 0 &&
-        status.stepnorm <= max(options.x_abstol, options.x_reltol * xnorm)
+    return status.fnorm <= max(options.f_abstol, options.f_reltol * fnorm₀)
+end
+
+"""
+    step_converged(options::Options{R}, status::SolverStatus{R}, xnorm::R)
+
+The step test of [`Options`](@ref) for an iterate of norm `xnorm`, once `min_iterations` steps are
+taken. It needs a step of nonzero norm.
+"""
+@inline function step_converged(
+        options::Options{R}, status::SolverStatus{R}, xnorm::R) where {R}
+    status.iterations >= options.min_iterations || return false
+    return status.iterations > 0 && status.stepnorm > 0 &&
+           status.stepnorm <= max(options.x_abstol, options.x_reltol * xnorm)
 end

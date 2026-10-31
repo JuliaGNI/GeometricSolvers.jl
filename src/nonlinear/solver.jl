@@ -55,12 +55,6 @@ and for an array iterate it writes that iterate into `x` and returns `x`.
 """
 @inline finish!!(state, method, prob, x, Fx, status) = (x, status, state)
 
-@inline function residual_converged(
-        opt::Options{R}, status::SolverStatus{R}, fnorm₀::R) where {R}
-    status.iterations >= opt.min_iterations || return false
-    return status.fnorm <= max(opt.f_abstol, opt.f_reltol * fnorm₀)
-end
-
 @inline function ok_status(status::SolverStatus{R}) where {R}
     return SolverStatus{R}(
         SUCCESS, status.iterations, status.fnorm, status.stepnorm,
@@ -139,7 +133,7 @@ function solve!!(
         end
         if !(info.code == STALLED || info.limited)
             # the residual test fails: the step test, or a zero step, ends the solve unconverged
-            if converged(options, status, fnorm₀, rnorm(x))
+            if step_converged(options, status, rnorm(x))
                 return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
             end
             if info.code == SUCCESS && iszero(info.stepnorm) &&
