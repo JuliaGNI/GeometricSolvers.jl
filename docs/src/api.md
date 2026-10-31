@@ -133,11 +133,11 @@ DogLeg
 A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,
 `refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
-to `R = real(eltype(x₀))`, calls [`init`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when `x₀`
-is an array, and returns `(x, status)`. For an `AbstractVector` iterate in R3,
+to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
+`x₀` is an array, and returns `(x, status)`. For an `AbstractVector` iterate in R3,
 `init(prob, x, method, p; options, kwargs...)` pre-allocates a [`NonlinearSolver`](@ref) and
 [`solve!`](@ref) mutates `x` in place and returns `status`. [`solve!!`](@ref) takes a solver state
-from `init(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch `X` of
+from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch `X` of
 independent small systems, [`solve!`](@ref) solves each in place on `get_backend(X)` with one
 work-item per system, and [`PerSystem`](@ref) wraps an indexable collection of per-system
 parameters so system `i` receives `p.data[i]`.
@@ -201,8 +201,17 @@ jvp!!
 
 These names are not exported. Reach them as `GeometricSolvers.name`.
 
+A nonlinear method enters the loop of [`solve!!`](@ref) through [`init_state`](@ref), which builds
+its state, [`step!!`](@ref), and the two hooks [`start!!`](@ref) and [`finish!!`](@ref), which run
+once before the first step and at every return. [`residual_buffer`](@ref) names the slot of the
+state that holds `F(x₀)`.
+
 ```@docs
+init_state
+residual_buffer
 step!!
+start!!
+finish!!
 init_globalization
 LineFunction
 globalize!!

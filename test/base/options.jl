@@ -1,5 +1,5 @@
 using GeometricSolvers
-using GeometricSolvers: converged, record, rnorm
+using GeometricSolvers: converged, record, residual_converged, rnorm, step_converged
 using StaticArrays: SVector, SMatrix
 using Test
 
@@ -26,8 +26,8 @@ end
     @test opt.max_iterations === Int32(20)
 end
 
-@testset "Options converted from Float64 to Float32 has only Float32 fields" begin
-    opt = convert(Options{Float32}, Options(Float64; f_abstol = 1e-9, max_stalls = 5))
+@testset "Options(Float32) has only Float32 fields" begin
+    opt = Options(Float32; f_abstol = 1e-9, max_stalls = 5)
     @test opt isa Options{Float32}
     for name in (:f_abstol, :f_reltol, :x_abstol, :x_reltol)
         @test getfield(opt, name) isa Float32
@@ -35,23 +35,23 @@ end
     @test all(T -> T === Float32 || T === Int32, fieldtypes(typeof(opt)))
     @test opt.f_abstol === 1.0f-9
     @test opt.max_stalls === Int32(5)
-    @test convert(Options{Float32}, opt) === opt
 end
 
-@testset "convert raises a relative tolerance to the default of R" begin
-    # the Float64 defaults, √eps(Float64) and 2 eps(Float64), are below eps(Float32)
-    opt = convert(Options{Float32}, Options(Float64))
-    @test opt.f_reltol === sqrt(eps(Float32))
-    @test opt.x_reltol === 2 * eps(Float32)
-    @test opt.f_reltol >= eps(Float32)
-    # a looser tolerance is kept
-    opt = convert(Options{Float32}, Options(Float64; f_reltol = 1e-3, x_reltol = 1e-5))
-    @test opt.f_reltol === 1.0f-3
-    @test opt.x_reltol === 1.0f-5
-    # towards a finer type, every value is kept
-    opt = convert(Options{Float64}, Options(Float32))
-    @test opt.f_reltol === Float64(sqrt(eps(Float32)))
-    @test opt.x_reltol === Float64(2 * eps(Float32))
+# The Float64 defaults, √eps(Float64) and 2 eps(Float64), are below eps(Float32): no `Options`
+# converts to another `R`, and a solve raises an `ArgumentError` for options of another precision.
+@testset "no Options converts to another R" begin
+    @test_throws MethodError convert(Options{Float32}, Options(Float64))
+    @test_throws MethodError convert(Options{Float64}, Options(Float32))
+end
+
+@testset "check_options accepts Options{real(T)} only: $T" for T in ELTYPES
+    R = real(T)
+    other = R === Float32 ? Float64 : Float32
+    for opt in (Options(T), Options(T; f_reltol = 0, x_reltol = 0))
+        @test GeometricSolvers.check_options(T, opt) === nothing
+    end
+    @test_throws ArgumentError GeometricSolvers.check_options(T, Options(other))
+    @test_throws ArgumentError GeometricSolvers.check_options(T, Options(Complex{other}))
 end
 
 @testset "invalid values raise an ArgumentError" begin
@@ -129,6 +129,32 @@ end
     # before the first step, a zero `stepnorm` means no step, not a converged one
     st₀ = SolverStatus{Float64}(MAXITERS, Int32(0), 1.0, 0.0, Int32(0), false)
     @test !converged(Options(Float64), st₀, 1.0, 1.0)
+    # after a step, a zero `stepnorm` means no progress: the step test needs a nonzero step
     st₁ = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 0.0, Int32(0), false)
+    @test !converged(Options(Float64), st₁, 1.0, 1.0)
+    st₁ = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 1e-20, Int32(0), false)
     @test converged(Options(Float64), st₁, 1.0, 1.0)
+end
+
+# `converged` is the residual test or the step test, and each holds alone.
+@testset "residual_converged and step_converged, and converged is their union" begin
+    opt = Options(Float64)
+    # a small residual and a large step: only the residual test holds
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1e-20, 1.0, Int32(0), false)
+    @test residual_converged(opt, st, 1.0) && !step_converged(opt, st, 1.0)
+    # a large residual and a tiny step: only the step test holds
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 1e-20, Int32(0), false)
+    @test !residual_converged(opt, st, 1.0) && step_converged(opt, st, 1.0)
+    # neither holds
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 1.0, Int32(0), false)
+    @test !residual_converged(opt, st, 1.0) && !step_converged(opt, st, 1.0)
+    @test !converged(opt, st, 1.0, 1.0)
+    # min_iterations defers both
+    opt₂ = Options(Float64; min_iterations = 2)
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1e-20, 1e-20, Int32(0), false)
+    @test !residual_converged(opt₂, st, 1.0) && !step_converged(opt₂, st, 1.0)
+    @test !converged(opt₂, st, 1.0, 1.0)
+    # a zero step is no step, at any iteration
+    st = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 0.0, Int32(0), false)
+    @test !step_converged(opt, st, 1.0)
 end

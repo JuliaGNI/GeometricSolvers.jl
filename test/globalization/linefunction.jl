@@ -15,7 +15,8 @@ using GeometricSolvers
 using GeometricSolvers: Backtracking, Bisection, ExactStep, LineFunction, LINESEARCH_FAILED,
                         MeasuredSlope, NONFINITE, Newton, NonlinearProblem, STALLED,
                         SUCCESS,
-                        Static, StepInfo, StrongWolfe, ToReal, globalize!!, init, jvp!!,
+                        Static, StepInfo, StrongWolfe, ToReal, globalize!!, init_state,
+                        jvp!!,
                         linesearch, norm2, prepare_ad, rdot, residual!!, rnorm, solve,
                         update_iterate!!, φ, φ′
 
@@ -34,7 +35,7 @@ const N_LF = 4
     sq_f(y, q) = y .^ 2 .- q
     sq_j(y, q) = diagonal_matrix(y .+ y)
     prob_sq = NonlinearProblem(sq_f, sq_j)
-    st_sq = init(Newton(), prob_sq, x, p)
+    st_sq = init_state(Newton(), prob_sq, x, p)
     lf_sq = LineFunction(prob_sq, x, sq_f(x, p), d, p, st_sq.jvpprep)
     @test !(lf_sq isa Function)
     @test isbits(lf_sq)
@@ -61,7 +62,7 @@ const N_LF = 4
 
     # Member operator A != J: φ′ uses the problem's J, never the member's operator A
     id_op(y, q) = identity_matrix(T, N_LF)
-    st_a = init(Newton(; jacobian = id_op), prob_sq, x, p)
+    st_a = init_state(Newton(; jacobian = id_op), prob_sq, x, p)
     lf_a = LineFunction(prob_sq, x, sq_f(x, p), d, p, st_a.jvpprep)
     F₀ = sq_f(x, p)
     if T <: Real

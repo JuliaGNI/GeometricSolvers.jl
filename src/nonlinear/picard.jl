@@ -39,25 +39,32 @@ Adapt.@adapt_structure Picard
     end
 end
 
-@inline function init(m::Picard, prob::NonlinearProblem, x, p = nothing)
+# The state of `Picard`: the Jacobian-vector preparation of its line search, and the residual,
+# direction and globalization workspace, each `nothing` for a value iterate.
+struct PicardState{VP, FX, D, G}
+    jvpprep::VP
+    Fx::FX
+    d::D
+    g::G
+end
+
+@inline function init_state(m::Picard, prob::NonlinearProblem, x, p)
     Fx = buffer(x)
     jvpprep = picard_jvpprep(m, prob, Fx, x, p)
     if Fx === nothing
-        return (; jacprep = nothing, jvpprep)
+        return PicardState(jvpprep, nothing, nothing, nothing)
     else
-        d = buffer(x)
-        g = init_globalization(m.globalization, x)
-        return (; jacprep = nothing, jvpprep, Fx, d, g)
+        return PicardState(jvpprep, Fx, buffer(x), init_globalization(m.globalization, x))
     end
 end
 
-@inline state_d(state) = hasproperty(state, :d) ? state.d : nothing
-@inline state_g(state) = hasproperty(state, :g) ? state.g : nothing
+@inline residual_buffer(state::PicardState) = state.Fx
 
-@inline function step!!(state, m::Picard, prob::NonlinearProblem, x, Fx, p)
-    ω = eltype(x)(m.damping)
-    d = map!!(fi -> -ω * fi, state_d(state), Fx)
+# The damping is real, so that `-ω F` of a complex `F` is the real scaling of each part.
+@inline function step!!(state::PicardState, m::Picard, prob::NonlinearProblem, x, Fx, p)
+    ω = real(eltype(x))(m.damping)
+    d = map!!(fi -> -ω * fi, state.d, Fx)
     x₊, F₊, _, info = globalize!!(
-        state_g(state), m.globalization, prob, x, Fx, d, p, state.jvpprep, MeasuredSlope())
+        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, MeasuredSlope())
     return x₊, F₊, state, info
 end

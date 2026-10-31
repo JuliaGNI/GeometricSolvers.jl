@@ -11,6 +11,50 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Each nonlinear method has one state type, and the loop has two hooks** (decision 47 of the
+  design). The state builder of a method is now `GeometricSolvers.init_state(method, prob, x, p)`,
+  with four positional arguments, in place of `init(method, prob, x, p = nothing)`; `init` keeps
+  the solver (`init(prob, x, method, p; ...)`) and the linear factor. `init_state` returns a
+  `NewtonState` or a `PicardState`, not a `NamedTuple`, and for an `SVector` or a `Number` it is
+  `isbits` and allocates nothing. `Newton`'s reuse age and stalled flag, and `DogLeg`'s radius
+  and its initial radius, are its field `rule`: `state.rule.age`, `state.rule.radius`.
+  `solve!!` calls `start!!(state, method, prob, x, Fx, p, fnorm₀)` once before its stopping test
+  at 0 iterations, and `finish!!(state, method, prob, x, Fx, status)` at every return, and
+  returns what `finish!!` returns; a method's own `residual_buffer(state)` names the slot of
+  `F(x₀)`. `Newton`'s `start!!` resets its rule state, which `solve!!` did by field name before.
+  These four names are internal and documented beside `step!!`. Every `Newton` step factorises
+  through one function, and the iterates of the `Newton` tests are unchanged.
+
+- **A step test that holds while the residual test fails returns `STALLED`, not `SUCCESS`**
+  (decision 54). `SUCCESS` now always means that the residual test holds. A `SUCCESS` step of
+  zero norm, which leaves the iterate where the next step starts, also returns `STALLED` at that
+  iteration: `solve(NonlinearProblem((x, p) -> x * x - 4, (x, p) -> Inf), 3.0, Newton())`
+  returns `STALLED` after 1 iteration at `x = 3`, where it returned `SUCCESS` (K13 leaves
+  `KNOWN_ISSUES.md`). `min_iterations` bounds both rules, and `converged` holds through the step
+  test only after a step of nonzero norm. No cell of the standard test set changes: the
+  regenerated `test/verification/standard_reference.csv` equals the old one.
+
+- **A solve takes only an `Options{R}` for `R = real(eltype(x₀))`, and raises an `ArgumentError`
+  for any other.** `solve`, `init`, both batched `solve!` methods and `solve!!` check it; there is
+  no `convert` between `Options` of different `R`. The `Float64` defaults `f_reltol = √eps(Float64)`
+  and `x_reltol = 2 eps(Float64)` lie below `eps(Float32)`, so a `Float32` solve could not reach
+  them: with `Options(Float64)` converted, `x² − 2` from 1000 starts in `[1, 3]` returned `STALLED`
+  from 366, and with `Options(Float32)` it returned `SUCCESS` from all 1000. A `Float32` problem
+  takes `Options(Float32; …)` or keyword tolerances. `solve`, `init` and both batched `solve!`
+  methods resolve `options` and keywords in one function, with one message when both are passed:
+  "pass either `options` or keyword arguments, not both".
+
+- The batched `solve!` runs one kernel for both forms, waits for it with
+  `isgpu(backend) && synchronize(backend)` as the KA factorisations do, counts the return codes
+  over `instances(ReturnCode)`, and calls `get_backend` on an `order` without catching its error:
+  an `order` whose backend cannot be read raises, where it fell back to the CPU, and an `order` on a
+  device with a batch on the host is copied to the host. The range method of `_adapt_order`,
+  which the `isbits` branch already covered, is gone (K18 leaves `KNOWN_ISSUES.md`).
+
+- `Picard` scales its direction by a damping in `real(T)`, so a complex problem gets a real
+  damping (decision 24): one step with `damping = 0.5` equals `x .- 0.5 .* F` bit for bit, so a
+  real part `-0.0` of `x` stays `-0.0` where the real part of `F` is `+0.0`.
+
 - `Pkg.test()` no longer runs the doctests. `test/quality/doctests.jl` is now the group
   `doctests`, which an empty `ARGS` does not run; `Pkg.test(test_args = ["doctests"])` runs it.
   In CI the Doctests job stays their runner, so the test matrix no longer runs them a second
@@ -99,9 +143,11 @@ so that a compat-only bump can be told apart from an interface change.
   its innermost frame and a fragment of JET's message, with its reason. Four are the launch of a
   kernel and `synchronize` on a KernelAbstractions `GPU` backend, which the backend package
   defines; one is a `nothing` status that the one caller of `ka_factorize_lu!` never passes. A
-  report outside the list, or an entry that names no report or more than one, fails the file. A
-  call of an undefined function added to `rnorm` or to `isconverged` now fails it. A JET that
-  fails to load fails the file, on a pre-release Julia too. This closes `K1` in
+  report outside the list, or an entry that names more than one report, fails the file; so does
+  an entry that names none, unless it is a launch or a `synchronize`, whose method a backend
+  package loaded earlier in the same process (JLArrays, Metal) can define. A call of an
+  undefined function added to `rnorm` or to `isconverged` now fails it. A JET that fails to load
+  fails the file, on a pre-release Julia too. This closes `K1` in
   `KNOWN_ISSUES.md`.
 
 - The test environment sets Metal's `precompile` preference to `false` in `test/Project.toml`,
@@ -202,8 +248,8 @@ so that a compat-only bump can be told apart from an interface change.
   `NONFINITE`, `LINESEARCH_FAILED`); `SolverStatus{R}`, with `step_failures` counting every
   step-rule failure and `promoted` recording a factorisation above its method's precision;
   `StepInfo{R}`, which `GeometricSolvers.record` folds into a status; and `Options{R}`, the
-  stopping test only, built by `Options(T; kwargs...)` and converted to another `R` by `convert`,
-  which raises a relative tolerance below the default of `R` to that default.
+  stopping test only, built by `Options(T; kwargs...)`, which a solve of another element type
+  rejects with an `ArgumentError`.
   The default residual test is relative (`f_reltol = √eps(R)`, `f_abstol = 0`), because the
   attainable residual depends on the scale of the problem, and `min_iterations` is `0`, so a
   start that already passes the test takes no step.

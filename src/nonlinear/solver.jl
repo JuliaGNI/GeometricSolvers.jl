@@ -9,13 +9,23 @@ struct NoRefinement end
 @inline refine!!(d_slot, ::NoRefinement, prob, x, Fx, d, fac, p, jvpprep) = d
 
 """
-    init(method, prob::NonlinearProblem, x, p = nothing)
+    init_state(method, prob::NonlinearProblem, x, p)
 
-Prepare the state of `method` for [`NonlinearProblem`](@ref) `prob` at the initial iterate `x` and
-parameters `p`. In R1 (`SVector`, `MVector` or `Number`), `init` is allocation-free and returns an
-`isbits` named tuple when `prob` and `method` are `isbits`.
+Build the state of `method` for [`NonlinearProblem`](@ref) `prob` at the initial iterate `x` and
+parameters `p`: its workspace, its AD preparation and its rule state, in one concrete type per
+method. In R1 (`SVector`, `MVector` or `Number`), `init_state` is allocation-free and returns an
+`isbits` state when `prob` and `method` are `isbits`.
 """
-function init end
+function init_state end
+
+"""
+    residual_buffer(state)
+
+The slot that [`solve!!`](@ref) evaluates `F(x₀)` into: the residual workspace of `state` for an
+array iterate, and `nothing` for a value iterate. The default is `nothing`, which lets
+[`residual!!`](@ref) return a new value.
+"""
+@inline residual_buffer(state) = nothing
 
 """
     step!!(state, method, prob::NonlinearProblem, x, Fx, p)
@@ -25,11 +35,25 @@ is a [`StepInfo`](@ref).
 """
 function step!! end
 
-@inline function residual_converged(
-        opt::Options{R}, status::SolverStatus{R}, fnorm₀::R) where {R}
-    status.iterations >= opt.min_iterations || return false
-    return status.fnorm <= max(opt.f_abstol, opt.f_reltol * fnorm₀)
-end
+"""
+    start!!(state, method, prob::NonlinearProblem, x, Fx, p, fnorm₀) -> state
+
+Prepare `state` for a solve from `x`, with residual `Fx` and its norm `fnorm₀`, and return the
+state that the first step reads. [`solve!!`](@ref) calls it once, before its stopping test at 0
+iterations, so a state reused across solves starts each solve afresh. The default returns
+`state`; [`Newton`](@ref) resets its rule state.
+"""
+@inline start!!(state, method, prob, x, Fx, p, fnorm₀) = state
+
+"""
+    finish!!(state, method, prob::NonlinearProblem, x, Fx, status) -> (x, status, state)
+
+Close a solve that ends at `x`, with residual `Fx` and `status`, and return the triple that
+[`solve!!`](@ref) returns. [`solve!!`](@ref) calls it at every return. The default returns
+`(x, status, state)`. A method may return another iterate; it then sets `status.fnorm` itself,
+and for an array iterate it writes that iterate into `x` and returns `x`.
+"""
+@inline finish!!(state, method, prob, x, Fx, status) = (x, status, state)
 
 @inline function ok_status(status::SolverStatus{R}) where {R}
     return SolverStatus{R}(
@@ -43,112 +67,103 @@ end
         status.step_failures, status.promoted)
 end
 
-@inline state_Fx(state) = hasproperty(state, :Fx) ? state.Fx : nothing
-
-@inline function reset_state(state)
-    if hasproperty(state, :age)
-        return (; state..., age = Int32(0), stalled = false)
-    elseif hasproperty(state, :radius) && hasproperty(state, :radius₀)
-        return (; state..., radius = state.radius₀)
-    else
-        return state
-    end
-end
-
 """
     solve!!(state, prob::NonlinearProblem, x₀, method, p = nothing, options = Options(eltype(x₀)))
 
-Run the nonlinear solver loop from `x₀` using `state = init(method, prob, x₀, p)` and return
+Run the nonlinear solver loop from `x₀` using `state = init_state(method, prob, x₀, p)` and return
 `(x, status, state)`. `solve!!` is the in-place and kernel entry point: inside a
-`KernelAbstractions.@kernel`, a caller prepares `state₀ = init(m, prob, x₀, p)` on the host and
-calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
+`KernelAbstractions.@kernel`, a caller prepares `state₀ = init_state(m, prob, x₀, p)` on the host
+and calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 
-At the start of each call, `solve!!` resets per-solve state counters (`age = 0, stalled = false`
-under factor reuse, and `radius = radius₀` under [`DogLeg`](@ref)), evaluates
-`Fx = residual!!(state_Fx(state), prob, x₀, p)`, and computes `fnorm₀ = rnorm(Fx)`.
+At the start of each call, `solve!!` evaluates `Fx = residual!!(residual_buffer(state), prob, x₀,
+p)` and `fnorm₀ = rnorm(Fx)`, and calls [`start!!`](@ref) once, which resets the per-solve state
+of the method (the reuse age and the stalled flag under factor reuse, and the radius under
+[`DogLeg`](@ref)). Every return goes through [`finish!!`](@ref), and `solve!!` returns the triple
+that `finish!!` returns.
+
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
-returns `NONFINITE` with `0` iterations. When `converged(options, status, fnorm₀, rnorm(x₀))`
-already holds at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it
-returns `MAXITERS` with `0` iterations.
+returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds
+at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it returns `MAXITERS`
+with `0` iterations. `options` must be an `Options{real(eltype(x₀))}`; any other raises an
+`ArgumentError`.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
 (meaning the failed line-search trial did not decrease the merit) stops immediately with
 `LINESEARCH_FAILED`; one that decreased the merit keeps its new iterate, increments
-`status.step_failures`, and continues. After a `STALLED` step, only the residual tolerance test
-can declare `SUCCESS`, so a zero stepnorm never satisfies `x_abstol` or `x_reltol` by accident;
-`options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose `limited`
-is set, only the residual tolerance test can declare `SUCCESS` too, because a radius, not the
-distance to a root, sets its norm; such a step is not a stall. Reaching
-`options.max_iterations` without convergence returns `MAXITERS`.
+`status.step_failures`, and continues. Only the residual test returns `SUCCESS`. When it fails
+after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
+at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
+would start; `min_iterations` bounds both. After a `STALLED` step only the residual test applies,
+and `options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose
+`limited` is set only the residual test applies too, because a radius, not the distance to a
+root, sets its norm; such a step is not a stall. Reaching `options.max_iterations` without
+convergence returns `MAXITERS`.
 """
 function solve!!(
         state, prob::NonlinearProblem, x₀, method, p = nothing,
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
-    state = reset_state(state)
+    check_options(eltype(x₀), options)
     x = x₀
-    Fx = residual!!(state_Fx(state), prob, x, p)
+    Fx = residual!!(residual_buffer(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
+    state = start!!(state, method, prob, x, Fx, p, fnorm₀)
     status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)
     if !isfinite(fnorm₀)
-        return x, end_status(status, NONFINITE), state
+        return finish!!(state, method, prob, x, Fx, end_status(status, NONFINITE))
     end
-    if converged(options, status, fnorm₀, rnorm(x))
-        return x, status, state
+    if residual_converged(options, status, fnorm₀)
+        return finish!!(state, method, prob, x, Fx, status)
     end
     if options.max_iterations == Int32(0)
-        return x, end_status(status, MAXITERS), state
+        return finish!!(state, method, prob, x, Fx, end_status(status, MAXITERS))
     end
     stalls = Int32(0)
     while true
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
         status = record(status, info)
         if info.code == SINGULAR || info.code == NONFINITE
-            return x, status, state
+            return finish!!(state, method, prob, x, Fx, status)
         end
         if info.code == LINESEARCH_FAILED && iszero(info.stepnorm)
-            return x, status, state
+            return finish!!(state, method, prob, x, Fx, status)
         end
-        is_conv = if info.code == STALLED || info.limited
-            residual_converged(options, status, fnorm₀)
-        else
-            converged(options, status, fnorm₀, rnorm(x))
+        if residual_converged(options, status, fnorm₀)
+            return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
-        if is_conv
-            return x, ok_status(status), state
+        if !(info.code == STALLED || info.limited)
+            # the residual test fails: the step test, or a zero step, ends the solve unconverged
+            if step_converged(options, status, rnorm(x))
+                return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
+            end
+            if info.code == SUCCESS && iszero(info.stepnorm) &&
+               status.iterations >= options.min_iterations
+                return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
+            end
         end
         if info.code == STALLED
             stalls += one(Int32)
             if stalls >= options.max_stalls
-                return x, end_status(status, STALLED), state
+                return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
             end
         else
             stalls = Int32(0)
         end
         if status.iterations >= options.max_iterations
-            return x, end_status(status, MAXITERS), state
+            return finish!!(state, method, prob, x, Fx, end_status(status, MAXITERS))
         end
     end
 end
 
-@inline function default_options(::Type{R}) where {R <: Real}
-    return Options{R}(
-        zero(R), sqrt(eps(R)), zero(R), 2 * eps(R), Int32(0), Int32(100), Int32(2))
-end
-
+# The options of a solve whose iterate has element type `T`: the keywords, or an `Options{real(T)}`,
+# never both.
 @inline function resolve_options(
-        x₀, options::Union{Nothing, Options}, kwargs, caller::Symbol)
-    T = eltype(x₀)
-    R = real(T)
-    if options !== nothing
-        isempty(kwargs) || throw(ArgumentError(
-            "pass either `options` or keyword tolerances to `$caller`, not both"))
-        return convert(Options{R}, options)
-    elseif isempty(kwargs)
-        return default_options(R)
-    else
-        return Options(T; kwargs...)
-    end
+        ::Type{T}, options::Union{Nothing, Options}, kwargs) where {T}
+    options === nothing && return Options(T; kwargs...)
+    isempty(kwargs) ||
+        throw(ArgumentError("pass either `options` or keyword arguments, not both"))
+    check_options(T, options)
+    return options
 end
 
 """
@@ -178,7 +193,8 @@ end
 
 Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` at a template iterate `x`
 and representative parameters `p`, without mutating `x`. Passing both `options` and keyword
-tolerances raises an `ArgumentError`. A `StaticArray` `x` raises an `ArgumentError` too, because
+tolerances raises an `ArgumentError`, and so does an `options` that is not an
+`Options{real(eltype(x))}`. A `StaticArray` `x` raises an `ArgumentError` too, because
 [`solve!`](@ref) cannot write the solution into it; solve it with [`solve`](@ref).
 """
 function init(
@@ -187,9 +203,9 @@ function init(
     x isa StaticArray && throw(ArgumentError(
         "`init` builds a solver for an array iterate; solve a `StaticArray` iterate with `solve`"))
     R = real(eltype(x))
-    opt = resolve_options(x, options, kwargs, :init)
+    opt = resolve_options(eltype(x), options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
-    state = init(m, prob, x, p)
+    state = init_state(m, prob, x, p)
     return NonlinearSolver(prob, x, m, opt, state)
 end
 
@@ -221,8 +237,11 @@ Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters
 copies `x₀` so the caller's initial guess is not mutated.
 
 `solve` adapts `method` to `real(eltype(x₀))` with [`ToReal`](@ref), builds [`Options`](@ref) in
-`eltype(x₀)` from `options` or `kwargs...`, calls [`init`](@ref), and delegates to
-[`solve!!`](@ref). Passing both `options` and keyword tolerances raises an `ArgumentError`. The
+`eltype(x₀)` from `kwargs...` or takes `options`, calls [`init_state`](@ref), and delegates to
+[`solve!!`](@ref). Passing both `options` and keyword tolerances raises an `ArgumentError`, and
+so does an `options` that is not an `Options{real(eltype(x₀))}`: a `Float32` iterate takes
+`Options(Float32; …)`, because the default tolerances of `Options(Float64)` are below what a
+`Float32` solve reaches. The
 residual norm `rnorm` is finite up to `floatmax`, but the merit `‖F‖²` of a line search overflows
 to `Inf` above `‖F‖ = sqrt(floatmax)`, and a solve with a line search then returns `NONFINITE`.
 """
@@ -230,10 +249,10 @@ function solve(
         prob::NonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
     R = real(eltype(x₀))
-    opt = resolve_options(x₀, options, kwargs, :solve)
+    opt = resolve_options(eltype(x₀), options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
     x = x₀ isa Union{StaticArray, Number} ? x₀ : copy(x₀)
-    state = init(m, prob, x, p)
+    state = init_state(m, prob, x, p)
     x, status, _ = solve!!(state, prob, x, m, p, opt)
     return x, status
 end

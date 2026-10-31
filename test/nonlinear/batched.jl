@@ -28,6 +28,16 @@ function Base.getindex(v::SpyOrderVector, i::Int)
     v.reads[i] += 1
     return v.perm[i]
 end
+KernelAbstractions.get_backend(::SpyOrderVector) = KernelAbstractions.CPU()
+
+# A host vector with no `get_backend` method.
+struct UnreadOrderVector <: AbstractVector{Int}
+    perm::Vector{Int}
+end
+
+Base.size(v::UnreadOrderVector) = size(v.perm)
+Base.IndexStyle(::Type{UnreadOrderVector}) = IndexLinear()
+Base.getindex(v::UnreadOrderVector, i::Int) = v.perm[i]
 
 @inline function _r2_hetero_res(x::SVector{2, T}, code::Int) where {T}
     R = real(T)
@@ -182,11 +192,12 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test_throws ArgumentError solve!(JLArray(copy(X)), S_good, prob, Newton(), p0)
         @test_throws ArgumentError solve!(copy(X), JLArray(S_good), prob, Newton(), p0)
 
-        # options !== nothing && !isempty(kwargs)
+        # options !== nothing && !isempty(kwargs), with the message of `solve` and `init`
         opt = Options(Float64; max_iterations = 20)
-        @test_throws ArgumentError solve!(
+        both = ArgumentError("pass either `options` or keyword arguments, not both")
+        @test_throws both solve!(
             copy(X), S_good, prob, Newton(), p0; options = opt, max_iterations = 10)
-        @test_throws ArgumentError solve!(
+        @test_throws both solve!(
             copy(X), prob, Newton(), p0; options = opt, max_iterations = 10)
 
         # length(order) != length(X)
@@ -369,7 +380,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         end
     end
 
-    @testset "Host conversion ToReal{R} and Options{R} on Float32 / ComplexF32" begin
+    @testset "Host conversion ToReal{R}, and Options of another precision, on Float32 / ComplexF32" begin
         prob_coupled = _r2_coupled_problem()
         for B in ARRAY_BACKENDS, T in filter(T -> real(T) === Float32, ELTYPES)
 
@@ -384,19 +395,25 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                     SVector{2, T}(T(2.125f0), T(1.5f0)),
                     SVector{2, T}(T(1.25f0), T(2.0f0))
                 ]))
-            # Float64 Picard(; damping = 0.7) and Float64 Options / keyword tolerances converted on host
+            # Float64 Picard(; damping = 0.7) converted on host; the options are Options{Float32}
             m_f64 = Picard(; damping = 0.7)
-            opt_f64 = Options(Float64; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
+            opt_r = Options(T; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
             m_prep, opt_prep, state_prep = GeometricSolvers._prepare_batch(
-                X, prob_coupled, m_f64, opt_f64, (;))
+                X, prob_coupled, m_f64, opt_r, (;))
             @test m_prep === Picard(0.7f0, Static(1.0f0))
             @test typeof(m_prep.damping) === Float32
             @test isbits(m_prep)
+            @test opt_prep === opt_r
             @test opt_prep isa Options{Float32}
             @test isbits(opt_prep)
             @test isbits(state_prep)
 
-            solve!(X, S, prob_coupled, m_f64, p_coupled; options = opt_f64)
+            # Options of another precision are an error, not a conversion
+            opt_f64 = Options(Float64; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
+            @test_throws ArgumentError solve!(
+                X, S, prob_coupled, m_f64, p_coupled; options = opt_f64)
+
+            solve!(X, S, prob_coupled, m_f64, p_coupled; options = opt_r)
             @test all(isconverged, Array(S))
             @test eltype(eltype(X)) === T
             @test eltype(S) === SolverStatus{Float32}
@@ -419,7 +436,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 ])
                 S_bt = B(Vector{SolverStatus{Float32}}(undef, 2))
                 m_bt_f64 = Newton(; globalization = Backtracking())
-                solve!(X_bt, S_bt, prob_coupled, m_bt_f64, p_coupled; options = opt_f64)
+                solve!(X_bt, S_bt, prob_coupled, m_bt_f64, p_coupled; options = opt_r)
                 @test all(isconverged, Array(S_bt))
             end
         end
@@ -568,6 +585,27 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test ord_view_adapted isa JLArray{Int, 1}
         @test Array(ord_view_adapted) == ord_cpu
 
+        # an order on a device, with a batch on the host, is copied to the host
+        ord_host = GeometricSolvers._adapt_order(KernelAbstractions.CPU(), ord_jl)
+        @test ord_host isa Vector{Int}
+        @test ord_host == ord_cpu
+
+        # an order whose backend cannot be read raises the error of `get_backend`
+        unread = UnreadOrderVector([3, 1, 2])
+        @test_throws ArgumentError KernelAbstractions.get_backend(unread)
+        @test_throws ArgumentError GeometricSolvers._adapt_order(
+            KernelAbstractions.CPU(), unread)
+        @test_throws ArgumentError solve!(
+            [SVector(2.0, 1.0) for _ in 1:3], _r2_coupled_problem(), Newton(),
+            SVector(2.125, 1.5); order = unread)
+
+        # both forms launch through `_launch!`, which waits for the kernel
+        ci = only(Base.code_lowered(GeometricSolvers._launch!))
+        @test any(
+            stmt -> stmt == GlobalRef(GeometricSolvers, :synchronize) ||
+                    stmt == KernelAbstractions.synchronize,
+            ci.code
+        )
         for sig in (
             Tuple{
             Vector{SVector{2, Float64}},
@@ -585,11 +623,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         )
             bf = Base.bodyfunction(which(solve!, sig))
             ci = first(Base.code_lowered(bf))
-            @test any(
-                stmt -> stmt == GlobalRef(GeometricSolvers, :synchronize) ||
-                        stmt == KernelAbstractions.synchronize,
-                ci.code
-            )
+            @test any(stmt -> stmt == GlobalRef(GeometricSolvers, :_launch!), ci.code)
         end
     end
 
