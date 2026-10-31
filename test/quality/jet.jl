@@ -31,7 +31,7 @@ const KNOWN_FALSE_POSITIVES = [
 
 if !isempty(VERSION.prerelease)
     @testset "JET report_package" begin
-        @test_skip !isempty(VERSION.prerelease)  # JET on a pre-release: aviatesk/JET.jl#796
+        @test_skip isempty(VERSION.prerelease)  # JET on a pre-release: aviatesk/JET.jl#796
     end
 else
     using JET
