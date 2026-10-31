@@ -50,7 +50,8 @@ so that a compat-only bump can be told apart from an interface change.
   which the `isbits` branch already covered, is gone (K18 leaves `KNOWN_ISSUES.md`).
 
 - `Picard` scales its direction by a damping in `real(T)`, so a complex problem gets a real
-  damping (decision 24): one step from a real part `-0.0` keeps `-0.0`, as `x .- 0.5 .* F` does.
+  damping (decision 24): one step with `damping = 0.5` equals `x .- 0.5 .* F` bit for bit, so a
+  real part `-0.0` of `x` stays `-0.0` where the real part of `F` is `+0.0`.
 
 - `Pkg.test()` no longer runs the doctests. `test/quality/doctests.jl` is now the group
   `doctests`, which an empty `ARGS` does not run; `Pkg.test(test_args = ["doctests"])` runs it.
