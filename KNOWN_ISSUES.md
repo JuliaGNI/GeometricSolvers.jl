@@ -5,8 +5,8 @@
 - **location:** `test/Project.toml` (`[preferences.Metal]`)
 - **evidence:** Metal.jl 1.11.1's precompile workload (`src/precompile.jl:18`) calls
   `mtlfunction(identity, Tuple{Nothing})`, which calls `device()`. In the Bash sandbox
-  `Metal.devices()` is empty, so Metal cannot precompile its workload there. The issue is worked
-  around: `test/Project.toml` sets Metal's `precompile` preference to `false` (Metal.jl PR #915,
+  `Metal.devices()` is empty, so Metal cannot precompile its workload there. The issue is
+  worked around: `test/Project.toml` sets Metal's `precompile` preference to `false` (Metal.jl PR #915,
   `@load_preference("precompile", true)` at `src/Metal.jl:110`), which turns the workload off,
   and `test/devices/metal.jl` asserts that the test process reads the preference as `false`.
   With the preference `true` and no Metal cache for it, the sandboxed
