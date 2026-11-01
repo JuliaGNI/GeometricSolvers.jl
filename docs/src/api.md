@@ -135,8 +135,11 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
 `x₀` is an array, and returns `(x, status)`. For an `AbstractVector` iterate in R3,
-`init(prob, x, method, p; options, kwargs...)` pre-allocates a [`NonlinearSolver`](@ref) and
-[`solve!`](@ref) mutates `x` in place and returns `status`. [`solve!!`](@ref) takes a solver state
+`solver = init(prob, x, method, p; options, kwargs...)` pre-allocates a
+[`NonlinearSolver`](@ref) that holds `x` and `p`, `solve!(solver)` solves in place into `x` and
+returns `status`, and `solve!(solver, x, p)` solves in place into another `x` with other `p` of
+the same types. `init`, `solve!` and `solve` are the functions of CommonSolve.jl, which the
+package extends. [`solve!!`](@ref) takes a solver state
 from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch `X` of
 independent small systems, [`solve!`](@ref) solves each in place on `get_backend(X)` with one
 work-item per system, and [`PerSystem`](@ref) wraps an indexable collection of per-system
