@@ -1,9 +1,9 @@
 """
     PerSystem(data)
 
-Wrap an indexable collection of per-system parameters so [`solve!`](@ref) passes `data[i]` to
-system `i`. Any parameter value not wrapped in `PerSystem` — a number, a tuple, an `SVector`, or
-a plain `AbstractVector` — is shared unchanged across every system in the batch.
+Wrap an indexable collection of per-system parameters so [`solve_batch!`](@ref) passes `data[i]`
+to system `i`. Any parameter value not wrapped in `PerSystem` — a number, a tuple, an `SVector`,
+or a plain `AbstractVector` — is shared unchanged across every system in the batch.
 """
 struct PerSystem{P}
     data::P
@@ -102,22 +102,22 @@ function _tally_return_codes(codes_host::Vector{ReturnCode})
 end
 
 """
-    solve!(X::AbstractVector{<:Union{SVector, Number}},
-           S::AbstractVector{SolverStatus{R}},
-           prob::NonlinearProblem,
-           method,
-           p = nothing;
-           order = nothing,
-           options = nothing,
-           kwargs...) -> S
+    solve_batch!(X::AbstractVector{<:Union{SVector, Number}},
+                 S::AbstractVector{SolverStatus{R}},
+                 prob::NonlinearProblem,
+                 method,
+                 p = nothing;
+                 order = nothing,
+                 options = nothing,
+                 kwargs...) -> S
 
-    solve!(X::AbstractVector{<:Union{SVector, Number}},
-           prob::NonlinearProblem,
-           method,
-           p = nothing;
-           order = nothing,
-           options = nothing,
-           kwargs...) -> NamedTuple{(:SUCCESS, :STALLED, :MAXITERS, :SINGULAR, :NONFINITE, :LINESEARCH_FAILED), NTuple{6, Int}}
+    solve_batch!(X::AbstractVector{<:Union{SVector, Number}},
+                 prob::NonlinearProblem,
+                 method,
+                 p = nothing;
+                 order = nothing,
+                 options = nothing,
+                 kwargs...) -> NamedTuple{(:SUCCESS, :STALLED, :MAXITERS, :SINGULAR, :NONFINITE, :LINESEARCH_FAILED), NTuple{6, Int}}
 
 Solve a batch of independent small nonlinear systems in place on `get_backend(X)`, assigning one
 work-item per system.
@@ -134,7 +134,7 @@ The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and ret
 buffer on `get_backend(X)`, copies the codes once to the host after kernel completion, and returns
 the six outcome counts as a `NamedTuple`.
 """
-function solve!(
+function solve_batch!(
         X::AbstractVector{<:Union{SVector, Number}},
         S::AbstractVector{SolverStatus{R}},
         prob::NonlinearProblem,
@@ -163,7 +163,7 @@ function solve!(
     return _launch!(X, S, prob, m, p, opt, state₀, order)
 end
 
-function solve!(
+function solve_batch!(
         X::AbstractVector{<:Union{SVector, Number}},
         prob::NonlinearProblem,
         method,
