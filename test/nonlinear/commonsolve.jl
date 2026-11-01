@@ -39,17 +39,6 @@ function solve!_allocations(solver::S, x₀::X) where {S, X}
     return @allocated solve!(solver)
 end
 
-# The message of the `ArgumentError` that `f()` raises.
-function argument_error_message(f)
-    try
-        f()
-    catch e
-        e isa ArgumentError && return e.msg
-        rethrow()
-    end
-    return "no exception"
-end
-
 @testset "the names are CommonSolve's" begin
     @test GS.init === CommonSolve.init
     @test GS.solve === CommonSolve.solve
@@ -63,16 +52,17 @@ end
     end
 end
 
-@testset "the factor builder and the R2 forms are methods of CommonSolve's functions" begin
+@testset "the factor builder and the R2 forms are methods of CommonSolve's functions, $T" for T in ELTYPES
+    R = real(T)
     prob = NonlinearProblem(sq!, sqj!)
-    @test CommonSolve.init(LUFactorization(), prob, [1.0, 2.0], [4.0, 9.0]) isa DenseLU
+    @test CommonSolve.init(LUFactorization(), prob, T[1, 2], T[4, 9]) isa DenseLU
     pr = NonlinearProblem((x, p) -> x .* x .- 2)
-    X = [SVector(1.0), SVector(2.0)]
+    X = [SVector(T(1)), SVector(T(2))]
     counts = CommonSolve.solve!(X, pr, Newton())
     @test counts.SUCCESS == 2
-    @test all(x -> isapprox(x[1], sqrt(2.0); rtol = 1e-7), X)
-    S = [SolverStatus{Float64}(SUCCESS, Int32(0), 0.0, 0.0, Int32(0), false) for _ in 1:2]
-    @test CommonSolve.solve!([SVector(1.0), SVector(2.0)], S, pr, Newton()) === S
+    @test all(x -> isapprox(x[1], sqrt(R(2)); rtol = 10 * sqrt(eps(R))), X)
+    S = [SolverStatus{R}(SUCCESS, Int32(0), zero(R), zero(R), Int32(0), false) for _ in 1:2]
+    @test CommonSolve.solve!([SVector(T(1)), SVector(T(2))], S, pr, Newton()) === S
     @test all(s -> s.code == SUCCESS && s.iterations > 0, S)
 end
 
@@ -131,28 +121,42 @@ end
     @test solver.x === x₃
     @test solver.p === p₂
 
-    # the refusals, each asserted by its whole message; a refused call changes nothing
+    # the refusals, each asserted by its whole message; a refused call changes nothing. Each
+    # refused iterate is read back, and the refused parameters differ from `p₂` in value, so a
+    # solve before a check moves an iterate.
     T_other = only(filter(S -> S !== T && (S <: Complex) == (T <: Complex), ELTYPES))
-    @test argument_error_message(() -> solve!(solver, AT(T[1, 2, 3]))) ==
-          "`solve!` needs an iterate like the template given to `init`, of length 2 and " *
-          "element type $T; got length 3 and element type $T"
-    @test argument_error_message(() -> solve!(solver, AT(T_other[1, 2]))) ==
-          "`solve!` needs an iterate like the template given to `init`, of length 2 and " *
-          "element type $T; got length 2 and element type $T_other"
+    template_error(m, S) = ArgumentError(
+        "`solve!` needs an iterate like the template given to `init`, of length 2 and " *
+        "element type $T; got length $m and element type $S")
+    iterate_error(y) = ArgumentError(
+        "`solve!` needs an iterate of type $(typeof(x)), like the one given to `init`; " *
+        "got type $(typeof(y))")
+    parameter_error(q) = ArgumentError(
+        "`solve!` needs parameters of type $(typeof(p)), like those given to `init`; " *
+        "got type $(typeof(q))")
+    x_long = AT(T[1, 2, 3])
+    @test_throws template_error(3, T) solve!(solver, x_long)
+    @test Array(x_long) == T[1, 2, 3]
+    x_eltype = AT(T_other[1, 2])
+    @test_throws template_error(2, T_other) solve!(solver, x_eltype)
+    @test Array(x_eltype) == T_other[1, 2]
     # an iterate of the right element type and length and another array type
-    x_type = AT === Array ? view(T[1, 2, 3], 1:2) : T[1, 2]
-    @test argument_error_message(() -> solve!(solver, x_type, p₂)) ==
-          "`solve!` needs an iterate of type $(typeof(x)), like the one given to `init`; " *
-          "got type $(typeof(x_type))"
+    x_parent = T[1, 2, 3]
+    x_type = AT === Array ? view(x_parent, 1:2) : T[1, 2]
+    @test_throws iterate_error(x_type) solve!(solver, x_type, p₂)
+    @test x_parent == T[1, 2, 3]
+    @test x_type == T[1, 2]
     # parameters of another type with an iterate of the right type
-    p_other = AT(T_other[16, 25])
-    @test argument_error_message(() -> solve!(solver, x₃, p_other)) ==
-          "`solve!` needs parameters of type $(typeof(p)), like those given to `init`; " *
-          "got type $(typeof(p_other))"
-    p_tuple = (R(16), R(25))
-    @test argument_error_message(() -> solve!(solver, x₃, p_tuple)) ==
-          "`solve!` needs parameters of type $(typeof(p)), like those given to `init`; " *
-          "got type $(typeof(p_tuple))"
+    p_other = AT(T_other[4, 9])
+    @test_throws parameter_error(p_other) solve!(solver, x₃, p_other)
+    p_tuple = (R(4), R(9))
+    @test_throws parameter_error(p_tuple) solve!(solver, x₃, p_tuple)
+    # a call that fails two checks raises the error of the first
+    @test_throws template_error(3, T) solve!(solver, x_long, p_other)
+    @test_throws iterate_error(x_type) solve!(solver, x_type, p_other)
+    @test Array(x_long) == T[1, 2, 3]
+    @test x_parent == T[1, 2, 3]
+    @test x_type == T[1, 2]
     @test solver.x === x₃
     @test solver.p === p₂
     @test isapprox(Array(x₃), T[4, 5]; rtol = tol)
@@ -169,9 +173,11 @@ end
     @test solver.p === nothing
     @test solve!(solver).code == SUCCESS
     @test isapprox(x, T[2, 2]; rtol = 10 * sqrt(eps(real(T))))
-    @test argument_error_message(() -> solve!(solver, T[3, 5], (a = 1,))) ==
-          "`solve!` needs parameters of type Nothing, like those given to `init`; " *
-          "got type $(typeof((a = 1,)))"
+    x_refused = T[3, 5]
+    @test_throws ArgumentError(
+        "`solve!` needs parameters of type Nothing, like those given to `init`; " *
+        "got type $(typeof((a = 1,)))") solve!(solver, x_refused, (a = 1,))
+    @test x_refused == T[3, 5]
     @test solver.x === x
     @test solver.p === nothing
     x₂ = T[3, 5]
@@ -182,12 +188,10 @@ end
 
 @testset "init refuses a StaticArray, $T" for T in ELTYPES
     prob = NonlinearProblem(sq!)
-    msg = "`init` builds a solver for an array iterate; solve a `StaticArray` iterate with " *
-          "`solve`"
-    @test argument_error_message(() -> init(prob, SVector{2, T}(1, 2), Newton(), T[4, 9])) ==
-          msg
-    @test argument_error_message(() -> init(prob, MVector{2, T}(1, 2), Newton(), T[4, 9])) ==
-          msg
+    e = ArgumentError("`init` builds a solver for an array iterate; solve a `StaticArray` " *
+                      "iterate with `solve`")
+    @test_throws e init(prob, SVector{2, T}(1, 2), Newton(), T[4, 9])
+    @test_throws e init(prob, MVector{2, T}(1, 2), Newton(), T[4, 9])
 end
 
 @testset "solve!(solver) allocates nothing on an Array, $T" for T in ELTYPES
