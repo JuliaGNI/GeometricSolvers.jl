@@ -65,24 +65,23 @@ BF16
 
 ### Factorisation and solve
 
-A linear-solver method enters a solve through [`init`](@ref), [`factorize!!`](@ref) and
+A linear-solver method enters a solve through [`dense_factor`](@ref), [`factorize!!`](@ref) and
 [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
 `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
 `Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
 a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
 `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
-[`init`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref), and
-[`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on a host
-`Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref),
+[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref),
+and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on a
+host `Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref),
 [`DenseQR`](@ref) and [`DenseSVD`](@ref). [`factorize!!`](@ref) states what a singular matrix
 gives: an SVD factor records its numerical rank in `rank` apart from its status, and
 [`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
-[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). [`init`](@ref) is
-exported; the remaining names are not exported and are reached as
-`GeometricSolvers.name`.
+[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These names are not
+exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
-init
+dense_factor
 factorize!!
 ldiv!!
 factor_eltype
@@ -139,18 +138,24 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 `refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
-`x₀` is an array, and returns `(x, status)`. For an `AbstractVector` iterate in R3,
-`init(prob, x, method, p; options, kwargs...)` pre-allocates a [`NonlinearSolver`](@ref) and
-[`solve!`](@ref) mutates `x` in place and returns `status`. [`solve!!`](@ref) takes a solver state
-from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch `X` of
-independent small systems, [`solve!`](@ref) solves each in place on `get_backend(X)` with one
-work-item per system, and [`PerSystem`](@ref) wraps an indexable collection of per-system
-parameters so system `i` receives `p.data[i]`.
+`x₀` is an array, and returns `(x, status)`. With the same arguments,
+`solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
+[`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
+`solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
+with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
+functions of CommonSolve.jl, which the package extends on its own types, and
+`solve!(init(args...))` returns what `solve(args...)` returns. [`solve!!`](@ref) takes a solver
+state from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch
+`X` of independent small systems, [`solve_batch!`](@ref) solves each in place on `get_backend(X)`
+with one work-item per system, and [`PerSystem`](@ref) wraps an indexable collection of
+per-system parameters so system `i` receives `p.data[i]`.
 
 ```@docs
 NonlinearSolver
+init
 solve
 solve!
+solve_batch!
 solve!!
 PerSystem
 Newton

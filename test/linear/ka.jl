@@ -7,7 +7,8 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: DenseLU, DenseQR, DenseSVD, LUFactorization, NonlinearProblem,
                         QRFactorization, SVDFactorization
-using GeometricSolvers: JACOBI_MAX_SWEEPS, backsolve!, factor_eltype, factorize!!, init,
+using GeometricSolvers: JACOBI_MAX_SWEEPS, backsolve!, factor_eltype, factorize!!,
+                        dense_factor,
                         jacobi_pair, jacobi_rotation, jacobi_tolerance, ldiv!!, returncode
 
 include("../helpers/matrix.jl")
@@ -236,7 +237,7 @@ end
 function _ka_svd_ref_f64(Ar::Matrix{Float64})
     x0 = zeros(Float64, size(Ar, 1))
     prob = NonlinearProblem(x0, ka_noop)
-    fac = init(SVDFactorization(), prob, x0, nothing)
+    fac = dense_factor(SVDFactorization(), prob, x0, nothing)
     copyto!(fac.factors, Ar)
     fac = factorize!!(fac, SVDFactorization(), fac.factors)
     return fac.S
@@ -284,7 +285,7 @@ function ka_ref_solve_cond_svd(
 end
 
 function ka_check_inferred_and_scaled(m, prob_dev, x_dev, A_dev, b_dev)
-    fac = @inferred init(m, prob_dev, x_dev, nothing)
+    fac = @inferred dense_factor(m, prob_dev, x_dev, nothing)
     fac = @inferred factorize!!(fac, m, A_dev)
     @test fac.info == 0
     d = @inferred ldiv!!(similar(x_dev), fac, b_dev)
@@ -308,7 +309,7 @@ end
 
     x_h0 = zeros(Float64, 2)
     prob_h = NonlinearProblem(x_h0, ka_noop)
-    fac_h = init(SVDFactorization(), prob_h, x_h0, nothing)
+    fac_h = dense_factor(SVDFactorization(), prob_h, x_h0, nothing)
     copyto!(fac_h.factors, A_cpu)
     fac_h = factorize!!(fac_h, SVDFactorization(), fac_h.factors)
     @test fac_h.info == 0
@@ -325,7 +326,7 @@ end
         x = JLArray(zeros(Float64, 2))
         b = JLArray(copy(b_cpu))
         prob = NonlinearProblem(x, ka_noop)
-        fac = init(m, prob, x, nothing)
+        fac = dense_factor(m, prob, x, nothing)
         copyto!(fac.factors, JLArray(A_cpu))
         fac = factorize!!(fac, m, fac.factors)
         @test fac.info == 0
@@ -334,7 +335,7 @@ end
         @test d isa JLVector{Float64}
         @test ka_rel_inf(Array(d), x_ref) <= 64 * eps(Float64)
 
-        fac_z = init(m, prob, x, nothing)
+        fac_z = dense_factor(m, prob, x, nothing)
         fill!(fac_z.factors, 0.0)
         fac_z = factorize!!(fac_z, m, fac_z.factors)
         if m isa SVDFactorization
@@ -376,7 +377,7 @@ end
                 x_dev = JLArray(zeros(T, n))
                 b_dev = JLArray(copy(b_cpu))
                 prob_dev = NonlinearProblem(x_dev, ka_noop)
-                fac_dev = init(m, prob_dev, x_dev, nothing)
+                fac_dev = dense_factor(m, prob_dev, x_dev, nothing)
                 if TF === Nothing
                     copyto!(fac_dev.factors, JLArray(A_cpu))
                     fac_dev = factorize!!(fac_dev, m, fac_dev.factors)
@@ -442,7 +443,7 @@ end
                     x_dev = JLArray(zeros(T, n))
                     b_dev = JLArray(copy(b_cpu))
                     prob_dev = NonlinearProblem(x_dev, ka_noop)
-                    fac_dev = init(m, prob_dev, x_dev, nothing)
+                    fac_dev = dense_factor(m, prob_dev, x_dev, nothing)
                     fac_dev = factorize!!(fac_dev, m, JLArray(A_cpu))
                     @test fac_dev.info == 0
                     @test fac_dev.scale_exponent != 0
@@ -462,21 +463,21 @@ end
         x = JLArray(zeros(T, 4))
         prob = NonlinearProblem(x, ka_noop)
 
-        fac_lu = init(LUFactorization(), prob, x, nothing)
+        fac_lu = dense_factor(LUFactorization(), prob, x, nothing)
         lu_sig = (typeof(fac_lu), LUFactorization{Nothing}, JLMatrix{T})
         m_lu_fac = which(factorize!!, lu_sig)
         m_lu_bs = which(backsolve!, (typeof(fac_lu), JLVector{T}))
         @test endswith(replace(String(m_lu_fac.file), '\\' => '/'), "src/linear/ka/lu.jl")
         @test endswith(replace(String(m_lu_bs.file), '\\' => '/'), "src/linear/ka/lu.jl")
 
-        fac_qr = init(QRFactorization(), prob, x, nothing)
+        fac_qr = dense_factor(QRFactorization(), prob, x, nothing)
         qr_sig = (typeof(fac_qr), QRFactorization{Nothing}, JLMatrix{T})
         m_qr_fac = which(factorize!!, qr_sig)
         m_qr_bs = which(backsolve!, (typeof(fac_qr), JLVector{T}))
         @test endswith(replace(String(m_qr_fac.file), '\\' => '/'), "src/linear/ka/qr.jl")
         @test endswith(replace(String(m_qr_bs.file), '\\' => '/'), "src/linear/ka/qr.jl")
 
-        fac_svd = init(SVDFactorization(), prob, x, nothing)
+        fac_svd = dense_factor(SVDFactorization(), prob, x, nothing)
         @test length(fac_svd.work) == 1
         @test eltype(fac_svd.work) === Int32
         @test length(fac_svd.rwork) == 4
@@ -498,7 +499,7 @@ end
             m = M()
             x = JLArray(zeros(T, n))
             prob = NonlinearProblem(x, ka_noop)
-            fac = factorize!!(init(m, prob, x, nothing), m, JLArray(A_cpu))
+            fac = factorize!!(dense_factor(m, prob, x, nothing), m, JLArray(A_cpu))
             @test fac.info == 0
             m_bs = which(backsolve!, (typeof(fac), JLVector{T}))
             @test endswith(replace(String(m_bs.file), '\\' => '/'), file)
@@ -508,8 +509,8 @@ end
         end
     end
 
-    # JET.@test_opt on init, factorize!!, and ldiv!! is in test/linear/ka_large.jl (slow group)
-    @testset "no scalar indexing and type inference in init, factorize!!, ldiv!!" begin
+    # JET.@test_opt on dense_factor, factorize!!, and ldiv!! is in test/linear/ka_large.jl (slow group)
+    @testset "no scalar indexing and type inference in dense_factor, factorize!!, ldiv!!" begin
         T = Float64
         A_cpu, b_cpu = ka_well_conditioned(T, 6)
         x_dev = JLArray(zeros(T, 6))
@@ -540,7 +541,7 @@ end
         for m in (LUFactorization(), QRFactorization())
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = init(m, prob, x_dev, nothing)
+            fac = dense_factor(m, prob, x_dev, nothing)
             copyto!(fac.factors, JLArray(A_cpu))
             fac = factorize!!(fac, m, fac.factors)
             @test fac.info == 0
@@ -569,7 +570,7 @@ end
                 for m in (LUFactorization(), QRFactorization())
                     x_dev = JLArray(zeros(T, n))
                     prob = NonlinearProblem(x_dev, ka_noop)
-                    fac = init(m, prob, x_dev, nothing)
+                    fac = dense_factor(m, prob, x_dev, nothing)
                     copyto!(fac.factors, JLArray(A_cpu))
                     fac = factorize!!(fac, m, fac.factors)
                     @test fac.info == 0
@@ -598,7 +599,7 @@ end
         for m in (LUFactorization(), QRFactorization())
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = init(m, prob, x_dev, nothing)
+            fac = dense_factor(m, prob, x_dev, nothing)
             copyto!(fac.factors, JLArray(A_col))
             fac = factorize!!(fac, m, fac.factors)
             @test fac.info == 0
@@ -628,7 +629,7 @@ end
             for m in (LUFactorization(), QRFactorization())
                 x2 = JLArray(zeros(T, 2))
                 prob2 = NonlinearProblem(x2, ka_noop)
-                fac_hi = init(m, prob2, x2, nothing)
+                fac_hi = dense_factor(m, prob2, x2, nothing)
                 fac_hi = factorize!!(fac_hi, m, JLArray(A_hi))
                 @test returncode(fac_hi) === SUCCESS
                 @test all(isfinite, Array(fac_hi.factors))
@@ -655,7 +656,7 @@ end
             x_ref, _, _ = ka_ref_solve_and_cond(A_unit, b_unit)
             x_dev = JLArray(zeros(T, 2))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = init(LUFactorization(), prob, x_dev, nothing)
+            fac = dense_factor(LUFactorization(), prob, x_dev, nothing)
             copyto!(fac.factors, JLArray(A_big))
             fac = factorize!!(fac, LUFactorization(), fac.factors)
             @test fac.info == 0
@@ -677,7 +678,7 @@ end
         n = 4
         x_dev = JLArray(zeros(T, n))
         prob = NonlinearProblem(x_dev, ka_noop)
-        fac_zero = init(m, prob, x_dev, nothing)
+        fac_zero = dense_factor(m, prob, x_dev, nothing)
         fill!(fac_zero.factors, zero(T))
         fac_zero = factorize!!(fac_zero, m, fac_zero.factors)
         @test fac_zero.info == 1
@@ -688,7 +689,7 @@ end
         A_col2 = Matrix{T}(I, n, n)
         A_col2[:, 2] .= zero(T)
         A_col2[:, 3] .= zero(T)
-        fac_col2 = init(m, prob, x_dev, nothing)
+        fac_col2 = dense_factor(m, prob, x_dev, nothing)
         copyto!(fac_col2.factors, JLArray(A_col2))
         fac_col2 = factorize!!(fac_col2, m, fac_col2.factors)
         @test fac_col2.info == 2
@@ -697,7 +698,7 @@ end
         # (b2) Zero column k = 2 followed by nonzero columns 3 and 4 -> info stays 2
         A_col2_nz = Matrix{T}(I, n, n)
         A_col2_nz[:, 2] .= zero(T)
-        fac_col2_nz = init(m, prob, x_dev, nothing)
+        fac_col2_nz = dense_factor(m, prob, x_dev, nothing)
         copyto!(fac_col2_nz.factors, JLArray(A_col2_nz))
         fac_col2_nz = factorize!!(fac_col2_nz, m, fac_col2_nz.factors)
         @test fac_col2_nz.info == 2
@@ -708,7 +709,7 @@ end
         prob2 = NonlinearProblem(x2, ka_noop)
         for scale in (one(RT), floatmax(RT) / RT(8))
             A_eq = T[T(scale) T(2 * scale); T(scale) T(2 * scale)]
-            fac_eq = init(m, prob2, x2, nothing)
+            fac_eq = dense_factor(m, prob2, x2, nothing)
             copyto!(fac_eq.factors, JLArray(A_eq))
             fac_eq = factorize!!(fac_eq, m, fac_eq.factors)
             if M === LUFactorization
@@ -721,7 +722,7 @@ end
         for _ in 1:3
             r_eq = randn(rng_eq, T, 2)
             A_eq = T[r_eq[1] r_eq[2]; r_eq[1] r_eq[2]]
-            fac_eq = init(m, prob2, x2, nothing)
+            fac_eq = dense_factor(m, prob2, x2, nothing)
             copyto!(fac_eq.factors, JLArray(A_eq))
             fac_eq = factorize!!(fac_eq, m, fac_eq.factors)
             if M === LUFactorization
@@ -735,7 +736,7 @@ end
         for bad_val in (RT(NaN), RT(Inf))
             A_bad = Matrix{T}(I, n, n)
             A_bad[2, 2] = T(bad_val)
-            fac_bad = init(m, prob, x_dev, nothing)
+            fac_bad = dense_factor(m, prob, x_dev, nothing)
             copyto!(fac_bad.factors, JLArray(A_bad))
             fac_bad = factorize!!(fac_bad, m, fac_bad.factors)
             d_bad = ldiv!!(similar(x_dev), fac_bad, JLArray(ones(T, n)))
@@ -745,7 +746,7 @@ end
         # (e) 0 x 0 empty system does not launch a 0-range kernel or throw
         x0 = JLArray(zeros(T, 0))
         prob0 = NonlinearProblem(x0, ka_noop)
-        fac0 = init(m, prob0, x0, nothing)
+        fac0 = dense_factor(m, prob0, x0, nothing)
         fac0 = factorize!!(fac0, m, fac0.factors)
         @test fac0.info == 0
         d0 = ldiv!!(similar(x0), fac0, JLArray(zeros(T, 0)))
@@ -788,14 +789,14 @@ end
 
         x1 = JLArray(zeros(T, n))
         prob1 = NonlinearProblem(x1, ka_noop)
-        fac1 = init(m, prob1, x1, nothing)
+        fac1 = dense_factor(m, prob1, x1, nothing)
         copyto!(fac1.factors, JLArray(A_cpu))
         fac1 = factorize!!(fac1, m, fac1.factors)
         d1 = ldiv!!(similar(x1), fac1, JLArray(b_cpu))
 
         x2 = JLArray(zeros(T, n))
         prob2 = NonlinearProblem(x2, ka_noop)
-        fac2 = init(m, prob2, x2, nothing)
+        fac2 = dense_factor(m, prob2, x2, nothing)
         copyto!(fac2.factors, JLArray(A_cpu))
         fac2 = factorize!!(fac2, m, fac2.factors)
         d2 = ldiv!!(similar(x2), fac2, JLArray(b_cpu))
@@ -827,7 +828,7 @@ end
             x_ref, _, _ = ka_ref_solve_and_cond(A_eqnorm, b_eq)
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = init(m, prob, x_dev, nothing)
+            fac = dense_factor(m, prob, x_dev, nothing)
             fac = factorize!!(fac, m, JLArray(A_eqnorm))
             @test fac.info == 0
             err_u, _, _ = ka_svd_orth_and_recon_errs(
@@ -853,8 +854,8 @@ end
 
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(A_cpu))
-            fac_ref = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(B_cpu))
+            fac = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_cpu))
+            fac_ref = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(B_cpu))
 
             @test fac.info == 0
             @test all(isfinite, Array(fac.U))
@@ -884,7 +885,7 @@ end
 
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(A_cpu))
+            fac = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_cpu))
             @test fac.info == 0
             @test returncode(fac) === SUCCESS
             @test !isfinite(Array(fac.S)[1])
@@ -909,7 +910,7 @@ end
 
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(A_cpu))
+            fac = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_cpu))
 
             @test fac.info == 0
             @test returncode(fac) === SUCCESS
@@ -968,7 +969,7 @@ end
             b_sub = ones(T, n)
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
-            fac = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(A_sub))
+            fac = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_sub))
             @test fac.info == 0
             @test Array(fac.rwork)[2] > zero(R)
             @test Array(fac.rwork)[2] <= tol * Array(fac.rwork)[1]
@@ -979,7 +980,7 @@ end
             @test all(iszero, d_h[2:n])
 
             # Direct backsolve! check when U[:, 2] is non-zero so ka_svd_ut_mul_scale_kernel!'s own
-            # tol * rwork[1] guard is exercised independently of U column zeroing
+            # guard on fac.rank is exercised independently of U column zeroing
             if TF === Nothing
                 copyto!(fac.U, JLArray(Matrix{F}(I, n, n)))
                 copyto!(fac.VT, JLArray(Matrix{F}(I, n, n)))
@@ -1006,7 +1007,7 @@ end
             A4[1, n4] = T(ε4)
             x4 = JLArray(zeros(T, n4))
             prob4 = NonlinearProblem(x4, ka_noop)
-            fac4 = factorize!!(init(m, prob4, x4, nothing), m, JLArray(A4))
+            fac4 = factorize!!(dense_factor(m, prob4, x4, nothing), m, JLArray(A4))
             @test fac4.info == 0
             @test Array(fac4.S)[n4] == ε4
             @test all(iszero, Array(fac4.U)[:, n4])
@@ -1020,7 +1021,7 @@ end
             A16[1, n16] = T(ε16)
             x16 = JLArray(zeros(T, n16))
             prob16 = NonlinearProblem(x16, ka_noop)
-            fac16 = factorize!!(init(m, prob16, x16, nothing), m, JLArray(A16))
+            fac16 = factorize!!(dense_factor(m, prob16, x16, nothing), m, JLArray(A16))
             @test fac16.info == 0
             @test Array(fac16.S)[n16] == ε16
             @test all(iszero, Array(fac16.U)[:, n16])
@@ -1040,7 +1041,7 @@ end
             x_dev = JLArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, ka_noop)
             m = SVDFactorization()
-            fac_noise = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(A_noise))
+            fac_noise = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_noise))
             @test fac_noise.info == 0
             @test ka_count_nz(@view(Array(fac_noise.U)[:, 2:n])) == 0
             @test ka_count_nz(Array(fac_noise.VT)) == n
@@ -1056,7 +1057,7 @@ end
                 prob = NonlinearProblem(x_dev, ka_noop)
 
                 A_nan = fill(T(RT(NaN)), n, n)
-                fac_nan = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(A_nan))
+                fac_nan = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_nan))
                 @test fac_nan.info == 1
                 @test returncode(fac_nan) === SINGULAR
                 d_nan = ldiv!!(similar(x_dev), fac_nan, JLArray(ones(T, n)))
@@ -1064,7 +1065,7 @@ end
 
                 A_inf = Matrix{T}(I, n, n)
                 A_inf[1, 1] = T(RT(Inf))
-                fac_inf = factorize!!(init(m, prob, x_dev, nothing), m, JLArray(A_inf))
+                fac_inf = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_inf))
                 @test fac_inf.info == 1
                 @test returncode(fac_inf) === SINGULAR
                 d_inf = ldiv!!(similar(x_dev), fac_inf, JLArray(ones(T, n)))
@@ -1074,13 +1075,13 @@ end
             x2 = JLArray(zeros(T, 2))
             prob2 = NonlinearProblem(x2, ka_noop)
             A_part = T[zero(T) T(RT(NaN)); zero(T) zero(T)]
-            fac_part = factorize!!(init(m, prob2, x2, nothing), m, JLArray(A_part))
+            fac_part = factorize!!(dense_factor(m, prob2, x2, nothing), m, JLArray(A_part))
             @test fac_part.info == 1
             @test returncode(fac_part) === SINGULAR
 
             x0 = JLArray(zeros(T, 0))
             prob0 = NonlinearProblem(x0, ka_noop)
-            fac0 = factorize!!(init(m, prob0, x0, nothing), m, JLArray(zeros(T, 0, 0)))
+            fac0 = factorize!!(dense_factor(m, prob0, x0, nothing), m, JLArray(zeros(T, 0, 0)))
             @test fac0.info == 0
             d0 = ldiv!!(similar(x0), fac0, JLArray(zeros(T, 0)))
             @test length(d0) == 0

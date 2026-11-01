@@ -99,9 +99,9 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
 @testset "Batched R2 nonlinear" begin
     @testset "Exports and R1 base premises" begin
         @test isdefined(GeometricSolvers, :PerSystem)
-        @test isdefined(GeometricSolvers, :solve!)
+        @test isdefined(GeometricSolvers, :solve_batch!)
         @test :PerSystem in names(GeometricSolvers)
-        @test :solve! in names(GeometricSolvers)
+        @test :solve_batch! in names(GeometricSolvers)
         @test Int.(instances(ReturnCode)) === Tuple(0:5)
     end
 
@@ -147,7 +147,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
             # Plain SVector parameter (length 2 != batch length 3) shared across all systems
             X_sh = B(copy(x0_host))
             S_sh = B(Vector{SolverStatus{R}}(undef, 3))
-            solve!(X_sh, S_sh, prob, Newton(), p_shared_svec)
+            solve_batch!(X_sh, S_sh, prob, Newton(), p_shared_svec)
             X_sh_h = Array(X_sh)
             S_sh_h = Array(S_sh)
             for i in 1:3
@@ -161,7 +161,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 p_vec_shared = T[T(2.125), T(1.5)]
                 X_v = copy(x0_host)
                 S_v = Vector{SolverStatus{R}}(undef, 3)
-                solve!(X_v, S_v, prob, Newton(), p_vec_shared)
+                solve_batch!(X_v, S_v, prob, Newton(), p_vec_shared)
                 for i in 1:3
                     xr, str = solve(prob, x0_host[i], Newton(), p_vec_shared)
                     @test X_v[i] == xr
@@ -171,9 +171,9 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
 
             # Length mismatch for PerSystem throws DimensionMismatch
             bad_ps = PerSystem(B([p_shared_svec, p_shared_svec]))
-            @test_throws DimensionMismatch solve!(
+            @test_throws DimensionMismatch solve_batch!(
                 B(copy(x0_host)), S_sh, prob, Newton(), bad_ps)
-            @test_throws DimensionMismatch solve!(
+            @test_throws DimensionMismatch solve_batch!(
                 B(copy(x0_host)), prob, Newton(), bad_ps)
         end
     end
@@ -186,55 +186,57 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         S_bad = Vector{SolverStatus{Float64}}(undef, 3)
 
         # length(S) != length(X)
-        @test_throws DimensionMismatch solve!(copy(X), S_bad, prob, Newton(), p0)
+        @test_throws DimensionMismatch solve_batch!(copy(X), S_bad, prob, Newton(), p0)
 
         # S on another backend than X: a host S with a device X, and a device S with a host X
-        @test_throws ArgumentError solve!(JLArray(copy(X)), S_good, prob, Newton(), p0)
-        @test_throws ArgumentError solve!(copy(X), JLArray(S_good), prob, Newton(), p0)
+        @test_throws ArgumentError solve_batch!(
+            JLArray(copy(X)), S_good, prob, Newton(), p0)
+        @test_throws ArgumentError solve_batch!(
+            copy(X), JLArray(S_good), prob, Newton(), p0)
 
         # options !== nothing && !isempty(kwargs), with the message of `solve` and `init`
         opt = Options(Float64; max_iterations = 20)
         both = ArgumentError("pass either `options` or keyword arguments, not both")
-        @test_throws both solve!(
+        @test_throws both solve_batch!(
             copy(X), S_good, prob, Newton(), p0; options = opt, max_iterations = 10)
-        @test_throws both solve!(
+        @test_throws both solve_batch!(
             copy(X), prob, Newton(), p0; options = opt, max_iterations = 10)
 
         # length(order) != length(X)
-        @test_throws DimensionMismatch solve!(
+        @test_throws DimensionMismatch solve_batch!(
             copy(X), S_good, prob, Newton(), p0; order = [1])
-        @test_throws DimensionMismatch solve!(
+        @test_throws DimensionMismatch solve_batch!(
             copy(X), prob, Newton(), p0; order = [1, 2, 3])
 
         # order that is not a permutation of 1:length(X): a duplicate, an out-of-range index
-        @test_throws ArgumentError solve!(
+        @test_throws ArgumentError solve_batch!(
             copy(X), S_good, prob, Newton(), p0; order = [1, 1])
-        @test_throws ArgumentError solve!(
+        @test_throws ArgumentError solve_batch!(
             copy(X), prob, Newton(), p0; order = [1, 3])
 
         # Empty batch (length(X) == 0)
         X_empty = SVector{2, Float64}[]
         S_empty = SolverStatus{Float64}[]
-        @test solve!(X_empty, S_empty, prob, Newton(), p0) === S_empty
-        counts_empty = solve!(X_empty, prob, Newton(), p0)
+        @test solve_batch!(X_empty, S_empty, prob, Newton(), p0) === S_empty
+        counts_empty = solve_batch!(X_empty, prob, Newton(), p0)
         @test counts_empty === (SUCCESS = 0, STALLED = 0, MAXITERS = 0,
             SINGULAR = 0, NONFINITE = 0, LINESEARCH_FAILED = 0)
         @test isconverged(counts_empty) === true
 
         # Empty batch still validates S, PerSystem, order, and options+kwargs
-        @test_throws DimensionMismatch solve!(X_empty, S_good, prob, Newton(), p0)
-        @test_throws DimensionMismatch solve!(
+        @test_throws DimensionMismatch solve_batch!(X_empty, S_good, prob, Newton(), p0)
+        @test_throws DimensionMismatch solve_batch!(
             X_empty, S_empty, prob, Newton(), PerSystem([p0]))
-        @test_throws DimensionMismatch solve!(
+        @test_throws DimensionMismatch solve_batch!(
             X_empty, S_empty, prob, Newton(), p0; order = [1])
-        @test_throws ArgumentError solve!(
+        @test_throws ArgumentError solve_batch!(
             X_empty, S_empty, prob, Newton(), p0; options = opt, f_reltol = 1e-4)
 
         # Mismatched SolverStatus{R} vs real(eltype(eltype(X))) throws ArgumentError on empty and non-empty batch
         X_f32_empty = SVector{2, Float32}[]
-        @test_throws ArgumentError solve!(X_f32_empty, S_empty, prob, Newton(), p0)
+        @test_throws ArgumentError solve_batch!(X_f32_empty, S_empty, prob, Newton(), p0)
         X_f32 = [SVector(2.0f0, 1.0f0), SVector(1.5f0, 0.5f0)]
-        @test_throws ArgumentError solve!(X_f32, S_good, prob, Newton(), p0)
+        @test_throws ArgumentError solve_batch!(X_f32, S_good, prob, Newton(), p0)
 
         # isconverged on ReturnCodeCounts NamedTuple
         all_ok = (SUCCESS = 10, STALLED = 0, MAXITERS = 0, SINGULAR = 0,
@@ -297,7 +299,8 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                         S_dev = B(Vector{SolverStatus{R}}(undef, length(x0_host)))
                         P_dev = Adapt.adapt(B, PerSystem(copy(p_host)))
 
-                        ret_S = solve!(X_dev, S_dev, prob, m, P_dev; max_iterations = 150)
+                        ret_S = solve_batch!(
+                            X_dev, S_dev, prob, m, P_dev; max_iterations = 150)
                         @test ret_S === S_dev
 
                         X_h = Array(X_dev)
@@ -319,7 +322,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
 
                         # Count form
                         X_dev2 = B(copy(x0_host))
-                        counts = solve!(X_dev2, prob, m, P_dev; max_iterations = 150)
+                        counts = solve_batch!(X_dev2, prob, m, P_dev; max_iterations = 150)
                         @test Array(X_dev2) == ref_x
                         @test counts === (
                             SUCCESS = 4,
@@ -342,7 +345,8 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                         X_sing = B(copy(x0_sing))
                         S_sing = B(Vector{SolverStatus{R}}(undef, 4))
                         P_dev = Adapt.adapt(B, PerSystem(copy(p_host)))
-                        solve!(X_sing, S_sing, prob, Newton(), P_dev; max_iterations = 60)
+                        solve_batch!(
+                            X_sing, S_sing, prob, Newton(), P_dev; max_iterations = 60)
                         S_sing_h = Array(S_sing)
                         @test S_sing_h[2].code == SINGULAR
                         @test S_sing_h[1].code == SUCCESS
@@ -350,7 +354,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                         @test S_sing_h[4].code == SUCCESS
 
                         X_sing2 = B(copy(x0_sing))
-                        counts_sing = solve!(
+                        counts_sing = solve_batch!(
                             X_sing2, prob, Newton(), P_dev; max_iterations = 60)
                         @test counts_sing.SINGULAR == 1
                         @test counts_sing.SUCCESS == 3
@@ -372,7 +376,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                     s_X = B(copy(s_x0_host))
                     s_S = B(Vector{SolverStatus{R}}(undef, 4))
                     s_P = Adapt.adapt(B, PerSystem(copy(s_p_host)))
-                    solve!(s_X, s_S, scalar_prob, Newton(), s_P; max_iterations = 40)
+                    solve_batch!(s_X, s_S, scalar_prob, Newton(), s_P; max_iterations = 40)
                     @test Array(s_X) == s_ref_x
                     @test Array(s_S) == s_ref_st
                 end
@@ -410,10 +414,10 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
 
             # Options of another precision are an error, not a conversion
             opt_f64 = Options(Float64; f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
-            @test_throws ArgumentError solve!(
+            @test_throws ArgumentError solve_batch!(
                 X, S, prob_coupled, m_f64, p_coupled; options = opt_f64)
 
-            solve!(X, S, prob_coupled, m_f64, p_coupled; options = opt_r)
+            solve_batch!(X, S, prob_coupled, m_f64, p_coupled; options = opt_r)
             @test all(isconverged, Array(S))
             @test eltype(eltype(X)) === T
             @test eltype(S) === SolverStatus{Float32}
@@ -422,7 +426,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 SVector{2, T}(T(2.0f0), T(1.0f0)),
                 SVector{2, T}(T(1.5f0), T(0.8f0))
             ])
-            counts = solve!(
+            counts = solve_batch!(
                 X2, prob_coupled, m_f64, p_coupled;
                 f_abstol = 1e-5, f_reltol = 1e-5, max_iterations = 80)
             @test isconverged(counts)
@@ -436,7 +440,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 ])
                 S_bt = B(Vector{SolverStatus{Float32}}(undef, 2))
                 m_bt_f64 = Newton(; globalization = Backtracking())
-                solve!(X_bt, S_bt, prob_coupled, m_bt_f64, p_coupled; options = opt_r)
+                solve_batch!(X_bt, S_bt, prob_coupled, m_bt_f64, p_coupled; options = opt_r)
                 @test all(isconverged, Array(S_bt))
             end
         end
@@ -453,7 +457,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 P1 = Adapt.adapt(B, PerSystem(copy(codes_p)))
                 m = Newton(; globalization = Backtracking())
 
-                solve!(X1, S1, prob_het, m, P1; max_iterations = 3)
+                solve_batch!(X1, S1, prob_het, m, P1; max_iterations = 3)
                 S_host = Array(S1)
                 @test S_host[1].code == SUCCESS
                 @test S_host[2].code == STALLED
@@ -465,7 +469,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 @test S_host[8].code == MAXITERS
 
                 X2 = B(copy(x0))
-                counts = solve!(X2, prob_het, m, P1; max_iterations = 3)
+                counts = solve_batch!(X2, prob_het, m, P1; max_iterations = 3)
                 @test counts === (
                     SUCCESS = 2,
                     STALLED = 1,
@@ -495,20 +499,20 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 X_unord = B(copy(x0_vec))
                 S_unord = B(Vector{SolverStatus{Float64}}(undef, N))
                 P_dev = Adapt.adapt(B, PerSystem(copy(p_vec)))
-                solve!(X_unord, S_unord, prob, Newton(), P_dev)
+                solve_batch!(X_unord, S_unord, prob, Newton(), P_dev)
 
                 # (a) order = perm vs order = nothing on the same input arrays
                 X_ord = B(copy(x0_vec))
                 S_ord = B(Vector{SolverStatus{Float64}}(undef, N))
                 order_dev = B(copy(perm))
-                solve!(X_ord, S_ord, prob, Newton(), P_dev; order = order_dev)
+                solve_batch!(X_ord, S_ord, prob, Newton(), P_dev; order = order_dev)
                 @test Array(X_ord) == Array(X_unord)
                 @test Array(S_ord) == Array(S_unord)
 
                 # Host Vector{Int} order passed when X is on B (tests host-to-device adaptation)
                 X_ord_host = B(copy(x0_vec))
                 S_ord_host = B(Vector{SolverStatus{Float64}}(undef, N))
-                solve!(X_ord_host, S_ord_host, prob, Newton(), P_dev; order = perm)
+                solve_batch!(X_ord_host, S_ord_host, prob, Newton(), P_dev; order = perm)
                 @test Array(X_ord_host) == Array(X_unord)
                 @test Array(S_ord_host) == Array(S_unord)
 
@@ -517,12 +521,13 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                     for rng in (1:N, N:-1:1)
                         X_rng = B(copy(x0_vec))
                         S_rng = B(Vector{SolverStatus{Float64}}(undef, N))
-                        solve!(X_rng, S_rng, prob, Newton(), P_dev; order = rng)
+                        solve_batch!(X_rng, S_rng, prob, Newton(), P_dev; order = rng)
                         @test Array(X_rng) == Array(X_unord)
                         @test Array(S_rng) == Array(S_unord)
 
                         X_rng_cnt = B(copy(x0_vec))
-                        counts_rng = solve!(X_rng_cnt, prob, Newton(), P_dev; order = rng)
+                        counts_rng = solve_batch!(
+                            X_rng_cnt, prob, Newton(), P_dev; order = rng)
                         @test Array(X_rng_cnt) == Array(X_unord)
                         @test counts_rng.SUCCESS == N
                     end
@@ -530,7 +535,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                     perm_view = @view perm[1:N]
                     X_vw = B(copy(x0_vec))
                     S_vw = B(Vector{SolverStatus{Float64}}(undef, N))
-                    solve!(X_vw, S_vw, prob, Newton(), P_dev; order = perm_view)
+                    solve_batch!(X_vw, S_vw, prob, Newton(), P_dev; order = perm_view)
                     @test Array(X_vw) == Array(X_unord)
                     @test Array(S_vw) == Array(S_unord)
                 end
@@ -539,13 +544,13 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 X_perm_in = B(x0_vec[perm])
                 S_perm_in = B(Vector{SolverStatus{Float64}}(undef, N))
                 P_perm_in = Adapt.adapt(B, PerSystem(p_vec[perm]))
-                solve!(X_perm_in, S_perm_in, prob, Newton(), P_perm_in)
+                solve_batch!(X_perm_in, S_perm_in, prob, Newton(), P_perm_in)
                 @test Array(X_perm_in)[inv_perm] == Array(X_unord)
                 @test Array(S_perm_in)[inv_perm] == Array(S_unord)
 
                 # Count form with order
                 X_cnt = B(copy(x0_vec))
-                counts = solve!(X_cnt, prob, Newton(), P_dev; order = perm)
+                counts = solve_batch!(X_cnt, prob, Newton(), P_dev; order = perm)
                 @test Array(X_cnt) == Array(X_unord)
                 @test counts.SUCCESS == N
             end
@@ -556,12 +561,12 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         spy = SpyOrderVector(copy(perm), zeros(Int, N))
         X_spy = copy(x0_vec)
         S_spy = Vector{SolverStatus{Float64}}(undef, N)
-        solve!(X_spy, S_spy, prob, Newton(), PerSystem(copy(p_vec)); order = spy)
+        solve_batch!(X_spy, S_spy, prob, Newton(), PerSystem(copy(p_vec)); order = spy)
         @test spy.reads == fill(2, N)
 
         spy2 = SpyOrderVector(copy(perm), zeros(Int, N))
         X_spy2 = copy(x0_vec)
-        solve!(X_spy2, prob, Newton(), PerSystem(copy(p_vec)); order = spy2)
+        solve_batch!(X_spy2, prob, Newton(), PerSystem(copy(p_vec)); order = spy2)
         @test spy2.reads == fill(2, N)
     end
 
@@ -595,7 +600,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test_throws ArgumentError KernelAbstractions.get_backend(unread)
         @test_throws ArgumentError GeometricSolvers._adapt_order(
             KernelAbstractions.CPU(), unread)
-        @test_throws ArgumentError solve!(
+        @test_throws ArgumentError solve_batch!(
             [SVector(2.0, 1.0) for _ in 1:3], _r2_coupled_problem(), Newton(),
             SVector(2.125, 1.5); order = unread)
 
@@ -621,7 +626,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
             Nothing
         }
         )
-            bf = Base.bodyfunction(which(solve!, sig))
+            bf = Base.bodyfunction(which(solve_batch!, sig))
             ci = first(Base.code_lowered(bf))
             @test any(stmt -> stmt == GlobalRef(GeometricSolvers, :_launch!), ci.code)
         end
@@ -637,14 +642,14 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
 
         X = [nan_v, inf_v, sub_v, good_v]
         S = Vector{SolverStatus{Float64}}(undef, 4)
-        solve!(X, S, prob, Newton(), PerSystem(p_vec))
+        solve_batch!(X, S, prob, Newton(), PerSystem(p_vec))
         @test S[1].code == NONFINITE
         @test S[2].code == NONFINITE
         @test S[3].code == SUCCESS
         @test S[4].code == SUCCESS
 
         X2 = [nan_v, inf_v, sub_v, good_v]
-        counts = solve!(X2, prob, Newton(), PerSystem(p_vec))
+        counts = solve_batch!(X2, prob, Newton(), PerSystem(p_vec))
         @test counts.NONFINITE == 2
         @test counts.SUCCESS == 2
     end
@@ -670,8 +675,8 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
         @test (@inferred GeometricSolvers._tally_return_codes(codes)) === (
             SUCCESS = 1, STALLED = 0, MAXITERS = 1,
             SINGULAR = 1, NONFINITE = 0, LINESEARCH_FAILED = 0)
-        @test (@inferred solve!(copy(X), S, prob, Newton(), ps; options = opt)) === S
-        counts = @inferred solve!(copy(X), prob, Newton(), ps; options = opt)
+        @test (@inferred solve_batch!(copy(X), S, prob, Newton(), ps; options = opt)) === S
+        counts = @inferred solve_batch!(copy(X), prob, Newton(), ps; options = opt)
         @test (@inferred isconverged(counts)) === true
 
         # Allocation assertions via function barrier after warmup

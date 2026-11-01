@@ -31,7 +31,7 @@ const KNOWN_FALSE_POSITIVES = [
     (f = "ka_factorize_lu!",
         msg = "`ka_lu!(::AbstractMatrix, ::AbstractVector, ::Nothing)`",
         reason = "its one caller, `factorize!!` of a `DenseLU{<:AbstractGPUArray}`, " *
-                 "holds the `Int32` status vector that `init` gives a GPU array")
+                 "holds the `Int32` status vector that `dense_factor` gives a GPU array")
 ]
 
 # The name of the function of a report's innermost frame, with the `#name#n` of a keyword

@@ -112,21 +112,21 @@ function measure_row(
     end
     rate_cpu = n_sys / t_cpu
 
-    # 2. R2 solve! with Newton()
+    # 2. R2 solve_batch! with Newton()
     X0_dev = array_ctor(X0_host)
     X_dev = similar(X0_dev)
     S_dev = array_ctor(Vector{SolverStatus{R}}(undef, n_sys))
     P_dev = PerSystem(array_ctor(B_host))
     t_r2 = _best_time_s(; reps) do
         copyto!(X_dev, X0_dev)
-        solve!(X_dev, S_dev, prob, Newton(), P_dev; options = opt)
+        solve_batch!(X_dev, S_dev, prob, Newton(), P_dev; options = opt)
     end
     rate_r2 = n_sys / t_r2
 
-    # 3. R2 solve! with Newton(; reuse = 4)
+    # 3. R2 solve_batch! with Newton(; reuse = 4)
     t_reuse = _best_time_s(; reps) do
         copyto!(X_dev, X0_dev)
-        solve!(X_dev, S_dev, prob, Newton(; reuse = 4), P_dev; options = opt)
+        solve_batch!(X_dev, S_dev, prob, Newton(; reuse = 4), P_dev; options = opt)
     end
     rate_reuse = n_sys / t_reuse
 

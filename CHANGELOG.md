@@ -20,8 +20,13 @@ so that a compat-only bump can be told apart from an interface change.
   `SINGULAR`, so `Newton(; linsolve = SVDFactorization())` no longer stops after one iteration with
   `SINGULAR` on an `SVector`. A host `DenseSVD` refuses a matrix with an `Inf` or `NaN` entry
   before `gesvd` and reports `info = 1` and `SINGULAR`, where an `Inf` gave `SUCCESS` with `NaN`
-  singular values; a finite matrix whose singular value overflows in `gesvd` reports `info = 1`
-  too.
+  singular values. A host `DenseSVD` divides every matrix by a power of two before `gesvd`, as a
+  static or device SVD does, and takes its status and rank from the singular values of the scaled
+  matrix. A finite matrix near `floatmax`, such as a 4×4 matrix of `floatmax(T) / 2`, gives
+  `info == 0`, `SUCCESS`, rank 1 and a finite step, as an `SMatrix` and a `JLArray` do, where it
+  gave `info = 1` and `SINGULAR`. The field `S` holds the singular values of the matrix itself,
+  which overflow to `Inf` above `floatmax` without failing the factor. A matrix rounded to the
+  subnormal range gets the same rank on the host as on the static and device routes.
   `GeometricSolvers.exact_solve(fac)` is `false` for an SVD factor of rank below `n`, and `Newton`
   then measures the slope of its step (`MeasuredSlope()`) in place of `−2φ(0)`. With `DogLeg`, a
   Newton step of zero norm is no Newton step: a zero Jacobian returns `STALLED` with the iterate
@@ -45,14 +50,42 @@ so that a compat-only bump can be told apart from an interface change.
   precompile block of `src/linear/ka/svd.jl` are removed, and the device SVD accumulates in its own
   element type. The `Float16` SVD tests go with them; the `Float16` tests of generic code stay.
 
-- **The dense LU calls `LAPACK.getrf!`**, and the package's own `getrf!` wrapper is removed. `init`
-  sizes the host QR and SVD workspaces by a workspace query of `geqrf` and `gesvd` in place of the
-  fixed `64n` and `128n`.
+- **The dense LU calls `LAPACK.getrf!`**, and the package's own `getrf!` wrapper is removed.
+  `GeometricSolvers.dense_factor` sizes the host QR and SVD workspaces by a workspace query of
+  `geqrf` and `gesvd` in place of the fixed `64n` and `128n`.
+
+- **`init`, `solve!` and `solve` are CommonSolve.jl's functions, and `solve!(init(…))` returns what
+  `solve(…)` returns** (decision 49 of the design). CommonSolve is a
+  new dependency (`[compat] CommonSolve = "0.2"`). The package imports and extends
+  `CommonSolve.init`, `CommonSolve.solve` and `CommonSolve.solve!` and exports them as before, so a
+  caller reaches this package through the same three names as another CommonSolve package. This
+  holds for every iterate `solve` takes: an array, including a GPU array, an `SVector`, an
+  `MVector` or a `Number`. `init(prob, x₀, method, p = nothing; options, kwargs...)` takes the
+  arguments of `solve`. It holds a copy of an array `x₀`, so neither `init` nor `solve!(solver)`
+  mutates `x₀`, and it holds a `StaticArray` or a `Number` `x₀` and `p` themselves.
+  `solve!(solver)` and `solve!(solver, x, p = solver.p)` return `(solver.x, status)`, as `solve`
+  returns `(x, status)`. `solve!(solver, x, p)` stores `x` and `p` in the fields `solver.x` and
+  `solver.p` and solves from `x`: an array `x` receives the solution in place and stays in
+  `solver.x`, and a value iterate is replaced in `solver.x` by the solution. It raises an
+  `ArgumentError` for an `x` whose element type or length differs from the iterate given to `init`,
+  and for an `x` of another type or a `p` of another type than those given to `init`, because the
+  fields `x::X` and `p::Q` have the concrete types of the first ones; a refused call changes
+  nothing. `NonlinearSolver` gains the type parameters `X <: Union{AbstractVector{T}, T}` and `Q`,
+  and its constructor takes `p` as a sixth argument. `solve!(solver)` allocates nothing on an
+  `Array` after one warm-up call.
+  The batched R2 in-place solve is `solve_batch!` (exported), in two forms:
+  `solve_batch!(X, S, prob, method, p = nothing; ...)` and
+  `solve_batch!(X, prob, method, p = nothing; ...)`. The dense factor builders for
+  `LUFactorization`, `QRFactorization` and `SVDFactorization` are `GeometricSolvers.dense_factor`,
+  not exported. With these names apart from CommonSolve's, the package extends `CommonSolve.init`
+  only on `NonlinearProblem` and `CommonSolve.solve!` only on `NonlinearSolver`. The R3 call form
+  `solve!(x, solver, p)` is removed, with no deprecation, because the package is not registered.
 
 - **Each nonlinear method has one state type, and the loop has two hooks** (decision 47 of the
   design). The state builder of a method is now `GeometricSolvers.init_state(method, prob, x, p)`,
-  with four positional arguments, in place of `init(method, prob, x, p = nothing)`; `init` keeps
-  the solver (`init(prob, x, method, p; ...)`) and the linear factor. `init_state` returns a
+  with four positional arguments, in place of `init(method, prob, x, p = nothing)`; `init` builds
+  the solver (`init(prob, x, method, p; ...)`), and the linear factor is built by
+  `GeometricSolvers.dense_factor`. `init_state` returns a
   `NewtonState` or a `PicardState`, not a `NamedTuple`, and for an `SVector` or a `Number` it is
   `isbits` and allocates nothing. `Newton`'s reuse age and stalled flag, and `DogLeg`'s radius
   and its initial radius, are its field `rule`: `state.rule.age`, `state.rule.radius`.
@@ -98,16 +131,16 @@ so that a compat-only bump can be told apart from an interface change.
   regenerated `test/verification/standard_reference.csv` equals the old one.
 
 - **A solve takes only an `Options{R}` for `R = real(eltype(x₀))`, and raises an `ArgumentError`
-  for any other.** `solve`, `init`, both batched `solve!` methods and `solve!!` check it; there is
+  for any other.** `solve`, `init`, both batched `solve_batch!` methods and `solve!!` check it; there is
   no `convert` between `Options` of different `R`. The `Float64` defaults `f_reltol = √eps(Float64)`
   and `x_reltol = 2 eps(Float64)` lie below `eps(Float32)`, so a `Float32` solve could not reach
   them: with `Options(Float64)` converted, `x² − 2` from 1000 starts in `[1, 3]` returned `STALLED`
   from 366, and with `Options(Float32)` it returned `SUCCESS` from all 1000. A `Float32` problem
-  takes `Options(Float32; …)` or keyword tolerances. `solve`, `init` and both batched `solve!`
+  takes `Options(Float32; …)` or keyword tolerances. `solve`, `init` and both batched `solve_batch!`
   methods resolve `options` and keywords in one function, with one message when both are passed:
   "pass either `options` or keyword arguments, not both".
 
-- The batched `solve!` runs one kernel for both forms, waits for it with
+- The batched `solve_batch!` runs one kernel for both forms, waits for it with
   `isgpu(backend) && synchronize(backend)` as the KA factorisations do, counts the return codes
   over `instances(ReturnCode)`, and calls `get_backend` on an `order` without catching its error:
   an `order` whose backend cannot be read raises, where it fell back to the CPU, and an `order` on a
@@ -541,7 +574,7 @@ so that a compat-only bump can be told apart from an interface change.
   `LINESEARCH_FAILED` at `√(2/3)`, the local minimum of `|F|`: the root lies beyond a local maximum
   of `|F|` above `|F(0)|`, so no path along which `|F|` decreases reaches it.
 
-- Internal: R3 dense CPU linear solvers and mixed-precision solve. `init(m, prob, x, p)`
+- Internal: R3 dense CPU linear solvers and mixed-precision solve. `GeometricSolvers.dense_factor(m, prob, x, p)`
   pre-allocates `DenseLU`, `DenseQR` or `DenseSVD` for an `AbstractVector` state `x` of element type
   `T = eltype(x)`, with factor precision `TF = factor_eltype(m, T)` and a right-hand-side conversion
   buffer `rhs` when `TF !== T`. On `BlasFloat` (`Float32`, `Float64`, `ComplexF32`,
@@ -565,7 +598,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 - Internal: R3 dense `KernelAbstractions` linear solvers on `AbstractGPUArray`
   (`src/linear/ka/lu.jl` and `src/linear/ka/qr.jl`). For a device vector iterate `x isa
-  AbstractGPUArray`, `init(m, prob, x, p)` builds `DenseLU` or `DenseQR` with `Int32` pivot and
+  AbstractGPUArray`, `GeometricSolvers.dense_factor(m, prob, x, p)` builds `DenseLU` or `DenseQR` with `Int32` pivot and
   status buffers on the same device (`similar(x, Int32, n)` and `similar(x, Int32, 1)`), and
   `factorize!!` and `ldiv!!` run column-stepped `KernelAbstractions` kernels in place of the host
   `LAPACK` / `LinearAlgebra` methods, with zero host scalar indexing
@@ -581,7 +614,7 @@ so that a compat-only bump can be told apart from an interface change.
   broadcasts without host scalar indexing. The public `solve` does not reach these kernels: its
   `init` for `Newton` builds no dense factor from the iterate, and its step factorises with
   `nothing`, which has methods for static matrices only. The device path is reached only through
-  the internal `init`, `factorize!!` and `ldiv!!`, which a device-resident R3 `solve` would call.
+  the internal `dense_factor`, `factorize!!` and `ldiv!!`, which a device-resident R3 `solve` would call.
   `norm2(a)` and `rdot(a, b)` call `sum` without an `init` keyword (`isempty(a) ? zero(R) :
   R(sum(...))`), so `Array` and `Broadcasted` reductions use Base's pairwise `_mapreduce` rather
   than sequential `mapfoldl_impl`. `scripts/spikes/metal_reductions/run.jl` measures `norm2` and
@@ -590,25 +623,25 @@ so that a compat-only bump can be told apart from an interface change.
   `⌈log₂(n)⌉ · eps(Float32)` pairwise tree-reduction bound (`20`, `24` and `27 · eps(Float32)`),
   so no custom `KernelAbstractions` reduction kernel is needed.
 
-- `PerSystem` and `solve!` (exported), together with the internal `GeometricSolvers.parameters`,
+- `PerSystem` and `solve_batch!` (exported), together with the internal `GeometricSolvers.parameters`,
   run the R1 nonlinear solver loop across a batch of independent small systems in place on
   `get_backend(X)` through KernelAbstractions, one work-item per system. `PerSystem(data)` wraps an
   indexable collection of per-system parameters so system `i` receives `data[i]`; any parameter
   value not wrapped in `PerSystem` (including a plain `AbstractVector`, `Tuple` or `SVector`) is
   shared unchanged across every system, and `Adapt.@adapt_structure PerSystem` adapts `PerSystem`
   to device arrays.
-  `solve!(X, S, prob, method, p = nothing; order = nothing, options = nothing, kwargs...) -> S`
+  `solve_batch!(X, S, prob, method, p = nothing; order = nothing, options = nothing, kwargs...) -> S`
   writes each system's `SolverStatus{R}` into `S[idx]` and returns `S`, raising `ArgumentError`
   when `R !== real(eltype(eltype(X)))`, or when `get_backend(S) != get_backend(X)`: a host `S` with
   a device `X`, or a device `S` with a host `X`, is refused, so no kernel writes a status into a
   host `S`.
-  `solve!(X, prob, method, p = nothing; order = nothing, options = nothing, kwargs...)` allocates a
+  `solve_batch!(X, prob, method, p = nothing; order = nothing, options = nothing, kwargs...)` allocates a
   1-byte-per-system `ReturnCode` buffer on `get_backend(X)`, copies the codes once to the host
   after `synchronize(backend)`, and returns the six outcome counts as a `NamedTuple`
   `(; SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED)`, for which
   `GeometricSolvers.isconverged(counts)` returns `counts.SUCCESS == sum(counts)`. On the host,
-  `solve!` adapts `method` with `Adapt.adapt(ToReal{R}(), method)`, converts or constructs
-  `Options{R}`, and builds `state₀ = init(m, prob, zero(eltype(X)), nothing)` once by value so
+  `solve_batch!` adapts `method` with `Adapt.adapt(ToReal{R}(), method)`, converts or constructs
+  `Options{R}`, and builds `state₀ = init_state(m, prob, zero(eltype(X)), nothing)` once by value so
   `Newton(; reuse = k)` carries its chord factor across steps inside each work-item. When `order`
   is a permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; an `isbits` range
   is passed by value, and a non-`isbits` host `order` vector passed with a device `X` is copied to
@@ -616,7 +649,7 @@ so that a compat-only bump can be told apart from an interface change.
   `DimensionMismatch`. An `order` of the right length that repeats an index or holds one outside
   `1:length(X)` raises `ArgumentError`; the check reads a device `order` on the host, one copy per
   call. Passing both `options` and keyword tolerances also raises `ArgumentError`.
-  `scripts/r2_throughput.jl` benchmarks R2 `solve!` (`Newton()` and `Newton(; reuse = 4)`) against
+  `scripts/r2_throughput.jl` benchmarks R2 `solve_batch!` (`Newton()` and `Newton(; reuse = 4)`) against
   a threaded CPU R1 loop and reports the R4 crossover dimension `n`.
   `KernelAbstractions` (0.9.15 or later, the first release whose compat admits Adapt 4) is now a
   direct dependency of the package.
@@ -625,20 +658,21 @@ so that a compat-only bump can be told apart from an interface change.
   `Picard` in R3 on an `AbstractVector` iterate (`Array` and device arrays), sharing `solve!!` and
   `step!!` with R1 through the storage seam. `init(prob, x, method, p = nothing; options, kwargs...)`
   adapts `method` to `R = real(eltype(x))` and builds a `NonlinearSolver` holding `prob`, the
-  adapted `method`, `Options{R}`, the element type and length of `x`, and the pre-allocated
-  workspace state without mutating `x`. A
-  `StaticArray` `x` raises `ArgumentError`, because `solve!` cannot write the solution into it;
-  `solve` takes one. In R3,
-  `Newton` holds its factorisation buffer in `state.fac` (`init(m.linsolve, prob, x, p)`), aliases
+  adapted `method`, `Options{R}`, the iterate `x` and the parameters `p` (a copy of `x` when `x` is an
+  array, `x` itself when it is a `StaticArray` or a `Number`), and the pre-allocated workspace state,
+  without mutating `x`. In R3,
+  `Newton` holds its factorisation buffer in `state.fac`
+  (`GeometricSolvers.dense_factor(m.linsolve, prob, x, p)`), aliases
   `state.J` to `state.fac.factors` when `!(m.globalization isa DogLeg)` and
   `factor_eltype(m.linsolve, eltype(x)) === eltype(x)`, and allocates a separate `n × n` Jacobian
   buffer `state.J` when `m.globalization isa DogLeg` or the factor and working element types differ.
-  `solve!(x, solver, p = nothing)` resets per-solve scalar state (`age = Int32(0)` and
+  `solve!(solver, x, p = solver.p)` resets per-solve scalar state (`age = Int32(0)` and
   `stalled = false` for `Newton` with `reuse`, and `radius = radius₀` for `Newton` with `DogLeg`),
-  mutates `x` in place and returns `SolverStatus{R}` with zero steady-state heap allocations on
-  `Array` once `solver` is built. An `x` whose element type or length differs from the template
-  given to `init` raises `ArgumentError` before any evaluation. The solver does not keep the `p`
-  of `init`, so `solve!(x, solver)` solves with `p = nothing`.
+  stores `x` and `p` in `solver.x` and `solver.p`, solves from `x`, and returns `(solver.x, status)`,
+  with zero steady-state heap allocations on `Array` once `solver` is built. An `x` whose element
+  type or length differs from the template given to `init` raises `ArgumentError` before any
+  evaluation. `solve!(solver)` solves with the `x` and `p` held by `solver`, and the solver keeps the
+  `p` of `init` in `solver.p`.
   `solve(prob, x₀, method, p = nothing; options, kwargs...)` copies `x₀` when `x₀` is not a
   `StaticArray` or a `Number`, so `x₀` is never mutated.
   The internal storage seam (`src/base/bang.jl`) adds the array methods of `buffer`, `residual!!`,
@@ -665,7 +699,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 - Internal: R3 device `KernelAbstractions` `SVDFactorization` on `AbstractGPUArray`
   (`src/linear/ka/svd.jl`). For a device vector iterate `x isa AbstractGPUArray`,
-  `init(m::SVDFactorization, prob, x, p)` allocates `fac.work = similar(x, Int32, 1)` (the
+  `GeometricSolvers.dense_factor(m::SVDFactorization, prob, x, p)` allocates `fac.work = similar(x, Int32, 1)` (the
   per-sweep rotation-flag buffer) and `fac.rwork = similar(x, real(F), n)` (column norms squared
   during the sweep, and the sorted scaled singular values `σ̂` of `J / 2^e` after it).
   `factorize!!` prescales `J` unconditionally by `2^-e` (`e = matrix_exponent(J)`) into `fac.U`

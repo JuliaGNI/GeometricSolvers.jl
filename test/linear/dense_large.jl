@@ -1,5 +1,5 @@
 using GeometricSolvers
-using GeometricSolvers: factorize!!, init, ldiv!!, returncode
+using GeometricSolvers: factorize!!, dense_factor, ldiv!!, returncode
 using LinearAlgebra: BLAS, LAPACK, opnorm
 using Random: Xoshiro
 using Test
@@ -32,7 +32,7 @@ include("../helpers/matrix.jl")
             x0 = zeros(T, n)
             d = similar(b)
 
-            fac_lu = init(LUFactorization(), nothing, x0, nothing)
+            fac_lu = dense_factor(LUFactorization(), nothing, x0, nothing)
             copyto!(fac_lu.factors, A)
             fac_lu = factorize!!(fac_lu, LUFactorization(), fac_lu.factors)
             @test returncode(fac_lu) === SUCCESS
@@ -41,7 +41,7 @@ include("../helpers/matrix.jl")
                      maximum(abs, Float64.(x_ref))
             @test err_lu <= bnd
 
-            fac_qr = init(QRFactorization(), nothing, x0, nothing)
+            fac_qr = dense_factor(QRFactorization(), nothing, x0, nothing)
             copyto!(fac_qr.factors, A)
             fac_qr = factorize!!(fac_qr, QRFactorization(), fac_qr.factors)
             @test returncode(fac_qr) === SUCCESS

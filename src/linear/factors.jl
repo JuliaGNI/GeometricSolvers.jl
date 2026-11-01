@@ -27,13 +27,14 @@ only where the sweep did not converge or a singular value is not finite, and `ra
 SVD is prescaled at the working precision too, because the sweep squares the entries.
 
 For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
-built by [`init`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
+built by [`dense_factor`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
-place; `J === fac.factors` is factorised as it is. On a device [`DenseSVD`](@ref), `J` is divided
-by `2^e` unconditionally into `fac.U` before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
+place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) divides `J` by `2^e`
+unconditionally, `J === fac.factors` too: into `fac.factors` on the host before `gesvd`, and into
+`fac.U` on a device before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
 `info` is `1` on the host where `J` has a non-finite entry, which is refused before `gesvd` and
 leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
-singular value overflows to a value that is not finite; on a device it is `1` where the Jacobi
+singular value of `J / 2^e` is not finite; on a device it is `1` where the Jacobi
 sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
 numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD then
 reports `SINGULAR`, and the step that the LU or QR factors give is not specified.
@@ -50,7 +51,11 @@ Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element typ
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
-type of `r` is the element type of the factors, the solve runs directly in it. Where they differ,
+type of `r` is the element type of the factors, the solve runs directly in it. There `r` is not
+scaled, unlike in the mixed-type path below: the step overflows on every route where the solution
+itself exceeds `floatmax`, and the QR and SVD solves, which form `Qᴴ r` or `Uᴴ r` first, can also
+overflow for a finite `r` near `floatmax` whose solution is representable, while the LU solve
+forms no such product. Where they differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
@@ -179,16 +184,18 @@ end
 
 The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` matrix, with
 `factors` the `n × n` Jacobian buffer in the factor element type (which holds `V` during the
-device Jacobi sweep), `U` and `VT` the `n × n` unitary factors, `S` the vector of singular values
-in the real factor type, `work` (the LAPACK workspace on the host, and the 1-element `Int32`
-rotation-flag buffer on a device), `rwork` (the real LAPACK workspace on the host, and the
-length-`n` scaled singular-value vector `σ̂` on a device) and `tmp` the workspace buffers, `rhs`
+device Jacobi sweep), `U` and `VT` the `n × n` unitary factors, `S` the vector of the singular
+values `σ̂ · 2^e` of the matrix in the real factor type, which overflow to `Inf` where they exceed
+`floatmax`, `work` (the LAPACK workspace on the host, and the 1-element `Int32` rotation-flag
+buffer on a device), `rwork` (the real LAPACK workspace during `gesvd` on the host, and the
+singular values `σ̂` of the matrix divided by `2^e` in its first `n` entries, on the host after
+`gesvd` and on a device after the sweep) and `tmp` the workspace buffers, `rhs`
 the right-hand-side buffer of the factor element type when that differs from the working element
 type and `nothing` otherwise, `info` `1` where the host matrix has a non-finite entry, which is
-refused before `gesvd`, `gesvd`'s non-convergence code, `1` where a host singular value overflows
-to a value that is not finite or the device Jacobi sweep reaches its sweep cap without converging
+refused before `gesvd`, `gesvd`'s non-convergence code, `1` where a host `σ̂` is not finite or the
+device Jacobi sweep reaches its sweep cap without converging
 or meets a non-finite entry, or `0`, `rank` the number of singular values above
-the cutoff `√n · eps(real(TF)) · S[1]`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent
+the cutoff `√n · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent
 `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
@@ -208,12 +215,12 @@ struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
 end
 
 """
-    init(method::LinearMethod, prob, x::AbstractVector, p)
+    dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
 Build the dense factor [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) of `method` for
 the state vector `x`.
 """
-function init(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -223,7 +230,7 @@ function init(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     return DenseLU(factors, ipiv, rhs, 0, 0, status)
 end
 
-function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -234,7 +241,8 @@ function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end
 
-function init(m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(
+        m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)
@@ -243,7 +251,7 @@ function init(m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Nu
     S = similar(x, R, n)
     VT = similar(x, F, n, n)
     rwork = x isa AbstractGPUArray ? similar(x, R, n) :
-            similar(x, R, F <: Complex ? max(1, 5 * n) : 0)
+            similar(x, R, F <: Complex ? max(1, 5 * n) : n)
     work = x isa AbstractGPUArray ? similar(x, Int32, 1) :
            similar(x, F, svd_work_length(factors, S, U, VT, rwork))
     tmp = similar(x, F, n)

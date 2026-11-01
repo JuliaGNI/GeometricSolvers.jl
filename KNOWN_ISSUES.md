@@ -53,17 +53,23 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K19 · The host SVD of a matrix near the ends of the exponent range gives another rank and status than the static and device SVDs
+### K21 · The same-type QR and SVD solves overflow for a finite right-hand side near `floatmax` whose solution is representable
 
-- **location:** `src/linear/dense.jl` (`factorize!!` for `DenseSVD`)
-- **evidence:** The host `DenseSVD` passes a `J` of its own element type to `gesvd` without the
-  power-of-two scaling that the static and device SVDs apply. The rank-2 integer matrix
-  `rank_r(T, 4, 2)`, scaled so that its largest entry is 64 subnormal units, gives `rank == 3` on
-  an `Array` and `rank == 4` on an `SMatrix` and a `JLArray`, with `info == 0` on all three; the
-  rank-1 matrix `rank_r(T, 4, 1)`, scaled so that its largest entry is `floatmax(T) / 2`, gives
-  `info == 1`, `SINGULAR` and `rank == 0` on an `Array`, where `gesvd` overflows, and `rank == 1`
-  with `info == 0` on an `SMatrix` and a `JLArray`. Both hold in `Float32` and `Float64` (Julia
-  1.13.3, M4 Max). The tests of the rank use integer entries below 400 in modulus, where the three
-  routes agree.
-- **kind:** found late
-- **found:** 2026-11-01
+- **location:** `src/linear/factors.jl` (`ldiv!!`, the path where `r` has the factor element type)
+- **evidence:** With `J = I + H`, `H` the 4 × 4 Hilbert matrix, and
+  `b = fill(T(0.75) * floatmax(T), 4)`, the step of `ldiv!!` with `SVDFactorization()` or
+  `QRFactorization()` is not finite on an `SMatrix`, an `Array` and a `JLArray`, in `Float32` and
+  `Float64`, although `big.(J) \ big.(b)` is below `floatmax(T)`; `LUFactorization()` gives a
+  finite step there. `J = ones(T, 4, 4)` with
+  the same `b` gives the same for the SVD, whose minimum-norm solution is `0.75 · floatmax / 4`
+  in every entry. The same-type path does not scale `r`, and the QR and SVD solves form `Qᴴ r` or
+  `Uᴴ r` before they divide, so a sum of entries near `floatmax` overflows; the mixed-type path
+  divides `r` by `maximum(abs, r)` first. One `Float32` instance differs between the routes:
+  `J = fill(floatmax(Float32) / 2, 4, 4)` with `b = fill(floatmax(Float32) / 2, 4)`, whose
+  minimum-norm solution is `0.25` in every entry, gives a non-finite step on an `Array` and a
+  finite one on an `SMatrix` and a `JLArray`. Measured at 677ea03 (Julia 1.13.3, M4 Max). The QR
+  solve is not changed by PR #46, so the defect is probably older than PR #46; it was not measured
+  on `main`. The planned fix scales `r` by an exact power of two inside the same-type `ldiv!!` and
+  multiplies the step by its inverse with the `2^-e` of the factor, in a follow-up pull request.
+- **kind:** defect
+- **found:** PR #46

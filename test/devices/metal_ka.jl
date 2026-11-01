@@ -6,7 +6,8 @@ using Test
 
 using GeometricSolvers
 using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
-using GeometricSolvers: backsolve!, factorize!!, init, jacobi_tolerance, ldiv!!, returncode
+using GeometricSolvers: backsolve!, factorize!!, dense_factor, jacobi_tolerance, ldiv!!,
+                        returncode
 
 include("../helpers/matrix.jl")
 include("../helpers/metal_device.jl")
@@ -53,7 +54,7 @@ if Metal.functional() && !on_virtual_gpu()
 
                 x_cpu_init = zeros(T, n)
                 prob_cpu = NonlinearProblem(x_cpu_init, metal_noop)
-                fac_cpu = init(m, prob_cpu, x_cpu_init, nothing)
+                fac_cpu = dense_factor(m, prob_cpu, x_cpu_init, nothing)
                 copyto!(fac_cpu.factors, A_cpu)
                 fac_cpu = factorize!!(fac_cpu, m, fac_cpu.factors)
                 @test fac_cpu.info == 0
@@ -62,7 +63,7 @@ if Metal.functional() && !on_virtual_gpu()
                 x_dev = MtlArray(zeros(T, n))
                 b_dev = MtlArray(b_cpu)
                 prob_dev = NonlinearProblem(x_dev, metal_noop)
-                fac_dev = init(m, prob_dev, x_dev, nothing)
+                fac_dev = dense_factor(m, prob_dev, x_dev, nothing)
                 copyto!(fac_dev.factors, MtlArray(A_cpu))
                 fac_dev = factorize!!(fac_dev, m, fac_dev.factors)
                 @test fac_dev.info == 0
@@ -90,7 +91,7 @@ if Metal.functional() && !on_virtual_gpu()
 
             x_cpu_init = zeros(T, n)
             prob_cpu = NonlinearProblem(x_cpu_init, metal_noop)
-            fac_cpu = init(m, prob_cpu, x_cpu_init, nothing)
+            fac_cpu = dense_factor(m, prob_cpu, x_cpu_init, nothing)
             copyto!(fac_cpu.factors, A_cpu)
             fac_cpu = factorize!!(fac_cpu, m, fac_cpu.factors)
             @test fac_cpu.info == 0
@@ -99,7 +100,7 @@ if Metal.functional() && !on_virtual_gpu()
             x_dev = MtlArray(zeros(T, n))
             b_dev = MtlArray(b_cpu)
             prob_dev = NonlinearProblem(x_dev, metal_noop)
-            fac_dev = init(m, prob_dev, x_dev, nothing)
+            fac_dev = dense_factor(m, prob_dev, x_dev, nothing)
             copyto!(fac_dev.factors, MtlArray(A_cpu))
             fac_dev = factorize!!(fac_dev, m, fac_dev.factors)
             @test fac_dev.info == 0
@@ -130,12 +131,12 @@ if Metal.functional() && !on_virtual_gpu()
             A_cpu, b_cpu = metal_well_conditioned(T, n, 0x2222 + n)
             x1 = MtlArray(zeros(T, n))
             prob1 = NonlinearProblem(x1, metal_noop)
-            fac1 = factorize!!(init(m, prob1, x1, nothing), m, MtlArray(A_cpu))
+            fac1 = factorize!!(dense_factor(m, prob1, x1, nothing), m, MtlArray(A_cpu))
             d1 = ldiv!!(similar(x1), fac1, MtlArray(b_cpu))
 
             x2 = MtlArray(zeros(T, n))
             prob2 = NonlinearProblem(x2, metal_noop)
-            fac2 = factorize!!(init(m, prob2, x2, nothing), m, MtlArray(A_cpu))
+            fac2 = factorize!!(dense_factor(m, prob2, x2, nothing), m, MtlArray(A_cpu))
             d2 = ldiv!!(similar(x2), fac2, MtlArray(b_cpu))
 
             @test fac1.info == 0
@@ -152,8 +153,8 @@ if Metal.functional() && !on_virtual_gpu()
         A_sub = ldexp(1.0f0, E) .* B_cpu
         x4 = MtlArray(zeros(T, 4))
         prob4 = NonlinearProblem(x4, metal_noop)
-        fac_sub = factorize!!(init(m, prob4, x4, nothing), m, MtlArray(A_sub))
-        fac_ref = factorize!!(init(m, prob4, x4, nothing), m, MtlArray(B_cpu))
+        fac_sub = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_sub))
+        fac_ref = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(B_cpu))
         @test fac_sub.info == 0
         @test Array(fac_sub.U) == Array(fac_ref.U)
         @test Array(fac_sub.VT) == Array(fac_ref.VT)
@@ -165,7 +166,7 @@ if Metal.functional() && !on_virtual_gpu()
         b_hi = fill(T(0.25f0 * floatmax(Float32)), 4)
         x_hi_ref = fill(2.0 / 17.0, 4)
         κ_hi = 17.0
-        fac_hi = factorize!!(init(m, prob4, x4, nothing), m, MtlArray(A_hi))
+        fac_hi = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_hi))
         @test fac_hi.info == 0
         @test !isfinite(Array(fac_hi.S)[1])
         @test all(isfinite, Array(fac_hi.rwork))
@@ -181,7 +182,7 @@ if Metal.functional() && !on_virtual_gpu()
         prob16 = NonlinearProblem(x16, metal_noop)
         for r in (5, 1, 0)
             A_rk = metal_rank_deficient(100r + n16, T, n16, r)
-            fac_rk = factorize!!(init(m, prob16, x16, nothing), m, MtlArray(A_rk))
+            fac_rk = factorize!!(dense_factor(m, prob16, x16, nothing), m, MtlArray(A_rk))
             @test fac_rk.info == 0
             @test returncode(fac_rk) === SUCCESS
             S_rk = Array(fac_rk.S)
@@ -208,7 +209,7 @@ if Metal.functional() && !on_virtual_gpu()
         A_neg = Matrix{T}(I, 4, 4)
         A_neg[4, 4] = zero(T)
         A_neg[1, 4] = T(ε32)
-        fac_neg = factorize!!(init(m, prob4, x4, nothing), m, MtlArray(A_neg))
+        fac_neg = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_neg))
         @test fac_neg.info == 0
         @test Array(fac_neg.S)[4] == ε32
         @test all(iszero, Array(fac_neg.U)[:, 4])
@@ -218,7 +219,7 @@ if Metal.functional() && !on_virtual_gpu()
         A_neg16 = Matrix{T}(I, n16, n16)
         A_neg16[n16, n16] = zero(T)
         A_neg16[1, n16] = T(ε16)
-        fac_neg16 = factorize!!(init(m, prob16, x16, nothing), m, MtlArray(A_neg16))
+        fac_neg16 = factorize!!(dense_factor(m, prob16, x16, nothing), m, MtlArray(A_neg16))
         @test fac_neg16.info == 0
         @test Array(fac_neg16.S)[n16] == ε16
         @test all(iszero, Array(fac_neg16.U)[:, n16])
@@ -228,19 +229,19 @@ if Metal.functional() && !on_virtual_gpu()
         x1 = MtlArray(zeros(T, 1))
         prob1 = NonlinearProblem(x1, metal_noop)
         fac_nan1 = factorize!!(
-            init(m, prob1, x1, nothing), m, MtlArray(fill(T(NaN32), 1, 1)))
+            dense_factor(m, prob1, x1, nothing), m, MtlArray(fill(T(NaN32), 1, 1)))
         @test fac_nan1.info == 1
         @test returncode(fac_nan1) === SINGULAR
 
         A_nan = fill(T(NaN32), 4, 4)
-        fac_nan = factorize!!(init(m, prob4, x4, nothing), m, MtlArray(A_nan))
+        fac_nan = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_nan))
         @test fac_nan.info == 1
         @test returncode(fac_nan) === SINGULAR
 
         x2 = MtlArray(zeros(T, 2))
         prob2 = NonlinearProblem(x2, metal_noop)
         A_part = T[zero(T) T(NaN32); zero(T) zero(T)]
-        fac_part = factorize!!(init(m, prob2, x2, nothing), m, MtlArray(A_part))
+        fac_part = factorize!!(dense_factor(m, prob2, x2, nothing), m, MtlArray(A_part))
         @test fac_part.info == 1
         @test returncode(fac_part) === SINGULAR
 
@@ -272,7 +273,7 @@ if Metal.functional() && !on_virtual_gpu()
 
             x_dev = MtlArray(zeros(T, n))
             prob = NonlinearProblem(x_dev, metal_noop)
-            fac = init(m, prob, x_dev, nothing)
+            fac = dense_factor(m, prob, x_dev, nothing)
             copyto!(fac.factors, MtlArray(A_tiny))
             fac = factorize!!(fac, m, fac.factors)
             @test fac.info == 0
@@ -285,14 +286,14 @@ if Metal.functional() && !on_virtual_gpu()
             A0[:, 1] .*= 1.0f20
             x4 = MtlArray(zeros(T, 4))
             prob4 = NonlinearProblem(x4, metal_noop)
-            fac_sc = init(m, prob4, x4, nothing)
+            fac_sc = dense_factor(m, prob4, x4, nothing)
             copyto!(fac_sc.factors, MtlArray(A0))
             fac_sc = factorize!!(fac_sc, m, fac_sc.factors)
             @test fac_sc.info == 0
             @test all(isfinite, Array(fac_sc.factors))
 
             # Singular zero matrix and zero column 2
-            fac_z = init(m, prob4, x4, nothing)
+            fac_z = dense_factor(m, prob4, x4, nothing)
             fill!(fac_z.factors, zero(T))
             fac_z = factorize!!(fac_z, m, fac_z.factors)
             @test fac_z.info == 1
@@ -310,7 +311,7 @@ if Metal.functional() && !on_virtual_gpu()
             A_eq = T[1 2; 1 2]
             x2 = MtlArray(zeros(T, 2))
             prob2 = NonlinearProblem(x2, metal_noop)
-            fac_eq = init(m, prob2, x2, nothing)
+            fac_eq = dense_factor(m, prob2, x2, nothing)
             copyto!(fac_eq.factors, MtlArray(A_eq))
             fac_eq = factorize!!(fac_eq, m, fac_eq.factors)
             if M === LUFactorization

@@ -141,7 +141,7 @@ end
 end
 
 @inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p)
-    return init(ls, prob, x, p)
+    return dense_factor(ls, prob, x, p)
 end
 
 @inline function init_newton_J(m::Newton, fac, x)
