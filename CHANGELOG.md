@@ -18,8 +18,10 @@ so that a compat-only bump can be told apart from an interface change.
   then 0, with the zero step. A rank-deficient matrix gives `info == 0` and `SUCCESS` on a static
   matrix, a host array and a device array alike, where the static factor gave `info = r + 1` and
   `SINGULAR`, so `Newton(; linsolve = SVDFactorization())` no longer stops after one iteration with
-  `SINGULAR` on an `SVector`. A host `DenseSVD` of a matrix with an `Inf` entry, where `gesvd`
-  converges to `NaN` singular values, now reports `info = 1` and `SINGULAR`, not `SUCCESS`.
+  `SINGULAR` on an `SVector`. A host `DenseSVD` refuses a matrix with an `Inf` or `NaN` entry
+  before `gesvd` and reports `info = 1` and `SINGULAR`, where an `Inf` gave `SUCCESS` with `NaN`
+  singular values; a finite matrix whose singular value overflows in `gesvd` reports `info = 1`
+  too.
   `GeometricSolvers.exact_solve(fac)` is `false` for an SVD factor of rank below `n`, and `Newton`
   then measures the slope of its step (`MeasuredSlope()`) in place of `−2φ(0)`. With `DogLeg`, a
   Newton step of zero norm is no Newton step: a zero Jacobian returns `STALLED` with the iterate

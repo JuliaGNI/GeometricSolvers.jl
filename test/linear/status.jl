@@ -129,18 +129,32 @@ end
         @test fac.rank == 0
         @test route_solve(label, fac, ones(T, 4)) == zeros(T, 4)
     end
-    # where `gesvd` itself fails, the host factor keeps its code
-    @testset "gesvd's code on an Array with a NaN entry, $T" for T in ELTYPES
-        A = full_rank(T, 4)
-        A[1, 1] = T(NaN)
-        code = try
-            LAPACK.gesvd!('A', 'A', copy(A))
-            0
-        catch err
-            err.info
-        end
-        @test code > 0
-        @test factor_dense(T, Nothing, A, Array).info == code
+    # the host SVD refuses a non-finite entry before `gesvd`: the sentinels in `S` and `U` show
+    # that no LAPACK routine wrote them
+    nonfinite = vcat(
+        [(T, TF, (A = full_rank(T, 4); A[ij...] = T(bad); A))
+         for (T, TF) in PRECISION_PAIRS
+         for (ij, bad) in (((1, 1), Inf), ((1, 1), -Inf), ((1, 1), NaN),
+            ((4, 4), NaN), ((2, 3), NaN))],
+        [(T, TF, fill(T(bad), 1, 1)) for (T, TF) in PRECISION_PAIRS for bad in (Inf, NaN)])
+    @testset "LAPACK is not reached for a non-finite entry, $T, TF = $TF, $(size(A, 1)) × $(size(A, 1))" for (
+            T, TF, A) in nonfinite
+        m = svd_method(TF)
+        fac = init(m, NonlinearProblem(nop), zeros(T, size(A, 1)), nothing)
+        fill!(fac.S, 7)
+        fill!(fac.U, 7)
+        fac = factorize!!(fac, m, A)
+        @test all(==(7), fac.S)
+        @test all(==(7), fac.U)
+        @test fac.info != 0
+        @test fac.rank == 0
+    end
+    # a finite matrix whose largest singular value overflows in `gesvd`, without prescaling
+    @testset "an Array whose singular value overflows, $T" for T in REAL_ELTYPES
+        fac = factor_dense(T, Nothing, T(floatmax(T) / 2) .* ones(T, 4, 4), Array)
+        @test fac.info != 0
+        @test returncode(fac) === SINGULAR
+        @test fac.rank == 0
     end
     @testset "a static matrix of NaN, $T" for T in REAL_ELTYPES
         fac = factorize!!(nothing, SVDFactorization(), SMatrix{4, 4}(fill(T(NaN), 4, 4)))

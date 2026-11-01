@@ -188,9 +188,14 @@ end
 function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactorization,
         J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
+    # an iterative LAPACK routine is never given a non-finite entry: the factor fails before it
+    if !all(isfinite, fac.factors)
+        return DenseSVD(
+            fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, 1, 0, e)
+    end
     info = Int(lapack_gesvd(fac.factors, fac.S, fac.U, fac.VT, fac.work, fac.rwork))
-    # `gesvd` converges on a matrix with an `Inf` entry and returns `NaN` singular values, so a
-    # spectrum that is not finite is a failure too
+    # a finite matrix near `floatmax` can still overflow to a singular value that is not finite,
+    # which is a failure too
     ok = iszero(info) && all(isfinite, fac.S)
     status = ok ? 0 : (iszero(info) ? 1 : info)
     rank = ok ? svd_rank(fac.S) : 0

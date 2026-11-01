@@ -31,11 +31,12 @@ built by [`init`](@ref). `J` is written into `fac.factors`, divided by `2^e` as 
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
 place; `J === fac.factors` is factorised as it is. On a device [`DenseSVD`](@ref), `J` is divided
 by `2^e` unconditionally into `fac.U` before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
-`info` is `gesvd`'s non-convergence code on the host, or `1` where `gesvd` converged to a singular
-value that is not finite, or where the device Jacobi sweep reaches its sweep cap without
-converging or meets a non-finite entry; `rank` is the numerical rank as for a static matrix. An
-`Inf` in a dense `J` does not throw; the SVD then reports `SINGULAR`, and the step that the LU or
-QR factors give is not specified.
+`info` is `1` on the host where `J` has a non-finite entry, which is refused before `gesvd` and
+leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
+singular value overflows to a value that is not finite; on a device it is `1` where the Jacobi
+sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
+numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD then
+reports `SINGULAR`, and the step that the LU or QR factors give is not specified.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -183,9 +184,10 @@ in the real factor type, `work` (the LAPACK workspace on the host, and the 1-ele
 rotation-flag buffer on a device), `rwork` (the real LAPACK workspace on the host, and the
 length-`n` scaled singular-value vector `σ̂` on a device) and `tmp` the workspace buffers, `rhs`
 the right-hand-side buffer of the factor element type when that differs from the working element
-type and `nothing` otherwise, `info` `gesvd`'s non-convergence code on the host, `1` where `gesvd`
-converged to a singular value that is not finite or the device Jacobi sweep reaches its sweep cap
-without converging or meets a non-finite entry, or `0`, `rank` the number of singular values above
+type and `nothing` otherwise, `info` `1` where the host matrix has a non-finite entry, which is
+refused before `gesvd`, `gesvd`'s non-convergence code, `1` where a host singular value overflows
+to a value that is not finite or the device Jacobi sweep reaches its sweep cap without converging
+or meets a non-finite entry, or `0`, `rank` the number of singular values above
 the cutoff `√n · eps(real(TF)) · S[1]`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent
 `e` of the power of two `2^e` that the matrix was divided by.
 """
