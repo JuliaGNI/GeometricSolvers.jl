@@ -63,6 +63,29 @@ so that a compat-only bump can be told apart from an interface change.
   These four names are internal and documented beside `step!!`. Every `Newton` step factorises
   through one function, and the iterates of the `Newton` tests are unchanged.
 
+- **The static Jacobi sweep updates its column norms from each rotation** (audit F12). The squared
+  norms of all columns are read once at the start of a sweep, and a rotation of a pair sets the
+  pair's two norms from its Gram matrix and the rotation, `α - t|γ|` and `β + t|γ|`, where every
+  pair read both columns again; a norm below `√eps(R)` times its old value is read from its column
+  again. On the 112 matrices of the new testset of `test/linear/static/svd.jl`, no factorisation
+  takes more sweeps than the recompute form, and the singular values agree with it within
+  `4n · eps(R) · σ₁`.
+
+- **A line-search step of `Newton` and `Picard` reduces the residual no more to get its merit at
+  `α = 0`** (audit F13). `NewtonState` and `PicardState` have a ninth and a fifth field, `merit`:
+  `norm2(Fx)` of the current residual for a line search, which `start!!` sets once per solve and
+  each step sets from the merit that its search computed for the residual it returns; `nothing`
+  for `Static`, `DogLeg` and any other globalization. A solve on an `Array` with `Backtracking`,
+  `Bisection` or `StrongWolfe` calls `norm2` on its residual buffer at most twice, where it called
+  it once per step and once more. The public `globalize!!(g, ls, prob, x, Fx, d, p, jvpprep, stepkind)`
+  keeps its form and its results; the solvers call the internal `globalize_merit!!`.
+
+- **`Backtracking`, `Bisection` and `StrongWolfe` loop while they have no result**, for at most
+  `maxiter` trips, in place of `maxiter` trips with a done flag (audit F14). They evaluate the same
+  trials and return the same results, and no cell of `test/verification/standard_reference.csv`
+  changes. `scripts/r2_throughput.jl` reports a row of `Newton(; globalization = Backtracking())`,
+  which runs a line search in the kernel.
+
 - **A step test that holds while the residual test fails returns `STALLED`, not `SUCCESS`**
   (decision 54). `SUCCESS` now always means that the residual test holds. A `SUCCESS` step of
   zero norm, which leaves the iterate where the next step starts, also returns `STALLED` at that
