@@ -328,13 +328,14 @@ so that a compat-only bump can be told apart from an interface change.
 - `SVDFactorization` on a static matrix: `GeometricSolvers.factorize!!(nothing, SVDFactorization(), J)`
   and `GeometricSolvers.ldiv!!(nothing, fac, r)` return an `isbits` `StaticSVD` and an `SVector`
   step, from a one-sided Jacobi iteration run by one thread per system in a KernelAbstractions
-  kernel, and allocate nothing unless bounds checks are forced (`--check-bounds=yes`). The
-  singular values `σ` are those of `J`, in non-increasing order. A singular value at or below
-  `√n · eps(TF) · σ₁` counts as zero: `info` is the index of the first one,
-  `GeometricSolvers.returncode(fac)` gives `SINGULAR`, and the solve leaves those directions out,
-  so a rank-deficient matrix gives a finite truncated step and never a `NaN`. The matrix is first
-  divided by a power of two, recorded as `scale_exponent`, so a subnormal matrix gives finite
-  factors. A sweep that reaches the cap of 30 sweeps leaves `converged` false.
+  kernel, and allocate nothing unless bounds checks are forced (`--check-bounds=yes`).
+  `GeometricSolvers.singular_values(fac)` gives the singular values of `J`, in non-increasing
+  order. A singular value at or below `√n · eps(TF) · σ₁` counts as zero: `rank` counts the
+  others, and the solve leaves those directions out, so a rank-deficient matrix gives a finite
+  truncated step and never a `NaN`. The matrix is first divided by a power of two, recorded as
+  `scale_exponent`, so a subnormal matrix gives finite factors. A sweep that reaches the cap of 30
+  sweeps, or a singular value that is not finite, gives `info = 1`, and
+  `GeometricSolvers.returncode(fac)` gives `SINGULAR`.
 
 - `jacobi_eigen(A)`, exported, is a cyclic two-sided Jacobi eigensolver for a Hermitian or real
   symmetric static matrix, on the rotations and round-robin ordering of the SVD, with a

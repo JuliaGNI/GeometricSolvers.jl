@@ -245,6 +245,9 @@ end
 function ka_svd_backsolve!(fac::DenseSVD, d::AbstractVector{T}) where {T <: Number}
     n = length(d)
     n == 0 && return d
+    # a failed factor, whose `σ̂` can hold a finite leading value beside a `NaN`, and a zero
+    # matrix give the zero step; `rank` is a host field, so this reads no device array
+    iszero(fac.rank) && return fill!(d, zero(T))
     R = real(T)
     tol = jacobi_tolerance(n, R)
     backend = get_backend(d)

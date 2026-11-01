@@ -117,15 +117,17 @@ end
         @test returncode(fac) === SINGULAR
         @test fac.rank == 0
     end
-    # a `NaN` in the last column leaves the first singular value finite where the sweep stops at
-    # the non-finite column norm, so a rank counted past the failure would not be 0
-    @testset "NaN at [4, 4], $T, TF = $TF, $label" for (T, TF) in PRECISION_PAIRS,
-        (label, make) in routes(T, TF, (A = full_rank(T, 4); A[4, 4] = T(NaN); A))
-
+    # a `NaN` outside the first column leaves the first singular value finite where the sweep
+    # stops at the non-finite column norm, so a rank counted past the failure would not be 0, and
+    # a solve that truncates by its own cutoff would divide out the finite columns
+    @testset "NaN at $ij, $T, TF = $TF, $label" for (T, TF) in PRECISION_PAIRS,
+        ij in ((4, 4), (2, 3)),
+        (label, make) in routes(T, TF, (A = full_rank(T, 4); A[ij...] = T(NaN); A))
         fac = make()
         @test fac.info != 0
         @test returncode(fac) === SINGULAR
         @test fac.rank == 0
+        @test route_solve(label, fac, ones(T, 4)) == zeros(T, 4)
     end
     # where `gesvd` itself fails, the host factor keeps its code
     @testset "gesvd's code on an Array with a NaN entry, $T" for T in ELTYPES
@@ -244,14 +246,17 @@ allocations(f::F, args::Vararg{Any, K}) where {F, K} = (f(args...); @allocated f
 end
 
 @testset "the dense factorisations allocate nothing on an Array" begin
-    @testset "$(nameof(typeof(m))), $T" for m in (
-            LUFactorization(), QRFactorization(), SVDFactorization()),
-        T in ELTYPES
+    # skipped where a run forces --check-bounds=yes, as the static kernels above
+    if Base.JLOptions().check_bounds != 1
+        @testset "$(nameof(typeof(m))), $T" for m in (
+                LUFactorization(), QRFactorization(), SVDFactorization()),
+            T in ELTYPES
 
-        fac = init(m, NonlinearProblem(nop), zeros(T, 4), nothing)
-        J = rand(Xoshiro(2), T, 4, 4)
-        factorize!!(fac, m, J)
-        @test allocations(factorize!!, fac, m, J) == 0
+            fac = init(m, NonlinearProblem(nop), zeros(T, 4), nothing)
+            J = rand(Xoshiro(2), T, 4, 4)
+            factorize!!(fac, m, J)
+            @test allocations(factorize!!, fac, m, J) == 0
+        end
     end
 end
 
