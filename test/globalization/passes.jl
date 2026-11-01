@@ -122,13 +122,34 @@ end
 @testset "only a line search carries a merit" begin
     prob = value_problem(:newton)
     x = SVector(1.0, 1.0)
+    Fx = newton_F(x, nothing)
     for m in (Newton(), Newton(; globalization = DogLeg()), Picard())
-        @test init_state(m, prob, x, nothing).merit === nothing
+        state = init_state(m, prob, x, nothing)
+        @test state.merit === nothing
+        @test start!!(state, m, prob, x, Fx, nothing, rnorm(Fx)).merit === nothing
     end
     @test init_state(Newton(; globalization = Backtracking()), prob, x, nothing).merit isa
           Float64
     @test isbits(init_state(Newton(; globalization = Backtracking()), prob, x, nothing))
     @test isbits(init_state(Picard(; globalization = Backtracking()), prob, x, nothing))
+end
+
+# A search that fails and still decreases the merit takes its step: the merit it returns is that
+# of the residual it returns. From `(1, 1)` along `d = (0.5, 1)` the merit falls from 73 to 28.0625,
+# short of the decrease of 100 that a slope of `-10⁶` demands at `α = 1`, and one trip ends it.
+@testset "a failed search that takes its step returns the merit of its residual, $R" for R in REAL_ELTYPES
+    prob = value_problem(:newton)
+    x = SVector{2, R}(1, 1)
+    Fx = newton_F(x, nothing)
+    d = SVector{2, R}(0.5, 1)
+    ls = adapt(ToReal{R}(), Backtracking(; maxiter = 1))
+    x₊, F₊, _, info, merit = GS.globalize_merit!!(
+        nothing, ls, prob, x, Fx, d, nothing, nothing, R(-1e6), norm2(Fx))
+    @test info.code == LINESEARCH_FAILED
+    @test info.failures == 1
+    @test x₊ == x + d
+    @test merit === norm2(F₊)
+    @test merit < norm2(Fx)
 end
 
 # A merit that rises along the line, `φ(α) = 1 + α`, with a slope `-1` that the caller passes: no

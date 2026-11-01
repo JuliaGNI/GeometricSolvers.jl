@@ -396,7 +396,11 @@ agree(σ, σref, n, R) = maximum(abs.(σ .- σref)) ≤ 4n * eps(R) * σref[1]
     end
 end
 
-@testset "a cancelling update recomputes the norm of its column" begin
+# A second column that is the first plus `1e-6` of noise: the rotation of the pair cancels the
+# norm of one column to rounding noise, which the guard of the sweep recomputes. Every sweep starts
+# from norms read from the columns, so a cancelled norm changes the rotations of one sweep and the
+# sweep count, which the testset above counts, and never the singular values, which this one checks.
+@testset "a cancelling update gives finite, non-negative singular values within the bound" begin
     @testset "$T, n = $n" for T in ELTYPES, n in (2, 4, 16)
 
         R = real(T)

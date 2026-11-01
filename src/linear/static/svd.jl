@@ -115,8 +115,8 @@ end
 #
 # `@inline`, and `rotate_columns!` with it: a call that is not inlined over a local `MMatrix`
 # lets the matrix escape, and each escaped matrix is a heap allocation of `n²` values (measured
-# with `--track-allocation=user`: 144 bytes at `n = 4` for each). The norms are a local
-# `MVector` for the same reason.
+# with `--track-allocation=user`: 144 bytes at `n = 4` for each). The norms are a
+# `local_array`, as the column of `column_norm2` is, for the same reason.
 @inline function jacobi_sweep!(
         A::StaticMatrix{N, N, F}, V::StaticMatrix{N, N, F}, tol) where {N, F}
     R = real(F)
