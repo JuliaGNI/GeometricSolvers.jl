@@ -221,8 +221,9 @@ end
     solve!(solver::NonlinearSolver, x::AbstractVector, p = solver.p)
 
 Solve `solver.prob` in place, using the preallocated workspace and AD preparation in `solver`, and
-return `status::SolverStatus`. `solve!(solver)` solves from `solver.x`, the iterate given to
-[`init`](@ref), with `solver.p`, and writes the solution into `solver.x`.
+return `status::SolverStatus`. `solve!(solver)` solves from `solver.x` with `solver.p`, the
+iterate and the parameters given to [`init`](@ref) or to the last `solve!(solver, x, p)`, and
+writes the solution into `solver.x`.
 `solve!(solver, x, p)` stores `x` in `solver.x` and `p` in `solver.p`, then solves from `x` with
 `p` and writes the solution into `x`; without `p`, it solves with the parameters that the solver
 holds. An `x` whose element type or length differs from the iterate given to `init` raises an
