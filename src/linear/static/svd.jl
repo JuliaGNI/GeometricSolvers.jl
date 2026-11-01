@@ -107,16 +107,26 @@ end
 # orthogonal. Returns the number of rotations applied: a sweep that applies none is the fixed
 # point of the iteration.
 #
+# The squared column norms are computed once at the start of the sweep, and a rotation of the
+# pair `(p, q)` updates them from `α`, `β`, `γ` and the rotation, to `α′ = α - t|γ|` and
+# `β′ = β + t|γ|` with `t` the tangent of the rotation, so the sweep reads no column to get them.
+# An updated norm below `√eps(R)` times its old value has lost half its digits or more to the
+# cancellation, and is recomputed from its column at once, as LAPACK's `gesvj` does.
+#
 # `@inline`, and `rotate_columns!` with it: a call that is not inlined over a local `MMatrix`
 # lets the matrix escape, and each escaped matrix is a heap allocation of `n²` values (measured
-# with `--track-allocation=user`: 144 bytes at `n = 4` for each).
+# with `--track-allocation=user`: 144 bytes at `n = 4` for each). The norms are a
+# `local_array`, as the column of `column_norm2` is, for the same reason.
 @inline function jacobi_sweep!(
         A::StaticMatrix{N, N, F}, V::StaticMatrix{N, N, F}, tol) where {N, F}
     R = real(F)
+    norms = local_array(zero(SVector{N, R}))
     αmax = zero(R)
-    for j in 1:N
-        αmax = max(αmax, column_norm2(A, j))
+    @inbounds for j in 1:N
+        norms[j] = column_norm2(A, j)
+        αmax = max(αmax, norms[j])
     end
+    small = sqrt(eps(R))
     # `αmax` first, so that the product stays in the scale of the matrix rather than in the scale
     # of the pair
     negligible = αmax * tol * tol
@@ -126,8 +136,8 @@ end
 
         p, q = jacobi_pair(N, r, k)
         p > N && continue
-        α = column_norm2(A, p)
-        β = column_norm2(A, q)
+        α = @inbounds norms[p]
+        β = @inbounds norms[q]
         (α ≤ negligible || β ≤ negligible) && continue
         # the pair's own inner product, through no seam of `reductions.jl`: `rdot` returns its
         # real part alone, and the rotation needs the phase of the complex one
@@ -139,6 +149,13 @@ end
         cs, sn = jacobi_rotation(α, β, γ)
         rotate_columns!(A, p, q, cs, sn)
         rotate_columns!(V, p, q, cs, sn)
+        # `‖cs a_p - conj(sn) a_q‖²` and `‖sn a_p + cs a_q‖²` from the Gram matrix of the pair,
+        # with `cs Re(conj(sn) γ) = t|γ| cs²`: `α - t|γ|` and `β + t|γ|` in exact arithmetic
+        c = real(conj(sn) * γ) * cs
+        α′ = cs^2 * α + abs2(sn) * β - 2c
+        β′ = abs2(sn) * α + cs^2 * β + 2c
+        @inbounds norms[p] = α′ < small * α ? column_norm2(A, p) : α′
+        @inbounds norms[q] = β′ < small * β ? column_norm2(A, q) : β′
         rotations += 1
     end
     return rotations

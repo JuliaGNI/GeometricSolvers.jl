@@ -113,8 +113,9 @@ function search(ls::StrongWolfe{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, c
     bisect = false    # the last zoom trial shrank the bracket by less than 0.66
     initial = true
     done = false
-    for _ in 1:ls.maxiter
-        done && continue
+    trips = Int32(0)
+    while !done && trips < ls.maxiter
+        trips += Int32(1)
         if !zooming
             φi, Fi = merit_and_residual(lf, αi)
             αlast = αi

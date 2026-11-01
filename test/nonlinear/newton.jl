@@ -134,13 +134,13 @@ end
     GS = GeometricSolvers
     st = GS.init_state(Newton(; reuse = 3), prob, 3.0, nothing)
     aged = GS.NewtonState(st.jacprep, st.jvpprep, st.Fx, st.d, st.fac, st.J, st.g,
-        GS.FactorAge(Int32(2), true))
+        GS.FactorAge(Int32(2), true), st.merit)
     @test GS.start!!(aged, Newton(; reuse = 3), prob, 3.0, 5.0, nothing, 5.0).rule ===
           GS.FactorAge(Int32(0), false)
     st_dl = GS.init_state(Newton(; globalization = DogLeg(; radius = 2.0)), prob, 3.0, nothing)
     @test st_dl.rule === GS.TrustRadius(2.0, 2.0)
     moved = GS.NewtonState(st_dl.jacprep, st_dl.jvpprep, st_dl.Fx, st_dl.d, st_dl.fac,
-        st_dl.J, st_dl.g, GS.TrustRadius(8.0, 2.0))
+        st_dl.J, st_dl.g, GS.TrustRadius(8.0, 2.0), st_dl.merit)
     @test GS.start!!(moved, Newton(; globalization = DogLeg()), prob, 3.0, 5.0, nothing,
         5.0).rule === GS.TrustRadius(2.0, 2.0)
 end

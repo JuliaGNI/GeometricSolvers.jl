@@ -62,6 +62,18 @@ Allocate the workspace named tuple for globalization method `g` at iterate `x` t
 @inline init_globalization(::LineSearch, x) = (;
     xt = buffer(x), Ft = buffer(x), Jv = buffer(x))
 
+# The merit `norm2(F)` of the current residual, which a solver carries in its state for a line
+# search, the one globalization that reads it: the anchor merit of the next step. Any other
+# globalization carries `nothing`, and computes none; `Static` searches nothing. `init_merit` is
+# `NaN` until `start!!` sets the merit from `F(x₀)`, so that a step on a state that no `start!!`
+# saw meets a non-finite anchor and returns `NONFINITE` with its iterate kept.
+@inline init_merit(::LineSearch, x) = real(eltype(x))(NaN)
+@inline init_merit(::Static, x) = nothing
+@inline init_merit(g, x) = nothing
+@inline start_merit(::LineSearch, Fx) = norm2(Fx)
+@inline start_merit(::Static, Fx) = nothing
+@inline start_merit(g, Fx) = nothing
+
 @inline g_xt(::Nothing) = nothing
 @inline g_xt(g) = g.xt
 @inline g_Ft(::Nothing) = nothing
@@ -109,12 +121,36 @@ end
 @inline function globalize!!(
         g, ls::LineSearch{R}, prob, x, Fx, d, p,
         jvpprep, stepkind = MeasuredSlope()) where {R}
+    x₊, F₊, g₊, info, _ = globalize_merit!!(
+        g, ls, prob, x, Fx, d, p, jvpprep, stepkind, norm2(Fx))
+    return x₊, F₊, g₊, info
+end
+
+# `globalize!!` for a solver that carries the merit of `Fx` in its state: it returns
+# `(x₊, F₊, g, info, merit₊)`. For a line search, `merit` is the anchor merit `φ₀ = norm2(Fx)`,
+# so that the step computes no merit at `α = 0`, and `merit₊` is the merit that the search
+# computed for the residual `F₊` it returns, or `merit` where the step keeps `Fx`. Any other
+# `method` takes the public `globalize!!`, which a globalization outside the package may be alone
+# in defining, and returns `merit` as it came, `nothing` in a solver.
+@inline function globalize_merit!!(
+        g, method, prob, x, Fx, d, p, jvpprep, stepkind, merit)
+    x₊, F₊, g₊, info = globalize!!(g, method, prob, x, Fx, d, p, jvpprep, stepkind)
+    return x₊, F₊, g₊, info, merit
+end
+
+@inline function globalize_merit!!(
+        g, ls::Static, prob, x, Fx, d, p, jvpprep, stepkind, merit)
+    x₊, F₊, g₊, info = globalize!!(g, ls, prob, x, Fx, d, p, jvpprep, stepkind)
+    return x₊, F₊, g₊, info, merit
+end
+
+@inline function globalize_merit!!(
+        g, ls::LineSearch{R}, prob, x, Fx, d, p, jvpprep, stepkind, φ₀) where {R}
     dn = rnorm(d)
     if !isfinite(dn)
-        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), dn, Int32(0), false, false)
+        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), dn, Int32(0), false, false), φ₀
     end
     lf = LineFunction(prob, x, Fx, d, p, jvpprep, g_xt(g), g_Ft(g), g_Jv(g))
-    φ₀ = norm2(Fx)
     res = linesearch(ls, lf, stepkind, φ₀, one(R))
     code = res.code
     if code == SUCCESS
@@ -123,7 +159,8 @@ end
         Fx = copy!!(Fx, res.residual)
         return x, Fx,
         g,
-        StepInfo{R}(SUCCESS, sqrt(res.φ), res.α * dn, Int32(0), false, false)
+        StepInfo{R}(SUCCESS, sqrt(res.φ), res.α * dn, Int32(0), false, false),
+        res.φ
     elseif code == LINESEARCH_FAILED
         if isfinite(res.φ) && res.φ < φ₀
             x₊ = update_iterate!!(g_xt(g), x, res.α, d)
@@ -131,15 +168,18 @@ end
             Fx = copy!!(Fx, res.residual)
             return x, Fx,
             g,
-            StepInfo{R}(LINESEARCH_FAILED, sqrt(res.φ), res.α * dn, Int32(1), false, false)
+            StepInfo{R}(LINESEARCH_FAILED, sqrt(res.φ), res.α * dn, Int32(1), false, false),
+            res.φ
         else
             return x, Fx,
             g,
-            StepInfo{R}(LINESEARCH_FAILED, rnorm(Fx), zero(R), Int32(1), false, false)
+            StepInfo{R}(LINESEARCH_FAILED, rnorm(Fx), zero(R), Int32(1), false, false), φ₀
         end
     elseif code == STALLED
-        return x, Fx, g, StepInfo{R}(STALLED, rnorm(Fx), zero(R), Int32(0), false, false)
+        return x, Fx, g, StepInfo{R}(STALLED, rnorm(Fx), zero(R), Int32(0), false, false),
+        φ₀
     else
-        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), zero(R), Int32(0), false, false)
+        return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), zero(R), Int32(0), false, false),
+        φ₀
     end
 end
