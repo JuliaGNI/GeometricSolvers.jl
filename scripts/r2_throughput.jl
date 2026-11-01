@@ -130,16 +130,26 @@ function measure_row(
     end
     rate_reuse = n_sys / t_reuse
 
+    # 4. R2 solve! with Newton(; globalization = Backtracking()): the row that runs a line
+    # search in the kernel
+    t_ls = _best_time_s(; reps) do
+        copyto!(X_dev, X0_dev)
+        solve!(X_dev, S_dev, prob, Newton(; globalization = Backtracking()), P_dev;
+            options = opt)
+    end
+    rate_ls = n_sys / t_ls
+
     # Verify convergence on last run
     S_got = Array(S_dev)
     n_conv = count(isconverged, S_got)
 
-    @printf("backend=%-6s N_sys=%-8d n=%-2d | R2 Newton: %9.2f Msys/s | R2 reuse=4: %9.2f Msys/s | CPU-thr R1: %9.2f Msys/s | speedup=%5.2fx (%d/%d conv)\n",
+    @printf("backend=%-6s N_sys=%-8d n=%-2d | R2 Newton: %9.2f Msys/s | R2 reuse=4: %9.2f Msys/s | R2 Backtracking: %9.2f Msys/s | CPU-thr R1: %9.2f Msys/s | speedup=%5.2fx (%d/%d conv)\n",
         backend_name,
         n_sys,
         N,
         rate_r2 / 1e6,
         rate_reuse / 1e6,
+        rate_ls / 1e6,
         rate_cpu / 1e6,
         rate_r2 / rate_cpu,
         n_conv,
@@ -149,6 +159,7 @@ function measure_row(
         n_sys = n_sys,
         rate_r2 = rate_r2,
         rate_reuse = rate_reuse,
+        rate_ls = rate_ls,
         rate_cpu = rate_cpu
     )
 end

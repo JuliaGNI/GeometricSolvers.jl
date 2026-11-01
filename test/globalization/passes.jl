@@ -50,7 +50,7 @@ end
 const FX = Ref{Any}(nothing)
 const NFX = Ref(0)
 function count_merits(method, prob, x₀)
-    counter = @eval function GS.norm2(a::Vector{Float64})
+    @eval function GS.norm2(a::Vector{Float64})
         a === $FX[] && ($NFX[] += 1)
         return invoke(GS.norm2, Tuple{Any}, a)
     end
@@ -101,7 +101,7 @@ function merits_follow(m, prob, x₀)
     moved = false
     for _ in 1:6
         x_old = copy(x)
-        x, Fx, state, info = step!!(state, m, prob, x, Fx, nothing)
+        x, Fx, state, _ = step!!(state, m, prob, x, Fx, nothing)
         moved |= x != x_old
         ok &= state.merit === norm2(Fx)
     end

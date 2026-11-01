@@ -148,9 +148,8 @@ A non-positive or `NaN` `αmax` is a caller error. The search then evaluates not
 `LINESEARCH_FAILED` with the trial step, bounded by the ceiling of the method.
 
 This is the one entry point: it applies the ceiling, the trial step and the anchor checks, then
-runs the loop of the method. Each loop has exactly `ls.maxiter` trips with a done flag, so that
-the threads of a warp stay together in a kernel; a trip after the flag is set evaluates nothing.
-[`Static`](@ref) has no loop.
+runs the loop of the method. Each loop runs while it has no result, for at most `ls.maxiter`
+trips. [`Static`](@ref) has no loop.
 """
 function linesearch(ls::LineSearch{R}, lf, step::StepKind{R}, φ₀::R, α::R,
         αmax::R = R(Inf)) where {R}
