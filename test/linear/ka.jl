@@ -979,7 +979,7 @@ end
             @test all(iszero, d_h[2:n])
 
             # Direct backsolve! check when U[:, 2] is non-zero so ka_svd_ut_mul_scale_kernel!'s own
-            # tol * rwork[1] guard is exercised independently of U column zeroing
+            # guard on fac.rank is exercised independently of U column zeroing
             if TF === Nothing
                 copyto!(fac.U, JLArray(Matrix{F}(I, n, n)))
                 copyto!(fac.VT, JLArray(Matrix{F}(I, n, n)))

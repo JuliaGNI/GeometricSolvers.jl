@@ -214,17 +214,16 @@ function factorize!!(fac::DenseSVD{<:AbstractGPUArray}, ::SVDFactorization, J::A
 end
 
 @kernel function ka_svd_ut_mul_scale_kernel!(
-        tmp, @Const(U), @Const(rwork), @Const(d), n::Int, tol)
+        tmp, @Const(U), @Const(rwork), @Const(d), n::Int, rank::Int)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(tmp)
-        σj = rwork[j]
-        if σj > tol * rwork[1]
+        if j <= rank
             acc = zero(F)
             for i in 1:n
                 acc += conj(U[i, j]) * d[i]
             end
-            tmp[j] = acc / σj
+            tmp[j] = acc / rwork[j]
         else
             tmp[j] = zero(F)
         end
@@ -248,8 +247,6 @@ function ka_svd_backsolve!(fac::DenseSVD, d::AbstractVector{T}) where {T <: Numb
     # a failed factor, whose `σ̂` can hold a finite leading value beside a `NaN`, and a zero
     # matrix give the zero step; `rank` is a host field, so this reads no device array
     iszero(fac.rank) && return fill!(d, zero(T))
-    R = real(T)
-    tol = jacobi_tolerance(n, R)
     backend = get_backend(d)
     kbackend = ka_kernel_backend(backend)
     GC.@preserve fac d begin
@@ -258,7 +255,8 @@ function ka_svd_backsolve!(fac::DenseSVD, d::AbstractVector{T}) where {T <: Numb
         VT_k = ka_kernel_array(backend, fac.VT)
         rwork_k = ka_kernel_array(backend, fac.rwork)
         d_k = ka_kernel_array(backend, d)
-        ka_svd_ut_mul_scale_kernel!(kbackend)(tmp_k, U_k, rwork_k, d_k, n, tol; ndrange = n)
+        ka_svd_ut_mul_scale_kernel!(kbackend)(
+            tmp_k, U_k, rwork_k, d_k, n, fac.rank; ndrange = n)
         ka_svd_v_mul_kernel!(kbackend)(d_k, VT_k, tmp_k, n; ndrange = n)
     end
     synchronize(kbackend)

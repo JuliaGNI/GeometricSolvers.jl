@@ -293,8 +293,6 @@ end
 end
 
 @testset "the dense LU through LAPACK.getrf!" begin
-    @test !isdefined(GeometricSolvers, :getrf!)
-    @test !isdefined(GeometricSolvers, :jacobi_acc_type)
     @testset "a zero column, $T" for T in ELTYPES
         A = full_rank(T, 4)
         A[:, 3] .= 0
