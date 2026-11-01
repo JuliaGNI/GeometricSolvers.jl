@@ -248,12 +248,15 @@ end
 end
 
 # The `divisor_exponent` of the coordinates `Uᴴ d` in `tmp`, from one reduction over `tmp` and
-# `rwork` once the kernel that writes `tmp` has run.
+# `rwork` once the kernel that writes `tmp` has run. The reduction runs over the whole of both, of
+# length `n` on a device, and not over views of their first `rank` entries, so that only device
+# arrays reach it: past the rank `tmp` holds the zero that the kernel wrote, which adds nothing.
 function ka_divisor_exponent(kbackend, fac::DenseSVD, ::Type{T}, n::Int) where {T}
     synchronize(kbackend)
     c = coordinate_bound(T, n)
-    q = mapreduce((y, σ) -> coordinate_ratio(y, σ, c), max,
-        view(fac.tmp, 1:(fac.rank)), view(fac.rwork, 1:(fac.rank)); init = zero(real(T)))
+    R = real(T)
+    q = mapreduce((y, σ) -> iszero(y) ? zero(R) : coordinate_ratio(y, σ, c), max,
+        fac.tmp, fac.rwork; init = zero(R))
     return shift_exponent(q)
 end
 
