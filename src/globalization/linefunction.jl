@@ -127,11 +127,11 @@ end
 end
 
 # `globalize!!` for a solver that carries the merit of `Fx` in its state: it returns
-# `(x₊, F₊, g, info, merit₊)`. For a line search, `merit` is the anchor merit `φ₀ = norm2(Fx)`, so
-# that the step reduces `Fx` no more, and `merit₊` is the merit that the search computed for the
-# residual `F₊` it returns, or `merit` where the step keeps `Fx`. Any other `method` takes the
-# public `globalize!!`, which a globalization outside the package may be alone in defining, and
-# returns `merit` as it came, `nothing` in a solver.
+# `(x₊, F₊, g, info, merit₊)`. For a line search, `merit` is the anchor merit `φ₀ = norm2(Fx)`,
+# so that the step computes no merit at `α = 0`, and `merit₊` is the merit that the search
+# computed for the residual `F₊` it returns, or `merit` where the step keeps `Fx`. Any other
+# `method` takes the public `globalize!!`, which a globalization outside the package may be alone
+# in defining, and returns `merit` as it came, `nothing` in a solver.
 @inline function globalize_merit!!(
         g, method, prob, x, Fx, d, p, jvpprep, stepkind, merit)
     x₊, F₊, g₊, info = globalize!!(g, method, prob, x, Fx, d, p, jvpprep, stepkind)

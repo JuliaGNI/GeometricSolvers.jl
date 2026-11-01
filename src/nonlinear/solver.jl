@@ -80,9 +80,9 @@ and calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 
 At the start of each call, `solve!!` evaluates `Fx = residual!!(residual_buffer(state), prob, x₀,
 p)` and `fnorm₀ = rnorm(Fx)`, and calls [`start!!`](@ref) once, which resets the per-solve state
-of the method (the reuse age and the stalled flag under factor reuse, and the radius under
-[`DogLeg`](@ref)). Every return goes through [`finish!!`](@ref), and `solve!!` returns the triple
-that `finish!!` returns.
+of the method (the reuse age and the stalled flag under factor reuse, the radius under
+[`DogLeg`](@ref), and the anchor merit of a line search). Every return goes through
+[`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns.
 
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
 returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds
