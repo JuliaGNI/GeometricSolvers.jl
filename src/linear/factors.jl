@@ -378,11 +378,12 @@ function matrix_exponent(J::AbstractArray)
 end
 
 # The exponent `k ≥ 0` of the power of two `2^k` that the same-type solve divides the right-hand
-# side `r` by, the smallest one that keeps `Qᴴ r` and `Uᴴ r` of the QR and SVD solves finite: their
-# entries sum `N` products of an entry of `r` with a factor of modulus at most 1, a complex one
-# up to twice the largest |re| or |im| of `r`, so the largest |re| or |im| of `r / 2^k` is held
-# below `2^(emax - 2 - ⌈log2 N⌉)`, with `emax` the exponent of `floatmax`. An `r` below that is
-# not scaled, and an `r` above it is divided by at most `2 + ⌈log2 N⌉` bits, so that only a small
+# side `r` by, the smallest one with which this bound keeps `Qᴴ r` and `Uᴴ r` of the QR and SVD
+# solves finite: their entries sum `N` products of an entry of `r` with a factor of modulus at most
+# 1, a complex one up to twice the largest |re| or |im| of `r`, so the largest |re| or |im| of
+# `r / 2^k` is held below `2^(emax - 1 - ⌈log2 N⌉)`, with `emax` the exponent of `floatmax`, and
+# each |re| and |im| of `Qᴴ r` and `Uᴴ r` below `2^emax`. An `r` below the first bound is not
+# scaled, and an `r` above it is divided by at most `2 + ⌈log2 N⌉` bits, so that only a small
 # entry of such an `r`, within that many bits of the subnormal range, can lose bits to the scaling,
 # and the large entries keep a scaled solution far above the subnormal range. 0 for a zero,
 # non-finite or empty `r`.
