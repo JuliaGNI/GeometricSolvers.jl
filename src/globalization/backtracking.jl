@@ -99,8 +99,9 @@ function search(ls::Backtracking{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, 
     frozen = 0             # consecutive trials whose merit equals φ₀ bit for bit
     code = LINESEARCH_FAILED
     done = false
-    for _ in 1:ls.maxiter
-        done && continue
+    trips = Int32(0)
+    while !done && trips < ls.maxiter
+        trips += Int32(1)
         αₐ = α
         φₐ, Fₐ = merit_and_residual(lf, α)
         n += Int32(1)

@@ -52,8 +52,9 @@ function search(ls::Bisection{R}, lf, step, φ₀::R, d₀::R, τ::R, α::R, cei
     αres = hi
     bracketing = true
     done = false
-    for _ in 1:ls.maxiter
-        done && continue
+    trips = Int32(0)
+    while !done && trips < ls.maxiter
+        trips += Int32(1)
         if bracketing
             dh = φ′(lf, hi)
             n += Int32(1)
