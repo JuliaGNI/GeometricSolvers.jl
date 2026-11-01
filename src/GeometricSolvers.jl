@@ -6,6 +6,7 @@ module GeometricSolvers
 
 using ADTypes: AbstractADType, AutoForwardDiff
 using Adapt: Adapt
+import CommonSolve: init, solve, solve!
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray

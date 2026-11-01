@@ -330,9 +330,9 @@ end
 
 function solve!_allocations(x::X, x₀::X, solver::S, p::Q) where {X, S, Q}
     copyto!(x, x₀)
-    solve!(x, solver, p)
+    solve!(solver, x, p)
     copyto!(x, x₀)
-    return @allocated solve!(x, solver, p)
+    return @allocated solve!(solver, x, p)
 end
 
 @testset "scalar indexing on a device array is disallowed" begin
@@ -631,7 +631,7 @@ end
 
         x_in = copy(x₀)
         solver_r3 = init(prob_r3_ad, x_in, m_sw, p; options = opts_full)
-        st_in = solve!(x_in, solver_r3, p)
+        st_in = solve!(solver_r3, x_in, p)
         @test st_in.code == stf_r1.code == SUCCESS
         @test st_in.iterations == stf_r1.iterations
         @test isapprox(Array(x_in), Array(xf_r1); rtol = 8 * eps(R))
@@ -691,7 +691,7 @@ end
         x_r1, st_r1 = solve(prob_r1, x₀_s, m, p_s; options = opts_full)
         x_r3 = copy(x₀)
         solver_r3 = init(prob_r3, x_r3, m, p; options = opts_full)
-        st_r3 = solve!(x_r3, solver_r3, p)
+        st_r3 = solve!(solver_r3, x_r3, p)
         @test st_r3.code == st_r1.code == SUCCESS
         @test st_r3.iterations == st_r1.iterations
         @test isapprox(x_r3, Array(x_r1); rtol = 10 * sqrt(eps(R)))
@@ -718,7 +718,7 @@ end
         xr_r1, str_r1 = solve(prob_r1, x₀_s, m_reuse, p_s; options = opts_full)
         xr_r3 = copy(x₀)
         solver_reuse = init(prob_r3, xr_r3, m_reuse, p; options = opts_full)
-        str_r3 = solve!(xr_r3, solver_reuse, p)
+        str_r3 = solve!(solver_reuse, xr_r3, p)
         @test str_r3.code == str_r1.code == SUCCESS
         @test str_r3.iterations == str_r1.iterations
         @test isapprox(xr_r3, Array(xr_r1); rtol = 10 * sqrt(eps(R)))
@@ -803,42 +803,42 @@ end
     # `solve!` rejects an iterate whose element type or length differs from the template
     T_other = T <: Complex ? real(T) : complex(T)
     x_other = T_other.(x₀)
-    @test_throws ArgumentError solve!(x_other, solver, p₁)
+    @test_throws ArgumentError solve!(solver, x_other, p₁)
     @test x_other == T_other.(x₀)
-    @test_throws ArgumentError solve!(T[3, 5, 7], solver, p₁)
+    @test_throws ArgumentError solve!(solver, T[3, 5, 7], p₁)
     # the check reads the template from the solver, not from the state, which may have no `Fx`
-    solver_nofx = NonlinearSolver(prob, x₀, Newton(), solver.options, (;))
-    @test_throws ArgumentError solve!(x_other, solver_nofx, p₁)
-    @test_throws ArgumentError solve!(T[3, 5, 7], solver_nofx, p₁)
+    solver_nofx = NonlinearSolver(prob, x₀, Newton(), solver.options, (;), p₁)
+    @test_throws ArgumentError solve!(solver_nofx, x_other, p₁)
+    @test_throws ArgumentError solve!(solver_nofx, T[3, 5, 7], p₁)
 
-    # First `solve!(x, solver, p₁)` converges in place to `[2, 3]` and leaves `age > 0`
-    st₁ = solve!(x, solver, p₁)
+    # First `solve!(solver, x, p₁)` converges in place to `[2, 3]` and leaves `age > 0`
+    st₁ = solve!(solver, x, p₁)
     @test st₁ isa SolverStatus{R}
     @test st₁.code == SUCCESS
     @test isapprox(x, T[2, 3]; rtol = 10 * sqrt(eps(R)))
     @test solver.state.rule.age > 0
 
-    # Second `solve!(x, solver, p₂)` on a new initial guess and new parameter resets `age = 0`
+    # Second `solve!(solver, x, p₂)` on a new initial guess and new parameter resets `age = 0`
     # and `stalled = false`, so step 1 refactorises at the new `(x, p₂)` (catches MU4!)
     solver_1step = init(
         prob, copy(x₀), Newton(; reuse = 4), p₁;
         min_iterations = 1, max_iterations = 1,
         f_abstol = zero(R), f_reltol = zero(R), x_abstol = zero(R), x_reltol = zero(R))
     x_s1 = copy(x₀)
-    solve!(x_s1, solver_1step, p₁)
+    solve!(solver_1step, x_s1, p₁)
     @test solver_1step.state.rule.age == Int32(1)
     j_calls[] = 0
     x_s2 = T[5, 6]
-    st_s2 = solve!(x_s2, solver_1step, p₂)
+    st_s2 = solve!(solver_1step, x_s2, p₂)
     @test st_s2.iterations == 1
     @test j_calls[] == 1
     # Exact 1-step Newton iterate from `[5, 6]` on `y^2 - [16, 25]` is `[5 - 9/10, 6 - 11/12] = [4.1, 61/12]`;
     # a stale factor from `x₀ = [3, 5]` (`J = diag(6, 10)`) would give `[5 - 9/6, 6 - 11/10] = [3.5, 4.9]`!
     @test isapprox(x_s2, T[T(41) / T(10), T(61) / T(12)]; rtol = 8 * eps(R))
 
-    # Full second `solve!(x, solver, p₂)` converges to `[4, 5]`
+    # Full second `solve!(solver, x, p₂)` converges to `[4, 5]`
     x_re = T[5, 6]
-    st₂ = solve!(x_re, solver, p₂)
+    st₂ = solve!(solver, x_re, p₂)
     @test st₂.code == SUCCESS
     @test isapprox(x_re, T[4, 5]; rtol = 10 * sqrt(eps(R)))
 
@@ -848,10 +848,10 @@ end
         min_iterations = 1, max_iterations = 1,
         f_abstol = zero(R), f_reltol = zero(R), x_abstol = zero(R), x_reltol = zero(R))
     x_dl1 = copy(x₀)
-    solve!(x_dl1, solver_dl, p₁)
+    solve!(solver_dl, x_dl1, p₁)
     @test solver_dl.state.rule.radius > zero(R)
     x_dl2 = T[5, 6]
-    solve!(x_dl2, solver_dl, p₂)
+    solve!(solver_dl, x_dl2, p₂)
     x_dl2_fresh, _ = solve(
         prob, T[5, 6], Newton(; globalization = DogLeg()), p₂;
         min_iterations = 1, max_iterations = 1,
@@ -872,7 +872,7 @@ end
 
         x_in = copy(x₀_at)
         solver_in = init(prob_test, x_in, m_test, p₁_at)
-        st_in = solve!(x_in, solver_in, p₁_at)
+        st_in = solve!(solver_in, x_in, p₁_at)
         @test Array(x_out) == Array(x_in)
         @test st_out === st_in
     end
@@ -884,7 +884,7 @@ end
         x_jl = JLArray(copy(x₀))
         p_jl = JLArray(copy(p₁))
         solver_jl = init(prob_ad, x_jl, m, p_jl)
-        st_jl = solve!(x_jl, solver_jl, p_jl)
+        st_jl = solve!(solver_jl, x_jl, p_jl)
         @test st_jl.code == SUCCESS
         @test isapprox(Array(x_jl), T[2, 3]; rtol = 10 * sqrt(eps(R)))
     end
@@ -1031,7 +1031,7 @@ end
             f_real_calls[] = 0
             f_dual1_calls[] = 0
             f_dual2_calls[] = 0
-            st_cnt = solve!(x_8, solver_cnt, p_8)
+            st_cnt = solve!(solver_cnt, x_8, p_8)
             @test st_cnt.code == SUCCESS
             # Each Newton step does `ceil(Int, 8 / 2) = 4` chunk-2 dual calls for `jacobian!!`,
             # and each line-search slope evaluation does 1 chunk-1 dual call for `jvp!!`.
@@ -1045,7 +1045,7 @@ end
             prob_newt_ad, x_fd,
             Newton(; jacobian = AutoFiniteDiff(), globalization = StrongWolfe()), p)
         @test solver_fd.state.jacprep isa DIJacobian
-        st_fd = solve!(x_fd, solver_fd, p)
+        st_fd = solve!(solver_fd, x_fd, p)
         @test st_fd.code == SUCCESS
         @test isapprox(x_fd, sqrt.(p); rtol = 10 * sqrt(eps(R)))
     finally
