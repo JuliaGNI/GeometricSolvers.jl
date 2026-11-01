@@ -311,3 +311,122 @@ end
         end
     end
 end
+
+const GS = GeometricSolvers
+
+# The reference sweep: the squared norms of a pair read from its two columns for every pair, on
+# the package's own pairs, rotation and reduction. The sweep of the package updates the norms
+# from the rotation instead, and must take no more sweeps and agree with this one.
+function reference_sweep!(A::MMatrix{N, N, F}, V::MMatrix{N, N, F}, tol) where {N, F}
+    colnorm2(j) = GS.norm2(SVector{N, F}(ntuple(i -> A[i, j], N)))
+    αmax = zero(real(F))
+    for j in 1:N
+        αmax = max(αmax, colnorm2(j))
+    end
+    negligible = αmax * tol * tol
+    rotations = 0
+    m = N + isodd(N)
+    for r in 0:(m - 2), k in 0:(m ÷ 2 - 1)
+
+        p, q = GS.jacobi_pair(N, r, k)
+        p > N && continue
+        α = colnorm2(p)
+        β = colnorm2(q)
+        (α ≤ negligible || β ≤ negligible) && continue
+        γ = zero(F)
+        for i in 1:N
+            γ += conj(A[i, p]) * A[i, q]
+        end
+        abs(γ) ≤ tol * sqrt(α * β) && continue
+        cs, sn = GS.jacobi_rotation(α, β, γ)
+        GS.rotate_columns!(A, p, q, cs, sn)
+        GS.rotate_columns!(V, p, q, cs, sn)
+        rotations += 1
+    end
+    return rotations
+end
+
+# The number of sweeps of `sweep!` to its fixed point, and the singular values of the matrix as
+# `factorize!!` divides it, non-increasing.
+function sweeps_and_values(sweep!, J::SMatrix{N, N, F}) where {N, F}
+    Â, _ = GS.svd_matrix(F, J)
+    A = MMatrix(Â)
+    V = MMatrix(one(SMatrix{N, N, F}))
+    tol = GS.jacobi_tolerance(N, real(F))
+    sweeps = 0
+    while sweeps < GS.JACOBI_MAX_SWEEPS
+        sweeps += 1
+        iszero(sweep!(A, V, tol)) && break
+    end
+    σ = [sqrt(GS.norm2(SVector{N, F}(ntuple(i -> A[i, j], N)))) for j in 1:N]
+    return sweeps, sort!(σ; rev = true)
+end
+
+# Random, the rank-2 integers `i + j`, graded with row scales `2^(-3i)`, and nearly parallel: a
+# second column that is the first plus `1e-6` of noise, where an updated column norm cancels.
+function sweep_matrices(::Type{T}, n) where {T}
+    rng = Xoshiro(17 + n)
+    M = randn(rng, T, n, n)
+    G = Diagonal([real(T)(2)^(-3i) for i in 0:(n - 1)]) * randn(rng, T, n, n)
+    P = randn(rng, T, n, n)
+    n ≥ 2 && (P[:, 2] = P[:, 1] + real(T)(1e-6) * randn(rng, T, n))
+    I2 = T[i + j for i in 1:n, j in 1:n]
+    return [("random", M), ("integers", I2), ("graded", G), ("parallel", P)]
+end
+
+# The bound of the agreement: `4n` roundings of the largest singular value.
+agree(σ, σref, n, R) = maximum(abs.(σ .- σref)) ≤ 4n * eps(R) * σref[1]
+
+@testset "the column-norm update takes no more sweeps than the recompute and agrees with it" begin
+    @testset "$T, n = $n" for T in ELTYPES, n in (1, 2, 3, 4, 8, 12, 16)
+
+        R = real(T)
+        for (name, M) in sweep_matrices(T, n)
+            J = SMatrix{n, n, T}(M)
+            s_ref, σ_ref = sweeps_and_values(reference_sweep!, J)
+            s_new, σ_new = sweeps_and_values(GS.jacobi_sweep!, J)
+            @test s_ref < GS.JACOBI_MAX_SWEEPS
+            @test s_new ≤ s_ref
+            σ̂ = collect(factorize!!(nothing, SVDFactorization(), J).σ̂)
+            @test all(isfinite, σ̂)
+            @test all(≥(zero(R)), σ̂)
+            @test agree(σ̂, σ_ref, n, R)
+            @test agree(σ_new, σ_ref, n, R)
+        end
+    end
+end
+
+@testset "a cancelling update recomputes the norm of its column" begin
+    @testset "$T, n = $n" for T in ELTYPES, n in (2, 4, 16)
+
+        R = real(T)
+        rng = Xoshiro(29 + n)
+        for _ in 1:20
+            P = randn(rng, T, n, n)
+            P[:, 2] = P[:, 1] + R(1e-6) * randn(rng, T, n)
+            J = SMatrix{n, n, T}(P)
+            _, σ_ref = sweeps_and_values(reference_sweep!, J)
+            fac = factorize!!(nothing, SVDFactorization(), J)
+            σ̂ = collect(fac.σ̂)
+            @test fac.info == 0
+            @test all(isfinite, σ̂)
+            @test all(≥(zero(R)), σ̂)
+            @test agree(σ̂, σ_ref, n, R)
+        end
+    end
+end
+
+@testset "a 1 × 1 matrix takes one sweep with no rotation" begin
+    @testset "$T" for T in ELTYPES
+        R = real(T)
+        for a in (T(3), T(-0.75), one(T) + (T <: Complex ? im * one(T) : zero(T)))
+            J = SMatrix{1, 1, T}(a)
+            A = MMatrix(first(GS.svd_matrix(T, J)))
+            V = MMatrix(one(SMatrix{1, 1, T}))
+            @test GS.jacobi_sweep!(A, V, GS.jacobi_tolerance(1, R)) == 0
+            @test sweeps_and_values(GS.jacobi_sweep!, J)[1] == 1
+            fac = factorize!!(nothing, SVDFactorization(), J)
+            @test singular_values(fac)[1] ≈ abs(a) rtol = 4eps(R)
+        end
+    end
+end
