@@ -16,7 +16,7 @@ so that a compat-only bump can be told apart from an interface change.
   (`[compat] CommonSolve = "0.2"`), and the package imports and extends `CommonSolve.init`,
   `CommonSolve.solve` and `CommonSolve.solve!` and exports them as before, so a caller reaches
   this package through the same three names as another CommonSolve package. Every method of the
-  package keeps its signature, the factor builders `init(::LUFactorization, prob, x, p)` and
+  three names keeps its signature, the factor builders `init(::LUFactorization, prob, x, p)` and
   their siblings and the R2 forms of `solve!` included, except the R3 call form:
   `solve!(x, solver, p)` is removed, with no deprecation, because the package is not registered.
   In its place, `solver = init(prob, x, method, p)` holds `x` and `p` themselves, not copies, in

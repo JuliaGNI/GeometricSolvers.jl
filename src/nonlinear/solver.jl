@@ -171,11 +171,10 @@ end
 
 A preallocated nonlinear solver for [`NonlinearProblem`](@ref) `prob` with `method` and
 [`Options`](@ref) `options`, holding the workspace and AD preparation in `state`, the iterate `x`
-and the parameters `p`. It keeps the element type `T` and the length `n` of `x`, which
-[`solve!`](@ref) checks, and the types `X` of `x` and `Q` of `p`, which its fields `x::X` and
-`p::Q` keep. Build it with [`init(prob, x, method, p; options = nothing, kwargs...)`](@ref init)
-and solve in place with [`solve!(solver)`](@ref solve!) or
-[`solve!(solver, x, p)`](@ref solve!).
+and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the element type `T` and the
+length `n` of `x` and the types `X` of `x` and `Q` of `p`, which [`solve!`](@ref) checks.
+Build it with [`init(prob, x, method, p; options = nothing, kwargs...)`](@ref init) and solve in
+place with [`solve!(solver)`](@ref solve!) or [`solve!(solver, x, p)`](@ref solve!).
 """
 mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
     X <: AbstractVector{T}, Q}
