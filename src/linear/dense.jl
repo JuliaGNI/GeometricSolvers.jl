@@ -75,7 +75,8 @@ end
 
 # The lengths of the host QR and SVD workspaces of `init`: the optimal sizes that a workspace query
 # of `geqrf` and of `gesvd` returns, for the buffers that the factorisation then takes. Another
-# element type factorises through `qr!`, or has no SVD method, and takes no workspace.
+# element type factorises through `qr!`, or has no SVD method, and does not use its one-element
+# workspace.
 function qr_work_length(A::StridedMatrix{F}, τ::AbstractVector{F}) where {F <: BlasFloat}
     work = Vector{F}(undef, 1)
     geqrf!(A, τ, work, BlasInt(-1))
