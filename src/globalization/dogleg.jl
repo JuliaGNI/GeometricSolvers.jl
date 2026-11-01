@@ -27,8 +27,8 @@ the distance to a root, sets its norm, so the solve applies only the residual te
 converted to `float(typeof(radius))`, and [`ToReal`](@ref) to the iterate's real type, clamped to
 ``[10^{-6}, 10^{10}]`` after each conversion. With `nothing`, the first step starts the radius at
 the norm of the first Newton step, clamped the same way, except that a norm below ``10^{-6}``
-starts it at ``2 \\cdot 10^{-6}``, as Procedure 4.1 does. A singular factor, or a Newton step
-whose norm is not finite, gives no Newton step: the step is then the Cauchy point, cut to the
+starts it at ``2 \\cdot 10^{-6}``, as Procedure 4.1 does. A failed factor, or a Newton step
+whose norm is zero or not finite, gives no Newton step: the step is then the Cauchy point, cut to the
 radius when it lies outside, and a first radius starts at the length of the Cauchy point, by the same rule. The Cauchy
 direction is formed from the unit residual, ``\\tilde g = J^* F / \\|F\\|``, so no norm of
 ``J^* F`` occurs, and a common scale of ``F`` and ``J`` leaves the Cauchy point unchanged up to

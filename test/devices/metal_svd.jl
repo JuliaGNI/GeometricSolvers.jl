@@ -57,14 +57,16 @@ if Metal.functional() && !on_virtual_gpu()
             @test info[k] == 0
             @test relerr(x[k], reference(A, b)) <= bound(A, T, Nothing)
         end
-        # the rank of a rank-`r` matrix is `r`, `info` being the index of the first singular
-        # value the cutoff counts as zero; a rank-1 matrix is full rank at n = 1
-        @test info[length(systems) + 1] == Int32(1)
-        n > 1 && @test info[length(systems) + 2] == Int32(2)
+        # a rank deficiency is no failure of the factorisation: `info` is 0, and the rank of a
+        # rank-`r` matrix is `r`; a rank-1 matrix is full rank at n = 1
+        @test info[length(systems) + 1] == Int32(0)
+        @test info[length(systems) + 2] == Int32(0)
+        @test factorize!!(nothing, m, rank0).rank == 0
+        @test factorize!!(nothing, m, rank1).rank == 1
         # the subnormal input gives finite factors
         fac = factorize!!(nothing, m, subnormal)
         @test all(isfinite, fac.factors)
-        @test all(isfinite, fac.σ)
+        @test all(isfinite, fac.σ̂)
         @test ldiv!!(nothing, fac, SVector{n, T}(fill(one(T), n))) isa SVector{n, T}
     end
 

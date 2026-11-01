@@ -11,6 +11,49 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`Newton` takes the truncated minimum-norm step of a rank-deficient SVD** (decision 44 of the
+  design). The numerical rank of `StaticSVD` and `DenseSVD` is the new field `rank`, the number of
+  singular values above `√n · eps(TF) · σ₁`; `info` is nonzero only where the factorisation
+  failed — a sweep that did not converge, or a singular value that is not finite — and `rank` is
+  then 0, with the zero step. A rank-deficient matrix gives `info == 0` and `SUCCESS` on a static
+  matrix, a host array and a device array alike, where the static factor gave `info = r + 1` and
+  `SINGULAR`, so `Newton(; linsolve = SVDFactorization())` no longer stops after one iteration with
+  `SINGULAR` on an `SVector`. A host `DenseSVD` refuses a matrix with an `Inf` or `NaN` entry
+  before `gesvd` and reports `info = 1` and `SINGULAR`, where an `Inf` gave `SUCCESS` with `NaN`
+  singular values. A host `DenseSVD` divides every matrix by a power of two before `gesvd`, as a
+  static or device SVD does, and takes its status and rank from the singular values of the scaled
+  matrix. A finite matrix near `floatmax`, such as a 4×4 matrix of `floatmax(T) / 2`, gives
+  `info == 0`, `SUCCESS`, rank 1 and a finite step, as an `SMatrix` and a `JLArray` do, where it
+  gave `info = 1` and `SINGULAR`. The field `S` holds the singular values of the matrix itself,
+  which overflow to `Inf` above `floatmax` without failing the factor. A matrix rounded to the
+  subnormal range gets the same rank on the host as on the static and device routes.
+  `GeometricSolvers.exact_solve(fac)` is `false` for an SVD factor of rank below `n`, and `Newton`
+  then measures the slope of its step (`MeasuredSlope()`) in place of `−2φ(0)`. With `DogLeg`, a
+  Newton step of zero norm is no Newton step: a zero Jacobian returns `STALLED` with the iterate
+  kept. The regenerated `test/verification/standard_reference.csv` changes the code of two cells
+  of the column `Newton Backtracking SVD` in `Float32`, `(3, u0)` from `STALLED` after 7 iterations
+  to `LINESEARCH_FAILED` after 6 and `(8, u0)`, flagged `unstable`, from `STALLED` after 12 to
+  `LINESEARCH_FAILED` after 11, and the evaluation counts of 17 more cells of that column, where
+  the measured slope costs a Jacobian-vector product at the start of a line search; one of them,
+  `(8, 10u0)`, flagged `unstable`, also ends at another residual norm.
+
+- **`StaticSVD` stores `σ̂` alone, and `GeometricSolvers.singular_values(fac)` gives the singular
+  values** of the matrix as it was passed, `σ̂ · 2^e`; the fields `σ` and `converged` are gone, and
+  K17 leaves `KNOWN_ISSUES.md`: the singular value above `floatmax` that overflows is now the value
+  of a function, documented there.
+
+- **The R1 LU, QR and SVD factorise a `BigFloat` static matrix** (K6 leaves `KNOWN_ISSUES.md`): their
+  local arrays are `SizedMatrix` and `SizedVector` for an element type that is not `isbits`, and
+  `MMatrix` and `MVector`, with no allocation, otherwise.
+
+- **No `Float16` code** (decision 46): `jacobi_acc_type`, its uses in the device SVD and the
+  precompile block of `src/linear/ka/svd.jl` are removed, and the device SVD accumulates in its own
+  element type. The `Float16` SVD tests go with them; the `Float16` tests of generic code stay.
+
+- **The dense LU calls `LAPACK.getrf!`**, and the package's own `getrf!` wrapper is removed.
+  `GeometricSolvers.dense_factor` sizes the host QR and SVD workspaces by a workspace query of
+  `geqrf` and `gesvd` in place of the fixed `64n` and `128n`.
+
 - **`init`, `solve!` and `solve` are CommonSolve.jl's functions, and `solve!(init(…))` returns what
   `solve(…)` returns** (decision 49 of the design). CommonSolve is a
   new dependency (`[compat] CommonSolve = "0.2"`). The package imports and extends
@@ -320,13 +363,14 @@ so that a compat-only bump can be told apart from an interface change.
 - `SVDFactorization` on a static matrix: `GeometricSolvers.factorize!!(nothing, SVDFactorization(), J)`
   and `GeometricSolvers.ldiv!!(nothing, fac, r)` return an `isbits` `StaticSVD` and an `SVector`
   step, from a one-sided Jacobi iteration run by one thread per system in a KernelAbstractions
-  kernel, and allocate nothing unless bounds checks are forced (`--check-bounds=yes`). The
-  singular values `σ` are those of `J`, in non-increasing order. A singular value at or below
-  `√n · eps(TF) · σ₁` counts as zero: `info` is the index of the first one,
-  `GeometricSolvers.returncode(fac)` gives `SINGULAR`, and the solve leaves those directions out,
-  so a rank-deficient matrix gives a finite truncated step and never a `NaN`. The matrix is first
-  divided by a power of two, recorded as `scale_exponent`, so a subnormal matrix gives finite
-  factors. A sweep that reaches the cap of 30 sweeps leaves `converged` false.
+  kernel, and allocate nothing unless bounds checks are forced (`--check-bounds=yes`).
+  `GeometricSolvers.singular_values(fac)` gives the singular values of `J`, in non-increasing
+  order. A singular value at or below `√n · eps(TF) · σ₁` counts as zero: `rank` counts the
+  others, and the solve leaves those directions out, so a rank-deficient matrix gives a finite
+  truncated step and never a `NaN`. The matrix is first divided by a power of two, recorded as
+  `scale_exponent`, so a subnormal matrix gives finite factors. A sweep that reaches the cap of 30
+  sweeps, or a singular value that is not finite, gives `info = 1`, and
+  `GeometricSolvers.returncode(fac)` gives `SINGULAR`.
 
 - `jacobi_eigen(A)`, exported, is a cyclic two-sided Jacobi eigensolver for a Hermitian or real
   symmetric static matrix, on the rotations and round-robin ordering of the SVD, with a

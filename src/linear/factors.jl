@@ -21,18 +21,23 @@ overflows nor underflows in the factor type. A zero or non-finite `J` gives `e =
 records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, and
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
-The SVD records the first singular value that its rank cutoff `√n · eps(TF) · σ₁` counts as zero,
-and it is prescaled at the working precision too, because the sweep squares the entries.
+The SVD records its numerical rank in `rank`, the number of singular values above the cutoff
+`√n · eps(TF) · σ₁`, and a rank deficiency gives `info == 0` and `SUCCESS`; its `info` is nonzero
+only where the sweep did not converge or a singular value is not finite, and `rank` is then 0. The
+SVD is prescaled at the working precision too, because the sweep squares the entries.
 
 For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
 built by [`dense_factor`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
-place; `J === fac.factors` is factorised as it is. On a device [`DenseSVD`](@ref), `J` is divided
-by `2^e` unconditionally into `fac.U` before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
-`info` is `gesvd`'s non-convergence code on the host, or `1` when the device Jacobi sweep reaches
-its sweep cap without converging or meets a non-finite entry, and a rank deficiency gives
-`info == 0` and `SUCCESS`. An `Inf` in a dense `J` does not throw, and the step that
-[`ldiv!!`](@ref) then gives is not specified.
+place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) divides `J` by `2^e`
+unconditionally, `J === fac.factors` too: into `fac.factors` on the host before `gesvd`, and into
+`fac.U` on a device before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
+`info` is `1` on the host where `J` has a non-finite entry, which is refused before `gesvd` and
+leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
+singular value of `J / 2^e` is not finite; on a device it is `1` where the Jacobi
+sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
+numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD then
+reports `SINGULAR`, and the step that the LU or QR factors give is not specified.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -46,7 +51,11 @@ Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element typ
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
-type of `r` is the element type of the factors, the solve runs directly in it. Where they differ,
+type of `r` is the element type of the factors, the solve runs directly in it. There `r` is not
+scaled, unlike in the mixed-type path below: the step overflows on every route where the solution
+itself exceeds `floatmax`, and the QR and SVD solves, which form `Qᴴ r` or `Uᴴ r` first, can also
+overflow for a finite `r` near `floatmax` whose solution is representable, while the LU solve
+forms no such product. Where they differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
@@ -55,7 +64,8 @@ only where an entry's absolute value does. In the mixed-type path, a zero `r` re
 step without solving, and an `Inf` or `NaN` in `r` gives a non-finite step. In both paths the
 step is multiplied by `2^-e`, the power of two that [`factorize!!`](@ref) divided `J` by, in the
 element type of `r`. The SVD's solve leaves out the directions that its rank cutoff counted as
-zero, so that a rank-deficient system gives a finite, truncated step rather than an enormous one.
+zero, so that a rank-deficient system gives a finite, truncated step rather than an enormous one;
+an SVD factor with `info ≠ 0` has rank 0 and gives the zero step.
 """
 function ldiv!! end
 
@@ -107,28 +117,24 @@ end
 
 The singular value decomposition of an `N × N` static matrix, in element type `TF`, computed by
 the one-sided Jacobi iteration of `src/linear/static/svd.jl`. `factors` holds `U`, `V` holds the
-right singular vectors as columns, and `σ` holds the `N` singular values in non-increasing order
-in `R = real(TF)`. `info` is the index of the first singular value that the rank cutoff
-`√N · eps(TF) · σ₁` counts as zero, or 0 where there is none, so that
-[`returncode`](@ref) gives `SINGULAR` for a rank-deficient matrix as it does for the LU and QR
-factors; the truncated directions are zeroed in `U`, and the solve of [`ldiv!!`](@ref) leaves
-their coordinates out. `converged` is `false` where the sweep reached its cap of 30 sweeps
-before the columns were orthogonal. `scale_exponent` is the exponent `e` of the power of two
-`2^e` that the matrix was divided by, and `σ` holds the singular values of the matrix as it was
-passed, not of the scaled one: a `σ₁` above `floatmax(R)` — every entry of the matrix finite —
-is not representable there, and `σ` then holds `Inf`. `σ̂` holds the singular values of the scaled
-matrix, the ones the sweep computed and the ones the solve divides by, so that the limit of `σ`
-is the limit of the report alone and not of the step.
+right singular vectors as columns, and `σ̂` holds the `N` singular values of the matrix divided by
+`2^e`, the ones the sweep computed and the solve divides by, in non-increasing order in
+`R = real(TF)`; [`singular_values`](@ref) gives those of the matrix as it was passed. `rank` is
+the number of singular values above the rank cutoff `√N · eps(TF) · σ̂₁`; the directions past it
+are zeroed in `U`, and the solve of [`ldiv!!`](@ref) leaves their coordinates out. `info` is 1
+where the sweep reached its cap of 30 sweeps before the columns were orthogonal or a singular
+value is not finite, and `rank` is then 0; it is 0 otherwise, also for a rank-deficient matrix,
+so that [`returncode`](@ref) reports a failed factorisation alone. `scale_exponent` is the
+exponent `e` of the power of two `2^e` that the matrix was divided by.
 
 `L = N * N` makes the `SMatrix` fields concrete, so the factor is `isbits`.
 """
 struct StaticSVD{N, TF, R, L}
     factors::SMatrix{N, N, TF, L}
     V::SMatrix{N, N, TF, L}
-    σ::SVector{N, R}
     σ̂::SVector{N, R}
     info::Int32
-    converged::Bool
+    rank::Int32
     scale_exponent::Int32
 end
 
@@ -178,14 +184,19 @@ end
 
 The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` matrix, with
 `factors` the `n × n` Jacobian buffer in the factor element type (which holds `V` during the
-device Jacobi sweep), `U` and `VT` the `n × n` unitary factors, `S` the vector of singular values
-in the real factor type, `work` (the LAPACK workspace on the host, and the 1-element `Int32`
-rotation-flag buffer on a device), `rwork` (the real LAPACK workspace on the host, and the
-length-`n` scaled singular-value vector `σ̂` on a device) and `tmp` the workspace buffers, `rhs`
+device Jacobi sweep), `U` and `VT` the `n × n` unitary factors, `S` the vector of the singular
+values `σ̂ · 2^e` of the matrix in the real factor type, which overflow to `Inf` where they exceed
+`floatmax`, `work` (the LAPACK workspace on the host, and the 1-element `Int32` rotation-flag
+buffer on a device), `rwork` (the real LAPACK workspace during `gesvd` on the host, and the
+singular values `σ̂` of the matrix divided by `2^e` in its first `n` entries, on the host after
+`gesvd` and on a device after the sweep) and `tmp` the workspace buffers, `rhs`
 the right-hand-side buffer of the factor element type when that differs from the working element
-type and `nothing` otherwise, `info` `gesvd`'s non-convergence code on the host, `1` when the
-device Jacobi sweep reaches its sweep cap without converging or meets a non-finite entry, or `0`,
-and `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by.
+type and `nothing` otherwise, `info` `1` where the host matrix has a non-finite entry, which is
+refused before `gesvd`, `gesvd`'s non-convergence code, `1` where a host `σ̂` is not finite or the
+device Jacobi sweep reaches its sweep cap without converging
+or meets a non-finite entry, or `0`, `rank` the number of singular values above
+the cutoff `√n · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent
+`e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     RW <: AbstractVector, T <: AbstractVector,
@@ -199,6 +210,7 @@ struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     tmp::T
     rhs::V
     info::Int
+    rank::Int
     scale_exponent::Int
 end
 
@@ -223,7 +235,8 @@ function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {
     n = length(x)
     factors = similar(x, F, n, n)
     τ = similar(x, F, n)
-    work = x isa AbstractGPUArray ? similar(x, Int32, 1) : similar(x, F, max(1, 64 * n))
+    work = x isa AbstractGPUArray ? similar(x, Int32, 1) :
+           similar(x, F, qr_work_length(factors, τ))
     rhs = F === T ? nothing : similar(x, F, n)
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end
@@ -237,12 +250,13 @@ function dense_factor(
     U = similar(x, F, n, n)
     S = similar(x, R, n)
     VT = similar(x, F, n, n)
-    work = x isa AbstractGPUArray ? similar(x, Int32, 1) : similar(x, F, max(1, 128 * n))
     rwork = x isa AbstractGPUArray ? similar(x, R, n) :
-            similar(x, R, F <: Complex ? max(1, 5 * n) : 0)
+            similar(x, R, F <: Complex ? max(1, 5 * n) : n)
+    work = x isa AbstractGPUArray ? similar(x, Int32, 1) :
+           similar(x, F, svd_work_length(factors, S, U, VT, rwork))
     tmp = similar(x, F, n)
     rhs = F === T ? nothing : similar(x, F, n)
-    return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0)
+    return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0, 0)
 end
 
 """
@@ -254,6 +268,28 @@ function returncode(
         fac::Union{StaticLU, StaticQR, StaticSVD, DenseLU, DenseQR, DenseSVD})
     return iszero(fac.info) ? SUCCESS : SINGULAR
 end
+
+"""
+    exact_solve(fac)
+
+`true` where the solve of [`ldiv!!`](@ref) with the factor `fac` is the exact solve of the
+factored matrix, and `false` for an SVD factor of numerical rank below `n`, whose solve is the
+truncated minimum-norm step. `Newton` measures the slope of a truncated step, because `−2φ(0)`
+is the slope of an exact Newton step alone.
+"""
+exact_solve(fac) = true
+exact_solve(fac::StaticSVD{N}) where {N} = fac.rank == N
+exact_solve(fac::DenseSVD) = fac.rank == length(fac.S)
+
+"""
+    singular_values(fac::StaticSVD)
+
+The singular values of the matrix that [`factorize!!`](@ref) factorised, in non-increasing order,
+as an `SVector` in `real(TF)`: the stored `σ̂` of the matrix divided by `2^e`, multiplied by `2^e`.
+A singular value above `floatmax(real(TF))` overflows to `Inf`, although every entry of the matrix
+is finite; the solve divides by `σ̂` and stays finite.
+"""
+singular_values(fac::StaticSVD) = map(a -> ldexp2(a, fac.scale_exponent), fac.σ̂)
 
 # `a · 2^e`, exact unless the result leaves the floating-point range; by component for a complex `a`.
 # Bitwise on `IEEEFloat` so that a device with flush-to-zero enabled (Metal) preserves subnormals.
@@ -305,6 +341,23 @@ function factor_matrix(::Type{F}, J::StaticMatrix{N, N, T}) where {F, N, T}
     F === T && return SMatrix{N, N, F}(J), Int32(0)
     e = matrix_exponent(J)
     return SMatrix{N, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
+end
+
+# A mutable local copy of a static array for the scalar loops of the R1 kernels: an `MMatrix` or
+# `MVector` for an `isbits` element type, which the compiler keeps off the heap, and otherwise a
+# `SizedMatrix` or `SizedVector` on a heap array, because a mutable static array of a non-`isbits`
+# element type such as `BigFloat` has no `setindex!`. `isbitstype(F)` is a constant of the type,
+# so each method compiles to one of its two branches.
+@inline function local_array(A::SMatrix{N, M, F}) where {N, M, F}
+    return isbitstype(F) ? MMatrix{N, M, F, N * M}(A) : SizedMatrix{N, M, F}(Matrix(A))
+end
+@inline function local_array(x::SVector{N, F}) where {N, F}
+    return isbitstype(F) ? MVector{N, F}(x) : SizedVector{N, F}(Vector(x))
+end
+
+# An uninitialised local vector of `N` entries of type `F`, as `local_array` chooses its type.
+@inline function local_vector(::Type{F}, ::Val{N}) where {F, N}
+    return isbitstype(F) ? MVector{N, F}(undef) : SizedVector{N, F}(undef)
 end
 
 # The exponent of the largest |re| or |im| of a nonempty `J`, clamped to the exponent range, and 0

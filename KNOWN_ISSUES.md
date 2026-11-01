@@ -39,18 +39,6 @@
 - **kind:** upstream
 - **found:** 2026-10-08
 
-### K6 · A `BigFloat` static matrix has no R1 factorisation.
-
-- **location:** `src/linear/static/lu.jl`, `src/linear/static/qr.jl` (`A = MMatrix(...)` in
-  `factorize!!`)
-- **evidence:** `factorize!!(nothing, LUFactorization(), SMatrix{2, 2, BigFloat}(2, 1, 1, 3))`,
-  and the same with `QRFactorization()`, raise `setindex!() with non-isbitstype eltype is not
-  supported by StaticArrays. Consider using SizedArray.` (Julia 1.13.1). Both kernels work on a
-  local `MMatrix`, the R1 storage, and an `MMatrix` of a non-`isbits` element type has no
-  `setindex!`. `BigFloat` is best effort on the CPU, and no test names it.
-- **kind:** found late
-- **found:** 2026-10-15
-
 ### K7 · A value iterate that is a mutable static array allocates on every update.
 
 - **location:** `src/base/bang.jl` (`update_iterate!!`, `map!!`)
@@ -65,17 +53,23 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K17 · A `StaticSVD`'s reported `σ` holds `Inf` where `σ₁` exceeds `floatmax(real(TF))`.
+### K21 · The same-type QR and SVD solves overflow for a finite right-hand side near `floatmax` whose solution is representable
 
-- **location:** `src/linear/static/svd.jl:218`
-- **evidence:** `test/linear/static/svd.jl`, the testset *a singular value above `floatmax(R)`
-  leaves the solve finite*: at a full `floatmax(T)/2` matrix in `Float32` and `Float64` it asserts
-  `@test !isfinite(fac.σ[1])` beside `all(isfinite, x)` and the `4n · eps(TF) · κ∞` solve bound.
-  `σ` is the `SVector{N, R}` of the singular values of the matrix as it was passed, in
-  `R = real(TF)`, and `factorize!!` unscales them by the power of two it divided the matrix by;
-  that product overflows `R` although every entry of the matrix is finite — the `σ₁` there is
-  `≈ 2.125 · floatmax`. The solve is not affected: `ldiv!!` divides by `σ̂`, the singular values
-  the sweep computed. Reporting a `σ₁` above `floatmax(R)` needs a field wider than the factor
-  type.
-- **kind:** found late
-- **found:** 2026-10-16
+- **location:** `src/linear/factors.jl` (`ldiv!!`, the path where `r` has the factor element type)
+- **evidence:** With `J = I + H`, `H` the 4 × 4 Hilbert matrix, and
+  `b = fill(T(0.75) * floatmax(T), 4)`, the step of `ldiv!!` with `SVDFactorization()` or
+  `QRFactorization()` is not finite on an `SMatrix`, an `Array` and a `JLArray`, in `Float32` and
+  `Float64`, although `big.(J) \ big.(b)` is below `floatmax(T)`; `LUFactorization()` gives a
+  finite step there. `J = ones(T, 4, 4)` with
+  the same `b` gives the same for the SVD, whose minimum-norm solution is `0.75 · floatmax / 4`
+  in every entry. The same-type path does not scale `r`, and the QR and SVD solves form `Qᴴ r` or
+  `Uᴴ r` before they divide, so a sum of entries near `floatmax` overflows; the mixed-type path
+  divides `r` by `maximum(abs, r)` first. One `Float32` instance differs between the routes:
+  `J = fill(floatmax(Float32) / 2, 4, 4)` with `b = fill(floatmax(Float32) / 2, 4)`, whose
+  minimum-norm solution is `0.25` in every entry, gives a non-finite step on an `Array` and a
+  finite one on an `SMatrix` and a `JLArray`. Measured at 677ea03 (Julia 1.13.3, M4 Max). The QR
+  solve is not changed by PR #46, so the defect is probably older than PR #46; it was not measured
+  on `main`. The planned fix scales `r` by an exact power of two inside the same-type `ldiv!!` and
+  multiplies the step by its inverse with the `2^-e` of the factor, in a follow-up pull request.
+- **kind:** defect
+- **found:** PR #46

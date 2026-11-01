@@ -1,5 +1,6 @@
 # The R1 LU factorisation with partial pivoting: a scalar loop that one thread runs, on a local
-# `MMatrix` that the compiler keeps off the heap on the CPU, on Metal and on CUDA.
+# `MMatrix` that the compiler keeps off the heap on the CPU, on Metal and on CUDA, and on a
+# `SizedMatrix` for an element type that is not `isbits` (`local_array` of `factors.jl`).
 
 # The pivot measure |re| + |im| of LAPACK's `izamax`: no `sqrt` per entry, as `abs` has, and no
 # overflow above `sqrt(floatmax)`, as `abs2` has.
@@ -24,7 +25,7 @@ function factorize!!(::Union{Nothing, StaticLU},
         method::LUFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
     Â, e = factor_matrix(factor_eltype(method, T), J)
-    A = MMatrix(Â)
+    A = local_array(Â)
     ipiv = zero(SVector{N, Int32})
     info = Int32(0)
     @inbounds for k in 1:N
@@ -65,7 +66,7 @@ end
 # The solve with the stored factors, of the matrix that `factorize!!` divided by `2^e`.
 function backsolve(fac::StaticLU{N, TF}, r::SVector{N, TF}) where {N, TF}
     A = fac.factors
-    x = MVector{N, TF}(r)
+    x = local_array(r)
     @inbounds begin
         for k in 1:N
             p = fac.ipiv[k]

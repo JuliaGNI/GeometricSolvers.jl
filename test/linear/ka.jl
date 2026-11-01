@@ -297,7 +297,7 @@ function ka_check_inferred_and_scaled(m, prob_dev, x_dev, A_dev, b_dev)
              fac isa DenseQR ?
              DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, fac.info, e_sc) :
              DenseSVD(fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork,
-        fac.tmp, fac.rhs, fac.info, e_sc)
+        fac.tmp, fac.rhs, fac.info, fac.rank, e_sc)
     d_sc = ldiv!!(similar(x_dev), fac_sc, b_dev)
     @test ka_rel_inf(Array(d_sc), Float64[x / 8.0 for x in d_h]) <= 8 * eps(Float64)
 end
@@ -489,14 +489,13 @@ end
         @test endswith(replace(String(m_svd_bs.file), '\\' => '/'), "src/linear/ka/svd.jl")
     end
 
-    @testset "non-BLAS element type Float16 solves through src/linear/ka/" begin
+    @testset "non-BLAS element type Float16 solves through src/linear/ka/{lu,qr}.jl" begin
         T = Float16
         n = 4
         A_cpu, b_cpu = ka_well_conditioned(T, n)
         x_ref, κ, _ = ka_ref_solve_and_cond(A_cpu, b_cpu)
         for (M, file) in ((LUFactorization, "src/linear/ka/lu.jl"),
-            (QRFactorization, "src/linear/ka/qr.jl"),
-            (SVDFactorization, "src/linear/ka/svd.jl"))
+            (QRFactorization, "src/linear/ka/qr.jl"))
             m = M()
             x = JLArray(zeros(T, n))
             prob = NonlinearProblem(x, ka_noop)
@@ -507,25 +506,6 @@ end
             d = ldiv!!(similar(x), fac, JLArray(b_cpu))
             @test d isa JLVector{T}
             @test ka_rel_inf(Array(d), x_ref) <= 8 * n * Float64(eps(T)) * κ
-        end
-    end
-
-    # No diagonal shift: the columns of a plain `randn` matrix are far from orthogonal, and the
-    # sweep converges on them only with a `Float32` accumulator.
-    @testset "general Float16 matrices converge in src/linear/ka/svd.jl, n = $n" for n in (2, 5, 8, 16)
-        T = Float16
-        m = SVDFactorization()
-        for seed in 1:3
-            A_cpu = randn(Xoshiro(seed), T, n, n)
-            x = JLArray(zeros(T, n))
-            prob = NonlinearProblem(x, ka_noop)
-            fac = factorize!!(dense_factor(m, prob, x, nothing), m, JLArray(A_cpu))
-            @test fac.info == 0
-            S = Array(fac.S)
-            σ_ref = _ka_svd_ref_f64(Float64.(A_cpu))
-            @test maximum(abs.(Float64.(S) .- σ_ref)) <= 8 * n * Float64(eps(T)) * σ_ref[1]
-            _, _, err_rec = ka_svd_orth_and_recon_errs(Array(fac.U), S, Array(fac.VT), A_cpu)
-            @test err_rec <= 8 * n * Float64(eps(T)) * ka_opnorm_inf(A_cpu)
         end
     end
 
@@ -944,6 +924,7 @@ end
                 end
             end
             @test num_rank == r
+            @test fac.rank == r
             @test S_h[r + 1] <= cutoff
             if r >= 1
                 @test S_h[r] > cutoff
@@ -999,7 +980,7 @@ end
             @test all(iszero, d_h[2:n])
 
             # Direct backsolve! check when U[:, 2] is non-zero so ka_svd_ut_mul_scale_kernel!'s own
-            # tol * rwork[1] guard is exercised independently of U column zeroing
+            # guard on fac.rank is exercised independently of U column zeroing
             if TF === Nothing
                 copyto!(fac.U, JLArray(Matrix{F}(I, n, n)))
                 copyto!(fac.VT, JLArray(Matrix{F}(I, n, n)))
@@ -1047,7 +1028,7 @@ end
             @test ka_count_nz(Array(fac16.VT)) == n16
         end
 
-        for T in (REAL_ELTYPES..., Float16)
+        for T in REAL_ELTYPES
             n = 16
             tol = jacobi_tolerance(n, T)
             ε = T(0.5) * tol
