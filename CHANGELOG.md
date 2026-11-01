@@ -75,7 +75,8 @@ so that a compat-only bump can be told apart from an interface change.
   `α = 0`** (audit F13). `NewtonState` and `PicardState` have a ninth and a fifth field, `merit`:
   `norm2(Fx)` of the current residual for a line search, which `start!!` sets once per solve and
   each step sets from the merit that its search computed for the residual it returns; `nothing`
-  for `Static`, `DogLeg` and any other globalization. A solve on an `Array` with `Backtracking`,
+  for `Static`, `DogLeg` and any other globalization. `init_state` sets it to `NaN`, so a
+  line-search `step!!` on a state that no `start!!` saw returns `NONFINITE` and keeps its iterate. A solve on an `Array` with `Backtracking`,
   `Bisection` or `StrongWolfe` calls `norm2` on its residual buffer at most twice, where it called
   it once per step and once more. The public `globalize!!(g, ls, prob, x, Fx, d, p, jvpprep, stepkind)`
   keeps its form and its results; the solvers call the internal `globalize_merit!!`.

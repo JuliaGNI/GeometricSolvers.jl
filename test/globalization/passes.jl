@@ -119,6 +119,43 @@ end
     end
 end
 
+# `init_state` sets the merit of a line search to `NaN`, and only `start!!` sets it to
+# `norm2(F(x₀))`: a step on a state that no `start!!` saw meets a non-finite anchor, returns
+# `NONFINITE` and keeps its iterate. After `start!!`, the same step succeeds and moves.
+const NO_START = [
+    ("Newton Backtracking", Newton(; globalization = Backtracking())),
+    ("Newton Bisection", Newton(; globalization = Bisection())),
+    ("Newton StrongWolfe", Newton(; globalization = StrongWolfe())),
+    ("Newton reuse = 3 Backtracking", Newton(; reuse = 3, globalization = Backtracking())),
+    ("Picard Backtracking", Picard(; damping = 1, globalization = Backtracking()))
+]
+
+function first_step(m, prob, x₀; start)
+    state = init_state(m, prob, x₀, nothing)
+    x = copy(x₀)
+    Fx = residual!!(GS.residual_buffer(state), prob, x, nothing)
+    start && (state = start!!(state, m, prob, x, Fx, nothing, rnorm(Fx)))
+    x₁, _, state₊, info = step!!(state, m, prob, x, Fx, nothing)
+    return x₁, state₊, info
+end
+
+@testset "a step without start!! is NONFINITE, $R" for R in REAL_ELTYPES
+    @testset "$name" for (name, m) in NO_START
+        mR = adapt(ToReal{R}(), m)
+        for (prob, x₀) in ((value_problem(:newton), SVector{2, R}(1, 1)),
+            (array_problem(:newton), R[1, 1]))
+            x₁, st₊, info = first_step(mR, prob, x₀; start = false)
+            @test info.code == NONFINITE
+            @test x₁ == x₀
+            @test isnan(st₊.merit)
+            x₁, st₊, info = first_step(mR, prob, x₀; start = true)
+            @test info.code == SUCCESS
+            @test x₁ != x₀
+            @test isfinite(st₊.merit)
+        end
+    end
+end
+
 @testset "only a line search carries a merit" begin
     prob = value_problem(:newton)
     x = SVector(1.0, 1.0)

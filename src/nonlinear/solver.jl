@@ -31,7 +31,9 @@ array iterate, and `nothing` for a value iterate. The default is `nothing`, whic
     step!!(state, method, prob::NonlinearProblem, x, Fx, p)
 
 Compute one nonlinear solver step from `(x, Fx)` and return `(x₊, F₊, state₊, info)` where `info`
-is a [`StepInfo`](@ref).
+is a [`StepInfo`](@ref). A line-search step of [`Newton`](@ref) or [`Picard`](@ref) reads the
+anchor merit that [`start!!`](@ref) sets; on a state that no `start!!` saw, it returns
+`NONFINITE` and keeps `x` and `Fx`.
 """
 function step!! end
 
@@ -41,7 +43,8 @@ function step!! end
 Prepare `state` for a solve from `x`, with residual `Fx` and its norm `fnorm₀`, and return the
 state that the first step reads. [`solve!!`](@ref) calls it once, before its stopping test at 0
 iterations, so a state reused across solves starts each solve afresh. The default returns
-`state`; [`Newton`](@ref) resets its rule state.
+`state`. [`Newton`](@ref) resets its rule state, and [`Newton`](@ref) and [`Picard`](@ref) set
+the anchor merit `norm2(Fx)` of a line search, which `init_state` leaves at `NaN`.
 """
 @inline start!!(state, method, prob, x, Fx, p, fnorm₀) = state
 

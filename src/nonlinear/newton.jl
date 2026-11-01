@@ -14,7 +14,8 @@ trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refineme
 - `linsolve::L`: the linear-solver method.
 - `globalization::G`: the globalization method. A line search takes its merit at `α = 0` from
   the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))`, so a [`step!!`](@ref) with a line
-  search follows a `start!!` on its state, as in [`solve!!`](@ref).
+  search follows a `start!!` on its state, as in [`solve!!`](@ref). A line-search step on a state
+  that no `start!!` saw returns `NONFINITE` and keeps its iterate.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
   `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a

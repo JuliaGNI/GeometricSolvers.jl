@@ -64,8 +64,10 @@ Allocate the workspace named tuple for globalization method `g` at iterate `x` t
 
 # The merit `norm2(F)` of the current residual, which a solver carries in its state for a line
 # search, the one globalization that reads it: the anchor merit of the next step. Any other
-# globalization carries `nothing`, and computes none; `Static` searches nothing.
-@inline init_merit(::LineSearch, x) = zero(real(eltype(x)))
+# globalization carries `nothing`, and computes none; `Static` searches nothing. `init_merit` is
+# `NaN` until `start!!` sets the merit from `F(x₀)`, so that a step on a state that no `start!!`
+# saw meets a non-finite anchor and returns `NONFINITE` with its iterate kept.
+@inline init_merit(::LineSearch, x) = real(eltype(x))(NaN)
 @inline init_merit(::Static, x) = nothing
 @inline init_merit(g, x) = nothing
 @inline start_merit(::LineSearch, Fx) = norm2(Fx)
