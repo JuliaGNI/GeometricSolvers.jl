@@ -39,32 +39,44 @@ Adapt.@adapt_structure Picard
     end
 end
 
-# The state of `Picard`: the Jacobian-vector preparation of its line search, and the residual,
-# direction and globalization workspace, each `nothing` for a value iterate.
-struct PicardState{VP, FX, D, G}
+# The state of `Picard`: the Jacobian-vector preparation of its line search, the residual,
+# direction and globalization workspace, each `nothing` for a value iterate, and the merit
+# `norm2(Fx)` of the current residual for a line search, `nothing` for any other globalization.
+struct PicardState{VP, FX, D, G, PH}
     jvpprep::VP
     Fx::FX
     d::D
     g::G
+    merit::PH
 end
 
 @inline function init_state(m::Picard, prob::NonlinearProblem, x, p)
     Fx = buffer(x)
     jvpprep = picard_jvpprep(m, prob, Fx, x, p)
+    merit = init_merit(m.globalization, x)
     if Fx === nothing
-        return PicardState(jvpprep, nothing, nothing, nothing)
+        return PicardState(jvpprep, nothing, nothing, nothing, merit)
     else
-        return PicardState(jvpprep, Fx, buffer(x), init_globalization(m.globalization, x))
+        return PicardState(
+            jvpprep, Fx, buffer(x), init_globalization(m.globalization, x), merit)
     end
 end
 
 @inline residual_buffer(state::PicardState) = state.Fx
 
+@inline function with_merit(s::PicardState, merit)
+    return PicardState(s.jvpprep, s.Fx, s.d, s.g, merit)
+end
+
+@inline function start!!(state::PicardState, m::Picard, prob, x, Fx, p, fnorm₀)
+    return with_merit(state, start_merit(m.globalization, Fx))
+end
+
 # The damping is real, so that `-ω F` of a complex `F` is the real scaling of each part.
 @inline function step!!(state::PicardState, m::Picard, prob::NonlinearProblem, x, Fx, p)
     ω = real(eltype(x))(m.damping)
     d = map!!(fi -> -ω * fi, state.d, Fx)
-    x₊, F₊, _, info = globalize!!(
-        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, MeasuredSlope())
-    return x₊, F₊, state, info
+    x₊, F₊, _, info, merit = globalize_merit!!(
+        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, MeasuredSlope(), state.merit)
+    return x₊, F₊, with_merit(state, merit), info
 end

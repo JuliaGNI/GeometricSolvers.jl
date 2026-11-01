@@ -174,11 +174,12 @@ end
 @inline reset_rule(r::TrustRadius) = TrustRadius(r.radius₀, r.radius₀)
 
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
-# globalization workspace, and the rule state of its reuse or its `DogLeg`. For a value iterate
-# the workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The
-# factor slot is the storage that each factorisation writes into; only a step with reuse stores
-# the factor it returns, because only such a step reads it again.
-struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS}
+# globalization workspace, the rule state of its reuse or its `DogLeg`, and the merit
+# `norm2(Fx)` of the current residual for a line search, `nothing` for any other globalization.
+# For a value iterate the workspace slots are `nothing`, and so is the factor slot unless the
+# factor is reused. The factor slot is the storage that each factorisation writes into; only a
+# step with reuse stores the factor it returns, because only such a step reads it again.
+struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH}
     jacprep::JP
     jvpprep::VP
     Fx::FX
@@ -187,34 +188,42 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS}
     J::JM
     g::G
     rule::RS
+    merit::PH
 end
 
 @inline function with_factor(s::NewtonState, fac)
-    return NewtonState(s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule)
+    return NewtonState(s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit)
 end
 
 @inline function with_rule(s::NewtonState, rule)
-    return NewtonState(s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule)
+    return NewtonState(s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit)
+end
+
+@inline function with_merit(s::NewtonState, merit)
+    return NewtonState(s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit)
 end
 
 @inline function init_state(m::Newton, prob::NonlinearProblem, x, p)
     Fx = buffer(x)
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
+    merit = init_merit(m.globalization, x)
     if Fx === nothing
         fac = m.reuse === nothing ? nothing : init_factor(m.linsolve, prob, x, p)
-        return NewtonState(jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule)
+        return NewtonState(
+            jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule, merit)
     else
         fac = init_factor(m.linsolve, prob, x, p)
         return NewtonState(jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, x),
-            init_globalization(m.globalization, x), rule)
+            init_globalization(m.globalization, x), rule, merit)
     end
 end
 
 @inline residual_buffer(state::NewtonState) = state.Fx
 
 @inline function start!!(state::NewtonState, m::Newton, prob, x, Fx, p, fnorm₀)
-    return with_rule(state, reset_rule(state.rule))
+    state = with_rule(state, reset_rule(state.rule))
+    return with_merit(state, start_merit(m.globalization, Fx))
 end
 
 @inline function newton_stepkind(m::Newton, ::Type{T}, fresh::Bool) where {T}
@@ -236,29 +245,31 @@ end
 
 # The step from the factor `fac`, fresh or reused: `SINGULAR` for a failed factor, else the
 # globalized step along the refined direction, with the measured slope where the solve of `fac`
-# is a truncated one.
+# is a truncated one. It returns the merit of the residual it returns, from the merit of `Fx`
+# that the state carries.
 @inline function newton_globalize(
         m::Newton, state::NewtonState, prob, x, Fx, p, fac, fresh::Bool)
     T = eltype(x)
     R = real(T)
     if fac.info > Int32(0)
-        return x, Fx, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false, false)
+        return x, Fx, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false, false),
+        state.merit
     end
     d₀ = ldiv!!(state.d, fac, Fx)
     d₁ = map!!(-, state.d, d₀)
     d = refine!!(state.d, m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
     sk = exact_solve(fac) ? newton_stepkind(m, T, fresh) : MeasuredSlope()
-    x₊, F₊, _, info = globalize!!(
-        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
-    return x₊, F₊, info
+    x₊, F₊, _, info, merit = globalize_merit!!(
+        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk, state.merit)
+    return x₊, F₊, info, merit
 end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     _, fac = newton_factor(m, state, prob, x, p)
-    x₊, F₊, info = newton_globalize(m, state, prob, x, Fx, p, fac, true)
-    return x₊, F₊, state, info
+    x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, true)
+    return x₊, F₊, with_merit(state, merit), info
 end
 
 # The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
@@ -293,17 +304,19 @@ end
     age_fresh = m.reuse == Int32(1) ? Int32(0) : Int32(1)
     age₊ = fresh ? age_fresh :
            (rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32))
-    x₊, F₊, info = newton_globalize(m, state, prob, x, Fx, p, fac, fresh)
+    x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, fresh)
     # A reused factor can give a direction that does not descend. A line search along it that
-    # fails without a step is retried once, in the same step, from a fresh factor.
+    # fails without a step is retried once, in the same step, from a fresh factor, and from the
+    # same residual and merit.
     if !fresh && info.code == LINESEARCH_FAILED && iszero(info.stepnorm)
         _, fac = newton_factor(m, state, prob, x, p)
         age₊ = age_fresh
-        x₊, F₊, info = newton_globalize(m, state, prob, x, Fx, p, fac, true)
+        x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, true)
     end
+    state = with_merit(with_factor(state, fac), merit)
     if info.code == SINGULAR
-        return x₊, F₊, with_rule(with_factor(state, fac), FactorAge(Int32(0), false)), info
+        return x₊, F₊, with_rule(state, FactorAge(Int32(0), false)), info
     end
-    state₊ = with_rule(with_factor(state, fac), FactorAge(age₊, info.code == STALLED))
+    state₊ = with_rule(state, FactorAge(age₊, info.code == STALLED))
     return x₊, F₊, state₊, info
 end
