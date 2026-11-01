@@ -53,23 +53,19 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K21 · The same-type QR and SVD solves overflow for a finite right-hand side near `floatmax` whose solution is representable
+### K23 · The same-type LU and QR solves overflow in the back substitution for a finite right-hand side near `floatmax` whose solution is representable
 
-- **location:** `src/linear/factors.jl` (`ldiv!!`, the path where `r` has the factor element type)
-- **evidence:** With `J = I + H`, `H` the 4 × 4 Hilbert matrix, and
-  `b = fill(T(0.75) * floatmax(T), 4)`, the step of `ldiv!!` with `SVDFactorization()` or
-  `QRFactorization()` is not finite on an `SMatrix`, an `Array` and a `JLArray`, in `Float32` and
-  `Float64`, although `big.(J) \ big.(b)` is below `floatmax(T)`; `LUFactorization()` gives a
-  finite step there. `J = ones(T, 4, 4)` with
-  the same `b` gives the same for the SVD, whose minimum-norm solution is `0.75 · floatmax / 4`
-  in every entry. The same-type path does not scale `r`, and the QR and SVD solves form `Qᴴ r` or
-  `Uᴴ r` before they divide, so a sum of entries near `floatmax` overflows; the mixed-type path
-  divides `r` by `maximum(abs, r)` first. One `Float32` instance differs between the routes:
-  `J = fill(floatmax(Float32) / 2, 4, 4)` with `b = fill(floatmax(Float32) / 2, 4)`, whose
-  minimum-norm solution is `0.25` in every entry, gives a non-finite step on an `Array` and a
-  finite one on an `SMatrix` and a `JLArray`. Measured at 677ea03 (Julia 1.13.3, M4 Max). The QR
-  solve is not changed by PR #46, so the defect is probably older than PR #46; it was not measured
-  on `main`. The planned fix scales `r` by an exact power of two inside the same-type `ldiv!!` and
-  multiplies the step by its inverse with the `2^-e` of the factor, in a follow-up pull request.
+- **location:** `src/linear/factors.jl` (`ldiv!!`), `src/linear/dense.jl` (`ldiv!!`)
+- **evidence:** With `H = H₄ / 2`, `H₄` the 4 × 4 Hadamard matrix,
+  `J = H diag(2^20, 2^14, 2^20, 2^20) H` and `b = 0.75 floatmax(T) · H[:, 2]`, whose solution
+  `0.75 floatmax(T) / 2^14 · H[:, 2]` is representable (`7.78844f33` and `4.11459e303` in modulus),
+  the step of `ldiv!!` with `LUFactorization()` and `QRFactorization()` is
+  `[Inf, -Inf, Inf, -7.78843f33]` in `Float32` and `[Inf, -Inf, Inf, -4.11459e303]` in `Float64`,
+  on an `SMatrix` and an `Array` (Julia 1.13.3); the `JLArray` route fails the same test. `r` is
+  divided by `2^k` with `k = 2`, which keeps `Qᴴ r` finite; a product of an entry of `U` or `R`
+  near `2^19` with an entry of the scaled step near `floatmax / 2^16` exceeds `floatmax`, which
+  points at the back substitution, but the operation that overflows was not traced.
+  `SVDFactorization()` solves the system. The test systems of
+  `test/helpers/matrix.jl` leave this system out for LU and QR.
 - **kind:** defect
-- **found:** PR #46
+- **found:** PR #48

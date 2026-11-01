@@ -213,8 +213,7 @@ function factorize!!(fac::DenseSVD{<:AbstractGPUArray}, ::SVDFactorization, J::A
     return ka_factorize_svd!(fac, J)
 end
 
-@kernel function ka_svd_ut_mul_scale_kernel!(
-        tmp, @Const(U), @Const(rwork), @Const(d), n::Int, rank::Int)
+@kernel function ka_svd_ut_mul_kernel!(tmp, @Const(U), @Const(d), n::Int, rank::Int)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(tmp)
@@ -223,10 +222,17 @@ end
             for i in 1:n
                 acc += conj(U[i, j]) * d[i]
             end
-            tmp[j] = acc / rwork[j]
+            tmp[j] = acc
         else
             tmp[j] = zero(F)
         end
+    end
+end
+
+@kernel function ka_svd_divide_kernel!(tmp, @Const(rwork), rank::Int, t::Int)
+    j = @index(Global, Linear)
+    @inbounds if j <= rank
+        tmp[j] = tmp[j] / (iszero(t) ? rwork[j] : ldexp2(rwork[j], t))
     end
 end
 
@@ -241,34 +247,64 @@ end
     end
 end
 
-function ka_svd_backsolve!(fac::DenseSVD, d::AbstractVector{T}) where {T <: Number}
+# The `divisor_exponent` of the coordinates `Uᴴ d` in `tmp`, from one reduction over `tmp` and
+# `rwork` once the kernel that writes `tmp` has run. The reduction runs over the whole of both, of
+# length `n` on a device, and not over views of their first `rank` entries, so that only device
+# arrays reach it: past the rank `tmp` holds the zero that the kernel wrote, which adds nothing.
+function ka_divisor_exponent(kbackend, fac::DenseSVD, ::Type{T}, n::Int) where {T}
+    synchronize(kbackend)
+    c = coordinate_bound(T, n)
+    R = real(T)
+    q = mapreduce((y, σ) -> iszero(y) ? zero(R) : coordinate_ratio(y, σ, c), max,
+        fac.tmp, fac.rwork; init = zero(R))
+    return shift_exponent(q)
+end
+
+# The solve with the factors of `J / 2^e` divides by their singular values `σ̂` in `rwork`, the
+# same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ d`; returns `t`.
+function ka_svd_backsolve!(fac::DenseSVD, d::AbstractVector{T}, shift::Bool) where {T <:
+                                                                                    Number}
     n = length(d)
-    n == 0 && return d
+    n == 0 && return 0
     # a failed factor, whose `σ̂` can hold a finite leading value beside a `NaN`, and a zero
     # matrix give the zero step; `rank` is a host field, so this reads no device array
-    iszero(fac.rank) && return fill!(d, zero(T))
+    iszero(fac.rank) && (fill!(d, zero(T)); return 0)
     backend = get_backend(d)
     kbackend = ka_kernel_backend(backend)
+    t = 0
     GC.@preserve fac d begin
         tmp_k = ka_kernel_array(backend, fac.tmp)
         U_k = ka_kernel_array(backend, fac.U)
         VT_k = ka_kernel_array(backend, fac.VT)
         rwork_k = ka_kernel_array(backend, fac.rwork)
         d_k = ka_kernel_array(backend, d)
-        ka_svd_ut_mul_scale_kernel!(kbackend)(
-            tmp_k, U_k, rwork_k, d_k, n, fac.rank; ndrange = n)
+        ka_svd_ut_mul_kernel!(kbackend)(tmp_k, U_k, d_k, n, fac.rank; ndrange = n)
+        shift && (t = ka_divisor_exponent(kbackend, fac, T, n))
+        ka_svd_divide_kernel!(kbackend)(tmp_k, rwork_k, fac.rank, t; ndrange = fac.rank)
         ka_svd_v_mul_kernel!(kbackend)(d_k, VT_k, tmp_k, n; ndrange = n)
     end
     synchronize(kbackend)
-    return d
+    return t
 end
 
 function backsolve!(
         fac::DenseSVD{<:AbstractGPUArray{T}}, d::AbstractVector{T}) where {T <: BlasFloat}
-    return ka_svd_backsolve!(fac, d)
+    ka_svd_backsolve!(fac, d, false)
+    return d
 end
 
 function backsolve!(
         fac::DenseSVD{<:AbstractGPUArray{T}}, d::AbstractVector{T}) where {T <: Number}
-    return ka_svd_backsolve!(fac, d)
+    ka_svd_backsolve!(fac, d, false)
+    return d
+end
+
+function backsolve_shifted!(fac::DenseSVD{<:AbstractGPUArray{T}},
+        d::AbstractVector{T}) where {T <: BlasFloat}
+    return ka_svd_backsolve!(fac, d, true)
+end
+
+function backsolve_shifted!(fac::DenseSVD{<:AbstractGPUArray{T}},
+        d::AbstractVector{T}) where {T <: Number}
+    return ka_svd_backsolve!(fac, d, true)
 end
