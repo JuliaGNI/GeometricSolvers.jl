@@ -51,7 +51,11 @@ Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element typ
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
-type of `r` is the element type of the factors, the solve runs directly in it. Where they differ,
+type of `r` is the element type of the factors, the solve runs directly in it. There `r` is not
+scaled, unlike in the mixed-type path below: the step overflows on every route where the solution
+itself exceeds `floatmax`, and the QR and SVD solves, which form `Qᴴ r` or `Uᴴ r` first, can also
+overflow for a finite `r` near `floatmax` whose solution is representable, while the LU solve
+forms no such product. Where they differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
