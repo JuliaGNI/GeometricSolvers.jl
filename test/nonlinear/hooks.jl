@@ -99,9 +99,9 @@ end
     p = T[4, 9]
     # one step per solve, so the first solve ends with a factor of age 1 out of 3
     solver = init(prob, x, Wrapped(Newton(; reuse = 3)), p; max_iterations = 1)
-    @test solve!(solver, x, p).code == MAXITERS
+    @test solve!(solver, x, p)[2].code == MAXITERS
     @test count[] == 1
-    @test solve!(solver, x, p).code == MAXITERS
+    @test solve!(solver, x, p)[2].code == MAXITERS
     @test count[] == 2
 end
 
@@ -128,7 +128,8 @@ end
     xa = T[30, 50]
     pa = T[4, 9]
     solver = init(prob!, xa, m, pa; max_iterations = 3)
-    status! = solve!(solver, xa, pa)
+    xa!, status! = solve!(solver, xa, pa)
+    @test xa! === xa
     @test status!.code == MAXITERS
     @test xa ≈ collect(x₁) rtol = 8 * eps(real(T))
     Fa = similar(xa)

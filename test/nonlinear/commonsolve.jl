@@ -1,7 +1,8 @@
-# CommonSolve's interface of the R3 solver: `init`, `solve!` and `solve` are CommonSolve's
-# functions, the `NonlinearSolver` holds its iterate and its parameters, `solve!(solver)` and
-# `solve!(solver, x, p)` solve in place, and `solve!(solver, x, p)` refuses an iterate or
-# parameters unlike those given to `init`, with one message per check.
+# CommonSolve's interface of the nonlinear solver: `init`, `solve!` and `solve` are CommonSolve's
+# functions with methods on the package's own types only, `solve!(init(args...))` returns what
+# `solve(args...)` returns, the `NonlinearSolver` holds its iterate and its parameters, and
+# `solve!(solver, x, p)` refuses an iterate or parameters unlike those of `init`, with one
+# message per check.
 
 using CommonSolve: CommonSolve
 using GPUArraysCore: allowscalar
@@ -11,7 +12,8 @@ using Test
 
 using GeometricSolvers
 using GeometricSolvers: DenseLU, LUFactorization, Newton, NonlinearProblem, NonlinearSolver,
-                        SUCCESS, SolverStatus, init, solve, solve!
+                        SUCCESS, SolverStatus, dense_factor, init, solve, solve!,
+                        solve_batch!
 
 const GS = GeometricSolvers
 
@@ -52,21 +54,40 @@ end
     end
 end
 
-@testset "the factor builder and the R2 forms are methods of CommonSolve's functions, $T" for T in ELTYPES
+@testset "CommonSolve's functions dispatch their first argument on the package's types" begin
+    # the first positional argument of every method that the package adds
+    for (f, owned) in ((CommonSolve.init, NonlinearProblem),
+        (CommonSolve.solve, NonlinearProblem), (CommonSolve.solve!, NonlinearSolver))
+        ours = filter(m -> m.module === GS, collect(methods(f)))
+        @test !isempty(ours)
+        for m in ours
+            first_arg = Base.unwrap_unionall(Base.unwrap_unionall(m.sig).parameters[2])
+            @test first_arg.name === Base.unwrap_unionall(owned).name
+        end
+    end
+end
+
+@testset "the factor builder and the R2 forms are the package's own functions, $T" for T in ELTYPES
     R = real(T)
     prob = NonlinearProblem(sq!, sqj!)
-    @test CommonSolve.init(LUFactorization(), prob, T[1, 2], T[4, 9]) isa DenseLU
+    @test dense_factor(LUFactorization(), prob, T[1, 2], T[4, 9]) isa DenseLU
+    @test parentmodule(dense_factor) === GS
+    @test parentmodule(solve_batch!) === GS
+    @test Base.isexported(GS, :solve_batch!)
     pr = NonlinearProblem((x, p) -> x .* x .- 2)
     X = [SVector(T(1)), SVector(T(2))]
-    counts = CommonSolve.solve!(X, pr, Newton())
+    counts = solve_batch!(X, pr, Newton())
     @test counts.SUCCESS == 2
     @test all(x -> isapprox(x[1], sqrt(R(2)); rtol = 10 * sqrt(eps(R))), X)
     S = [SolverStatus{R}(SUCCESS, Int32(0), zero(R), zero(R), Int32(0), false) for _ in 1:2]
-    @test CommonSolve.solve!([SVector(T(1)), SVector(T(2))], S, pr, Newton()) === S
+    @test solve_batch!([SVector(T(1)), SVector(T(2))], S, pr, Newton()) === S
     @test all(s -> s.code == SUCCESS && s.iterations > 0, S)
+    # neither reaches CommonSolve's functions
+    @test_throws MethodError CommonSolve.solve!([SVector(T(1))], pr, Newton())
+    @test_throws MethodError CommonSolve.init(LUFactorization(), prob, T[1, 2], T[4, 9])
 end
 
-@testset "init holds x and p, and solve! solves in place, $AT{$T}" for AT in ARRAY_BACKENDS,
+@testset "init holds a copy of x and p itself, and solve! solves into solver.x, $AT{$T}" for AT in ARRAY_BACKENDS,
     T in ELTYPES
 
     R = real(T)
@@ -75,47 +96,52 @@ end
     x = AT(T[3, 5])
     p = AT(T[4, 9])
 
-    # `init` aliases `x` and `p` and does not mutate `x`
+    # `init` copies `x`, holds `p` itself, and does not mutate `x`
     solver = init(prob, x, Newton(), p)
     @test solver isa NonlinearSolver{T}
-    @test solver.x === x
+    @test solver.x !== x
+    @test solver.x isa typeof(x)
+    @test Array(solver.x) == T[3, 5]
     @test solver.p === p
     @test Array(x) == T[3, 5]
 
-    # `solve!(solver)` writes the solution into `solver.x`, the caller's `x`
-    st₁ = solve!(solver)
+    # `solve!(solver)` writes the solution into `solver.x` and returns it, and leaves `x`
+    x_held = solver.x
+    x₁, st₁ = solve!(solver)
+    @test x₁ === x_held === solver.x
     @test st₁ isa SolverStatus{R}
     @test st₁.code == SUCCESS
     @test st₁.iterations > 0
-    @test solver.x === x
-    @test isapprox(Array(x), T[2, 3]; rtol = tol)
+    @test isapprox(Array(x₁), T[2, 3]; rtol = tol)
+    @test Array(x) == T[3, 5]
 
     # a second `solve!(solver)` starts from the solution, so it takes fewer iterations
-    st₂ = solve!(solver)
+    _, st₂ = solve!(solver)
     @test st₂.code == SUCCESS
     @test st₂.iterations < st₁.iterations
-    @test isapprox(Array(x), T[2, 3]; rtol = tol)
+    @test isapprox(Array(solver.x), T[2, 3]; rtol = tol)
 
-    # the caller's change of `x` is the next start
-    copyto!(x, AT(T[3, 5]))
-    st₃ = solve!(solver)
+    # a change of `solver.x` is the next start
+    copyto!(solver.x, AT(T[3, 5]))
+    _, st₃ = solve!(solver)
     @test st₃.code == SUCCESS
     @test st₃.iterations > st₂.iterations
-    @test isapprox(Array(x), T[2, 3]; rtol = tol)
+    @test isapprox(Array(solver.x), T[2, 3]; rtol = tol)
 
-    # `solve!(solver, x₂, p₂)` solves from `x₂` with `p₂` and keeps both
+    # `solve!(solver, x₂, p₂)` solves in place into `x₂` with `p₂` and keeps both
     x₂ = AT(T[5, 6])
     p₂ = AT(T[16, 25])
-    st₄ = solve!(solver, x₂, p₂)
+    x₂_out, st₄ = solve!(solver, x₂, p₂)
+    @test x₂_out === x₂
     @test st₄.code == SUCCESS
     @test isapprox(Array(x₂), T[4, 5]; rtol = tol)
     @test solver.x === x₂
     @test solver.p === p₂
-    @test Array(x) ≈ T[2, 3] rtol = tol
+    @test Array(x_held) ≈ T[2, 3] rtol = tol
 
     # `solve!(solver, x₃)` solves with the parameters that the solver holds
     x₃ = AT(T[1, 1])
-    st₅ = solve!(solver, x₃)
+    _, st₅ = solve!(solver, x₃)
     @test st₅.code == SUCCESS
     @test isapprox(Array(x₃), T[4, 5]; rtol = tol)
     @test solver.x === x₃
@@ -171,27 +197,63 @@ end
     x = T[3, 5]
     solver = init(prob, x, Newton())
     @test solver.p === nothing
-    @test solve!(solver).code == SUCCESS
-    @test isapprox(x, T[2, 2]; rtol = 10 * sqrt(eps(real(T))))
+    @test solve!(solver)[2].code == SUCCESS
+    @test isapprox(solver.x, T[2, 2]; rtol = 10 * sqrt(eps(real(T))))
+    @test x == T[3, 5]
+    x_held = solver.x
     x_refused = T[3, 5]
     @test_throws ArgumentError(
         "`solve!` needs parameters of type Nothing, like those given to `init`; " *
         "got type $(typeof((a = 1,)))") solve!(solver, x_refused, (a = 1,))
     @test x_refused == T[3, 5]
-    @test solver.x === x
+    @test solver.x === x_held
     @test solver.p === nothing
     x₂ = T[3, 5]
-    @test solve!(solver, x₂, nothing).code == SUCCESS
+    @test solve!(solver, x₂, nothing)[2].code == SUCCESS
     @test solver.x === x₂
     @test isapprox(x₂, T[2, 2]; rtol = 10 * sqrt(eps(real(T))))
 end
 
-@testset "init refuses a StaticArray, $T" for T in ELTYPES
-    prob = NonlinearProblem(sq!)
-    e = ArgumentError("`init` builds a solver for an array iterate; solve a `StaticArray` " *
-                      "iterate with `solve`")
-    @test_throws e init(prob, SVector{2, T}(1, 2), Newton(), T[4, 9])
-    @test_throws e init(prob, MVector{2, T}(1, 2), Newton(), T[4, 9])
+# The values of an iterate, comparable across `Number`, static and device arrays.
+iterate_values(x::Number) = [x]
+iterate_values(x::AbstractArray) = Array(x)
+
+@testset "solve!(init(args...)) returns what solve(args...) returns, $T" for T in ELTYPES
+    sqv(y, q) = y .* y .- q
+    cases = (
+        ((NonlinearProblem(sq!), AT(T[3, 5]), AT(T[4, 9])) for AT in ARRAY_BACKENDS)...,
+        (NonlinearProblem(sqv), SVector{2, T}(3, 5), SVector{2, T}(4, 9)),
+        (NonlinearProblem(sqv), MVector{2, T}(3, 5), SVector{2, T}(4, 9)),
+        (NonlinearProblem(sqv), T(3), T(4)))
+    for (prob, x₀, p) in cases, kwargs in ((;), (; max_iterations = 1))
+
+        x₀_values = iterate_values(x₀)
+        x, st = solve(prob, x₀, Newton(), p; kwargs...)
+        solver = init(prob, x₀, Newton(), p; kwargs...)
+        xi, sti = solve!(solver)
+        @test typeof(xi) === typeof(x)
+        @test xi === solver.x
+        @test iterate_values(xi) == iterate_values(x)
+        @test sti == st
+        @test st.code == (isempty(kwargs) ? SUCCESS : GeometricSolvers.MAXITERS)
+        @test iterate_values(x₀) == x₀_values
+    end
+end
+
+@testset "a value iterate: solve!(solver, x, p) stores the solution in solver.x, $T" for T in ELTYPES
+    tol = 10 * sqrt(eps(real(T)))
+    prob = NonlinearProblem((y, q) -> y .* y .- q)
+    solver = init(prob, SVector{2, T}(3, 5), Newton(), SVector{2, T}(4, 9))
+    x₁, st₁ = solve!(solver)
+    @test st₁.code == SUCCESS
+    @test solver.x === x₁
+    @test isapprox(x₁, SVector{2, T}(2, 3); rtol = tol)
+    x₂, st₂ = solve!(solver, SVector{2, T}(5, 6), SVector{2, T}(16, 25))
+    @test st₂.code == SUCCESS
+    @test solver.x === x₂
+    @test isapprox(x₂, SVector{2, T}(4, 5); rtol = tol)
+    @test_throws ArgumentError solve!(solver, SVector{3, T}(5, 6, 7))
+    @test solver.x === x₂
 end
 
 @testset "solve!(solver) allocates nothing on an Array, $T" for T in ELTYPES
