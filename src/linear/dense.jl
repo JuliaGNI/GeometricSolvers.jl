@@ -1,4 +1,4 @@
-# Dense CPU linear factorisations (R3): LAPACK (`LAPACK.getrf!`, `geqrf!`, `gesvd!`) for
+# Dense CPU linear factorisations (R3): LAPACK (`LAPACK.getrf!`, `geqrf!`, `lapack_gesvd`) for
 # `StridedMatrix{<:BlasFloat}` with held workspace buffers, and `LinearAlgebra`'s generic `lu!`
 # and `qr!` for any other `AbstractMatrix`. `geqrf!` and `lapack_gesvd` take `lwork = -1` for a
 # workspace query, which writes the optimal size into `work[1]` and factorises nothing.
