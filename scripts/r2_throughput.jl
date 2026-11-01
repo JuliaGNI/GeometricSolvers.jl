@@ -139,11 +139,11 @@ function measure_row(
     end
     rate_ls = n_sys / t_ls
 
-    # Verify convergence on last run
+    # Verify convergence on the last run, the Backtracking row's
     S_got = Array(S_dev)
     n_conv = count(isconverged, S_got)
 
-    @printf("backend=%-6s N_sys=%-8d n=%-2d | R2 Newton: %9.2f Msys/s | R2 reuse=4: %9.2f Msys/s | R2 Backtracking: %9.2f Msys/s | CPU-thr R1: %9.2f Msys/s | speedup=%5.2fx (%d/%d conv)\n",
+    @printf("backend=%-6s N_sys=%-8d n=%-2d | R2 Newton: %9.2f Msys/s | R2 reuse=4: %9.2f Msys/s | R2 Backtracking: %9.2f Msys/s | CPU-thr R1: %9.2f Msys/s | speedup=%5.2fx | Backtracking %d/%d conv\n",
         backend_name,
         n_sys,
         N,

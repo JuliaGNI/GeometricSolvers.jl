@@ -8,7 +8,10 @@ Damped fixed-point (Picard) iteration for [`NonlinearProblem`](@ref), with searc
 # Fields
 
 - `damping::D`: positive finite damping factor ``\\omega > 0``, stored in floating-point.
-- `globalization::G`: the globalization method. Any line search uses [`MeasuredSlope`](@ref).
+- `globalization::G`: the globalization method. Any line search uses [`MeasuredSlope`](@ref),
+  and takes its merit at `α = 0` from the state, where [`start!!`](@ref) sets it to
+  `norm2(F(x₀))`, so a [`step!!`](@ref) with a line search follows a `start!!` on its state, as in
+  [`solve!!`](@ref).
 """
 struct Picard{D <: Real, G}
     damping::D

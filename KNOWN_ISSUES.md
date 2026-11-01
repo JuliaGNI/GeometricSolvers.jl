@@ -67,3 +67,23 @@
   routes agree.
 - **kind:** found late
 - **found:** 2026-11-01
+
+### K20 · A line-search step of `Newton` or `Picard` without a preceding `start!!` searches from an anchor merit of zero
+
+- **location:** `src/globalization/linefunction.jl:68` (`init_merit`)
+- **evidence:** `init_state` of `Newton` and `Picard` sets the state's `merit` to
+  `init_merit(::LineSearch, x) = zero(real(eltype(x)))`, and only `start!!` sets it to
+  `norm2(Fx)`. A `step!!` on the state of `init_state`, with no `start!!` before it, searches from
+  `φ(0) = 0`, and no trial decreases that merit. On `x² − (4, 9)` from `SVector(1.0, 1.0)`, the
+  first step of `Newton` with `Backtracking` or `StrongWolfe` returns `STALLED` and keeps
+  `x = (1, 1)`, and that of `Picard` with `Backtracking` returns `LINESEARCH_FAILED` and keeps it;
+  after `start!!`, the same steps return `SUCCESS`. On `task/al` at `2584d71`, whose `globalize!!`
+  computes the anchor merit from `Fx` in each step, the three steps without `start!!` return
+  `SUCCESS`.
+  `solve!!` calls `start!!` before its first step, so a solve is not affected; a caller who drives
+  `step!!` by hand meets it. Reproducer: build the state with `init_state` and call `step!!` with
+  and without `start!!` before it (Julia 1.13.3, M4 Max). The proposed fix, not tested, is to
+  initialise the merit as `R(NaN)` in `init_merit`, so that a step without `start!!` meets a
+  non-finite anchor in place of a zero one.
+- **kind:** defect
+- **found:** 2026-11-01
