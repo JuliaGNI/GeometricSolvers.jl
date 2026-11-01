@@ -43,7 +43,7 @@ const STORAGES = (SVector, ARRAY_BACKENDS...)
         g in (Static(), Backtracking(), DogLeg()), S in STORAGES
         prob, x0 = sphere(S, T)
         f0 = norm(sphere_r1(T)(SVector{3, T}(0.5, 0.5, 0.5), nothing))
-        x, status = solve(prob, x0, Newton(; linsolve = SVDFactorization(), globalization = g))
+        _, status = solve(prob, x0, Newton(; linsolve = SVDFactorization(), globalization = g))
         @test status.code === SUCCESS
         @test status.fnorm ≤ Options(T).f_reltol * f0
         @test status.iterations ≥ 1
