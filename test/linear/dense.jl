@@ -81,7 +81,7 @@ end
             if fac isa DenseLU
                 @test eltype(fac.ipiv) === BlasInt
             elseif fac isa DenseSVD
-                @test length(fac.rwork) == (F <: Complex ? max(1, 5 * n) : 0)
+                @test length(fac.rwork) == (F <: Complex ? max(1, 5 * n) : n)
             end
 
             copyto!(fac.factors, A)

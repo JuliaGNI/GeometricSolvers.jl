@@ -20,8 +20,13 @@ so that a compat-only bump can be told apart from an interface change.
   `SINGULAR`, so `Newton(; linsolve = SVDFactorization())` no longer stops after one iteration with
   `SINGULAR` on an `SVector`. A host `DenseSVD` refuses a matrix with an `Inf` or `NaN` entry
   before `gesvd` and reports `info = 1` and `SINGULAR`, where an `Inf` gave `SUCCESS` with `NaN`
-  singular values; a finite matrix whose singular value overflows in `gesvd` reports `info = 1`
-  too.
+  singular values. A host `DenseSVD` divides every matrix by a power of two before `gesvd`, as a
+  static or device SVD does, and takes its status and rank from the singular values of the scaled
+  matrix. A finite matrix near `floatmax`, such as a 4×4 matrix of `floatmax(T) / 2`, gives
+  `info == 0`, `SUCCESS`, rank 1 and a finite step, as an `SMatrix` and a `JLArray` do, where it
+  gave `info = 1` and `SINGULAR`. The field `S` holds the singular values of the matrix itself,
+  which overflow to `Inf` above `floatmax` without failing the factor. A matrix rounded to the
+  subnormal range gets the same rank on the host as on the static and device routes.
   `GeometricSolvers.exact_solve(fac)` is `false` for an SVD factor of rank below `n`, and `Newton`
   then measures the slope of its step (`MeasuredSlope()`) in place of `−2φ(0)`. With `DogLeg`, a
   Newton step of zero norm is no Newton step: a zero Jacobian returns `STALLED` with the iterate

@@ -149,12 +149,21 @@ end
         @test fac.info != 0
         @test fac.rank == 0
     end
-    # a finite matrix whose largest singular value overflows in `gesvd`, without prescaling
-    @testset "an Array whose singular value overflows, $T" for T in REAL_ELTYPES
-        fac = factor_dense(T, Nothing, T(floatmax(T) / 2) .* ones(T, 4, 4), Array)
-        @test fac.info != 0
-        @test returncode(fac) === SINGULAR
-        @test fac.rank == 0
+    # a finite matrix whose largest singular value, `2 · floatmax`, lies above `floatmax`: every
+    # route divides the matrix by a power of two before the factorisation, so none of them fails,
+    # and the reported singular value overflows to `Inf` while the solve stays finite
+    @testset "a matrix of floatmax/2 entries, $T, $label" for T in REAL_ELTYPES,
+        (label, make) in routes(T, Nothing, fill(floatmax(T) / 2, 4, 4))
+
+        fac = make()
+        @test fac.info == 0
+        @test returncode(fac) === SUCCESS
+        @test fac.rank == 1
+        σ₁ = label == "SMatrix" ? singular_values(fac)[1] : Array(fac.S)[1]
+        @test σ₁ == Inf
+        d = route_solve(label, fac, ones(T, 4))
+        @test all(isfinite, d)
+        @test !iszero(d)
     end
     @testset "a static matrix of NaN, $T" for T in REAL_ELTYPES
         fac = factorize!!(nothing, SVDFactorization(), SMatrix{4, 4}(fill(T(NaN), 4, 4)))
@@ -182,6 +191,18 @@ end
         fac = make()
         @test fac.rank == 1
         @test fac.info == 0
+    end
+    # a rank-2 matrix rounded to the subnormal grid, whose largest entry is 64 subnormal units: the
+    # rounding changes its rank, and every route, which divides it by a power of two first, reports
+    # the rank of the static route
+    @testset "a subnormal matrix, $T, $label" for T in REAL_ELTYPES,
+        (label, make) in routes(T, Nothing,
+            (rank_r(T, 4, 2) ./ 17) .* (64 * nextfloat(zero(T))))
+
+        A = (rank_r(T, 4, 2) ./ 17) .* (64 * nextfloat(zero(T)))
+        fac = make()
+        @test fac.info == 0
+        @test fac.rank == factor_static(T, Nothing, A).rank
     end
 end
 

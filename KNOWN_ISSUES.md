@@ -52,18 +52,3 @@
   the target does not cover this case.
 - **kind:** found late
 - **found:** 2026-10-16
-
-### K19 · The host SVD of a matrix near the ends of the exponent range gives another rank and status than the static and device SVDs
-
-- **location:** `src/linear/dense.jl` (`factorize!!` for `DenseSVD`)
-- **evidence:** The host `DenseSVD` passes a `J` of its own element type to `gesvd` without the
-  power-of-two scaling that the static and device SVDs apply. The rank-2 integer matrix
-  `rank_r(T, 4, 2)`, scaled so that its largest entry is 64 subnormal units, gives `rank == 3` on
-  an `Array` and `rank == 4` on an `SMatrix` and a `JLArray`, with `info == 0` on all three; the
-  rank-1 matrix `rank_r(T, 4, 1)`, scaled so that its largest entry is `floatmax(T) / 2`, gives
-  `info == 1`, `SINGULAR` and `rank == 0` on an `Array`, where `gesvd` overflows, and `rank == 1`
-  with `info == 0` on an `SMatrix` and a `JLArray`. Both hold in `Float32` and `Float64` (Julia
-  1.13.3, M4 Max). The tests of the rank use integer entries below 400 in modulus, where the three
-  routes agree.
-- **kind:** found late
-- **found:** 2026-11-01

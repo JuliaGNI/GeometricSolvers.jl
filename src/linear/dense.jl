@@ -188,18 +188,29 @@ end
 
 function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactorization,
         J::AbstractMatrix)
-    e = load_factors!(fac.factors, J)
+    # `J / 2^e` for every element type of `J`, as the static and device SVDs divide it, so that a
+    # matrix near either end of the exponent range neither overflows in `gesvd` nor loses its small
+    # singular values to the subnormal range
+    e = isempty(J) ? 0 : matrix_exponent(J)
+    fac.factors .= ldexp2.(J, -e)
     # an iterative LAPACK routine is never given a non-finite entry: the factor fails before it
     if !all(isfinite, fac.factors)
         return DenseSVD(
             fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, 1, 0, e)
     end
     info = Int(lapack_gesvd(fac.factors, fac.S, fac.U, fac.VT, fac.work, fac.rwork))
-    # a finite matrix near `floatmax` can still overflow to a singular value that is not finite,
-    # which is a failure too
+    # `gesvd` wrote the singular values `σ̂` of `J / 2^e` into `S`: the status and the rank are read
+    # from them, a singular value that is not finite being a failure too
     ok = iszero(info) && all(isfinite, fac.S)
     status = ok ? 0 : (iszero(info) ? 1 : info)
     rank = ok ? svd_rank(fac.S) : 0
+    # `σ̂` into `rwork`, which `gesvd` no longer needs, for the solve, and the singular values
+    # `σ̂ · 2^e` of `J` into `S`, which overflow to `Inf` where `σ̂ · 2^e` exceeds `floatmax`
+    @inbounds for i in eachindex(fac.S)
+        σ̂ = fac.S[i]
+        fac.rwork[i] = σ̂
+        fac.S[i] = ldexp2(σ̂, e)
+    end
     return DenseSVD(
         fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs,
         status, rank, e)
@@ -216,9 +227,10 @@ function backsolve!(fac::DenseSVD{<:StridedMatrix{T}}, d::AbstractVector{T}) whe
                                                                                     BlasFloat}
     # a failed factor, whose vectors can hold `NaN`, and a zero matrix give the zero step
     iszero(fac.rank) && return fill!(d, zero(T))
+    # the solve with the factors of `J / 2^e` divides by their singular values `σ̂` in `rwork`
     mul!(fac.tmp, adjoint(fac.U), d)
     @inbounds for i in 1:length(fac.S)
-        fac.tmp[i] = i <= fac.rank ? fac.tmp[i] / fac.S[i] : zero(T)
+        fac.tmp[i] = i <= fac.rank ? fac.tmp[i] / fac.rwork[i] : zero(T)
     end
     mul!(d, adjoint(fac.VT), fac.tmp)
     return d
