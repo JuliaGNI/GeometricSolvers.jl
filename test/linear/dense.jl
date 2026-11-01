@@ -463,7 +463,7 @@ end
 end
 
 @testset "the same-type solve scales r by a power of two, $T" for T in REAL_ELTYPES
-    @testset "$label, $M" for (label, J, b, xref, with_qr) in extreme_rhs_systems(T),
+    @testset "$label, $M" for (label, J, b, xref, with_qr, atol) in extreme_rhs_systems(T),
         M in (SVDFactorization, QRFactorization, LUFactorization)
 
         M === QRFactorization && !with_qr && continue
@@ -473,7 +473,7 @@ end
         d = ldiv!!(similar(b), fac, b)
         @test all(isfinite, d)
         @test relerr(d, xref) <= 100 * eps(T)
-        @test all(isapprox.(big.(d), xref; rtol = 100 * eps(T)))
+        @test all(isapprox.(big.(d), xref; rtol = 100 * eps(T), atol))
         # in place, r === d
         r = copy(b)
         @test ldiv!!(r, fac, r) === r

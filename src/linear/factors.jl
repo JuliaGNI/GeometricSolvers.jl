@@ -53,13 +53,17 @@ For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. Fo
 (R3), `d` is the vector buffer written in place and returned. Where the element
 type of `r` is the element type of the factors, the solve runs directly in it. There a finite,
 nonzero `r` whose largest `|re|` or `|im|` is within a few bits of `floatmax` (`2 + ⌈log2 N⌉`
-bits for `N` entries) is divided by the smallest power of two `2^k` that leaves that headroom, and
-the step is multiplied by `2^(k - e)`, in one rounding, with `e` the exponent of
-[`factorize!!`](@ref); any other `r` is solved as it is. This keeps `Qᴴ r` and `Uᴴ r`, which the
-QR and SVD solves form first, finite. An SVD factor with `e > k` still solves for the step times
-`2^(e - k)`, which can overflow where the step is representable. An entry of `r` within `k` bits
-of the subnormal range can lose those bits to the division. The step still overflows on every
-route where the solution itself exceeds `floatmax`.
+bits for `N` entries) is divided by the smallest power of two `2^k` that leaves that headroom; any
+other `r` is solved as it is. This keeps `Qᴴ r` and `Uᴴ r`, which the QR and SVD solves form
+first, finite. The SVD, whose factors are those of `J / 2^e`, then divides the coordinates
+`Uᴴ r` by its singular values times the smallest power of two `2^t` that keeps the coordinates
+the same headroom below `floatmax`; `t` is 0 wherever they are already below it, and for LU and
+QR. The step is multiplied by `2^(k + t - e)`, in one rounding, with `e` the exponent of
+[`factorize!!`](@ref), so that the SVD step does not overflow where it is representable. The LU
+and QR solves can still overflow in the triangular solve for such an `r`. An entry of `r` within
+`k` bits of the subnormal range can lose those bits to the division, and a coordinate within `t`
+bits of it to the SVD's. The step still overflows on every route where the solution itself
+exceeds `floatmax`.
 Where the element types differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
@@ -391,9 +395,35 @@ end
 function rhs_exponent(r::AbstractVector)
     isempty(r) && return 0
     emax = exponent(floatmax(float(real(eltype(r)))))
-    headroom = 2 + 8sizeof(Int) - leading_zeros(length(r) - 1)
-    return max(0, matrix_exponent(r) - (emax - headroom))
+    return max(0, matrix_exponent(r) - (emax - headroom(length(r))))
 end
+
+# The bits `2 + ⌈log2 n⌉` that `rhs_exponent` and `divisor_exponent` keep below `floatmax`, for
+# `n ≥ 1`: a sum of `n` products of a factor of modulus at most 1 with an entry whose |re| and |im|
+# lie below `2^(emax + 1 - headroom(n))`, a complex one of modulus up to twice that, stays finite.
+headroom(n::Integer) = 2 + 8sizeof(Int) - leading_zeros(n - 1)
+
+# The exponent `t ≥ 0` of the power of two `2^t` that the same-type SVD solve multiplies its
+# divisors `σ̂` by, from the coordinates `y = Uᴴ r` of the first `rank` directions: the smallest one
+# with which every |re| and |im| of `y / (σ̂ 2^t)` lies below `2^c`, `c = emax + 1 - headroom(n)`,
+# so that `V (y / (σ̂ 2^t))` stays finite. `q` is the largest `max(|re y|, |im y|) · 2^-c / σ̂`,
+# which does not overflow where `y / σ̂` does; `t` is 0 where `q < 1`, and also where `q` is not
+# finite, which only a non-finite `y` makes, whose step is not finite either way. Where `t` is 0
+# the solve divides by `σ̂` itself, as it does without this exponent.
+function divisor_exponent(y::AbstractVector, σ̂::AbstractVector, rank::Integer)
+    c = coordinate_bound(eltype(y), length(y))
+    q = zero(real(eltype(y)))
+    @inbounds for j in 1:rank
+        q = max(q, coordinate_ratio(y[j], σ̂[j], c))
+    end
+    return shift_exponent(q)
+end
+
+function coordinate_bound(::Type{T}, n::Integer) where {T}
+    exponent(floatmax(real(T))) + 1 - headroom(n)
+end
+@inline coordinate_ratio(y, σ̂, c) = ldexp2(max(abs(real(y)), abs(imag(y))), -c) / σ̂
+shift_exponent(q::Real) = isfinite(q) && q >= 1 ? exponent(q) + 1 : 0
 
 # The step for the matrix `J` and the right-hand side `r`, from the step `d` for `J / 2^e` and
 # `r / 2^k` that the stored factors solve: `d · 2^(k - e)`, in one rounding.
@@ -402,11 +432,17 @@ function unscale(fac, d, k)
     return iszero(e) ? d : map(a -> ldexp2(a, e), d)
 end
 
+# The solve of the same-type `ldiv!!` with the stored factors, and the exponent `t` of the power of
+# two its result is to be multiplied by besides `2^(k - e)`: 0 for LU and QR, and for the SVD the
+# `divisor_exponent` of its coordinates.
+backsolve_shifted(fac, r) = (backsolve(fac, r), 0)
+
 function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSVD{N, TF}},
         r::StaticVector{N, TF}) where {N, TF}
     k = rhs_exponent(r)
     r̂ = iszero(k) ? SVector{N, TF}(r) : map(a -> ldexp2(a, -k), SVector{N, TF}(r))
-    return unscale(fac, backsolve(fac, r̂), k)
+    d, t = backsolve_shifted(fac, r̂)
+    return unscale(fac, d, k + t)
 end
 
 # The `T ≠ TF` method: the right-hand side has another element type than the factors. With

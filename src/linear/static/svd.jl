@@ -224,23 +224,45 @@ end
 # as the LU and QR solves are: a singular value of the matrix as it was passed can be `Inf` where
 # `σ₁` is above `floatmax(R)`, and a division by it would make the step zero.
 function backsolve(fac::StaticSVD{N, TF}, r::SVector{N, TF}) where {N, TF}
+    first(svd_solve(fac, r, false))
+end
+
+# The same-type solve divides by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates, so that
+# the step `2^(e - k) x` of the scaled system does not overflow where the step `x` is representable.
+function backsolve_shifted(fac::StaticSVD{N, TF}, r::SVector{N, TF}) where {N, TF}
+    svd_solve(fac, r, true)
+end
+
+function svd_solve(fac::StaticSVD{N, TF}, r::SVector{N, TF}, shift::Bool) where {N, TF}
     U = fac.factors
     V = fac.V
     # the directions the rank cutoff counted as zero contribute nothing: dividing by their
     # rounding noise is what turns a null direction into an enormous step, or into a `NaN`. A
     # failed factor has rank 0, and its step is zero whatever `V` holds.
-    d = local_array(zero(SVector{N, TF}))
+    # the coordinates `Uᴴ r` in an `SVector` grown by `setindex`, as `σ` of `factorize!!` is: an
+    # `MVector` read twice, before and after the divisor is known, escapes and is a heap allocation.
+    # The largest ratio of `divisor_exponent` is taken along.
+    y = zero(SVector{N, TF})
+    c = coordinate_bound(TF, N)
+    q = zero(real(TF))
     for j in 1:(fac.rank)
         s = zero(TF)
         @inbounds for i in 1:N
             s += conj(U[i, j]) * r[i]
         end
-        d[j] = s / fac.σ̂[j]
+        y = setindex(y, s, j)
+        shift && (q = max(q, coordinate_ratio(s, fac.σ̂[j], c)))
+    end
+    t = shift ? shift_exponent(q) : 0
+    σ̂ = iszero(t) ? fac.σ̂ : map(a -> ldexp2(a, t), fac.σ̂)
+    d = zero(SVector{N, TF})
+    for j in 1:(fac.rank)
+        d = setindex(d, y[j] / σ̂[j], j)
     end
     x = local_array(zero(SVector{N, TF}))
     @inbounds for i in 1:N, j in 1:(fac.rank)
 
         x[i] += V[i, j] * d[j]
     end
-    return SVector{N, TF}(x)
+    return SVector{N, TF}(x), t
 end

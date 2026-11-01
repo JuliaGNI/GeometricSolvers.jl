@@ -114,8 +114,9 @@ end
 
 const DenseFactor{A} = Union{DenseLU{A}, DenseQR{A}, DenseSVD{A}}
 
-# The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve!` solves
-# with the factors of `J / 2^e` in place, and the step for `J` is that solution times `2^(k - e)`.
+# The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve_shifted!`
+# solves with the factors of `J / 2^e` in place, an SVD dividing by `σ̂ 2^t`, and the step for `J` is
+# that solution times `2^(k + t - e)`.
 function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
         r::AbstractVector{T}) where {T <: Number}
     k = rhs_exponent(r)
@@ -124,11 +125,15 @@ function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
     else
         d .= ldexp2.(r, -k)
     end
-    backsolve!(fac, d)
-    e = k - fac.scale_exponent
+    t = backsolve_shifted!(fac, d)
+    e = k + t - fac.scale_exponent
     iszero(e) || map!(a -> ldexp2(a, e), d, d)
     return d
 end
+
+# `backsolve!` and the exponent `t` of the power of two its result is to be multiplied by: 0 for LU
+# and QR, and for the SVD the `divisor_exponent` of its coordinates.
+backsolve_shifted!(fac, d) = (backsolve!(fac, d); 0)
 
 # --- DenseLU ---
 
@@ -230,13 +235,27 @@ end
 
 function backsolve!(fac::DenseSVD{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:
                                                                                     BlasFloat}
+    svd_solve!(fac, d, false)
+    return d
+end
+
+function backsolve_shifted!(fac::DenseSVD{<:StridedMatrix{T}},
+        d::AbstractVector{T}) where {T <: BlasFloat}
+    return svd_solve!(fac, d, true)
+end
+
+# The solve with the factors of `J / 2^e` divides by their singular values `σ̂` in `rwork`, the
+# same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ d`; returns `t`.
+function svd_solve!(fac::DenseSVD{<:StridedMatrix{T}}, d::AbstractVector{T},
+        shift::Bool) where {T <: BlasFloat}
     # a failed factor, whose vectors can hold `NaN`, and a zero matrix give the zero step
-    iszero(fac.rank) && return fill!(d, zero(T))
-    # the solve with the factors of `J / 2^e` divides by their singular values `σ̂` in `rwork`
+    iszero(fac.rank) && (fill!(d, zero(T)); return 0)
     mul!(fac.tmp, adjoint(fac.U), d)
+    t = shift ? divisor_exponent(fac.tmp, fac.rwork, fac.rank) : 0
     @inbounds for i in 1:length(fac.S)
-        fac.tmp[i] = i <= fac.rank ? fac.tmp[i] / fac.rwork[i] : zero(T)
+        σ = iszero(t) ? fac.rwork[i] : ldexp2(fac.rwork[i], t)
+        fac.tmp[i] = i <= fac.rank ? fac.tmp[i] / σ : zero(T)
     end
     mul!(d, adjoint(fac.VT), fac.tmp)
-    return d
+    return t
 end

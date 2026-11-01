@@ -129,7 +129,7 @@ end
 end
 
 @testset "the same-type solve scales r by a power of two, $T" for T in REAL_ELTYPES
-    @testset "$label, $M" for (label, J, b, xref, with_qr) in extreme_rhs_systems(T),
+    @testset "$label, $M" for (label, J, b, xref, with_qr, atol) in extreme_rhs_systems(T),
         M in (SVDFactorization, QRFactorization, LUFactorization)
 
         M === QRFactorization && !with_qr && continue
@@ -139,7 +139,7 @@ end
         @test eltype(x) === T
         @test all(isfinite, x)
         @test relerr(x, xref) <= 100 * eps(T)
-        @test all(isapprox.(big.(x), xref; rtol = 100 * eps(T)))
+        @test all(isapprox.(big.(x), xref; rtol = 100 * eps(T), atol))
     end
 
     # a solution above floatmax overflows, by design: 2^-(emax + 3) I has the solution 2^(emax + 3)

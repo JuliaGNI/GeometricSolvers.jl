@@ -53,20 +53,19 @@
 - **kind:** found late
 - **found:** 2026-10-16
 
-### K22 · The same-type SVD solve overflows for a finite right-hand side near `floatmax` where the factor's scale exponent exceeds the right-hand side's
+### K23 · The same-type LU and QR solves overflow in the back substitution for a finite right-hand side near `floatmax` whose solution is representable
 
-- **location:** `src/linear/factors.jl` (`ldiv!!`, `rhs_exponent`), `src/linear/dense.jl` (`ldiv!!`)
-- **evidence:** With `J = diag(2^20, 2^10, 2^20, 2^20)` and `b = (0, 0.75 floatmax(T), 0, 0)`,
-  whose solution `(0, 0.75 floatmax(T) / 2^10, 0, 0)` is representable, the step of `ldiv!!` with
-  `SVDFactorization()` is `[NaN, Inf, NaN, NaN]` on an `SMatrix` and an `Array`, in `Float32` and
-  `Float64` (Julia 1.13.3, at eeaad5e); the `JLArray` route gives the same in the review of
-  PR #48. `LUFactorization()` and `QRFactorization()` give the exact step. The SVD factor stores
-  the factors of `J / 2^e`, here with `e = 20`, and `r` is divided by `2^k` with `k = 4` from
-  `rhs_exponent`, so the solve forms the step times `2^(e - k)` before the multiplication by
-  `2^(k - e)`, and that overflows. The review of PR #48 measured the same result at fe26534 on `main`. Dividing `r` by
-  `2^max(k, e)` and multiplying the step by `2^(max(k, e) - e)` gives the exact step on this case,
-  measured on the static route only in the review of PR #48; it trades the overflow for an
-  underflow of `r / 2^e` where `J` is large and its solution is not small, and that trade is not
-  decided.
+- **location:** `src/linear/factors.jl` (`ldiv!!`), `src/linear/dense.jl` (`ldiv!!`)
+- **evidence:** With `H = H₄ / 2`, `H₄` the 4 × 4 Hadamard matrix,
+  `J = H diag(2^20, 2^14, 2^20, 2^20) H` and `b = 0.75 floatmax(T) · H[:, 2]`, whose solution
+  `0.75 floatmax(T) / 2^14 · H[:, 2]` is representable (`7.78844f33` and `4.11459e303` in modulus),
+  the step of `ldiv!!` with `LUFactorization()` and `QRFactorization()` is
+  `[Inf, -Inf, Inf, -7.78843f33]` in `Float32` and `[Inf, -Inf, Inf, -4.11459e303]` in `Float64`,
+  on an `SMatrix` and an `Array` (Julia 1.13.3); the `JLArray` route fails the same test. `r` is
+  divided by `2^k` with `k = 2`, which keeps `Qᴴ r` finite; a product of an entry of `U` or `R`
+  near `2^19` with an entry of the scaled step near `floatmax / 2^16` exceeds `floatmax`, which
+  points at the back substitution, but the operation that overflows was not traced.
+  `SVDFactorization()` solves the system. The test systems of
+  `test/helpers/matrix.jl` leave this system out for LU and QR.
 - **kind:** defect
 - **found:** PR #48
