@@ -11,6 +11,25 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`init`, `solve!` and `solve` are CommonSolve.jl's functions, and the R3 solver holds its
+  iterate and its parameters** (decision 49 of the design). CommonSolve is a new dependency
+  (`[compat] CommonSolve = "0.2"`), and the package imports and extends `CommonSolve.init`,
+  `CommonSolve.solve` and `CommonSolve.solve!` and exports them as before, so a caller reaches
+  this package through the same three names as another CommonSolve package. Every method of the
+  package keeps its signature, the factor builders `init(::LUFactorization, prob, x, p)` and
+  their siblings and the R2 forms of `solve!` included, except the R3 call form:
+  `solve!(x, solver, p)` is removed, with no deprecation, because the package is not registered.
+  In its place, `solver = init(prob, x, method, p)` holds `x` and `p` themselves, not copies, in
+  the new fields `solver.x` and `solver.p`; `solve!(solver)` solves in place into `solver.x` with
+  `solver.p`, and `solve!(solver, x, p = solver.p)` stores a new iterate and new parameters
+  before it solves. `solve!(solver, x, p)` raises an `ArgumentError` for an `x` whose element
+  type or length differs from the iterate given to `init` (as before), and also for an `x` of
+  another array type and a `p` of another type than those given to `init`, because the fields
+  `x::X` and `p::Q` have the concrete types of the first ones; a refused call changes nothing.
+  `NonlinearSolver` gains the type parameters `X` and `Q`, and its constructor takes `p` as a
+  sixth argument. `solve!(solver)` allocates nothing on an `Array` after one warm-up call, and
+  `solve` still returns `(x, status)`.
+
 - **Each nonlinear method has one state type, and the loop has two hooks** (decision 47 of the
   design). The state builder of a method is now `GeometricSolvers.init_state(method, prob, x, p)`,
   with four positional arguments, in place of `init(method, prob, x, p = nothing)`; `init` keeps
