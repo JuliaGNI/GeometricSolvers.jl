@@ -114,14 +114,19 @@ end
 
 const DenseFactor{A} = Union{DenseLU{A}, DenseQR{A}, DenseSVD{A}}
 
-# The `T == TF` method: `backsolve!` solves with the factors of `J / 2^e` in place, and the step
-# for `J` is that solution times `2^-e`.
+# The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve!` solves
+# with the factors of `J / 2^e` in place, and the step for `J` is that solution times `2^(k - e)`.
 function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
         r::AbstractVector{T}) where {T <: Number}
-    d === r || copyto!(d, r)
+    k = rhs_exponent(r)
+    if iszero(k)
+        d === r || copyto!(d, r)
+    else
+        d .= ldexp2.(r, -k)
+    end
     backsolve!(fac, d)
-    e = fac.scale_exponent
-    iszero(e) || map!(a -> ldexp2(a, -e), d, d)
+    e = k - fac.scale_exponent
+    iszero(e) || map!(a -> ldexp2(a, e), d, d)
     return d
 end
 

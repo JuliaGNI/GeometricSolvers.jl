@@ -1087,3 +1087,29 @@ end
         end
     end
 end
+
+@testset "the same-type solve scales r by a power of two on JLArray, $T" for T in REAL_ELTYPES
+    @testset "$label, $M" for (label, J, b, xref, with_qr) in extreme_rhs_systems(T),
+        M in (SVDFactorization, QRFactorization)
+
+        M === QRFactorization && !with_qr && continue
+        m = M()
+        x = JLArray(zeros(T, 4))
+        fac = factorize!!(init(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))
+        d = ldiv!!(similar(x), fac, JLArray(b))
+        @test d isa JLVector{T}
+        h = Array(d)
+        @test all(isfinite, h)
+        @test maximum(abs, big.(h) .- xref) / maximum(abs, xref) <= 100 * eps(T)
+    end
+
+    # a solution above floatmax overflows, by design: 2^-130 I has the solution 2^130
+    @testset "a solution above floatmax overflows, $M" for M in (QRFactorization,
+        SVDFactorization)
+        m = M()
+        x = JLArray(zeros(T, 4))
+        J = ldexp(one(T), -(exponent(floatmax(T)) + 3)) * Matrix{T}(I, 4, 4)
+        fac = factorize!!(init(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))
+        @test !any(isfinite, Array(ldiv!!(similar(x), fac, JLArray(ones(T, 4)))))
+    end
+end

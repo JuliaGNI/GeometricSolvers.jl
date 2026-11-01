@@ -37,6 +37,16 @@ so that a compat-only bump can be told apart from an interface change.
   the measured slope costs a Jacobian-vector product at the start of a line search; one of them,
   `(8, 10u0)`, flagged `unstable`, also ends at another residual norm.
 
+- **The same-type `ldiv!!` of the QR and SVD factors no longer overflows on a finite right-hand side
+  near `floatmax`.** The solve formed `Qᴴ r` or `Uᴴ r` before it divided, so a finite `r` near
+  `floatmax` whose solution is representable gave a non-finite step: `J = I + Hilbert(4)` with
+  `b = fill(0.75 * floatmax(T), 4)` did, on the static, host and device routes, in `Float32` and
+  `Float64`. `ldiv!!` now divides a finite, nonzero `r` by the power of two `2^k` that brings its
+  largest `|re|` or `|im|` into `[1, 2)`, and multiplies the step by `2^(k - e)` in one rounding, with
+  `e` the scale exponent of the factorisation. The host SVD of a `Float32`
+  `J = fill(floatmax(Float32) / 2, 4, 4)` now agrees with the static and device routes. A solution
+  that itself exceeds `floatmax` still overflows. K21 is fixed and leaves `KNOWN_ISSUES.md`.
+
 - **`StaticSVD` stores `σ̂` alone, and `GeometricSolvers.singular_values(fac)` gives the singular
   values** of the matrix as it was passed, `σ̂ · 2^e`; the fields `σ` and `converged` are gone, and
   K17 leaves `KNOWN_ISSUES.md`: the singular value above `floatmax` that overflows is now the value

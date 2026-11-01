@@ -127,3 +127,34 @@ end
     # without a conversion there is no division
     @test factorize!!(nothing, M(), real(T)(1e40) * A).scale_exponent == 0
 end
+
+@testset "the same-type solve scales r by a power of two, $T" for T in REAL_ELTYPES
+    @testset "$label, $M" for (label, J, b, xref, with_qr) in extreme_rhs_systems(T),
+        M in (SVDFactorization, QRFactorization)
+
+        M === QRFactorization && !with_qr && continue
+        fac = factorize!!(nothing, M(), SMatrix{4, 4, T}(J))
+        x = ldiv!!(nothing, fac, SVector{4, T}(b))
+        @test eltype(x) === T
+        @test all(isfinite, x)
+        @test relerr(x, xref) <= 100 * eps(T)
+    end
+
+    # a solution above floatmax overflows, by design: 2^-130 I has the solution 2^130
+    @testset "a solution above floatmax overflows, $M" for M in (LUFactorization,
+        QRFactorization, SVDFactorization)
+        J = SMatrix{4, 4, T}(ldexp(one(T), -(exponent(floatmax(T)) + 3)) *
+                             Matrix{T}(I, 4, 4))
+        x = ldiv!!(nothing, factorize!!(nothing, M(), J), ones(SVector{4, T}))
+        @test !any(isfinite, x)
+    end
+
+    # a zero, non-finite or empty r takes the path of an r that is not scaled
+    @testset "a zero or non-finite r, $M" for M in (QRFactorization, SVDFactorization)
+        fac = factorize!!(nothing, M(), SMatrix{4, 4, T}(2 * Matrix{T}(I, 4, 4)))
+        @test ldiv!!(nothing, fac, zeros(SVector{4, T})) == zeros(SVector{4, T})
+        for v in (T(Inf), T(NaN))
+            @test !all(isfinite, ldiv!!(nothing, fac, SVector{4, T}(v, 1, 1, 1)))
+        end
+    end
+end

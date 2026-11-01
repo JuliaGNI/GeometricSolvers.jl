@@ -51,11 +51,13 @@ Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element typ
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
-type of `r` is the element type of the factors, the solve runs directly in it. There `r` is not
-scaled, unlike in the mixed-type path below: the step overflows on every route where the solution
-itself exceeds `floatmax`, and the QR and SVD solves, which form `Qᴴ r` or `Uᴴ r` first, can also
-overflow for a finite `r` near `floatmax` whose solution is representable, while the LU solve
-forms no such product. Where they differ,
+type of `r` is the element type of the factors, the solve runs directly in it. There a finite,
+nonzero `r` is divided by the power of two `2^k` that brings its largest `|re|` or `|im|` into
+`[1, 2)`, or as close as the exponent range allows, and the step is multiplied by `2^(k - e)`, in
+one rounding, with `e` the exponent of [`factorize!!`](@ref). The QR and SVD solves, which form
+`Qᴴ r` or `Uᴴ r` first, therefore do not overflow for a finite `r` near `floatmax` whose solution
+is representable. The step still overflows on every route where the solution itself exceeds
+`floatmax`. Where the element types differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
@@ -359,9 +361,9 @@ end
     return isbitstype(F) ? MVector{N, F}(undef) : SizedVector{N, F}(undef)
 end
 
-# The exponent of the largest |re| or |im| of a nonempty `J`, clamped to the exponent range, and 0
-# for a zero or non-finite `J`.
-function matrix_exponent(J::AbstractMatrix)
+# The exponent of the largest |re| or |im| of a nonempty array `J`, a matrix or a right-hand side,
+# clamped to the exponent range, and 0 for a zero or non-finite `J`.
+function matrix_exponent(J::AbstractArray)
     R = real(eltype(J))
     m = if R <: Base.IEEEFloat
         reinterpret(R, maximum(a -> max(abs_bits(real(a)), abs_bits(imag(a))), J))
@@ -372,15 +374,25 @@ function matrix_exponent(J::AbstractMatrix)
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
 end
 
-# The step for the matrix `J`, from the step `d` for `J / 2^e` that the stored factors solve.
-function unscale(fac, d)
-    e = fac.scale_exponent
-    return iszero(e) ? d : map(a -> ldexp2(a, -e), d)
+# The exponent `k` of the power of two `2^k` that the same-type solve divides the right-hand side
+# `r` by, so that `r / 2^k` has its largest |re| or |im| in `[1, 2)`, or as close as the exponent
+# range allows: `Qᴴ r` or `Uᴴ r` of the QR and SVD solves sums `N` entries and cannot overflow
+# there, and the solution of the scaled system, of norm at least `1 / ‖J / 2^e‖`, cannot underflow
+# to zero. 0 for a zero, non-finite or empty `r`, which is solved as it is.
+rhs_exponent(r::AbstractVector) = isempty(r) ? 0 : matrix_exponent(r)
+
+# The step for the matrix `J` and the right-hand side `r`, from the step `d` for `J / 2^e` and
+# `r / 2^k` that the stored factors solve: `d · 2^(k - e)`, in one rounding.
+function unscale(fac, d, k)
+    e = k - fac.scale_exponent
+    return iszero(e) ? d : map(a -> ldexp2(a, e), d)
 end
 
 function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSVD{N, TF}},
         r::StaticVector{N, TF}) where {N, TF}
-    return unscale(fac, backsolve(fac, SVector{N, TF}(r)))
+    k = rhs_exponent(r)
+    r̂ = iszero(k) ? SVector{N, TF}(r) : map(a -> ldexp2(a, -k), SVector{N, TF}(r))
+    return unscale(fac, backsolve(fac, r̂), k)
 end
 
 # The `T ≠ TF` method: the right-hand side has another element type than the factors. With
