@@ -1,7 +1,7 @@
 # KernelAbstractions parallel round-robin one-sided Jacobi SVD for DenseSVD on AbstractGPUArray.
 #
-# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `jacobi_acc_type`, `jacobi_rotation` and
-# `jacobi_pair` from `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.factors`
+# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `jacobi_rotation` and `jacobi_pair` from
+# `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.factors`
 # holds the right singular vectors `V`, `fac.work` is the 1-element `Int32` rotation flag, and
 # `fac.rwork` holds the column norms squared during the sweep and the sorted scaled singular values
 # `σ̂` of `J / 2^e` after it.
@@ -31,12 +31,11 @@ end
                 V[i, j] = ifelse(i == j, one(F), zero(F))
             end
         end
-        A = promote_type(F, jacobi_acc_type(R))
-        s = zero(jacobi_acc_type(R))
+        s = zero(R)
         for i in 1:n
-            s += abs2(A(U[i, j]))
+            s += abs2(U[i, j])
         end
-        rwork[j] = R(ifelse(take_sqrt, sqrt(s), s))
+        rwork[j] = ifelse(take_sqrt, sqrt(s), s)
         if !take_sqrt && j == 1
             work[1] = Int32(0)
         end
@@ -50,14 +49,13 @@ end
         p, q = jacobi_pair(n, r, k - 1)
         if p <= n
             F = eltype(U)
-            R = jacobi_acc_type(real(F))
-            A = promote_type(F, R)
+            R = real(F)
             α = zero(R)
             β = zero(R)
-            γ = zero(A)
+            γ = zero(F)
             for i in 1:n
-                up = A(U[i, p])
-                uq = A(U[i, q])
+                up = U[i, p]
+                uq = U[i, q]
                 α += abs2(up)
                 β += abs2(uq)
                 γ += conj(up) * uq
@@ -159,9 +157,9 @@ function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R
                 col_norms2_kernel!(
                     rwork_k, work_k, U_k, V_k, n, neg_e, sweep == 1, false; ndrange = n)
                 # `max` propagates `NaN`, so one reduction tests every column norm for finiteness.
-                max_norm2 = jacobi_acc_type(R)(maximum(rwork_k))
+                max_norm2 = maximum(rwork_k)
                 isfinite(max_norm2) || break
-                negligible = max_norm2 * jacobi_acc_type(R)(tol)^2
+                negligible = max_norm2 * tol^2
                 for r in 0:(m - 2)
                     round_kernel!(
                         U_k, V_k, work_k, n, r, tol, negligible; ndrange = n_pairs)
@@ -183,14 +181,19 @@ function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R
         ka_jacobi_finalize_svd_kernel!(kbackend)(
             U_k, S_k, VT_k, V_k, rwork_k, n, e, tol; ndrange = n)
         synchronize(kbackend)
-        return (converged && isfinite(maximum(rwork_k))) ? 0 : 1
+        # the status and the rank from one host read of the sorted `σ̂`, and no scalar read of a
+        # device array: `info` reports a sweep that did not converge or a singular value that is
+        # not finite, and the rank is then 0
+        σ̂ = ka_host_vec(rwork_k)
+        ok = converged && all(isfinite, σ̂)
+        return ok ? 0 : 1, ok ? svd_rank(σ̂) : 0
     end
 end
 
 function ka_factorize_svd!(fac::DenseSVD, J::AbstractMatrix)
     n = size(fac.U, 1)
     n == 0 && return DenseSVD(
-        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, 0, 0)
+        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, 0, 0, 0)
     F = eltype(fac.U)
     e = matrix_exponent(J)
     if eltype(J) === F
@@ -200,9 +203,10 @@ function ka_factorize_svd!(fac::DenseSVD, J::AbstractMatrix)
         fac.U .= ldexp2.(J, -e)
         neg_e = 0
     end
-    info = ka_svd!(fac.U, fac.factors, fac.S, fac.VT, fac.work, fac.rwork, e, neg_e)
+    info, rank = ka_svd!(fac.U, fac.factors, fac.S, fac.VT, fac.work, fac.rwork, e, neg_e)
     return DenseSVD(
-        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, info, e)
+        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs,
+        info, rank, e)
 end
 
 function factorize!!(fac::DenseSVD{<:AbstractGPUArray}, ::SVDFactorization, J::AbstractMatrix)
@@ -214,14 +218,13 @@ end
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(tmp)
-        A = promote_type(F, jacobi_acc_type(real(F)))
         σj = rwork[j]
         if σj > tol * rwork[1]
-            acc = zero(A)
+            acc = zero(F)
             for i in 1:n
-                acc += conj(A(U[i, j])) * A(d[i])
+                acc += conj(U[i, j]) * d[i]
             end
-            tmp[j] = F(acc / σj)
+            tmp[j] = acc / σj
         else
             tmp[j] = zero(F)
         end
@@ -231,13 +234,11 @@ end
 @kernel function ka_svd_v_mul_kernel!(d, @Const(VT), @Const(tmp), n::Int)
     i = @index(Global, Linear)
     @inbounds if i <= n
-        F = eltype(d)
-        A = promote_type(F, jacobi_acc_type(real(F)))
-        acc = zero(A)
+        acc = zero(eltype(d))
         for j in 1:n
-            acc += conj(A(VT[j, i])) * A(tmp[j])
+            acc += conj(VT[j, i]) * tmp[j]
         end
-        d[i] = F(acc)
+        d[i] = acc
     end
 end
 
@@ -269,31 +270,4 @@ end
 function backsolve!(
         fac::DenseSVD{<:AbstractGPUArray{T}}, d::AbstractVector{T}) where {T <: Number}
     return ka_svd_backsolve!(fac, d)
-end
-
-if ccall(:jl_generating_output, Cint, ()) == 1
-    let kbackend = KernelAbstractions.CPU(), work_k = zeros(Int32, 1)
-        for F in (Float32, Float64, ComplexF32, ComplexF64, Float16)
-            R = real(F)
-            U_k = zeros(F, 2, 2)
-            V_k = zeros(F, 2, 2)
-            VT_k = zeros(F, 2, 2)
-            S_k = zeros(R, 2)
-            rwork_k = zeros(R, 2)
-            tmp_k = zeros(F, 2)
-            d_k = zeros(F, 2)
-            tol = jacobi_tolerance(2, R)
-            ka_jacobi_col_norms2_kernel!(kbackend)(
-                rwork_k, work_k, U_k, V_k, 2, 0, true, false; ndrange = 2)
-            ka_jacobi_svd_round_kernel!(kbackend)(
-                U_k, V_k, work_k, 2, 0, tol, tol * tol; ndrange = 1)
-            ka_jacobi_sort_columns_kernel!(kbackend)(rwork_k, U_k, V_k, 2; ndrange = 1)
-            ka_jacobi_finalize_svd_kernel!(kbackend)(
-                U_k, S_k, VT_k, V_k, rwork_k, 2, 0, tol; ndrange = 2)
-            ka_svd_ut_mul_scale_kernel!(kbackend)(
-                tmp_k, U_k, rwork_k, d_k, 2, tol; ndrange = 2)
-            ka_svd_v_mul_kernel!(kbackend)(d_k, VT_k, tmp_k, 2; ndrange = 2)
-        end
-        synchronize(kbackend)
-    end
 end

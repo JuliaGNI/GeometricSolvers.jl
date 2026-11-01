@@ -39,18 +39,6 @@
 - **kind:** upstream
 - **found:** 2026-10-08
 
-### K6 · A `BigFloat` static matrix has no R1 factorisation.
-
-- **location:** `src/linear/static/lu.jl`, `src/linear/static/qr.jl` (`A = MMatrix(...)` in
-  `factorize!!`)
-- **evidence:** `factorize!!(nothing, LUFactorization(), SMatrix{2, 2, BigFloat}(2, 1, 1, 3))`,
-  and the same with `QRFactorization()`, raise `setindex!() with non-isbitstype eltype is not
-  supported by StaticArrays. Consider using SizedArray.` (Julia 1.13.1). Both kernels work on a
-  local `MMatrix`, the R1 storage, and an `MMatrix` of a non-`isbits` element type has no
-  `setindex!`. `BigFloat` is best effort on the CPU, and no test names it.
-- **kind:** found late
-- **found:** 2026-10-15
-
 ### K7 · A value iterate that is a mutable static array allocates on every update.
 
 - **location:** `src/base/bang.jl` (`update_iterate!!`, `map!!`)
@@ -62,20 +50,5 @@
   the iterate keeps its type. An `MVector` is a value iterate for the call form and for the value
   methods, and the zero-allocated-bytes target of the R1 regime names `SVector` and `Number`, so
   the target does not cover this case.
-- **kind:** found late
-- **found:** 2026-10-16
-
-### K17 · A `StaticSVD`'s reported `σ` holds `Inf` where `σ₁` exceeds `floatmax(real(TF))`.
-
-- **location:** `src/linear/static/svd.jl:218`
-- **evidence:** `test/linear/static/svd.jl`, the testset *a singular value above `floatmax(R)`
-  leaves the solve finite*: at a full `floatmax(T)/2` matrix in `Float32` and `Float64` it asserts
-  `@test !isfinite(fac.σ[1])` beside `all(isfinite, x)` and the `4n · eps(TF) · κ∞` solve bound.
-  `σ` is the `SVector{N, R}` of the singular values of the matrix as it was passed, in
-  `R = real(TF)`, and `factorize!!` unscales them by the power of two it divided the matrix by;
-  that product overflows `R` although every entry of the matrix is finite — the `σ₁` there is
-  `≈ 2.125 · floatmax`. The solve is not affected: `ldiv!!` divides by `σ̂`, the singular values
-  the sweep computed. Reporting a `σ₁` above `floatmax(R)` needs a field wider than the factor
-  type.
 - **kind:** found late
 - **found:** 2026-10-16

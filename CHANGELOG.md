@@ -11,6 +11,42 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`Newton` takes the truncated minimum-norm step of a rank-deficient SVD** (decision 44 of the
+  design). The numerical rank of `StaticSVD` and `DenseSVD` is the new field `rank`, the number of
+  singular values above `√n · eps(TF) · σ₁`; `info` is nonzero only where the factorisation
+  failed — a sweep that did not converge, or a singular value that is not finite — and `rank` is
+  then 0, with the zero step. A rank-deficient matrix gives `info == 0` and `SUCCESS` on a static
+  matrix, a host array and a device array alike, where the static factor gave `info = r + 1` and
+  `SINGULAR`, so `Newton(; linsolve = SVDFactorization())` no longer stops after one iteration with
+  `SINGULAR` on an `SVector`. A host `DenseSVD` of a matrix with an `Inf` entry, where `gesvd`
+  converges to `NaN` singular values, now reports `info = 1` and `SINGULAR`, not `SUCCESS`.
+  `GeometricSolvers.exact_solve(fac)` is `false` for an SVD factor of rank below `n`, and `Newton`
+  then measures the slope of its step (`MeasuredSlope()`) in place of `−2φ(0)`. With `DogLeg`, a
+  Newton step of zero norm is no Newton step: a zero Jacobian returns `STALLED` with the iterate
+  kept. The regenerated `test/verification/standard_reference.csv` changes the code of two cells
+  of the column `Newton Backtracking SVD` in `Float32`, `(3, u0)` from `STALLED` after 7 iterations
+  to `LINESEARCH_FAILED` after 6 and `(8, u0)`, flagged `unstable`, from `STALLED` after 12 to
+  `LINESEARCH_FAILED` after 11, and the evaluation counts of 17 more cells of that column, where
+  the measured slope costs a Jacobian-vector product at the start of a line search; one of them,
+  `(8, 10u0)`, flagged `unstable`, also ends at another residual norm.
+
+- **`StaticSVD` stores `σ̂` alone, and `GeometricSolvers.singular_values(fac)` gives the singular
+  values** of the matrix as it was passed, `σ̂ · 2^e`; the fields `σ` and `converged` are gone, and
+  K17 leaves `KNOWN_ISSUES.md`: the singular value above `floatmax` that overflows is now the value
+  of a function, documented there.
+
+- **The R1 LU, QR and SVD factorise a `BigFloat` static matrix** (K6 leaves `KNOWN_ISSUES.md`): their
+  local arrays are `SizedMatrix` and `SizedVector` for an element type that is not `isbits`, and
+  `MMatrix` and `MVector`, with no allocation, otherwise.
+
+- **No `Float16` code** (decision 46): `jacobi_acc_type`, its uses in the device SVD and the
+  precompile block of `src/linear/ka/svd.jl` are removed, and the device SVD accumulates in its own
+  element type. The `Float16` SVD tests go with them; the `Float16` tests of generic code stay.
+
+- **The dense LU calls `LAPACK.getrf!`**, and the package's own `getrf!` wrapper is removed. `init`
+  sizes the host QR and SVD workspaces by a workspace query of `geqrf` and `gesvd` in place of the
+  fixed `64n` and `128n`.
+
 - **Each nonlinear method has one state type, and the loop has two hooks** (decision 47 of the
   design). The state builder of a method is now `GeometricSolvers.init_state(method, prob, x, p)`,
   with four positional arguments, in place of `init(method, prob, x, p = nothing)`; `init` keeps

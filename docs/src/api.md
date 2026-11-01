@@ -75,7 +75,10 @@ a one-sided Jacobi singular value decomposition whose solve truncates at the ran
 [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on a host
 `Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref),
 [`DenseQR`](@ref) and [`DenseSVD`](@ref). [`factorize!!`](@ref) states what a singular matrix
-gives. [`init`](@ref) is exported; the remaining names are not exported and are reached as
+gives: an SVD factor records its numerical rank in `rank` apart from its status, and
+[`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
+[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). [`init`](@ref) is
+exported; the remaining names are not exported and are reached as
 `GeometricSolvers.name`.
 
 ```@docs
@@ -90,6 +93,8 @@ DenseLU
 DenseQR
 DenseSVD
 returncode
+exact_solve
+singular_values
 ```
 
 ### Eigensolver

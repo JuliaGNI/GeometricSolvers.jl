@@ -1,5 +1,6 @@
 # The R1 Householder QR factorisation without column pivoting: a scalar loop that one thread
-# runs, on a local `MMatrix` that the compiler keeps off the heap, as the LU of `lu.jl`.
+# runs, on a local `MMatrix` that the compiler keeps off the heap, as the LU of `lu.jl`, and on a
+# `SizedMatrix` for an element type that is not `isbits`.
 #
 # Step k reflects x = A[k:N, k] onto β e₁ with β = −phase · ‖x‖, where phase = x₁/|x₁|, or 1 at
 # x₁ = 0. With v = x − β e₁ scaled to w = v / v₁, the reflector is I − τ w wᴴ with
@@ -9,7 +10,7 @@ function factorize!!(::Union{Nothing, StaticQR},
         method::QRFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
     Â, e = factor_matrix(factor_eltype(method, T), J)
-    A = MMatrix(Â)
+    A = local_array(Â)
     F = eltype(A)
     τ = zero(SVector{N, F})
     info = Int32(0)
@@ -24,7 +25,7 @@ function factorize!!(::Union{Nothing, StaticQR},
         # Fill `x` over `1:N` in one loop. On Metal in `Float32` on Julia 1.13.2 this form gives
         # correct factors at n = 1:12, where a zeroed `x` filled over `k:N` under
         # `if !iszero(amax)` gives wrong ones at n = 3:9 (`scripts/spikes/metal_qr/README.md`).
-        x = MVector{N, F}(undef)
+        x = local_vector(F, Val(N))
         for i in 1:N
             x[i] = (i >= k && !iszero(amax)) ? A[i, k] / amax : zero(F)
         end
@@ -61,7 +62,7 @@ end
 # The solve with the stored factors, of the matrix that `factorize!!` divided by `2^e`.
 function backsolve(fac::StaticQR{N, TF}, r::SVector{N, TF}) where {N, TF}
     A = fac.factors
-    x = MVector{N, TF}(r)
+    x = local_array(r)
     @inbounds begin
         # Qᴴ r = H_N ⋯ H_1 r, each reflector Hermitian: x[k:N] -= τ w (wᴴ x[k:N])
         for k in 1:N

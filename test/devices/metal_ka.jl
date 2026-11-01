@@ -187,6 +187,7 @@ if Metal.functional() && !on_virtual_gpu()
             S_rk = Array(fac_rk.S)
             num_rk = S_rk[1] == 0.0f0 ? 0 : count(>(tol16 * S_rk[1]), S_rk)
             @test num_rk == r
+            @test fac_rk.rank == r
             @test all(iszero, Array(fac_rk.U)[:, (r + 1):n16])
             x0_rk = randn(Xoshiro(400r + n16), T, n16)
             b_rk = A_rk * x0_rk

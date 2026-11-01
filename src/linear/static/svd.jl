@@ -1,5 +1,6 @@
 # The R1 one-sided Jacobi SVD: a scalar loop that one thread runs, on a local `MMatrix` that the
-# compiler keeps off the heap on the CPU, on Metal and on CUDA, as the LU of `lu.jl`.
+# compiler keeps off the heap on the CPU, on Metal and on CUDA, as the LU of `lu.jl`, and on a
+# `SizedMatrix` for an element type that is not `isbits`.
 #
 # The sweep rotates pairs of columns until they are mutually orthogonal, in a round-robin order:
 # `n/2` disjoint pairs per round, and `n(n-1)/2` pairs per sweep, which is the order a parallel
@@ -23,18 +24,12 @@
 
 # The number of sweeps the iteration will run before giving up, the same cap LAPACK's `gesvj`
 # uses. Six to twelve is typical, and reaching thirty means something is wrong rather than
-# merely slow. A sweep that reaches it leaves `converged` false: a kernel cannot throw.
+# merely slow. A sweep that reaches it gives `info = 1`: a kernel cannot throw.
 const JACOBI_MAX_SWEEPS = 30
 
 # The relative tolerance of the sweep and the rank cutoff of `factorize!!`: `√n · eps(R)`, where
 # `R = real(TF)`. `√n` and not a constant, because `n` roundings accumulate along a column.
 jacobi_tolerance(n, ::Type{R}) where {R <: Real} = sqrt(R(n)) * eps(R)
-
-# The real accumulator type of an `O(n)` reduction of the sweep and the solve over a real type
-# `R`: `Float32` for `Float16`, whose own dot products stop near `32 · eps(Float16)`, above the
-# sweep tolerance, so the sweep would not converge, and `R` otherwise.
-jacobi_acc_type(::Type{R}) where {R <: Real} = R
-jacobi_acc_type(::Type{Float16}) = Float32
 
 """
     jacobi_rotation(α, β, γ)
@@ -71,7 +66,7 @@ end
 # `a_p′ = cs a_p - conj(sn) a_q` and `a_q′ = sn a_p + cs a_q`, in place: the columns of the
 # working matrix under a rotation, and the columns of the accumulated `V` under the same one.
 # `@inline` for the same reason as `jacobi_sweep!` below.
-@inline function rotate_columns!(A::MMatrix{N, N, F}, p, q, cs, sn) where {N, F}
+@inline function rotate_columns!(A::StaticMatrix{N, N, F}, p, q, cs, sn) where {N, F}
     @inbounds for i in 1:N
         u = A[i, p]
         v = A[i, q]
@@ -99,10 +94,9 @@ end
 # The squared norm of column `j` through the reduction seam of `reductions.jl`: the column is
 # copied into a local `MVector` first, and not passed as a `view`. The parent of a `SubArray`
 # escapes into the generic reduction, and an `MMatrix` that escapes is a heap allocation of `n²`
-# values — the LU and QR kernels of the same kind take their norms the same way. The copy is in
-# the accumulator type of `jacobi_acc_type`, so the norm is too.
-@inline function column_norm2(A::MMatrix{N, N, F}, j) where {N, F}
-    x = zero(MVector{N, promote_type(F, jacobi_acc_type(real(F)))})
+# values — the LU and QR kernels of the same kind take their norms the same way.
+@inline function column_norm2(A::StaticMatrix{N, N, F}, j) where {N, F}
+    x = local_array(zero(SVector{N, F}))
     @inbounds for i in 1:N
         x[i] = A[i, j]
     end
@@ -116,15 +110,15 @@ end
 # `@inline`, and `rotate_columns!` with it: a call that is not inlined over a local `MMatrix`
 # lets the matrix escape, and each escaped matrix is a heap allocation of `n²` values (measured
 # with `--track-allocation=user`: 144 bytes at `n = 4` for each).
-@inline function jacobi_sweep!(A::MMatrix{N, N, F}, V::MMatrix{N, N, F}, tol) where {N, F}
-    R = jacobi_acc_type(real(F))
-    W = promote_type(F, R)
+@inline function jacobi_sweep!(
+        A::StaticMatrix{N, N, F}, V::StaticMatrix{N, N, F}, tol) where {N, F}
+    R = real(F)
     αmax = zero(R)
     for j in 1:N
         αmax = max(αmax, column_norm2(A, j))
     end
-    # `αmax` first, so that the product stays in the accumulator's type, and in the scale of the
-    # matrix rather than in the scale of the pair
+    # `αmax` first, so that the product stays in the scale of the matrix rather than in the scale
+    # of the pair
     negligible = αmax * tol * tol
     rotations = 0
     m = N + isodd(N)
@@ -137,9 +131,9 @@ end
         (α ≤ negligible || β ≤ negligible) && continue
         # the pair's own inner product, through no seam of `reductions.jl`: `rdot` returns its
         # real part alone, and the rotation needs the phase of the complex one
-        γ = zero(W)
+        γ = zero(F)
         @inbounds for i in 1:N
-            γ += conj(W(A[i, p])) * W(A[i, q])
+            γ += conj(A[i, p]) * A[i, q]
         end
         abs(γ) ≤ tol * sqrt(α * β) && continue
         cs, sn = jacobi_rotation(α, β, γ)
@@ -155,8 +149,8 @@ function factorize!!(::Union{Nothing, StaticSVD},
         J::StaticMatrix{N, N, T}) where {N, T}
     F = factor_eltype(method, T)
     Â, e = svd_matrix(F, J)
-    A = MMatrix{N, N, F, N * N}(Â)
-    V = one(MMatrix{N, N, F, N * N})
+    A = local_array(Â)
+    V = local_array(one(SMatrix{N, N, F}))
     tol = jacobi_tolerance(N, real(F))
     sweeps = 0
     converged = false
@@ -191,22 +185,24 @@ function factorize!!(::Union{Nothing, StaticSVD},
         end
     end
 
-    # the rank cutoff: `σᵢ ≤ √n · eps(TF) · σ₁` counts as zero, which is the tolerance of
-    # the sweep. `info` is the index of the first
-    # such entry, as it is for the LU and QR factors.
+    # `info` reports a failed factorisation alone: a sweep that reached its cap, or a singular
+    # value that is not finite. The rank cutoff `σᵢ ≤ √n · eps(TF) · σ₁`, the tolerance of the
+    # sweep, counts a singular value as zero; `σ` is non-increasing, so the rank is a leading run.
+    ok = converged && all(isfinite, σ)
+    info = ok ? Int32(0) : Int32(1)
     cutoff = tol * σ[1]
-    info = Int32(0)
-    for j in 1:N
-        if !(σ[j] > cutoff)
-            info = Int32(j)
-            break
+    rank = Int32(0)
+    if ok
+        for j in 1:N
+            σ[j] > cutoff || break
+            rank += Int32(1)
         end
     end
 
     # `A` becomes `U`. Beyond the rank the column is zeroed rather than normalized, which keeps
     # a division by rounding noise out of the solve and leaves a `NaN` out of a zero quotient.
     for j in 1:N
-        if info == 0 || j < info
+        if j <= rank
             @inbounds for i in 1:N
                 A[i, j] /= σ[j]
             end
@@ -217,41 +213,34 @@ function factorize!!(::Union{Nothing, StaticSVD},
         end
     end
 
-    # the singular values of the matrix the caller passed: a power of two scales one exactly.
-    # `σ̂` keeps the ones the sweep computed, of the matrix as `factorize!!` divided it: the solve
-    # divides by those, so that a `σ₁` above `floatmax(R)` — a `σ` the report cannot hold, where
-    # every entry of the matrix is finite — still leaves a finite step
-    σ̂ = σ
-    for j in 1:N
-        σ = setindex(σ, ldexp2(σ[j], e), j)
-    end
-    return StaticSVD(SMatrix(A), SMatrix(V), σ, σ̂, info, converged, e)
+    # `σ` are the singular values of the matrix as `factorize!!` divided it, the ones the solve
+    # divides by; `singular_values` scales them back by `2^e`
+    return StaticSVD(SMatrix(A), SMatrix(V), σ, info, rank, e)
 end
 
 # The solve with the stored factors, of the matrix that `factorize!!` divided by `2^e`: the
 # truncated pseudo-inverse `V Σ⁺ Uᴴ r`. Its coordinates are taken in the scaled domain, where the
 # divisor is `σ̂`, the singular value the sweep computed, and the step is multiplied back by `2^-e`
-# as the LU and QR solves are: `σ` itself can be `Inf` where `σ₁` is above `floatmax(R)`, and a
-# division by it would make the step zero.
+# as the LU and QR solves are: a singular value of the matrix as it was passed can be `Inf` where
+# `σ₁` is above `floatmax(R)`, and a division by it would make the step zero.
 function backsolve(fac::StaticSVD{N, TF}, r::SVector{N, TF}) where {N, TF}
     U = fac.factors
     V = fac.V
     # the directions the rank cutoff counted as zero contribute nothing: dividing by their
-    # rounding noise is what turns a null direction into an enormous step, or into a `NaN`
-    rank = fac.info == 0 ? N : Int(fac.info) - 1
-    W = promote_type(TF, jacobi_acc_type(real(TF)))
-    d = zero(MVector{N, W})
-    for j in 1:rank
-        s = zero(W)
+    # rounding noise is what turns a null direction into an enormous step, or into a `NaN`. A
+    # failed factor has rank 0, and its step is zero whatever `V` holds.
+    d = local_array(zero(SVector{N, TF}))
+    for j in 1:(fac.rank)
+        s = zero(TF)
         @inbounds for i in 1:N
-            s += conj(W(U[i, j])) * W(r[i])
+            s += conj(U[i, j]) * r[i]
         end
         d[j] = s / fac.σ̂[j]
     end
-    x = zero(MVector{N, W})
-    @inbounds for i in 1:N, j in 1:N
+    x = local_array(zero(SVector{N, TF}))
+    @inbounds for i in 1:N, j in 1:(fac.rank)
 
-        x[i] += W(V[i, j]) * d[j]
+        x[i] += V[i, j] * d[j]
     end
     return SVector{N, TF}(x)
 end

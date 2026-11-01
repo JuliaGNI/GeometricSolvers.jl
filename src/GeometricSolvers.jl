@@ -13,8 +13,8 @@ using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
                           get_backend, isgpu, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, ldiv!,
                      lu!, mul!, qr!
-using StaticArrays: MMatrix, MVector, SMatrix, StaticArray, StaticMatrix, StaticVector,
-                    SVector,
+using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
+                    StaticMatrix, StaticVector, SVector,
                     setindex
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED

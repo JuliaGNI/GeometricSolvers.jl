@@ -235,7 +235,8 @@ end
 end
 
 # The step from the factor `fac`, fresh or reused: `SINGULAR` for a singular factor, else the
-# globalized step along the refined direction.
+# globalized step along the refined direction, with the measured slope where the solve of `fac`
+# is a truncated one.
 @inline function newton_globalize(
         m::Newton, state::NewtonState, prob, x, Fx, p, fac, fresh::Bool)
     T = eltype(x)
@@ -246,7 +247,7 @@ end
     d₀ = ldiv!!(state.d, fac, Fx)
     d₁ = map!!(-, state.d, d₀)
     d = refine!!(state.d, m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
-    sk = newton_stepkind(m, T, fresh)
+    sk = exact_solve(fac) ? newton_stepkind(m, T, fresh) : MeasuredSlope()
     x₊, F₊, _, info = globalize!!(
         state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk)
     return x₊, F₊, info
@@ -262,7 +263,7 @@ end
 
 # The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
 # `dogleg_step` on the regularised Jacobian that was factorised. A singular factor or a Newton step
-# whose norm is not finite leaves the Cauchy step.
+# whose norm is zero or not finite leaves the Cauchy step.
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
@@ -271,7 +272,8 @@ end
         d₀ = ldiv!!(state.d, fac, Fx)
         d₁ = map!!(-, state.d, d₀)
         d = refine!!(state.d, m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
-        newton = isfinite(rnorm(d))
+        nd = rnorm(d)
+        newton = isfinite(nd) && !iszero(nd)
     else
         d = Fx
         newton = false

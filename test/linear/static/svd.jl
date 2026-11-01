@@ -4,13 +4,12 @@
 #
 # The SVD runs in `Float32`, `Float64`, `ComplexF32` and `ComplexF64`, at the working precision
 # and with `TF = Float32` for the two `Float64` element types (`PRECISION_PAIRS`), over the array
-# backends and on the KernelAbstractions `CPU()` backend of `test/helpers/matrix.jl`. One testset
-# runs `TF = Float16` on general matrices, for `Float16` and the real element types.
+# backends and on the KernelAbstractions `CPU()` backend of `test/helpers/matrix.jl`.
 
 using GeometricSolvers
-using GeometricSolvers: factorize!!, ldiv!!, returncode, StaticSVD
+using GeometricSolvers: factorize!!, ldiv!!, returncode, singular_values, StaticSVD
 using JET: JET
-using LinearAlgebra: Diagonal, norm, opnorm, svdvals
+using LinearAlgebra: Diagonal, norm, opnorm
 using Random: Xoshiro, randn
 using StaticArrays: MMatrix, SMatrix, SVector, setindex
 using Test
@@ -55,7 +54,7 @@ integers(::Type{T}, n) where {T} = SMatrix{n, n, T}([i + j for i in 1:n, j in 1:
         fac = factorize!!(nothing, m, A)
         @test all(isfinite, fac.factors)
         @test all(isfinite, fac.V)
-        @test all(isfinite, fac.σ)
+        @test all(isfinite, singular_values(fac))
 
         # the power of two is exact, so the sweep runs on the integer matrix scaled, and the
         # orthogonal factors are the integer matrix's bit for bit, as the singular values are
@@ -63,7 +62,7 @@ integers(::Type{T}, n) where {T} = SMatrix{n, n, T}([i + j for i in 1:n, j in 1:
         ref = factorize!!(nothing, m, B)
         @test fac.factors == ref.factors
         @test fac.V == ref.V
-        @test fac.σ == map(x -> ldexp(x, E), ref.σ)
+        @test singular_values(fac) == map(x -> ldexp(x, E), singular_values(ref))
     end
 end
 
@@ -78,15 +77,15 @@ end
 
         # the per-pair relative test alone never terminates here: the null directions are asked
         # to become orthogonal to each other, and every rotation regenerates their noise
-        @test fac.converged
-        @test issorted(fac.σ; rev = true)
-        # the numerical rank is exact, and `info` is the index of the first singular value that
-        # the cutoff counts as zero
-        @test fac.info == r + 1
-        @test returncode(fac) === SINGULAR
-        @test all(σ -> σ ≤ tol * fac.σ[1], fac.σ[(r + 1):end])
+        @test fac.info == 0
+        σ = singular_values(fac)
+        @test issorted(σ; rev = true)
+        # the numerical rank is exact, and a rank deficiency is no failure of the factorisation
+        @test fac.rank == r
+        @test returncode(fac) === SUCCESS
+        @test all(s -> s ≤ tol * σ[1], σ[(r + 1):end])
         if r >= 1
-            @test fac.σ[r] > tol * fac.σ[1]
+            @test σ[r] > tol * σ[1]
         end
         # the columns of `U` past the rank are zeroed rather than normalized: the divisor of a
         # null direction is its rounding noise, and dividing by it can put a `NaN` into the factor
@@ -106,7 +105,7 @@ end
         # Without the guard the relative test rotates the pair — `|γ| = ε/2` against
         # `tol · √(αβ) = eps²` — and the reported singular value of the last column becomes the
         # rounding noise of that rotation, `~ eps²`, instead of the `ε = eps(TF)/2` the column
-        # carries. The sweep's `σ` are the column norms, and the rank cutoff truncates this one
+        # carries. The sweep's `σ̂` are the column norms, and the rank cutoff truncates this one
         # either way, which is why the two agree on the rank of this matrix.
         n = 4
         F = factortype(T, TF)
@@ -117,9 +116,9 @@ end
         A = SMatrix{n, n, T}([i == j ? one(T) : zero(T) for i in 1:n, j in 1:n])
         A = setindex(setindex(A, zero(T), n, n), T(ε), 1, n)
         fac = factorize!!(nothing, svd_method(TF), A)
-        @test fac.converged
-        @test fac.info == n
-        @test fac.σ[n] == ε
+        @test fac.info == 0
+        @test fac.rank == n - 1
+        @test singular_values(fac)[n] == ε
     end
 end
 
@@ -130,30 +129,9 @@ end
         # of a pair is never satisfied on a `NaN`, so the sweep reaches its cap.
         A = SMatrix{4, 4, T}(fill(T(NaN), 4, 4))
         fac = factorize!!(nothing, m, A)
-        @test !fac.converged
         @test fac.info == 1
-    end
-end
-
-@testset "a general matrix converges with TF = Float16, $T, n = $n" for T in (
-        REAL_ELTYPES..., Float16),
-    n in (2, 3, 4, 8)
-
-    # `randn` with no diagonal shift: the columns are far from orthogonal, and the sweep converges
-    # on them only when its reductions accumulate in `Float32`
-    m = svd_method(Float16)
-    for seed in 1:3
-        A = SMatrix{n, n, T}(randn(Xoshiro(seed), T, n, n))
-        fac = factorize!!(nothing, m, A)
-        @test fac.converged
-        Af = Float64.(Matrix(A))
-        σ_ref = svdvals(Af)
-        @test maximum(abs.(Float64.(fac.σ) .- σ_ref)) <=
-              8 * n * Float64(eps(Float16)) * σ_ref[1]
-        U = Float64.(Matrix(fac.factors))
-        V = Float64.(Matrix(fac.V))
-        @test opnorm(U * Diagonal(Float64.(fac.σ)) * V' - Af) <=
-              8 * n * Float64(eps(Float16)) * opnorm(Af)
+        @test fac.rank == 0
+        @test returncode(fac) === SINGULAR
     end
 end
 
@@ -169,7 +147,8 @@ end
         fac = factorize!!(nothing, m, A)
         x = ldiv!!(nothing, fac, b)
 
-        @test returncode(fac) === SINGULAR
+        @test returncode(fac) === SUCCESS
+        @test fac.rank == r
         @test eltype(x) === T
         @test all(isfinite, x)
         # the solve is not rank-revealing: the truncated step is not `x₀`, but its residual is
@@ -245,9 +224,9 @@ end
     @testset "a singular value above floatmax(R) leaves the solve finite, $T" for T in REAL_ELTYPES
 
         # Every entry of `A` is finite, and `σ₁` is not representable in `R` — a full matrix of
-        # `floatmax/2` has a `σ₁` near `2·floatmax`. The stored `σ` overflows, as the `StaticSVD`
-        # docstring states, while the solve divides by the scaled singular value `σ̂` and returns
-        # the step within the check-1 bound.
+        # `floatmax/2` has a `σ₁` near `2·floatmax`. `singular_values` overflows, as its docstring
+        # states, while the solve divides by the scaled singular value `σ̂` and returns the step
+        # within the check-1 bound.
         n = 4
         m = svd_method(Nothing)
         A = SMatrix{n, n, T}(fill(floatmax(T) / 2, n, n)) +
@@ -255,11 +234,12 @@ end
         b = SVector{n, T}(fill(floatmax(T) / 4, n))
         fac = factorize!!(nothing, m, A)
         x = ldiv!!(nothing, fac, b)
-        @test fac.converged
+        @test fac.info == 0
         @test returncode(fac) === SUCCESS
-        # the reported `σ` is the one limit: `σ₁` is not representable in `R`, and every entry of
-        # `A` is finite
-        @test !isfinite(fac.σ[1])
+        # the reported singular value is the one limit: `σ₁` is not representable in `R`, and
+        # every entry of `A` is finite
+        @test !isfinite(singular_values(fac)[1])
+        @test all(isfinite, fac.σ̂)
         @test all(isfinite, x)
         @test relerr(x, reference(A, b)) <= bound(A, T, Nothing)
     end
@@ -275,7 +255,7 @@ end
         @test fac isa StaticSVD{n, F, real(F), n * n}
         @test isbits(fac)
         @test eltype(fac.factors) === F
-        @test eltype(fac.σ) === real(F)
+        @test eltype(fac.σ̂) === real(F)
         @test @inferred(ldiv!!(nothing, fac, b)) isa SVector{n, T}
         # under --check-bounds=yes a bounds check lets the local MMatrix escape to the heap,
         # so these are skipped where a run forces it, as `julia-runtest` does by default
@@ -294,9 +274,10 @@ end
 
             m = svd_method(TF)
             systems = conditioned_systems(1000n + 3, T, TF, n)
-            # the zero matrix and the rank-1 matrix of check 2, which the kernel's `info` reports.
-            # `vcat` of two vectors: a `[...; matrix; ...]` literal concatenates a matrix's
-            # elements when its size is 1, which the n = 1 case of this loop is
+            # the zero matrix and the rank-1 matrix of check 2, whose truncated steps the kernel
+            # gives as the host does. `vcat` of two vectors: a `[...; matrix; ...]` literal
+            # concatenates a matrix's elements when its size is 1, which the n = 1 case of this
+            # loop is
             As = vcat(first.(systems),
                 [rank_deficient(100n + 1, T, n, 0), rank_deficient(100n + 5, T, n, 1)])
             bs = vcat(last.(systems), [zero(SVector{n, T}), SVector{n, T}(fill(one(T), n))])
@@ -304,10 +285,11 @@ end
             host = map((A, b) -> host_solve(m, A, b), As, bs)
             @test isequal(x, map(last, host))
             @test info == map(h -> first(h).info, host)
-            # the zero matrix is singular at every size; a rank-1 matrix is full rank at n = 1,
-            # and its `info` is 0 there
-            @test info[length(systems) + 1] > 0
-            n > 1 && @test info[length(systems) + 2] > 0
+            # a rank deficiency is no failure: `info` is 0 for every system. The zero matrix has
+            # rank 0 at every size; a rank-1 matrix is full rank at n = 1
+            @test all(iszero, info)
+            @test first(host[length(systems) + 1]).rank == 0
+            @test first(host[length(systems) + 2]).rank == 1
         end
     end
 

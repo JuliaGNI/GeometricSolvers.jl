@@ -386,6 +386,7 @@ end
             copyto!(fac.factors, A)
             fac = factorize!!(fac, m, fac.factors)
             @test fac.info == 0
+            @test fac.rank == r
             @test returncode(fac) === SUCCESS
 
             d = similar(b)
@@ -404,6 +405,7 @@ end
         copyto!(fac.factors, A)
         fac = factorize!!(fac, m, fac.factors)
         @test fac.info == 0
+        @test fac.rank == 0
         @test returncode(fac) === SUCCESS
         d = similar(b)
         x_sol = ldiv!!(d, fac, b)
