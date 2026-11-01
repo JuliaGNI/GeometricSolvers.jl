@@ -32,8 +32,9 @@ array iterate, and `nothing` for a value iterate. The default is `nothing`, whic
 
 Compute one nonlinear solver step from `(x, Fx)` and return `(x₊, F₊, state₊, info)` where `info`
 is a [`StepInfo`](@ref). A line-search step of [`Newton`](@ref) or [`Picard`](@ref) reads the
-anchor merit that [`start!!`](@ref) sets; on a state that no `start!!` saw, it returns
-`NONFINITE` and keeps `x` and `Fx`.
+anchor merit that the last [`start!!`](@ref) or `step!!` on its state set, so it takes only the
+`(x, Fx)` that they returned; on a state that no `start!!` saw, or that [`solve!!`](@ref)
+returned, it returns `NONFINITE` and keeps `x` and `Fx`.
 """
 function step!! end
 
@@ -54,7 +55,8 @@ the anchor merit `norm2(Fx)` of a line search, which `init_state` leaves at `NaN
 Close a solve that ends at `x`, with residual `Fx` and `status`, and return the triple that
 [`solve!!`](@ref) returns. [`solve!!`](@ref) calls it at every return. The default returns
 `(x, status, state)`. A method may return another iterate; it then sets `status.fnorm` itself,
-and for an array iterate it writes that iterate into `x` and returns `x`.
+and for an array iterate it writes that iterate into `x` and returns `x`. [`Newton`](@ref) and
+[`Picard`](@ref) set the anchor merit of a line search to `NaN` again, as `init_state` does.
 """
 @inline finish!!(state, method, prob, x, Fx, status) = (x, status, state)
 

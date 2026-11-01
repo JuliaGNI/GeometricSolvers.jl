@@ -13,9 +13,11 @@ trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refineme
 
 - `linsolve::L`: the linear-solver method.
 - `globalization::G`: the globalization method. A line search takes its merit at `α = 0` from
-  the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))`, so a [`step!!`](@ref) with a line
-  search follows a `start!!` on its state, as in [`solve!!`](@ref). A line-search step on a state
-  that no `start!!` saw returns `NONFINITE` and keeps its iterate.
+  the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))` and each [`step!!`](@ref) to the
+  merit of the residual it returns. A `step!!` with a line search therefore takes only the
+  `(x, Fx)` that the last `start!!` or `step!!` on its state returned, as in [`solve!!`](@ref).
+  A line-search step on a state that no `start!!` saw, or that `solve!!` returned, returns
+  `NONFINITE` and keeps its iterate.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
   `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
@@ -227,6 +229,12 @@ end
 @inline function start!!(state::NewtonState, m::Newton, prob, x, Fx, p, fnorm₀)
     state = with_rule(state, reset_rule(state.rule))
     return with_merit(state, start_merit(m.globalization, Fx))
+end
+
+# The state that `solve!!` returns carries the merit of `init_state` again, so that a line-search
+# step on it fails closed as on a fresh state.
+@inline function finish!!(state::NewtonState, m::Newton, prob, x, Fx, status)
+    return x, status, with_merit(state, init_merit(m.globalization, x))
 end
 
 @inline function newton_stepkind(m::Newton, ::Type{T}, fresh::Bool) where {T}

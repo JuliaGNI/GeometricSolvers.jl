@@ -10,9 +10,10 @@ Damped fixed-point (Picard) iteration for [`NonlinearProblem`](@ref), with searc
 - `damping::D`: positive finite damping factor ``\\omega > 0``, stored in floating-point.
 - `globalization::G`: the globalization method. Any line search uses [`MeasuredSlope`](@ref),
   and takes its merit at `α = 0` from the state, where [`start!!`](@ref) sets it to
-  `norm2(F(x₀))`, so a [`step!!`](@ref) with a line search follows a `start!!` on its state, as in
-  [`solve!!`](@ref). A line-search step on a state that no `start!!` saw returns `NONFINITE` and
-  keeps its iterate.
+  `norm2(F(x₀))` and each [`step!!`](@ref) to the merit of the residual it returns. A `step!!`
+  with a line search therefore takes only the `(x, Fx)` that the last `start!!` or `step!!` on its
+  state returned, as in [`solve!!`](@ref). A line-search step on a state that no `start!!` saw, or
+  that `solve!!` returned, returns `NONFINITE` and keeps its iterate.
 """
 struct Picard{D <: Real, G}
     damping::D
@@ -74,6 +75,12 @@ end
 
 @inline function start!!(state::PicardState, m::Picard, prob, x, Fx, p, fnorm₀)
     return with_merit(state, start_merit(m.globalization, Fx))
+end
+
+# The state that `solve!!` returns carries the merit of `init_state` again, so that a line-search
+# step on it fails closed as on a fresh state.
+@inline function finish!!(state::PicardState, m::Picard, prob, x, Fx, status)
+    return x, status, with_merit(state, init_merit(m.globalization, x))
 end
 
 # The damping is real, so that `-ω F` of a complex `F` is the real scaling of each part.

@@ -91,19 +91,21 @@ end
 end
 
 # The merit of the state after `start!!` and after each step is `norm2` of the residual that the
-# step returns, bit for bit, on an array and on a value iterate.
+# step returns, within 8 ulps, on an array and on a value iterate.
 function merits_follow(m, prob, x₀)
+    R = real(eltype(x₀))
+    rtol = 8 * eps(R)
     state = init_state(m, prob, x₀, nothing)
     x = copy(x₀)
     Fx = residual!!(GS.residual_buffer(state), prob, x, nothing)
     state = start!!(state, m, prob, x, Fx, nothing, rnorm(Fx))
-    ok = state.merit === norm2(Fx)
+    ok = state.merit isa R && isapprox(state.merit, norm2(Fx); rtol)
     moved = false
     for _ in 1:6
         x_old = copy(x)
         x, Fx, state, _ = step!!(state, m, prob, x, Fx, nothing)
         moved |= x != x_old
-        ok &= state.merit === norm2(Fx)
+        ok &= state.merit isa R && isapprox(state.merit, norm2(Fx); rtol)
     end
     return ok && moved
 end
@@ -156,6 +158,43 @@ end
     end
 end
 
+# `finish!!` sets the merit of a line search to `NaN` again: a step on the state that a solve
+# returned, from an iterate of its own, fails closed as on a fresh state. The solve that stops at
+# once at `(100, 100)` would otherwise leave an anchor far above the merit 73 at `(1, 1)`, and the
+# converged solve one of zero. The returned state still starts a solve of its own.
+@testset "a step on the state that a solve returned is NONFINITE, $R" for R in REAL_ELTYPES
+    @testset "$name" for (name, m) in NO_START
+        mR = adapt(ToReal{R}(), m)
+        for (prob, x₀) in ((value_problem(:newton), SVector{2, R}(1, 1)),
+            (array_problem(:newton), R[1, 1]))
+            for (xs, opt) in ((100 .* x₀, Options(R; max_iterations = 0)),
+                (x₀ .* [2, 3], Options(R)))
+                state = init_state(mR, prob, x₀, nothing)
+                xs = x₀ isa SVector ? SVector{2, R}(xs) : collect(R, xs)
+                _, status, state = solve!!(state, prob, xs, mR, nothing, opt)
+                @test status.code == (opt.max_iterations == 0 ? MAXITERS : SUCCESS)
+                @test isnan(state.merit)
+                x = copy(x₀)
+                Fx = residual!!(GS.residual_buffer(state), prob, x, nothing)
+                x₁, _, st₊, info = step!!(state, mR, prob, x, Fx, nothing)
+                @test info.code == NONFINITE
+                @test x₁ == x₀
+                @test isnan(st₊.merit)
+                _, status, _ = solve!!(state, prob, copy(x₀), mR, nothing, Options(R))
+                @test status.code == SUCCESS
+            end
+        end
+    end
+    @testset "no merit to reset" begin
+        prob = value_problem(:newton)
+        x = SVector(1.0, 1.0)
+        for m in (Newton(), Newton(; globalization = DogLeg()), Picard())
+            _, _, state = solve!!(init_state(m, prob, x, nothing), prob, x, m)
+            @test state.merit === nothing
+        end
+    end
+end
+
 @testset "only a line search carries a merit" begin
     prob = value_problem(:newton)
     x = SVector(1.0, 1.0)
@@ -185,7 +224,8 @@ end
     @test info.code == LINESEARCH_FAILED
     @test info.failures == 1
     @test x₊ == x + d
-    @test merit === norm2(F₊)
+    @test merit isa R
+    @test isapprox(merit, norm2(F₊); rtol = 8 * eps(R))
     @test merit < norm2(Fx)
 end
 
