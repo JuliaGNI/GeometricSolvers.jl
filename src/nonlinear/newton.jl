@@ -234,7 +234,7 @@ end
     return Jreg, factorize!!(state.fac, m.linsolve, Jreg)
 end
 
-# The step from the factor `fac`, fresh or reused: `SINGULAR` for a singular factor, else the
+# The step from the factor `fac`, fresh or reused: `SINGULAR` for a failed factor, else the
 # globalized step along the refined direction, with the measured slope where the solve of `fac`
 # is a truncated one.
 @inline function newton_globalize(
@@ -262,7 +262,7 @@ end
 end
 
 # The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
-# `dogleg_step` on the regularised Jacobian that was factorised. A singular factor or a Newton step
+# `dogleg_step` on the regularised Jacobian that was factorised. A failed factor or a Newton step
 # whose norm is zero or not finite leaves the Cauchy step.
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
