@@ -166,67 +166,96 @@ end
     return options
 end
 
+# The iterate, the adapted method, the options and the method state of a solve from `x₀`, which
+# `init` and `solve` share: an array `x₀` is copied, so that neither of them mutates it.
+@inline function prepare_solve(prob, x₀, method, p, options, kwargs)
+    R = real(eltype(x₀))
+    opt = resolve_options(eltype(x₀), options, kwargs)
+    m = Adapt.adapt(ToReal{R}(), method)
+    x = x₀ isa Union{StaticArray, Number} ? x₀ : copy(x₀)
+    return x, m, opt, init_state(m, prob, x, p)
+end
+
 """
-    NonlinearSolver(prob, x, method, options, state)
+    NonlinearSolver(prob, x, method, options, state, p)
 
 A preallocated nonlinear solver for [`NonlinearProblem`](@ref) `prob` with `method` and
-[`Options`](@ref) `options`, holding the workspace and AD preparation in `state`. It keeps the
-element type `T` and the length `n` of the template iterate `x`, which [`solve!`](@ref) checks.
-Build it with [`init(prob, x, method, p; options = nothing, kwargs...)`](@ref init) and solve in
-place with [`solve!(x, solver, p)`](@ref solve!).
+[`Options`](@ref) `options`, holding the workspace and AD preparation in `state`, the iterate `x`
+and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the element type `T` and the
+length `n` of `x` and the types `X` of `x` and `Q` of `p`, which [`solve!`](@ref) checks.
+Build it with [`init(prob, x₀, method, p; options = nothing, kwargs...)`](@ref init) and solve
+with [`solve!(solver)`](@ref solve!) or [`solve!(solver, x, p)`](@ref solve!).
 """
-mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S}
+mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
+    X <: Union{AbstractVector{T}, T}, Q}
     const prob::P
     const method::M
     const options::O
     const n::Int
     state::S
-    function NonlinearSolver(prob::P, x::AbstractVector{T}, method::M, options::O,
-            state::S) where {T, P <: NonlinearProblem, M, O <: Options, S}
-        new{T, P, M, O, S}(prob, method, options, length(x), state)
+    x::X
+    p::Q
+    function NonlinearSolver(prob::P, x::X, method::M, options::O, state::S,
+            p::Q) where {P <: NonlinearProblem, M, O <: Options, S,
+            X <: Union{AbstractVector, Number}, Q}
+        new{eltype(X), P, M, O, S, X, Q}(prob, method, options, length(x), state, x, p)
     end
 end
 
 """
-    init(prob::NonlinearProblem, x::AbstractVector, method, p = nothing;
-         options = nothing, kwargs...)
+    init(prob::NonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
 
-Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` at a template iterate `x`
-and representative parameters `p`, without mutating `x`. Passing both `options` and keyword
+Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` from the initial iterate
+`x₀` and the parameters `p`, with the arguments of [`solve`](@ref), so that
+`solve!(init(args...; kwargs...))` returns what `solve(args...; kwargs...)` returns. The solver
+holds a copy of an array `x₀`, so `init` and [`solve!(solver)`](@ref solve!) do not mutate `x₀`;
+it holds a `StaticArray` or a `Number` `x₀` and `p` themselves. Passing both `options` and keyword
 tolerances raises an `ArgumentError`, and so does an `options` that is not an
-`Options{real(eltype(x))}`. A `StaticArray` `x` raises an `ArgumentError` too, because
-[`solve!`](@ref) cannot write the solution into it; solve it with [`solve`](@ref).
+`Options{real(eltype(x₀))}`.
 """
 function init(
-        prob::NonlinearProblem, x::AbstractVector, method, p = nothing;
+        prob::NonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
-    x isa StaticArray && throw(ArgumentError(
-        "`init` builds a solver for an array iterate; solve a `StaticArray` iterate with `solve`"))
-    R = real(eltype(x))
-    opt = resolve_options(eltype(x), options, kwargs)
-    m = Adapt.adapt(ToReal{R}(), method)
-    state = init_state(m, prob, x, p)
-    return NonlinearSolver(prob, x, m, opt, state)
+    x, m, opt, state = prepare_solve(prob, x₀, method, p, options, kwargs)
+    return NonlinearSolver(prob, x, m, opt, state, p)
 end
 
 """
-    solve!(x::AbstractVector, solver::NonlinearSolver, p = nothing)
+    solve!(solver::NonlinearSolver)
+    solve!(solver::NonlinearSolver, x, p = solver.p)
 
-Solve `solver.prob` in place into `x` using the preallocated workspace and AD preparation in
-`solver`, and return `status::SolverStatus`. The solver does not keep the `p` given to
-[`init`](@ref): pass the parameters to every call, because `solve!(x, solver)` solves with
-`p = nothing`. An `x` whose element type or length differs from the template given to `init`
-raises an `ArgumentError`.
+Solve `solver.prob`, using the preallocated workspace and AD preparation in `solver`, store the
+solution in `solver.x`, and return `(solver.x, status)` where `status` is a
+[`SolverStatus`](@ref). `solve!(solver)` solves from `solver.x` with `solver.p`, the iterate and
+the parameters that [`init`](@ref) or the last `solve!(solver, x, p)` stored, and writes the
+solution into `solver.x` when it is an array.
+`solve!(solver, x, p)` stores `x` in `solver.x` and `p` in `solver.p`, then solves from `x` with
+`p`; an array `x` receives the solution in place and stays in `solver.x`. Without `p`, it solves
+with the parameters that the solver holds. An `x` whose element type or length differs from the
+iterate of `init` raises an `ArgumentError`, and so do an `x` of another type and a `p` of
+another type than those of `init`. A refused call changes neither `solver` nor `x`.
 """
-function solve!(x::AbstractVector, solver::NonlinearSolver{T}, p = nothing) where {T}
+solve!(solver::NonlinearSolver) = solve!(solver, solver.x, solver.p)
+
+function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
+        p = solver.p) where {T, P, M, O, S, X, Q}
     eltype(x) === T && length(x) == solver.n || throw(ArgumentError(
         "`solve!` needs an iterate like the template given to `init`, of length " *
         "$(solver.n) and element type $T; got length $(length(x)) and " *
         "element type $(eltype(x))"))
-    _, status, state = solve!!(
+    x isa X || throw(ArgumentError(
+        "`solve!` needs an iterate of type $X, like the one given to `init`; " *
+        "got type $(typeof(x))"))
+    p isa Q || throw(ArgumentError(
+        "`solve!` needs parameters of type $Q, like those given to `init`; " *
+        "got type $(typeof(p))"))
+    solver.x = x
+    solver.p = p
+    x₊, status, state = solve!!(
         solver.state, solver.prob, x, solver.method, p, solver.options)
+    solver.x = x₊
     solver.state === state || (solver.state = state)
-    return status
+    return solver.x, status
 end
 
 """
@@ -234,7 +263,8 @@ end
 
 Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters `p`, and return
 `(x, status)` where `status` is a [`SolverStatus`](@ref). For an R3 array iterate `x₀`, `solve`
-copies `x₀` so the caller's initial guess is not mutated.
+copies `x₀` so the caller's initial guess is not mutated. `solve(args...; kwargs...)` returns what
+`solve!(init(args...; kwargs...))` returns, without building a [`NonlinearSolver`](@ref).
 
 `solve` adapts `method` to `real(eltype(x₀))` with [`ToReal`](@ref), builds [`Options`](@ref) in
 `eltype(x₀)` from `kwargs...` or takes `options`, calls [`init_state`](@ref), and delegates to
@@ -248,11 +278,7 @@ to `Inf` above `‖F‖ = sqrt(floatmax)`, and a solve with a line search then r
 function solve(
         prob::NonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
-    R = real(eltype(x₀))
-    opt = resolve_options(eltype(x₀), options, kwargs)
-    m = Adapt.adapt(ToReal{R}(), method)
-    x = x₀ isa Union{StaticArray, Number} ? x₀ : copy(x₀)
-    state = init_state(m, prob, x, p)
+    x, m, opt, state = prepare_solve(prob, x₀, method, p, options, kwargs)
     x, status, _ = solve!!(state, prob, x, m, p, opt)
     return x, status
 end

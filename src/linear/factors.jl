@@ -27,7 +27,7 @@ only where the sweep did not converge or a singular value is not finite, and `ra
 SVD is prescaled at the working precision too, because the sweep squares the entries.
 
 For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
-built by [`init`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
+built by [`dense_factor`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
 place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) divides `J` by `2^e`
 unconditionally, `J === fac.factors` too: into `fac.factors` on the host before `gesvd`, and into
@@ -215,12 +215,12 @@ struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
 end
 
 """
-    init(method::LinearMethod, prob, x::AbstractVector, p)
+    dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
 Build the dense factor [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) of `method` for
 the state vector `x`.
 """
-function init(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -230,7 +230,7 @@ function init(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     return DenseLU(factors, ipiv, rhs, 0, 0, status)
 end
 
-function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -241,7 +241,8 @@ function init(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Num
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end
 
-function init(m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(
+        m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)

@@ -9,7 +9,8 @@
 
 using GeometricSolvers
 using GeometricSolvers: DenseSVD, NonlinearProblem, SINGULAR, SUCCESS, StaticLU, StaticQR,
-                        StaticSVD, exact_solve, factorize!!, init, jacobi_tolerance, ldiv!!,
+                        StaticSVD, dense_factor, exact_solve, factorize!!, jacobi_tolerance,
+                        ldiv!!,
                         returncode, singular_values
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
@@ -41,7 +42,7 @@ function factor_static(T, TF, A)
 end
 function factor_dense(T, TF, A, AT)
     m = svd_method(TF)
-    fac = init(m, NonlinearProblem(nop), AT(zeros(T, size(A, 1))), nothing)
+    fac = dense_factor(m, NonlinearProblem(nop), AT(zeros(T, size(A, 1))), nothing)
     return factorize!!(fac, m, AT(A))
 end
 "The SVD factors of `A` on the three routes: a static matrix, and each of `ARRAY_BACKENDS`."
@@ -140,7 +141,7 @@ end
     @testset "LAPACK is not reached for a non-finite entry, $T, TF = $TF, $(size(A, 1)) × $(size(A, 1))" for (
             T, TF, A) in nonfinite
         m = svd_method(TF)
-        fac = init(m, NonlinearProblem(nop), zeros(T, size(A, 1)), nothing)
+        fac = dense_factor(m, NonlinearProblem(nop), zeros(T, size(A, 1)), nothing)
         fill!(fac.S, 7)
         fill!(fac.U, 7)
         fac = factorize!!(fac, m, A)
@@ -236,7 +237,7 @@ end
         A = full_rank(T, 4)
         @test exact_solve(factorize!!(nothing, m, SMatrix{4, 4, T}(A))) === true
         for AT in ARRAY_BACKENDS
-            fac = init(m, NonlinearProblem(nop), AT(zeros(T, 4)), nothing)
+            fac = dense_factor(m, NonlinearProblem(nop), AT(zeros(T, 4)), nothing)
             @test exact_solve(factorize!!(fac, m, AT(A))) === true
         end
     end
@@ -287,7 +288,7 @@ end
                 LUFactorization(), QRFactorization(), SVDFactorization()),
             T in ELTYPES
 
-            fac = init(m, NonlinearProblem(nop), zeros(T, 4), nothing)
+            fac = dense_factor(m, NonlinearProblem(nop), zeros(T, 4), nothing)
             J = rand(Xoshiro(2), T, 4, 4)
             factorize!!(fac, m, J)
             @test allocations(factorize!!, fac, m, J) == 0
@@ -317,7 +318,7 @@ end
     @testset "a zero column, $T" for T in ELTYPES
         A = full_rank(T, 4)
         A[:, 3] .= 0
-        fac = init(LUFactorization(), NonlinearProblem(nop), zeros(T, 4), nothing)
+        fac = dense_factor(LUFactorization(), NonlinearProblem(nop), zeros(T, 4), nothing)
         fac = factorize!!(fac, LUFactorization(), A)
         @test fac.info > 0
         @test returncode(fac) === SINGULAR
@@ -371,9 +372,9 @@ end
     @testset "$T, n = $n" for T in ELTYPES, n in (1, 5, 100)
 
         prob = NonlinearProblem(nop)
-        @test length(init(QRFactorization(), prob, zeros(T, n), nothing).work) ==
+        @test length(dense_factor(QRFactorization(), prob, zeros(T, n), nothing).work) ==
               geqrf_query(T, n)
-        @test length(init(SVDFactorization(), prob, zeros(T, n), nothing).work) ==
+        @test length(dense_factor(SVDFactorization(), prob, zeros(T, n), nothing).work) ==
               gesvd_query(T, n)
     end
 end

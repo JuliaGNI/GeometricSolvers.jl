@@ -1,4 +1,4 @@
-# The R1 nonlinear loop and R2 batched solve! on Metal.
+# The R1 nonlinear loop and the R2 solve_batch! on Metal.
 
 using Adapt: Adapt
 using GPUArraysCore: GPUArraysCore
@@ -11,7 +11,7 @@ using GeometricSolvers
 using GeometricSolvers: Backtracking, DogLeg, LUFactorization, Newton, NonlinearProblem,
                         Options, PerSystem, Picard, QRFactorization, SINGULAR, SUCCESS,
                         SolverStatus, Static, ToReal, init_state, isconverged, solve,
-                        solve!,
+                        solve_batch!,
                         solve!!
 
 include("../helpers/matrix.jl")
@@ -185,8 +185,8 @@ end
         @test all(
             x -> isapprox(x, p_p; rtol = 10 * sqrt(eps(Float32))), xs_p_got)
 
-        # 5. R2 batched solve! on Metal (per-system status and return-code count forms)
-        @testset "Metal R2 batched solve!" begin
+        # 5. R2 solve_batch! on Metal (per-system status and return-code count forms)
+        @testset "Metal R2 solve_batch!" begin
             GPUArraysCore.allowscalar(false)
             for T in filter(T -> real(T) === Float32, ELTYPES)
                 R = real(T)
@@ -213,7 +213,7 @@ end
                     S_dev = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
                     P_dev = PerSystem(Metal.MtlArray(ps_host))
 
-                    ret_S = solve!(X_dev, S_dev, prob, m, P_dev)
+                    ret_S = solve_batch!(X_dev, S_dev, prob, m, P_dev)
                     @test ret_S === S_dev
 
                     xs_got = Array(X_dev)
@@ -229,7 +229,7 @@ end
                     end
 
                     X_dev2 = Metal.MtlArray(xs_host)
-                    counts = solve!(X_dev2, prob, m, P_dev)
+                    counts = solve_batch!(X_dev2, prob, m, P_dev)
                     @test isconverged(counts)
                     @test counts.SUCCESS == B_METAL_NL
                     @test sum(counts) == B_METAL_NL
@@ -252,7 +252,7 @@ end
                 X_pic = Metal.MtlArray(xs_host)
                 S_pic = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
                 P_pic = PerSystem(Metal.MtlArray(ps_pic_host))
-                solve!(X_pic, S_pic, prob_pic, m_pic, P_pic; options = opt_pic)
+                solve_batch!(X_pic, S_pic, prob_pic, m_pic, P_pic; options = opt_pic)
                 xs_pic_got = Array(X_pic)
                 st_pic_got = Array(S_pic)
                 for k in 1:B_METAL_NL
@@ -265,7 +265,7 @@ end
                 end
 
                 X_pic2 = Metal.MtlArray(xs_host)
-                counts_pic = solve!(
+                counts_pic = solve_batch!(
                     X_pic2, prob_pic, m_pic, P_pic; f_abstol = 1e-5, f_reltol = 1e-5)
                 @test isconverged(counts_pic)
                 @test counts_pic.SUCCESS == B_METAL_NL
@@ -274,7 +274,7 @@ end
                 for rng in (1:B_METAL_NL, B_METAL_NL:-1:1)
                     X_ord = Metal.MtlArray(xs_host)
                     S_ord = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
-                    solve!(X_ord, S_ord, prob_pic, m_pic, P_pic;
+                    solve_batch!(X_ord, S_ord, prob_pic, m_pic, P_pic;
                         order = rng, options = opt_pic)
                     xs_ord_got = Array(X_ord)
                     for k in 1:B_METAL_NL

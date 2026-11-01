@@ -1,6 +1,6 @@
 using GeometricSolvers
 using GeometricSolvers: DenseLU, DenseQR, DenseSVD,
-                        factor_eltype, factorize!!, init, ldiv!!, returncode
+                        factor_eltype, factorize!!, dense_factor, ldiv!!, returncode
 using LinearAlgebra: BlasFloat, BlasInt, Diagonal, I, norm, opnorm, qr
 using Random: Xoshiro
 using Test
@@ -44,13 +44,13 @@ function bigfloat_ref_and_cond(A::Matrix{BigFloat}, b::Vector{BigFloat})
     end
 end
 
-@testset "The Dense factor types and init" begin
-    @testset "init builds the factor of its method ($T, TF = $TF)" for (T, TF) in DENSE_PRECISION_PAIRS
+@testset "The Dense factor types and dense_factor" begin
+    @testset "dense_factor builds the factor of its method ($T, TF = $TF)" for (T, TF) in DENSE_PRECISION_PAIRS
         n = 4
         x = zeros(T, n)
-        lu_fac = init(make_method(LUFactorization, TF), nothing, x, nothing)
-        qr_fac = init(make_method(QRFactorization, TF), nothing, x, nothing)
-        svd_fac = init(make_method(SVDFactorization, TF), nothing, x, nothing)
+        lu_fac = dense_factor(make_method(LUFactorization, TF), nothing, x, nothing)
+        qr_fac = dense_factor(make_method(QRFactorization, TF), nothing, x, nothing)
+        svd_fac = dense_factor(make_method(SVDFactorization, TF), nothing, x, nothing)
 
         @test lu_fac isa DenseLU
         @test qr_fac isa DenseQR
@@ -71,7 +71,7 @@ end
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = make_method(M, TF)
             F = factor_eltype(m, T)
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             @test eltype(fac.factors) === F
             @test (fac.rhs === nothing) == expect_no_rhs
             if !expect_no_rhs
@@ -107,7 +107,7 @@ end
         b0 = copy(b)
 
         for m in (LUFactorization(), QRFactorization(), SVDFactorization())
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             fill!(fac.factors, zero(T))
             @test A !== fac.factors
             fac = factorize!!(fac, m, A)
@@ -141,7 +141,7 @@ end
         A = Matrix(A_s)
         b = Vector(b_s)
         m = QRFactorization()
-        fac = factorize!!(init(m, nothing, zeros(T, n), nothing), m, A)
+        fac = factorize!!(dense_factor(m, nothing, zeros(T, n), nothing), m, A)
         @test_throws ArgumentError ldiv!!(view(zeros(T, n, n), 1, :), fac, b)
     end
 end
@@ -157,7 +157,7 @@ end
 
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = make_method(M, TF)
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             ipiv0 = fac isa DenseLU ? fac.ipiv : nothing
 
             copyto!(fac.factors, A)
@@ -181,7 +181,7 @@ end
             x = zeros(T, 4)
             for (m, D) in ((LUFactorization(), DenseLU), (QRFactorization(), DenseQR),
                 (SVDFactorization(), DenseSVD))
-                fac = init(m, nothing, x, nothing)
+                fac = dense_factor(m, nothing, x, nothing)
                 w = which(factorize!!, Tuple{typeof(fac), typeof(m), typeof(fac.factors)})
                 @test w.sig <: Tuple{Any, D{<:StridedMatrix{<:BlasFloat}}, Any, Any}
             end
@@ -189,7 +189,7 @@ end
 
         xb = zeros(BigFloat, 4)
         for (m, D) in ((LUFactorization(), DenseLU), (QRFactorization(), DenseQR))
-            fac = init(m, nothing, xb, nothing)
+            fac = dense_factor(m, nothing, xb, nothing)
             w = which(factorize!!, Tuple{typeof(fac), typeof(m), typeof(fac.factors)})
             @test !(w.sig <: Tuple{Any, D{<:StridedMatrix{<:BlasFloat}}, Any, Any})
             @test w.sig <: Tuple{Any, D{<:AbstractMatrix}, Any, Any}
@@ -199,7 +199,7 @@ end
     @testset "no SVD on BigFloat" begin
         x = zeros(BigFloat, 4)
         m = SVDFactorization()
-        fac = init(m, nothing, x, nothing)
+        fac = dense_factor(m, nothing, x, nothing)
         copyto!(fac.factors, Matrix{BigFloat}(I, 4, 4))
         @test_throws MethodError factorize!!(fac, m, fac.factors)
     end
@@ -218,7 +218,7 @@ end
             b = randn(rng, BigFloat, n)
             x_ref, κ = bigfloat_ref_and_cond(A, b)
             for m in (LUFactorization(), QRFactorization())
-                fac = init(m, nothing, x, nothing)
+                fac = dense_factor(m, nothing, x, nothing)
                 copyto!(fac.factors, A)
                 fac = factorize!!(fac, m, fac.factors)
                 @test returncode(fac) === SUCCESS
@@ -242,7 +242,7 @@ end
         m = LUFactorization()
 
         for A_sing in (A_col2, A_zero)
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             copyto!(fac.factors, A_sing)
             fac = factorize!!(fac, m, fac.factors)
             @test fac.info > 0
@@ -259,7 +259,7 @@ end
         x = zeros(T, n)
         m = QRFactorization()
 
-        fac = init(m, nothing, x, nothing)
+        fac = dense_factor(m, nothing, x, nothing)
         copyto!(fac.factors, A_col2)
         fac = factorize!!(fac, m, fac.factors)
         @test fac.info == 2
@@ -282,7 +282,7 @@ end
         x = zeros(T, 2)
         for m in (LUFactorization(), QRFactorization())
             rng = Xoshiro(42)
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             for _ in 1:100
                 A = randn(rng, T, 2, 2)
                 A[2, :] .= A[1, :]
@@ -307,7 +307,7 @@ end
 
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = make_method(M, TF)
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             copyto!(fac.factors, A)
             fac = factorize!!(fac, m, fac.factors)
             @test returncode(fac) === SUCCESS
@@ -328,7 +328,7 @@ end
             bnd = bound(A, T, TF)
             for M in (LUFactorization, QRFactorization, SVDFactorization)
                 m = make_method(M, TF)
-                fac = init(m, nothing, x, nothing)
+                fac = dense_factor(m, nothing, x, nothing)
                 copyto!(fac.factors, A)
                 fac = factorize!!(fac, m, fac.factors)
                 @test returncode(fac) === SUCCESS
@@ -347,7 +347,7 @@ end
         b_sc = A_sc * x_expected
         x = zeros(T, 2)
         for m in (LUFactorization(), QRFactorization())
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             fac = factorize!!(fac, m, A_sc)
             @test returncode(fac) === SUCCESS
             d = ldiv!!(similar(b_sc), fac, b_sc)
@@ -382,7 +382,7 @@ end
             x0 = randn(rng, T, n)
             b = A * x0
 
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             copyto!(fac.factors, A)
             fac = factorize!!(fac, m, fac.factors)
             @test fac.info == 0
@@ -401,7 +401,7 @@ end
         A = zeros(T, 4, 4)
         b = ones(T, 4)
         m = SVDFactorization()
-        fac = init(m, nothing, zeros(T, 4), nothing)
+        fac = dense_factor(m, nothing, zeros(T, 4), nothing)
         copyto!(fac.factors, A)
         fac = factorize!!(fac, m, fac.factors)
         @test fac.info == 0
@@ -417,7 +417,7 @@ end
         A = zeros(T, 0, 0)
         b = zeros(T, 0)
         m = SVDFactorization()
-        fac = init(m, nothing, zeros(T, 0), nothing)
+        fac = dense_factor(m, nothing, zeros(T, 0), nothing)
         fac = factorize!!(fac, m, A)
         @test fac.info == 0
         @test returncode(fac) === SUCCESS
@@ -440,7 +440,7 @@ end
         for m in (LUFactorization(), QRFactorization())
             A_nan = copy(A_base)
             A_nan[3, 2] = T(R(NaN))
-            fac_nan = init(m, nothing, x, nothing)
+            fac_nan = dense_factor(m, nothing, x, nothing)
             copyto!(fac_nan.factors, A_nan)
             fac_nan = factorize!!(fac_nan, m, fac_nan.factors)
             d_nan = ldiv!!(similar(b), fac_nan, b)
@@ -449,7 +449,7 @@ end
             for inf_val in (R(Inf), -R(Inf))
                 A_inf = copy(A_base)
                 A_inf[1, 1] = T(inf_val)
-                fac_inf = init(m, nothing, x, nothing)
+                fac_inf = dense_factor(m, nothing, x, nothing)
                 copyto!(fac_inf.factors, A_inf)
                 fac_inf = factorize!!(fac_inf, m, fac_inf.factors)
                 # An `Inf` in `J` does not throw; the values of the step are not specified.
