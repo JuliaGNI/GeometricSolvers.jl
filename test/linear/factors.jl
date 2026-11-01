@@ -138,9 +138,10 @@ end
         @test eltype(x) === T
         @test all(isfinite, x)
         @test relerr(x, xref) <= 100 * eps(T)
+        @test all(isapprox.(big.(x), xref; rtol = 100 * eps(T)))
     end
 
-    # a solution above floatmax overflows, by design: 2^-130 I has the solution 2^130
+    # a solution above floatmax overflows, by design: 2^-(emax + 3) I has the solution 2^(emax + 3)
     @testset "a solution above floatmax overflows, $M" for M in (LUFactorization,
         QRFactorization, SVDFactorization)
         J = SMatrix{4, 4, T}(ldexp(one(T), -(exponent(floatmax(T)) + 3)) *
@@ -149,7 +150,7 @@ end
         @test !any(isfinite, x)
     end
 
-    # a zero, non-finite or empty r takes the path of an r that is not scaled
+    # a zero or non-finite r takes the path of an r that is not scaled
     @testset "a zero or non-finite r, $M" for M in (QRFactorization, SVDFactorization)
         fac = factorize!!(nothing, M(), SMatrix{4, 4, T}(2 * Matrix{T}(I, 4, 4)))
         @test ldiv!!(nothing, fac, zeros(SVector{4, T})) == zeros(SVector{4, T})

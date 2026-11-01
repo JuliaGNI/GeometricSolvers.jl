@@ -1101,9 +1101,10 @@ end
         h = Array(d)
         @test all(isfinite, h)
         @test maximum(abs, big.(h) .- xref) / maximum(abs, xref) <= 100 * eps(T)
+        @test all(isapprox.(big.(h), xref; rtol = 100 * eps(T)))
     end
 
-    # a solution above floatmax overflows, by design: 2^-130 I has the solution 2^130
+    # a solution above floatmax overflows, by design: 2^-(emax + 3) I has the solution 2^(emax + 3)
     @testset "a solution above floatmax overflows, $M" for M in (QRFactorization,
         SVDFactorization)
         m = M()

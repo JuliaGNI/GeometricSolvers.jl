@@ -52,12 +52,14 @@ Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element typ
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
 type of `r` is the element type of the factors, the solve runs directly in it. There a finite,
-nonzero `r` is divided by the power of two `2^k` that brings its largest `|re|` or `|im|` into
-`[1, 2)`, or as close as the exponent range allows, and the step is multiplied by `2^(k - e)`, in
-one rounding, with `e` the exponent of [`factorize!!`](@ref). The QR and SVD solves, which form
-`Qᴴ r` or `Uᴴ r` first, therefore do not overflow for a finite `r` near `floatmax` whose solution
-is representable. The step still overflows on every route where the solution itself exceeds
-`floatmax`. Where the element types differ,
+nonzero `r` whose largest `|re|` or `|im|` is within a few bits of `floatmax` (`2 + ⌈log2 N⌉`
+bits for `N` entries) is divided by the smallest power of two `2^k` that leaves that headroom, and
+the step is multiplied by `2^(k - e)`, in one rounding, with `e` the exponent of
+[`factorize!!`](@ref); any other `r` is solved as it is. The QR and SVD solves, which form `Qᴴ r`
+or `Uᴴ r` first, therefore do not overflow for a finite `r` near `floatmax` whose solution is
+representable. An entry of `r` within `k` bits of the subnormal range can lose those bits to the
+division. The step still overflows on every route where the solution itself exceeds `floatmax`.
+Where the element types differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
@@ -374,12 +376,21 @@ function matrix_exponent(J::AbstractArray)
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
 end
 
-# The exponent `k` of the power of two `2^k` that the same-type solve divides the right-hand side
-# `r` by, so that `r / 2^k` has its largest |re| or |im| in `[1, 2)`, or as close as the exponent
-# range allows: `Qᴴ r` or `Uᴴ r` of the QR and SVD solves sums `N` entries and cannot overflow
-# there, and the solution of the scaled system, of norm at least `1 / ‖J / 2^e‖`, cannot underflow
-# to zero. 0 for a zero, non-finite or empty `r`, which is solved as it is.
-rhs_exponent(r::AbstractVector) = isempty(r) ? 0 : matrix_exponent(r)
+# The exponent `k ≥ 0` of the power of two `2^k` that the same-type solve divides the right-hand
+# side `r` by, the smallest one that keeps `Qᴴ r` and `Uᴴ r` of the QR and SVD solves finite: their
+# entries sum `N` products of an entry of `r` with a factor of modulus at most 1, a complex one
+# up to twice the largest |re| or |im| of `r`, so the largest |re| or |im| of `r / 2^k` is held
+# below `2^(emax - 2 - ⌈log2 N⌉)`, with `emax` the exponent of `floatmax`. An `r` below that is
+# not scaled, and an `r` above it is divided by at most `2 + ⌈log2 N⌉` bits, so that only a small
+# entry of such an `r`, within that many bits of the subnormal range, can lose bits to the scaling,
+# and the large entries keep a scaled solution far above the subnormal range. 0 for a zero,
+# non-finite or empty `r`.
+function rhs_exponent(r::AbstractVector)
+    isempty(r) && return 0
+    emax = exponent(floatmax(float(real(eltype(r)))))
+    headroom = 2 + 8sizeof(Int) - leading_zeros(length(r) - 1)
+    return max(0, matrix_exponent(r) - (emax - headroom))
+end
 
 # The step for the matrix `J` and the right-hand side `r`, from the step `d` for `J / 2^e` and
 # `r / 2^k` that the stored factors solve: `d · 2^(k - e)`, in one rounding.

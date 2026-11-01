@@ -473,13 +473,14 @@ end
         d = ldiv!!(similar(b), fac, b)
         @test all(isfinite, d)
         @test relerr(d, xref) <= 100 * eps(T)
+        @test all(isapprox.(big.(d), xref; rtol = 100 * eps(T)))
         # in place, r === d
         r = copy(b)
         @test ldiv!!(r, fac, r) === r
         @test r == d
     end
 
-    # a solution above floatmax overflows, by design: 2^-130 I has the solution 2^130
+    # a solution above floatmax overflows, by design: 2^-(emax + 3) I has the solution 2^(emax + 3)
     @testset "a solution above floatmax overflows, $M" for M in (LUFactorization,
         QRFactorization, SVDFactorization)
         m = M()

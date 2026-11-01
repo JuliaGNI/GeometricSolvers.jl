@@ -1,4 +1,5 @@
-# The element types and the array backends every test loops over, named once.
+# The element types and the array backends every test loops over, named once, and the systems of
+# a right-hand side at an end of the exponent range, `extreme_rhs_systems`.
 #
 # A numeric test runs in each element type the package supports, and on each array backend the
 # code runs on; writing those sets in each test file lets them drift, and `test/quality/matrix.jl`
@@ -14,13 +15,12 @@
 
 using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions
+using LinearAlgebra: I
 
 const REAL_ELTYPES = (Float32, Float64)
 const ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
 const ARRAY_BACKENDS = (Array, JLArray)
 const KA_BACKEND = KernelAbstractions.CPU()
-
-using LinearAlgebra: I
 
 # The 4 × 4 systems of a right-hand side at an end of the exponent range whose solution is
 # representable: `(label, J, b, x, qr)` with the exact solution `x` in `BigFloat`, and `qr` whether
@@ -34,6 +34,7 @@ function extreme_rhs_systems(::Type{T}) where {T <: Real}
     J_hilbert = Matrix{T}(I, 4, 4) + T.(hilbert)
     big_scale = ldexp(one(T), exponent(fm) - 8)
     tiny = fill(floatmin(T) / 4, 4)
+    mixed = T[0.75 * fm, floatmin(T), floatmin(T) / 4, 1]
     return [
         ("I + Hilbert, b = 0.75 floatmax", J_hilbert,
             big_rhs, big.(J_hilbert) \ big.(big_rhs),
@@ -44,6 +45,9 @@ function extreme_rhs_systems(::Type{T}) where {T <: Real}
             fill(big(T(0.25)), 4), false),
         ("2^(emax - 8) I, b = 0.75 floatmax", big_scale * Matrix{T}(I, 4, 4), big_rhs,
             big.(big_rhs) / big(big_scale), true),
-        ("I, b = floatmin / 4 (subnormal)", Matrix{T}(I, 4, 4), tiny, big.(tiny), true)
+        ("I, b = floatmin / 4 (subnormal)", Matrix{T}(I, 4, 4), tiny, big.(tiny), true),
+        ("I, b = 0.75 floatmax with entries down to floatmin / 4",
+            Matrix{T}(I, 4, 4), mixed,
+            big.(mixed), true)
     ]
 end
