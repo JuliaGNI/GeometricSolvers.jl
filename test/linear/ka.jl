@@ -1096,7 +1096,7 @@ end
         M === QRFactorization && !with_qr && continue
         m = M()
         x = JLArray(zeros(T, 4))
-        fac = factorize!!(init(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))
+        fac = factorize!!(dense_factor(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))
         d = ldiv!!(similar(x), fac, JLArray(b))
         @test d isa JLVector{T}
         h = Array(d)
@@ -1111,7 +1111,7 @@ end
         m = M()
         x = JLArray(zeros(T, 4))
         J = ldexp(one(T), -(exponent(floatmax(T)) + 3)) * Matrix{T}(I, 4, 4)
-        fac = factorize!!(init(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))
+        fac = factorize!!(dense_factor(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))
         @test !any(isfinite, Array(ldiv!!(similar(x), fac, JLArray(ones(T, 4)))))
     end
 end

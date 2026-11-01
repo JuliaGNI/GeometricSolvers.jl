@@ -469,7 +469,7 @@ end
         M === QRFactorization && !with_qr && continue
         M === LUFactorization && !with_qr && continue
         m = M()
-        fac = factorize!!(init(m, nothing, zeros(T, 4), nothing), m, J)
+        fac = factorize!!(dense_factor(m, nothing, zeros(T, 4), nothing), m, J)
         d = ldiv!!(similar(b), fac, b)
         @test all(isfinite, d)
         @test relerr(d, xref) <= 100 * eps(T)
@@ -485,18 +485,19 @@ end
         QRFactorization, SVDFactorization)
         m = M()
         J = ldexp(one(T), -(exponent(floatmax(T)) + 3)) * Matrix{T}(I, 4, 4)
-        fac = factorize!!(init(m, nothing, zeros(T, 4), nothing), m, J)
+        fac = factorize!!(dense_factor(m, nothing, zeros(T, 4), nothing), m, J)
         @test !any(isfinite, ldiv!!(zeros(T, 4), fac, ones(T, 4)))
     end
 
     @testset "a zero, non-finite or empty r, $M" for M in (QRFactorization, SVDFactorization)
         m = M()
-        fac = factorize!!(init(m, nothing, zeros(T, 4), nothing), m, 2 * Matrix{T}(I, 4, 4))
+        fac = factorize!!(
+            dense_factor(m, nothing, zeros(T, 4), nothing), m, 2 * Matrix{T}(I, 4, 4))
         @test ldiv!!(ones(T, 4), fac, zeros(T, 4)) == zeros(T, 4)
         for v in (T(Inf), T(NaN))
             @test !all(isfinite, ldiv!!(zeros(T, 4), fac, T[v, 1, 1, 1]))
         end
-        fac0 = factorize!!(init(m, nothing, zeros(T, 0), nothing), m, zeros(T, 0, 0))
+        fac0 = factorize!!(dense_factor(m, nothing, zeros(T, 0), nothing), m, zeros(T, 0, 0))
         @test isempty(ldiv!!(zeros(T, 0), fac0, zeros(T, 0)))
     end
 end
