@@ -7,7 +7,7 @@ using Test
 
 using GeometricSolvers
 using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
-using GeometricSolvers: factorize!!, init, ldiv!!, returncode
+using GeometricSolvers: factorize!!, dense_factor, ldiv!!, returncode
 
 include("../helpers/matrix.jl")
 
@@ -38,7 +38,7 @@ ka_noop(r, y, p) = nothing
             m = SVDFactorization()
             x_cpu_init = zeros(T, n)
             prob_cpu = NonlinearProblem(x_cpu_init, ka_noop)
-            fac_cpu = init(m, prob_cpu, x_cpu_init, nothing)
+            fac_cpu = dense_factor(m, prob_cpu, x_cpu_init, nothing)
             copyto!(fac_cpu.factors, A_cpu)
             fac_cpu = factorize!!(fac_cpu, m, fac_cpu.factors)
             @test fac_cpu.info == 0
@@ -47,7 +47,7 @@ ka_noop(r, y, p) = nothing
             x_dev_init = JLArray(zeros(T, n))
             b_dev = JLArray(copy(b_cpu))
             prob_dev = NonlinearProblem(x_dev_init, ka_noop)
-            fac_dev = init(m, prob_dev, x_dev_init, nothing)
+            fac_dev = dense_factor(m, prob_dev, x_dev_init, nothing)
             copyto!(fac_dev.factors, JLArray(A_cpu))
             fac_dev = factorize!!(fac_dev, m, fac_dev.factors)
             @test fac_dev.info == 0
@@ -73,16 +73,16 @@ ka_noop(r, y, p) = nothing
     end
 end
 
-@testset "JET.@test_opt on init, factorize!!, and ldiv!! for KA factorizations on JLArray" begin
+@testset "JET.@test_opt on dense_factor, factorize!!, and ldiv!! for KA factorizations on JLArray" begin
     for (T, TF) in PRECISION_PAIRS
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = TF === Nothing ? M() : M(TF)
             x_dev = JLArray(zeros(T, 4))
             b_dev = JLArray(ones(T, 4))
             prob_dev = NonlinearProblem(x_dev, ka_noop)
-            JET.@test_opt target_modules = (GeometricSolvers,) init(
+            JET.@test_opt target_modules = (GeometricSolvers,) dense_factor(
                 m, prob_dev, x_dev, nothing)
-            fac = init(m, prob_dev, x_dev, nothing)
+            fac = dense_factor(m, prob_dev, x_dev, nothing)
             JET.@test_opt target_modules = (GeometricSolvers,) factorize!!(
                 fac, m, fac.factors)
             JET.@test_opt target_modules = (GeometricSolvers,) ldiv!!(

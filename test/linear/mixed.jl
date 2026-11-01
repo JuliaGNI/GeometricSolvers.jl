@@ -1,6 +1,6 @@
 using GeometricSolvers
 using GeometricSolvers: DenseLU, DenseQR, DenseSVD,
-                        factor_eltype, factorize!!, init, ldiv!!, returncode
+                        factor_eltype, factorize!!, dense_factor, ldiv!!, returncode
 using Random: Xoshiro
 using Test
 
@@ -33,7 +33,7 @@ end
 
             for M in (LUFactorization, QRFactorization, SVDFactorization)
                 m = M(TF)
-                fac = init(m, nothing, x, nothing)
+                fac = dense_factor(m, nothing, x, nothing)
                 copyto!(fac.factors, A)
                 fac = factorize!!(fac, m, fac.factors)
                 @test returncode(fac) === SUCCESS
@@ -63,7 +63,7 @@ end
 
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = M(TF)
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             copyto!(fac.factors, A)
             fac = factorize!!(fac, m, fac.factors)
             fill!(fac.rhs, eltype(fac.rhs)(NaN))
@@ -85,7 +85,7 @@ end
 
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = M(TF)
-            fac = init(m, nothing, x, nothing)
+            fac = dense_factor(m, nothing, x, nothing)
             copyto!(fac.factors, A)
             fac = factorize!!(fac, m, fac.factors)
 
@@ -110,7 +110,7 @@ end
 
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = M(TF)
-            fac = factorize!!(init(m, nothing, x, nothing), m, A)
+            fac = factorize!!(dense_factor(m, nothing, x, nothing), m, A)
             @test returncode(fac) === SUCCESS
             @test fac.scale_exponent == exponent(4c)
             d = similar(b)
@@ -134,7 +134,7 @@ end
 
         for M in (LUFactorization, QRFactorization, SVDFactorization)
             m = M(TF)
-            fac = factorize!!(init(m, nothing, x, nothing), m, A)
+            fac = factorize!!(dense_factor(m, nothing, x, nothing), m, A)
             @test returncode(fac) === SUCCESS
             d = similar(x)
             x_sol = ldiv!!(d, fac, r)
@@ -152,7 +152,7 @@ end
         A = Float16[1 0; 0 1]
         r = Float16[floatmin(Float16), 1024]
         m = M(Float32)
-        fac = factorize!!(init(m, nothing, zeros(Float16, 2), nothing), m, A)
+        fac = factorize!!(dense_factor(m, nothing, zeros(Float16, 2), nothing), m, A)
         @test returncode(fac) === SUCCESS
         x = ldiv!!(similar(r), fac, r)
         @test all(isapprox.(x, r; rtol = 8 * eps(Float16)))
