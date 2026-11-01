@@ -55,10 +55,11 @@ type of `r` is the element type of the factors, the solve runs directly in it. T
 nonzero `r` whose largest `|re|` or `|im|` is within a few bits of `floatmax` (`2 + ⌈log2 N⌉`
 bits for `N` entries) is divided by the smallest power of two `2^k` that leaves that headroom, and
 the step is multiplied by `2^(k - e)`, in one rounding, with `e` the exponent of
-[`factorize!!`](@ref); any other `r` is solved as it is. The QR and SVD solves, which form `Qᴴ r`
-or `Uᴴ r` first, therefore do not overflow for a finite `r` near `floatmax` whose solution is
-representable. An entry of `r` within `k` bits of the subnormal range can lose those bits to the
-division. The step still overflows on every route where the solution itself exceeds `floatmax`.
+[`factorize!!`](@ref); any other `r` is solved as it is. This keeps `Qᴴ r` and `Uᴴ r`, which the
+QR and SVD solves form first, finite. An SVD factor with `e > k` still solves for the step times
+`2^(e - k)`, which can overflow where the step is representable. An entry of `r` within `k` bits
+of the subnormal range can lose those bits to the division. The step still overflows on every
+route where the solution itself exceeds `floatmax`.
 Where the element types differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents

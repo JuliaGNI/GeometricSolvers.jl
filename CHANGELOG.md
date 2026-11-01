@@ -37,16 +37,26 @@ so that a compat-only bump can be told apart from an interface change.
   the measured slope costs a Jacobian-vector product at the start of a line search; one of them,
   `(8, 10u0)`, flagged `unstable`, also ends at another residual norm.
 
-- **The same-type `ldiv!!` of the QR and SVD factors no longer overflows on a finite right-hand side
-  near `floatmax`.** The solve formed `Qᴴ r` or `Uᴴ r` before it divided, so a finite `r` near
-  `floatmax` whose solution is representable gave a non-finite step: `J = I + Hilbert(4)` with
-  `b = fill(0.75 * floatmax(T), 4)` did, on the static, host and device routes, in `Float32` and
-  `Float64`. `ldiv!!` now divides a finite `r`
-  whose largest `|re|` or `|im|` is within `2 + ⌈log2 N⌉` bits of `floatmax` by the smallest power of
-  two `2^k` that leaves that headroom, and multiplies the step by `2^(k - e)` in one rounding, with
-  `e` the scale exponent of the factorisation; any other `r` is solved as before. The host SVD of a `Float32`
-  `J = fill(floatmax(Float32) / 2, 4, 4)` now agrees with the static and device routes. A solution
-  that itself exceeds `floatmax` still overflows. K21 is fixed and leaves `KNOWN_ISSUES.md`.
+- **The same-type `ldiv!!` no longer overflows on a finite right-hand side near `floatmax` in the
+  `Qᴴ r` and `Uᴴ r` products, except for an SVD factor whose scale
+  exponent exceeds the right-hand side's: that case is K22.** The solve formed `Qᴴ r` or `Uᴴ r`
+  before it divided, so a finite `r` near `floatmax` whose solution is representable gave a
+  non-finite step: `J = I + Hilbert(4)` with `b = fill(0.75 * floatmax(T), 4)` did, on the static,
+  host and device routes, in `Float32` and `Float64`. `ldiv!!` now divides a finite `r` whose
+  largest `|re|` or `|im|` is within `2 + ⌈log2 N⌉` bits of `floatmax` by the smallest power of two
+  `2^k` that leaves that headroom, and multiplies the step by `2^(k - e)`, with `e` the scale
+  exponent of the factorisation; any other `r` is solved as before. The host SVD of a `Float32`
+  `J = fill(floatmax(Float32) / 2, 4, 4)` now agrees with the static and device routes. The scaling
+  also applies to LU and prevents the LU overflow of this system: with
+  `J = [1 0 0 0; 1 4 0 0; 0 0 1 0; 0 0 0 1]` and `b = (0.75 * floatmax(T), -0.75 * floatmax(T), 1,
+  1)`, the solve gave an all-`NaN` step without the scaling, because the forward substitution forms
+  `b₂ − b₁`; with it, the step is exact, on the static, host and device routes. An SVD factor whose
+  `e` exceeds `k` still overflows: with `J = diag(2^20, 2^10, 2^20, 2^20)` and `b = (0, 0.75 *
+  floatmax(T), 0, 0)`, whose solution is representable, the step is `[NaN, Inf, NaN, NaN]`; that is
+  K22. An `r` within `k` bits of the subnormal range can lose those bits, for LU too: with `J = I`
+  and `b = (0.75 * floatmax(T), 3 * nextfloat(zero(T)), 1, 1)` the step's second entry is `0` where
+  the unscaled solve gave the exact subnormal, and the docstring of `ldiv!!` states this loss. A
+  solution that itself exceeds `floatmax` still overflows. K21 is fixed and leaves `KNOWN_ISSUES.md`.
 
 - **`StaticSVD` stores `σ̂` alone, and `GeometricSolvers.singular_values(fac)` gives the singular
   values** of the matrix as it was passed, `σ̂ · 2^e`; the fields `σ` and `converged` are gone, and

@@ -130,9 +130,10 @@ end
 
 @testset "the same-type solve scales r by a power of two, $T" for T in REAL_ELTYPES
     @testset "$label, $M" for (label, J, b, xref, with_qr) in extreme_rhs_systems(T),
-        M in (SVDFactorization, QRFactorization)
+        M in (SVDFactorization, QRFactorization, LUFactorization)
 
         M === QRFactorization && !with_qr && continue
+        M === LUFactorization && !with_qr && continue
         fac = factorize!!(nothing, M(), SMatrix{4, 4, T}(J))
         x = ldiv!!(nothing, fac, SVector{4, T}(b))
         @test eltype(x) === T

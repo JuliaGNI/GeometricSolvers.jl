@@ -25,19 +25,23 @@ const KA_BACKEND = KernelAbstractions.CPU()
 # The 4 × 4 systems of a right-hand side at an end of the exponent range whose solution is
 # representable: `(label, J, b, x, qr)` with the exact solution `x` in `BigFloat`, and `qr` whether
 # the QR solve is meant to solve it (it does not solve a singular `J`). `b` near `floatmax` makes a
-# solve that forms `Qᴴ b` or `Uᴴ b` without scaling `b` overflow; `b` below `floatmin` makes one
-# that scales `b` down lose it.
+# solve that forms `Qᴴ b` or `Uᴴ b` without scaling `b` overflow, and with `J_lu` the forward
+# substitution `b₂ - b₁` of an LU solve; `b` below `floatmin` makes one that scales `b` down lose it.
 function extreme_rhs_systems(::Type{T}) where {T <: Real}
     fm = floatmax(T)
     big_rhs = fill(T(0.75) * fm, 4)
     hilbert = [one(BigFloat) / (i + j - 1) for i in 1:4, j in 1:4]
     J_hilbert = Matrix{T}(I, 4, 4) + T.(hilbert)
+    J_lu = T[1 0 0 0; 1 4 0 0; 0 0 1 0; 0 0 0 1]
+    lu_rhs = T[0.75 * fm, -0.75 * fm, 1, 1]
     big_scale = ldexp(one(T), exponent(fm) - 8)
     tiny = fill(floatmin(T) / 4, 4)
     mixed = T[0.75 * fm, floatmin(T), floatmin(T) / 4, 1]
     return [
         ("I + Hilbert, b = 0.75 floatmax", J_hilbert,
             big_rhs, big.(J_hilbert) \ big.(big_rhs),
+            true),
+        ("L₂₁ = 1, U₂₂ = 4, b = ±0.75 floatmax", J_lu, lu_rhs, big.(J_lu) \ big.(lu_rhs),
             true),
         ("ones, b = 0.75 floatmax", ones(T, 4, 4),
             big_rhs, fill(big(big_rhs[1]) / 4, 4), false),

@@ -1091,9 +1091,10 @@ end
 
 @testset "the same-type solve scales r by a power of two on JLArray, $T" for T in REAL_ELTYPES
     @testset "$label, $M" for (label, J, b, xref, with_qr) in extreme_rhs_systems(T),
-        M in (SVDFactorization, QRFactorization)
+        M in (SVDFactorization, QRFactorization, LUFactorization)
 
         M === QRFactorization && !with_qr && continue
+        M === LUFactorization && !with_qr && continue
         m = M()
         x = JLArray(zeros(T, 4))
         fac = factorize!!(dense_factor(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))

@@ -52,3 +52,21 @@
   the target does not cover this case.
 - **kind:** found late
 - **found:** 2026-10-16
+
+### K22 · The same-type SVD solve overflows for a finite right-hand side near `floatmax` where the factor's scale exponent exceeds the right-hand side's
+
+- **location:** `src/linear/factors.jl` (`ldiv!!`, `rhs_exponent`), `src/linear/dense.jl` (`ldiv!!`)
+- **evidence:** With `J = diag(2^20, 2^10, 2^20, 2^20)` and `b = (0, 0.75 floatmax(T), 0, 0)`,
+  whose solution `(0, 0.75 floatmax(T) / 2^10, 0, 0)` is representable, the step of `ldiv!!` with
+  `SVDFactorization()` is `[NaN, Inf, NaN, NaN]` on an `SMatrix` and an `Array`, in `Float32` and
+  `Float64` (Julia 1.13.3, at eeaad5e); the `JLArray` route gives the same in the review of
+  PR #48. `LUFactorization()` and `QRFactorization()` give the exact step. The SVD factor stores
+  the factors of `J / 2^e`, here with `e = 20`, and `r` is divided by `2^k` with `k = 4` from
+  `rhs_exponent`, so the solve forms the step times `2^(e - k)` before the multiplication by
+  `2^(k - e)`, and that overflows. The review of PR #48 measured the same result at fe26534 on `main`. Dividing `r` by
+  `2^max(k, e)` and multiplying the step by `2^(max(k, e) - e)` gives the exact step on this case,
+  measured on the static route only in the review of PR #48; it trades the overflow for an
+  underflow of `r / 2^e` where `J` is large and its solution is not small, and that trade is not
+  decided.
+- **kind:** defect
+- **found:** PR #48
