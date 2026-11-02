@@ -192,6 +192,16 @@ so that a compat-only bump can be told apart from an interface change.
 - CI uploads coverage from the `Julia 1 - ubuntu-latest` job instead of `Julia min`, and a test
   job saves the Julia cache only when it succeeds.
 
+- Raised lower bounds, so that the CI Downgrade job, which resolves `Project.toml` and
+  `test/Project.toml` together at their lower bounds on Julia 1.13 and runs the tests there,
+  reaches every floor and passes. `KernelAbstractions` goes from 0.9.15 to 0.9.38: the test
+  dependency Metal.jl 1.10.3 requires KernelAbstractions 0.9.38 or later. In `test/Project.toml`,
+  `JET` goes from `0.9, 0.10, 0.11, 0.12` to `0.12`: JET 0.9 requires Julia 1.10, and JET 0.10
+  and 0.11 require Julia 1.12. `Aqua` goes from 0.8 to 0.8.14: 0.8.14 is the first release whose
+  piracy check reads `Core.methodtable`, the method table of Julia 1.13; Aqua 0.8.0 fails there on
+  the missing field `TypeName.mt`. `Documenter`, with no entry before, gets `1`: without one the
+  merged resolve takes its oldest release.
+
 - `test/backends.jl` is now `test/integration/backends.jl`. The test convention keeps a test file
   at the top level of `test/` only where it mirrors `src/<name>.jl`, and this file tests no source
   file: it checks the array backends and element-type sets of `test/helpers/matrix.jl`. It stays
