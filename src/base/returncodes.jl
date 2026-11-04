@@ -11,3 +11,18 @@ Why a solve or a step ended, stored in one byte so that a status fits a GPU regi
 - `LINESEARCH_FAILED`: the globalisation found no acceptable step.
 """
 @enum ReturnCode::UInt8 SUCCESS STALLED MAXITERS SINGULAR NONFINITE LINESEARCH_FAILED
+
+"""
+    sciml_retcode(code::ReturnCode) -> SciMLBase.ReturnCode.T
+
+Map a [`ReturnCode`](@ref) to a `SciMLBase.ReturnCode.T` when `SciMLBase` is loaded. A SciML caller
+reads `sciml_retcode(status.code)`:
+
+- `SUCCESS` → `SciMLBase.ReturnCode.Success`
+- `STALLED` → `SciMLBase.ReturnCode.Stalled`
+- `MAXITERS` → `SciMLBase.ReturnCode.MaxIters`
+- `SINGULAR` → `SciMLBase.ReturnCode.InternalLinearSolveFailed`
+- `NONFINITE` → `SciMLBase.ReturnCode.Unstable`
+- `LINESEARCH_FAILED` → `SciMLBase.ReturnCode.InternalLineSearchFailed`
+"""
+function sciml_retcode end
