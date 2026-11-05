@@ -1,6 +1,7 @@
 using GeometricSolvers
-using GeometricSolvers: DenseLU, DenseQR, DenseSVD,
+using GeometricSolvers: DenseLU, DenseQR, DenseSVD, DeviceLU, DeviceQR, DeviceSVD,
                         factor_eltype, factorize!!, dense_factor, ldiv!!, returncode
+using JLArrays: JLArray
 using LinearAlgebra: BlasFloat, BlasInt, Diagonal, I, norm, opnorm, qr
 using Random: Xoshiro
 using Test
@@ -45,12 +46,21 @@ function bigfloat_ref_and_cond(A::Matrix{BigFloat}, b::Vector{BigFloat})
 end
 
 @testset "The Dense factor types and dense_factor" begin
+    @test fieldnames(DenseLU) == (:factors, :ipiv, :rhs, :info, :scale_exponent)
+    @test fieldnames(DeviceLU) == (:factors, :ipiv, :rhs, :info, :scale_exponent, :status)
+    @test fieldnames(DenseQR) == (:factors, :τ, :work, :rhs, :info, :scale_exponent)
+    @test fieldnames(DeviceQR) == (:factors, :τ, :rhs, :info, :scale_exponent, :status)
+    @test fieldnames(DenseSVD) ==
+          (:factors, :U, :S, :VT, :work, :rwork, :tmp, :rhs, :info, :rank, :scale_exponent)
+    @test fieldnames(DeviceSVD) ==
+          (:factors, :U, :S, :VT, :V, :σ̂, :flag, :tmp, :rhs, :info, :rank, :scale_exponent)
+
     @testset "dense_factor builds the factor of its method ($T, TF = $TF)" for (T, TF) in DENSE_PRECISION_PAIRS
         n = 4
         x = zeros(T, n)
-        lu_fac = dense_factor(make_method(LUFactorization, TF), nothing, x, nothing)
-        qr_fac = dense_factor(make_method(QRFactorization, TF), nothing, x, nothing)
-        svd_fac = dense_factor(make_method(SVDFactorization, TF), nothing, x, nothing)
+        lu_fac = @inferred dense_factor(make_method(LUFactorization, TF), nothing, x, nothing)
+        qr_fac = @inferred dense_factor(make_method(QRFactorization, TF), nothing, x, nothing)
+        svd_fac = @inferred dense_factor(make_method(SVDFactorization, TF), nothing, x, nothing)
 
         @test lu_fac isa DenseLU
         @test qr_fac isa DenseQR
@@ -58,6 +68,23 @@ end
         @test size(lu_fac.factors) == (4, 4)
         @test size(qr_fac.factors) == (4, 4)
         @test size(svd_fac.factors) == (4, 4)
+
+        x_dev = JLArray(zeros(T, n))
+        lu_dev = @inferred dense_factor(make_method(LUFactorization, TF), nothing, x_dev, nothing)
+        qr_dev = @inferred dense_factor(make_method(QRFactorization, TF), nothing, x_dev, nothing)
+        svd_dev = @inferred dense_factor(make_method(SVDFactorization, TF), nothing, x_dev, nothing)
+
+        @test lu_dev isa DeviceLU
+        @test qr_dev isa DeviceQR
+        @test svd_dev isa DeviceSVD
+        @test size(lu_dev.factors) == (4, 4)
+        @test length(lu_dev.status) == 1
+        @test size(qr_dev.factors) == (4, 4)
+        @test length(qr_dev.status) == 1
+        @test size(svd_dev.factors) == (4, 4)
+        @test size(svd_dev.V) == (4, 4)
+        @test length(svd_dev.σ̂) == 4
+        @test length(svd_dev.flag) == 1
     end
 
     @testset "the types of every pair ($T, TF = $TF)" for (T, TF) in DENSE_PRECISION_PAIRS
