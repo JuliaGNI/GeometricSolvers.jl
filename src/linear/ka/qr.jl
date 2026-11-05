@@ -69,13 +69,10 @@ end
         d, @Const(A), @Const(τ), n::Int, ::Val{G}) where {G}
     tid = @index(Local, Linear)
     l_sum = @localmem eltype(d) (G,)
-    l_dk = @localmem eltype(d) (1,)
     for k in 1:n
         @inbounds begin
             τk = τ[k]
-            if tid == 1
-                l_dk[1] = d[k]
-            end
+            dk = d[k]
             acc = zero(eltype(d))
             if !iszero(τk)
                 i = k + tid
@@ -94,23 +91,40 @@ end
             end
             @synchronize()
         end
-        @inbounds begin
-            τk = τ[k]
-            if !iszero(τk)
-                dk = l_dk[1]
-                s = l_sum[1]
-                if tid == 1
-                    d[k] = (one(τk) - τk) * dk - τk * s
-                end
-                i = k + tid
-                while i <= n
-                    tik = A[i, k] * τk
-                    d[i] -= tik * dk + tik * s
-                    i += G
-                end
+        @inbounds if !iszero(τk)
+            s = l_sum[1]
+            if tid == 1
+                d[k] = (one(τk) - τk) * dk - τk * s
+            end
+            i = k + tid
+            while i <= n
+                tik = A[i, k] * τk
+                d[i] -= tik * dk + tik * s
+                i += G
             end
         end
         @synchronize()
+    end
+end
+
+@kernel function ka_qr_qadj_serial_kernel!(d, @Const(A), @Const(τ), n::Int)
+    idx = @index(Global, Linear)
+    @inbounds if idx == 1
+        for k in 1:n
+            τk = τ[k]
+            if !iszero(τk)
+                dk = d[k]
+                s_acc = zero(eltype(d))
+                for i in (k + 1):n
+                    s_acc += conj(A[i, k]) * d[i]
+                end
+                d[k] = (one(τk) - τk) * dk - τk * s_acc
+                for i in (k + 1):n
+                    tik = A[i, k] * τk
+                    d[i] = d[i] - (tik * dk + tik * s_acc)
+                end
+            end
+        end
     end
 end
 
@@ -127,13 +141,18 @@ end
     @inbounds d[k] = d[k] / A[k, k]
 end
 
+const KA_QR_WORKGROUP = 64
+
 function ka_qr!(A::AbstractGPUArray, τ::AbstractVector, status::AbstractVector{Int32})
     n = size(A, 1)
     n == 0 && return 0
     backend = get_backend(A)
     fill!(status, Int32(0))
-    ref_kernel! = ka_qr_reflector_kernel!(backend)
-    app_kernel! = ka_qr_apply_kernel!(backend)
+    use_workgroup = isgpu(backend) || n <= KA_QR_WORKGROUP
+    ref_kernel! = use_workgroup ? ka_qr_reflector_kernel!(backend) :
+                  ka_qr_reflector_kernel!(backend, 1)
+    app_kernel! = use_workgroup ? ka_qr_apply_kernel!(backend) :
+                  ka_qr_apply_kernel!(backend, 1)
     for k in 1:n
         ref_kernel!(A, τ, status, k, n; ndrange = 1)
         if k < n
@@ -154,14 +173,16 @@ function factorize!!(fac::DeviceQR, ::QRFactorization, J::AbstractMatrix)
     return ka_factorize_qr!(fac, J)
 end
 
-const KA_QR_WORKGROUP = 64
-
 function ka_qr_backsolve!(A::AbstractGPUArray, τ::AbstractVector, d::AbstractVector)
     n = length(d)
     n == 0 && return d
     backend = get_backend(A)
-    ka_qr_qadj_kernel!(backend, KA_QR_WORKGROUP)(
-        d, A, τ, n, Val(KA_QR_WORKGROUP); ndrange = KA_QR_WORKGROUP)
+    if isgpu(backend) || n <= KA_QR_WORKGROUP
+        ka_qr_qadj_kernel!(backend, KA_QR_WORKGROUP)(
+            d, A, τ, n, Val(KA_QR_WORKGROUP); ndrange = KA_QR_WORKGROUP)
+    else
+        ka_qr_qadj_serial_kernel!(backend, 1)(d, A, τ, n; ndrange = 1)
+    end
     trsv_r! = ka_qr_trsv_r_col_kernel!(backend)
     for k in n:-1:2
         trsv_r!(d, A, k; ndrange = k - 1)

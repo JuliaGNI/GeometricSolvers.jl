@@ -676,7 +676,7 @@ end
     end
 
     @testset "pivot_last_row at n = $n" for n in (17, 64)
-        for T in (Float32, Float64)
+        for T in REAL_ELTYPES
             A_cpu = Matrix{T}(I, n, n)
             A_cpu[1, 1] = eps(T)
             A_cpu[n, 1] = T(10)
@@ -1196,4 +1196,22 @@ end
     rk, nn = factor_diagnostics(similar(x), fac_svd_r2, r_dev, fnorm)
     @test rk === Int32(2)
     @test isapprox(nn, hypot(3.0, 4.0); rtol = 8 * eps(Float64))
+
+    m_svd_f32 = SVDFactorization(Float32)
+    fac_svd_f32 = factorize!!(
+        dense_factor(m_svd_f32, prob, x, nothing), m_svd_f32, JLArray(A_rank2_cpu))
+    @test exact_solve(fac_svd_f32) === false
+    r_scaled = JLArray([16.0, 32.0, 48.0, 64.0])
+    rk_f32, nn_f32 = factor_diagnostics(
+        similar(x), fac_svd_f32, r_scaled, 16.0 * fnorm)
+    @test rk_f32 === Int32(2)
+    @test isapprox(nn_f32, hypot(48.0, 64.0); rtol = 8 * eps(Float32))
+    r_scaled3 = JLArray([3.0, 6.0, 9.0, 12.0])
+    rk_f32_3, nn_f32_3 = factor_diagnostics(
+        similar(x), fac_svd_f32, r_scaled3, 3.0 * fnorm)
+    @test rk_f32_3 === Int32(2)
+    @test isapprox(nn_f32_3, hypot(9.0, 12.0); rtol = 8 * eps(Float32))
+    r_zero = JLArray(zeros(Float64, 4))
+    rk_zero, nn_zero = factor_diagnostics(similar(x), fac_svd_f32, r_zero, 0.0)
+    @test rk_zero === Int32(2) && nn_zero === 0.0
 end

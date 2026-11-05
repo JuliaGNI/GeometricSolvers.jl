@@ -30,7 +30,8 @@ so that a compat-only bump can be told apart from an interface change.
   QR, followed by `ndrange = k - 1` column updates plus a final diagonal divide for `U⁻¹` and `R⁻¹`),
   and `ka_jacobi_svd_round_kernel!` assigns one workgroup of `G` threads per column pair `(p, q)`
   (`ndrange = (n ÷ 2) * G`), reducing `(α, β, γ)` in `@localmem` and rotating columns `p` and `q` of
-  `U` and `V` in parallel across the workgroup.
+  `U` and `V` in parallel across the workgroup (while dispatching to synchronize-free
+  `workgroupsize = 1` kernels on a non-GPU backend at `n > 64`).
 
 - **`SolverStatus{R}` carries the range and spectrum diagnostics `rank::Int32`, `nullnorm::R` and
   `gradratio::R`, and `Newton` with `SVDFactorization` supports factor reuse on a static or scalar
