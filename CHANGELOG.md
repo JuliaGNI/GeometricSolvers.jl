@@ -851,3 +851,16 @@ so that a compat-only bump can be told apart from an interface change.
   fix shows its effect as a list of changed cells. The library is no dependency:
   `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
   against it.
+
+- `StationarityProblem(L, unknowns, indices)` and `LDLTFactorization(; eltype = nothing)`:
+  solve the stationarity condition `∇_{x[indices]} L(x, p) = b` of a scalar potential `L` with symmetric
+  or Hermitian Hessians, alongside Bunch–Kaufman `LDLᵀ` factorisation (`StaticLDLT` in R1,
+  zero-allocation LAPACK `sytrf!`/`sytrs!` and `hetrf!`/`hetrs!` with generic fallback `DenseLDLT`
+  in R3 host, and `KernelAbstractions` `DeviceLDLT` in R3 device). `StationarityProblem` accepts
+  `indices` as `Colon()`, an `AbstractUnitRange{<:Integer}`, an `AbstractVector{<:Integer}`, an
+  `SVector{M, <:Integer}` or an `NTuple{M, <:Integer}`, keeps inactive components of `x` fixed, and
+  solves `∇_{x[indices]} L(x, p) = b` (`b = nothing` defaults to zero) through `solve`, `init`,
+  `solve!` (with keyword `b = nothing`) and `solve_batch!`. In R1, `gradient_hessian!!` evaluates both
+  `∇L` and `∇²L` in one nested `ForwardDiff.Dual` call, and `jvp!!` evaluates `∇²L · v` with one
+  outer directional partial. In R3, `ChunkedHessianForwardDiff` and `DIStationarity` provide host
+  automatic differentiation without device scalar indexing.

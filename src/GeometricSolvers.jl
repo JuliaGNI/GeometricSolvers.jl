@@ -20,8 +20,9 @@ using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticA
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options
-export NonlinearProblem
-export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
+export NonlinearProblem, StationarityProblem
+export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
+export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg
 export Newton, NoRefinement, PerSystem, Picard, NonlinearSolver, init, solve, solve!
@@ -39,11 +40,13 @@ include("base/bang.jl")
 include("linear/methods.jl")
 include("linear/factors.jl")
 include("linear/static/lu.jl")
+include("linear/static/ldlt.jl")
 include("linear/static/qr.jl")
 include("linear/static/svd.jl")
 include("linear/static/eigen.jl")
 include("linear/dense.jl")
 include("linear/ka/lu.jl")
+include("linear/ka/ldlt.jl")
 include("linear/ka/qr.jl")
 include("linear/ka/svd.jl")
 include("linear/mixed.jl")
@@ -67,5 +70,7 @@ include("nonlinear/solver.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
 include("nonlinear/batched.jl")
+include("nonlinear/stationarity.jl")
+include("ad/hessian.jl")
 
 end

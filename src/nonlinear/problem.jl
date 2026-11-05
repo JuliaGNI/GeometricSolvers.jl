@@ -2,6 +2,13 @@
 # so one problem serves a whole time-stepping loop, and a batch shares one object.
 
 """
+    AbstractNonlinearProblem
+
+The supertype of [`NonlinearProblem`](@ref) and [`StationarityProblem`](@ref).
+"""
+abstract type AbstractNonlinearProblem end
+
+"""
     NonlinearProblem(F)
     NonlinearProblem(F, J)
 
@@ -25,7 +32,7 @@ julia> prob.J === nothing
 true
 ```
 """
-struct NonlinearProblem{F, J}
+struct NonlinearProblem{F, J} <: AbstractNonlinearProblem
     F::F
     J::J
 end

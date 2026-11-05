@@ -106,7 +106,7 @@ root, sets its norm; such a step is not a stall. Reaching `options.max_iteration
 convergence returns `MAXITERS`.
 """
 function solve!!(
-        state, prob::NonlinearProblem, x₀, method, p = nothing,
+        state, prob::AbstractNonlinearProblem, x₀, method, p = nothing,
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
     check_options(eltype(x₀), options)
     x = x₀
@@ -184,14 +184,15 @@ end
 """
     NonlinearSolver(prob, x, method, options, state, p)
 
-A preallocated nonlinear solver for [`NonlinearProblem`](@ref) `prob` with `method` and
+A preallocated nonlinear solver for [`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref)
+`prob` with `method` and
 [`Options`](@ref) `options`, holding the workspace and AD preparation in `state`, the iterate `x`
 and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the element type `T` and the
 length `n` of `x` and the types `X` of `x` and `Q` of `p`, which [`solve!`](@ref) checks.
 Build it with [`init(prob, x₀, method, p; options = nothing, kwargs...)`](@ref init) and solve
 with [`solve!(solver)`](@ref solve!) or [`solve!(solver, x, p)`](@ref solve!).
 """
-mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
+mutable struct NonlinearSolver{T, P <: AbstractNonlinearProblem, M, O <: Options, S,
     X <: Union{AbstractVector{T}, T}, Q}
     const prob::P
     const method::M
@@ -201,7 +202,7 @@ mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
     x::X
     p::Q
     function NonlinearSolver(prob::P, x::X, method::M, options::O, state::S,
-            p::Q) where {P <: NonlinearProblem, M, O <: Options, S,
+            p::Q) where {P <: AbstractNonlinearProblem, M, O <: Options, S,
             X <: Union{AbstractVector, Number}, Q}
         new{eltype(X), P, M, O, S, X, Q}(prob, method, options, length(x), state, x, p)
     end
@@ -226,8 +227,8 @@ function init(
 end
 
 """
-    solve!(solver::NonlinearSolver)
-    solve!(solver::NonlinearSolver, x, p = solver.p)
+    solve!(solver::NonlinearSolver; b = nothing)
+    solve!(solver::NonlinearSolver, x, p = solver.p; b = nothing)
 
 Solve `solver.prob`, using the preallocated workspace and AD preparation in `solver`, store the
 solution in `solver.x`, and return `(solver.x, status)` where `status` is a
@@ -236,14 +237,15 @@ the parameters that [`init`](@ref) or the last `solve!(solver, x, p)` stored, an
 solution into `solver.x` when it is an array.
 `solve!(solver, x, p)` stores `x` in `solver.x` and `p` in `solver.p`, then solves from `x` with
 `p`; an array `x` receives the solution in place and stays in `solver.x`. Without `p`, it solves
-with the parameters that the solver holds. An `x` whose element type or length differs from the
-iterate of `init` raises an `ArgumentError`, and so do an `x` of another type and a `p` of
+with the parameters that the solver holds. For a [`StationarityProblem`](@ref), the keyword `b`
+overrides the datum of the solve without reallocating. An `x` whose element type or length differs
+from the iterate of `init` raises an `ArgumentError`, and so do an `x` of another type and a `p` of
 another type than those of `init`. A refused call changes neither `solver` nor `x`.
 """
-solve!(solver::NonlinearSolver) = solve!(solver, solver.x, solver.p)
+solve!(solver::NonlinearSolver; b = nothing) = solve!(solver, solver.x, solver.p; b = b)
 
 function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
-        p = solver.p) where {T, P, M, O, S, X, Q}
+        p = solver.p; b = nothing) where {T, P, M, O, S, X, Q}
     eltype(x) === T && length(x) == solver.n || throw(ArgumentError(
         "`solve!` needs an iterate like the template given to `init`, of length " *
         "$(solver.n) and element type $T; got length $(length(x)) and " *
@@ -254,13 +256,19 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
     p isa Q || throw(ArgumentError(
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
-    solver.x = x
-    solver.p = p
-    x₊, status, state = solve!!(
-        solver.state, solver.prob, x, solver.method, p, solver.options)
-    solver.x = x₊
-    solver.state === state || (solver.state = state)
-    return solver.x, status
+    if P <: NonlinearProblem
+        b === nothing ||
+            throw(ArgumentError("keyword `b` is only supported for `StationarityProblem`"))
+        solver.x = x
+        solver.p = p
+        x₊, status, state = solve!!(
+            solver.state, solver.prob, x, solver.method, p, solver.options)
+        solver.x = x₊
+        solver.state === state || (solver.state = state)
+        return solver.x, status
+    else
+        return _solve_stationarity_solver!(solver, x, p, b)
+    end
 end
 
 """

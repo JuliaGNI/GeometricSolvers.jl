@@ -6,12 +6,14 @@ CurrentModule = GeometricSolvers
 
 ## The problem
 
-A problem holds functions and nothing else: the residual, and optionally its derivative. The
-storage of the iterate selects the call form of both, so one problem serves every regime. This
-name is exported.
+A problem holds functions and nothing else: the residual and optionally its derivative in
+[`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets, and an
+optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call form,
+so one problem serves every regime. These names are exported.
 
 ```@docs
 NonlinearProblem
+StationarityProblem
 ```
 
 ## The storage seam
@@ -69,6 +71,7 @@ vendor tensor-core path.
 
 ```@docs
 LUFactorization
+LDLTFactorization
 QRFactorization
 SVDFactorization
 TF32
@@ -81,17 +84,18 @@ BF16
 A linear-solver method enters a solve through [`dense_factor`](@ref), [`factorize!!`](@ref) and
 [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
 `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
-`Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
+`Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` with `1×1` and `2×2`
+diagonal blocks, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
 a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
 `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
-[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
-on a host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
-`AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
-through LAPACK on the host, and through `KernelAbstractions` on a device. [`factorize!!`](@ref)
-states what a singular matrix gives: an SVD factor records its numerical rank in `rank` apart from
-its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
-[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These names are not
-exported and are reached as `GeometricSolvers.name`.
+[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
+[`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref), [`DeviceQR`](@ref)
+or [`DeviceSVD`](@ref) on an `AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse
+its buffers in place: through LAPACK on the host, and through `KernelAbstractions` on a device.
+[`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
+in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact
+or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These
+names are not exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
 dense_factor
@@ -99,10 +103,13 @@ factorize!!
 ldiv!!
 factor_eltype
 StaticLU
+StaticLDLT
 StaticQR
 StaticSVD
 DenseLU
 DeviceLU
+DenseLDLT
+DeviceLDLT
 DenseQR
 DeviceQR
 DenseSVD
@@ -182,24 +189,26 @@ NoRefinement
 ## Automatic differentiation
 
 In R1, [`prepare_ad`](@ref) returns the `AutoForwardDiff()` back end itself for a `StaticVector`
-or a `Number` iterate. [`jacobian!!`](@ref) and [`jvp!!`](@ref) run tagged ForwardDiff directly
-with that source. The source `nothing` calls the problem's own `J`; a [`JacobianFunction`](@ref)
-calls a method's operator for `jacobian!!` only. A back end other than `AutoForwardDiff` has no
-R1 method, and the call is a host `MethodError`.
+or a `Number` iterate. [`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and [`jvp!!`](@ref) run
+tagged ForwardDiff directly with that source. The source `nothing` calls the problem's own `J`; a
+[`JacobianFunction`](@ref) calls a method's operator for `jacobian!!` only. A back end other than
+`AutoForwardDiff` has no R1 method, and the call is a host `MethodError`.
 
 In R3 the AD path is chosen once, by [`prepare_ad`](@ref), from the
 back end and the storage of the iterate: `AutoForwardDiff()` goes through an own chunked forward
-mode on every array type, and any other back end goes through
-[DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl) on a CPU
-iterate, so every ADTypes back end works with no line of source here. A device array iterate takes
+mode on every array type ([`ChunkedForwardDiff`](@ref) for [`NonlinearProblem`](@ref) and
+[`ChunkedHessianForwardDiff`](@ref) for [`StationarityProblem`](@ref)), and any other back end goes
+through [DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl) on a
+CPU iterate ([`DIJacobian`](@ref) and [`DIStationarity`](@ref)), so every ADTypes back end works
+with no line of source here. A device array iterate takes
 `AutoForwardDiff()` only, because DifferentiationInterface's `jacobian!` raises a scalar-indexing
 error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies an analytic
 3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
 matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@ref) other than
 [`Static`](@ref) takes a JVP, so under any other globalization the analytic `J` gets no JVP
-preparation and no second `n × n` buffer. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
-then dispatch on the object the preparation returned, so the solver makes no runtime choice and
-carries no `ad` keyword.
+preparation and no second `n × n` buffer. [`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and
+[`jvp!!`](@ref) then dispatch on the object the preparation returned, so the solver makes no runtime
+choice and carries no `ad` keyword.
 
 In R3 the iterate is a vector; another shape raises `ArgumentError` where the preparation is
 built. The parameters may be replaced on every call, which is what lets one preparation serve a
@@ -216,10 +225,13 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 ```@docs
 prepare_ad
 DIJacobian
+DIStationarity
 ChunkedForwardDiff
+ChunkedHessianForwardDiff
 JacobianFunction
 JacobianMatrixJVP
 jacobian!!
+gradient_hessian!!
 jvp!!
 ```
 
@@ -233,6 +245,7 @@ once before the first step and at every return. [`residual_buffer`](@ref) names 
 state that holds `F(x₀)`.
 
 ```@docs
+AbstractNonlinearProblem
 init_state
 residual_buffer
 step!!

@@ -62,7 +62,17 @@ Singular value decomposition, with the factorisation precision of [`LUFactorizat
 """
 struct SVDFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
-for M in (:LUFactorization, :QRFactorization, :SVDFactorization)
+"""
+    LDLTFactorization()
+    LDLTFactorization(TF)
+
+Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` factorisation with `1 × 1` and `2 × 2` diagonal pivot blocks
+for symmetric and Hermitian matrices, with the factorisation precision of
+[`LUFactorization`](@ref).
+"""
+struct LDLTFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
+
+for M in (:LUFactorization, :QRFactorization, :SVDFactorization, :LDLTFactorization)
     @eval begin
         $M() = $M{Nothing}()
         $M(::Type{TF}) where {TF <: AbstractFloat} = $M{TF}()
