@@ -525,36 +525,3 @@ end
         end
     end
 end
-
-NonlinearProblem(F; jacobian = nothing) = NonlinearProblem(F, jacobian)
-
-function solve(
-        prob::NonlinearProblem, m::Newton, x₀::Union{AbstractVector, Number},
-        p = nothing, options::Union{Nothing, Options} = nothing; kwargs...)
-    return solve(prob, x₀, m, p; options = options, kwargs...)
-end
-
-function init(
-        prob::NonlinearProblem, m::Newton, x₀::Union{AbstractVector, Number},
-        p = nothing; options::Union{Nothing, Options} = nothing, kwargs...)
-    return init(prob, x₀, m, p; options = options, kwargs...)
-end
-
-@inline function nonlinear_solver_status(s::NonlinearSolver)
-    Fx = getfield(s, :state).Fx
-    opts = getfield(s, :options)
-    d = getfield(s, :state).diag
-    fnorm = rnorm(Fx)
-    R = typeof(fnorm)
-    tol = max(opts.f_abstol, opts.f_reltol)
-    code = !isfinite(fnorm) ? NONFINITE : (fnorm <= tol ? SUCCESS : MAXITERS)
-    return SolverStatus{R}(
-        code, Int32(0), fnorm, zero(R), Int32(0), false,
-        d.rank, d.nullnorm, d.gradratio)
-end
-
-@inline function Base.getproperty(s::NonlinearSolver, name::Symbol)
-    name === :Fx && return getfield(s, :state).Fx
-    name === :status && return nonlinear_solver_status(s)
-    return getfield(s, name)
-end

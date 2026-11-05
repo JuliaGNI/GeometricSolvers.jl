@@ -78,9 +78,9 @@ include("../helpers/standard_cells.jl")
         opts = Options(Float64; f_abstol = 1e-12, f_reltol = 1e-12, max_iterations = 200)
         for ls in (SVDFactorization(), QRFactorization(), LUFactorization())
             u_sol, st_sol = solve(
-                prob,
+                prob, x0,
                 Newton(; linsolve = ls, globalization = LevenbergMarquardt()),
-                x0, nothing, opts)
+                nothing; options = opts)
             @test st_sol.code == SUCCESS
             @test norm(u_sol - @SVector [0.0, 0.0]) < 1e-3
             @test st_sol.fnorm <= 1e-12
@@ -89,12 +89,12 @@ include("../helpers/standard_cells.jl")
 
     @testset "Check 2 & 3: Rank-one consistent system (MU2) and single SVD per step (MU3)" begin
         prob_f3_r1 = NonlinearProblem(
-            (x, _) -> SVector(x[1] + x[2] - 2.0, 2.0 * (x[1] + x[2]) - 4.0);
-            jacobian = (_, _) -> @SMatrix [1.0 1.0; 2.0 2.0 + 1e-16])
+            (x, _) -> SVector(x[1] + x[2] - 2.0, 2.0 * (x[1] + x[2]) - 4.0),
+            (_, _) -> @SMatrix [1.0 1.0; 2.0 2.0 + 1e-16])
         x_f3, st_f3 = solve(
             prob_f3_r1,
-            Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
-            SVector(0.0, 0.0))
+            SVector(0.0, 0.0),
+            Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
         @test st_f3.code == SUCCESS
         @test norm(x_f3 - SVector(1.0, 1.0)) <= 1e-6
 
@@ -119,8 +119,8 @@ include("../helpers/standard_cells.jl")
 
         jac_calls = Ref(0)
         prob_reject = NonlinearProblem(
-            (x, _) -> (norm(x) > 1.5 ? SVector(NaN, NaN) : SVector(x[1] - 1.0, x[2] - 1.0));
-            jacobian = (_, _) -> (jac_calls[] += 1; @SMatrix [0.01 0.0; 0.0 0.01]))
+            (x, _) -> (norm(x) > 1.5 ? SVector(NaN, NaN) : SVector(x[1] - 1.0, x[2] - 1.0)),
+            (_, _) -> (jac_calls[] += 1; @SMatrix [0.01 0.0; 0.0 0.01]))
         m_svd_lm = Newton(;
             linsolve = SVDFactorization(), globalization = LevenbergMarquardt())
         x0_rej = SVector(0.0, 0.0)
@@ -148,11 +148,11 @@ include("../helpers/standard_cells.jl")
                       (transpose(A) * (-b)))
             for ls in (SVDFactorization(), QRFactorization(), LUFactorization())
                 u_sol, _ = solve(
-                    prob_lin,
+                    prob_lin, x0,
                     Newton(;
                         linsolve = ls,
                         globalization = LevenbergMarquardt(R; μ₀ = μ0, scaling = :none)),
-                    x0, nothing, opts)
+                    nothing; options = opts)
                 @test isapprox(u_sol, δ_ref; rtol = 50 * eps(R))
             end
 
@@ -161,11 +161,11 @@ include("../helpers/standard_cells.jl")
             D2 = @SMatrix [d1^2 R(0); R(0) d2^2]
             δ_diag_ref = -((transpose(A) * A + μ0 * D2) \ (transpose(A) * (-b)))
             u_diag, _ = solve(
-                prob_lin,
+                prob_lin, x0,
                 Newton(;
                     linsolve = QRFactorization(),
                     globalization = LevenbergMarquardt(R; μ₀ = μ0, scaling = :diagonal)),
-                x0, nothing, opts)
+                nothing; options = opts)
             @test isapprox(u_diag, δ_diag_ref; rtol = 50 * eps(R))
         end
     end
@@ -175,12 +175,12 @@ include("../helpers/standard_cells.jl")
         prob_sub = NonlinearProblem((x, _) -> J_sub * x, (_, _) -> J_sub)
         x0_sub = @SVector [1.0, 0.0]
         u_sub, _ = solve(
-            prob_sub,
+            prob_sub, x0_sub,
             Newton(;
                 linsolve = SVDFactorization(),
                 globalization = LevenbergMarquardt(; μ₀ = 1e-6)),
-            x0_sub, nothing,
-            Options(Float64; f_abstol = 1e-300, f_reltol = 1e-12, max_iterations = 5))
+            nothing;
+            options = Options(Float64; f_abstol = 1e-300, f_reltol = 1e-12, max_iterations = 5))
         @test all(isfinite, u_sub)
         @test u_sub[1] < 1.0
 
@@ -190,12 +190,12 @@ include("../helpers/standard_cells.jl")
             prob_ext = NonlinearProblem((x, _) -> J_ext * x - b_ext, (_, _) -> J_ext)
             u_ext, _ = solve(
                 prob_ext,
+                @SVector([0.0, 0.0]),
                 Newton(;
                     linsolve = SVDFactorization(),
                     globalization = LevenbergMarquardt(; μ₀ = 1e-6)),
-                @SVector([0.0, 0.0]),
-                nothing,
-                Options(Float64; f_abstol = 1e-300, f_reltol = 1e-12, max_iterations = 1))
+                nothing;
+                options = Options(Float64; f_abstol = 1e-300, f_reltol = 1e-12, max_iterations = 1))
             @test all(isfinite, u_ext)
             @test isapprox(
                 u_ext[1],
@@ -222,12 +222,12 @@ include("../helpers/standard_cells.jl")
         prob_nan = NonlinearProblem(F_nan, J_nan)
         x0_nan = @SVector [2.0, 0.0]
         u_nan, st_nan = solve(
-            prob_nan,
+            prob_nan, x0_nan,
             Newton(;
                 linsolve = SVDFactorization(),
                 globalization = LevenbergMarquardt(; μ₀ = 1e-2)),
-            x0_nan, nothing,
-            Options(Float64; f_abstol = 1e-10, f_reltol = 1e-10, max_iterations = 50))
+            nothing;
+            options = Options(Float64; f_abstol = 1e-10, f_reltol = 1e-10, max_iterations = 50))
         @test st_nan.code == SUCCESS
         @test u_nan ≈ @SVector [1.0, 0.0] atol = 1e-8
         @test st_nan.step_failures >= 1
@@ -237,13 +237,13 @@ include("../helpers/standard_cells.jl")
             (_, _) -> @SMatrix([1.0 0.0; 0.0 1.0]))
         x0_stall = @SVector [2.0, 3.0]
         u_stall, st_stall = solve(
-            prob_stall,
+            prob_stall, x0_stall,
             Newton(;
                 linsolve = SVDFactorization(),
                 globalization = LevenbergMarquardt(;
                     μ₀ = 1.0, μ_max = 16.0, μ_increase = 4.0)),
-            x0_stall, nothing,
-            Options(Float64; f_abstol = 1e-12, f_reltol = 1e-12, max_iterations = 10))
+            nothing;
+            options = Options(Float64; f_abstol = 1e-12, f_reltol = 1e-12, max_iterations = 10))
         @test st_stall.code == STALLED
         @test u_stall === x0_stall
     end
@@ -256,17 +256,17 @@ include("../helpers/standard_cells.jl")
         x0_ill = @SVector [0.0, 0.0]
         opts_ill = Options(Float64; f_abstol = 1e-30, f_reltol = 1e-30, max_iterations = 1)
         u_qr_ill, _ = solve(
-            prob_ill,
+            prob_ill, x0_ill,
             Newton(;
                 linsolve = QRFactorization(),
                 globalization = LevenbergMarquardt(; μ₀ = 1e-16, μ_min = 1e-16)),
-            x0_ill, nothing, opts_ill)
+            nothing; options = opts_ill)
         u_svd_ill, _ = solve(
-            prob_ill,
+            prob_ill, x0_ill,
             Newton(;
                 linsolve = SVDFactorization(),
                 globalization = LevenbergMarquardt(; μ₀ = 1e-16, μ_min = 1e-16)),
-            x0_ill, nothing, opts_ill)
+            nothing; options = opts_ill)
         @test norm(u_qr_ill - x_true) < 1e-6
         @test isapprox(u_qr_ill, u_svd_ill; rtol = 1e-5)
 
@@ -317,16 +317,15 @@ include("../helpers/standard_cells.jl")
         prob_r3 = NonlinearProblem(F_r3!, J_r3!)
         x0_r3 = [-1.2, 1.0]
         solver_r3 = init(
-            prob_r3,
+            prob_r3, copy(x0_r3),
             Newton(;
                 linsolve = SVDFactorization(),
-                globalization = LevenbergMarquardt(; μ₀ = 1e-4)),
-            copy(x0_r3);
+                globalization = LevenbergMarquardt(; μ₀ = 1e-4));
             options = Options(
                 Float64; f_abstol = 1e-10, f_reltol = 1e-10, max_iterations = 200))
-        solve!(solver_r3)
-        @test solver_r3.status.code == SUCCESS
-        @test norm(solver_r3.Fx) < 1e-10
+        _, st_r3 = solve!(solver_r3)
+        @test st_r3.code == SUCCESS
+        @test norm(solver_r3.state.Fx) < 1e-10
         alloc_r3 = @allocated begin
             copyto!(solver_r3.x, x0_r3)
             solve!(solver_r3)
