@@ -23,7 +23,7 @@ function randsvd(
     κ_R = R(κ)
     U = _haar_unitary(rng, T, n)
     V = _haar_unitary(rng, T, n)
-    σ = R[i <= rank ? κ_R^(-R(i - 1) / R(rank - 1)) : zero(R) for i in 1:n]
+    σ = R[i <= rank ? κ_R^(-R(i - 1) / R(max(1, rank - 1))) : zero(R) for i in 1:n]
     A = U * Diagonal(T.(σ)) * V'
     return A, U, σ, V
 end
@@ -40,7 +40,7 @@ function randhermitian(rng::AbstractRNG, ::Type{T}, n::Integer, κ::Real) where 
     R = real(T)
     κ_R = R(κ)
     Q = _haar_unitary(rng, T, n)
-    λ = R[κ_R^(-R(i - 1) / R(n - 1)) for i in 1:n]
+    λ = R[κ_R^(-R(i - 1) / R(max(1, n - 1))) for i in 1:n]
     H0 = Q * Diagonal(T.(λ)) * Q'
     H = Matrix{T}(Hermitian((H0 + H0') / 2))
     return H, λ, Q
