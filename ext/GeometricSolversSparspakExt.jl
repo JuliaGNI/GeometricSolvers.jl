@@ -8,9 +8,10 @@ using Sparspak.SparseCSCInterface: sparspaklu, sparspaklu!
 
 # Sparse LU factorisation workspace wrapping a `Sparspak` solver `lu` over a preallocated
 # `SparseMatrixCSC` buffer `factors` whose column pointers `colptr` and row indices `rowval` match
-# `jacobian_prototype`. The symbolic ordering and factorisation run once in `init_linear`; each
-# `factorize!!` call reuses them with `allow_pattern_change = false` and maps a zero pivot or a
-# non-finite factor entry to `info = 1` (`SINGULAR`).
+# `jacobian_prototype`. `init_linear` builds the unfactorised `Sparspak.SparseSolver`, and the first
+# `factorize!!` call runs the symbolic ordering and factorisation, which subsequent `factorize!!`
+# calls reuse with `allow_pattern_change = false`, mapping a zero pivot or a non-finite entry to
+# `info = 1` (`SINGULAR`).
 struct SparspakLU{A <: SparseMatrixCSC, L}
     factors::A
     colptr::Vector{Int}
@@ -70,6 +71,8 @@ function GeometricSolvers.factorize!!(
     end
     J === fac.factors ||
         copyto!(SparseArrays.nonzeros(fac.factors), SparseArrays.nonzeros(J))
+    all(isfinite, SparseArrays.nonzeros(fac.factors)) ||
+        return SparspakLU(fac.factors, fac.colptr, fac.rowval, fac.lu, 1, 0)
     try
         sparspaklu!(fac.lu, fac.factors; allow_pattern_change = false)
     catch e

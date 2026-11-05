@@ -187,6 +187,9 @@ end
     if !(m.globalization isa DogLeg) && factor_eltype(m.linsolve, eltype(x)) === eltype(x)
         return fac.factors
     end
+    if fac.factors isa SparseArrays.SparseMatrixCSC
+        return similar(fac.factors, eltype(x))
+    end
     n = length(x)
     return buffer(x, eltype(x), n, n)
 end

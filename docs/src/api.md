@@ -93,8 +93,9 @@ host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) o
 through LAPACK on the host, and through `KernelAbstractions` on a device. When `Sparspak` is loaded
 and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
 AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
-workspace for `LUFactorization{Nothing}()`, runs symbolic ordering and symbolic factorisation once
-in `init_linear`, and reuses them across Newton steps in `factorize!!` and `ldiv!!`.
+workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for `LUFactorization{Nothing}()`;
+the first `factorize!!` call runs symbolic ordering and symbolic factorisation, and subsequent
+`factorize!!` and `ldiv!!` calls reuse them across Newton steps.
 [`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
 in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is
 exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref).

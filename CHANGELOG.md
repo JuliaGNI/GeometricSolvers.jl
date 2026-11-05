@@ -23,17 +23,19 @@ so that a compat-only bump can be told apart from an interface change.
   nothing`. When `Sparspak` (`0.3.15`) is loaded, `GeometricSolversSparspakExt` defines `SparspakLU`
   and extends `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T}) where
   {T <: AbstractFloat}`, `factorize!!` and `ldiv!!`: `init_linear` allocates a `similar(P, T)`
-  buffer (never mutating `P`), records `colptr` and `rowval`, and runs symbolic ordering and
-  symbolic factorisation once via `sparspaklu(factors; factorize = false)`; `factorize!!` checks
-  that the sparsity pattern matches `jacobian_prototype`, reuses the symbolic factorisation via
-  `sparspaklu!(lu, factors; allow_pattern_change = false)`, catches `ErrorException` from a zero
-  pivot at row 1, and checks `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz` and
-  `lu.slvr.unz` so singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR` without
-  throwing. In `prepare_ad`, an `AutoSparse` backend paired with a non-`nothing`
-  `jacobian_prototype` validates `size(P) == (length(r), length(x))` and wraps `P` in
-  `ADTypes.KnownJacobianSparsityDetector(P)` for column-coloured sparse AD via
-  DifferentiationInterface, while `ChunkedForwardDiff`'s `jacobian!!` is restricted to
-  `J::DenseMatrix`.
+  buffer (never mutating `P`), records `colptr` and `rowval`, and builds the unfactorised
+  `Sparspak.SparseSolver` via `sparspaklu(factors; factorize = false)`; `factorize!!` checks that
+  the sparsity pattern matches `jacobian_prototype` and that `nonzeros(factors)` is finite before
+  calling `sparspaklu!(lu, factors; allow_pattern_change = false)` (which runs symbolic ordering
+  and factorisation on the first call and reuses them thereafter), catches `ErrorException` from a
+  zero pivot at row 1, and checks `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz`
+  and `lu.slvr.unz` so singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR`
+  without throwing. `init_newton_J` allocates `similar(fac.factors, eltype(x))` when `fac.factors`
+  is a `SparseMatrixCSC` and cannot be aliased directly (such as under `DogLeg`). In `prepare_ad`,
+  an `AutoSparse` backend paired with a non-`nothing` `jacobian_prototype` validates `size(P) ==
+  (length(r), length(x))` and wraps `P` in `ADTypes.KnownJacobianSparsityDetector(P)` for
+  column-coloured sparse AD via DifferentiationInterface, while `ChunkedForwardDiff`'s `jacobian!!`
+  is restricted to `J::DenseMatrix`.
 
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use
