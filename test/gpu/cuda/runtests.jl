@@ -160,7 +160,15 @@ if CUDA.functional()
                     @test maximum(abs.(S_ext .- S_ka)) <= 8 * n * epsT * S_ka[1]
                 end
                 @test fac_ka.info == 0
-                ldiv!!(dx_ka, fac_ka, db)
+                # the own KA kernel; the extension's LU and QR `backsolve!` calls cuSOLVER
+                copyto!(dx_ka, db)
+                if M === LUFactorization
+                    ka_lu_backsolve!(fac_ka, dx_ka)
+                elseif M === QRFactorization
+                    ka_qr_backsolve!(fac_ka, dx_ka)
+                else
+                    ka_svd_backsolve!(fac_ka, dx_ka)
+                end
 
                 x_ext = Array(dx_ext)
                 x_ka = Array(dx_ka)
@@ -173,20 +181,43 @@ if CUDA.functional()
     @testset "CUDA cuSOLVER large n = 10^4 solve and mixed T = Float64, TF = Float32" begin
         let n = 10^4, T = Float32
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
+            κ = Float64(cond(A_cpu, Inf))
+            @test κ <= 10.0
+            epsT = Float64(eps(T))
             dA = CuArray(A_cpu)
             db = CuArray(b_cpu)
-            dx = CuArray(zeros(T, n))
-            prob_dev = NonlinearProblem(dx, cuda_noop)
+            dx_ext = CuArray(zeros(T, n))
+            dx_ka = CuArray(zeros(T, n))
+            prob_dev = NonlinearProblem(dx_ext, cuda_noop)
             for M in (LUFactorization, QRFactorization)
                 m = M()
-                fac = dense_factor(m, prob_dev, dx, nothing)
-                fac = factorize!!(fac, m, dA)
-                @test fac.info == 0
-                @test returncode(fac) === SUCCESS
-                ldiv!!(dx, fac, db)
-                x_h = Array(dx)
-                bwd = norm(A_cpu * x_h - b_cpu, Inf) / (opnorm(A_cpu, Inf) * norm(x_h, Inf))
-                @test bwd <= 4 * n * Float64(eps(T))
+                fac_ext = dense_factor(m, prob_dev, dx_ext, nothing)
+                fac_ka = dense_factor(m, prob_dev, dx_ka, nothing)
+                fac_ext = factorize!!(fac_ext, m, dA)
+                @test fac_ext.info == 0
+                @test returncode(fac_ext) === SUCCESS
+                ldiv!!(dx_ext, fac_ext, db)
+                x_ext = Array(dx_ext)
+                bwd = norm(A_cpu * x_ext - b_cpu, Inf) /
+                      (opnorm(A_cpu, Inf) * norm(x_ext, Inf))
+                @test bwd <= 4 * n * epsT
+
+                # the own KA kernel; the extension's LU and QR `backsolve!` calls cuSOLVER
+                if M === LUFactorization
+                    fac_ka = ka_factorize_lu!(fac_ka, dA)
+                else
+                    fac_ka = ka_factorize_qr!(fac_ka, dA)
+                end
+                @test fac_ka.info == 0
+                copyto!(dx_ka, db)
+                if M === LUFactorization
+                    ka_lu_backsolve!(fac_ka, dx_ka)
+                else
+                    ka_qr_backsolve!(fac_ka, dx_ka)
+                end
+                x_ka = Array(dx_ka)
+                @test norm(x_ext - x_ka, Inf) / max(norm(x_ka, Inf), epsT) <=
+                      8 * n * epsT * κ
             end
         end
 
@@ -216,7 +247,15 @@ if CUDA.functional()
                 else
                     fac_ka = ka_factorize_svd!(fac_ka, dA)
                 end
-                ldiv!!(dx_ka, fac_ka, db)
+                # the own KA kernel; the extension's LU and QR `backsolve!` calls cuSOLVER
+                copyto!(dx_ka, db)
+                if M === LUFactorization
+                    ka_lu_backsolve!(fac_ka, dx_ka)
+                elseif M === QRFactorization
+                    ka_qr_backsolve!(fac_ka, dx_ka)
+                else
+                    ka_svd_backsolve!(fac_ka, dx_ka)
+                end
 
                 x_ext = Array(dx_ext)
                 x_ka = Array(dx_ka)

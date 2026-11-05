@@ -20,6 +20,33 @@ if Metal.functional() && !on_virtual_gpu()
 
     metal_vendor_noop(r, y, p) = nothing
 
+    # Asserts that `factorize!!` and `backsolve!` on a factor of `T` on storage `S` keep the own
+    # KA kernels of `src/linear/ka/`, for an element type that no MPS path covers. `Float16` is
+    # reached through `which` only, never through a factorisation: a `Float16` factorisation on
+    # Metal crashes the process (§10.D finding 2).
+    function ka_retention(T::Type, S::Type)
+        Mat = MtlMatrix{T, S}
+        Vec = MtlVector{T, S}
+        VecR = MtlVector{real(T), S}
+        VecI32 = MtlVector{Int32, S}
+        DevLU = DeviceLU{Mat, VecI32, Nothing, VecI32}
+        m_lu_fac = which(factorize!!, (DevLU, LUFactorization{Nothing}, Mat))
+        m_lu_bs = which(backsolve!, (DevLU, Vec))
+        @test m_lu_fac.module === GeometricSolvers
+        @test m_lu_bs.module === GeometricSolvers
+        @test endswith(replace(String(m_lu_fac.file), '\\' => '/'), "src/linear/ka/lu.jl")
+        @test endswith(replace(String(m_lu_bs.file), '\\' => '/'), "src/linear/ka/lu.jl")
+        DevQR = DeviceQR{Mat, Vec, Nothing, VecI32}
+        @test which(factorize!!, (DevQR, QRFactorization{Nothing}, Mat)).module ===
+              GeometricSolvers
+        @test which(backsolve!, (DevQR, Vec)).module === GeometricSolvers
+        DevSVD = DeviceSVD{Mat, VecR, VecI32, Vec, Nothing}
+        @test which(factorize!!, (DevSVD, SVDFactorization{Nothing}, Mat)).module ===
+              GeometricSolvers
+        @test which(backsolve!, (DevSVD, Vec)).module === GeometricSolvers
+        return nothing
+    end
+
     @testset "GeometricSolversMetalExt dispatch, KA retention, and Metal census alignment" begin
         ext_mtl = Base.get_extension(GeometricSolvers, :GeometricSolversMetalExt)
         @test ext_mtl !== nothing
@@ -47,47 +74,15 @@ if Metal.functional() && !on_virtual_gpu()
                 backsolve!, (DevLU_F32, VecF32); optimize = false))[1])
             @test occursin("ldiv!", ci_bs) && !occursin("ka_lu_backsolve!", ci_bs)
 
-            # ComplexF32 and Float16 use `which` only (never executing Float16 on Metal)
-            for T_ka in (ComplexF32, Float16)
-                MatKA = MtlMatrix{T_ka, S}
-                VecKA = MtlVector{T_ka, S}
-                DevLU_KA = DeviceLU{MatKA, VecI32, Nothing, VecI32}
-                m_fac = which(factorize!!, (DevLU_KA, LUFactorization{Nothing}, MatKA))
-                m_bs = which(backsolve!, (DevLU_KA, VecKA))
-                @test m_fac.module === GeometricSolvers
-                @test m_bs.module === GeometricSolvers
-                @test endswith(
-                    replace(String(m_fac.file), '\\' => '/'), "src/linear/ka/lu.jl")
-                @test endswith(
-                    replace(String(m_bs.file), '\\' => '/'), "src/linear/ka/lu.jl")
-            end
-
-            for T_qr in (Float32, ComplexF32, Float16)
-                MatQR = MtlMatrix{T_qr, S}
-                VecQR = MtlVector{T_qr, S}
-                DevQR = DeviceQR{MatQR, VecQR, Nothing, VecI32}
-                m_qr_fac = which(factorize!!, (DevQR, QRFactorization{Nothing}, MatQR))
-                m_qr_bs = which(backsolve!, (DevQR, VecQR))
-                @test m_qr_fac.module === GeometricSolvers
-                @test m_qr_bs.module === GeometricSolvers
-            end
-
-            for T_svd in (Float32, ComplexF32, Float16)
-                MatSVD = MtlMatrix{T_svd, S}
-                VecSVD = MtlVector{T_svd, S}
-                VecR = MtlVector{real(T_svd), S}
-                DevSVD = DeviceSVD{MatSVD, VecR, VecI32, VecSVD, Nothing}
-                m_svd_fac = which(factorize!!, (DevSVD, SVDFactorization{Nothing}, MatSVD))
-                m_svd_bs = which(backsolve!, (DevSVD, VecSVD))
-                @test m_svd_fac.module === GeometricSolvers
-                @test m_svd_bs.module === GeometricSolvers
-            end
+            # The element types that no MPS path covers keep the own KA kernels
+            ka_retention(ComplexF32, S)
+            ka_retention(Float16, S)
         end
 
-        # Metal capability census alignment: Float32 lu! is the sole pass factorisation cell
-        # for (Float32, Float64, ComplexF32, ComplexF64) in GeometricSolversMetalExt.
+        # Metal capability census alignment: `Float32` `lu!` is the sole pass factorisation cell
+        # of `ELTYPES` that `GeometricSolversMetalExt` covers.
         VecI32_P = MtlVector{Int32, Metal.PrivateStorage}
-        for T in (Float32, Float64, ComplexF32, ComplexF64)
+        for T in ELTYPES
             Mat = MtlMatrix{T, Metal.PrivateStorage}
             Vec = MtlVector{T, Metal.PrivateStorage}
             VecR = MtlVector{real(T), Metal.PrivateStorage}
@@ -103,7 +98,7 @@ if Metal.functional() && !on_virtual_gpu()
         end
     end
 
-    @testset "Metal MPS LU agreement with own KA kernel at n = $n" for n in (1, 16, 256)
+    @testset "Metal MPS LU agreement with own KA kernel at n = $n" for n in (1, 16, 256, 10^4)
         m = LUFactorization()
         rng = Xoshiro(0x5eed + n)
         A_cpu = randn(rng, Float32, n, n) + Float32(2 * n) * Matrix{Float32}(I, n, n)
