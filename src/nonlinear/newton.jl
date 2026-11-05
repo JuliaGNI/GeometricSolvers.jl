@@ -451,7 +451,7 @@ end
             if slow >= Int32(2)
                 info_p = StepInfo{R}(
                     info.code, info.fnorm, info.stepnorm,
-                    info.failures + one(Int32), info.stalled, true)
+                    info.failures + one(Int32), true, info.limited)
                 return with_mixed(state, true, slow, Int32(0)), info_p
             end
             return with_mixed(state, false, slow, Int32(0)), info
@@ -460,7 +460,7 @@ end
             if fl >= Int32(2)
                 info_s = StepInfo{R}(
                     STALLED, info.fnorm, info.stepnorm,
-                    info.failures, true, false)
+                    info.failures, false, info.limited)
                 return with_mixed(state, false, Int32(0), fl), info_s
             end
             return with_mixed(state, false, Int32(0), fl), info
@@ -488,7 +488,7 @@ end
         if fac.info > Int32(0)
             info_sing = StepInfo{R}(
                 SINGULAR, rnorm(Fx), zero(R),
-                promoted_step ? Int32(1) : Int32(0), false, promoted_step)
+                promoted_step ? Int32(1) : Int32(0), promoted_step, false)
             state_sing = promoted_step ?
                          with_mixed(state, true, state.slow_steps, state.floor_steps) :
                          state
@@ -506,7 +506,7 @@ end
         promoted_step = true
         if fac.info > Int32(0)
             info_sing = StepInfo{R}(
-                SINGULAR, rnorm(Fx), zero(R), Int32(1), false, true)
+                SINGULAR, rnorm(Fx), zero(R), Int32(1), true, false)
             state_sing = with_mixed(state, true, state.slow_steps, state.floor_steps)
             return x, Fx, with_diag(state_sing, diag), info_sing
         end
@@ -523,7 +523,7 @@ end
     if promoted_step
         info = StepInfo{R}(
             info.code, info.fnorm, info.stepnorm,
-            info.failures + one(Int32), info.stalled, true)
+            info.failures + one(Int32), true, info.limited)
         state = with_mixed(state, true, Int32(0), Int32(0))
     else
         state, info = update_mixed_stall(state, info, fnorm_old, lin_rel, mixed)
@@ -582,7 +582,7 @@ end
     if promoted_step
         info = StepInfo{R}(
             info.code, info.fnorm, info.stepnorm,
-            info.failures + one(Int32), info.stalled, true)
+            info.failures + one(Int32), true, info.limited)
         state = with_mixed(state, true, Int32(0), Int32(0))
     else
         state, info = update_mixed_stall(state, info, fnorm_old, lin_rel, mixed)
@@ -631,7 +631,7 @@ end
             state_d = with_diag(state_m, diag)
             info_sing = StepInfo{R}(
                 SINGULAR, rnorm(Fx), zero(R),
-                promoted_step ? Int32(1) : Int32(0), false, promoted_step)
+                promoted_step ? Int32(1) : Int32(0), promoted_step, false)
             return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
         end
     end
@@ -661,7 +661,7 @@ end
             state_f = with_factor_T(state, fac)
             state_m = with_mixed(state_f, true, state.slow_steps, state.floor_steps)
             state_d = with_diag(state_m, diag)
-            info_sing = StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(1), false, true)
+            info_sing = StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(1), true, false)
             return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
         end
         d₀ = ldiv!!(state.d, fac, Fx)
@@ -695,7 +695,7 @@ end
             state_d = with_diag(with_merit(state_m, merit), diag)
             info_sing = StepInfo{R}(
                 SINGULAR, rnorm(Fx), zero(R),
-                promoted_step ? Int32(1) : Int32(0), false, promoted_step)
+                promoted_step ? Int32(1) : Int32(0), promoted_step, false)
             return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
         end
         d, ref_failed = if promoted_step
@@ -712,7 +712,7 @@ end
                 state_m = with_mixed(state_f, true, state.slow_steps, state.floor_steps)
                 state_d = with_diag(with_merit(state_m, merit), diag)
                 info_sing = StepInfo{R}(
-                    SINGULAR, rnorm(Fx), zero(R), Int32(1), false, true)
+                    SINGULAR, rnorm(Fx), zero(R), Int32(1), true, false)
                 return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
             end
             d₀ = ldiv!!(state.d, fac, Fx)
@@ -731,7 +731,7 @@ end
     if promoted_step
         info = StepInfo{R}(
             info.code, info.fnorm, info.stepnorm,
-            info.failures + one(Int32), info.stalled, true)
+            info.failures + one(Int32), true, info.limited)
         state = with_mixed(state, true, Int32(0), Int32(0))
     else
         was_promoted = state.promoted
