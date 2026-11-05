@@ -6,12 +6,16 @@ CurrentModule = GeometricSolvers
 
 ## The problem
 
-A problem holds functions and nothing else: the residual, and optionally its derivative. The
-storage of the iterate selects the call form of both, so one problem serves every regime. This
-name is exported.
+A problem holds functions and an optional Jacobian prototype: the residual, optionally its
+derivative, and optionally `jacobian_prototype` for a sparse R3 Jacobian. The storage of the
+iterate selects the call form of the functions, so one problem serves every regime.
+`NonlinearProblem` is exported; `GeometricSolvers.jacobian_prototype` and
+`GeometricSolvers.jacobian_pattern` are internal accessors.
 
 ```@docs
 NonlinearProblem
+jacobian_prototype
+jacobian_pattern
 ```
 
 ## The storage seam
@@ -78,22 +82,28 @@ BF16
 
 ### Factorisation and solve
 
-A linear-solver method enters a solve through [`dense_factor`](@ref), [`factorize!!`](@ref) and
-[`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
-`isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
-`Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
-a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
-`√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
-[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
-on a host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
+A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense_factor`](@ref)),
+[`factorize!!`](@ref) and [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and
+[`ldiv!!`](@ref) return new `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU
+with partial pivoting and `Int32` pivots, [`StaticQR`](@ref) Householder QR without column
+pivoting, and [`StaticSVD`](@ref) a one-sided Jacobi singular value decomposition whose solve
+truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve
+finite. For a vector state (R3) with no prototype (`jacobian_prototype === nothing`),
+[`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a
+host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
 `AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
-through LAPACK on the host, and through `KernelAbstractions` on a device. [`factorize!!`](@ref)
-states what a singular matrix gives: an SVD factor records its numerical rank in `rank` apart from
-its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
-[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These names are not
-exported and are reached as `GeometricSolvers.name`.
+through LAPACK on the host, and through `KernelAbstractions` on a device. When `Sparspak` is loaded
+and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
+AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+workspace for `LUFactorization{Nothing}()`, runs symbolic ordering and symbolic factorisation once
+in `init_linear`, and reuses them across Newton steps in `factorize!!` and `ldiv!!`.
+[`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
+in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is
+exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref).
+These names are not exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
+init_linear
 dense_factor
 factorize!!
 ldiv!!
