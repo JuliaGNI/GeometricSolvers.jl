@@ -60,10 +60,10 @@ factor ``\rho_n``. On systems with moderate pivot growth, the normwise backward 
 
 [`QRFactorization`](@ref) dispatches to:
 
-- [`StaticQR`](@ref) on `SMatrix{m, n, T}` (register-resident Householder reflections with
+- [`StaticQR`](@ref) on `SMatrix{n, n, T}` (register-resident Householder reflections with
   standard complex sign selection),
 - [`DenseQR`](@ref) on host `Array{T, 2}` (LAPACK `geqrf!` / `ormqr!` / `unmqr!` and
-  `trtrs!`), and
+  `BLAS.trsv!`), and
 - [`DeviceQR`](@ref) on GPU `AbstractGPUArray{T, 2}` backends (`KernelAbstractions` column-norm
   reduction and reflector application).
 
@@ -83,8 +83,7 @@ back-substitution are unconditionally backward stable. For any nonsingular squar
 
 - [`StaticSVD`](@ref) on `SMatrix{n, n, T}` (one-sided Jacobi orthogonalization of ``A`` followed
   by column normalization and descending sort),
-- [`DenseSVD`](@ref) on host `Array{T, 2}` (LAPACK `gesdd!` divide-and-conquer with `gesvd!`
-  fallback), and
+- [`DenseSVD`](@ref) on host `Array{T, 2}` (LAPACK `gesvd`), and
 - [`DeviceSVD`](@ref) on GPU `AbstractGPUArray{T, 2}` backends (`KernelAbstractions` one-sided
   Jacobi sweeps with complex phase annihilation).
 
@@ -120,10 +119,10 @@ By Demmel and Veselić (1992) and Higham (2002):
 
 When ``A \in T^{n \times n}`` has exact rank ``r < n`` with singular values
 ``\sigma_1 \ge \dots \ge \sigma_r > 0 = \sigma_{r+1} = \dots = \sigma_n`` and
-``\sigma_r / \sigma_1 \gg \tau_{\text{rel}} = \sqrt{\varepsilon_R}``, [`SVDFactorization`](@ref)
+``\sigma_r / \sigma_1 \gg \sqrt{n} \, \varepsilon_R``, [`SVDFactorization`](@ref)
 across [`StaticSVD`](@ref), [`DenseSVD`](@ref), and [`DeviceSVD`](@ref) detects the numerical
 rank `fac.rank == r` by truncating singular values satisfying
-``\hat{\sigma}_i \le \max(\tau_{\text{abs}}, \tau_{\text{rel}} \hat{\sigma}_1)``.
+``\hat{\sigma}_i \le \sqrt{n} \, \varepsilon_R \, \hat{\sigma}_1``.
 
 By Demmel and Veselić (1992) and Higham (2002, §20.4), the truncated pseudoinverse solve
 [`ldiv!!`](@ref) approximates the exact minimum-norm least-squares solution
