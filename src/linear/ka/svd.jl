@@ -112,44 +112,6 @@ end
     end
 end
 
-@kernel function ka_jacobi_svd_round_serial_kernel!(
-        U, V, flag, n::Int, r::Int, tol, negligible)
-    pair = @index(Global, Linear)
-    @inbounds begin
-        F = eltype(U)
-        R = real(F)
-        p, q = jacobi_pair(n, r, pair - 1)
-        if p <= n
-            α = zero(R)
-            β = zero(R)
-            γ = zero(F)
-            for i in 1:n
-                u_p = U[i, p]
-                u_q = U[i, q]
-                α += abs2(u_p)
-                β += abs2(u_q)
-                γ += conj(u_p) * u_q
-            end
-            if !(α <= negligible || β <= negligible) &&
-               !(abs(γ) <= tol * sqrt(α * β))
-                c, s = jacobi_rotation(α, β, γ)
-                sc = conj(s)
-                flag[1] = Int32(1)
-                for i in 1:n
-                    u_p = U[i, p]
-                    u_q = U[i, q]
-                    U[i, p] = c * u_p - sc * u_q
-                    U[i, q] = s * u_p + c * u_q
-                    v_p = V[i, p]
-                    v_q = V[i, q]
-                    V[i, p] = c * v_p - sc * v_q
-                    V[i, q] = s * v_p + c * v_q
-                end
-            end
-        end
-    end
-end
-
 @kernel function ka_jacobi_sort_columns_kernel!(σ̂, U, V, n::Int)
     idx = @index(Global, Linear)
     @inbounds if idx == 1
@@ -207,8 +169,6 @@ end
 
 ka_unwrap_val(::Val{N}) where {N} = N
 
-const KA_SVD_CPU_CUTOFF = 64
-
 function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
         VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
         e::Int, neg_e::Int) where {F, R}
@@ -222,9 +182,7 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
     converged = n <= 1
     col_norms2_kernel! = ka_jacobi_col_norms2_kernel!(backend)
     if n >= 2
-        use_workgroup = isgpu(backend) || n <= KA_SVD_CPU_CUTOFF
         round_kernel! = ka_jacobi_svd_round_kernel!(backend, g)
-        round_serial! = ka_jacobi_svd_round_serial_kernel!(backend, 1)
         for sweep in 1:JACOBI_MAX_SWEEPS
             col_norms2_kernel!(
                 σ̂, flag, U, V, n, neg_e, sweep == 1, false; ndrange = n)
@@ -232,16 +190,9 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
             max_norm2 = maximum(σ̂)
             isfinite(max_norm2) || break
             negligible = max_norm2 * tol^2
-            if use_workgroup
-                for r in 0:(m - 2)
-                    round_kernel!(
-                        U, V, flag, n, r, tol, negligible, valG; ndrange = n_pairs * g)
-                end
-            else
-                for r in 0:(m - 2)
-                    round_serial!(
-                        U, V, flag, n, r, tol, negligible; ndrange = n_pairs)
-                end
+            for r in 0:(m - 2)
+                round_kernel!(
+                    U, V, flag, n, r, tol, negligible, valG; ndrange = n_pairs * g)
             end
             if iszero(Array(flag)[1])
                 converged = true

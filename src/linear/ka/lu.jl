@@ -116,74 +116,17 @@ end
 
 const KA_LU_WORKGROUP = 64
 
-@kernel function ka_lu_pivot_swap_scale_serial_kernel!(
-        A, ipiv, status, k::Int, n::Int)
-    idx = @index(Global, Linear)
-    @inbounds if idx == 1
-        p = k
-        amax = abs1(A[k, k])
-        for i in (k + 1):n
-            a = abs1(A[i, k])
-            if a > amax
-                amax = a
-                p = i
-            end
-        end
-        ipiv[k] = Int32(p)
-        if p != k
-            for j in 1:n
-                A[k, j], A[p, j] = A[p, j], A[k, j]
-            end
-        end
-        a_kk = A[k, k]
-        if iszero(a_kk)
-            if status[1] == Int32(0)
-                status[1] = Int32(k)
-            end
-        else
-            for i in (k + 1):n
-                A[i, k] = multiplier(A[i, k], a_kk)
-            end
-        end
-    end
-end
-
-@kernel function ka_lu_perm_l_serial_kernel!(
-        d, @Const(A), @Const(ipiv), n::Int)
-    idx = @index(Global, Linear)
-    @inbounds if idx == 1
-        for k in 1:n
-            p_k = Int(ipiv[k])
-            if p_k != k
-                d[k], d[p_k] = d[p_k], d[k]
-            end
-        end
-        for k in 1:(n - 1)
-            d_k = d[k]
-            for i in (k + 1):n
-                d[i] -= A[i, k] * d_k
-            end
-        end
-    end
-end
-
 function ka_lu!(A::AbstractGPUArray, ipiv::AbstractVector{Int32},
         status::AbstractVector{Int32})
     n = size(A, 1)
     n == 0 && return 0
     backend = get_backend(A)
     fill!(status, Int32(0))
-    use_workgroup = isgpu(backend) || n <= KA_LU_WORKGROUP
     piv_kernel! = ka_lu_pivot_swap_scale_kernel!(backend, KA_LU_WORKGROUP)
-    piv_serial! = ka_lu_pivot_swap_scale_serial_kernel!(backend, 1)
     ger_kernel! = ka_lu_ger_kernel!(backend)
     for k in 1:n
-        if use_workgroup
-            piv_kernel!(
-                A, ipiv, status, k, n, Val(KA_LU_WORKGROUP); ndrange = KA_LU_WORKGROUP)
-        else
-            piv_serial!(A, ipiv, status, k, n; ndrange = 1)
-        end
+        piv_kernel!(
+            A, ipiv, status, k, n, Val(KA_LU_WORKGROUP); ndrange = KA_LU_WORKGROUP)
         if k < n
             m = n - k
             ger_kernel!(A, k; ndrange = (m, m))
@@ -207,12 +150,8 @@ function ka_lu_backsolve!(A::AbstractGPUArray, ipiv::AbstractVector{Int32}, d::A
     n = length(d)
     n == 0 && return d
     backend = get_backend(A)
-    if isgpu(backend) || n <= KA_LU_WORKGROUP
-        ka_lu_perm_l_kernel!(backend, KA_LU_WORKGROUP)(
-            d, A, ipiv, n, Val(KA_LU_WORKGROUP); ndrange = KA_LU_WORKGROUP)
-    else
-        ka_lu_perm_l_serial_kernel!(backend, 1)(d, A, ipiv, n; ndrange = 1)
-    end
+    ka_lu_perm_l_kernel!(backend, KA_LU_WORKGROUP)(
+        d, A, ipiv, n, Val(KA_LU_WORKGROUP); ndrange = KA_LU_WORKGROUP)
     trsv_u! = ka_lu_trsv_u_col_kernel!(backend)
     for k in n:-1:2
         trsv_u!(d, A, k; ndrange = k - 1)

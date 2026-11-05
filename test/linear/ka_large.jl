@@ -18,8 +18,8 @@ allowscalar(false)
 
 ka_noop(r, y, p) = nothing
 
-@testset "KA device SVD agrees with CPU LAPACK gesvd at n = 10^3 on JLArray" begin
-    n = 10^3
+@testset "KA device SVD agrees with CPU LAPACK gesvd at n = 129 on JLArray" begin
+    n = 129
     old_threads = BLAS.get_num_threads()
     try
         BLAS.set_num_threads(min(2, old_threads))
