@@ -67,7 +67,6 @@ function Anderson(
         member::M = Picard(), ::Val{m} = Val(4);
         c_s::Real = 0.2,
         κ_bar::Union{Nothing, Real} = nothing,
-        kappa_bar::Union{Nothing, Real} = κ_bar,
         restart_factor::Real = 10.0,
         M_alpha::Real = 25.0,
         safeguard_cos::Union{Nothing, Real} = nothing,
@@ -75,9 +74,9 @@ function Anderson(
     m isa Int && !(m isa Bool) ||
         throw(ArgumentError("Anderson history depth m must be an Int, got $(typeof(m))"))
     R_base = promote_type(typeof(c_s), typeof(restart_factor), typeof(M_alpha))
-    R_kb = kappa_bar === nothing ? R_base : promote_type(R_base, typeof(kappa_bar))
+    R_kb = κ_bar === nothing ? R_base : promote_type(R_base, typeof(κ_bar))
     R = float(safeguard_cos === nothing ? R_kb : promote_type(R_kb, typeof(safeguard_cos)))
-    kb = kappa_bar === nothing ? nothing : R(kappa_bar)
+    kb = κ_bar === nothing ? nothing : R(κ_bar)
     sc = safeguard_cos === nothing ? nothing : R(safeguard_cos)
     return Anderson{m, M, R, typeof(kb), typeof(sc)}(
         member, R(c_s), kb, R(restart_factor), R(M_alpha), sc, grow_depth)
@@ -325,6 +324,13 @@ end
 end
 
 # Shared scalar predicates for the restarts, filters, regularisation, and safeguards.
+@inline function is_unstarted(state::AndersonState)
+    if !isfinite(state.fnorm₀)
+        return true
+    end
+    return false
+end
+
 @inline function effective_depth_cap(a::Anderson{m}, wnorm::R) where {m, R <: Real}
     a.grow_depth || return m
     (!isfinite(wnorm) || wnorm <= zero(R)) && return 1
@@ -422,11 +428,6 @@ end
     return γ
 end
 
-@inline function solve_weights(G::SMatrix{m, m, R}, b::SVector{m, R}) where {m, R <: Real}
-    kept = SVector{m, Int}(ntuple(identity, Val(m)))
-    return solve_weights(G, b, kept, m)
-end
-
 # Regularised Cholesky solve of `(G_K + λI) γ = b_K` in R3 (preallocated host buffers).
 function solve_weights!(
         γ::Vector{R}, L::Matrix{R}, y::Vector{R},
@@ -471,15 +472,6 @@ function solve_weights!(
         γ[c] = s / L[c, c]
     end
     return γ
-end
-
-function solve_weights(G::AbstractMatrix{R}, b::AbstractVector{R}) where {R <: Real}
-    p = length(b)
-    γ = zeros(R, p)
-    L = zeros(R, p, p)
-    y = zeros(R, p)
-    kept = collect(1:p)
-    return solve_weights!(γ, L, y, G, b, kept, p)
 end
 
 # Check `all(isfinite, γ)`, `∑_{j=0}^p |α_j| <= M_alpha`, and `Δmodel <= eps(R) * wnorm2`.
@@ -649,7 +641,7 @@ function step!!(
         p) where {
         m, MS, X <: Union{StaticVector, Number}, DX, DW, R <: Real}
     fnorm_in = rnorm(Fx)
-    if !isfinite(state.fnorm₀)
+    if is_unstarted(state)
         return x, Fx, state,
         StepInfo{R}(NONFINITE, fnorm_in, zero(R), Int32(0), false, false)
     end
@@ -885,7 +877,7 @@ function step!!(
         p) where {
         m, MS, FX, X, DX, DW, W <: AndersonWorkspace, R <: Real, T}
     fnorm_in = rnorm(Fx)
-    if !isfinite(state.fnorm₀)
+    if is_unstarted(state)
         return x, Fx, state,
         StepInfo{R}(NONFINITE, fnorm_in, zero(R), Int32(0), false, false)
     end

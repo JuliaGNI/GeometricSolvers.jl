@@ -114,8 +114,11 @@ function _gmres_reference(A::AbstractMatrix{Float64}, b::AbstractVector{Float64}
 end
 
 function _r1_step_alloc_probe(state, method, prob, x, Fx)
-    _, _, st1, _ = step!!(state, method, prob, x, Fx, nothing)
-    return @allocated step!!(st1, method, prob, x, Fx, nothing)
+    x1, F1, st1, _ = step!!(state, method, prob, x, Fx, nothing)
+    _, _, st2, info2 = step!!(st1, method, prob, x1, F1, nothing)
+    @test st2.depth >= 1
+    @test info2.failures == 0
+    return @allocated step!!(st1, method, prob, x1, F1, nothing)
 end
 
 function _r1_solve_alloc_probe(state, prob, x, method, opts)
@@ -125,7 +128,10 @@ end
 
 function _r3_step_alloc_probe(state, method, prob, x, Fx)
     _, _, st1, _ = step!!(state, method, prob, x, Fx, nothing)
-    return @allocated step!!(st1, method, prob, x, Fx, nothing)
+    _, _, st2, info2 = step!!(st1, method, prob, x, Fx, nothing)
+    @test st2.depth >= 1
+    @test info2.failures == 0
+    return @allocated step!!(st2, method, prob, x, Fx, nothing)
 end
 
 function _r3_solve_alloc_probe(solver, x_work, x0)
@@ -248,17 +254,83 @@ end
             st_finished, a_r1, prob_r1, x1, F1, nothing)
         @test info_after_finish.code == NONFINITE
 
-        # R3 lifecycle guard (MU9)
+        # sync_merit forwards to member_state and preserves fnorm_best and x_best (R1)
+        a_bt_r1 = Anderson(
+            Newton(; globalization = Backtracking()), Val(3))
+        st_bt_r1 = init_state(a_bt_r1, prob_r1, x0_r1, nothing)
+        @test isnan(st_bt_r1.member_state.merit)
+        st_bt_unstarted_sync = sync_merit(st_bt_r1, a_bt_r1, 0.25)
+        @test isnan(st_bt_unstarted_sync.member_state.merit)
+        st_bt_started = start!!(
+            st_bt_r1, a_bt_r1, prob_r1, x0_r1, Fx0_r1, nothing, rnorm(Fx0_r1))
+        _, _, st_bt_step1, _ = step!!(
+            st_bt_started, a_bt_r1, prob_r1, x0_r1, Fx0_r1, nothing)
+        st_bt_synced = sync_merit(st_bt_step1, a_bt_r1, 0.125)
+        @test isbits(st_bt_synced)
+        @test st_bt_synced.member_state.merit == 0.125
+        @test st_bt_synced.member_state != st_bt_step1.member_state
+        @test st_bt_synced.fnorm_best == st_bt_step1.fnorm_best
+        @test st_bt_synced.x_best == st_bt_step1.x_best
+        @test st_bt_synced.Fx_best == st_bt_step1.Fx_best
+        @test st_bt_synced.fnorm₀ == st_bt_step1.fnorm₀
+
+        # R3 lifecycle guard (MU9) and sync_merit forwarding
         prob_r3 = NonlinearProblem((F, x, p) -> (F .= x .- cos.(x); F))
         x0_r3 = [0.5, 0.5]
         Fx0_r3 = similar(x0_r3)
         prob_r3.F(Fx0_r3, x0_r3, nothing)
-        a_r3 = Anderson(Picard(; damping = 0.8), Val(5))
+        a_r3 = Anderson(
+            Picard(; damping = 0.8, globalization = Backtracking()), Val(5))
         st_r3 = init_state(a_r3, prob_r3, x0_r3, nothing)
         @test residual_buffer(st_r3) === st_r3.Fx
         _, _, _, info_r3_unstarted = step!!(
             st_r3, a_r3, prob_r3, copy(x0_r3), copy(Fx0_r3), nothing)
         @test info_r3_unstarted.code == NONFINITE
+
+        x_r3_1 = copy(x0_r3)
+        F_r3_1 = copy(Fx0_r3)
+        st_r3_started = start!!(
+            st_r3, a_r3, prob_r3, x_r3_1, F_r3_1, nothing, rnorm(F_r3_1))
+        x_r3_1, F_r3_1, st_r3_step1, info_r3_1 = step!!(
+            st_r3_started, a_r3, prob_r3, x_r3_1, F_r3_1, nothing)
+        @test info_r3_1.code == SUCCESS
+        st_r3_synced = sync_merit(st_r3_step1, a_r3, 0.375)
+        @test st_r3_synced.member_state.merit == 0.375
+        @test st_r3_synced.member_state != st_r3_step1.member_state
+        @test st_r3_synced.fnorm_best == st_r3_step1.fnorm_best
+        @test st_r3_synced.x_best == st_r3_step1.x_best
+        @test st_r3_synced.Fx_best == st_r3_step1.Fx_best
+        _, _, st_r3_finished = finish!!(
+            st_r3_step1, a_r3, prob_r3, x_r3_1, F_r3_1,
+            SolverStatus{Float64}(
+                SUCCESS, Int32(1), info_r3_1.fnorm, info_r3_1.stepnorm, Int32(0), false))
+        _, _, _, info_r3_after_finish = step!!(
+            st_r3_finished, a_r3, prob_r3, x_r3_1, F_r3_1, nothing)
+        @test info_r3_after_finish.code == NONFINITE
+
+        # R3 lifecycle guard with stateless inner globalization (member_state.merit === nothing)
+        a_r3_stat = Anderson(Picard(; damping = 0.8), Val(5))
+        st_r3_stat = init_state(a_r3_stat, prob_r3, x0_r3, nothing)
+        @test isnothing(st_r3_stat.member_state.merit)
+        _, _, _, info_r3_stat_unstarted = step!!(
+            st_r3_stat, a_r3_stat, prob_r3, copy(x0_r3), copy(Fx0_r3), nothing)
+        @test info_r3_stat_unstarted.code == NONFINITE
+        x_r3_stat = copy(x0_r3)
+        F_r3_stat = copy(Fx0_r3)
+        st_r3_stat_started = start!!(
+            st_r3_stat, a_r3_stat, prob_r3, x_r3_stat, F_r3_stat, nothing,
+            rnorm(F_r3_stat))
+        x_r3_stat, F_r3_stat, st_r3_stat_step1, info_r3_stat_1 = step!!(
+            st_r3_stat_started, a_r3_stat, prob_r3, x_r3_stat, F_r3_stat, nothing)
+        @test info_r3_stat_1.code == SUCCESS
+        _, _, st_r3_stat_finished = finish!!(
+            st_r3_stat_step1, a_r3_stat, prob_r3, x_r3_stat, F_r3_stat,
+            SolverStatus{Float64}(
+                SUCCESS, Int32(1), info_r3_stat_1.fnorm, info_r3_stat_1.stepnorm,
+                Int32(0), false))
+        _, _, _, info_r3_stat_after_finish = step!!(
+            st_r3_stat_finished, a_r3_stat, prob_r3, x_r3_stat, F_r3_stat, nothing)
+        @test info_r3_stat_after_finish.code == NONFINITE
     end
 
     @testset "Check 1: NLsolve parity on CollisionOperators settings (MU1)" begin
@@ -635,7 +707,7 @@ end
         # Direct singular Gram matrix in Float32: two identical columns
         G32_sing = @SMatrix [1.0f0 1.0f0; 1.0f0 1.0f0]
         b32_sing = @SVector [0.5f0, 0.5f0]
-        γ32 = solve_weights(G32_sing, b32_sing)
+        γ32 = solve_weights(G32_sing, b32_sing, SVector(1, 2), 2)
         @test eltype(γ32) === Float32
         @test all(isfinite, γ32)
 
