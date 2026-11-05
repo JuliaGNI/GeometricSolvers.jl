@@ -1,6 +1,6 @@
-# Sweep η_J ∈ (1e-1, 1e-2, 1e-3, 1e-4) across conditioned nonlinear problems in R1 and R3
-# with Float32 LU factorisation on Float64 state, comparing Newton iteration counts,
-# refinement JVP evaluations, and promotion rates against pure Float64 LU.
+# Sweep η_J ∈ (1e-1, 1e-2, 1e-3, 1e-4, 1e-6, √eps(Float64)) across conditioned nonlinear
+# problems in R1 and R3 with Float32 LU factorisation on Float64 state, comparing Newton
+# iteration counts, refinement JVP evaluations, and promotion rates against pure Float64 LU.
 
 using GeometricSolvers
 using LinearAlgebra: Diagonal, norm
@@ -42,7 +42,7 @@ function make_problem_r3(eps_cond::Float64, jvp_counter::Base.RefValue{Int})
 end
 
 function run_sweep()
-    etas = (1e-1, 1e-2, 1e-3, 1e-4)
+    etas = (1e-1, 1e-2, 1e-3, 1e-4, 1e-6, sqrt(eps(Float64)))
     eps_list = (1e-2, 1e-4, 1e-5, 2e-6)
     starts = (
         SVector{2, Float64}(2.0, 3.0),
@@ -66,7 +66,7 @@ function run_sweep()
         evals_r3 = 0
         total_cases = length(eps_list) * length(starts)
 
-        m = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement(2; η = η))
+        m = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement(5; η = η))
 
         for eps_cond in eps_list
             prob_r1 = make_problem_r1(eps_cond)
@@ -94,7 +94,7 @@ function run_sweep()
     end
     println("--------------------------------------------------------------------------")
     ref = Refinement()
-    println("Selected default: eta_J = $(ref.η) (maxiter = $(ref.maxiter))")
+    println("Selected default: eta_J = √eps(real(T)) = $(ref.η) (maxiter = $(ref.maxiter))")
 end
 
 run_sweep()

@@ -852,16 +852,20 @@ so that a compat-only bump can be told apart from an interface change.
   `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
   against it.
 
-- Mixed-precision iterative refinement (`Refinement(maxiter = 2; η = 1e-3)` and
-  `GeometricSolvers.refine!!`), factorisation promotion to working precision `T`, precision-floor
-  detection, and the `QuasiNewton(k; kwargs...)` convenience constructor for `Newton(; reuse = k,
-  kwargs...)` (decisions 16, 17, 25 and 53 of the design). `Refinement{R}` (`maxiter::Int32 ≥ 1`,
-  `0 < η < 1`, `isbits`, adapted by `ToReal{R}`) performs up to `maxiter` defect-correction passes
-  in working precision `T` using the existing factor `fac` and matrix-free Jacobian-vector products
-  `jvp!!`: each pass forms `r = -F(x) - J(x) d` in `T`, solves `fac \ r` in `TF` for `δd`, updates
-  `d ← d + δd`, and stops once `‖F(x) + J(x) d‖ ≤ max(η, √eps(R)) ‖F(x)‖`. If a pass does not
-  strictly decrease `‖F(x) + J(x) d‖` (`!(r_curr < r_prev)`) or `maxiter` passes finish above the
-  threshold, `refine!!` returns the best direction reached with `failed = true`. In `Newton` with a
+- Mixed-precision iterative refinement (`Refinement(T = Float64; η = √eps(real(T)), maxiter = 5)`
+  and `GeometricSolvers.refine!!`), factorisation promotion to working precision `T`
+  (`GeometricSolvers.promote_linsolve`), precision-floor detection, and the
+  `QuasiNewton(k; kwargs...)` convenience constructor for `Newton(; reuse = k, kwargs...)`
+  (decisions 16, 17, 25 and 53 of the design). `Refinement{R}` (`maxiter::Int32 ≥ 1`, `0 < η < 1`,
+  `isbits`, adapted by `ToReal{R}`, with `.eta` and `.max_iterations` property and keyword aliases)
+  performs up to `maxiter` defect-correction passes in working precision `T` using the existing
+  factor `fac` and matrix-free Jacobian-vector products `jvp!!`: each pass forms
+  `r = -F(x) - J(x) d` in `T`, solves `fac \ r` in `TF` for `δd`, updates `d ← d + δd`, and stops
+  once `‖F(x) + J(x) d‖ ≤ max(η, √eps(R)) ‖F(x)‖`. Combining `Refinement` with `AutoFiniteDiff`
+  throws an `ArgumentError` in `init` because finite-difference directional derivatives corrupt the
+  defect correction near the finite-difference step floor. If a pass does not strictly decrease
+  `‖F(x) + J(x) d‖` (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold,
+  `refine!!` returns the best direction reached with `failed = true`. In `Newton` with a
   mixed-precision linear solver (`TF ≠ T`), a failed refinement on a reused factor (`reuse = k`,
   `age > 0`) first triggers an early refactorisation at the current iterate in `TF` (`age` reset)
   and retries refinement; if refinement fails on a fresh `TF` factor, `Newton` promotes the
@@ -873,5 +877,5 @@ so that a compat-only bump can be told apart from an interface change.
   `max(√eps(R), 1e-4)`: a large linear residual promotes the factorisation to `T` with
   `promoted = true`, whereas an accurate linear model with non-decreasing nonlinear residual is
   classified as the precision floor of `F` and terminates with `STALLED` and `promoted = false`.
-  `scripts/mixed_refinement_eta.jl` sweeps `η ∈ (1e-1, 1e-2, 1e-3, 1e-4)` across conditioned
-  nonlinear problems in R1 and R3.
+  `scripts/mixed_refinement_eta.jl` sweeps `η ∈ (1e-1, 1e-2, 1e-3, 1e-4, 1e-6, √eps(Float64))`
+  across conditioned nonlinear problems in R1 and R3.

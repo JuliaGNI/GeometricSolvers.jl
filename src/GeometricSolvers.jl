@@ -4,7 +4,7 @@ solvers run on the CPU and on CUDA, ROCm and Metal devices through KernelAbstrac
 """
 module GeometricSolvers
 
-using ADTypes: AbstractADType, AutoForwardDiff
+using ADTypes: AbstractADType, AutoFiniteDiff, AutoForwardDiff
 using Adapt: Adapt
 import CommonSolve: init, solve, solve!
 using DifferentiationInterface: DifferentiationInterface as DI

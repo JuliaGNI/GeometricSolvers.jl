@@ -70,3 +70,5 @@ for M in (:LUFactorization, :QRFactorization, :SVDFactorization)
         @inline working_linsolve(::$M) = $M{Nothing}()
     end
 end
+
+@inline promote_linsolve(m::LinearMethod, ::Type{T}) where {T} = working_linsolve(m)

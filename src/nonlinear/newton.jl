@@ -92,6 +92,9 @@ end
 Adapt.@adapt_structure Newton
 
 @inline function newton_ad_preps(m::Newton, prob::NonlinearProblem, Fx, x, p)
+    if m.refinement isa Refinement && m.jacobian isa AutoFiniteDiff
+        throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
+    end
     if m.jacobian === nothing && prob.J === nothing
         prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
         return prep, prep

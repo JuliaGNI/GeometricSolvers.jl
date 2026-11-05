@@ -1,10 +1,15 @@
 """
-    Refinement(maxiter = 2; η = 1e-3)
+    Refinement(T = Float64; η = √eps(real(T)), maxiter = 5)
+    Refinement(maxiter; η = √eps(Float64))
     Refinement(maxiter, η)
 
 Iterative refinement of the linear direction `d` in [`Newton`](@ref) using the existing factor
 `fac` and matrix-free Jacobian-vector products [`jvp!!`](@ref) in the working precision `T` of the
 problem.
+
+The keyword constructor accepts `η` (or its ASCII alias `eta`) and `maxiter` (or `max_iterations`),
+defaulting to `η = √eps(float(real(T)))` and `maxiter = 5`, and the properties `.eta` and
+`.max_iterations` alias `.η` and `.maxiter`.
 
 At each inner pass (`1 ≤ iter ≤ maxiter`), `refine!!` forms the linear residual
 `r = -F(x) - J(x) d` in `T`, solves `fac \\ r` in the factor precision `TF` for the correction
@@ -38,12 +43,35 @@ function Refinement(maxiter::Integer, η::Real)
     return Refinement{R}(Int32(maxiter), R(η))
 end
 
-function Refinement(maxiter::Integer; η::Real = 1e-3)
-    return Refinement(maxiter, η)
+function Refinement(maxiter::Integer; η = nothing, eta = nothing)
+    η !== nothing && eta !== nothing &&
+        throw(ArgumentError("Refinement: pass either η or eta, not both"))
+    return Refinement(maxiter, something(η, eta, sqrt(eps(Float64))))
 end
 
-function Refinement(; maxiter::Integer = 2, η::Real = 1e-3)
-    return Refinement(maxiter, η)
+function Refinement(::Type{T} = Float64;
+        η = nothing,
+        eta = nothing,
+        maxiter = nothing,
+        max_iterations = nothing) where {T}
+    η !== nothing && eta !== nothing &&
+        throw(ArgumentError("Refinement: pass either η or eta, not both"))
+    maxiter !== nothing && max_iterations !== nothing &&
+        throw(ArgumentError("Refinement: pass either maxiter or max_iterations, not both"))
+    R = float(real(T))
+    η_val = something(η, eta, sqrt(eps(R)))
+    maxiter_val = something(maxiter, max_iterations, Int32(5))
+    return Refinement(maxiter_val, η_val)
+end
+
+@inline function Base.getproperty(ref::Refinement, s::Symbol)
+    s === :eta && return getfield(ref, :η)
+    s === :max_iterations && return getfield(ref, :maxiter)
+    return getfield(ref, s)
+end
+
+function Base.propertynames(::Refinement, ::Bool = false)
+    return (:maxiter, :η, :eta, :max_iterations)
 end
 
 Adapt.@adapt_structure Refinement

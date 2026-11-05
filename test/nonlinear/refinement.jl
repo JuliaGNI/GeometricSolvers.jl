@@ -1,6 +1,6 @@
+using ADTypes: AutoFiniteDiff
 using Adapt: adapt
 using GeometricSolvers
-using KernelAbstractions: get_backend
 using LinearAlgebra: Diagonal, norm
 using StaticArrays: SMatrix, SVector
 using Test
@@ -110,9 +110,21 @@ end
 @testset "Refinement and QuasiNewton constructors" begin
     ref = Refinement()
     @test ref isa Refinement{Float64}
-    @test ref.maxiter === Int32(2)
-    @test ref.η === 1e-3
+    @test ref.maxiter === Int32(5)
+    @test ref.η === sqrt(eps(Float64))
+    @test ref.eta === ref.η
+    @test ref.max_iterations === ref.maxiter
+    @test propertynames(ref) == (:maxiter, :η, :eta, :max_iterations)
     @test isbits(ref)
+
+    ref_f32 = Refinement(Float32)
+    @test ref_f32 isa Refinement{Float32}
+    @test ref_f32.maxiter === Int32(5)
+    @test ref_f32.η === sqrt(eps(Float32))
+
+    ref_kw = Refinement(; eta = 1e-3, max_iterations = 4)
+    @test ref_kw.maxiter === Int32(4)
+    @test ref_kw.η === 1e-3
 
     ref2 = Refinement(3; η = 1e-2)
     @test ref2.maxiter === Int32(3)
@@ -125,6 +137,11 @@ end
 
     @test_throws ArgumentError Refinement(0)
     @test_throws ArgumentError Refinement(-2)
+    @test_throws ArgumentError Refinement(; η = 0.0)
+    @test_throws ArgumentError Refinement(; η = 1.0)
+    @test_throws ArgumentError Refinement(; maxiter = 0)
+    @test_throws ArgumentError Refinement(; η = 1e-3, eta = 1e-3)
+    @test_throws ArgumentError Refinement(; maxiter = 2, max_iterations = 2)
     @test_throws ArgumentError Refinement(2; η = 0.0)
     @test_throws ArgumentError Refinement(2; η = -1e-3)
     @test_throws ArgumentError Refinement(2; η = 1.0)
@@ -135,9 +152,17 @@ end
     for R in REAL_ELTYPES
         adapted = adapt(GS.ToReal{R}(), ref)
         @test adapted isa Refinement{R}
-        @test adapted.maxiter === Int32(2)
-        @test adapted.η === R(1e-3)
+        @test adapted.maxiter === Int32(5)
+        @test adapted.η === R(sqrt(eps(Float64)))
     end
+
+    @test GS.promote_linsolve(LUFactorization(Float32), Float64) === LUFactorization()
+
+    prob_fd = NonlinearProblem((F, x, p) -> (F .= x .^ 2 .- 2.0; F))
+    @test_throws ArgumentError init(
+        prob_fd,
+        Newton(; jacobian = AutoFiniteDiff(), refinement = Refinement()),
+        [1.5, 1.5])
 
     qn = QuasiNewton(3)
     @test qn isa Newton
