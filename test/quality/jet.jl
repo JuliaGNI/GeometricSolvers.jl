@@ -24,10 +24,7 @@ const SYNC = "the backend package defines `synchronize` on a `GPU` backend"
 # JET's message, neither of which holds a line number, with the reason it is not a defect.
 const KNOWN_FALSE_POSITIVES = [
     (f = "_launch!", msg = "gpu__solve_kernel!", reason = LAUNCH),
-    (f = "_launch!", msg = "`synchronize(::KernelAbstractions.GPU)`", reason = SYNC),
-    (f = "ka_svd!", msg = "`synchronize(::KernelAbstractions.GPU)`", reason = SYNC),
-    (f = "ka_svd_backsolve!",
-        msg = "`synchronize(::KernelAbstractions.GPU)`", reason = SYNC)
+    (f = "_launch!", msg = "`synchronize(::KernelAbstractions.GPU)`", reason = SYNC)
 ]
 
 # The name of the function of a report's innermost frame, with the `#name#n` of a keyword

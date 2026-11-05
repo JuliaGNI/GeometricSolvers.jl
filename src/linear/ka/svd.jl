@@ -169,7 +169,7 @@ end
 
 ka_unwrap_val(::Val{N}) where {N} = N
 
-function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R},
+function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
         VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
         e::Int, neg_e::Int) where {F, R}
     n = size(U, 1)
@@ -281,7 +281,9 @@ end
 # `σ̂` once the kernel that writes `tmp` has run. The reduction runs over the whole of both, of
 # length `n` on a device, and not over views of their first `rank` entries, so that only device
 # arrays reach it: past the rank `tmp` holds the zero that the kernel wrote, which adds nothing.
-function ka_divisor_exponent(backend, fac::DeviceSVD, ::Type{T}, n::Int) where {T}
+function ka_divisor_exponent(
+        fac::DeviceSVD{<:AbstractGPUArray}, ::Type{T}, n::Int) where {T}
+    backend = get_backend(fac.U)
     isgpu(backend) && synchronize(backend)
     c = coordinate_bound(T, n)
     R = real(T)
@@ -292,16 +294,17 @@ end
 
 # The solve with the factors of `J / 2^e` divides by their singular values `σ̂`, the
 # same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ d`; returns `t`.
-function ka_svd_backsolve!(fac::DeviceSVD, d::AbstractVector{T}, shift::Bool) where {T <:
-                                                                                     Number}
+function ka_svd_backsolve!(
+        fac::DeviceSVD{<:AbstractGPUArray}, d::AbstractVector{T}, shift::Bool) where {T <:
+                                                                                      Number}
     n = length(d)
     n == 0 && return 0
     # a failed factor, whose `σ̂` can hold a finite leading value beside a `NaN`, and a zero
     # matrix give the zero step; `rank` is a host field, so this reads no device array
     iszero(fac.rank) && (fill!(d, zero(T)); return 0)
-    backend = get_backend(d)
+    backend = get_backend(fac.U)
     ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, d, n, fac.rank; ndrange = n)
-    t = shift ? ka_divisor_exponent(backend, fac, T, n) : 0
+    t = shift ? ka_divisor_exponent(fac, T, n) : 0
     ka_svd_divide_kernel!(backend)(fac.tmp, fac.σ̂, fac.rank, t; ndrange = fac.rank)
     ka_svd_v_mul_kernel!(backend)(d, fac.VT, fac.tmp, n; ndrange = n)
     isgpu(backend) && synchronize(backend)
@@ -332,7 +335,7 @@ end
 end
 
 function ka_svd_nullnorm!(
-        out::AbstractVector{TF}, fac::DeviceSVD{<:AbstractMatrix{TF}},
+        out::AbstractVector{TF}, fac::DeviceSVD{<:AbstractGPUArray{TF, 2}},
         r::AbstractVector{TF}, rk::Int) where {TF}
     n = length(r)
     n == 0 && return zero(real(TF))
