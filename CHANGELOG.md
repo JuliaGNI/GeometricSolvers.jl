@@ -11,6 +11,30 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
+  `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
+  extension `GeometricSolversSparspakExt`** (decision 53 of the design). `NonlinearProblem{F, J, P
+  <: Union{Nothing, AbstractMatrix}}` gains a third field `jacobian_prototype::P` defaulting to
+  `nothing` by keyword (`NonlinearProblem(F, J = nothing; jacobian_prototype = nothing)`), so
+  `NonlinearProblem(F)` and `NonlinearProblem(F, J)` remain `isbits` when `F` and `J` are `isbits`.
+  `GeometricSolvers.init_linear(method, pattern, x)` dispatches on `(method, pattern, x)` (with
+  `dense_factor` forwarding `jacobian_prototype(prob)` and `Newton`'s `init_factor` forwarding
+  `jacobian_pattern(prob, jacprep)`), building dense host and device factors when `pattern ===
+  nothing`. When `Sparspak` (`0.3.15`) is loaded, `GeometricSolversSparspakExt` defines `SparspakLU`
+  and extends `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T}) where
+  {T <: AbstractFloat}`, `factorize!!` and `ldiv!!`: `init_linear` allocates a `similar(P, T)`
+  buffer (never mutating `P`), records `colptr` and `rowval`, and runs symbolic ordering and
+  symbolic factorisation once via `sparspaklu(factors; factorize = false)`; `factorize!!` checks
+  that the sparsity pattern matches `jacobian_prototype`, reuses the symbolic factorisation via
+  `sparspaklu!(lu, factors; allow_pattern_change = false)`, catches `ErrorException` from a zero
+  pivot at row 1, and checks `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz` and
+  `lu.slvr.unz` so singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR` without
+  throwing. In `prepare_ad`, an `AutoSparse` backend paired with a non-`nothing`
+  `jacobian_prototype` validates `size(P) == (length(r), length(x))` and wraps `P` in
+  `ADTypes.KnownJacobianSparsityDetector(P)` for column-coloured sparse AD via
+  DifferentiationInterface, while `ChunkedForwardDiff`'s `jacobian!!` is restricted to
+  `J::DenseMatrix`.
+
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use
   workgroup reductions and column-parallel triangular solves** (decision 48 of the design).

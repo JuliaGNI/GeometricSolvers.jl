@@ -293,11 +293,22 @@ end
 """
     dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
-Build the dense factor [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a host
-vector `x`, or the device factor [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on
-a device vector `x::AbstractGPUArray`, for `method`.
+Build the linear factor for `method` on `x` using `jacobian_prototype(prob)`.
 """
-function dense_factor(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(m::LinearMethod, prob, x::AbstractVector, p)
+    init_linear(m, jacobian_prototype(prob), x)
+end
+
+"""
+    init_linear(method::LinearMethod, pattern, x::AbstractVector)
+
+Build the linear factor for `method` on `x`: the dense host factor [`DenseLU`](@ref),
+[`DenseQR`](@ref) or [`DenseSVD`](@ref) or device factor [`DeviceLU`](@ref), [`DeviceQR`](@ref) or
+[`DeviceSVD`](@ref) when `pattern === nothing`, or an extension's sparse factor when `pattern` is
+a sparse matrix prototype.
+"""
+function init_linear(m::LUFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
+                                                                                 Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -306,8 +317,8 @@ function dense_factor(m::LUFactorization, prob, x::AbstractVector{T}, p) where {
     return DenseLU(factors, ipiv, rhs, 0, 0)
 end
 
-function dense_factor(
-        m::LUFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+function init_linear(
+        m::LUFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -317,7 +328,8 @@ function dense_factor(
     return DeviceLU(factors, ipiv, rhs, 0, 0, status)
 end
 
-function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function init_linear(m::QRFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
+                                                                                 Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -327,8 +339,8 @@ function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end
 
-function dense_factor(
-        m::QRFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+function init_linear(
+        m::QRFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -338,8 +350,8 @@ function dense_factor(
     return DeviceQR(factors, τ, rhs, 0, 0, status)
 end
 
-function dense_factor(
-        m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function init_linear(
+        m::SVDFactorization, ::Nothing, x::AbstractVector{T}) where {T <: Number}
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)
@@ -354,8 +366,8 @@ function dense_factor(
     return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0, 0)
 end
 
-function dense_factor(
-        m::SVDFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+function init_linear(
+        m::SVDFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)
