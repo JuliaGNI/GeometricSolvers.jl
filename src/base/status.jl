@@ -14,19 +14,26 @@ is in `R = real(T)` for the element type `T` of the iterate.
   one count.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
-- `rank::Int32`: the numerical rank of the last SVD factorisation, or `Int32(-1)` when no SVD
-  factorisation completed.
-- `nullnorm::R`: ``\\|(I - U_r U_r^H) F(x)\\|`` from the last SVD factorisation, with ``U_r`` the
-  first `rank` columns of ``U``, or `R(NaN)` when no SVD factorisation completed.
-- `gradratio::R`: ``\\|J(x)^H F(x)\\| / (\\|J(x)\\|_F \\|F(x)\\|)`` at the last Jacobian
-  evaluation, `zero(R)` when ``\\|J(x)\\|_F = 0`` or ``\\|F(x)\\| = 0``, or `R(NaN)` when no
-  Jacobian was evaluated.
+- `rank::Int32`: the numerical rank from the last fresh SVD factorisation, or `Int32(-1)`
+  when no SVD factorisation completed.
+- `nullnorm::R`: ``\\|(I - U_r U_r^H) F(x_k)\\|`` at the iterate ``x_k`` of the last fresh
+  SVD factorisation, with ``U_r`` the first `rank` columns of ``U``, or `R(NaN)` when no
+  SVD factorisation completed.
+- `gradratio::R`: ``\\|J(x_k)^H F(x_k)\\| / (\\|J(x_k)\\|_F \\|F(x_k)\\|)`` at the iterate
+  ``x_k`` of the last fresh factorisation, `zero(R)` when ``\\|J(x_k)\\|_F = 0`` or
+  ``\\|F(x_k)\\| = 0``, or `R(NaN)` when no Jacobian was factorised.
 
-On a non-converged [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any nonzero scalar Jacobian
-has `gradratio == 1` and `rank == 1`), the diagnostics classify the failure mode: `nullnorm > 0`
-with `rank < n` indicates a residual outside the range of `J(x)`; `gradratio ≈ 0` with `fnorm > 0`
-indicates a stationary point of the merit where `F(x) ≠ 0`; and `gradratio` bounded away from zero
-with `nullnorm ≈ 0` indicates an in-range residual stalled by conditioning or step acceptance.
+The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
+``x`` at return. For a [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any nonzero scalar
+Jacobian has `gradratio == 1` and `rank == 1`), they classify the outcome and a `STALLED` or
+`MAXITERS` return: a consistent rank-deficient system that converged has a small residual
+(`fnorm` small) and nothing outside the range (`rank < n`, `nullnorm ≈ 0`); a least-squares
+point with no root has a ratio near zero (`gradratio ≈ 0`, `fnorm > 0`) and the residual
+outside the range (`rank < n`, ``\\text{nullnorm} \\approx \\|F(x_k)\\| > 0``); a stall in
+nearly singular directions has the residual inside the range (`nullnorm ≈ 0`) at a fine SVD
+cutoff and outside it (`rank < n`, ``\\text{nullnorm} \\approx \\|F(x_k)\\|``) at a coarse
+cutoff; and an in-range stall from conditioning or step acceptance has `gradratio` bounded
+away from zero and `nullnorm ≈ 0`.
 
 The predicates `GeometricSolvers.isconverged` and `GeometricSolvers.isstalled` read the code. They
 are not exported, because they are generic names that a package doing `using GeometricSolvers`

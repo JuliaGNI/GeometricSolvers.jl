@@ -39,11 +39,17 @@ regularize!!
 
 Every type on this page is `isbits`, so a kernel can hold it, and every real field is in
 `R = real(T)` for the element type `T` of the iterate. [`SolverStatus`](@ref) also carries the
-range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) of the last [`Newton`](@ref)
-factorisation: for `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1`),
-`nullnorm > 0` with `rank < n` classifies a residual outside the range of `J(x)`, `gradratio ≈ 0`
-with `fnorm > 0` a local minimum of the merit, and `gradratio` bounded away from zero with
-`nullnorm ≈ 0` an ill-conditioned or step-limited iterate.
+range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
+``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return.
+For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1` and `rank = 1`),
+they classify the outcome and a `STALLED` or `MAXITERS` return: a consistent rank-deficient
+system that converged has a small residual (`fnorm` small) and nothing outside the range
+(`rank < n`, `nullnorm ≈ 0`); a least-squares point with no root has `gradratio ≈ 0` (`fnorm > 0`)
+and the residual outside the range (`rank < n`, ``\text{nullnorm} \approx \|F(x_k)\| > 0``); a
+stall in nearly singular directions has the residual inside the range (`nullnorm ≈ 0`) at a fine
+SVD cutoff and outside it (`rank < n`, ``\text{nullnorm} \approx \|F(x_k)\|``) at a coarse one;
+and an in-range stall from conditioning or step acceptance has `gradratio` bounded away from zero
+with `nullnorm ≈ 0`.
 
 ```@docs
 ReturnCode
