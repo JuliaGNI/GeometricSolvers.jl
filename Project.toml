@@ -16,9 +16,12 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [weakdeps]
+SparseConnectivityTracer = "9f842d2f-2579-4b1d-911e-f412cf18a3f5"
+SparseMatrixColorings = "0a514795-09f3-496d-8182-132a7b665d35"
 Sparspak = "e56a9233-b9d6-4f03-8d0f-1825330902ac"
 
 [extensions]
+GeometricSolversSparseADExt = ["SparseConnectivityTracer", "SparseMatrixColorings"]
 GeometricSolversSparspakExt = "Sparspak"
 
 [compat]
@@ -31,6 +34,8 @@ GPUArraysCore = "0.2"
 KernelAbstractions = "0.9.38"
 LinearAlgebra = "1"
 SparseArrays = "1"
+SparseConnectivityTracer = "1"
+SparseMatrixColorings = "0.4"
 Sparspak = "0.3.15"
 StaticArrays = "1.9.8"
 julia = "1.13"

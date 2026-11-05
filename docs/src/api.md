@@ -86,13 +86,15 @@ A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense
 with partial pivoting and `Int32` pivots, [`StaticQR`](@ref) Householder QR without column
 pivoting, and [`StaticSVD`](@ref) a one-sided Jacobi singular value decomposition whose solve
 truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve
-finite. For a vector state (R3) with no prototype (`jacobian_prototype === nothing`),
+finite. For a vector state (R3) with no sparse pattern (`jacobian_pattern(prob, jacprep) === nothing`),
 [`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a
 host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
 `AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
 through LAPACK on the host, and through `KernelAbstractions` on a device. When `Sparspak` is loaded
-and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
-AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+and [`jacobian_pattern`](@ref) is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
+AbstractFloat`) — from an explicit `jacobian_prototype`, or detected automatically by
+`GeometricSolversSparseADExt` when `SparseConnectivityTracer` and `SparseMatrixColorings` are
+loaded — the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
 workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for `LUFactorization{Nothing}()`;
 the first `factorize!!` call runs symbolic ordering and symbolic factorisation, and subsequent
 `factorize!!` and `ldiv!!` calls reuse them across Newton steps.
@@ -209,6 +211,17 @@ matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@r
 preparation and no second `n × n` buffer. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
 then dispatch on the object the preparation returned, so the solver makes no runtime choice and
 carries no `ad` keyword.
+
+For a sparse R3 Jacobian on a host `Array` iterate, an `AutoSparse` back end takes either an
+explicit `jacobian_prototype` on the [`NonlinearProblem`](@ref) (which [`prepare_ad`](@ref) wraps in
+`KnownJacobianSparsityDetector`) or, when `SparseConnectivityTracer` and `SparseMatrixColorings` are
+loaded and `jacobian_prototype === nothing`, a sparsity detector such as `TracerSparsityDetector()`
+alongside a colouring algorithm such as `GreedyColoringAlgorithm()`. The
+`GeometricSolversSparseADExt` package extension then extracts the detected pattern from the prepared
+[`DIJacobian`](@ref) via [`jacobian_pattern`](@ref) as a `SparseMatrixCSC{Bool, Int}` so
+[`init_linear`](@ref) allocates the sparse factor and Jacobian buffer without a user-supplied
+prototype; when an explicit `jacobian_prototype` is also given, the explicit prototype takes
+precedence.
 
 In R3 the iterate is a vector; another shape raises `ArgumentError` where the preparation is
 built. The parameters may be replaced on every call, which is what lets one preparation serve a
