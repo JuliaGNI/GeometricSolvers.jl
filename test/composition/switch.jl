@@ -9,7 +9,7 @@ using Adapt: Adapt
 using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
-using LinearAlgebra: BLAS
+using LinearAlgebra: BLAS, diagind
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -46,6 +46,8 @@ function (::R3QuadSwJ)(J, x, p)
         @inbounds for i in axes(J, 1)
             J[i, i] = 2 * x[i]
         end
+    else
+        view(J, diagind(J)) .= 2 .* x
     end
     return J
 end
@@ -148,7 +150,7 @@ end
     prob_lin = NonlinearProblem((x, p) -> x)
     x₀ = SVector{2, T}(T(100), zero(T))
     m1 = Picard(; damping = 0.9)
-    m2 = Picard(; damping = 3.0, globalization = Backtracking())
+    m2 = Picard(; damping = 11.0, globalization = Backtracking())
     sw = Adapt.adapt(ToReal{T}(), Switch(m1, m2; threshold = 0.2))
 
     Fx₀ = residual!!(nothing, prob_lin, x₀, nothing)
@@ -159,10 +161,11 @@ end
     @test !st.switched
     @test x₁ === SVector{2, T}(T(10), zero(T))
     # Step 2: ||Fx1|| = 10 <= 20 -> latches switched = true, sync_merit sets m2.merit = 100,
-    # and m2 backtracks from d = -30 to α = 0.5 -> x2 = (-5, 0)
+    # and m2 backtracks from d = -110 to α = 0.1 -> x2 ≈ (-1, 0)
     x₂, _, st, _ = step!!(st, sw, prob_lin, x₁, F₁, nothing)
     @test st.switched
-    @test x₂ === SVector{2, T}(T(-5), zero(T))
+    @test isapprox(x₂[1], T(-1); rtol = 8 * eps(T))
+    @test iszero(x₂[2])
 
     # Diagnostics: before switch forwards `first`, after switch forwards `second`
     prob_q = NonlinearProblem(R1QuadSwF(T(2), T(3)))
@@ -236,6 +239,9 @@ end
 
     X_batch = [x₀_s for _ in 1:4]
     S_batch = Vector{SolverStatus{R}}(undef, 4)
-    counts = solve_batch!(X_batch, S_batch, prob_s, m)
+    solve_batch!(X_batch, S_batch, prob_s, m)
+    @test all(s -> s.code == SUCCESS, S_batch)
+    X_batch2 = [x₀_s for _ in 1:4]
+    counts = solve_batch!(X_batch2, prob_s, m)
     @test counts.SUCCESS == 4
 end

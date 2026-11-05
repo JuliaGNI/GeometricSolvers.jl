@@ -8,7 +8,7 @@ using Adapt: Adapt
 using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
-using LinearAlgebra: BLAS
+using LinearAlgebra: BLAS, diagind
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -45,6 +45,8 @@ function (::R3QuadRepJ)(J, x, p)
         @inbounds for i in axes(J, 1)
             J[i, i] = 2 * x[i]
         end
+    else
+        view(J, diagind(J)) .= 2 .* x
     end
     return J
 end
@@ -205,6 +207,9 @@ end
     m_batch = Repeat(Newton(; globalization = Static()), 2)
     X_batch = [x₀_s for _ in 1:4]
     S_batch = Vector{SolverStatus{R}}(undef, 4)
-    counts = solve_batch!(X_batch, S_batch, prob_s, m_batch)
+    solve_batch!(X_batch, S_batch, prob_s, m_batch)
+    @test all(s -> s.code == SUCCESS, S_batch)
+    X_batch2 = [x₀_s for _ in 1:4]
+    counts = solve_batch!(X_batch2, prob_s, m_batch)
     @test counts.SUCCESS == 4
 end

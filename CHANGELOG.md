@@ -844,7 +844,9 @@ so that a compat-only bump can be told apart from an interface change.
   and $b$ (`SVector{m, R}`) are formed by `rdot` with zero allocations; in R3, $\delta F_i$ are
   stored in `work.ΔF` ($n \times m$), $G = \operatorname{Re}(\Delta F^{\mathrm{H}} \Delta F)$ and
   $b = -\operatorname{Re}(\Delta F^{\mathrm{H}} F(x))$ are formed by `mul!!`, and on a device array
-  the small $m \times m$ and $m$ buffers are copied to the host once per step. Under the $\sin^2\theta$
+  the small $m \times m$ and $m$ buffers are copied to the host once per step. When a candidate has
+  already reached an exact root ($\|F(x_{\text{best}})\| = 0$), `OptimalWeights` assigns exact unit
+  weight $w_{k_{\text{best}}} = 1$ without Tikhonov regularisation. Under the $\sin^2\theta$
   rank rule ($\tau_{\sin^2} = 10^{-3}$), for $m = 2$,
   $\sin^2\theta = 1 - (G_{12} / G_{11})(G_{12} / G_{22})$ (and for $m \ge 3$, incremental Cholesky
   ordered by non-decreasing $\|F(x_i)\|$, with ties keeping the lowest member index) drops
@@ -861,11 +863,13 @@ so that a compat-only bump can be told apart from an interface change.
   $(x, F(x))$ (stepping in preallocated per-member copies `(xs[i], Fxs[i])` in R3 so `x` is not
   mutated while members run), returns the first hard failure (`SINGULAR`, `NONFINITE`, or
   `LINESEARCH_FAILED` with zero `stepnorm`) with `stepnorm = 0` when any member hard-fails, and
-  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$, $x_+ = x + d$ and $F_+ = F(x_+, p)$. Under
+  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$, $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$
+  and $F_+ = F(x_+, p)$. Under
   `OptimalWeights`, the PETSc safeguard checks whether `!isfinite(‖F(x₊)‖)`,
   $\sum_i |w_i| < 0.1$, or $\|F(x_+)\| > \rho \min_i \|F(x_i)\|$; when triggered, it replaces
   $(x_+, F_+)$ with the candidate $(x_{\text{best}}, F(x_{\text{best}}))$ of smallest residual norm
-  (ties to lowest index) and increments `step_failures` by 1.
+  (ties to lowest index) and increments `step_failures` by 1, superseding a `rank_fallback` that
+  fired on the same step so that one composite fallback is counted once.
   `Multiplicative(m₁, m₂, ...)` (`fieldcount(M) >= 1`, else `ArgumentError`) threads $(x, F(x))$
   sequentially through its members in one outer step, calling `sync_merit` before each member step
   so a started line-search member updates its stored baseline merit $\phi(x) = \|F(x)\|_2^2$ to the

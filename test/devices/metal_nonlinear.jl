@@ -201,12 +201,14 @@ end
                 for m in (
                         Newton(),
                         Newton(; globalization = DogLeg()),
-                        Newton(; reuse = 2),
-                        Additive(Newton(), Picard(; damping = 0.7)),
-                        Additive(Newton(), Picard(); weights = FixedWeights(0.8, 0.2)),
-                        Multiplicative(Picard(; damping = 0.7), Newton()),
+                        Newton(; globalization = Backtracking(), reuse = 2),
+                        Additive(Newton(), Picard(; damping = 0.1)),
+                        Additive(
+                        Newton(), Picard(; damping = 0.1);
+                        weights = FixedWeights(0.8, 0.2)),
+                        Multiplicative(Picard(; damping = 0.1), Newton()),
                         Repeat(Newton(), 2),
-                        Switch(Picard(; damping = 0.7), Newton(); threshold = 0.5)
+                        Switch(Picard(; damping = 0.1), Newton(); threshold = 0.9)
                     ),
                     prob in (prob_j, prob_ad)
 

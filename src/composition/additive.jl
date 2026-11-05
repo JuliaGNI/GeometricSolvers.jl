@@ -1,6 +1,8 @@
 # The `Additive` combinator: steps `m` members independently from `(x, Fx)` and combines
 # their candidate directions with `OptimalWeights` or `FixedWeights`.
 
+const WeightRule = Union{OptimalWeights, FixedWeights}
+
 """
     Additive(m₁, m₂, ...; weights = OptimalWeights())
     Additive((m₁, m₂, ...), weights = OptimalWeights())
@@ -12,8 +14,6 @@ Parallel nonlinear combinator that runs one step of each member from the same it
 iterate that violates the PETSc safeguard falls back to the candidate with the smallest
 residual norm and increments `step_failures`.
 """
-const WeightRule = Union{OptimalWeights, FixedWeights}
-
 struct Additive{M <: Tuple, W <: WeightRule}
     members::M
     weights::W
@@ -28,8 +28,9 @@ struct Additive{M <: Tuple, W <: WeightRule}
     end
 end
 
-function Additive(members::Tuple, weights::WeightRule = OptimalWeights())
-    return Additive{typeof(members), typeof(weights)}(members, weights)
+function Additive(
+        members::M, weights::W = OptimalWeights()) where {M <: Tuple, W <: WeightRule}
+    return Additive{M, W}(members, weights)
 end
 
 function Additive(members...; weights::WeightRule = OptimalWeights())
@@ -110,39 +111,44 @@ end
            (info.code == LINESEARCH_FAILED && iszero(info.stepnorm))
 end
 
-@inline function first_failure_code(infos::NTuple{M, StepInfo{R}}) where {M, R}
-    @inbounds for i in 1:M
+@inline function first_failure_code(
+        infos::Tuple{StepInfo{R}, Vararg{StepInfo{R}, M}}) where {M, R}
+    @inbounds for i in eachindex(infos)
         is_hard_failure(infos[i]) && return infos[i].code
     end
     return SUCCESS
 end
 
-@inline function sum_failures(infos::NTuple{M, StepInfo{R}}) where {M, R}
+@inline function sum_failures(
+        infos::Tuple{StepInfo{R}, Vararg{StepInfo{R}, M}}) where {M, R}
     s = Int32(0)
-    @inbounds for i in 1:M
+    @inbounds for i in eachindex(infos)
         s += infos[i].failures
     end
     return s
 end
 
-@inline function any_promoted(infos::NTuple{M, StepInfo{R}}) where {M, R}
-    @inbounds for i in 1:M
+@inline function any_promoted(
+        infos::Tuple{StepInfo{R}, Vararg{StepInfo{R}, M}}) where {M, R}
+    @inbounds for i in eachindex(infos)
         infos[i].promoted && return true
     end
     return false
 end
 
-@inline function any_limited(infos::NTuple{M, StepInfo{R}}) where {M, R}
-    @inbounds for i in 1:M
+@inline function any_limited(
+        infos::Tuple{StepInfo{R}, Vararg{StepInfo{R}, M}}) where {M, R}
+    @inbounds for i in eachindex(infos)
         infos[i].limited && return true
     end
     return false
 end
 
-@inline function best_candidate_index(fnorms::NTuple{M, R}) where {M, R <: Real}
+@inline function best_candidate_index(
+        fnorms::Tuple{R, Vararg{R, N}}) where {R <: Real, N}
     k_best = 1
     f_best = fnorms[1]
-    @inbounds for i in 2:M
+    @inbounds for i in 2:(N + 1)
         fi = fnorms[i]
         if (isfinite(fi) && !isfinite(f_best)) || (fi < f_best)
             k_best = i
@@ -223,11 +229,12 @@ end
 
 @inline function combine_directions!(
         d::AbstractArray{T}, x::AbstractArray{T},
-        xs::NTuple{M, AbstractArray{T}}, w::NTuple{M, R}) where {M, T, R <: Real}
+        xs::Tuple{AbstractArray{T}, Vararg{AbstractArray{T}, N}},
+        w::Tuple{R, Vararg{R, N}}) where {T, R <: Real, N}
     w1 = w[1]
     x1 = xs[1]
     @. d = w1 * (x1 - x)
-    @inbounds for i in 2:M
+    @inbounds for i in 2:(N + 1)
         wi = w[i]
         xi = xs[i]
         @. d = d + wi * (xi - x)
@@ -258,7 +265,7 @@ function step!!(
         w, rank_fallback = optimal_weights(nothing, Fx, Fxs_cand, fnorms)
     end
     d = _combine_r1_dir(x, xs_cand, w)
-    x₊ = x + d
+    x₊ = update_iterate!!(nothing, x, one(R), d)
     F₊ = residual!!(nothing, prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     safeguard_fallback = false
@@ -274,6 +281,7 @@ function step!!(
         end
     end
     stepnorm = rnorm(x₊ - x)
+    rank_fallback = rank_fallback & !safeguard_fallback
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
     info_ok = StepInfo{R}(
         SUCCESS, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
@@ -321,6 +329,7 @@ function step!!(
     stepnorm = rnorm(state.d)
     x_out = copy!!(x, x₊)
     Fx_out = copy!!(Fx, F₊)
+    rank_fallback = rank_fallback & !safeguard_fallback
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
     info_ok = StepInfo{R}(
         SUCCESS, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))

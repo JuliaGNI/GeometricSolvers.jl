@@ -9,16 +9,16 @@ using Adapt: Adapt
 using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
-using LinearAlgebra: BLAS, Diagonal
+using LinearAlgebra: BLAS, Diagonal, diagind
 using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, LUFactorization, Multiplicative, NONFINITE, Newton,
-                        NonlinearProblem, Options, Picard, SINGULAR, SVDFactorization,
-                        SUCCESS, SolverStatus, Static, ToReal, finish!!, init, init_state,
-                        residual!!, rnorm, solve, solve!, solve_batch!, solve!!, start!!,
-                        step!!
+using GeometricSolvers: Additive, Backtracking, LUFactorization, Multiplicative, NONFINITE,
+                        Newton, NonlinearProblem, Options, Picard, Repeat, SINGULAR,
+                        SVDFactorization, SUCCESS, SolverStatus, Static, Switch, ToReal,
+                        finish!!, init, init_state, residual!!, rnorm, solve, solve!,
+                        solve_batch!, solve!!, start!!, step!!, sync_merit
 
 include("../helpers/matrix.jl")
 
@@ -80,6 +80,8 @@ function (::R3QuadMultJ)(J, x, p)
         @inbounds for i in axes(J, 1)
             J[i, i] = 2 * x[i]
         end
+    else
+        view(J, diagind(J)) .= 2 .* x
     end
     return J
 end
@@ -140,12 +142,12 @@ end
     @test st_m.stepnorm === rnorm(x_seq - x₀_s)
 
     # Line-search member 2: sync_merit updates member 2's anchor merit from φ(x₀) = 100
-    # to φ(x₁) = 1 so member 2 backtracks when φ(x₁ + d₂) = 4 > φ(x₁) = 1 (catches MU6!)
+    # to φ(x₁) = 1 so member 2 backtracks when φ(x₁ + d₂) = 100 >= φ(x₁) = 1 (catches MU6!)
     prob_lin = NonlinearProblem((x, p) -> x)
     x₀_lin = SVector{2, T}(T(10), zero(T))
     m1_ls = Adapt.adapt(ToReal{R}(), Picard(; damping = 0.9))
     m2_ls = Adapt.adapt(
-        ToReal{R}(), Picard(; damping = 3.0, globalization = Backtracking()))
+        ToReal{R}(), Picard(; damping = 11.0, globalization = Backtracking()))
     m_mult_ls = Multiplicative(m1_ls, m2_ls)
 
     st_mls = init_state(m_mult_ls, prob_lin, x₀_lin, nothing)
@@ -166,8 +168,25 @@ end
 
     @test x_mls === x2_sa
     @test F_mls === F2_sa
-    @test x_mls === SVector{2, T}(T(R(-0.5)), zero(T))
+    @test isapprox(x_mls[1], T(R(-0.1)); rtol = 8 * eps(R))
+    @test iszero(x_mls[2])
     @test info_mls.stepnorm === rnorm(x2_sa - x₀_lin)
+
+    # Recursive sync_merit through nested Additive, Multiplicative, Repeat, Switch states
+    m_nest = Adapt.adapt(
+        ToReal{R}(),
+        Multiplicative(
+            Additive(m2_ls, m1_ls),
+            Repeat(m2_ls, 2),
+            Switch(m2_ls, m2_ls; threshold = 0.5)))
+    st_nest = start!!(
+        init_state(m_nest, prob_lin, x₀_lin, nothing),
+        m_nest, prob_lin, x₀_lin, Fx₀_lin, nothing, rnorm(Fx₀_lin))
+    st_nest_sync = @inferred sync_merit(st_nest, m_nest, R(4))
+    @test st_nest_sync.states[1].states[1].merit === R(4)
+    @test st_nest_sync.states[2].state.merit === R(4)
+    @test st_nest_sync.states[3].s1.merit === R(4)
+    @test st_nest_sync.states[3].s2.merit === R(4)
 end
 
 @testset "Check 4: Pollock Picard + Newton vs Newton, $T" for T in REAL_ELTYPES
@@ -180,7 +199,9 @@ end
     m_pollock_s = Multiplicative(
         Newton(; jacobian = R1PollockA(), globalization = Static()),
         Newton(; globalization = Static()))
-    x_pol_s, st_pol_s = solve(prob_s, x₀_s, m_pollock_s; max_iterations = 15)
+    x_pol_s, st_pol_s = solve(
+        prob_s, x₀_s, m_pollock_s;
+        max_iterations = 30, f_abstol = eps(T), f_reltol = eps(T))
     @test st_pol_s.code === SUCCESS
     @test rnorm(x_pol_s) <= T(1e-7)
 
@@ -193,7 +214,9 @@ end
     m_pollock_a = Multiplicative(
         Newton(; jacobian = R3PollockA(), globalization = Static()),
         Newton(; globalization = Static()))
-    x_pol_a, st_pol_a = solve(prob_a, copy(x₀_a), m_pollock_a; max_iterations = 15)
+    x_pol_a, st_pol_a = solve(
+        prob_a, copy(x₀_a), m_pollock_a;
+        max_iterations = 30, f_abstol = eps(T), f_reltol = eps(T))
     @test st_pol_a.code === SUCCESS
     @test rnorm(x_pol_a) <= T(1e-7)
 end
@@ -277,7 +300,10 @@ end
 
     X_batch = [x₀_s for _ in 1:4]
     S_batch = Vector{SolverStatus{R}}(undef, 4)
-    counts = solve_batch!(X_batch, S_batch, prob_s, m)
-    @test counts.SUCCESS == 4
+    solve_batch!(X_batch, S_batch, prob_s, m)
+    @test all(s -> s.code == SUCCESS, S_batch)
     @test all(x -> isapprox(x, xs_full; rtol = 16 * eps(R)), X_batch)
+    X_batch2 = [x₀_s for _ in 1:4]
+    counts = solve_batch!(X_batch2, prob_s, m)
+    @test counts.SUCCESS == 4
 end

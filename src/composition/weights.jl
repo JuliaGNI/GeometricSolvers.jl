@@ -102,11 +102,16 @@ function init_weight_workspace(
         ΔF, G_dev, b_dev, G_host, b_host)
 end
 
+@inline function single_weight(::Val{M}, k::Int, val::R) where {M, R}
+    return ntuple(i -> ifelse(i == k, val, zero(R)), Val(M))
+end
+
 # Solve the small `M × M` real normal equations `G w = b` with the `sin²θ` rank rule
 # (`τ_sin2 = 1e-3`) and Tikhonov regularisation `λ = eps(R) * (tr(G_kept) / p)`.
 @inline function solve_optimal_weights(
         G::SMatrix{1, 1, R}, b::SVector{1, R},
         fnorms::NTuple{1, R}) where {R <: AbstractFloat}
+    fnorms[1] == zero(R) && return (one(R),), false
     g11 = G[1, 1]
     b1 = b[1]
     if isfinite(g11) && g11 > zero(R) && isfinite(b1)
@@ -119,6 +124,8 @@ end
 @inline function solve_optimal_weights(
         G::SMatrix{2, 2, R}, b::SVector{2, R},
         fnorms::NTuple{2, R}) where {R <: AbstractFloat}
+    fnorms[1] == zero(R) && return (one(R), zero(R)), false
+    fnorms[2] == zero(R) && return (zero(R), one(R)), false
     τ_sin2 = R(1e-3)
     g11 = G[1, 1]
     g22 = G[2, 2]
@@ -177,14 +184,15 @@ end
         end
         order = setindex(order, key, j + 1)
     end
+    fnorms[order[1]] == zero(R) && return single_weight(Val(M), order[1], one(R)), false
     if !all(isfinite, G) || !all(isfinite, b)
         k = order[1]
         gkk = G[k, k]
         bk = b[k]
-        wk = (isfinite(gkk) && gkk > zero(R) && isfinite(bk)) ?
-             (bk / (gkk * (one(R) + eps(R)))) : one(R)
-        wk = isfinite(wk) ? wk : one(R)
-        return ntuple(i -> i == k ? wk : zero(R), Val(M)), true
+        wk_nf_raw = (isfinite(gkk) && gkk > zero(R) && isfinite(bk)) ?
+                    (bk / (gkk * (one(R) + eps(R)))) : one(R)
+        wk_nf = isfinite(wk_nf_raw) ? wk_nf_raw : one(R)
+        return single_weight(Val(M), k, wk_nf), true
     end
     kept = zero(SVector{M, Int})
     L = zero(G)
@@ -226,13 +234,13 @@ end
     end
     if p == 0
         k = order[1]
-        return ntuple(i -> i == k ? one(R) : zero(R), Val(M)), true
+        return single_weight(Val(M), k, one(R)), true
     elseif p == 1
         k = kept[1]
         gkk = G[k, k]
-        wk = b[k] / (gkk * (one(R) + eps(R)))
-        wk = isfinite(wk) ? wk : one(R)
-        return ntuple(i -> i == k ? wk : zero(R), Val(M)), true
+        wk_p1_raw = b[k] / (gkk * (one(R) + eps(R)))
+        wk_p1 = isfinite(wk_p1_raw) ? wk_p1_raw : one(R)
+        return single_weight(Val(M), k, wk_p1), true
     end
     tr_kept = zero(R)
     @inbounds for c in 1:p
@@ -299,8 +307,9 @@ end
 end
 
 @inline function optimal_weights(
-        ::Nothing, Fx, Fxs::NTuple{M, Any},
-        fnorms::NTuple{M, R}) where {M, R <: AbstractFloat}
+        ::Nothing, Fx, Fxs::Tuple{Any, Vararg{Any, N}},
+        fnorms::Tuple{R, Vararg{R, N}}) where {N, R <: AbstractFloat}
+    M = N + 1
     δFs = ntuple(i -> Fxs[i] - Fx, Val(M))
     G = SMatrix{M, M, R}(ntuple(Val(M * M)) do k
         i = mod1(k, M)
@@ -314,7 +323,7 @@ end
 @inline function optimal_weights(
         work::AdditiveWeightWorkspace{M, T}, Fx::AbstractArray{T},
         Fxs::NTuple{M, AbstractArray{T}},
-        fnorms::NTuple{M, R}) where {M, T, R <: AbstractFloat}
+        fnorms::Tuple{R, Vararg{R, N}}) where {M, T, R <: AbstractFloat, N}
     fill_delta_columns!(work.ΔF, Fx, Fxs)
     mul!!(work.G_dev, work.ΔF', work.ΔF)
     mul!!(work.b_dev, work.ΔF', Fx)

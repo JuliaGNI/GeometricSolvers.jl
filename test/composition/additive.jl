@@ -9,7 +9,7 @@ using Adapt: Adapt
 using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
-using LinearAlgebra: BLAS
+using LinearAlgebra: BLAS, diagind
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -29,6 +29,10 @@ struct RecordingMember{M, X}
     inner::M
     seen_x::Base.RefValue{X}
     seen_Fx::Base.RefValue{X}
+end
+
+function Adapt.adapt_structure(to, m::RecordingMember)
+    return RecordingMember(Adapt.adapt(to, m.inner), m.seen_x, m.seen_Fx)
 end
 
 struct RecordingState{S}
@@ -83,6 +87,8 @@ function (::R3QuadJ)(J, x, p)
         @inbounds for i in axes(J, 1)
             J[i, i] = 2 * x[i]
         end
+    else
+        view(J, diagind(J)) .= 2 .* x
     end
     return J
 end
@@ -156,7 +162,11 @@ end
     _, F_N, _, _ = step!!(st_n, m_n, prob_aff, x₀, Fx₀, nothing)
     @test rnorm(F₁) <= rnorm(F_N) + 8 * eps(R) * rnorm(b)
     @test isapprox(x₁, A \ b; rtol = 16 * eps(R))
-    @test info₁.failures == Int32(0)
+    # The `ρ = 1` property of D5, exactly. A rounding-level excess of `‖F(x₊)‖` over an
+    # already-solved `‖F(x_N)‖` is a safeguard fallback, so at most that one fallback is
+    # counted (decision 25).
+    @test rnorm(F₁) <= rnorm(F_N)
+    @test info₁.failures <= Int32(1)
 
     # Scalar iterate (Number) in R1
     prob_num = NonlinearProblem((x, p) -> T(3) * x - T(6))
@@ -183,6 +193,50 @@ end
     @test rnorm(Fm₁) <= min(rnorm(F_c1), rnorm(F_c2))
     @test xm₁ === (rnorm(F_c1) <= rnorm(F_c2) ? x_c1 : x_c2)
     @test info_mis.failures == Int32(1)
+
+    # Pure safeguard fallback with non-collinear candidate residual differences
+    # (`rank_fallback == false` and `safeguard_fallback == true`)
+    function f_nc(x, p)
+        y1 = x[1] - one(T) + T(10) * x[1] * (x[1] - one(T))
+        y2 = x[2] - one(T) - T(20) * x[2] * (x[2] - T(R(0.2)))
+        return SVector{2, T}(y1, y2)
+    end
+    prob_nc = NonlinearProblem(f_nc)
+    m_nc = Adapt.adapt(ToReal{R}(), Additive(Picard(; damping = 1.0), p_02))
+    st_nc = init_state(m_nc, prob_nc, x₀, nothing)
+    Fnc₀ = residual!!(nothing, prob_nc, x₀, nothing)
+    st_nc = start!!(st_nc, m_nc, prob_nc, x₀, Fnc₀, nothing, rnorm(Fnc₀))
+    xnc₁, Fnc₁, _, info_nc = @inferred step!!(st_nc, m_nc, prob_nc, x₀, Fnc₀, nothing)
+    x_nc1 = x₀ - one(R) * Fnc₀
+    x_nc2 = x₀ - R(0.2) * Fnc₀
+    F_nc1 = residual!!(nothing, prob_nc, x_nc1, nothing)
+    F_nc2 = residual!!(nothing, prob_nc, x_nc2, nothing)
+    @test rnorm(Fnc₁) <= min(rnorm(F_nc1), rnorm(F_nc2))
+    @test xnc₁ === (rnorm(F_nc1) <= rnorm(F_nc2) ? x_nc1 : x_nc2)
+    @test info_nc.failures == Int32(1)
+
+    # A candidate that has already reached an exact root takes the exact unit weight, so
+    # the composite returns it bit for bit and counts no fallback. `F(x) = 2x - 4` from
+    # `x₀ = 1` puts `Newton` on `x = 2`, where `F(x) = 0` exactly.
+    prob_root = NonlinearProblem((x, p) -> T(2) * x - T(4))
+    x_r0 = one(T)
+    Fr0 = residual!!(nothing, prob_root, x_r0, nothing)
+    function root_step(m_raw, x₀r, F₀r)
+        m_r = Adapt.adapt(ToReal{R}(), m_raw)
+        st_r = start!!(
+            init_state(m_r, prob_root, x₀r, nothing),
+            m_r, prob_root, x₀r, F₀r, nothing, rnorm(F₀r))
+        return @inferred step!!(st_r, m_r, prob_root, x₀r, F₀r, nothing)
+    end
+    for m_raw in (
+        Additive(n_st),
+        Additive(n_st, p_02),
+        Additive(n_st, p_02, Picard(; damping = 0.5)))
+        x_r, F_r, _, info_r = root_step(m_raw, x_r0, Fr0)
+        @test x_r === T(2)
+        @test iszero(F_r)
+        @test info_r.failures == Int32(0)
+    end
 
     # Small weight L1 norm `sum(abs, w) < 0.1` also triggers PETSc safeguard
     function f_sw(x, p)
@@ -386,8 +440,12 @@ end
         # R2 solve_batch! on CPU()
         X_batch = [x₀_s for _ in 1:4]
         S_batch = Vector{SolverStatus{R}}(undef, 4)
-        counts = solve_batch!(X_batch, S_batch, prob_s, m)
-        @test counts.SUCCESS == 4
+        solve_batch!(X_batch, S_batch, prob_s, m)
+        @test all(s -> s.code == SUCCESS, S_batch)
         @test all(x -> isapprox(x, xs_full; rtol = 16 * eps(R)), X_batch)
+        X_batch2 = [x₀_s for _ in 1:4]
+        counts = solve_batch!(X_batch2, prob_s, m)
+        @test counts.SUCCESS == 4
+        @test all(x -> isapprox(x, xs_full; rtol = 16 * eps(R)), X_batch2)
     end
 end
