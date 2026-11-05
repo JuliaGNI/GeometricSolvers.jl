@@ -1,100 +1,167 @@
-# Sweep η_J ∈ (1e-1, 1e-2, 1e-3, 1e-4, 1e-6, √eps(Float64)) across conditioned nonlinear
-# problems in R1 and R3 with Float32 LU factorisation on Float64 state, comparing Newton
-# iteration counts, refinement JVP evaluations, and promotion rates against pure Float64 LU.
+# On F(x) = A * x .+ 0.5 .* (x .^ 2) at N = 16, f_abstol = 1e-12, f_reltol = 0.0,
+# κ(J) ∈ (1e2, 1e4, 1e5, 1e6), compare pure-Float64 Newton, constant η_J = √eps(Float64),
+# Kelley's η_J = 1e-6, and Eisenstat-Walker Choice 2 with √eps(Float64) floor across
+# outer Newton iterations, inner refinement passes, and final ‖F‖_∞.
 
 using GeometricSolvers
-using LinearAlgebra: Diagonal, norm
+using LinearAlgebra: Diagonal, lu, ldiv!, mul!, norm
 using Printf: @printf
 using StaticArrays: SMatrix, SVector
 
 const GS = GeometricSolvers
 
-function make_problem_r1(eps_cond::Float64)
-    A = SMatrix{2, 2, Float64, 4}(1.0, 1.0, 1.0, 1.0 + eps_cond)
-    u_star = A * SVector{2, Float64}(1.0, 2.0)
-    b = SVector{2, Float64}(
-        u_star[1] + 0.1 * u_star[1]^2, u_star[2] - 0.2 * u_star[2]^2)
-    f(x, _) = begin
-        u = A * x
-        SVector{2, Float64}(u[1] + 0.1 * u[1]^2 - b[1], u[2] - 0.2 * u[2]^2 - b[2])
+function make_d2_matrix(N::Int, kappa::Float64)
+    s = [kappa^((i - 1) / (N - 1)) for i in 1:N]
+    Q = Matrix{Float64}(undef, N, N)
+    for j in 1:N, i in 1:N
+
+        Q[i, j] = sqrt(2.0 / (N + 1)) * sin(i * j * pi / (N + 1))
     end
-    j(x, _) = begin
-        u = A * x
-        d = SVector{2, Float64}(1.0 + 0.2 * u[1], 1.0 - 0.4 * u[2])
-        Diagonal(d) * A
-    end
-    return NonlinearProblem(f, j)
+    return Q * Diagonal(1.0 ./ s) * transpose(Q)
 end
 
-function make_problem_r3(eps_cond::Float64, jvp_counter::Base.RefValue{Int})
-    A = [1.0 1.0; 1.0 (1.0 + eps_cond)]
-    u_star = A * [1.0, 2.0]
-    b = [u_star[1] + 0.1 * u_star[1]^2, u_star[2] - 0.2 * u_star[2]^2]
+function make_d2_problem(A::Matrix{Float64})
     function f!(F, x, _)
-        jvp_counter[] += 1
-        u1 = A[1, 1] * x[1] + A[1, 2] * x[2]
-        u2 = A[2, 1] * x[1] + A[2, 2] * x[2]
-        F[1] = u1 + 0.1 * u1^2 - b[1]
-        F[2] = u2 - 0.2 * u2^2 - b[2]
+        mul!(F, A, x)
+        @. F = F + 0.5 * (x^2)
         return F
     end
-    return NonlinearProblem(f!)
-end
-
-function run_sweep()
-    etas = (1e-1, 1e-2, 1e-3, 1e-4, 1e-6, sqrt(eps(Float64)))
-    eps_list = (1e-2, 1e-4, 1e-5, 2e-6)
-    starts = (
-        SVector{2, Float64}(2.0, 3.0),
-        SVector{2, Float64}(-1.5, 4.0),
-        SVector{2, Float64}(3.5, -1.0)
-    )
-
-    println("Mixed-precision Newton iterative refinement sweep (eta_J / η):")
-    println("--------------------------------------------------------------------------")
-    @printf("%-10s | %-8s | %-10s | %-10s | %-10s | %-10s\n",
-        "eta_J (η)", "regime", "converged", "promoted", "total_iter", "total_eval")
-    println("--------------------------------------------------------------------------")
-
-    for η in etas
-        conv_r1 = 0
-        prom_r1 = 0
-        iters_r1 = 0
-        conv_r3 = 0
-        prom_r3 = 0
-        iters_r3 = 0
-        evals_r3 = 0
-        total_cases = length(eps_list) * length(starts)
-
-        m = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement(5; η = η))
-
-        for eps_cond in eps_list
-            prob_r1 = make_problem_r1(eps_cond)
-            counter = Ref(0)
-            prob_r3 = make_problem_r3(eps_cond, counter)
-            for x0 in starts
-                _, st1 = solve(prob_r1, x0, m)
-                conv_r1 += (st1.code == SUCCESS)
-                prom_r1 += st1.promoted
-                iters_r1 += Int(st1.iterations)
-
-                counter[] = 0
-                _, st3 = solve(prob_r3, collect(x0), m)
-                conv_r3 += (st3.code == SUCCESS)
-                prom_r3 += st3.promoted
-                iters_r3 += Int(st3.iterations)
-                evals_r3 += counter[]
-            end
+    function j!(J, x, _)
+        copyto!(J, A)
+        @inbounds for i in axes(J, 1)
+            J[i, i] += x[i]
         end
-
-        @printf("%-10.0e | %-8s | %4d/%-5d | %4d/%-5d | %10d | %10s\n",
-            η, "R1", conv_r1, total_cases, prom_r1, total_cases, iters_r1, "-")
-        @printf("%-10.0e | %-8s | %4d/%-5d | %4d/%-5d | %10d | %10d\n",
-            η, "R3", conv_r3, total_cases, prom_r3, total_cases, iters_r3, evals_r3)
+        return J
     end
-    println("--------------------------------------------------------------------------")
-    ref = Refinement()
-    println("Selected default: eta_J = √eps(real(T)) = $(ref.η) (maxiter = $(ref.maxiter))")
+    return NonlinearProblem(f!, j!)
 end
 
-run_sweep()
+function simulate_ew_choice2(A::Matrix{Float64}, x0::Vector{Float64}; atol::Float64 = 1e-12)
+    N = length(x0)
+    x = copy(x0)
+    F = A * x .+ 0.5 .* (x .^ 2)
+    fnorm = maximum(abs, F)
+    fnorm_prev = fnorm
+    eta_ew = 0.5
+    eta_floor = sqrt(eps(Float64))
+    outer_iters = 0
+    inner_passes = 0
+    while fnorm > atol && outer_iters < 50
+        outer_iters += 1
+        if outer_iters > 1
+            eta_raw = 0.9 * (fnorm / fnorm_prev)^1.5
+            eta_ew = max(eta_floor, min(0.5, eta_raw))
+        end
+        J = copy(A)
+        @inbounds for i in 1:N
+            J[i, i] += x[i]
+        end
+        fac32 = lu(Float32.(J))
+        d = -Float64.(fac32 \ Float32.(F))
+        r = F .+ J * d
+        r_prev = maximum(abs, r)
+        for _ in 1:5
+            r_prev <= eta_ew * fnorm && break
+            inner_passes += 1
+            δ = Float64.(fac32 \ Float32.(r))
+            d_try = d .- δ
+            r_try = F .+ J * d_try
+            r_curr = maximum(abs, r_try)
+            r_curr < r_prev || break
+            d = d_try
+            r = r_try
+            r_prev = r_curr
+        end
+        x .+= d
+        fnorm_prev = fnorm
+        F .= A * x .+ 0.5 .* (x .^ 2)
+        fnorm = maximum(abs, F)
+    end
+    return outer_iters, inner_passes, fnorm
+end
+
+function count_refinement_passes(A::Matrix{Float64}, x0::Vector{Float64}, eta::Float64;
+        atol::Float64 = 1e-12, maxiter::Int = 5)
+    N = length(x0)
+    x = copy(x0)
+    F = A * x .+ 0.5 .* (x .^ 2)
+    fnorm = maximum(abs, F)
+    eta_eff = max(eta, sqrt(eps(Float64)))
+    outer_iters = 0
+    inner_passes = 0
+    while fnorm > atol && outer_iters < 50
+        outer_iters += 1
+        J = copy(A)
+        @inbounds for i in 1:N
+            J[i, i] += x[i]
+        end
+        fac32 = lu(Float32.(J))
+        d = -Float64.(fac32 \ Float32.(F))
+        r = F .+ J * d
+        r_prev = maximum(abs, r)
+        for _ in 1:maxiter
+            r_prev <= eta_eff * fnorm && break
+            inner_passes += 1
+            δ = Float64.(fac32 \ Float32.(r))
+            d_try = d .- δ
+            r_try = F .+ J * d_try
+            r_curr = maximum(abs, r_try)
+            r_curr < r_prev || break
+            d = d_try
+            r = r_try
+            r_prev = r_curr
+        end
+        x .+= d
+        F .= A * x .+ 0.5 .* (x .^ 2)
+        fnorm = maximum(abs, F)
+    end
+    return outer_iters, inner_passes, fnorm
+end
+
+function run_d2_sweep()
+    N = 16
+    atol = 1e-12
+    kappas = (1e2, 1e4, 1e5, 1e6)
+    x0 = fill(0.1, N)
+    opts = Options(Float64; f_abstol = atol, f_reltol = 0.0)
+
+    println("Mixed-precision refinement η_J sweep: F(x) = A * x .+ 0.5 .* (x .^ 2), N = $N, atol = $atol")
+    println("----------------------------------------------------------------------------------------")
+    @printf("%-8s | %-22s | %-10s | %-12s | %-10s | %-12s\n",
+        "κ(J)", "strategy", "outer_iter", "inner_passes", "promoted", "final ‖F‖_∞")
+    println("----------------------------------------------------------------------------------------")
+
+    m_f64 = Newton(; linsolve = LUFactorization(), refinement = NoRefinement())
+    m_sqrt = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement(sqrt(eps(Float64)), 5))
+    m_kelley = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement(1e-6, 5))
+
+    for kappa in kappas
+        A = make_d2_matrix(N, kappa)
+        prob = make_d2_problem(A)
+
+        _, st_f64 = solve(prob, copy(x0), m_f64; options = opts)
+        _, st_sqrt = solve(prob, copy(x0), m_sqrt; options = opts)
+        _, st_kelley = solve(prob, copy(x0), m_kelley; options = opts)
+
+        _, passes_sqrt, _ = count_refinement_passes(A, x0, sqrt(eps(Float64)); atol = atol)
+        _, passes_kelley, _ = count_refinement_passes(A, x0, 1e-6; atol = atol)
+        ew_iters, ew_passes, ew_fnorm = simulate_ew_choice2(A, x0; atol = atol)
+
+        @printf("%-8.0e | %-22s | %10d | %12d | %-10s | %12.2e\n",
+            kappa, "Pure Float64", st_f64.iterations, 0, string(st_f64.promoted),
+            st_f64.fnorm)
+        @printf("%-8.0e | %-22s | %10d | %12d | %-10s | %12.2e\n",
+            kappa, "η_J = √eps(Float64)", st_sqrt.iterations,
+            passes_sqrt, string(st_sqrt.promoted), st_sqrt.fnorm)
+        @printf("%-8.0e | %-22s | %10d | %12d | %-10s | %12.2e\n",
+            kappa, "Kelley η_J = 1e-6", st_kelley.iterations, passes_kelley,
+            string(st_kelley.promoted), st_kelley.fnorm)
+        @printf("%-8.0e | %-22s | %10d | %12d | %-10s | %12.2e\n",
+            kappa, "EW Choice 2 + floor", ew_iters, ew_passes, "false", ew_fnorm)
+        println("----------------------------------------------------------------------------------------")
+    end
+    ref = Refinement()
+    println("Selected default: η_J = √eps(real(T)) = $(ref.η) (maxiter = $(ref.maxiter))")
+end
+
+run_d2_sweep()

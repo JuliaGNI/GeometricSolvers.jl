@@ -1,7 +1,7 @@
 """
     Refinement(T = Float64; η = √eps(real(T)), maxiter = 5)
     Refinement(maxiter; η = √eps(Float64))
-    Refinement(maxiter, η)
+    Refinement(η, maxiter = 5)
 
 Iterative refinement of the linear direction `d` in [`Newton`](@ref) using the existing factor
 `fac` and matrix-free Jacobian-vector products [`jvp!!`](@ref) in the working precision `T` of the
@@ -23,30 +23,35 @@ for `R = real(T)`. If a pass fails to strictly decrease `‖F(x) + J(x) d‖` (`
 or if `maxiter` passes finish above the threshold, `refine!!` returns the best direction reached
 together with `failed = true`.
 
-Both `maxiter ≥ 1` (`Int32`) and `0 < η < 1` (`R <: AbstractFloat`) are validated at construction.
+Both `maxiter ≥ 1` (`Int32`) and `0 < η < 1` (`R <: Real`) are validated at construction.
 `Refinement{R}` is `isbits`, and [`ToReal`](@ref) adapts `η` to the real type of the iterate.
 """
-struct Refinement{R <: AbstractFloat}
-    maxiter::Int32
+struct Refinement{R <: Real}
     η::R
-    function Refinement{R}(maxiter::Int32, η::R) where {R <: AbstractFloat}
-        maxiter >= Int32(1) ||
+    maxiter::Int32
+    function Refinement{R}(η::Real, maxiter::Integer) where {R <: Real}
+        maxiter >= 1 ||
             throw(ArgumentError("Refinement maxiter must be ≥ 1, got $maxiter"))
-        (isfinite(η) && zero(R) < η < one(R)) ||
+        (isfinite(η) && zero(η) < η < one(η)) ||
             throw(ArgumentError("Refinement η must be finite and in (0, 1), got $η"))
-        return new{R}(maxiter, η)
+        return new{R}(R(η), Int32(maxiter))
     end
 end
 
-function Refinement(maxiter::Integer, η::Real)
-    R = float(typeof(η))
-    return Refinement{R}(Int32(maxiter), R(η))
-end
+Refinement(η::R, maxiter::Integer = Int32(5)) where {R <: Real} = Refinement{R}(η, maxiter)
 
 function Refinement(maxiter::Integer; η = nothing, eta = nothing)
     η !== nothing && eta !== nothing &&
         throw(ArgumentError("Refinement: pass either η or eta, not both"))
-    return Refinement(maxiter, something(η, eta, sqrt(eps(Float64))))
+    return Refinement(something(η, eta, sqrt(eps(Float64))), maxiter)
+end
+
+function Refinement(::Type{T}, maxiter::Integer; η = nothing, eta = nothing) where {T}
+    η !== nothing && eta !== nothing &&
+        throw(ArgumentError("Refinement: pass either η or eta, not both"))
+    R = float(real(T))
+    η_val = R(something(η, eta, sqrt(eps(R))))
+    return Refinement{R}(η_val, maxiter)
 end
 
 function Refinement(::Type{T} = Float64;
@@ -59,9 +64,9 @@ function Refinement(::Type{T} = Float64;
     maxiter !== nothing && max_iterations !== nothing &&
         throw(ArgumentError("Refinement: pass either maxiter or max_iterations, not both"))
     R = float(real(T))
-    η_val = something(η, eta, sqrt(eps(R)))
+    η_val = R(something(η, eta, sqrt(eps(R))))
     maxiter_val = something(maxiter, max_iterations, Int32(5))
-    return Refinement(maxiter_val, η_val)
+    return Refinement{R}(η_val, maxiter_val)
 end
 
 @inline function Base.getproperty(ref::Refinement, s::Symbol)
@@ -71,7 +76,7 @@ end
 end
 
 function Base.propertynames(::Refinement, ::Bool = false)
-    return (:maxiter, :η, :eta, :max_iterations)
+    return (:η, :maxiter, :eta, :max_iterations)
 end
 
 Adapt.@adapt_structure Refinement
