@@ -152,8 +152,7 @@ end
 end
 
 @inline function init_factor(
-        ls::Union{LUFactorization, QRFactorization, SVDFactorization},
-        prob, x::Union{StaticVector, Number}, p)
+        ls::LinearMethod, prob, x::Union{StaticVector, Number}, p)
     return empty_static_factor(ls, x)
 end
 
@@ -161,8 +160,13 @@ end
     return dense_factor(ls, prob, x, p)
 end
 
+@inline init_factor(ls, prob, x, p) = nothing
+
+@inline _factor_eltype(::LinearMethod{Nothing}, ::Type{T}) where {T <: Number} = T
+@inline _factor_eltype(ls, ::Type{T}) where {T} = factor_eltype(ls, T)
+
 @inline function init_newton_J(m::Newton, fac, x)
-    if !(m.globalization isa DogLeg) && factor_eltype(m.linsolve, eltype(x)) === eltype(x)
+    if !(m.globalization isa DogLeg) && _factor_eltype(m.linsolve, eltype(x)) === eltype(x)
         return fac.factors
     end
     n = length(x)
@@ -291,7 +295,7 @@ end
 @inline function newton_stepkind(m::Newton, ::Type{T}, fresh::Bool) where {T}
     if fresh && (m.jacobian === nothing || m.jacobian isa AbstractADType) &&
        iszero(m.regularization) &&
-       factor_eltype(m.linsolve, T) === T && m.refinement isa NoRefinement
+       _factor_eltype(m.linsolve, T) === T && m.refinement isa NoRefinement
         return ExactStep()
     else
         return MeasuredSlope()

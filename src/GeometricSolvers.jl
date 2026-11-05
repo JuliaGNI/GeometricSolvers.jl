@@ -66,6 +66,7 @@ include("globalization/dogleg.jl")
 include("nonlinear/solver.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
+include("nonlinear/implicit.jl")
 include("nonlinear/batched.jl")
 
 end

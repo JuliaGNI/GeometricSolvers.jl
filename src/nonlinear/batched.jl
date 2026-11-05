@@ -44,6 +44,10 @@ function _validate_batch(
         p,
         order::Union{Nothing, AbstractVector{<:Integer}}
 )
+    if has_dual_type(typeof(X)) || has_dual_type(typeof(p))
+        throw(ArgumentError(
+            "`solve_batch!` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` per system"))
+    end
     if p isa PerSystem && length(p.data) != length(X)
         throw(DimensionMismatch(
             "PerSystem parameter length $(length(p.data)) does not match batch length $(length(X))"))
@@ -65,6 +69,10 @@ function _prepare_batch(
         options::Union{Nothing, Options},
         kwargs
 )
+    if has_dual_type(typeof(prob))
+        throw(ArgumentError(
+            "`solve_batch!` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` per system"))
+    end
     T = eltype(eltype(X))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
@@ -127,7 +135,8 @@ iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref
 receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is a
 permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any other `order`
 throws. An `order` that is not `isbits` needs a method of `get_backend`, and an `order` on another
-backend than `X` is copied to the backend of `X`.
+backend than `X` is copied to the backend of `X`. Any `ForwardDiff.Dual` in `X`, `p`, or `prob`
+raises an `ArgumentError`.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
@@ -144,6 +153,10 @@ function solve_batch!(
         options::Union{Nothing, Options} = nothing,
         kwargs...
 ) where {R <: Real}
+    if has_dual_type(typeof(X)) || has_dual_type(typeof(p)) || has_dual_type(typeof(prob))
+        throw(ArgumentError(
+            "`solve_batch!` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` per system"))
+    end
     R_X = real(eltype(eltype(X)))
     if R !== R_X
         throw(ArgumentError(
