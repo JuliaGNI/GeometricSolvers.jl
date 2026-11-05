@@ -292,6 +292,7 @@ end
     @test st_nr_r1.promoted
     @test st_nr_r1.step_failures >= 1
     @test st_nr_r1.fnorm < 1e-12
+    @test norm(x_nr_r1 - x_star) < 1e-10
 
     for (_, B) in ARRAY_BACKENDS
         x0_r3 = B(collect(x0_r1))
@@ -300,6 +301,7 @@ end
         @test st_nr_r3.promoted
         @test st_nr_r3.step_failures >= 1
         @test st_nr_r3.fnorm < 1e-12
+        @test norm(Array(x_nr_r3) - collect(x_star)) < 1e-10
     end
 end
 
@@ -343,6 +345,7 @@ end
     @test st_qn.code == SUCCESS
     @test !st_qn.promoted
     @test st_qn.fnorm < 1e-12
+    @test norm(x_qn - x0_rot) > 0.1
 
     function f_rot_r3!(F, x, _)
         F .= [x[1]^3 - 3.0 * x[1] * x[2]^2 - 1.0, 3.0 * x[1]^2 * x[2] - x[2]^3 - 2.0]
@@ -355,6 +358,7 @@ end
         @test st_qn_r3.code == SUCCESS
         @test !st_qn_r3.promoted
         @test st_qn_r3.fnorm < 1e-12
+        @test norm(Array(x_qn_r3) - collect(x0_rot)) > 0.1
     end
 
     # When even a fresh Float32 factor cannot refine (cond(J) ≈ 5e7), QuasiNewton promotes
@@ -378,6 +382,7 @@ end
 end
 
 @testset "Complex mixed-precision refinement and inference / allocation" begin
+    x_star = SVector{2, Float64}(1.0, 2.0)
     for T in ELTYPES
         R = real(T)
         R === Float64 || continue
@@ -388,6 +393,7 @@ end
         @test st_c.code == SUCCESS
         @test st_c.fnorm < 1e-11
         @test !st_c.promoted
+        @test norm(x_c - SVector{2, T}(x_star)) < 1e-11
 
         prob_c_r3 = NonlinearProblem(f_mod_r3!)
         x0_vec = [T(2.0 + 0.1 * im), T(3.0 - 0.1 * im)]
