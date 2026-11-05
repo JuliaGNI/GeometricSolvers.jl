@@ -11,6 +11,26 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Package extensions `GeometricSolversMetalExt` and `GeometricSolversCUDAExt` dispatch dense
+  device factorisations and solves to vendor libraries on supported GPU element types** (decision 48
+  of the design). `Project.toml` adds `CUDA` (`5.5, 6`) and `Metal` (`1.10.3`) under `[weakdeps]`
+  and `[compat]` with `GeometricSolversCUDAExt` and `GeometricSolversMetalExt` under `[extensions]`.
+  When `Metal` is loaded, `factorize!!` and `backsolve!` on `DeviceLU{<:MtlMatrix{Float32}}` and
+  `MtlVector{Float32}` dispatch to Metal Performance Shaders (`LinearAlgebra.lu!(fac.factors;
+  check = false)` and `LinearAlgebra.ldiv!(LU(fac.factors, fac.ipiv, BlasInt(fac.info)), d)`),
+  mapping MPS status `-2` or `> 0` to `info > 0` (`SINGULAR`) and falling back to
+  `ka_factorize_lu!(fac, J)` on negative MPS status codes other than `-2`, while `QRFactorization`,
+  `SVDFactorization`, and `ComplexF32`, `Float16` and `BFloat16` `LUFactorization` remain on
+  `KernelAbstractions`. When `CUDA` is loaded, `factorize!!` and `backsolve!` on
+  `DeviceLU{<:CuMatrix{T}}`, `DeviceQR{<:CuMatrix{T}}` and `DeviceSVD{<:CuMatrix{T}}` for
+  `T <: LinearAlgebra.BlasFloat` dispatch to cuSOLVER and cuBLAS (`CUDA.CUSOLVER.getrf!`,
+  `CUDA.CUSOLVER.getrs!`, `CUDA.CUSOLVER.geqrf!` with diagonal zero and non-finite checks,
+  `CUDA.CUSOLVER.ormqr!` and `CUDA.CUBLAS.trsv!`, and `CUDA.CUSOLVER.gesvdj!` with power-of-two
+  input prescaling by `2^-e`, rank truncation at `jacobi_tolerance(n, real(T)) * σ̂₁`, zeroing of
+  `U[:, (r + 1):n]`, and `ka_svd_backsolve!`, falling back to `ka_factorize_lu!` when `getrf!`
+  reports `info < 0` and to `ka_factorize_svd!` when `gesvdj!` reports `info != 0`), while
+  `Float16` and `BFloat16` remain on `KernelAbstractions`.
+
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use
   workgroup reductions and column-parallel triangular solves** (decision 48 of the design).

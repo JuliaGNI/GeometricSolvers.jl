@@ -54,6 +54,7 @@ if "metal" in GROUPS
     @safetestset "Metal" include("devices/metal.jl")
     @safetestset "Metal static LU and QR" include("devices/metal_linear.jl")
     @safetestset "Metal KA LU and QR" include("devices/metal_ka.jl")
+    @safetestset "Metal vendor fast paths" include("devices/metal_vendor.jl")
     @safetestset "Metal static SVD and Jacobi eigensolver" include("devices/metal_svd.jl")
     @safetestset "Metal R1 nonlinear" include("devices/metal_nonlinear.jl")
 end

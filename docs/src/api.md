@@ -87,7 +87,13 @@ a one-sided Jacobi singular value decomposition whose solve truncates at the ran
 [`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
 on a host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
 `AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
-through LAPACK on the host, and through `KernelAbstractions` on a device. [`factorize!!`](@ref)
+through LAPACK on the host, and on a device through the `GeometricSolversMetalExt` (`Metal` MPS
+`lu!` and `ldiv!` on `MtlMatrix{Float32}` and `MtlVector{Float32}`, falling back to
+`ka_factorize_lu!` on negative MPS status codes other than `-2`) and `GeometricSolversCUDAExt`
+(`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS `trsv!`, and `gesvdj!` on
+`CuMatrix{T}` and `CuVector{T}` for `T <: LinearAlgebra.BlasFloat`, falling back to
+`ka_factorize_lu!` and `ka_factorize_svd!` on negative or non-convergent status codes) package
+extensions where available and through `KernelAbstractions` otherwise. [`factorize!!`](@ref)
 states what a singular matrix gives: an SVD factor records its numerical rank in `rank` apart from
 its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
 [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These names are not
