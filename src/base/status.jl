@@ -14,6 +14,19 @@ is in `R = real(T)` for the element type `T` of the iterate.
   one count.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
+- `rank::Int32`: the numerical rank of the last SVD factorisation, or `Int32(-1)` when no SVD
+  factorisation completed.
+- `nullnorm::R`: ``\\|(I - U_r U_r^H) F(x)\\|`` from the last SVD factorisation, with ``U_r`` the
+  first `rank` columns of ``U``, or `R(NaN)` when no SVD factorisation completed.
+- `gradratio::R`: ``\\|J(x)^H F(x)\\| / (\\|J(x)\\|_F \\|F(x)\\|)`` at the last Jacobian
+  evaluation, `zero(R)` when ``\\|J(x)\\|_F = 0`` or ``\\|F(x)\\| = 0``, or `R(NaN)` when no
+  Jacobian was evaluated.
+
+On a non-converged [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any nonzero scalar Jacobian
+has `gradratio == 1` and `rank == 1`), the diagnostics classify the failure mode: `nullnorm > 0`
+with `rank < n` indicates a residual outside the range of `J(x)`; `gradratio ≈ 0` with `fnorm > 0`
+indicates a stationary point of the merit where `F(x) ≠ 0`; and `gradratio` bounded away from zero
+with `nullnorm ≈ 0` indicates an in-range residual stalled by conditioning or step acceptance.
 
 The predicates `GeometricSolvers.isconverged` and `GeometricSolvers.isstalled` read the code. They
 are not exported, because they are generic names that a package doing `using GeometricSolvers`
@@ -26,6 +39,17 @@ struct SolverStatus{R <: Real}
     stepnorm::R
     step_failures::Int32
     promoted::Bool
+    rank::Int32
+    nullnorm::R
+    gradratio::R
+end
+
+@inline function SolverStatus{R}(
+        code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool) where {R <: Real}
+    return SolverStatus{R}(
+        code, iterations, fnorm, stepnorm, step_failures, promoted,
+        Int32(-1), R(NaN), R(NaN))
 end
 
 """
@@ -57,7 +81,8 @@ end
     record(status::SolverStatus{R}, info::StepInfo{R})
 
 Fold the result of one step into the status: count the iteration, take the code and the norms of
-the step, add its failures, and keep `promoted` once it is set.
+the step, add its failures, keep `promoted` once it is set, and preserve `rank`, `nullnorm` and
+`gradratio`.
 """
 function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
     SolverStatus{R}(info.code,
@@ -65,7 +90,10 @@ function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
         info.fnorm,
         info.stepnorm,
         status.step_failures + info.failures,
-        status.promoted | info.promoted)
+        status.promoted | info.promoted,
+        status.rank,
+        status.nullnorm,
+        status.gradratio)
 end
 
 const ReturnCodeCounts = NamedTuple{

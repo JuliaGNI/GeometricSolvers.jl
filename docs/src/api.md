@@ -38,7 +38,12 @@ regularize!!
 ## Status and stopping test
 
 Every type on this page is `isbits`, so a kernel can hold it, and every real field is in
-`R = real(T)` for the element type `T` of the iterate.
+`R = real(T)` for the element type `T` of the iterate. [`SolverStatus`](@ref) also carries the
+range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) of the last [`Newton`](@ref)
+factorisation: for `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1`),
+`nullnorm > 0` with `rank < n` classifies a residual outside the range of `J(x)`, `gradratio ≈ 0`
+with `fnorm > 0` a local minimum of the merit, and `gradratio` bounded away from zero with
+`nullnorm ≈ 0` an ill-conditioned or step-limited iterate.
 
 ```@docs
 ReturnCode

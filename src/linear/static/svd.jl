@@ -283,3 +283,39 @@ function svd_solve(fac::StaticSVD{N, TF}, r::SVector{N, TF}, shift::Bool) where 
     end
     return SVector{N, TF}(x), t
 end
+
+@inline function static_svd_nullnorm(
+        U::SMatrix{N, N, TF}, rk::Int32, r::SVector{N, TF}) where {N, TF}
+    p = local_array(r)
+    @inbounds for j in 1:rk
+        s = zero(TF)
+        for i in 1:N
+            s += conj(U[i, j]) * r[i]
+        end
+        for i in 1:N
+            p[i] -= U[i, j] * s
+        end
+    end
+    return rnorm(SVector{N, TF}(p))
+end
+
+@inline function factor_diagnostics(
+        ::Nothing, fac::StaticSVD{N, TF}, r::StaticVector{N, T}, fnorm::R) where {
+        N, TF, T, R <: Real}
+    fac.info == Int32(0) || return Int32(-1), R(NaN)
+    rk = fac.rank
+    rk == Int32(0) && return Int32(0), fnorm
+    if TF === T
+        return rk, R(static_svd_nullnorm(fac.factors, rk, SVector{N, TF}(r)))
+    end
+    s = maximum(abs, r)
+    iszero(s) && return rk, zero(R)
+    r_tf = map(a -> TF(a / s), SVector{N, T}(r))
+    return rk, R(static_svd_nullnorm(fac.factors, rk, r_tf)) * R(s)
+end
+
+@inline function factor_diagnostics(
+        ::Nothing, fac::StaticSVD{1, TF}, r::T, fnorm::R) where {
+        TF, T <: Number, R <: Real}
+    return factor_diagnostics(nothing, fac, SVector{1, T}((r,)), fnorm)
+end

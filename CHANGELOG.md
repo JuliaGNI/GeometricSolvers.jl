@@ -11,6 +11,25 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`SolverStatus{R}` carries the range and spectrum diagnostics `rank::Int32`, `nullnorm::R` and
+  `gradratio::R`, and `Newton` with `SVDFactorization` supports factor reuse on a static or scalar
+  iterate** (decisions 54 and 57 of the design). `SolverStatus{R}` gains the fields `rank::Int32`,
+  `nullnorm::R` and `gradratio::R` (`sizeof(SolverStatus{Float32}) == 36`,
+  `sizeof(SolverStatus{Float64}) == 56`), with a 6-argument constructor that fills their sentinels
+  `(Int32(-1), R(NaN), R(NaN))`, and `GeometricSolvers.record` preserves them across steps. At each
+  fresh `Newton` factorisation, `gradratio` is `‖J(x)ᴴ F(x)‖ / (‖J(x)‖_F ‖F(x)‖)` at the
+  unregularised Jacobian `J(x)` (`zero(R)` when `‖J(x)‖_F == 0` or `‖F(x)‖ == 0`). When `linsolve`
+  is `SVDFactorization{P}()` and the factor has `info == 0`, `rank` is `Int32(fac.rank)` and
+  `nullnorm` is `‖(I - U_r U_rᴴ) F(x)‖` (`fnorm` when `fac.rank == 0`), computed in the factor
+  precision after scaling a nonzero `F(x)` by `maximum(abs, F(x))` when `TF ≠ T`; for
+  `LUFactorization`, `QRFactorization`, or a failed SVD factor (`info ≠ 0`), `rank == Int32(-1)`
+  and `nullnorm` is `NaN`. Reused steps keep the diagnostics of the last factorisation unless a
+  line-search failure triggers a fresh retry, `start!!` resets them to their sentinels at the start
+  of each solve, and `finish!!` writes them into the returned `SolverStatus{R}` (while `Picard` and
+  any solve that returns before a factorisation keep the sentinels). `NewtonState` pre-allocates an
+  empty `StaticSVD` factor slot for `Newton(; linsolve = SVDFactorization(), reuse = k)` on a
+  `StaticVector` or `Number` iterate, as it does for `LUFactorization` and `QRFactorization`.
+
 - **`Newton` takes the truncated minimum-norm step of a rank-deficient SVD** (decision 44 of the
   design). The numerical rank of `StaticSVD` and `DenseSVD` is the new field `rank`, the number of
   singular values above `√n · eps(TF) · σ₁`; `info` is nonzero only where the factorisation
