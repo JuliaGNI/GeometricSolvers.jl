@@ -8,11 +8,11 @@ using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, DogLeg, LUFactorization, Newton, NonlinearProblem,
-                        Options, PerSystem, Picard, QRFactorization, SINGULAR, SUCCESS,
-                        SolverStatus, Static, ToReal, init_state, isconverged, solve,
-                        solve_batch!,
-                        solve!!
+using GeometricSolvers: Additive, Backtracking, DogLeg, FixedWeights, LUFactorization,
+                        Multiplicative, Newton, NonlinearProblem, OptimalWeights, Options,
+                        PerSystem, Picard, QRFactorization, Repeat, SINGULAR, SUCCESS,
+                        SolverStatus, Static, Switch, ToReal, init_state, isconverged,
+                        solve, solve_batch!, solve!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -170,7 +170,7 @@ end
             end
         end
 
-        # 4. Picard solve inside a kernel with Adapt.adapt(ToReal{Float32}(), Picard(; damping = 0.7))
+        # 4. Picard solve inside a kernel with Adapt.adapt(ToReal{Float32}(), Picard(...))
         x₀_p = SVector{2, Float32}(3.0f0, 5.0f0)
         p_p = SVector{2, Float32}(2.0f0, 4.0f0)
         prob_p = NonlinearProblem((y, q) -> y .- q)
@@ -201,7 +201,12 @@ end
                 for m in (
                         Newton(),
                         Newton(; globalization = DogLeg()),
-                        Newton(; reuse = 2)
+                        Newton(; reuse = 2),
+                        Additive(Newton(), Picard(; damping = 0.7)),
+                        Additive(Newton(), Picard(); weights = FixedWeights(0.8, 0.2)),
+                        Multiplicative(Picard(; damping = 0.7), Newton()),
+                        Repeat(Newton(), 2),
+                        Switch(Picard(; damping = 0.7), Newton(); threshold = 0.5)
                     ),
                     prob in (prob_j, prob_ad)
 
