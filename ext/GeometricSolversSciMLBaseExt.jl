@@ -1,9 +1,8 @@
 module GeometricSolversSciMLBaseExt
 
 import CommonSolve: init, solve
-using GeometricSolvers: GeometricSolvers, LINESEARCH_FAILED, MAXITERS, NONFINITE,
-                        Newton, NonlinearProblem, Picard, ReturnCode, SINGULAR,
-                        STALLED, SUCCESS
+using GeometricSolvers: GeometricSolvers, MAXITERS, NONFINITE, Newton, NonlinearProblem,
+                        Picard, ReturnCode, SINGULAR, STALLED, SUCCESS
 using SciMLBase: SciMLBase
 using StaticArrays: StaticArray
 

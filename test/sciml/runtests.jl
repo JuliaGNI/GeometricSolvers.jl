@@ -306,6 +306,7 @@ sq!(du, u, p) = (du .= u .* u .- p; nothing)
             @test st_num.code == SUCCESS
             @test st_num.code == stn_num.code
             @test st_num.iterations == stn_num.iterations
+            @test isapprox(x_num, xn_num; rtol = 8 * eps(R))
             @test isapprox(x_num, T(2); rtol = 10 * sqrt(eps(R)))
 
             for AT in ARRAY_BACKENDS
