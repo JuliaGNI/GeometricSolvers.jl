@@ -8,12 +8,14 @@ CurrentModule = GeometricSolvers
 
 A problem holds functions and nothing else: the residual and optionally its derivative in
 [`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets, and an
-optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call form,
+optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps either problem in a
+coordinate chart `x = g(y, p)`. The storage of the iterate selects the call form,
 so one problem serves every regime. These names are exported.
 
 ```@docs
 NonlinearProblem
 StationarityProblem
+Reparametrized
 ```
 
 ## The storage seam
@@ -163,7 +165,8 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
 `x₀` is an array, and returns `(x, status)`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
-[`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
+[`NonlinearSolver`](@ref) (or a [`ReparametrizedSolver`](@ref) for a [`Reparametrized`](@ref)
+problem) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
 with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
@@ -175,6 +178,7 @@ per-system parameters so system `i` receives `p.data[i]`.
 
 ```@docs
 NonlinearSolver
+ReparametrizedSolver
 init
 solve
 solve!

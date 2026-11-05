@@ -30,6 +30,7 @@ if "core" in GROUPS
     @safetestset "DogLeg" include("globalization/dogleg.jl")
     @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
     @safetestset "Stationarity problem" include("nonlinear/stationarity.jl")
+    @safetestset "Reparametrized problem" include("nonlinear/reparametrized.jl")
     @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
     @safetestset "Newton" include("nonlinear/newton.jl")
     @safetestset "Picard" include("nonlinear/picard.jl")

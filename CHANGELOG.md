@@ -870,3 +870,18 @@ so that a compat-only bump can be told apart from an interface change.
   partial. In R3, `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and
   on an `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
   `Array`.
+
+- `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
+  curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or
+  `StationarityProblem` in chart coordinates `x = g(y, p)` and return `(x* = g(y*, p), status)`
+  in the original coordinates across `solve`, `init`, `solve!`, `solve!!` and `solve_batch!`,
+  leaving `update_iterate!!` untouched. In R1 (`StaticVector` or `Number`), `g(y, p)` returns
+  `x` and `∂g(y, p)` returns `G = ∂g/∂y`; in R3 (`AbstractVector`), `g!(x, y, p)` writes into
+  `x` and `∂g!(G, y, p)` writes into `G`, and when `∂g === nothing`, `G(y, p) = ∂g/∂y` is
+  computed by tagged ForwardDiff in R1 and chunked forward-mode AD in R3. With
+  `covariant = false` (default for `NonlinearProblem`), the transformed residual and Jacobian
+  are `F̃(y, p) = F(g(y, p), p)` and `J̃(y, p) = J(g(y, p), p) G(y, p)`. With `covariant = true`
+  (default for `StationarityProblem`), the residual is pulled back as
+  `F̃(y, p) = transpose(G(y, p)) F(g(y, p), p)`, and the Jacobian is
+  `J̃(y, p) = transpose(G) J G + (∂Gᵀ/∂y) F(g(y, p), p)` when `curvature = true` or
+  `transpose(G) J G` when `curvature = false`.
