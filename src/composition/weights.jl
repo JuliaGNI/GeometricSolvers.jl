@@ -21,7 +21,7 @@ struct OptimalWeights{R <: Real}
     end
 end
 
-function OptimalWeights(ρ::Real = 1.0)
+function OptimalWeights(ρ::Real)
     r = float(ρ)
     return OptimalWeights{typeof(r)}(r)
 end

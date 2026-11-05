@@ -237,7 +237,7 @@ end
 
 function step!!(
         state::AdditiveState{S, Nothing}, m::Additive, prob::NonlinearProblem,
-        x, Fx, p) where {S}
+        x, Fx, p) where {S <: Tuple}
     R = real(eltype(x))
     merit₀ = norm2(Fx)
     xs_cand, Fxs_cand, states_new, infos = _step_additive_r1(

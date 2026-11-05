@@ -145,7 +145,7 @@ end
 
 function step!!(
         state::MultiplicativeState{S, Nothing}, m::Multiplicative,
-        prob::NonlinearProblem, x, Fx, p) where {S}
+        prob::NonlinearProblem, x, Fx, p) where {S <: Tuple}
     R = real(eltype(x))
     x_start = x
     s1 = sync_merit(first(state.states), first(m.members), norm2(Fx))
