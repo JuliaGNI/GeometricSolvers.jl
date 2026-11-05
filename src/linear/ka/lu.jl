@@ -1,35 +1,68 @@
 # Device-resident dense LU factorisation with partial pivoting and triangular backsolve (R3)
-# on `AbstractGPUArray`, implemented in `KernelAbstractions` with zero scalar indexing on the
-# host and one status readback per factorisation.
+# on `AbstractGPUArray`, implemented in `KernelAbstractions` with workgroup pivot reduction,
+# column-parallel triangular solves, zero scalar indexing on the host, and one status readback
+# per factorisation.
 
-@kernel function ka_lu_pivot_swap_scale_kernel!(A, ipiv, status, k::Int, n::Int)
-    idx = @index(Global, Linear)
-    if idx == 1
-        @inbounds begin
-            p = k
-            amax = abs1(A[k, k])
-            for i in (k + 1):n
-                a = abs1(A[i, k])
-                if a > amax
-                    amax = a
-                    p = i
-                end
+using KernelAbstractions: @localmem, @synchronize
+
+@kernel function ka_lu_pivot_swap_scale_kernel!(
+        A, ipiv, status, k::Int, n::Int, ::Val{G}) where {G}
+    tid = @index(Local, Linear)
+    l_amax = @localmem real(eltype(A)) (G,)
+    l_piv = @localmem Int32 (G,)
+    R = real(eltype(A))
+    @inbounds begin
+        best_amax = -one(R)
+        best_p = Int32(n + 1)
+        i = k + tid - 1
+        while i <= n
+            a = abs1(A[i, k])
+            if best_p > n || a > best_amax
+                best_amax = a
+                best_p = Int32(i)
             end
-            ipiv[k] = Int32(p)
-            if p != k
-                for j in 1:n
-                    A[k, j], A[p, j] = A[p, j], A[k, j]
-                end
+            i += G
+        end
+        l_amax[tid] = best_amax
+        l_piv[tid] = best_p
+    end
+    @synchronize()
+    for step in 1:trailing_zeros(G)
+        s = G >> step
+        @inbounds if tid <= s
+            a_other = l_amax[tid + s]
+            p_other = l_piv[tid + s]
+            if a_other > l_amax[tid] ||
+               (a_other == l_amax[tid] && p_other < l_piv[tid])
+                l_amax[tid] = a_other
+                l_piv[tid] = p_other
             end
-            akk = A[k, k]
-            if iszero(akk)
-                if status[1] == Int32(0)
-                    status[1] = Int32(k)
-                end
-            else
-                for i in (k + 1):n
-                    A[i, k] = multiplier(A[i, k], akk)
-                end
+        end
+        @synchronize()
+    end
+    p = Int(@inbounds l_piv[1])
+    if tid == 1
+        @inbounds ipiv[k] = Int32(p)
+    end
+    if p != k
+        j = tid
+        @inbounds while j <= n
+            A[k, j], A[p, j] = A[p, j], A[k, j]
+            j += G
+        end
+    end
+    @synchronize()
+    @inbounds begin
+        akk = A[k, k]
+        if iszero(akk)
+            if tid == 1 && status[1] == Int32(0)
+                status[1] = Int32(k)
+            end
+        else
+            i = k + tid
+            while i <= n
+                A[i, k] = multiplier(A[i, k], akk)
+                i += G
             end
         end
     end
@@ -46,32 +79,38 @@ end
     end
 end
 
-@kernel function ka_lu_backsolve_kernel!(d, @Const(A), @Const(ipiv), n::Int)
+@kernel function ka_lu_perm_kernel!(d, @Const(ipiv), n::Int)
     idx = @index(Global, Linear)
     if idx == 1
-        @inbounds begin
-            for k in 1:n
-                p = Int(ipiv[k])
-                if p != k
-                    d[k], d[p] = d[p], d[k]
-                end
-            end
-            for k in 1:n
-                dk = d[k]
-                for i in (k + 1):n
-                    d[i] -= A[i, k] * dk
-                end
-            end
-            for k in n:-1:1
-                dk = d[k] / A[k, k]
-                d[k] = dk
-                for i in 1:(k - 1)
-                    d[i] -= A[i, k] * dk
-                end
+        @inbounds for k in 1:n
+            p = Int(ipiv[k])
+            if p != k
+                d[k], d[p] = d[p], d[k]
             end
         end
     end
 end
+
+@kernel function ka_lu_trsv_l_col_kernel!(d, @Const(A), k::Int)
+    di = @index(Global, Linear)
+    i = k + di
+    @inbounds d[i] -= A[i, k] * d[k]
+end
+
+@kernel function ka_lu_trsv_u_col_kernel!(d, @Const(A), k::Int)
+    i = @index(Global, Linear)
+    @inbounds begin
+        dk = d[k] / A[k, k]
+        d[i] -= A[i, k] * dk
+    end
+end
+
+@kernel function ka_lu_trsv_u_diag_kernel!(d, @Const(A))
+    k = @index(Global, Linear)
+    @inbounds d[k] = d[k] / A[k, k]
+end
+
+const KA_LU_WORKGROUP = 64
 
 function ka_lu!(A::AbstractGPUArray, ipiv::AbstractVector{Int32},
         status::AbstractVector{Int32})
@@ -79,10 +118,11 @@ function ka_lu!(A::AbstractGPUArray, ipiv::AbstractVector{Int32},
     n == 0 && return 0
     backend = get_backend(A)
     fill!(status, Int32(0))
-    piv_kernel! = ka_lu_pivot_swap_scale_kernel!(backend)
+    piv_kernel! = ka_lu_pivot_swap_scale_kernel!(backend, KA_LU_WORKGROUP)
     ger_kernel! = ka_lu_ger_kernel!(backend)
     for k in 1:n
-        piv_kernel!(A, ipiv, status, k, n; ndrange = 1)
+        piv_kernel!(
+            A, ipiv, status, k, n, Val(KA_LU_WORKGROUP); ndrange = KA_LU_WORKGROUP)
         if k < n
             m = n - k
             ger_kernel!(A, k; ndrange = (m, m))
@@ -92,13 +132,13 @@ function ka_lu!(A::AbstractGPUArray, ipiv::AbstractVector{Int32},
     return Int(Array(status)[1])
 end
 
-function ka_factorize_lu!(fac::DenseLU, J::AbstractMatrix)
+function ka_factorize_lu!(fac::DeviceLU, J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     info = ka_lu!(fac.factors, fac.ipiv, fac.status)
-    return DenseLU(fac.factors, fac.ipiv, fac.rhs, info, e, fac.status)
+    return DeviceLU(fac.factors, fac.ipiv, fac.rhs, info, e, fac.status)
 end
 
-function factorize!!(fac::DenseLU{<:AbstractGPUArray}, ::LUFactorization, J::AbstractMatrix)
+function factorize!!(fac::DeviceLU, ::LUFactorization, J::AbstractMatrix)
     return ka_factorize_lu!(fac, J)
 end
 
@@ -106,17 +146,21 @@ function ka_lu_backsolve!(A::AbstractGPUArray, ipiv::AbstractVector{Int32}, d::A
     n = length(d)
     n == 0 && return d
     backend = get_backend(A)
-    ka_lu_backsolve_kernel!(backend)(d, A, ipiv, n; ndrange = 1)
+    ka_lu_perm_kernel!(backend)(d, ipiv, n; ndrange = 1)
+    trsv_l! = ka_lu_trsv_l_col_kernel!(backend)
+    for k in 1:(n - 1)
+        trsv_l!(d, A, k; ndrange = n - k)
+    end
+    trsv_u! = ka_lu_trsv_u_col_kernel!(backend)
+    for k in n:-1:2
+        trsv_u!(d, A, k; ndrange = k - 1)
+    end
+    ka_lu_trsv_u_diag_kernel!(backend)(d, A; ndrange = n)
     isgpu(backend) && synchronize(backend)
     return d
 end
 
-function backsolve!(fac::DenseLU{<:AbstractGPUArray{T}},
-        d::AbstractVector{T}) where {T <: BlasFloat}
-    return ka_lu_backsolve!(fac.factors, fac.ipiv, d)
-end
-
-function backsolve!(fac::DenseLU{<:AbstractGPUArray{T}},
+function backsolve!(fac::DeviceLU{<:AbstractMatrix{T}},
         d::AbstractVector{T}) where {T <: Number}
     return ka_lu_backsolve!(fac.factors, fac.ipiv, d)
 end

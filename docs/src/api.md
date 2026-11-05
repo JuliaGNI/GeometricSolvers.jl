@@ -82,12 +82,12 @@ A linear-solver method enters a solve through [`dense_factor`](@ref), [`factoriz
 `Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
 a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
 `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
-[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref),
-and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on a
-host `Array`, and through `KernelAbstractions` on an `AbstractGPUArray` for [`DenseLU`](@ref),
-[`DenseQR`](@ref) and [`DenseSVD`](@ref). [`factorize!!`](@ref) states what a singular matrix
-gives: an SVD factor records its numerical rank in `rank` apart from its status, and
-[`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
+[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
+on a host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
+`AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
+through LAPACK on the host, and through `KernelAbstractions` on a device. [`factorize!!`](@ref)
+states what a singular matrix gives: an SVD factor records its numerical rank in `rank` apart from
+its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
 [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These names are not
 exported and are reached as `GeometricSolvers.name`.
 
@@ -100,8 +100,11 @@ StaticLU
 StaticQR
 StaticSVD
 DenseLU
+DeviceLU
 DenseQR
+DeviceQR
 DenseSVD
+DeviceSVD
 returncode
 exact_solve
 singular_values

@@ -5,11 +5,11 @@ using Random: Xoshiro
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: DenseLU, DenseQR, DenseSVD, LUFactorization, NonlinearProblem,
-                        QRFactorization, SVDFactorization
-using GeometricSolvers: JACOBI_MAX_SWEEPS, backsolve!, factor_eltype, factorize!!,
-                        dense_factor,
-                        jacobi_pair, jacobi_rotation, jacobi_tolerance, ldiv!!, returncode
+using GeometricSolvers: DenseLU, DenseQR, DenseSVD, DeviceLU, DeviceQR, DeviceSVD,
+                        LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
+using GeometricSolvers: JACOBI_MAX_SWEEPS, backsolve!, dense_factor, exact_solve,
+                        factor_diagnostics, factor_eltype, factorize!!, jacobi_pair,
+                        jacobi_rotation, jacobi_tolerance, ldiv!!, returncode
 
 include("../helpers/matrix.jl")
 
@@ -292,11 +292,11 @@ function ka_check_inferred_and_scaled(m, prob_dev, x_dev, A_dev, b_dev)
     d_h = Array(d)
     @test all(isfinite, d_h)
     e_sc = fac.scale_exponent + 3
-    fac_sc = fac isa DenseLU ?
-             DenseLU(fac.factors, fac.ipiv, fac.rhs, fac.info, e_sc, fac.status) :
-             fac isa DenseQR ?
-             DenseQR(fac.factors, fac.τ, fac.work, fac.rhs, fac.info, e_sc) :
-             DenseSVD(fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork,
+    fac_sc = fac isa DeviceLU ?
+             DeviceLU(fac.factors, fac.ipiv, fac.rhs, fac.info, e_sc, fac.status) :
+             fac isa DeviceQR ?
+             DeviceQR(fac.factors, fac.τ, fac.rhs, fac.info, e_sc, fac.status) :
+             DeviceSVD(fac.factors, fac.U, fac.S, fac.VT, fac.V, fac.σ̂, fac.flag,
         fac.tmp, fac.rhs, fac.info, fac.rank, e_sc)
     d_sc = ldiv!!(similar(x_dev), fac_sc, b_dev)
     @test ka_rel_inf(Array(d_sc), Float64[x / 8.0 for x in d_h]) <= 8 * eps(Float64)
@@ -392,14 +392,16 @@ end
                 x_h = Array(d_dev)
                 res_inf, res_2 = ka_res_norms(A_cpu, x_h, b_cpu)
 
-                if fac_dev isa DenseSVD
-                    @test length(fac_dev.work) == 1
-                    @test eltype(fac_dev.work) === Int32
-                    @test length(fac_dev.rwork) == n
-                    @test eltype(fac_dev.rwork) === real(TF_eff)
+                if fac_dev isa DeviceSVD
+                    @test size(fac_dev.V) == (n, n)
+                    @test eltype(fac_dev.V) === TF_eff
+                    @test length(fac_dev.flag) == 1
+                    @test eltype(fac_dev.flag) === Int32
+                    @test length(fac_dev.σ̂) == n
+                    @test eltype(fac_dev.σ̂) === real(TF_eff)
                     S_h = Array(fac_dev.S)
                     @test issorted(S_h; rev = true)
-                    @test issorted(Array(fac_dev.rwork); rev = true)
+                    @test issorted(Array(fac_dev.σ̂); rev = true)
                     σ1 = S_ref[1]
                     @test ka_max_abs_diff(S_h, S_ref) <= 8 * n * eps_eff * σ1
                     bwd2 = res_2 / (σ1 * ka_norm_2(x_h))
@@ -464,6 +466,7 @@ end
         prob = NonlinearProblem(x, ka_noop)
 
         fac_lu = dense_factor(LUFactorization(), prob, x, nothing)
+        @test fac_lu isa DeviceLU
         lu_sig = (typeof(fac_lu), LUFactorization{Nothing}, JLMatrix{T})
         m_lu_fac = which(factorize!!, lu_sig)
         m_lu_bs = which(backsolve!, (typeof(fac_lu), JLVector{T}))
@@ -471,6 +474,7 @@ end
         @test endswith(replace(String(m_lu_bs.file), '\\' => '/'), "src/linear/ka/lu.jl")
 
         fac_qr = dense_factor(QRFactorization(), prob, x, nothing)
+        @test fac_qr isa DeviceQR
         qr_sig = (typeof(fac_qr), QRFactorization{Nothing}, JLMatrix{T})
         m_qr_fac = which(factorize!!, qr_sig)
         m_qr_bs = which(backsolve!, (typeof(fac_qr), JLVector{T}))
@@ -478,10 +482,13 @@ end
         @test endswith(replace(String(m_qr_bs.file), '\\' => '/'), "src/linear/ka/qr.jl")
 
         fac_svd = dense_factor(SVDFactorization(), prob, x, nothing)
-        @test length(fac_svd.work) == 1
-        @test eltype(fac_svd.work) === Int32
-        @test length(fac_svd.rwork) == 4
-        @test eltype(fac_svd.rwork) === real(T)
+        @test fac_svd isa DeviceSVD
+        @test size(fac_svd.V) == (4, 4)
+        @test eltype(fac_svd.V) === T
+        @test length(fac_svd.flag) == 1
+        @test eltype(fac_svd.flag) === Int32
+        @test length(fac_svd.σ̂) == 4
+        @test eltype(fac_svd.σ̂) === real(T)
         svd_sig = (typeof(fac_svd), SVDFactorization{Nothing}, JLMatrix{T})
         m_svd_fac = which(factorize!!, svd_sig)
         m_svd_bs = which(backsolve!, (typeof(fac_svd), JLVector{T}))
@@ -667,6 +674,44 @@ end
             @test ka_rel_inf(Array(d), x_ref) <= 32 * Float64(eps(RT))
         end
     end
+
+    @testset "pivot_last_row at n = $n" for n in (17, 64)
+        for T in (Float32, Float64)
+            A_cpu = Matrix{T}(I, n, n)
+            A_cpu[1, 1] = eps(T)
+            A_cpu[n, 1] = T(10)
+            A_cpu[1, n] = T(2)
+            A_cpu[n, 2] = T(3)
+            b_cpu = T[T(i) for i in 1:n]
+            x_ref, κ, _ = ka_ref_solve_and_cond(A_cpu, b_cpu)
+
+            x_dev = JLArray(zeros(T, n))
+            prob = NonlinearProblem(x_dev, ka_noop)
+            m = LUFactorization()
+            fac = dense_factor(m, prob, x_dev, nothing)
+            fac = factorize!!(fac, m, JLArray(A_cpu))
+            @test fac.info == 0
+            @test Array(fac.ipiv)[1] == Int32(n)
+            d = ldiv!!(similar(x_dev), fac, JLArray(b_cpu))
+            @test ka_rel_inf(Array(d), x_ref) <= 8 * n * Float64(eps(T)) * κ
+        end
+    end
+
+    @testset "workgroup pivot reduction tie-breaking prefers smaller row index" begin
+        for (n, r1, r2) in ((16, 2, 5), (260, 2, 258))
+            A_cpu = Matrix{Float64}(I, n, n)
+            A_cpu[1, 1] = 0.5
+            A_cpu[r1, 1] = 4.0
+            A_cpu[r2, 1] = -4.0
+            x_dev = JLArray(zeros(Float64, n))
+            prob = NonlinearProblem(x_dev, ka_noop)
+            m = LUFactorization()
+            fac = dense_factor(m, prob, x_dev, nothing)
+            fac = factorize!!(fac, m, JLArray(A_cpu))
+            @test fac.info == 0
+            @test Array(fac.ipiv)[1] == Int32(r1)
+        end
+    end
 end
 
 @testset "singular and non-finite inputs on JLArray: $T" for T in ELTYPES
@@ -806,7 +851,8 @@ end
         @test Array(fac1.U) == Array(fac2.U)
         @test Array(fac1.S) == Array(fac2.S)
         @test Array(fac1.VT) == Array(fac2.VT)
-        @test Array(fac1.rwork) == Array(fac2.rwork)
+        @test Array(fac1.V) == Array(fac2.V)
+        @test Array(fac1.σ̂) == Array(fac2.σ̂)
         @test Array(d1) == Array(d2)
 
         err_u, err_vt, err_rec = ka_svd_orth_and_recon_errs(
@@ -868,7 +914,7 @@ end
         end
     end
 
-    @testset "4(b) singular value above floatmax(R) leaves solve finite via rwork" begin
+    @testset "4(b) singular value above floatmax(R) leaves solve finite via σ̂" begin
         for (T, TF) in PRECISION_PAIRS
             n = 4
             m = TF === Nothing ? SVDFactorization() : SVDFactorization(TF)
@@ -889,7 +935,7 @@ end
             @test fac.info == 0
             @test returncode(fac) === SUCCESS
             @test !isfinite(Array(fac.S)[1])
-            @test all(isfinite, Array(fac.rwork))
+            @test all(isfinite, Array(fac.σ̂))
 
             d = ldiv!!(similar(x_dev), fac, JLArray(b_cpu))
             x_h = Array(d)
@@ -956,7 +1002,7 @@ end
             end
         end
 
-        # Sub-cutoff positive singular value rwork[2] = tol / 4 > 0 is truncated by tol * rwork[1]
+        # Sub-cutoff positive singular value σ̂[2] = tol / 4 > 0 is truncated by tol * σ̂[1]
         for (T, TF) in PRECISION_PAIRS
             n = 4
             m = TF === Nothing ? SVDFactorization() : SVDFactorization(TF)
@@ -971,8 +1017,8 @@ end
             prob = NonlinearProblem(x_dev, ka_noop)
             fac = factorize!!(dense_factor(m, prob, x_dev, nothing), m, JLArray(A_sub))
             @test fac.info == 0
-            @test Array(fac.rwork)[2] > zero(R)
-            @test Array(fac.rwork)[2] <= tol * Array(fac.rwork)[1]
+            @test Array(fac.σ̂)[2] > zero(R)
+            @test Array(fac.σ̂)[2] <= tol * Array(fac.σ̂)[1]
             @test ka_count_nz(@view(Array(fac.U)[:, 2:n])) == 0
             d = ldiv!!(similar(x_dev), fac, JLArray(b_sub))
             d_h = Array(d)
@@ -1115,4 +1161,39 @@ end
         fac = factorize!!(dense_factor(m, NonlinearProblem(x, ka_noop), x, nothing), m, JLArray(J))
         @test !any(isfinite, Array(ldiv!!(similar(x), fac, JLArray(ones(T, 4)))))
     end
+end
+
+@testset "exact_solve and factor_diagnostics on DeviceLU, DeviceQR, DeviceSVD" begin
+    x = JLArray(zeros(Float64, 4))
+    prob = NonlinearProblem(x, ka_noop)
+    A_full = JLArray(Matrix{Float64}(I, 4, 4))
+    r_dev = JLArray([1.0, 2.0, 3.0, 4.0])
+    fnorm = sqrt(30.0)
+
+    fac_lu = factorize!!(
+        dense_factor(LUFactorization(), prob, x, nothing), LUFactorization(), copy(A_full))
+    @test exact_solve(fac_lu) === true
+    rk_lu, nn_lu = factor_diagnostics(similar(x), fac_lu, r_dev, fnorm)
+    @test rk_lu === Int32(-1) && isnan(nn_lu)
+
+    fac_qr = factorize!!(
+        dense_factor(QRFactorization(), prob, x, nothing), QRFactorization(), copy(A_full))
+    @test exact_solve(fac_qr) === true
+    rk_qr, nn_qr = factor_diagnostics(similar(x), fac_qr, r_dev, fnorm)
+    @test rk_qr === Int32(-1) && isnan(nn_qr)
+
+    fac_svd = factorize!!(
+        dense_factor(SVDFactorization(), prob, x, nothing), SVDFactorization(), copy(A_full))
+    @test exact_solve(fac_svd) === true
+    rk_svd, nn_svd = factor_diagnostics(similar(x), fac_svd, r_dev, fnorm)
+    @test rk_svd === Int32(4) && isapprox(nn_svd, 0.0; atol = 8 * eps(Float64) * fnorm)
+
+    A_rank2_cpu = zeros(Float64, 4, 4)
+    A_rank2_cpu[1, 1] = 2.0
+    A_rank2_cpu[2, 2] = 1.0
+    fac_svd_r2 = factorize!!(fac_svd, SVDFactorization(), JLArray(A_rank2_cpu))
+    @test exact_solve(fac_svd_r2) === false
+    rk, nn = factor_diagnostics(similar(x), fac_svd_r2, r_dev, fnorm)
+    @test rk === Int32(2)
+    @test isapprox(nn, hypot(3.0, 4.0); rtol = 8 * eps(Float64))
 end

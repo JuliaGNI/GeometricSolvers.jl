@@ -5,9 +5,11 @@ using Random: Xoshiro
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
-using GeometricSolvers: backsolve!, factorize!!, dense_factor, jacobi_tolerance, ldiv!!,
-                        returncode
+using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
+using GeometricSolvers: LUFactorization, Newton, NonlinearProblem, Options, QRFactorization,
+                        SVDFactorization
+using GeometricSolvers: backsolve!, dense_factor, factorize!!, init, jacobi_tolerance,
+                        ldiv!!, returncode, solve, solve!
 
 include("../helpers/matrix.jl")
 include("../helpers/metal_device.jl")
@@ -64,6 +66,7 @@ if Metal.functional() && !on_virtual_gpu()
                 b_dev = MtlArray(b_cpu)
                 prob_dev = NonlinearProblem(x_dev, metal_noop)
                 fac_dev = dense_factor(m, prob_dev, x_dev, nothing)
+                @test fac_dev isa (M === LUFactorization ? DeviceLU : DeviceQR)
                 copyto!(fac_dev.factors, MtlArray(A_cpu))
                 fac_dev = factorize!!(fac_dev, m, fac_dev.factors)
                 @test fac_dev.info == 0
@@ -101,6 +104,7 @@ if Metal.functional() && !on_virtual_gpu()
             b_dev = MtlArray(b_cpu)
             prob_dev = NonlinearProblem(x_dev, metal_noop)
             fac_dev = dense_factor(m, prob_dev, x_dev, nothing)
+            @test fac_dev isa DeviceSVD
             copyto!(fac_dev.factors, MtlArray(A_cpu))
             fac_dev = factorize!!(fac_dev, m, fac_dev.factors)
             @test fac_dev.info == 0
@@ -144,6 +148,8 @@ if Metal.functional() && !on_virtual_gpu()
             @test Array(fac1.U) == Array(fac2.U)
             @test Array(fac1.S) == Array(fac2.S)
             @test Array(fac1.VT) == Array(fac2.VT)
+            @test Array(fac1.V) == Array(fac2.V)
+            @test Array(fac1.σ̂) == Array(fac2.σ̂)
             @test Array(d1) == Array(d2)
         end
 
@@ -160,7 +166,7 @@ if Metal.functional() && !on_virtual_gpu()
         @test Array(fac_sub.VT) == Array(fac_ref.VT)
         @test Array(fac_sub.S) == ldexp.(Array(fac_ref.S), E)
 
-        # Singular value above floatmax(Float32) leaves solve finite via rwork
+        # Singular value above floatmax(Float32) leaves solve finite via σ̂
         A_hi = fill(T(0.5f0 * floatmax(Float32)), 4, 4) +
                Matrix{T}(Diagonal(fill(T(0.125f0 * floatmax(Float32)), 4)))
         b_hi = fill(T(0.25f0 * floatmax(Float32)), 4)
@@ -169,7 +175,7 @@ if Metal.functional() && !on_virtual_gpu()
         fac_hi = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_hi))
         @test fac_hi.info == 0
         @test !isfinite(Array(fac_hi.S)[1])
-        @test all(isfinite, Array(fac_hi.rwork))
+        @test all(isfinite, Array(fac_hi.σ̂))
         d_hi = ldiv!!(similar(x4), fac_hi, MtlArray(b_hi))
         @test all(isfinite, Array(d_hi))
         rel_hi = norm(W.(Array(d_hi)) - x_hi_ref, Inf) / norm(x_hi_ref, Inf)
@@ -246,8 +252,10 @@ if Metal.functional() && !on_virtual_gpu()
         @test returncode(fac_part) === SINGULAR
 
         # Dispatch and workspace sizes on MtlArray
-        @test length(fac_sub.work) == 1
-        @test length(fac_sub.rwork) == 4
+        @test fac_sub isa DeviceSVD
+        @test size(fac_sub.V) == (4, 4)
+        @test length(fac_sub.flag) == 1
+        @test length(fac_sub.σ̂) == 4
         m_svd_fac = which(
             factorize!!, (typeof(fac_sub), SVDFactorization{Nothing}, MtlMatrix{T}))
         m_svd_bs = which(backsolve!, (typeof(fac_sub), MtlVector{T}))
@@ -280,6 +288,28 @@ if Metal.functional() && !on_virtual_gpu()
             d = ldiv!!(similar(x_dev), fac, MtlArray(b_tiny))
             rel = norm(W.(Array(d)) - x_ref, Inf) / norm(x_ref, Inf)
             @test rel <= 8 * n * Float64(eps(Float32)) * κ
+
+            if M === LUFactorization
+                for n_piv in (17, 64)
+                    A_piv = Matrix{T}(I, n_piv, n_piv)
+                    A_piv[1, 1] = T(eps(Float32))
+                    A_piv[n_piv, 1] = T(10)
+                    A_piv[1, n_piv] = T(2)
+                    A_piv[n_piv, 2] = T(3)
+                    b_piv = T[T(i) for i in 1:n_piv]
+                    x_piv_ref = W.(A_piv) \ W.(b_piv)
+                    κ_piv = cond(W.(A_piv), Inf)
+                    x_piv_dev = MtlArray(zeros(T, n_piv))
+                    prob_piv = NonlinearProblem(x_piv_dev, metal_noop)
+                    fac_piv = factorize!!(
+                        dense_factor(m, prob_piv, x_piv_dev, nothing), m, MtlArray(A_piv))
+                    @test fac_piv.info == 0
+                    @test Array(fac_piv.ipiv)[1] == Int32(n_piv)
+                    d_piv = ldiv!!(similar(x_piv_dev), fac_piv, MtlArray(b_piv))
+                    rel_piv = norm(W.(Array(d_piv)) - x_piv_ref, Inf) / norm(x_piv_ref, Inf)
+                    @test rel_piv <= 8 * n_piv * Float64(eps(Float32)) * κ_piv
+                end
+            end
 
             # Column scaled by 1.0f20
             A0, _ = metal_well_conditioned(T, 4)
@@ -329,6 +359,56 @@ if Metal.functional() && !on_virtual_gpu()
             @test d_nan isa MtlVector{T}
         end
     end
+
+    @testset "R3 Newton on MtlVector{Float32} with LUFactorization, QRFactorization, SVDFactorization" begin
+        function d7_F!(F, x, p)
+            n = length(x)
+            x_l = @view x[1:(n - 2)]
+            x_c = @view x[2:(n - 1)]
+            x_r = @view x[3:n]
+            F_c = @view F[2:(n - 1)]
+            @. F[1:1] = (4.0f0 + 0.5f0 * x[1]^2) * x[1] - x[2] - 1.0f0
+            @. F_c = -x_l + (4.0f0 + 0.5f0 * x_c^2) * x_c - x_r - 1.0f0
+            @. F[n:n] = -x[n - 1] + (4.0f0 + 0.5f0 * x[n]^2) * x[n] - 1.0f0
+            return F
+        end
+        prob_d7 = NonlinearProblem(d7_F!)
+        x0_cpu = fill(0.2f0, 64)
+        for M in (LUFactorization, QRFactorization, SVDFactorization)
+            method = Newton(; linsolve = M(), globalization = GeometricSolvers.Static())
+            x_cpu, st_cpu = solve(prob_d7, copy(x0_cpu), method)
+            x_gpu, st_gpu = solve(prob_d7, MtlArray(x0_cpu), method)
+            @test st_gpu.code === SUCCESS
+            @test x_gpu isa MtlVector{Float32}
+            @test st_gpu.iterations == st_cpu.iterations
+            @test norm(Array(x_gpu) - x_cpu) / norm(x_cpu) <= 1.0f-5
+            if M === SVDFactorization
+                @test st_gpu.rank == Int32(64)
+                @test isfinite(st_gpu.nullnorm)
+            else
+                @test st_gpu.rank == Int32(-1)
+                @test isnan(st_gpu.nullnorm)
+            end
+            @test isfinite(st_gpu.gradratio)
+
+            solver = init(prob_d7, MtlArray(x0_cpu), method)
+            x_gpu2, st_gpu2 = solve!(solver)
+            @test st_gpu2.code === SUCCESS
+            @test Array(x_gpu2) == Array(x_gpu)
+        end
+
+        # Rank-deficient Jacobian on MtlVector{Float32} with SVDFactorization populates status diagnostics
+        f_sing_mtl!(r, y, p) = (r .= y .^ 2 .- p; r)
+        j_sing_mtl!(J, y, p) = (fill!(J, 0.0f0); J)
+        prob_sing = NonlinearProblem(f_sing_mtl!, j_sing_mtl!)
+        _, st_sing = solve(
+            prob_sing, MtlArray(Float32[2, 3]),
+            Newton(; linsolve = SVDFactorization()), MtlArray(Float32[1, 1]))
+        @test st_sing.rank == Int32(0)
+        @test isfinite(st_sing.nullnorm) && st_sing.nullnorm > 0.0f0
+        @test st_sing.gradratio == 0.0f0
+    end
+
     BLAS.set_num_threads(old_blas_threads)
 elseif Metal.functional()
     @test_skip on_virtual_gpu()  # issue #34
