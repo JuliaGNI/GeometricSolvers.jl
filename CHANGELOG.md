@@ -11,6 +11,26 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`LevenbergMarquardt{R, S}` damped trust-region globalization for `Newton`** (decision 54 of the
+  design). `LevenbergMarquardt{R <: AbstractFloat, S}` (`R = Float64` by default, adapted to
+  `real(eltype(x₀))` by `ToReal{R}()`) carries the damping parameters `(μ₀, μ_min, μ_max,
+  μ_decrease, μ_increase, ρ_accept, scaling)` with `scaling = Val(s)` for `s ∈ (:none, :diagonal)`
+  and validates `0 < μ_min <= μ₀ <= μ_max < Inf`, `0 < μ_decrease < 1 < μ_increase` and `0 <=
+  ρ_accept < 1`. `Newton` with `globalization = LevenbergMarquardt(...)` requires `reuse ===
+  nothing` and tracks its damping parameter in `state.rule::DampingParameter{R}` (`NaN` from
+  `init_state` and `finish!!`, and `R(lm.μ₀)` from `start!!`). On `SVDFactorization()` with
+  `scaling = :none`, each step factorises `J(x)` once and each trial `μ` computes
+  `δ = -V diag(σ_i / (σ_i² + μ)) Uᴴ F(x)` directly from the singular value decomposition via the
+  scale-safe coordinate weight `lm_svd_coord` across static (`StaticSVD`), host (`DenseSVD`) and
+  device (`DeviceSVD`) factors. On `QRFactorization()` or `LUFactorization()`, or when `scaling =
+  :diagonal`, each trial step solves `(Jᴴ J + μ D²) δ = -Jᴴ F(x)` via Givens QR elimination of the
+  stacked system `[J; √μ D]` without forming `Jᴴ J`. Steps are accepted when the gain ratio
+  `ρ = (‖F(x)‖² - ‖F(x + δ)‖²) / (‖F(x)‖² - ‖F(x) + J δ‖²)` satisfies `ρ > ρ_accept`, decreasing
+  `μ` to `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`, and rejected steps multiply `μ` by
+  `μ_increase` inside the step until a trial step is accepted or `μ > μ_max` returns `STALLED`.
+  `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 10th column
+  `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
+
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use
   workgroup reductions and column-parallel triangular solves** (decision 48 of the design).

@@ -51,6 +51,8 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
                 throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse"))
             globalization isa DogLeg &&
                 throw(ArgumentError("Newton with a DogLeg globalization takes no reuse, got reuse = $reuse"))
+            globalization isa LevenbergMarquardt &&
+                throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse, got reuse = $reuse"))
         end
         new{L, G, J, RF, R, K}(
             linsolve, globalization, jacobian, refinement, regularization, reuse)
@@ -162,7 +164,8 @@ end
 end
 
 @inline function init_newton_J(m::Newton, fac, x)
-    if !(m.globalization isa DogLeg) && factor_eltype(m.linsolve, eltype(x)) === eltype(x)
+    same_eltype = factor_eltype(m.linsolve, eltype(x)) === eltype(x)
+    if !(m.globalization isa Union{DogLeg, LevenbergMarquardt}) && same_eltype
         return fac.factors
     end
     n = length(x)
@@ -183,6 +186,13 @@ struct TrustRadius{R}
     radius₀::R
 end
 
+# The rule state of `Newton` with `LevenbergMarquardt`: the current damping parameter `μ`,
+# initialised to `NaN` in `init_state` and after `finish!!` so that a raw `step!!` outside
+# `start!!` fails closed with `NONFINITE`, and set to `R(lm.μ₀)` by `start!!`.
+struct DampingParameter{R}
+    μ::R
+end
+
 @inline newton_rule(m::Newton, x) = newton_rule(m.globalization, m.reuse, real(eltype(x)))
 @inline newton_rule(globalization, ::Nothing, ::Type{R}) where {R} = nothing
 @inline newton_rule(globalization, ::Int32, ::Type{R}) where {R} = FactorAge(Int32(0), false)
@@ -190,10 +200,20 @@ end
     δ₀ = dogleg_initial_radius(dl, R)
     return TrustRadius(δ₀, δ₀)
 end
+@inline function newton_rule(::LevenbergMarquardt, x)
+    return DampingParameter(real(eltype(x))(NaN))
+end
+@inline function newton_rule(::LevenbergMarquardt, ::Nothing, ::Type{R}) where {R}
+    return DampingParameter(R(NaN))
+end
 
 @inline reset_rule(::Nothing) = nothing
 @inline reset_rule(::FactorAge) = FactorAge(Int32(0), false)
 @inline reset_rule(r::TrustRadius) = TrustRadius(r.radius₀, r.radius₀)
+@inline reset_rule(r, _) = reset_rule(r)
+@inline function reset_rule(::DampingParameter{R}, lm::LevenbergMarquardt) where {R}
+    return DampingParameter(R(lm.μ₀))
+end
 
 # The range and spectrum diagnostics of the last `newton_factor` call of the solve, which
 # `finish!!` copies into `SolverStatus`.
@@ -208,12 +228,12 @@ end
 end
 
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
-# globalization workspace, the rule state of its reuse or its `DogLeg`, the merit `norm2(Fx)` of
-# the current residual for a line search (`nothing` for any other globalization), and the
-# diagnostics of the last factorisation. For a value iterate the workspace slots are `nothing`,
-# and so is the factor slot unless the factor is reused. The factor slot is the storage that each
-# factorisation writes into; only a step with reuse stores the factor it returns, because only
-# such a step reads it again.
+# globalization workspace, the rule state of its reuse, its `DogLeg` or its `LevenbergMarquardt`,
+# the merit `norm2(Fx)` of the current residual for a line search (`nothing` for any other
+# globalization), and the diagnostics of the last factorisation. For a value iterate the
+# workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The
+# factor slot is the storage that each factorisation writes into; only a step with reuse stores
+# the factor it returns, because only such a step reads it again.
 struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, DG}
     jacprep::JP
     jvpprep::VP
@@ -267,7 +287,7 @@ end
 @inline residual_buffer(state::NewtonState) = state.Fx
 
 @inline function start!!(state::NewtonState, m::Newton, prob, x, Fx, p, fnorm₀)
-    state = with_rule(state, reset_rule(state.rule))
+    state = with_rule(state, reset_rule(state.rule, m.globalization))
     state = with_merit(state, start_merit(m.globalization, Fx))
     return with_diag(state, NewtonDiagnostics(real(eltype(x))))
 end
@@ -281,7 +301,11 @@ end
     st = SolverStatus{R}(
         status.code, status.iterations, status.fnorm, status.stepnorm,
         status.step_failures, status.promoted, d.rank, d.nullnorm, d.gradratio)
-    return x, st, with_merit(state, init_merit(m.globalization, x))
+    state_out = with_merit(state, init_merit(m.globalization, x))
+    if state.rule isa DampingParameter
+        state_out = with_rule(state_out, DampingParameter(R(NaN)))
+    end
+    return x, st, state_out
 end
 
 @inline function newton_stepkind(m::Newton, ::Type{T}, fresh::Bool) where {T}
@@ -409,4 +433,128 @@ end
     end
     state₊ = with_rule(state, FactorAge(age₊, info.code == STALLED))
     return x₊, F₊, state₊, info
+end
+
+@inline lm_svd_factor(_, m, ::StaticVector, Jreg) = lm_static_svd(m.linsolve, Jreg)
+@inline function lm_svd_factor(_, m, ::Number, Jreg)
+    return lm_static_svd(m.linsolve, SMatrix{1, 1, typeof(Jreg)}((Jreg,)))
+end
+@inline lm_svd_factor(state, m, _, Jreg) = factorize!!(state.fac, m.linsolve, Jreg)
+
+@inline function lm_newton_factor(
+        m::Newton, state::NewtonState, prob, x, Fx, p, fnorm::R) where {R}
+    Jmat = jacobian!!(state.J, state.jacprep, prob, x, p)
+    gr = grad_ratio(state.d, Jmat, Fx, fnorm)
+    Jreg = regularize!!(Jmat, m.regularization)
+    if m.linsolve isa SVDFactorization && m.globalization.scaling === Val(:none)
+        fac = lm_svd_factor(state, m, x, Jreg)
+        rk, nn = factor_diagnostics(state.d, fac, Fx, fnorm)
+        return Jreg, fac, NewtonDiagnostics{R}(rk, nn, gr)
+    end
+    return Jreg, state.fac, NewtonDiagnostics{R}(Int32(-1), R(NaN), gr)
+end
+
+@inline function step!!(
+        state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
+        prob::NonlinearProblem, x, Fx, p) where {L, G <: LevenbergMarquardt, J, RF, Reg}
+    R = real(eltype(x))
+    fnorm = R(rnorm(Fx))
+    μ = state.rule.μ
+    if !isfinite(μ)
+        info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state, info
+    end
+    lm = m.globalization
+    μ_min_eff = max(R(lm.μ_min), 4 * eps(R))
+    Jreg, fac, diag = lm_newton_factor(m, state, prob, x, Fx, p, fnorm)
+    state_d = with_diag(state, diag)
+    j_ok = Jreg isa Number ? isfinite(Jreg) : all(isfinite, Jreg)
+    if !j_ok || !isfinite(diag.gradratio)
+        info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state_d, info
+    end
+    use_svd = m.linsolve isa SVDFactorization && lm.scaling === Val(:none)
+    if use_svd && fac.info > 0
+        info = StepInfo{R}(SINGULAR, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state_d, info
+    end
+    if iszero(fnorm)
+        info = StepInfo{R}(SUCCESS, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state_d, info
+    end
+    failures = Int32(0)
+    while true
+        if use_svd
+            δ = lm_svd_step(state.d, fac, Fx, μ)
+            step_ok = δ isa Number ? isfinite(δ) : all(isfinite, δ)
+        else
+            δ, step_ok = lm_stacked_qr_step(state.d, Jreg, Fx, μ, lm.scaling, state.g)
+        end
+        if step_ok
+            Jδ = mul!!(lm_Jδ(state.g), Jreg, δ)
+            pred = -2 * rdot(Fx, Jδ) - norm2(Jδ)
+            if pred <= zero(R)
+                Flin = axpby!!(lm_Ft(state.g), one(R), Fx, one(R), Jδ)
+                flin_norm = rnorm(Flin)
+                pred = (fnorm - flin_norm) * (fnorm + flin_norm)
+            end
+            x₊ = update_iterate!!(lm_xt(state.g), x, one(R), δ)
+            F₊ = residual!!(lm_Ft(state.g), prob, x₊, p)
+            fnorm₊ = R(rnorm(F₊))
+            if isfinite(fnorm₊) && pred > zero(R)
+                ared = (fnorm - fnorm₊) * (fnorm + fnorm₊)
+                ρ = ared / pred
+                if ρ > R(lm.ρ_accept)
+                    limited = μ > R(lm.μ₀)
+                    μ_next = max(μ * R(lm.μ_decrease), μ_min_eff)
+                    stepnorm = R(rnorm(δ))
+                    x = copy!!(x, x₊)
+                    Fx = copy!!(Fx, F₊)
+                    state₊ = with_rule(state_d, DampingParameter(μ_next))
+                    info = StepInfo{R}(SUCCESS, fnorm₊, stepnorm, failures, false, limited)
+                    return x, Fx, state₊, info
+                end
+            end
+        end
+        failures += Int32(1)
+        μ *= R(lm.μ_increase)
+        if !isfinite(μ) || μ > R(lm.μ_max)
+            state_fail = with_rule(state_d, DampingParameter(μ))
+            info = StepInfo{R}(STALLED, fnorm, zero(R), failures, false, false)
+            return x, Fx, state_fail, info
+        end
+    end
+end
+
+NonlinearProblem(F; jacobian = nothing) = NonlinearProblem(F, jacobian)
+
+function solve(
+        prob::NonlinearProblem, m::Newton, x₀::Union{AbstractVector, Number},
+        p = nothing, options::Union{Nothing, Options} = nothing; kwargs...)
+    return solve(prob, x₀, m, p; options = options, kwargs...)
+end
+
+function init(
+        prob::NonlinearProblem, m::Newton, x₀::Union{AbstractVector, Number},
+        p = nothing; options::Union{Nothing, Options} = nothing, kwargs...)
+    return init(prob, x₀, m, p; options = options, kwargs...)
+end
+
+@inline function nonlinear_solver_status(s::NonlinearSolver)
+    Fx = getfield(s, :state).Fx
+    opts = getfield(s, :options)
+    d = getfield(s, :state).diag
+    fnorm = rnorm(Fx)
+    R = typeof(fnorm)
+    tol = max(opts.f_abstol, opts.f_reltol)
+    code = !isfinite(fnorm) ? NONFINITE : (fnorm <= tol ? SUCCESS : MAXITERS)
+    return SolverStatus{R}(
+        code, Int32(0), fnorm, zero(R), Int32(0), false,
+        d.rank, d.nullnorm, d.gradratio)
+end
+
+@inline function Base.getproperty(s::NonlinearSolver, name::Symbol)
+    name === :Fx && return getfield(s, :state).Fx
+    name === :status && return nonlinear_solver_status(s)
+    return getfield(s, name)
 end
