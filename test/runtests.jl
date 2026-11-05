@@ -42,6 +42,7 @@ if "core" in GROUPS
     @safetestset "Multiplicative combinator" include("composition/multiplicative.jl")
     @safetestset "Repeat combinator" include("composition/repeat.jl")
     @safetestset "Switch combinator" include("composition/switch.jl")
+    @safetestset "Anderson acceleration" include("composition/anderson.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "Jacobian-vector product" include("ad/jvp.jl")

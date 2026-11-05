@@ -8,11 +8,11 @@ using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Additive, Backtracking, DogLeg, FixedWeights, LUFactorization,
-                        Multiplicative, Newton, NonlinearProblem, OptimalWeights, Options,
-                        PerSystem, Picard, QRFactorization, Repeat, SINGULAR, SUCCESS,
-                        SolverStatus, Static, Switch, ToReal, init_state, isconverged,
-                        solve, solve_batch!, solve!!
+using GeometricSolvers: Additive, Anderson, Backtracking, DogLeg, FixedWeights,
+                        LUFactorization, Multiplicative, Newton, NonlinearProblem,
+                        OptimalWeights, Options, PerSystem, Picard, QRFactorization, Repeat,
+                        SINGULAR, SUCCESS, SolverStatus, Static, Switch, ToReal, init_state,
+                        isconverged, solve, solve_batch!, solve!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -168,6 +168,26 @@ end
                         xs_got[k], x_ref; rtol = 10 * eps(R), atol = 10 * eps(R))
                 end
             end
+
+            # Anderson R1 batch kernel on Metal
+            m_and = Adapt.adapt(
+                ToReal{R}(), Anderson(Picard(; damping = 0.5f0), Val(2)))
+            state_and = init_state(m_and, prob_pic, x₀, ps_pic_host[1])
+            @test isbits(m_and)
+            @test isbits(state_and)
+            solve_nonlinear_kernel!(backend)(
+                xs_out, codes_out, iters_out, xs_dev, ps_pic_dev,
+                prob_pic, m_and, state_and, opt; ndrange = B_METAL_NL)
+            synchronize(backend)
+            xs_and_got = Array(xs_out)
+            codes_and_got = Array(codes_out)
+            for k in 1:B_METAL_NL
+                x_ref, _, _ = solve!!(
+                    state_and, prob_pic, xs_host[k], m_and, ps_pic_host[k], opt)
+                @test codes_and_got[k] == Int32(SUCCESS)
+                @test isapprox(
+                    xs_and_got[k], x_ref; rtol = 10 * eps(R), atol = 10 * eps(R))
+            end
         end
 
         # 4. Picard solve inside a kernel with Adapt.adapt(ToReal{Float32}(), Picard(...))
@@ -208,7 +228,8 @@ end
                         weights = FixedWeights(0.8, 0.2)),
                         Multiplicative(Picard(; damping = 0.1), Newton()),
                         Repeat(Newton(), 2),
-                        Switch(Picard(; damping = 0.1), Newton(); threshold = 0.9)
+                        Switch(Picard(; damping = 0.1), Newton(); threshold = 0.9),
+                        Anderson(Picard(; damping = 0.7), Val(2))
                     ),
                     prob in (prob_j, prob_ad)
 
