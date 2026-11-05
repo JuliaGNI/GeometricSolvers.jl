@@ -263,6 +263,28 @@ end
             ldiv!!(xjl, fjl, bjl)
             @test backward_error(A_sym, Array(xjl), b) <= 16 * n * eps(R)
         end
+
+        # D5: exact zero imaginary diagonal required, and 64 * eps(R) off-diagonal tolerance
+        A_bad_diag = T[1 + R(1 // 2) * im 2 - im; 2 + im 3]
+        fs_bad = factorize!!(nothing, LDLTFactorization(), SMatrix{2, 2, T, 4}(A_bad_diag))
+        @test fs_bad.hermitian === false
+        fd_bad = dense_factor(LDLTFactorization(), nothing, ones(T, 2), nothing)
+        fd_bad = factorize!!(fd_bad, LDLTFactorization(), A_bad_diag)
+        @test fd_bad.hermitian === false
+        fjl_bad = dense_factor(LDLTFactorization(), nothing, JLArray(ones(T, 2)), nothing)
+        fjl_bad = factorize!!(fjl_bad, LDLTFactorization(), JLArray(A_bad_diag))
+        @test fjl_bad.hermitian === false
+
+        noise = R(8) * eps(R)
+        A_near_real = T[2 1 + noise * im; 1 + noise * im 3]
+        fs_nr = factorize!!(nothing, LDLTFactorization(), SMatrix{2, 2, T, 4}(A_near_real))
+        @test fs_nr.hermitian === true
+        fd_nr = dense_factor(LDLTFactorization(), nothing, ones(T, 2), nothing)
+        fd_nr = factorize!!(fd_nr, LDLTFactorization(), A_near_real)
+        @test fd_nr.hermitian === true
+        fjl_nr = dense_factor(LDLTFactorization(), nothing, JLArray(ones(T, 2)), nothing)
+        fjl_nr = factorize!!(fjl_nr, LDLTFactorization(), JLArray(A_near_real))
+        @test fjl_nr.hermitian === true
     end
 end
 

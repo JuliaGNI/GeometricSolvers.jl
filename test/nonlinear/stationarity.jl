@@ -438,16 +438,121 @@ end
         @test isapprox(X_batch[i], A_ind \ SVector(p_i, -2 * p_i); rtol = 1e-12)
     end
 
+    # solve_batch! with PerSystem datum b (both keyword b and problem-stored prob.b) and JLArray
+    b_per_vec = [SVector(0.25 * i, -0.5 * i) for i in 1:4]
+    b_ps = PerSystem(b_per_vec)
+    X_b_kw = [SVector(0.0, 0.0) for _ in 1:4]
+    counts_b_kw = solve_batch!(X_b_kw, prob_b1, m_newt_ldlt, ps; b = b_ps)
+    @test counts_b_kw.SUCCESS == 4
+    for i in 1:4
+        p_i = ps.data[i]
+        rhs_i = SVector(p_i, -2 * p_i) - b_per_vec[i]
+        @test isapprox(X_b_kw[i], A_ind \ rhs_i; rtol = 1e-12)
+    end
+
+    prob_b_ps = StationarityProblem(f_b1; b = b_ps)
+    X_b_prob = [SVector(0.0, 0.0) for _ in 1:4]
+    S_b_prob = Vector{SolverStatus{Float64}}(undef, 4)
+    ret_s = solve_batch!(X_b_prob, S_b_prob, prob_b_ps, m_newt_ldlt, ps)
+    @test ret_s === S_b_prob
+    for i in 1:4
+        @test S_b_prob[i].code == SUCCESS
+        @test isapprox(X_b_prob[i], X_b_kw[i]; rtol = 1e-12)
+    end
+
+    allowscalar(false)
+    X_jl_b = JLArray([SVector(0.0, 0.0) for _ in 1:4])
+    ps_jl = PerSystem(JLArray([1.0, 2.0, -1.0, 0.5]))
+    b_ps_jl = PerSystem(JLArray(b_per_vec))
+    counts_jl = solve_batch!(X_jl_b, prob_b1, m_newt_ldlt, ps_jl; b = b_ps_jl)
+    @test counts_jl.SUCCESS == 4
+    @test isapprox(Array(X_jl_b), X_b_kw; rtol = 1e-12)
+
     # solve_batch! with status vector S and subset U = (2, 3) preserving X[idx][1]
     f_b2(x, p) = 0.5 * ((x[2] - x[1])^2 + (x[3] - p)^2)
     prob_b2 = StationarityProblem(f_b2; E = (2, 3), U = (2, 3))
     X_sub = [SVector(Float64(i), 0.0, 0.0) for i in 1:4]
     S_sub = Vector{SolverStatus{Float64}}(undef, 4)
-    solve_batch!(X_sub, S_sub, prob_b2, m_newt_ldlt, ps)
+    ret_sub = solve_batch!(X_sub, S_sub, prob_b2, m_newt_ldlt, ps)
+    @test ret_sub === S_sub
     for i in 1:4
         @test S_sub[i].code == SUCCESS
         @test X_sub[i][1] == Float64(i)
         @test isapprox(X_sub[i][2], Float64(i); atol = 1e-12)
         @test isapprox(X_sub[i][3], ps.data[i]; atol = 1e-12)
     end
+end
+
+@testset "D1 runtime index rejection, 7-arg gradient_hessian!!, and D3 chunk symmetry" begin
+    # D1: runtime Vector{Int} indices must throw ArgumentError on R1/R2 StaticVector or Number
+    f_d1(x, p) = 0.5 * sum(abs2, x)
+    prob_rt_both = StationarityProblem(f_d1; E = [1, 2], U = [1, 2])
+    prob_rt_e = StationarityProblem(f_d1; E = [1, 2], U = (1, 2))
+    prob_rt_u = StationarityProblem(f_d1; E = (1, 2), U = [1, 2])
+    x_sv3 = SVector(1.0, 2.0, 3.0)
+    @test_throws ArgumentError solve(prob_rt_both, x_sv3, Newton())
+    @test_throws ArgumentError solve(prob_rt_e, x_sv3, Newton())
+    @test_throws ArgumentError solve(prob_rt_u, x_sv3, Newton())
+    @test_throws ArgumentError init(prob_rt_both, x_sv3, Newton())
+    @test_throws ArgumentError solve_batch!([x_sv3, x_sv3], prob_rt_both, Newton())
+    prob_rt_num = StationarityProblem((x, p) -> 0.5 * x^2; E = [1], U = [1])
+    @test_throws ArgumentError solve(prob_rt_num, 1.0, Newton())
+
+    # 7-argument gradient_hessian!!(F, J, prep, backend, prob, x, p) in R1 and R3
+    ad_fd = AutoForwardDiff()
+    prob_gh = StationarityProblem(f_d1; b = SVector(0.5, -1.0))
+    x_sv2 = SVector(1.5, -2.0)
+    F_r1_7, J_r1_7 = gradient_hessian!!(
+        nothing, nothing, nothing, ad_fd, prob_gh, x_sv2, nothing)
+    F_r1_6, J_r1_6 = gradient_hessian!!(nothing, nothing, ad_fd, prob_gh, x_sv2, nothing)
+    @test F_r1_7 == F_r1_6
+    @test J_r1_7 == J_r1_6
+
+    prob_gh_vec = StationarityProblem(f_d1; b = [0.5, -1.0])
+    x_v2 = [1.5, -2.0]
+    F_v2 = zeros(2)
+    J_v2 = zeros(2, 2)
+    prep_v2 = prepare_ad(ad_fd, prob_gh_vec, F_v2, x_v2, nothing)
+    gradient_hessian!!(F_v2, J_v2, prep_v2, ad_fd, prob_gh_vec, x_v2, nothing)
+    @test isapprox(F_v2, Vector(F_r1_6); rtol = 1e-12)
+    @test isapprox(J_v2, Matrix(J_r1_6); rtol = 1e-12)
+
+    # D3: When E == U and C = cld(n, N) > 1, ChunkedHessianForwardDiff evaluates S C*(C+1)/2 times
+    calls_d3 = Ref(0)
+    function f_d3(x, p)
+        calls_d3[] += 1
+        s = zero(eltype(x))
+        for i in eachindex(x)
+            s += i * x[i]^2
+        end
+        for i in 1:(length(x) - 1)
+            s += 0.3 * x[i] * x[i + 1]
+        end
+        return 0.5 * s
+    end
+    prob_d3 = StationarityProblem(f_d3)
+    x_d3 = collect(range(0.5, 1.5; length = 6))
+    F_d3 = zeros(6)
+    J_d3 = zeros(6, 6)
+    ad_c2 = AutoForwardDiff(; chunksize = 2)
+    prep_d3 = prepare_ad(ad_c2, prob_d3, F_d3, x_d3, nothing)
+    @test prep_d3.sym === true
+
+    calls_d3[] = 0
+    jacobian!!(J_d3, prep_d3, prob_d3, x_d3, nothing)
+    @test calls_d3[] == 6
+
+    F_full = zeros(6)
+    J_full = zeros(6, 6)
+    prep_full = prepare_ad(AutoForwardDiff(; chunksize = 6), prob_d3, F_full, x_d3, nothing)
+    gradient_hessian!!(F_full, J_full, prep_full, prob_d3, x_d3, nothing)
+    @test isapprox(J_d3, J_full; rtol = 1e-12)
+
+    fill!(F_d3, 0.0)
+    fill!(J_d3, 0.0)
+    calls_d3[] = 0
+    gradient_hessian!!(F_d3, J_d3, prep_d3, prob_d3, x_d3, nothing)
+    @test calls_d3[] == 6
+    @test isapprox(F_d3, F_full; rtol = 1e-12)
+    @test isapprox(J_d3, J_full; rtol = 1e-12)
 end

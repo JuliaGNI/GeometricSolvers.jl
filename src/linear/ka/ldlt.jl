@@ -3,7 +3,7 @@
 # blocks, column-parallel trailing updates, zero scalar indexing on the host, and one status
 # readback per factorisation.
 
-using KernelAbstractions: @localmem, @synchronize
+using KernelAbstractions: @localmem, @synchronize, @uniform
 
 const KA_LDLT_WORKGROUP = 64
 
@@ -11,19 +11,18 @@ const KA_LDLT_WORKGROUP = 64
     F = eltype(A)
     F <: Real && return true
     R = real(F)
-    err_h = zero(R)
-    err_s = zero(R)
+    tol = R(64) * eps(R)
     @inbounds for j in 1:n
-        for i in j:n
+        iszero(imag(A[j, j])) || return false
+        for i in (j + 1):n
             aij = A[i, j]
             aji = A[j, i]
-            dh = abs1(aij - conj(aji))
-            ds = abs1(aij - aji)
-            dh > err_h && (err_h = dh)
-            ds > err_s && (err_s = ds)
+            if abs(aij - conj(aji)) > tol * max(abs(aij), abs(aji))
+                return false
+            end
         end
     end
-    return !(err_s < err_h)
+    return true
 end
 
 @inline function ka_ldlt_all_finite(A, n::Int)
@@ -38,17 +37,22 @@ end
 @kernel function ka_ldlt_factor_kernel!(
         A, ipiv, status, n::Int, ::Val{G}) where {G}
     tid = @index(Local, Linear)
-    F = eltype(A)
-    R = real(F)
-    l_ctrl = @localmem Int32 (4,)
-    l_coef = @localmem F (4,)
+    @uniform F = eltype(A)
+    @uniform R = real(F)
+    @uniform α = bk_alpha(R)
+    l_ctrl = @localmem Int32 (5,)
+    l_coef = @localmem eltype(A) (4,)
     if tid == 1
         @inbounds if !ka_ldlt_all_finite(A, n)
             for k in 1:n
                 ipiv[k] = Int32(k)
             end
             status[1] = Int32(1)
-            l_ctrl[1] = Int32(0)
+            l_ctrl[1] = Int32(n + 1)
+            l_ctrl[2] = Int32(0)
+            l_ctrl[3] = Int32(-1)
+            l_ctrl[4] = Int32(1)
+            l_ctrl[5] = Int32(1)
         else
             herm = ka_ldlt_is_hermitian(A, n)
             if herm && F <: Complex
@@ -60,15 +64,15 @@ end
             l_ctrl[2] = Int32(0)
             l_ctrl[3] = Int32(0)
             l_ctrl[4] = herm ? Int32(1) : Int32(0)
+            l_ctrl[5] = Int32(1)
         end
     end
     @synchronize()
-    @inbounds if l_ctrl[1] != Int32(0)
-        herm = l_ctrl[4] == Int32(1)
-        α = bk_alpha(R)
-        k = 1
-        while k <= n
-            if tid == 1
+    while l_ctrl[1] <= Int32(n)
+        if tid == 1
+            @inbounds begin
+                k = Int(l_ctrl[1])
+                herm = l_ctrl[4] == Int32(1)
                 r = k
                 ω1 = zero(R)
                 if k < n
@@ -86,8 +90,8 @@ end
                 if iszero(max(abs_akk, ω1))
                     l_ctrl[3] == Int32(0) && (l_ctrl[3] = Int32(k))
                     ipiv[k] = Int32(k)
-                    l_ctrl[1] = Int32(1)
                     l_ctrl[2] = Int32(0)
+                    l_ctrl[5] = Int32(1)
                 else
                     if abs_akk >= α * ω1
                         s = 1
@@ -127,7 +131,7 @@ end
                             l_coef[1] = inv(d11)
                             l_ctrl[2] = Int32(1)
                         end
-                        l_ctrl[1] = Int32(1)
+                        l_ctrl[5] = Int32(1)
                     else
                         ipiv[k] = Int32(-p)
                         ipiv[k + 1] = Int32(-p)
@@ -151,71 +155,89 @@ end
                             l_coef[4] = inv(d21 * denom)
                             l_ctrl[2] = Int32(1)
                         end
-                        l_ctrl[1] = Int32(2)
+                        l_ctrl[5] = Int32(2)
                     end
                 end
             end
-            @synchronize()
-            s = Int(l_ctrl[1])
-            ok = l_ctrl[2] == Int32(1)
-            if ok
-                if s == 1
-                    inv_d11 = l_coef[1]
-                    j = k + tid
-                    while j <= n
-                        l_jk = A[j, k] * inv_d11
-                        w_jk = herm ? conj(l_jk) : l_jk
-                        for i in j:n
-                            A[i, j] -= A[i, k] * w_jk
-                        end
-                        if herm && F <: Complex
-                            A[j, j] = F(real(A[j, j]))
-                        end
-                        j += G
-                    end
-                    @synchronize()
-                    j = k + tid
-                    while j <= n
-                        A[j, k] *= inv_d11
-                        j += G
-                    end
-                else
-                    δ11 = l_coef[1]
-                    δ22 = l_coef[2]
-                    inv_d12_det = l_coef[3]
-                    inv_d21_det = l_coef[4]
-                    j = k + 1 + tid
-                    while j <= n
-                        a_jk = A[j, k]
-                        a_jk1 = A[j, k + 1]
-                        l_jk = (a_jk * δ22 - a_jk1) * inv_d12_det
-                        l_jk1 = (a_jk1 * δ11 - a_jk) * inv_d21_det
-                        w_jk = herm ? conj(l_jk) : l_jk
-                        w_jk1 = herm ? conj(l_jk1) : l_jk1
-                        for i in j:n
-                            A[i, j] -= A[i, k] * w_jk + A[i, k + 1] * w_jk1
-                        end
-                        if herm && F <: Complex
-                            A[j, j] = F(real(A[j, j]))
-                        end
-                        j += G
-                    end
-                    @synchronize()
-                    j = k + 1 + tid
-                    while j <= n
-                        a_jk = A[j, k]
-                        a_jk1 = A[j, k + 1]
-                        A[j, k] = (a_jk * δ22 - a_jk1) * inv_d12_det
-                        A[j, k + 1] = (a_jk1 * δ11 - a_jk) * inv_d21_det
-                        j += G
-                    end
-                end
-            end
-            @synchronize()
-            k += s
         end
+        @synchronize()
+        @inbounds if l_ctrl[2] == Int32(1)
+            k = Int(l_ctrl[1])
+            s = Int(l_ctrl[5])
+            herm = l_ctrl[4] == Int32(1)
+            if s == 1
+                inv_d11 = l_coef[1]
+                j = k + tid
+                while j <= n
+                    l_jk = A[j, k] * inv_d11
+                    w_jk = herm ? conj(l_jk) : l_jk
+                    for i in j:n
+                        A[i, j] -= A[i, k] * w_jk
+                    end
+                    if herm && F <: Complex
+                        A[j, j] = F(real(A[j, j]))
+                    end
+                    j += G
+                end
+            else
+                δ11 = l_coef[1]
+                δ22 = l_coef[2]
+                inv_d12_det = l_coef[3]
+                inv_d21_det = l_coef[4]
+                j = k + 1 + tid
+                while j <= n
+                    a_jk = A[j, k]
+                    a_jk1 = A[j, k + 1]
+                    l_jk = (a_jk * δ22 - a_jk1) * inv_d12_det
+                    l_jk1 = (a_jk1 * δ11 - a_jk) * inv_d21_det
+                    w_jk = herm ? conj(l_jk) : l_jk
+                    w_jk1 = herm ? conj(l_jk1) : l_jk1
+                    for i in j:n
+                        A[i, j] -= A[i, k] * w_jk + A[i, k + 1] * w_jk1
+                    end
+                    if herm && F <: Complex
+                        A[j, j] = F(real(A[j, j]))
+                    end
+                    j += G
+                end
+            end
+        end
+        @synchronize()
+        @inbounds if l_ctrl[2] == Int32(1)
+            k = Int(l_ctrl[1])
+            s = Int(l_ctrl[5])
+            if s == 1
+                inv_d11 = l_coef[1]
+                j = k + tid
+                while j <= n
+                    A[j, k] *= inv_d11
+                    j += G
+                end
+            else
+                δ11 = l_coef[1]
+                δ22 = l_coef[2]
+                inv_d12_det = l_coef[3]
+                inv_d21_det = l_coef[4]
+                j = k + 1 + tid
+                while j <= n
+                    a_jk = A[j, k]
+                    a_jk1 = A[j, k + 1]
+                    A[j, k] = (a_jk * δ22 - a_jk1) * inv_d12_det
+                    A[j, k + 1] = (a_jk1 * δ11 - a_jk) * inv_d21_det
+                    j += G
+                end
+            end
+        end
+        @synchronize()
         if tid == 1
+            @inbounds l_ctrl[1] += l_ctrl[5]
+        end
+        @synchronize()
+    end
+    if tid == 1
+        @inbounds if l_ctrl[3] >= Int32(0)
             info = l_ctrl[3]
+            herm = l_ctrl[4] == Int32(1)
             status[1] = herm ? info : -(info + Int32(1))
         end
     end
@@ -240,7 +262,9 @@ end
 @kernel function ka_ldlt_backsolve_kernel!(
         d, @Const(A), @Const(ipiv), n::Int, herm::Bool, ::Val{G}) where {G}
     tid = @index(Local, Linear)
-    F = eltype(d)
+    @uniform F = eltype(d)
+    l_k = @localmem Int32 (2,)
+    l_d = @localmem eltype(d) (2,)
     if tid == 1
         @inbounds begin
             k = 1
@@ -259,36 +283,57 @@ end
                     k += 2
                 end
             end
+            l_k[1] = Int32(1)
+            l_k[2] = Int32(1)
         end
     end
     @synchronize()
-    @inbounds begin
-        k = 1
-        while k <= n
-            pk = Int(ipiv[k])
-            if pk > 0
-                dk = d[k]
+    while l_k[1] <= Int32(n)
+        if tid == 1
+            @inbounds begin
+                k = Int(l_k[1])
+                pk = Int(ipiv[k])
+                if pk > 0
+                    l_k[2] = Int32(1)
+                    l_d[1] = d[k]
+                else
+                    l_k[2] = Int32(2)
+                    l_d[1] = d[k]
+                    l_d[2] = d[k + 1]
+                end
+            end
+        end
+        @synchronize()
+        @inbounds begin
+            k = Int(l_k[1])
+            s = Int(l_k[2])
+            if s == 1
+                dk = l_d[1]
                 i = k + tid
                 while i <= n
                     d[i] -= A[i, k] * dk
                     i += G
                 end
-                @synchronize()
-                if tid == 1
-                    d[k] = dk / A[k, k]
-                end
-                @synchronize()
-                k += 1
             else
-                dk = d[k]
-                dk1 = d[k + 1]
+                dk = l_d[1]
+                dk1 = l_d[2]
                 i = k + 1 + tid
                 while i <= n
                     d[i] -= A[i, k] * dk + A[i, k + 1] * dk1
                     i += G
                 end
-                @synchronize()
-                if tid == 1
+            end
+        end
+        @synchronize()
+        if tid == 1
+            @inbounds begin
+                k = Int(l_k[1])
+                s = Int(l_k[2])
+                if s == 1
+                    d[k] = l_d[1] / A[k, k]
+                else
+                    dk = l_d[1]
+                    dk1 = l_d[2]
                     d21 = A[k + 1, k]
                     d12 = herm ? conj(d21) : d21
                     δ11 = A[k, k] / d12
@@ -299,10 +344,12 @@ end
                     d[k] = (δ22 * b1 - b2) / denom
                     d[k + 1] = (δ11 * b2 - b1) / denom
                 end
-                @synchronize()
-                k += 2
+                l_k[1] = Int32(k + s)
             end
         end
+        @synchronize()
+    end
+    @inbounds begin
         if tid == 1
             k = n
             while k >= 1

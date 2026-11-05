@@ -151,21 +151,52 @@ end
 end
 
 @inline function residual!!(
-        ::Nothing, prob::StationarityProblem, x::Union{StaticVector, Number}, p)
+        ::Nothing, prob::StationarityProblem, x::StaticVector{N, T}, p) where {N, T}
+    b_eff = _static_datum(prob, x, _resolve_datum(prob, p, nothing))
+    return _stationarity_residual_r1(AutoForwardDiff(), prob, x, p, b_eff)
+end
+
+@inline function residual!!(
+        ::Nothing, prob::StationarityProblem, x::Number, p)
     b_eff = _static_datum(prob, x, _resolve_datum(prob, p, nothing))
     return _stationarity_residual_r1(AutoForwardDiff(), prob, x, p, b_eff)
 end
 
 @inline function gradient_hessian!!(
         ::Nothing, ::Nothing, backend::AutoForwardDiff,
-        prob::StationarityProblem, x::Union{StaticVector, Number}, p)
+        prob::StationarityProblem, x::StaticVector{N, T}, p) where {N, T}
     b_eff = _static_datum(prob, x, _resolve_datum(prob, p, nothing))
     return _stationarity_grad_hess_r1(backend, prob, x, p, b_eff)
 end
 
+@inline function gradient_hessian!!(
+        ::Nothing, ::Nothing, backend::AutoForwardDiff,
+        prob::StationarityProblem, x::Number, p)
+    b_eff = _static_datum(prob, x, _resolve_datum(prob, p, nothing))
+    return _stationarity_grad_hess_r1(backend, prob, x, p, b_eff)
+end
+
+@inline function gradient_hessian!!(
+        ::Nothing, ::Nothing, ::Nothing, backend::AutoForwardDiff,
+        prob::StationarityProblem, x::StaticVector{N, T}, p) where {N, T}
+    return gradient_hessian!!(nothing, nothing, backend, prob, x, p)
+end
+
+@inline function gradient_hessian!!(
+        ::Nothing, ::Nothing, ::Nothing, backend::AutoForwardDiff,
+        prob::StationarityProblem, x::Number, p)
+    return gradient_hessian!!(nothing, nothing, backend, prob, x, p)
+end
+
 @inline function jacobian!!(
         ::Nothing, backend::AutoForwardDiff,
-        prob::StationarityProblem, x::Union{StaticVector, Number}, p)
+        prob::StationarityProblem, x::StaticVector{N, T}, p) where {N, T}
+    return gradient_hessian!!(nothing, nothing, backend, prob, x, p)[2]
+end
+
+@inline function jacobian!!(
+        ::Nothing, backend::AutoForwardDiff,
+        prob::StationarityProblem, x::Number, p)
     return gradient_hessian!!(nothing, nothing, backend, prob, x, p)[2]
 end
 
@@ -177,20 +208,66 @@ end
 
 @inline function jvp!!(
         ::Nothing, backend::AutoForwardDiff, prob::StationarityProblem,
+        x::StaticVector{N, T}, v::StaticVector{N, T}, p) where {N, T}
+    return _stationarity_jvp_r1(backend, prob, x, v, p)
+end
+
+@inline function jvp!!(
+        ::Nothing, backend::AutoForwardDiff, prob::StationarityProblem,
         x::T, v::T, p) where {T <: Number}
     return _stationarity_jvp_r1(backend, prob, x, v, p)
 end
 
 @inline function residual!!(
         ::Nothing, rprob::_ReducedStationarityProblem,
-        u::Union{StaticVector, Number}, p)
+        u::StaticVector{N, T}, p) where {N, T}
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
     return _stationarity_residual_r1(AutoForwardDiff(), rprob.prob, x, p, rprob.b)
 end
 
+@inline function residual!!(
+        ::Nothing, rprob::_ReducedStationarityProblem,
+        u::Number, p)
+    x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
+    return _stationarity_residual_r1(AutoForwardDiff(), rprob.prob, x, p, rprob.b)
+end
+
+@inline function gradient_hessian!!(
+        ::Nothing, ::Nothing, backend::AutoForwardDiff,
+        rprob::_ReducedStationarityProblem, u::StaticVector{N, T}, p) where {N, T}
+    x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
+    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)
+end
+
+@inline function gradient_hessian!!(
+        ::Nothing, ::Nothing, backend::AutoForwardDiff,
+        rprob::_ReducedStationarityProblem, u::Number, p)
+    x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
+    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)
+end
+
+@inline function gradient_hessian!!(
+        ::Nothing, ::Nothing, ::Nothing, backend::AutoForwardDiff,
+        rprob::_ReducedStationarityProblem, u::StaticVector{N, T}, p) where {N, T}
+    return gradient_hessian!!(nothing, nothing, backend, rprob, u, p)
+end
+
+@inline function gradient_hessian!!(
+        ::Nothing, ::Nothing, ::Nothing, backend::AutoForwardDiff,
+        rprob::_ReducedStationarityProblem, u::Number, p)
+    return gradient_hessian!!(nothing, nothing, backend, rprob, u, p)
+end
+
 @inline function jacobian!!(
         ::Nothing, backend::AutoForwardDiff, rprob::_ReducedStationarityProblem,
-        u::Union{StaticVector, Number}, p)
+        u::StaticVector{N, T}, p) where {N, T}
+    x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
+    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)[2]
+end
+
+@inline function jacobian!!(
+        ::Nothing, backend::AutoForwardDiff, rprob::_ReducedStationarityProblem,
+        u::Number, p)
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
     return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)[2]
 end
@@ -229,6 +306,7 @@ struct ChunkedHessianForwardDiff{N, TgIn, TgOut, DX, DN, DN1, VX, IP, VC, MC}
     u_idx_cpu::Vector{Int}
     f_cpu::VC
     j_cpu::MC
+    sym::Bool
 end
 
 function _build_pos_maps(prob::StationarityProblem, M::Int, n::Int)
@@ -260,17 +338,18 @@ function prepare_ad(
     x_nest = similar(x, D_nest, M)
     x_nest1 = similar(x, D_nest1, M)
     v_full = similar(x, T, M)
-    e_pos_cpu, u_pos_cpu, _, u_cpu = _build_pos_maps(prob, M, n)
+    e_pos_cpu, u_pos_cpu, e_cpu, u_cpu = _build_pos_maps(prob, M, n)
     e_pos = similar(x, Int, M)
     copyto!(e_pos, e_pos_cpu)
     u_pos = similar(x, Int, M)
     copyto!(u_pos, u_pos_cpu)
     f_cpu = Vector{T}(undef, n)
     j_cpu = Matrix{T}(undef, n, n)
+    sym = e_cpu == u_cpu
     return ChunkedHessianForwardDiff{
         N, TgIn, TgOut, typeof(x_in), typeof(x_nest), typeof(x_nest1),
         typeof(v_full), typeof(e_pos), typeof(f_cpu), typeof(j_cpu)}(
-        x_in, x_nest, x_nest1, v_full, e_pos, u_pos, u_cpu, f_cpu, j_cpu)
+        x_in, x_nest, x_nest1, v_full, e_pos, u_pos, u_cpu, f_cpu, j_cpu, sym)
 end
 
 @inline function _seed_in(
@@ -360,9 +439,11 @@ function jacobian!!(
     e_pos = prep.e_pos
     u_pos = prep.u_pos
     j_dest = J isa AbstractGPUArray ? prep.j_cpu : J
+    sym = prep.sym
     for b0 in 0:N:(n - 1)
         mb = min(N, n - b0)
-        for a0 in 0:N:(n - 1)
+        a_start = sym ? b0 : 0
+        for a0 in a_start:N:(n - 1)
             ma = min(N, n - a0)
             x_nest .= _seed_nest.(x_nest, x, e_pos, u_pos, a0, b0)
             s_nest = prob.S(x_nest, p)
@@ -372,24 +453,33 @@ function jacobian!!(
                     j_dest[a0 + k, b0 + l] = ForwardDiff.partials(outer_l, k)
                 end
             end
+            if sym && a0 > b0
+                @inbounds for l in 1:mb
+                    for k in 1:ma
+                        j_dest[b0 + l, a0 + k] = j_dest[a0 + k, b0 + l]
+                    end
+                end
+            end
         end
     end
     J isa AbstractGPUArray && copyto!(J, j_dest)
     return J
 end
 
-function gradient_hessian!!(
+function _stationarity_grad_hess_r3!(
         F::AbstractVector{T}, J::AbstractMatrix{T}, prep::ChunkedHessianForwardDiff{N},
-        prob::StationarityProblem, x::AbstractVector{T}, p) where {N, T}
+        prob::StationarityProblem, x::AbstractVector{T}, p, b_eff) where {N, T}
     n = length(F)
     x_nest = prep.x_nest
     e_pos = prep.e_pos
     u_pos = prep.u_pos
     f_dest = F isa AbstractGPUArray ? prep.f_cpu : F
     j_dest = J isa AbstractGPUArray ? prep.j_cpu : J
+    sym = prep.sym
     for b0 in 0:N:(n - 1)
         mb = min(N, n - b0)
-        for a0 in 0:N:(n - 1)
+        a_start = sym ? b0 : 0
+        for a0 in a_start:N:(n - 1)
             ma = min(N, n - a0)
             x_nest .= _seed_nest.(x_nest, x, e_pos, u_pos, a0, b0)
             s_nest = prob.S(x_nest, p)
@@ -400,17 +490,37 @@ function gradient_hessian!!(
                 end
             end
             @inbounds for l in 1:mb
-                outer_l = ForwardDiff.partials(s_nest, l)
+                s_out_l = ForwardDiff.partials(s_nest, l)
                 for k in 1:ma
-                    j_dest[a0 + k, b0 + l] = ForwardDiff.partials(outer_l, k)
+                    j_dest[a0 + k, b0 + l] = ForwardDiff.partials(s_out_l, k)
+                end
+            end
+            if sym && a0 > b0
+                @inbounds for l in 1:mb
+                    for k in 1:ma
+                        j_dest[b0 + l, a0 + k] = j_dest[a0 + k, b0 + l]
+                    end
                 end
             end
         end
     end
     F isa AbstractGPUArray && copyto!(F, f_dest)
     J isa AbstractGPUArray && copyto!(J, j_dest)
-    _add_datum_r3!(F, _resolve_datum(prob, p, nothing))
+    _add_datum_r3!(F, b_eff)
     return F, J
+end
+
+function gradient_hessian!!(
+        F::AbstractVector{T}, J::AbstractMatrix{T}, prep::ChunkedHessianForwardDiff{N},
+        prob::StationarityProblem, x::AbstractVector{T}, p) where {N, T}
+    return _stationarity_grad_hess_r3!(
+        F, J, prep, prob, x, p, _resolve_datum(prob, p, nothing))
+end
+
+function gradient_hessian!!(
+        F::AbstractVector{T}, J::AbstractMatrix{T}, prep::ChunkedHessianForwardDiff{N},
+        ::AbstractADType, prob::StationarityProblem, x::AbstractVector{T}, p) where {N, T}
+    return gradient_hessian!!(F, J, prep, prob, x, p)
 end
 
 function jvp!!(
@@ -553,12 +663,25 @@ function jacobian!!(
     return J
 end
 
+function _stationarity_grad_hess_r3!(
+        F::AbstractVector, J::AbstractMatrix, prep::DIStationarity,
+        prob::StationarityProblem, x::AbstractVector, p, b_eff)
+    _stationarity_residual_r3!(F, prep, prob, x, p, b_eff)
+    jacobian!!(J, prep, prob, x, p)
+    return F, J
+end
+
 function gradient_hessian!!(
         F::AbstractVector, J::AbstractMatrix, prep::DIStationarity,
         prob::StationarityProblem, x::AbstractVector, p)
-    residual!!(F, prep, prob, x, p)
-    jacobian!!(J, prep, prob, x, p)
-    return F, J
+    return _stationarity_grad_hess_r3!(
+        F, J, prep, prob, x, p, _resolve_datum(prob, p, nothing))
+end
+
+function gradient_hessian!!(
+        F::AbstractVector, J::AbstractMatrix, prep::DIStationarity,
+        ::AbstractADType, prob::StationarityProblem, x::AbstractVector, p)
+    return gradient_hessian!!(F, J, prep, prob, x, p)
 end
 
 function jvp!!(
@@ -577,6 +700,13 @@ end
 # --- R3 `_ReducedStationarityProblem` forwarding ---
 
 function prepare_ad(
+        backend::AutoForwardDiff, rprob::_ReducedStationarityProblem,
+        r::AbstractArray, u::AbstractArray, p)
+    rprob.prep !== nothing && return rprob.prep
+    return prepare_ad(backend, rprob.prob, r, rprob.x_ref, p)
+end
+
+function prepare_ad(
         backend::AbstractADType, rprob::_ReducedStationarityProblem,
         r::AbstractArray, u::AbstractArray, p)
     rprob.prep !== nothing && return rprob.prep
@@ -586,7 +716,7 @@ end
 function residual!!(
         F::AbstractArray, rprob::_ReducedStationarityProblem, u::AbstractArray, p)
     _embed_u!(rprob.x_ref, rprob.x_ref, u, rprob.u_pos)
-    b_eff = rprob.has_b[] ? rprob.b : nothing
+    b_eff = rprob.has_b === nothing ? rprob.b : (rprob.has_b[] ? rprob.b : nothing)
     return _stationarity_residual_r3!(F, rprob.prep, rprob.prob, rprob.x_ref, p, b_eff)
 end
 
@@ -595,6 +725,22 @@ function jacobian!!(
         rprob::_ReducedStationarityProblem, u::AbstractVector, p)
     _embed_u!(rprob.x_ref, rprob.x_ref, u, rprob.u_pos)
     return jacobian!!(J, prep, rprob.prob, rprob.x_ref, p)
+end
+
+function gradient_hessian!!(
+        F::AbstractVector, J::AbstractMatrix,
+        prep::Union{ChunkedHessianForwardDiff, DIStationarity},
+        rprob::_ReducedStationarityProblem, u::AbstractVector, p)
+    _embed_u!(rprob.x_ref, rprob.x_ref, u, rprob.u_pos)
+    b_eff = rprob.has_b === nothing ? rprob.b : (rprob.has_b[] ? rprob.b : nothing)
+    return _stationarity_grad_hess_r3!(F, J, prep, rprob.prob, rprob.x_ref, p, b_eff)
+end
+
+function gradient_hessian!!(
+        F::AbstractVector, J::AbstractMatrix,
+        prep::Union{ChunkedHessianForwardDiff, DIStationarity},
+        ::AbstractADType, rprob::_ReducedStationarityProblem, u::AbstractVector, p)
+    return gradient_hessian!!(F, J, prep, rprob, u, p)
 end
 
 function jvp!!(

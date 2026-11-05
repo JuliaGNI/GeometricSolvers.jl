@@ -117,6 +117,13 @@ Adapt.@adapt_structure StationarityProblem
 end
 
 function _validate_stationarity_solve(prob::StationarityProblem, x₀, b_val)
+    if x₀ isa StaticOrNumber
+        if !(prob.E isa Union{Colon, SVector{<:Any, Int}} &&
+             prob.U isa Union{Colon, SVector{<:Any, Int}})
+            throw(ArgumentError(
+                "R1/R2 StationarityProblem with $(typeof(x₀)) requires E and U to be : or SVector{N, Int} (or NTuple{N, Int})"))
+        end
+    end
     M = x₀ isa Number ? 1 : length(x₀)
     if !(prob.E isa Colon)
         all(i -> 1 <= i <= M, prob.E) || throw(ArgumentError("index in E exceeds $M"))
@@ -268,6 +275,12 @@ const ReducedStatProb = _ReducedStationarityProblem
     return TR(prob, x_ref, b, nothing, nothing, nothing, nothing)
 end
 
+@inline function _ReducedStationarityProblem(
+        prob, x_ref, b, u_idx, u_pos, has_b::Bool)
+    return _ReducedStationarityProblem(
+        prob, x_ref, b, Ref(has_b), u_idx, u_pos, nothing)
+end
+
 struct StaticStationarityState{ST}
     inner::ST
 end
@@ -280,6 +293,32 @@ end
 
 const StaticStatState = StaticStationarityState
 const DenseStatState = DenseStationarityState
+
+struct _StationaritySysParams{P, B}
+    p::P
+    b::B
+end
+
+struct _StationarityBatchParams{P, B}
+    p::P
+    b::B
+end
+
+Adapt.@adapt_structure _StationaritySysParams
+Adapt.@adapt_structure _StationarityBatchParams
+
+@inline function parameters(sp::_StationarityBatchParams, i::Integer)
+    return _StationaritySysParams(parameters(sp.p, i), parameters(sp.b, i))
+end
+
+@inline _sample_batch_item(x, ::Integer) = x
+@inline function _sample_batch_item(p::PerSystem, i::Integer)
+    if p.data isa AbstractGPUArray
+        return Array(@view(p.data[i:i]))[1]
+    else
+        return @inbounds p.data[i]
+    end
+end
 
 @inline function _ad_backend_of(m::Newton)
     return m.jacobian isa AbstractADType ? m.jacobian : AutoForwardDiff()
@@ -313,7 +352,7 @@ end
     return u₊, F₊, with_merit(s, merit), info
 end
 
-@inline function init_state(m, prob::StatProb, x₀::StaticOrNumber, p; b = nothing)
+@inline function _init_stationarity_state(m, prob::StatProb, x₀::StaticOrNumber, p, b)
     b_raw = _resolve_datum(prob, p, b)
     _validate_stationarity_solve(prob, x₀, b_raw)
     b_eff = _static_datum(prob, x₀, b_raw)
@@ -322,7 +361,16 @@ end
     return StaticStationarityState(init_state(m, rprob, u₀, p))
 end
 
-function init_state(m, prob::StatProb, x₀::AbstractVector{T}, p; b = nothing) where {T}
+@inline function init_state(m::Newton, prob::StatProb, x₀::StaticOrNumber, p; b = nothing)
+    return _init_stationarity_state(m, prob, x₀, p, b)
+end
+
+@inline function init_state(m, prob::StatProb, x₀::StaticOrNumber, p; b = nothing)
+    return _init_stationarity_state(m, prob, x₀, p, b)
+end
+
+function _init_stationarity_state(
+        m, prob::StatProb, x₀::AbstractVector{T}, p, b) where {T}
     b_raw = _resolve_datum(prob, p, b)
     _validate_stationarity_solve(prob, x₀, b_raw)
     M = length(x₀)
@@ -353,12 +401,25 @@ function init_state(m, prob::StatProb, x₀::AbstractVector{T}, p; b = nothing) 
     return DenseStationarityState(inner, rprob, u_work)
 end
 
-@inline function solve!!(s::StaticStatState, prob::StatProb, x₀, m, p, opt; b = nothing)
-    b_raw = _resolve_datum(prob, p, b)
+function init_state(
+        m::Newton, prob::StatProb, x₀::AbstractVector{T}, p; b = nothing) where {T}
+    return _init_stationarity_state(m, prob, x₀, p, b)
+end
+
+function init_state(m, prob::StatProb, x₀::AbstractVector{T}, p; b = nothing) where {T}
+    return _init_stationarity_state(m, prob, x₀, p, b)
+end
+
+@inline function solve!!(
+        s::StaticStatState, prob::StatProb, x₀, m, p,
+        opt::Options{R}; b = nothing) where {R <: Real}
+    p_sys = p isa _StationaritySysParams ? p.p : p
+    b_sys = p isa _StationaritySysParams && b === nothing ? p.b : b
+    b_raw = _resolve_datum(prob, p_sys, b_sys)
     b_eff = _static_datum(prob, x₀, b_raw)
     rprob = _ReducedStationarityProblem(prob, x₀, b_eff)
     u₀ = _extract_unknowns(prob.U, x₀)
-    u, status, inner₊ = solve!!(s.inner, rprob, u₀, m, p, opt)
+    u, status, inner₊ = solve!!(s.inner, rprob, u₀, m, p_sys, opt)
     x = _embed_unknowns(prob.U, x₀, u)
     return x, status, StaticStationarityState(inner₊)
 end
@@ -367,7 +428,9 @@ end
     return solve!!(s, pr, x₀, m, p, Options(eltype(x₀)); b = b)
 end
 
-function solve!!(s::DenseStatState, prob::StatProb, x₀, method, p, options; b = nothing)
+function solve!!(
+        s::DenseStatState, prob::StatProb, x₀, method, p,
+        options::Options{R}; b = nothing) where {R <: Real}
     b_raw = _resolve_datum(prob, p, b)
     rprob = s.rprob
     if b_raw isa AbstractVector
@@ -424,46 +487,67 @@ function _solve_stationarity_solver!(solver::NonlinearSolver, x, p, b)
     return solver.x, status
 end
 
-function _split_options_kw(kw)
-    opt = get(kw, :options, nothing)
-    rest = Base.structdiff(values(kw), NamedTuple{(:options,)})
-    return opt, rest
-end
-
-function solve_batch!(X::AbsArr, S::AbsArr, p::StatProb, m, q = nothing; b = nothing, kw...)
-    opt, rest = _split_options_kw(kw)
-    if !isempty(X)
-        b₀ = _resolve_datum(p, parameters(q, firstindex(X)), b)
-        _validate_stationarity_solve(p, first(X), b₀)
+function _extract_batch_p_kw(X, p, kwargs)
+    if p === nothing && haskey(kwargs, :p)
+        p_kw = kwargs[:p]
+        rest = Base.structdiff(values(kwargs), NamedTuple{(:p,)})
+        if !(p_kw isa PerSystem) && p_kw isa AbstractVector && length(p_kw) == length(X)
+            return PerSystem(p_kw), rest
+        end
+        return p_kw, rest
     end
-    prob_eff = _with_datum(p, b)
-    _launch!(X, S, prob_eff, m, q, opt, rest)
-    return X, S
+    return p, kwargs
 end
 
-function solve_batch!(X::AbsArr, S::AbsArr, p::StatProb; kw...)
-    return solve_batch!(X, S, p, Newton(), nothing; kw...)
+function solve_batch!(
+        X::AbstractArray, prob::StationarityProblem, method = Newton(), p = nothing;
+        order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
+        options::Union{Nothing, Options} = nothing, b = nothing, kwargs...)
+    p_eff, rest_kw = _extract_batch_p_kw(X, p, kwargs)
+    b_src = b === nothing ? prob.b : b
+    T = _validate_batch(X, p_eff, order)
+    b_src isa PerSystem && _validate_batch(X, b_src, nothing)
+    R = real(eltype(T))
+    opt = resolve_options(T, options, rest_kw)
+    m = Adapt.adapt(ToReal{R}(), method)
+    idx₀ = firstindex(X)
+    p₀ = isempty(X) ? nothing : _sample_batch_item(p_eff, idx₀)
+    b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
+         _sample_batch_item(b_src, idx₀)
+    state₀ = init_state(m, prob, zero(T), p₀; b = b₀)
+    isempty(X) && return _tally_return_codes(ReturnCode[])
+    codes = allocate(get_backend(X), ReturnCode, length(X))
+    sp = _StationarityBatchParams(p_eff, b_src)
+    return _tally_return_codes(Array(_launch!(X, codes, prob, m, sp, opt, state₀, order)))
 end
 
-function solve_batch!(X::AbsArr, p::StatProb, m, q = nothing; b = nothing, kw...)
-    opt, rest = _split_options_kw(kw)
-    check_batch(X, nothing, q)
-    R = real(eltype(eltype(X)))
-    if isempty(X)
-        resolve_options(eltype(eltype(X)), opt, rest)
-        Adapt.adapt(ToReal{R}(), m)
-        return zero_counts()
-    end
-    b₀ = _resolve_datum(p, parameters(q, firstindex(X)), b)
-    _validate_stationarity_solve(p, first(X), b₀)
-    prob_eff = _with_datum(p, b)
-    S = similar(X, SolverStatus{R})
-    _launch!(X, S, prob_eff, m, q, opt, rest)
-    return count_outcomes(S)
-end
-
-function solve_batch!(X::AbsArr, p::StatProb; kw...)
-    return solve_batch!(X, p, Newton(), nothing; kw...)
+function solve_batch!(
+        X::AbstractArray, S::AbstractArray{SolverStatus{R}},
+        prob::StationarityProblem, method = Newton(), p = nothing;
+        order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
+        options::Union{Nothing, Options} = nothing, b = nothing,
+        kwargs...) where {R <: Real}
+    p_eff, rest_kw = _extract_batch_p_kw(X, p, kwargs)
+    b_src = b === nothing ? prob.b : b
+    T = _validate_batch(X, p_eff, order)
+    b_src isa PerSystem && _validate_batch(X, b_src, nothing)
+    R_X = real(eltype(T))
+    R === R_X || throw(ArgumentError(
+        "solve_batch! requires the status vector S to use the real type $R_X of the batch iterates, got SolverStatus{$R}"))
+    length(S) == length(X) || throw(DimensionMismatch(
+        "status vector S has length $(length(S)), expected $(length(X)) to match the batch X"))
+    get_backend(S) == get_backend(X) || throw(ArgumentError(
+        "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
+    opt = resolve_options(T, options, rest_kw)
+    m = Adapt.adapt(ToReal{R}(), method)
+    idx₀ = firstindex(X)
+    p₀ = isempty(X) ? nothing : _sample_batch_item(p_eff, idx₀)
+    b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
+         _sample_batch_item(b_src, idx₀)
+    state₀ = init_state(m, prob, zero(T), p₀; b = b₀)
+    isempty(X) && return S
+    sp = _StationarityBatchParams(p_eff, b_src)
+    return _launch!(X, S, prob, m, sp, opt, state₀, order)
 end
 
 # Define CommonSolve.init and CommonSolve.solve for StationarityProblem in an internal

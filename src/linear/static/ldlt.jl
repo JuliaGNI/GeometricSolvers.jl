@@ -12,19 +12,18 @@ end
 
 function is_hermitian_matrix(A::AbstractMatrix{<:Complex{R}}) where {R <: Real}
     n = size(A, 1)
-    err_h = zero(R)
-    err_s = zero(R)
+    tol = R(64) * eps(R)
     @inbounds for j in 1:n
-        for i in j:n
+        iszero(imag(A[j, j])) || return false
+        for i in (j + 1):n
             aij = A[i, j]
             aji = A[j, i]
-            dh = abs1(aij - conj(aji))
-            ds = abs1(aij - aji)
-            dh > err_h && (err_h = dh)
-            ds > err_s && (err_s = ds)
+            if abs(aij - conj(aji)) > tol * max(abs(aij), abs(aji))
+                return false
+            end
         end
     end
-    return !(err_s < err_h)
+    return true
 end
 
 @inline function ldlt_swap_lower!(
