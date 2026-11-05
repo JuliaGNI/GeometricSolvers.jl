@@ -53,8 +53,8 @@ end
 
 Build a V-shaped `2 × 2`-block sparse nonlinear test problem of dimension `n = 2N` with four
 `7`-diagonal periodic banded blocks (`nnz(P) == 28N`, non-symmetric values `P != transpose(P)`),
-cross-block nonlinear coupling, and a planted solution `z_star`. Returns
-`(prob_analytic, prob_ad, z0, p_val, z_star)`.
+cross-block nonlinear coupling (omitted at row `1` so `(1, N + 1)` is a stored zero at every
+iterate), and a planted solution `z_star`. Returns `(prob_analytic, prob_ad, z0, p_val, z_star)`.
 """
 function sparse_bracket_problem(
         N::Int,
@@ -85,7 +85,8 @@ function sparse_bracket_problem(
         ip = i <= N ? i + N : i - N
         zi = z_star[i]
         zp = z_star[ip]
-        b[i] += p_val * (zi^3 / T(5) + zp^2 / T(10))
+        c = i == 1 ? zero(T) : one(T)
+        b[i] += p_val * (zi^3 / T(5) + c * zp^2 / T(10))
     end
 
     z0 = [z_star[i] + one(T) / T(5) for i in 1:n]
@@ -102,7 +103,8 @@ function sparse_bracket_problem(
             ip = i <= N ? i + N : i - N
             zi = z[i]
             zp = z[ip]
-            r[i] += p * (zi^3 / T(5) + zp^2 / T(10)) - b[i]
+            c = i == 1 ? zero(T) : one(T)
+            r[i] += p * (zi^3 / T(5) + c * zp^2 / T(10)) - b[i]
         end
         return r
     end
@@ -115,7 +117,7 @@ function sparse_bracket_problem(
             zj = z[j]
             ip = j <= N ? j + N : j - N
             d_diag = p * (T(3) / T(5)) * zj^2
-            d_part = p * (one(T) / T(5)) * zj
+            d_part = ip == 1 ? zero(eltype(z)) : p * (one(T) / T(5)) * zj
             for k in nzrange(J, j)
                 row = rowsJ[k]
                 if row == j

@@ -3,10 +3,9 @@
 using ADTypes: AutoForwardDiff, AutoSparse, NoSparsityDetector
 using ForwardDiff: ForwardDiff
 using GeometricSolvers
-using GeometricSolvers: Backtracking, Bisection, LUFactorization, Newton, NonlinearProblem,
-                        Picard, QRFactorization, SINGULAR, SUCCESS, SVDFactorization, init,
-                        returncode, solve, solve!, solve_batch!
-using JLArrays: JLArray
+using GeometricSolvers: Backtracking, Bisection, DogLeg, LUFactorization, Newton,
+                        NonlinearProblem, Picard, QRFactorization, SINGULAR, SUCCESS,
+                        SVDFactorization, init, returncode, solve, solve!, solve_batch!
 using LinearAlgebra: norm, transpose
 using Random: MersenneTwister
 using SparseArrays: SparseArrays, SparseMatrixCSC, getcolptr, nnz, nonzeros, nzrange,
@@ -16,16 +15,17 @@ using Sparspak: Sparspak
 using StaticArrays: SVector
 using Test
 
+include("../helpers/matrix.jl")
 include("../helpers/sparse_problems.jl")
 
 @testset "Sparspak extension and dispatch" begin
     ext = Base.get_extension(GeometricSolvers, :GeometricSolversSparspakExt)
     @test ext !== nothing
 
-    prob_analytic, prob_ad, z0, p_val, z_star = sparse_bracket_problem(125, Float64)
+    prob_analytic, prob_ad, z0, p_val, z_star = sparse_bracket_problem(125)
     r_star = similar(z0)
     prob_analytic.F(r_star, z_star, p_val)
-    @test norm(r_star, Inf) <= 10 * eps(Float64)
+    @test norm(r_star, Inf) <= 10 * eps(eltype(z0))
 
     P = GeometricSolvers.jacobian_prototype(prob_analytic)
     @test P isa SparseMatrixCSC{Float64, Int}
@@ -40,6 +40,24 @@ include("../helpers/sparse_problems.jl")
     st = solver.state
     @test st.J === st.fac.factors
     @test st.J !== P
+    J_dl = GeometricSolvers.init_newton_J(Newton(; globalization = DogLeg()), st.fac, z0)
+    @test J_dl isa SparseMatrixCSC{Float64, Int}
+    @test J_dl !== st.fac.factors
+    @test getcolptr(J_dl) == getcolptr(P)
+    @test rowvals(J_dl) == rowvals(P)
+
+    # DogLeg reads the Jacobian from a buffer of its own, so that buffer carries the prototype's
+    # pattern and is the matrix that `jacobian!!` fills
+    solver_dl = init(
+        prob_analytic, copy(z0), Newton(; globalization = DogLeg()), p_val;
+        f_abstol = 1e-10, f_reltol = 0.0
+    )
+    _, st_dl = solve!(solver_dl)
+    @test st_dl.code === SUCCESS
+    @test st_dl.fnorm <= 1e-10
+    @test solver_dl.state.J !== st.fac.factors
+    @test getcolptr(solver_dl.state.J) == getcolptr(P)
+    @test rowvals(solver_dl.state.J) == rowvals(P)
     which_fac = which(
         GeometricSolvers.factorize!!, (typeof(st.fac), typeof(m.linsolve), typeof(st.J))
     )
@@ -57,7 +75,7 @@ include("../helpers/sparse_problems.jl")
 
     # Out-of-place and in-place (d === r) linear solves
     rhs = collect(range(0.1, 1.0; length = 250))
-    d_oop = zeros(Float64, 250)
+    d_oop = zeros(eltype(z0), 250)
     GeometricSolvers.ldiv!!(d_oop, fac, rhs)
     @test isapprox(st.J * d_oop, rhs; rtol = 1e-10)
     d_ip = copy(rhs)
@@ -72,12 +90,9 @@ include("../helpers/sparse_problems.jl")
     @test nonzeros(fac2.factors) == nonzeros(J_other)
 end
 
-@testset "V-shaped sparse problem: N = $N, T = $T" for (N, T, tol) in (
-    (125, Float64, 1e-10),
-    (125, Float32, 1.0f-4),
-    (768, Float64, 1e-10),
-    (768, Float32, 1.0f-4)
-)
+@testset "V-shaped sparse problem: N = $N, T = $T" for N in (125, 768), T in REAL_ELTYPES
+
+    tol = T === Float64 ? 1e-10 : 1.0f-4
     prob_analytic, prob_ad, z0, p_val, z_star = sparse_bracket_problem(N, T)
     P = GeometricSolvers.jacobian_prototype(prob_analytic)
     nz0 = copy(nonzeros(P))
@@ -97,6 +112,7 @@ end
     @test solver_a.state.J !== P
     @test getcolptr(solver_a.state.J) == colptr0
     @test rowvals(solver_a.state.J) == rowval0
+    @test any(iszero, nonzeros(solver_a.state.J))
     @test nonzeros(P) == nz0
 
     # AutoSparse AD solve
@@ -114,6 +130,7 @@ end
     @test solver_d.state.J !== P
     @test getcolptr(solver_d.state.J) == colptr0
     @test rowvals(solver_d.state.J) == rowval0
+    @test any(iszero, nonzeros(solver_d.state.J))
     @test nonzeros(P) == nz0
 
     ncols = length(column_groups(solver_d.state.jacprep.jacprep))
@@ -140,16 +157,22 @@ end
         end
 
         prob_analytic.J(J_ana, pt, p_val)
+        @test any(iszero, nonzeros(J_ad))
+        @test any(iszero, nonzeros(J_ana))
         J_fd = ForwardDiff.jacobian(f_fd, similar(pt), pt)
         M_ad = Matrix(J_ad)
         @test M_ad == J_fd
         @test isapprox(M_ad, J_fd; rtol = 8 * eps(T), atol = 8 * eps(T))
         @test isapprox(M_ad, Matrix(J_ana); rtol = 8 * eps(T), atol = 8 * eps(T))
     end
+    GeometricSolvers.jacobian!!(J_ad, prep_cnt, prob_cnt, z_star, p_val)
+    prob_analytic.J(J_ana, z_star, p_val)
+    @test any(iszero, nonzeros(J_ad))
+    @test any(iszero, nonzeros(J_ana))
 end
 
 @testset "Detector override, prototype element types, and structural zeros" begin
-    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125, Float64)
+    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125)
     P = GeometricSolvers.jacobian_prototype(prob_analytic)
 
     # KnownJacobianSparsityDetector(P) overrides a user-supplied detector (DenseSparsityDetector or NoSparsityDetector)
@@ -228,7 +251,7 @@ end
 end
 
 @testset "Globalization, chord reuse, and R1/R2 ignore prototype" begin
-    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125, Float64)
+    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125)
     ad_b = AutoSparse(
         AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm())
     for g in (Backtracking(), Bisection())
@@ -238,7 +261,7 @@ end
         )
         @test sol_ga.state.jvpprep.J isa SparseMatrixCSC{Float64, Int}
         Jv_a = similar(z0)
-        v_dir = ones(Float64, length(z0))
+        v_dir = ones(eltype(z0), length(z0))
         GeometricSolvers.jvp!!(Jv_a, sol_ga.state.jvpprep, prob_analytic, z0, v_dir, p_val)
         x_ga, st_ga = solve!(sol_ga)
         @test st_ga.code === SUCCESS
@@ -250,14 +273,15 @@ end
         )
         Jv_d = similar(z0)
         GeometricSolvers.jvp!!(Jv_d, sol_gd.state.jvpprep, prob_ad, z0, v_dir, p_val)
-        @test isapprox(Jv_d, Jv_a; rtol = 8 * eps(Float64), atol = 8 * eps(Float64))
+        @test isapprox(Jv_d, Jv_a; rtol = 8 * eps(eltype(z0)), atol = 8 * eps(eltype(z0)))
         x_gd, st_gd = solve!(sol_gd)
         @test st_gd.code === SUCCESS
         @test st_gd.fnorm <= 1e-10
     end
 
-    # Chord-Newton reuse = 2 in Float64 and Float32
-    for (T, tol) in ((Float64, 1e-10), (Float32, 1.0f-4))
+    # Chord-Newton reuse = 2 across REAL_ELTYPES
+    for T in REAL_ELTYPES
+        tol = T === Float64 ? 1e-10 : 1.0f-4
         prob_an_t, _, z0_t, p_t, _ = sparse_bracket_problem(125, T)
         jcalls = Ref(0)
         prob_cnt_j = NonlinearProblem(
@@ -291,12 +315,9 @@ end
     @test st_pic.code === SUCCESS
 end
 
-@testset "Singular and non-finite Jacobians: N = $N, T = $T" for (N, T) in (
-    (125, Float64),
-    (125, Float32),
-    (768, Float64),
-    (768, Float32)
-)
+@testset "Singular and non-finite Jacobians: N = $N, T = $T" for N in (125, 768),
+    T in REAL_ELTYPES
+
     prob_analytic, _, z0, p_val, _ = sparse_bracket_problem(N, T)
     P = GeometricSolvers.jacobian_prototype(prob_analytic)
     n = 2 * N
@@ -336,6 +357,9 @@ end
     J_inf = copy(J_base)
     nonzeros(J_inf)[7] = T(Inf)
 
+    J_ninf = copy(J_base)
+    nonzeros(J_ninf)[9] = -T(Inf)
+
     solver = init(prob_analytic, copy(z0), Newton(), p_val)
     st = solver.state
     J_bad_ref = Ref(J_row1)
@@ -345,7 +369,7 @@ end
         jacobian_prototype = P
     )
     solver_bad = init(prob_bad, copy(z0), Newton(), p_val)
-    for J_bad in (J_row1, J_rowN, J_zero, J_nan, J_inf)
+    for J_bad in (J_row1, J_rowN, J_zero, J_nan, J_inf, J_ninf)
         copyto!(nonzeros(st.fac.factors), nonzeros(J_bad))
         fac_out = GeometricSolvers.factorize!!(st.fac, LUFactorization(), st.fac.factors)
         @test fac_out.info == 1
@@ -357,6 +381,19 @@ end
         @test st_bad.code === SINGULAR
         @test st_bad.rank == -1
         @test isnan(st_bad.nullnorm)
+    end
+
+    # A non-finite `J` returns before `sparspaklu!`, so `lnz` and `unz` keep the values of the
+    # last valid factorisation
+    copyto!(nonzeros(st.fac.factors), nonzeros(J_base))
+    fac_ok = GeometricSolvers.factorize!!(st.fac, LUFactorization(), st.fac.factors)
+    @test fac_ok.info == 0
+    for J_nf in (J_nan, J_inf, J_ninf)
+        fac_nf = GeometricSolvers.factorize!!(fac_ok, LUFactorization(), J_nf)
+        @test fac_nf.info == 1
+        @test returncode(fac_nf) === SINGULAR
+        @test all(isfinite, fac_nf.lu.slvr.lnz)
+        @test all(isfinite, fac_nf.lu.slvr.unz)
     end
 end
 
