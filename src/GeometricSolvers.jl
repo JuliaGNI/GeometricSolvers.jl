@@ -24,7 +24,8 @@ export NonlinearProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg
-export Newton, NoRefinement, PerSystem, Picard, NonlinearSolver, init, solve, solve!
+export Newton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard, NonlinearSolver,
+       init, solve, solve!
 export solve_batch!
 
 public solve!!
@@ -64,6 +65,7 @@ include("ad/jvp.jl")
 include("globalization/linefunction.jl")
 include("globalization/dogleg.jl")
 include("nonlinear/solver.jl")
+include("nonlinear/refinement.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
 include("nonlinear/batched.jl")

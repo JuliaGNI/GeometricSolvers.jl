@@ -175,8 +175,10 @@ solve_batch!
 solve!!
 PerSystem
 Newton
+QuasiNewton
 Picard
 NoRefinement
+Refinement
 ```
 
 ## Automatic differentiation
@@ -196,8 +198,9 @@ iterate, so every ADTypes back end works with no line of source here. A device a
 error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies an analytic
 3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
 matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@ref) other than
-[`Static`](@ref) takes a JVP, so under any other globalization the analytic `J` gets no JVP
-preparation and no second `n × n` buffer. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
+[`Static`](@ref), [`Refinement`](@ref), or a mixed-precision factorisation (`TF ≠ T`) takes a JVP,
+so under any other configuration the analytic `J` gets no JVP preparation and no second `n × n`
+buffer. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
 then dispatch on the object the preparation returned, so the solver makes no runtime choice and
 carries no `ad` keyword.
 
@@ -230,7 +233,8 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 A nonlinear method enters the loop of [`solve!!`](@ref) through [`init_state`](@ref), which builds
 its state, [`step!!`](@ref), and the two hooks [`start!!`](@ref) and [`finish!!`](@ref), which run
 once before the first step and at every return. [`residual_buffer`](@ref) names the slot of the
-state that holds `F(x₀)`.
+state that holds `F(x₀)`, and [`refine!!`](@ref) refines the linear direction `d` in working
+precision before globalization.
 
 ```@docs
 init_state
@@ -238,6 +242,7 @@ residual_buffer
 step!!
 start!!
 finish!!
+refine!!
 init_globalization
 LineFunction
 globalize!!

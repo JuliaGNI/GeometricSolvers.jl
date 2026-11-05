@@ -7,8 +7,8 @@ Newton's method for [`NonlinearProblem`](@ref), with linear solver `linsolve`
 globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
 trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refinement `refinement`
-([`NoRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
-`reuse`.
+([`NoRefinement`](@ref) or [`Refinement`](@ref)), diagonal regularisation `regularization`, and
+factor-reuse period `reuse`.
 
 # Fields
 
@@ -23,14 +23,15 @@ trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refineme
   `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
   `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
-- `refinement::RF`: the refinement setting ([`NoRefinement`](@ref)).
+- `refinement::RF`: the refinement setting ([`NoRefinement`](@ref) or [`Refinement`](@ref)).
 - `regularization::R`: non-negative finite diagonal shift ``μ ≥ 0`` added as ``J + μ I`` before
   factorisation when `μ > 0`.
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
-  reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step).
-  A line search along a reused factor that fails without a step is retried once, in the same
-  step, from a fresh factor. A [`DogLeg`](@ref) globalization takes no reuse: its model needs the
-  Jacobian of the current iterate, and the constructor raises an `ArgumentError`.
+  reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step or a
+  failed [`Refinement`](@ref) on a reused factor). A line search along a reused factor that fails
+  without a step is retried once, in the same step, from a fresh factor. A [`DogLeg`](@ref)
+  globalization takes no reuse: its model needs the Jacobian of the current iterate, and the
+  constructor raises an `ArgumentError`.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     linsolve::L
@@ -78,6 +79,16 @@ function Newton(;
     return Newton(linsolve, globalization, jacobian, refinement, reg, r)
 end
 
+"""
+    QuasiNewton(k; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
+                refinement = NoRefinement(), regularization = 0)
+
+Construct [`Newton`](@ref) with factor-reuse period `reuse = Int32(k)` (`k ≥ 1`).
+"""
+function QuasiNewton(k::Integer; kwargs...)
+    return Newton(; reuse = k, kwargs...)
+end
+
 Adapt.@adapt_structure Newton
 
 @inline function newton_ad_preps(m::Newton, prob::NonlinearProblem, Fx, x, p)
@@ -96,7 +107,14 @@ Adapt.@adapt_structure Newton
             JacobianFunction(m.jacobian)
         end
         jvpprep = if prob.J !== nothing
-            Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x)
+            if Fx === nothing
+                nothing
+            elseif m.refinement isa Refinement ||
+                   factor_eltype(m.linsolve, eltype(x)) !== eltype(x)
+                JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+            else
+                jacobian_matrix_jvp(m.globalization, x)
+            end
         elseif m.jacobian isa AbstractADType
             prepare_ad(m.jacobian, prob, Fx, x, p)
         else
@@ -209,13 +227,11 @@ end
 
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
 # globalization workspace, the rule state of its reuse or its `DogLeg`, the merit `norm2(Fx)` of
-# the current residual for a line search (`nothing` for any other globalization), the norm
-# `‖Fx‖` of the current residual, and the diagnostics of the last factorisation. For a value
-# iterate the workspace slots are `nothing`, and so is the factor slot unless the factor is
-# reused. The factor slot is the storage that each factorisation writes into; only a step with
-# reuse stores the factor it returns, because only such a step reads it again. The norm is `NaN`
-# on a state that no `start!!` saw or that `solve!!` returned.
-struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG}
+# the current residual for a line search (`nothing` for any other globalization), the diagnostics
+# of the last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the
+# working-precision factor slot for mixed-precision promotion, and the mixed-precision promotion
+# and slow/floor step counters.
+struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, DG, RB, FT}
     jacprep::JP
     jvpprep::VP
     Fx::FX
@@ -227,27 +243,57 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG}
     merit::PH
     fnorm::R
     diag::DG
+    refbuf::RB
+    fac_T::FT
+    promoted::Bool
+    slow_steps::Int32
+    floor_steps::Int32
+end
+
+@inline function NewtonState(
+        jacprep::JP, jvpprep::VP, Fx::FX, d::D, fac::FAC,
+        J::JM, g::G, rule::RS, merit::PH, diag::DG) where {
+        JP, VP, FX, D, FAC, JM, G, RS, PH, DG}
+    return NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, DG, Nothing, Nothing}(
+        jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, diag,
+        nothing, nothing, false, Int32(0), Int32(0))
 end
 
 @inline function with_factor(s::NewtonState, fac)
     return NewtonState(
-        s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag)
+        s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.diag,
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.floor_steps)
+end
+
+@inline function with_factor_T(s::NewtonState, fac_T)
+    return NewtonState(
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.diag,
+        s.refbuf, fac_T, s.promoted, s.slow_steps, s.floor_steps)
 end
 
 @inline function with_rule(s::NewtonState, rule)
     return NewtonState(
-        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.fnorm, s.diag)
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.diag,
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.floor_steps)
 end
 
-# The merit and the norm of the residual that a step returns, or that a solve starts from.
-@inline function with_merit(s::NewtonState, merit, fnorm)
-    return NewtonState(s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit,
-        oftype(s.fnorm, fnorm), s.diag)
+@inline function with_merit(s::NewtonState, merit)
+    return NewtonState(
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit, s.diag,
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.floor_steps)
 end
 
 @inline function with_diag(s::NewtonState, diag)
     return NewtonState(
-        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, diag)
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, diag,
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.floor_steps)
+end
+
+@inline function with_mixed(
+        s::NewtonState, promoted::Bool, slow_steps::Int32, floor_steps::Int32)
+    return NewtonState(
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.diag,
+        s.refbuf, s.fac_T, promoted, slow_steps, floor_steps)
 end
 
 @inline function init_state(m::Newton, prob::NonlinearProblem, x, p)
@@ -255,16 +301,23 @@ end
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
     merit = init_merit(m.globalization, x)
-    R = real(eltype(x))
-    diag = NewtonDiagnostics(R)
+    diag = NewtonDiagnostics(real(eltype(x)))
+    mixed = factor_eltype(m.linsolve, eltype(x)) !== eltype(x)
     if Fx === nothing
         fac = m.reuse === nothing ? nothing : init_factor(m.linsolve, prob, x, p)
-        return NewtonState(jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule,
-            merit, R(NaN), diag)
+        fac_T = (m.reuse === nothing || !mixed) ? nothing :
+                init_factor(working_linsolve(m.linsolve), prob, x, p)
+        return NewtonState(
+            jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule, merit, diag,
+            nothing, fac_T, false, Int32(0), Int32(0))
     else
         fac = init_factor(m.linsolve, prob, x, p)
-        return NewtonState(jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, x),
-            init_globalization(m.globalization, x), rule, merit, R(NaN), diag)
+        fac_T = mixed ? init_factor(working_linsolve(m.linsolve), prob, x, p) : nothing
+        refbuf = init_refinement(m.refinement, x)
+        return NewtonState(
+            jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, x),
+            init_globalization(m.globalization, x), rule, merit, diag,
+            refbuf, fac_T, false, Int32(0), Int32(0))
     end
 end
 
@@ -272,7 +325,8 @@ end
 
 @inline function start!!(state::NewtonState, m::Newton, prob, x, Fx, p, fnorm₀)
     state = with_rule(state, reset_rule(state.rule))
-    state = with_merit(state, start_merit(m.globalization, Fx), fnorm₀)
+    state = with_merit(state, start_merit(m.globalization, Fx))
+    state = with_mixed(state, false, Int32(0), Int32(0))
     return with_diag(state, NewtonDiagnostics(real(eltype(x))))
 end
 
@@ -288,10 +342,12 @@ end
     return x, st, with_merit(state, init_merit(m.globalization, x), NaN)
 end
 
-@inline function newton_stepkind(m::Newton, ::Type{T}, fresh::Bool) where {T}
+@inline function newton_stepkind(
+        m::Newton, ::Type{T}, fresh::Bool, in_working_T::Bool = false) where {T}
     if fresh && (m.jacobian === nothing || m.jacobian isa AbstractADType) &&
        iszero(m.regularization) &&
-       factor_eltype(m.linsolve, T) === T && m.refinement isa NoRefinement
+       (in_working_T ||
+        (factor_eltype(m.linsolve, T) === T && m.refinement isa NoRefinement))
         return ExactStep()
     else
         return MeasuredSlope()
@@ -341,33 +397,135 @@ end
     return Jreg, fac, NewtonDiagnostics{R}(rk, nn, gr)
 end
 
-# The step from the factor `fac`, fresh or reused: `SINGULAR` for a failed factor, else the
-# globalized step along the refined direction, with the measured slope where the solve of `fac`
-# is a truncated one. It returns the merit of the residual it returns, from the merit of `Fx`
-# that the state carries.
-@inline function newton_globalize(
-        m::Newton, state::NewtonState, prob, x, Fx, p, fac, fresh::Bool)
-    T = eltype(x)
-    R = real(T)
-    if fac.info > Int32(0)
-        return x, Fx, StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(0), false, false),
-        state.merit
-    end
+# Factorisation promoted to the working precision `T` of the iterate when a mixed-precision
+# factorisation (`TF ≠ T`) fails refinement or stalls on linear-model accuracy.
+@inline function newton_factor_T(m::Newton, state::NewtonState, prob, x, Fx, p)
+    R = real(eltype(x))
+    fnorm = R(residual_norm(Fx, state.merit))
+    Jmat = jacobian!!(state.J, state.jacprep, prob, x, p)
+    gr = grad_ratio(state.d, Jmat, Fx, fnorm)
+    Jreg = regularize!!(Jmat, m.regularization)
+    ls_T = working_linsolve(m.linsolve)
+    fac = factorize!!(state.fac_T, ls_T, Jreg)
+    rk, nn = factor_diagnostics(state.d, fac, Fx, fnorm)
+    return Jreg, fac, NewtonDiagnostics{R}(rk, nn, gr)
+end
+
+@inline function newton_direction(
+        m::Newton, state::NewtonState, prob, x, Fx, fnorm::R, p, fac) where {R <: Real}
     d₀ = ldiv!!(state.d, fac, Fx)
     d₁ = map!!(-, state.d, d₀)
-    d = refine!!(state.d, m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
-    sk = exact_solve(fac) ? newton_stepkind(m, T, fresh) : MeasuredSlope()
-    x₊, F₊, _, info, merit = globalize_merit!!(
-        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk, state.merit)
-    return x₊, F₊, info, merit
+    return refine!!(
+        d₁, m.refinement, fac, state.jvpprep, prob, x, Fx, fnorm, p, state.refbuf)
+end
+
+# Relative linear-model residual `‖F(x) + J(x) d‖ / ‖F(x)‖` in working precision `T`, evaluated
+# before `globalize_merit!!` overwrites `Fx` in R3, using the globalization trial buffer `g_Ft`
+# as scratch.
+@inline function linear_residual_ratio(
+        state::NewtonState, prob, x, Fx, d, fnorm_old::R, p) where {R <: Real}
+    T = eltype(x)
+    (iszero(fnorm_old) || !isfinite(fnorm_old)) && return zero(R)
+    tmp = g_Ft(state.g)
+    Jv = jvp!!(tmp, state.jvpprep, prob, x, d, p)
+    lin_r = axpby!!(tmp, one(T), Fx, one(T), Jv)
+    return R(rnorm(lin_r)) / fnorm_old
+end
+
+# Distinguish a stall caused by an inaccurate low-precision linear step (`lin_rel > η_lin`, which
+# promotes the factorisation to working precision `T`) from a stall at the precision floor of the
+# residual evaluation (`lin_rel <= η_lin`, which terminates with `STALLED` and `promoted = false`).
+@inline function update_mixed_stall(
+        state::NewtonState, info::StepInfo{R},
+        fnorm_old::R, lin_rel::R, mixed::Bool) where {R <: Real}
+    if !mixed || state.promoted || info.code != SUCCESS
+        return state, info
+    end
+    if info.fnorm >= R(0.5) * fnorm_old
+        η_lin = max(sqrt(eps(R)), R(1e-4))
+        if lin_rel > η_lin
+            slow = state.slow_steps + one(Int32)
+            if slow >= Int32(2)
+                info_p = StepInfo{R}(
+                    info.code, info.fnorm, info.stepnorm,
+                    info.failures + one(Int32), info.stalled, true)
+                return with_mixed(state, true, slow, Int32(0)), info_p
+            end
+            return with_mixed(state, false, slow, Int32(0)), info
+        else
+            fl = state.floor_steps + one(Int32)
+            if fl >= Int32(2)
+                info_s = StepInfo{R}(
+                    STALLED, info.fnorm, info.stepnorm,
+                    info.failures, true, false)
+                return with_mixed(state, false, Int32(0), fl), info_s
+            end
+            return with_mixed(state, false, Int32(0), fl), info
+        end
+    end
+    return with_mixed(state, false, Int32(0), Int32(0)), info
 end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
-    _, fac, diag = newton_factor(m, state, prob, x, Fx, p)
-    x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, true)
-    return x₊, F₊, with_diag(with_merit(state, merit, info.fnorm), diag), info
+    T = eltype(x)
+    R = real(T)
+    mixed = factor_eltype(m.linsolve, T) !== T
+    fnorm_old = R(residual_norm(Fx, state.merit))
+    _, fac, diag = state.promoted ?
+                   newton_factor_T(m, state, prob, x, Fx, p) :
+                   newton_factor(m, state, prob, x, Fx, p)
+    promoted_step = false
+    if fac.info > Int32(0)
+        if mixed && !state.promoted
+            _, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+            promoted_step = true
+        end
+        if fac.info > Int32(0)
+            info_sing = StepInfo{R}(
+                SINGULAR, rnorm(Fx), zero(R),
+                promoted_step ? Int32(1) : Int32(0), false, promoted_step)
+            state_sing = promoted_step ?
+                         with_mixed(state, true, state.slow_steps, state.floor_steps) :
+                         state
+            return x, Fx, with_diag(state_sing, diag), info_sing
+        end
+    end
+    d, ref_failed = if promoted_step
+        d₀ = ldiv!!(state.d, fac, Fx)
+        map!!(-, state.d, d₀), false
+    else
+        newton_direction(m, state, prob, x, Fx, fnorm_old, p, fac)
+    end
+    if ref_failed && mixed && !state.promoted
+        _, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+        promoted_step = true
+        if fac.info > Int32(0)
+            info_sing = StepInfo{R}(
+                SINGULAR, rnorm(Fx), zero(R), Int32(1), false, true)
+            state_sing = with_mixed(state, true, state.slow_steps, state.floor_steps)
+            return x, Fx, with_diag(state_sing, diag), info_sing
+        end
+        d₀ = ldiv!!(state.d, fac, Fx)
+        d = map!!(-, state.d, d₀)
+    end
+    lin_rel = (mixed && !state.promoted && !promoted_step) ?
+              linear_residual_ratio(state, prob, x, Fx, d, fnorm_old, p) : zero(R)
+    sk = exact_solve(fac) ?
+         newton_stepkind(m, T, true, promoted_step || state.promoted) :
+         MeasuredSlope()
+    x₊, F₊, _, info, merit = globalize_merit!!(
+        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk, state.merit)
+    if promoted_step
+        info = StepInfo{R}(
+            info.code, info.fnorm, info.stepnorm,
+            info.failures + one(Int32), info.stalled, true)
+        state = with_mixed(state, true, Int32(0), Int32(0))
+    else
+        state, info = update_mixed_stall(state, info, fnorm_old, lin_rel, mixed)
+    end
+    return x₊, F₊, with_diag(with_merit(state, merit), diag), info
 end
 
 # The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
@@ -376,50 +534,234 @@ end
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
-    Jreg, fac, diag = newton_factor(m, state, prob, x, Fx, p)
+    T = eltype(x)
+    R = real(T)
+    mixed = factor_eltype(m.linsolve, T) !== T
+    fnorm_old = R(rnorm(Fx))
+    Jreg, fac, diag = state.promoted ?
+                      newton_factor_T(m, state, prob, x, Fx, p) :
+                      newton_factor(m, state, prob, x, Fx, p)
+    promoted_step = false
+    if fac.info > Int32(0) && mixed && !state.promoted
+        Jreg, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+        promoted_step = true
+    end
     if fac.info == Int32(0)
-        d₀ = ldiv!!(state.d, fac, Fx)
-        d₁ = map!!(-, state.d, d₀)
-        d = refine!!(state.d, m.refinement, prob, x, Fx, d₁, fac, p, state.jvpprep)
-        nd = rnorm(d)
-        newton = isfinite(nd) && !iszero(nd)
+        d, ref_failed = if promoted_step
+            d₀ = ldiv!!(state.d, fac, Fx)
+            map!!(-, state.d, d₀), false
+        else
+            newton_direction(m, state, prob, x, Fx, fnorm_old, p, fac)
+        end
+        if ref_failed && mixed && !state.promoted
+            Jreg, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+            promoted_step = true
+            if fac.info == Int32(0)
+                d₀ = ldiv!!(state.d, fac, Fx)
+                d = map!!(-, state.d, d₀)
+            end
+        end
+        if fac.info == Int32(0)
+            nd = rnorm(d)
+            newton = isfinite(nd) && !iszero(nd)
+        else
+            d = Fx
+            newton = false
+        end
     else
         d = Fx
         newton = false
     end
+    lin_rel = (mixed && !state.promoted && !promoted_step && newton) ?
+              linear_residual_ratio(state, prob, x, Fx, d, fnorm_old, p) : zero(R)
     x₊, F₊, radius, info = dogleg_step(
         state.g, prob, x, Fx, p, Jreg, d, newton, state.rule.radius)
-    state₊ = with_rule(state, TrustRadius(radius, state.rule.radius₀))
-    state₊ = with_diag(with_merit(state₊, state.merit, info.fnorm), diag)
+    if promoted_step
+        info = StepInfo{R}(
+            info.code, info.fnorm, info.stepnorm,
+            info.failures + one(Int32), info.stalled, true)
+        state = with_mixed(state, true, Int32(0), Int32(0))
+    else
+        state, info = update_mixed_stall(state, info, fnorm_old, lin_rel, mixed)
+    end
+    state₊ = with_diag(with_rule(state, TrustRadius(radius, state.rule.radius₀)), diag)
     return x₊, F₊, state₊, info
 end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Int32},
         prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+    T = eltype(x)
+    R = real(T)
+    mixed = factor_eltype(m.linsolve, T) !== T
+    fnorm_old = R(residual_norm(Fx, state.merit))
     rule = state.rule
     fresh = rule.age == Int32(0) || rule.stalled
     _, fac, diag = if fresh
+        state.promoted ? newton_factor_T(m, state, prob, x, Fx, p) :
         newton_factor(m, state, prob, x, Fx, p)
     else
-        (nothing, state.fac, state.diag)
+        (nothing, state.promoted ? state.fac_T : state.fac, state.diag)
     end
     age_fresh = m.reuse == Int32(1) ? Int32(0) : Int32(1)
     age₊ = fresh ? age_fresh :
            (rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32))
-    x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, fresh)
+    promoted_step = false
+    if fac.info > Int32(0)
+        if !fresh
+            fresh = true
+            age₊ = age_fresh
+            _, fac, diag = state.promoted ? newton_factor_T(m, state, prob, x, Fx, p) :
+                           newton_factor(m, state, prob, x, Fx, p)
+        end
+        if fac.info > Int32(0) && mixed && !state.promoted
+            _, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+            promoted_step = true
+            age₊ = age_fresh
+        end
+        if fac.info > Int32(0)
+            state_f = (promoted_step || state.promoted) ?
+                      with_factor_T(state, fac) : with_factor(state, fac)
+            state_m = promoted_step ?
+                      with_mixed(state_f, true, state.slow_steps, state.floor_steps) :
+                      state_f
+            state_d = with_diag(state_m, diag)
+            info_sing = StepInfo{R}(
+                SINGULAR, rnorm(Fx), zero(R),
+                promoted_step ? Int32(1) : Int32(0), false, promoted_step)
+            return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
+        end
+    end
+    d, ref_failed = if promoted_step
+        d₀ = ldiv!!(state.d, fac, Fx)
+        map!!(-, state.d, d₀), false
+    else
+        newton_direction(m, state, prob, x, Fx, fnorm_old, p, fac)
+    end
+    # When refinement fails on a reused factor (`!fresh`), refactorise early at the current
+    # iterate in `TF` (`age` reset) and retry refinement before considering promotion to `T`.
+    if !fresh && ref_failed
+        fresh = true
+        age₊ = age_fresh
+        _, fac, diag = state.promoted ? newton_factor_T(m, state, prob, x, Fx, p) :
+                       newton_factor(m, state, prob, x, Fx, p)
+        if fac.info == Int32(0)
+            d, ref_failed = newton_direction(m, state, prob, x, Fx, fnorm_old, p, fac)
+        end
+    end
+    if (fac.info > Int32(0) || ref_failed) && mixed && !state.promoted
+        _, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+        promoted_step = true
+        fresh = true
+        age₊ = age_fresh
+        if fac.info > Int32(0)
+            state_f = with_factor_T(state, fac)
+            state_m = with_mixed(state_f, true, state.slow_steps, state.floor_steps)
+            state_d = with_diag(state_m, diag)
+            info_sing = StepInfo{R}(SINGULAR, rnorm(Fx), zero(R), Int32(1), false, true)
+            return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
+        end
+        d₀ = ldiv!!(state.d, fac, Fx)
+        d = map!!(-, state.d, d₀)
+    end
+    lin_rel = (mixed && !state.promoted && !promoted_step) ?
+              linear_residual_ratio(state, prob, x, Fx, d, fnorm_old, p) : zero(R)
+    sk = exact_solve(fac) ?
+         newton_stepkind(m, T, fresh, promoted_step || state.promoted) :
+         MeasuredSlope()
+    x₊, F₊, _, info, merit = globalize_merit!!(
+        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk, state.merit)
     # A reused factor can give a direction that does not descend. A line search along it that
     # fails without a step is retried once, in the same step, from a fresh factor, and from the
     # same residual and merit.
     if !fresh && info.code == LINESEARCH_FAILED && iszero(info.stepnorm)
-        _, fac, diag = newton_factor(m, state, prob, x, Fx, p)
+        fresh = true
         age₊ = age_fresh
-        x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, true)
+        _, fac, diag = state.promoted ? newton_factor_T(m, state, prob, x, Fx, p) :
+                       newton_factor(m, state, prob, x, Fx, p)
+        if fac.info > Int32(0) && mixed && !state.promoted
+            _, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+            promoted_step = true
+        end
+        if fac.info > Int32(0)
+            state_f = (promoted_step || state.promoted) ?
+                      with_factor_T(state, fac) : with_factor(state, fac)
+            state_m = promoted_step ?
+                      with_mixed(state_f, true, state.slow_steps, state.floor_steps) :
+                      state_f
+            state_d = with_diag(with_merit(state_m, merit), diag)
+            info_sing = StepInfo{R}(
+                SINGULAR, rnorm(Fx), zero(R),
+                promoted_step ? Int32(1) : Int32(0), false, promoted_step)
+            return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
+        end
+        d, ref_failed = if promoted_step
+            d₀ = ldiv!!(state.d, fac, Fx)
+            map!!(-, state.d, d₀), false
+        else
+            newton_direction(m, state, prob, x, Fx, fnorm_old, p, fac)
+        end
+        if ref_failed && mixed && !state.promoted
+            _, fac, diag = newton_factor_T(m, state, prob, x, Fx, p)
+            promoted_step = true
+            if fac.info > Int32(0)
+                state_f = with_factor_T(state, fac)
+                state_m = with_mixed(state_f, true, state.slow_steps, state.floor_steps)
+                state_d = with_diag(with_merit(state_m, merit), diag)
+                info_sing = StepInfo{R}(
+                    SINGULAR, rnorm(Fx), zero(R), Int32(1), false, true)
+                return x, Fx, with_rule(state_d, FactorAge(Int32(0), false)), info_sing
+            end
+            d₀ = ldiv!!(state.d, fac, Fx)
+            d = map!!(-, state.d, d₀)
+        end
+        lin_rel = (mixed && !state.promoted && !promoted_step) ?
+                  linear_residual_ratio(state, prob, x, Fx, d, fnorm_old, p) : zero(R)
+        sk = exact_solve(fac) ?
+             newton_stepkind(m, T, true, promoted_step || state.promoted) :
+             MeasuredSlope()
+        x₊, F₊, _, info, merit = globalize_merit!!(
+            state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, sk, state.merit)
     end
-    state = with_diag(with_merit(with_factor(state, fac), merit, info.fnorm), diag)
+    state = (promoted_step || state.promoted) ?
+            with_factor_T(state, fac) : with_factor(state, fac)
+    if promoted_step
+        info = StepInfo{R}(
+            info.code, info.fnorm, info.stepnorm,
+            info.failures + one(Int32), info.stalled, true)
+        state = with_mixed(state, true, Int32(0), Int32(0))
+    else
+        was_promoted = state.promoted
+        state, info = update_mixed_stall(state, info, fnorm_old, lin_rel, mixed)
+        if !was_promoted && state.promoted
+            age₊ = Int32(0)
+        end
+    end
+    state = with_diag(with_merit(state, merit), diag)
     if info.code == SINGULAR
         return x₊, F₊, with_rule(state, FactorAge(Int32(0), false)), info
     end
     state₊ = with_rule(state, FactorAge(age₊, info.code == STALLED))
     return x₊, F₊, state₊, info
+end
+
+function init(
+        prob::NonlinearProblem, method::Newton,
+        x₀::Union{AbstractVector, Number}, p = nothing;
+        options::Union{Nothing, Options} = nothing, kwargs...)
+    return init(prob, x₀, method, p; options = options, kwargs...)
+end
+
+function solve(
+        prob::NonlinearProblem, method::Newton,
+        x₀::Union{AbstractVector, Number}, p = nothing;
+        options::Union{Nothing, Options} = nothing, kwargs...)
+    return solve(prob, x₀, method, p; options = options, kwargs...)
+end
+
+function solve(
+        prob::NonlinearProblem, method::Newton,
+        x₀::Union{AbstractVector, Number}, p,
+        options::Options; kwargs...)
+    return solve(prob, x₀, method, p; options = options, kwargs...)
 end
