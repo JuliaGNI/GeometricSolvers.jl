@@ -16,6 +16,10 @@ function ldiv!!(
     rhs .= F.(r ./ s)
     backsolve!(fac, rhs)
     frac, ex = frexp(s)
-    d .= T.(ldexp2.(rhs .* frac, ex - fac.scale_exponent))
+    if length(rhs) == length(d)
+        d .= T.(ldexp2.(rhs .* frac, ex - fac.scale_exponent))
+    else
+        @views d .= T.(ldexp2.(rhs[1:length(d)] .* frac, ex - fac.scale_exponent))
+    end
     return d
 end

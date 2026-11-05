@@ -320,10 +320,11 @@ end
 function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
-    factors = similar(x, F, n, n)
+    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
+    factors = similar(x, F, m_rows, n)
     τ = similar(x, F, n)
     work = similar(x, F, qr_work_length(factors, τ))
-    rhs = F === T ? nothing : similar(x, F, n)
+    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end
 
@@ -331,9 +332,10 @@ function dense_factor(
         m::QRFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
-    factors = similar(x, F, n, n)
+    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
+    factors = similar(x, F, m_rows, n)
     τ = similar(x, F, n)
-    rhs = F === T ? nothing : similar(x, F, n)
+    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
     status = similar(x, Int32, 1)
     return DeviceQR(factors, τ, rhs, 0, 0, status)
 end
@@ -343,14 +345,15 @@ function dense_factor(
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)
-    factors = similar(x, F, n, n)
-    U = similar(x, F, n, n)
+    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
+    factors = similar(x, F, m_rows, n)
+    U = similar(x, F, m_rows, n)
     S = similar(x, R, n)
     VT = similar(x, F, n, n)
     rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : n)
     work = similar(x, F, svd_work_length(factors, S, U, VT, rwork))
     tmp = similar(x, F, n)
-    rhs = F === T ? nothing : similar(x, F, n)
+    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
     return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0, 0)
 end
 
@@ -359,15 +362,16 @@ function dense_factor(
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)
-    factors = similar(x, F, n, n)
-    U = similar(x, F, n, n)
+    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
+    factors = similar(x, F, m_rows, n)
+    U = similar(x, F, m_rows, n)
     S = similar(x, R, n)
     VT = similar(x, F, n, n)
     V = similar(x, F, n, n)
     σ̂ = similar(x, R, n)
     flag = similar(x, Int32, 1)
     tmp = similar(x, F, n)
-    rhs = F === T ? nothing : similar(x, F, n)
+    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
     return DeviceSVD(factors, U, S, VT, V, σ̂, flag, tmp, rhs, 0, 0, 0)
 end
 
@@ -377,9 +381,9 @@ end
 `SUCCESS` for a factor with `info == 0`, and `SINGULAR` otherwise.
 """
 function returncode(
-        fac::Union{StaticLU, StaticQR, StaticSVD, DenseLU, DenseQR, DenseSVD,
-        DeviceLU, DeviceQR, DeviceSVD})
-    return iszero(fac.info) ? SUCCESS : SINGULAR
+        fac::Union{StaticLU, StaticQR, StaticRectQR, StaticSVD, StaticRectSVD,
+        DenseLU, DenseQR, DenseSVD, DeviceLU, DeviceQR, DeviceSVD})
+    return iszero(getfield(fac, :info)) ? SUCCESS : SINGULAR
 end
 
 """
@@ -395,7 +399,7 @@ exact_solve(fac::StaticSVD{N}) where {N} = fac.rank == N
 exact_solve(fac::Union{DenseSVD, DeviceSVD}) = fac.rank == length(fac.S)
 
 @inline function factor_diagnostics(
-        d, ::Union{StaticLU, StaticQR, DenseLU, DenseQR, DeviceLU, DeviceQR},
+        d, ::Union{StaticLU, StaticQR, StaticRectQR, DenseLU, DenseQR, DeviceLU, DeviceQR},
         r, fnorm::R) where {R <: Real}
     return Int32(-1), R(NaN)
 end
@@ -456,10 +460,10 @@ end
 # the exponent `e` of the power of two that `J` was divided by: 0 where `F` is the element type of
 # `J`, else the exponent of the largest |re| or |im| of `J`, which takes no `abs` that can overflow.
 # `e` is clamped to the exponent range, so that `2^-e` is a float and the product with it is exact.
-function factor_matrix(::Type{F}, J::StaticMatrix{N, N, T}) where {F, N, T}
-    F === T && return SMatrix{N, N, F}(J), Int32(0)
+function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T}) where {F, M, N, T}
+    F === T && return SMatrix{M, N, F}(J), Int32(0)
     e = matrix_exponent(J)
-    return SMatrix{N, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
+    return SMatrix{M, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
 end
 
 # A mutable local copy of a static array for the scalar loops of the R1 kernels: an `MMatrix` or

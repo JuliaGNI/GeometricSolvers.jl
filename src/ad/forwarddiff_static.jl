@@ -52,8 +52,9 @@ function jacobian!!(::Nothing, backend::AutoForwardDiff, prob, x::StaticVector{N
     D = dual_type(T, typeof(tag_of(backend, prob, x)), N)
     xdual = SVector{N, D}(ntuple(j -> seed(zero(D), x[j], ntuple(==(j), Val(N))), Val(N)))
     rdual = prob.F(xdual, p)
-    return SMatrix{N, N, T}(
-        ntuple(k -> dual_partial(rdual[mod1(k, N)], fld1(k, N)), Val(N * N)))
+    M = length(rdual)
+    return SMatrix{M, N, T, M * N}(
+        ntuple(k -> dual_partial(rdual[mod1(k, M)], fld1(k, M)), Val(M * N)))
 end
 
 # A `Number` iterate is `n = 1`, and its Jacobian is a `Number` in the same element type: the

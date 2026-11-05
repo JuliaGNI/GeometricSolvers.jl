@@ -66,7 +66,7 @@ end
 end
 
 @kernel function ka_qr_qadj_kernel!(
-        d, @Const(A), @Const(τ), n::Int, ::Val{G}) where {G}
+        d, @Const(A), @Const(τ), m::Int, n::Int, ::Val{G}) where {G}
     tid = @index(Local, Linear)
     l_sum = @localmem eltype(d) (G,)
     l_dk = @localmem eltype(d) (1,)
@@ -79,7 +79,7 @@ end
             acc = zero(eltype(d))
             if !iszero(τk)
                 i = k + tid
-                while i <= n
+                while i <= m
                     acc += conj(A[i, k]) * d[i]
                     i += G
                 end
@@ -103,7 +103,7 @@ end
                     d[k] = (one(τk) - τk) * dk - τk * s
                 end
                 i = k + tid
-                while i <= n
+                while i <= m
                     tik = A[i, k] * τk
                     d[i] -= tik * dk + tik * s
                     i += G
@@ -127,17 +127,22 @@ end
     @inbounds d[k] = d[k] / A[k, k]
 end
 
+@kernel function ka_qr_copy_prefix_kernel!(d, @Const(rhs))
+    i = @index(Global, Linear)
+    @inbounds d[i] = rhs[i]
+end
+
 function ka_qr!(A::AbstractGPUArray, τ::AbstractVector, status::AbstractVector{Int32})
-    n = size(A, 1)
+    m, n = size(A)
     n == 0 && return 0
     backend = get_backend(A)
     fill!(status, Int32(0))
     ref_kernel! = ka_qr_reflector_kernel!(backend)
     app_kernel! = ka_qr_apply_kernel!(backend)
     for k in 1:n
-        ref_kernel!(A, τ, status, k, n; ndrange = 1)
+        ref_kernel!(A, τ, status, k, m; ndrange = 1)
         if k < n
-            app_kernel!(A, τ, k, n; ndrange = n - k)
+            app_kernel!(A, τ, k, m; ndrange = n - k)
         end
     end
     isgpu(backend) && synchronize(backend)
@@ -157,11 +162,11 @@ end
 const KA_QR_WORKGROUP = 64
 
 function ka_qr_backsolve!(A::AbstractGPUArray, τ::AbstractVector, d::AbstractVector)
-    n = length(d)
+    m, n = size(A)
     n == 0 && return d
     backend = get_backend(A)
     ka_qr_qadj_kernel!(backend, KA_QR_WORKGROUP)(
-        d, A, τ, n, Val(KA_QR_WORKGROUP); ndrange = KA_QR_WORKGROUP)
+        d, A, τ, m, n, Val(KA_QR_WORKGROUP); ndrange = KA_QR_WORKGROUP)
     trsv_r! = ka_qr_trsv_r_col_kernel!(backend)
     for k in n:-1:2
         trsv_r!(d, A, k; ndrange = k - 1)
@@ -174,4 +179,16 @@ end
 function backsolve!(fac::DeviceQR{<:AbstractMatrix{T}},
         d::AbstractVector{T}) where {T <: Number}
     return ka_qr_backsolve!(fac.factors, fac.τ, d)
+end
+
+function backsolve_shifted!(fac::DeviceQR{<:AbstractMatrix{T}},
+        d::AbstractVector{T}, rhs::AbstractVector{T}) where {T <: Number}
+    ka_qr_backsolve!(fac.factors, fac.τ, rhs)
+    n = length(d)
+    if n > 0
+        backend = get_backend(fac.factors)
+        ka_qr_copy_prefix_kernel!(backend)(d, rhs; ndrange = n)
+        isgpu(backend) && synchronize(backend)
+    end
+    return 0
 end

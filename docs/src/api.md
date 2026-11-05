@@ -7,11 +7,13 @@ CurrentModule = GeometricSolvers
 ## The problem
 
 A problem holds functions and nothing else: the residual, and optionally its derivative. The
-storage of the iterate selects the call form of both, so one problem serves every regime. This
-name is exported.
+storage of the iterate selects the call form of both, so one problem serves every regime.
+[`NonlinearProblem`](@ref) and [`LeastSquaresProblem`](@ref) are exported.
 
 ```@docs
+AbstractNonlinearProblem
 NonlinearProblem
+LeastSquaresProblem
 ```
 
 ## The storage seam
@@ -54,6 +56,7 @@ with `nullnorm ≈ 0`.
 ```@docs
 ReturnCode
 SolverStatus
+stopping_test
 StepInfo
 Options
 Options(::Type{T}) where {T <: Number}
@@ -79,17 +82,18 @@ BF16
 A linear-solver method enters a solve through [`dense_factor`](@ref), [`factorize!!`](@ref) and
 [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
 `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
-`Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
-a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
-`√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
+`Int32` pivots, [`StaticQR`](@ref) and [`StaticRectQR`](@ref) are Householder QR without column
+pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a one-sided Jacobi singular
+value decomposition whose solve truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what
+makes a rank-revealing solve finite. For a vector state (R3)
 [`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
 on a host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
 `AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
 through LAPACK on the host, and through `KernelAbstractions` on a device. [`factorize!!`](@ref)
 states what a singular matrix gives: an SVD factor records its numerical rank in `rank` apart from
 its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
-[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These names are not
-exported and are reached as `GeometricSolvers.name`.
+[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref) or
+[`StaticRectSVD`](@ref). These names are not exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
 dense_factor
@@ -98,7 +102,9 @@ ldiv!!
 factor_eltype
 StaticLU
 StaticQR
+StaticRectQR
 StaticSVD
+StaticRectSVD
 DenseLU
 DeviceLU
 DenseQR
@@ -153,7 +159,9 @@ LevenbergMarquardt
 
 A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,
 `refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
-[`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
+[`Picard`](@ref)) and nothing about the problem or the iterate. [`GaussNewton`](@ref) constructs a
+[`Newton`](@ref) configured for [`LeastSquaresProblem`](@ref) (`linsolve = QRFactorization()`,
+`globalization = Static()`). [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
 `x₀` is an array, and returns `(x, status)`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
@@ -176,6 +184,7 @@ solve_batch!
 solve!!
 PerSystem
 Newton
+GaussNewton
 Picard
 NoRefinement
 ```

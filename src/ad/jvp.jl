@@ -35,11 +35,11 @@ end
 # The R3 JVP preparation from an analytic Jacobian under globalization `g`. Only a line search
 # that searches takes the slope of the merit, so `Static`, `DogLeg` and every other
 # globalization get `nothing` and no `n × n` buffer.
-function jacobian_matrix_jvp(::LineSearch, x)
-    JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+function jacobian_matrix_jvp(::LineSearch, x, m::Int = length(x))
+    JacobianMatrixJVP(buffer(x, eltype(x), m, length(x)))
 end
-jacobian_matrix_jvp(g, x) = nothing
-jacobian_matrix_jvp(::Static, x) = nothing
+jacobian_matrix_jvp(g, x, m::Int = length(x)) = nothing
+jacobian_matrix_jvp(::Static, x, m::Int = length(x)) = nothing
 
 function jvp!!(Jv::AbstractVector, prep::JacobianMatrixJVP, prob,
         x::AbstractVector, v::AbstractVector, p)
@@ -70,7 +70,8 @@ function jvp!!(::Nothing, backend::AutoForwardDiff, prob, x::StaticVector{N, T},
     D = dual_type(T, typeof(tag_of(backend, prob, x)), 1)
     xdual = SVector{N, D}(ntuple(i -> seed(zero(D), x[i], (v[i],)), Val(N)))
     rdual = prob.F(xdual, p)
-    return SVector{N, T}(ntuple(i -> dual_partial(rdual[i], 1), Val(N)))
+    M = length(rdual)
+    return SVector{M, T}(ntuple(i -> dual_partial(rdual[i], 1), Val(M)))
 end
 
 function jvp!!(::Nothing, backend::AutoForwardDiff, prob, x::T, v::T, p) where {T <: Number}

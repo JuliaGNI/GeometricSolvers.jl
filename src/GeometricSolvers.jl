@@ -19,12 +19,13 @@ using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticA
                     setindex
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
-export SolverStatus, StepInfo, Options
-export NonlinearProblem
+export SolverStatus, StepInfo, Options, stopping_test
+export NonlinearProblem, LeastSquaresProblem
 export LUFactorization, QRFactorization, SVDFactorization, TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
-export Newton, NoRefinement, PerSystem, Picard, NonlinearSolver, init, solve, solve!
+export Newton, GaussNewton, NoRefinement, PerSystem, Picard, NonlinearSolver, init, solve,
+       solve!
 export solve_batch!
 
 public solve!!
@@ -40,7 +41,9 @@ include("linear/methods.jl")
 include("linear/factors.jl")
 include("linear/static/lu.jl")
 include("linear/static/qr.jl")
+include("linear/static/qr_rect.jl")
 include("linear/static/svd.jl")
+include("linear/static/svd_rect.jl")
 include("linear/static/eigen.jl")
 include("linear/dense.jl")
 include("linear/ka/lu.jl")
@@ -55,6 +58,7 @@ include("globalization/bisection.jl")
 include("globalization/strongwolfe.jl")
 
 include("nonlinear/problem.jl")
+include("nonlinear/leastsquares.jl")
 
 include("ad/forwarddiff_static.jl")
 include("ad/di.jl")

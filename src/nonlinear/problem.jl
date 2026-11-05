@@ -1,6 +1,8 @@
 # The problem: the residual and its derivative, and nothing else. Parameters arrive at solve time,
 # so one problem serves a whole time-stepping loop, and a batch shares one object.
 
+abstract type AbstractNonlinearProblem end
+
 """
     NonlinearProblem(F)
     NonlinearProblem(F, J)
@@ -25,9 +27,11 @@ julia> prob.J === nothing
 true
 ```
 """
-struct NonlinearProblem{F, J}
+struct NonlinearProblem{F, J} <: AbstractNonlinearProblem
     F::F
     J::J
 end
 
 NonlinearProblem(F) = NonlinearProblem(F, nothing)
+
+@inline output_length(::NonlinearProblem, n::Int) = n

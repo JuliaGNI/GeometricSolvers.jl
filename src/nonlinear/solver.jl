@@ -9,9 +9,9 @@ struct NoRefinement end
 @inline refine!!(d_slot, ::NoRefinement, prob, x, Fx, d, fac, p, jvpprep) = d
 
 """
-    init_state(method, prob::NonlinearProblem, x, p)
+    init_state(method, prob::AbstractNonlinearProblem, x, p)
 
-Build the state of `method` for [`NonlinearProblem`](@ref) `prob` at the initial iterate `x` and
+Build the state of `method` for [`AbstractNonlinearProblem`](@ref) `prob` at the initial iterate `x` and
 parameters `p`: its workspace, its AD preparation and its rule state, in one concrete type per
 method. In R1 (`SVector`, `MVector` or `Number`), `init_state` is allocation-free and returns an
 `isbits` state when `prob` and `method` are `isbits`.
@@ -28,7 +28,7 @@ array iterate, and `nothing` for a value iterate. The default is `nothing`, whic
 @inline residual_buffer(state) = nothing
 
 """
-    step!!(state, method, prob::NonlinearProblem, x, Fx, p)
+    step!!(state, method, prob::AbstractNonlinearProblem, x, Fx, p)
 
 Compute one nonlinear solver step from `(x, Fx)` and return `(x₊, F₊, state₊, info)` where `info`
 is a [`StepInfo`](@ref). A line-search step of [`Newton`](@ref) or [`Picard`](@ref) reads the
@@ -39,7 +39,7 @@ returned, it returns `NONFINITE` and keeps `x` and `Fx`.
 function step!! end
 
 """
-    start!!(state, method, prob::NonlinearProblem, x, Fx, p, fnorm₀) -> state
+    start!!(state, method, prob::AbstractNonlinearProblem, x, Fx, p, fnorm₀) -> state
 
 Prepare `state` for a solve from `x`, with residual `Fx` and its norm `fnorm₀`, and return the
 state that the first step reads. [`solve!!`](@ref) calls it once, before its stopping test at 0
@@ -50,7 +50,7 @@ the anchor merit `norm2(Fx)` of a line search, which `init_state` leaves at `NaN
 @inline start!!(state, method, prob, x, Fx, p, fnorm₀) = state
 
 """
-    finish!!(state, method, prob::NonlinearProblem, x, Fx, status) -> (x, status, state)
+    finish!!(state, method, prob::AbstractNonlinearProblem, x, Fx, status) -> (x, status, state)
 
 Close a solve that ends at `x`, with residual `Fx` and `status`, and return the triple that
 [`solve!!`](@ref) returns. [`solve!!`](@ref) calls it at every return. The default returns
@@ -60,20 +60,38 @@ and for an array iterate it writes that iterate into `x` and returns `x`. [`Newt
 """
 @inline finish!!(state, method, prob, x, Fx, status) = (x, status, state)
 
+@inline state_gradratio(state) = NaN
+@inline state_jnorm(state) = 0
+
 @inline function ok_status(status::SolverStatus{R}) where {R}
     return SolverStatus{R}(
         SUCCESS, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted)
+        status.step_failures, status.promoted, false)
+end
+
+@inline function stationary_status(status::SolverStatus{R}) where {R}
+    return SolverStatus{R}(
+        SUCCESS, status.iterations, status.fnorm, status.stepnorm,
+        status.step_failures, status.promoted, true)
 end
 
 @inline function end_status(status::SolverStatus{R}, code::ReturnCode) where {R}
     return SolverStatus{R}(
         code, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted)
+        status.step_failures, status.promoted, false)
+end
+
+@inline stationary_converged(::NonlinearProblem, ::Options, state, ::SolverStatus) = false
+@inline function stationary_converged(
+        ::LeastSquaresProblem, options::Options{R}, state, status::SolverStatus{R}) where {R}
+    status.iterations >= options.min_iterations || return false
+    jnorm = state_jnorm(state)
+    grad = state_gradratio(state)
+    return jnorm > zero(R) && status.fnorm > zero(R) && grad <= options.g_tol
 end
 
 """
-    solve!!(state, prob::NonlinearProblem, x₀, method, p = nothing, options = Options(eltype(x₀)))
+    solve!!(state, prob::AbstractNonlinearProblem, x₀, method, p = nothing, options = Options(eltype(x₀)))
 
 Run the nonlinear solver loop from `x₀` using `state = init_state(method, prob, x₀, p)` and return
 `(x, status, state)`. `solve!!` is the in-place and kernel entry point: inside a
@@ -96,24 +114,28 @@ Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`rec
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
 (meaning the failed line-search trial did not decrease the merit) stops immediately with
 `LINESEARCH_FAILED`; one that decreased the merit keeps its new iterate, increments
-`status.step_failures`, and continues. Only the residual test returns `SUCCESS`. When it fails
+`status.step_failures`, and continues. The residual test returns `SUCCESS` with
+`status.stationary == false`; on a [`LeastSquaresProblem`](@ref) where the residual test does not
+hold, the stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ options.g_tol` (with `‖J‖_F > 0` and
+`‖F‖ > 0`) returns `SUCCESS` with `status.stationary == true`. When neither test holds
 after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
 at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
-would start; `min_iterations` bounds both. After a `STALLED` step only the residual test applies,
+would start; `min_iterations` bounds both. After a `STALLED` step only the residual and
+stationarity tests apply,
 and `options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose
-`limited` is set only the residual test applies too, because a radius, not the distance to a
-root, sets its norm; such a step is not a stall. Reaching `options.max_iterations` without
-convergence returns `MAXITERS`.
+`limited` is set only the residual and stationarity tests apply too, because a radius, not the
+distance to a root, sets its norm; such a step is not a stall. Reaching `options.max_iterations`
+without convergence returns `MAXITERS`.
 """
 function solve!!(
-        state, prob::NonlinearProblem, x₀, method, p = nothing,
+        state, prob::AbstractNonlinearProblem, x₀, method, p = nothing,
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
     check_options(eltype(x₀), options)
     x = x₀
     Fx = residual!!(residual_buffer(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
-    status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)
+    status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false, false)
     if !isfinite(fnorm₀)
         return finish!!(state, method, prob, x, Fx, end_status(status, NONFINITE))
     end
@@ -135,6 +157,9 @@ function solve!!(
         end
         if residual_converged(options, status, fnorm₀)
             return finish!!(state, method, prob, x, Fx, ok_status(status))
+        end
+        if stationary_converged(prob, options, state, status)
+            return finish!!(state, method, prob, x, Fx, stationary_status(status))
         end
         if !(info.code == STALLED || info.limited)
             # the residual test fails: the step test, or a zero step, ends the solve unconverged
@@ -184,14 +209,14 @@ end
 """
     NonlinearSolver(prob, x, method, options, state, p)
 
-A preallocated nonlinear solver for [`NonlinearProblem`](@ref) `prob` with `method` and
+A preallocated nonlinear solver for [`AbstractNonlinearProblem`](@ref) `prob` with `method` and
 [`Options`](@ref) `options`, holding the workspace and AD preparation in `state`, the iterate `x`
 and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the element type `T` and the
 length `n` of `x` and the types `X` of `x` and `Q` of `p`, which [`solve!`](@ref) checks.
 Build it with [`init(prob, x₀, method, p; options = nothing, kwargs...)`](@ref init) and solve
 with [`solve!(solver)`](@ref solve!) or [`solve!(solver, x, p)`](@ref solve!).
 """
-mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
+mutable struct NonlinearSolver{T, P <: AbstractNonlinearProblem, M, O <: Options, S,
     X <: Union{AbstractVector{T}, T}, Q}
     const prob::P
     const method::M
@@ -201,14 +226,14 @@ mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
     x::X
     p::Q
     function NonlinearSolver(prob::P, x::X, method::M, options::O, state::S,
-            p::Q) where {P <: NonlinearProblem, M, O <: Options, S,
+            p::Q) where {P <: AbstractNonlinearProblem, M, O <: Options, S,
             X <: Union{AbstractVector, Number}, Q}
         new{eltype(X), P, M, O, S, X, Q}(prob, method, options, length(x), state, x, p)
     end
 end
 
 """
-    init(prob::NonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
+    init(prob::AbstractNonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
 
 Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` from the initial iterate
 `x₀` and the parameters `p`, with the arguments of [`solve`](@ref), so that
@@ -219,7 +244,7 @@ tolerances raises an `ArgumentError`, and so does an `options` that is not an
 `Options{real(eltype(x₀))}`.
 """
 function init(
-        prob::NonlinearProblem, x₀, method, p = nothing;
+        prob::AbstractNonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
     x, m, opt, state = prepare_solve(prob, x₀, method, p, options, kwargs)
     return NonlinearSolver(prob, x, m, opt, state, p)
@@ -264,9 +289,9 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
 end
 
 """
-    solve(prob::NonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
+    solve(prob::AbstractNonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
 
-Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters `p`, and return
+Solve [`AbstractNonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters `p`, and return
 `(x, status)` where `status` is a [`SolverStatus`](@ref). For an R3 array iterate `x₀`, `solve`
 copies `x₀` so the caller's initial guess is not mutated. `solve(args...; kwargs...)` returns what
 `solve!(init(args...; kwargs...))` returns, without building a [`NonlinearSolver`](@ref).
@@ -281,7 +306,7 @@ residual norm `rnorm` is finite up to `floatmax`, but the merit `‖F‖²` of a
 to `Inf` above `‖F‖ = sqrt(floatmax)`, and a solve with a line search then returns `NONFINITE`.
 """
 function solve(
-        prob::NonlinearProblem, x₀, method, p = nothing;
+        prob::AbstractNonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
     x, m, opt, state = prepare_solve(prob, x₀, method, p, options, kwargs)
     x, status, _ = solve!!(state, prob, x, m, p, opt)

@@ -9,21 +9,23 @@
 using KernelAbstractions: @localmem, @synchronize
 
 @kernel function ka_jacobi_col_norms2_kernel!(
-        σ̂, flag, U, V, n::Int, neg_e::Int, init_v::Bool, take_sqrt::Bool)
+        σ̂, flag, U, V, m_rows::Int, n::Int, neg_e::Int, init_v::Bool, take_sqrt::Bool)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(U)
         R = eltype(σ̂)
         if init_v
-            for i in 1:n
-                if neg_e != 0
+            if neg_e != 0
+                for i in 1:m_rows
                     U[i, j] = ldexp2(U[i, j], neg_e)
                 end
+            end
+            for i in 1:n
                 V[i, j] = ifelse(i == j, one(F), zero(F))
             end
         end
         s = zero(R)
-        for i in 1:n
+        for i in 1:m_rows
             s += abs2(U[i, j])
         end
         σ̂[j] = ifelse(take_sqrt, sqrt(s), s)
@@ -34,7 +36,7 @@ using KernelAbstractions: @localmem, @synchronize
 end
 
 @kernel function ka_jacobi_svd_round_kernel!(
-        U, V, flag, n::Int, r::Int, tol, negligible, ::Val{G}) where {G}
+        U, V, flag, m_rows::Int, n::Int, r::Int, tol, negligible, ::Val{G}) where {G}
     pair = @index(Group, Linear)
     tid = @index(Local, Linear)
     l_α = @localmem real(eltype(U)) (G,)
@@ -52,7 +54,7 @@ end
         γ_loc = zero(F)
         if p <= n
             i = tid
-            while i <= n
+            while i <= m_rows
                 up = U[i, p]
                 uq = U[i, q]
                 α_loc += abs2(up)
@@ -98,21 +100,25 @@ end
         s = l_s[1]
         sc = conj(s)
         i = tid
-        while i <= n
+        while i <= m_rows
             up = U[i, p]
             uq = U[i, q]
             U[i, p] = c * up - sc * uq
             U[i, q] = s * up + c * uq
-            vp = V[i, p]
-            vq = V[i, q]
-            V[i, p] = c * vp - sc * vq
-            V[i, q] = s * vp + c * vq
             i += G
+        end
+        j = tid
+        while j <= n
+            vp = V[j, p]
+            vq = V[j, q]
+            V[j, p] = c * vp - sc * vq
+            V[j, q] = s * vp + c * vq
+            j += G
         end
     end
 end
 
-@kernel function ka_jacobi_sort_columns_kernel!(σ̂, U, V, n::Int)
+@kernel function ka_jacobi_sort_columns_kernel!(σ̂, U, V, m_rows::Int, n::Int)
     idx = @index(Global, Linear)
     @inbounds if idx == 1
         for p in 1:(n - 1)
@@ -128,10 +134,12 @@ end
             if q_max != p
                 σ̂[q_max] = σ̂[p]
                 σ̂[p] = s_max
-                for i in 1:n
+                for i in 1:m_rows
                     up = U[i, p]
                     U[i, p] = U[i, q_max]
                     U[i, q_max] = up
+                end
+                for i in 1:n
                     vp = V[i, p]
                     V[i, p] = V[i, q_max]
                     V[i, q_max] = vp
@@ -142,18 +150,18 @@ end
 end
 
 @kernel function ka_jacobi_finalize_svd_kernel!(
-        U, S, VT, @Const(V), @Const(σ̂), n::Int, e::Int, tol)
+        U, S, VT, @Const(V), @Const(σ̂), m_rows::Int, n::Int, e::Int, tol)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(U)
         σj = σ̂[j]
         S[j] = ldexp2(σj, e)
         if σj > tol * σ̂[1]
-            for i in 1:n
+            for i in 1:m_rows
                 U[i, j] = U[i, j] / σj
             end
         else
-            for i in 1:n
+            for i in 1:m_rows
                 U[i, j] = zero(F)
             end
         end
@@ -172,9 +180,10 @@ ka_unwrap_val(::Val{N}) where {N} = N
 function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
         VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
         e::Int, neg_e::Int) where {F, R}
-    n = size(U, 1)
+    m_rows, n = size(U)
     backend = get_backend(U)
-    tol = jacobi_tolerance(n, R)
+    tol = jacobi_tolerance(m_rows, R)
+    cutoff_tol = jacobi_tolerance(n, R)
     m = n + Int(isodd(n))
     n_pairs = m ÷ 2
     valG = ka_svd_workgroup(backend)
@@ -185,14 +194,14 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
         round_kernel! = ka_jacobi_svd_round_kernel!(backend, g)
         for sweep in 1:JACOBI_MAX_SWEEPS
             col_norms2_kernel!(
-                σ̂, flag, U, V, n, neg_e, sweep == 1, false; ndrange = n)
+                σ̂, flag, U, V, m_rows, n, neg_e, sweep == 1, false; ndrange = n)
             # `max` propagates `NaN`, so one reduction tests every column norm for finiteness.
             max_norm2 = maximum(σ̂)
             isfinite(max_norm2) || break
             negligible = max_norm2 * tol^2
             for r in 0:(m - 2)
                 round_kernel!(
-                    U, V, flag, n, r, tol, negligible, valG; ndrange = n_pairs * g)
+                    U, V, flag, m_rows, n, r, tol, negligible, valG; ndrange = n_pairs * g)
             end
             if iszero(Array(flag)[1])
                 converged = true
@@ -200,16 +209,16 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
             end
         end
         col_norms2_kernel!(
-            σ̂, flag, U, V, n, 0, false, true; ndrange = n)
+            σ̂, flag, U, V, m_rows, n, 0, false, true; ndrange = n)
     else
         col_norms2_kernel!(
-            σ̂, flag, U, V, n, neg_e, true, true; ndrange = n)
+            σ̂, flag, U, V, m_rows, n, neg_e, true, true; ndrange = n)
     end
     if n >= 2
-        ka_jacobi_sort_columns_kernel!(backend)(σ̂, U, V, n; ndrange = 1)
+        ka_jacobi_sort_columns_kernel!(backend)(σ̂, U, V, m_rows, n; ndrange = 1)
     end
     ka_jacobi_finalize_svd_kernel!(backend)(
-        U, S, VT, V, σ̂, n, e, tol; ndrange = n)
+        U, S, VT, V, σ̂, m_rows, n, e, cutoff_tol; ndrange = n)
     isgpu(backend) && synchronize(backend)
     # the status and the rank from one host read of the sorted `σ̂`, and no scalar read of a
     # device array: `info` reports a sweep that did not converge or a singular value that is
@@ -220,7 +229,7 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
 end
 
 function ka_factorize_svd!(fac::DeviceSVD, J::AbstractMatrix)
-    n = size(fac.U, 1)
+    n = size(fac.U, 2)
     n == 0 && return DeviceSVD(
         fac.factors, fac.U, fac.S, fac.VT, fac.V, fac.σ̂, fac.flag, fac.tmp, fac.rhs,
         0, 0, 0)
@@ -243,14 +252,15 @@ function factorize!!(fac::DeviceSVD, ::SVDFactorization, J::AbstractMatrix)
     return ka_factorize_svd!(fac, J)
 end
 
-@kernel function ka_svd_ut_mul_kernel!(tmp, @Const(U), @Const(d), n::Int, rank::Int)
+@kernel function ka_svd_ut_mul_kernel!(
+        tmp, @Const(U), @Const(r), m_rows::Int, n::Int, rank::Int)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(tmp)
         if j <= rank
             acc = zero(F)
-            for i in 1:n
-                acc += conj(U[i, j]) * d[i]
+            for i in 1:m_rows
+                acc += conj(U[i, j]) * r[i]
             end
             tmp[j] = acc
         else
@@ -293,17 +303,17 @@ function ka_divisor_exponent(
 end
 
 # The solve with the factors of `J / 2^e` divides by their singular values `σ̂`, the
-# same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ d`; returns `t`.
+# same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ r`; returns `t`.
 function ka_svd_backsolve!(
-        fac::DeviceSVD{<:AbstractGPUArray}, d::AbstractVector{T}, shift::Bool) where {T <:
-                                                                                      Number}
-    n = length(d)
+        fac::DeviceSVD{<:AbstractGPUArray}, d::AbstractVector{T},
+        r::AbstractVector{T}, shift::Bool) where {T <: Number}
+    m_rows, n = size(fac.U)
     n == 0 && return 0
     # a failed factor, whose `σ̂` can hold a finite leading value beside a `NaN`, and a zero
     # matrix give the zero step; `rank` is a host field, so this reads no device array
     iszero(fac.rank) && (fill!(d, zero(T)); return 0)
     backend = get_backend(fac.U)
-    ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, d, n, fac.rank; ndrange = n)
+    ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, r, m_rows, n, fac.rank; ndrange = n)
     t = shift ? ka_divisor_exponent(fac, T, n) : 0
     ka_svd_divide_kernel!(backend)(fac.tmp, fac.σ̂, fac.rank, t; ndrange = fac.rank)
     ka_svd_v_mul_kernel!(backend)(d, fac.VT, fac.tmp, n; ndrange = n)
@@ -313,19 +323,24 @@ end
 
 function backsolve!(
         fac::DeviceSVD{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <: Number}
-    ka_svd_backsolve!(fac, d, false)
+    ka_svd_backsolve!(fac, d, d, false)
     return d
 end
 
 function backsolve_shifted!(fac::DeviceSVD{<:AbstractMatrix{T}},
         d::AbstractVector{T}) where {T <: Number}
-    return ka_svd_backsolve!(fac, d, true)
+    return ka_svd_backsolve!(fac, d, d, true)
+end
+
+function backsolve_shifted!(fac::DeviceSVD{<:AbstractMatrix{T}},
+        d::AbstractVector{T}, rhs::AbstractVector{T}) where {T <: Number}
+    return ka_svd_backsolve!(fac, d, rhs, true)
 end
 
 @kernel function ka_svd_null_residual_kernel!(
-        out, r, @Const(U), @Const(tmp), n::Int, rank::Int)
+        out, r, @Const(U), @Const(tmp), m_rows::Int, rank::Int)
     i = @index(Global, Linear)
-    @inbounds if i <= n
+    @inbounds if i <= m_rows
         acc = zero(eltype(out))
         for j in 1:rank
             acc += U[i, j] * tmp[j]
@@ -337,11 +352,11 @@ end
 function ka_svd_nullnorm!(
         out::AbstractVector{TF}, fac::DeviceSVD{<:AbstractGPUArray{TF, 2}},
         r::AbstractVector{TF}, rk::Int) where {TF}
-    n = length(r)
-    n == 0 && return zero(real(TF))
+    m_rows, n = size(fac.U)
+    m_rows == 0 && return zero(real(TF))
     backend = get_backend(fac.U)
-    ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, r, n, rk; ndrange = n)
-    ka_svd_null_residual_kernel!(backend)(out, r, fac.U, fac.tmp, n, rk; ndrange = n)
+    ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, r, m_rows, n, rk; ndrange = n)
+    ka_svd_null_residual_kernel!(backend)(out, r, fac.U, fac.tmp, m_rows, rk; ndrange = m_rows)
     isgpu(backend) && synchronize(backend)
     return rnorm(out)
 end
@@ -353,7 +368,8 @@ function factor_diagnostics(
     rk = fac.rank
     rk == 0 && return Int32(0), fnorm
     if TF === T
-        return Int32(rk), R(ka_svd_nullnorm!(d, fac, r, rk))
+        out_buf = length(d) == length(r) ? d : fac.rhs::AbstractVector{TF}
+        return Int32(rk), R(ka_svd_nullnorm!(out_buf, fac, r, rk))
     end
     s = maximum(abs, r)
     iszero(s) && return Int32(rk), zero(R)

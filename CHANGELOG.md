@@ -11,6 +11,29 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`LeastSquaresProblem`, `GaussNewton`, rectangular static, host and device QR and SVD, and the
+  stationarity stopping test** (decisions 34 and 54 of the design). `AbstractNonlinearProblem` is
+  the common supertype of `NonlinearProblem` and `LeastSquaresProblem{F, J, M}` (exported), which
+  constructs an overdetermined or square least-squares problem `min_x ½ ‖F(x, p)‖₂²` with `m ≥ n`
+  residuals (2-argument `F(x, p)` in R1, and 3-argument `F!(r, x, p)` with `m::Int` in R3).
+  `GaussNewton(; linsolve = QRFactorization(), globalization = Static(), jacobian = nothing,
+  refinement = NoRefinement(), regularization = 0, reuse = nothing)` (exported) constructs a
+  `Newton` method configured for least-squares problems, using `MeasuredSlope()` for line-search
+  globalizations (`φ′(0) = 2 Re⟨F, J d⟩ = -2 ‖J d‖₂²`). `StaticRectQR{M, N, T, L}` and
+  `StaticRectSVD{M, N, T, R, L1, L2}` factorise rectangular static matrices `SMatrix{M, N, T}` with
+  `M > N ≥ 1` and `M ≤ 32` without allocation (delegating `M == N` to `StaticQR` and `StaticSVD`,
+  and throwing `DimensionMismatch` for `M < N` or `N == 0` and `ArgumentError` for `M > 32`), and
+  solve the minimum-norm least-squares problem in `ldiv!!`; `DenseQR`, `DeviceQR`, `DenseSVD` and
+  `DeviceSVD` support rectangular `m × n` dimensions (`m ≥ n`) on `Array` and `AbstractGPUArray`
+  alike, and `LevenbergMarquardt` supports rectangular `m × n` Jacobians in both its SVD and
+  stacked-QR paths across R1 and R3. `Options{R}` gains `g_tol::R = sqrt(eps(R))` (`≥ 0`), and
+  `SolverStatus{R}` gains `stationary::Bool` (`sizeof(SolverStatus{Float32}) == 36`,
+  `sizeof(SolverStatus{Float64}) == 56`) together with `stopping_test(status)` (exported), which
+  returns `:stationarity`, `:residual` or `:none`. On a `LeastSquaresProblem`, `solve!!` tests the
+  residual criterion first (`stationary = false`) and then the relative normal-equation gradient
+  `‖J(x)ᴴ F(x)‖ / (‖J(x)‖_F ‖F(x)‖) ≤ options.g_tol` when `‖J(x)‖_F > 0` and `‖F(x)‖ > 0`
+  (`stationary = true`).
+
 - **`LevenbergMarquardt{R, S}` damped trust-region globalization for `Newton`** (decision 57 of the
   design). `LevenbergMarquardt{R <: AbstractFloat, S}` (`R = Float64` by default, adapted to
   `real(eltype(x₀))` by `ToReal{R}()`) carries the damping parameters `(μ₀, μ_min, μ_max,

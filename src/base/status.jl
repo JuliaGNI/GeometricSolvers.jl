@@ -14,6 +14,7 @@ is in `R = real(T)` for the element type `T` of the iterate.
   one count.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
+- `stationary::Bool`: the solve converged by the stationarity test rather than the residual test.
 - `rank::Int32`: the numerical rank from the last fresh SVD factorisation, or `Int32(-1)`
   when no SVD factorisation completed.
 - `nullnorm::R`: ``\\|(I - U_r U_r^H) F(x_k)\\|`` at the iterate ``x_k`` of the last fresh
@@ -46,6 +47,7 @@ struct SolverStatus{R <: Real}
     stepnorm::R
     step_failures::Int32
     promoted::Bool
+    stationary::Bool
     rank::Int32
     nullnorm::R
     gradratio::R
@@ -53,10 +55,31 @@ end
 
 @inline function SolverStatus{R}(
         code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool,
+        rank::Int32, nullnorm::R, gradratio::R) where {R <: Real}
+    return SolverStatus{R}(
+        code, iterations, fnorm, stepnorm, step_failures, promoted, false,
+        rank, nullnorm, gradratio)
+end
+
+@inline function SolverStatus{R}(
+        code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
         step_failures::Int32, promoted::Bool) where {R <: Real}
     return SolverStatus{R}(
-        code, iterations, fnorm, stepnorm, step_failures, promoted,
+        code, iterations, fnorm, stepnorm, step_failures, promoted, false,
         Int32(-1), R(NaN), R(NaN))
+end
+
+"""
+    stopping_test(status::SolverStatus)
+
+Name the stopping test that ended a converged solve: `:stationarity` when `status.stationary`
+is set, `:residual` when the solve converged by the residual test, and `:none` when the solve
+did not converge.
+"""
+@inline function stopping_test(status::SolverStatus)
+    isconverged(status) || return :none
+    return status.stationary ? :stationarity : :residual
 end
 
 """
@@ -88,8 +111,8 @@ end
     record(status::SolverStatus{R}, info::StepInfo{R})
 
 Fold the result of one step into the status: count the iteration, take the code and the norms of
-the step, add its failures, keep `promoted` once it is set, and preserve `rank`, `nullnorm` and
-`gradratio`.
+the step, add its failures, keep `promoted` once it is set, and preserve `stationary`, `rank`,
+`nullnorm` and `gradratio`.
 """
 function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
     SolverStatus{R}(info.code,
@@ -98,6 +121,7 @@ function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
         info.stepnorm,
         status.step_failures + info.failures,
         status.promoted | info.promoted,
+        status.stationary,
         status.rank,
         status.nullnorm,
         status.gradratio)
