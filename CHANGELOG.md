@@ -18,19 +18,19 @@ so that a compat-only bump can be told apart from an interface change.
   info, scale_exponent, status)`), `DeviceQR` (`(factors, τ, rhs, info, scale_exponent, status)`)
   and `DeviceSVD` (`(factors, U, S, VT, V, σ̂, flag, tmp, rhs, info, rank, scale_exponent)`), and on
   `x::AbstractVector` to construct host `DenseLU` (which drops `status`), `DenseQR` and `DenseSVD`,
-  removing the `x isa AbstractGPUArray` branches, the `ka_factorize_lu!` `Nothing`-status entry in
-  `test/quality/jet.jl`, the duplicate `BlasFloat` `backsolve!` and `backsolve_shifted!` methods,
-  and the `unsafe_wrap` `JLArray` adapter in `src/linear/ka/svd.jl`.
+  removing the `x isa AbstractGPUArray` branches, the `ka_factorize_lu!`, `ka_svd!` and
+  `ka_svd_backsolve!` entries in `test/quality/jet.jl`, the duplicate `BlasFloat` `backsolve!` and
+  `backsolve_shifted!` methods, and the `unsafe_wrap` `JLArray` adapter in `src/linear/ka/svd.jl`.
   `ka_divisor_exponent` uses `zero(σ)` in place of `zero(R)` inside its `mapreduce` closure so the
   closure is `isbits` on Metal and CUDA. `ka_lu!` replaces its single-thread pivot/swap/scale kernel
   with a single workgroup kernel per column step (`@localmem` pivot reduction with lowest-row-index
   tie-breaking, parallel row swap across `1:n`, and parallel column scaling across `(k + 1):n`),
   `ka_lu_backsolve!` and `ka_qr_backsolve!` replace single-thread triangular solves with
-  column-parallel kernels (`ndrange = n - k` for `L⁻¹` and `ndrange = k - 1` plus a final diagonal
-  divide for `U⁻¹` and `R⁻¹`, after a workgroup `Qᴴ` kernel for QR), and `ka_jacobi_svd_round_kernel!`
-  assigns one workgroup of `G` threads per column pair `(p, q)` (`ndrange = (n ÷ 2) * G`), reducing
-  `(α, β, γ)` in `@localmem` and rotating columns `p` and `q` of `U` and `V` in parallel across the
-  workgroup.
+  column-parallel kernels (a workgroup `P` and `L⁻¹` kernel for LU and a workgroup `Qᴴ` kernel for
+  QR, followed by `ndrange = k - 1` column updates plus a final diagonal divide for `U⁻¹` and `R⁻¹`),
+  and `ka_jacobi_svd_round_kernel!` assigns one workgroup of `G` threads per column pair `(p, q)`
+  (`ndrange = (n ÷ 2) * G`), reducing `(α, β, γ)` in `@localmem` and rotating columns `p` and `q` of
+  `U` and `V` in parallel across the workgroup.
 
 - **`SolverStatus{R}` carries the range and spectrum diagnostics `rank::Int32`, `nullnorm::R` and
   `gradratio::R`, and `Newton` with `SVDFactorization` supports factor reuse on a static or scalar

@@ -79,9 +79,10 @@ end
     end
 end
 
-@kernel function ka_lu_perm_kernel!(d, @Const(ipiv), n::Int)
-    idx = @index(Global, Linear)
-    if idx == 1
+@kernel function ka_lu_perm_l_kernel!(
+        d, @Const(A), @Const(ipiv), n::Int, ::Val{G}) where {G}
+    tid = @index(Local, Linear)
+    if tid == 1
         @inbounds for k in 1:n
             p = Int(ipiv[k])
             if p != k
@@ -89,12 +90,15 @@ end
             end
         end
     end
-end
-
-@kernel function ka_lu_trsv_l_col_kernel!(d, @Const(A), k::Int)
-    di = @index(Global, Linear)
-    i = k + di
-    @inbounds d[i] -= A[i, k] * d[k]
+    @synchronize()
+    for k in 1:(n - 1)
+        i = k + tid
+        while i <= n
+            @inbounds d[i] -= A[i, k] * d[k]
+            i += G
+        end
+        @synchronize()
+    end
 end
 
 @kernel function ka_lu_trsv_u_col_kernel!(d, @Const(A), k::Int)
@@ -146,11 +150,8 @@ function ka_lu_backsolve!(A::AbstractGPUArray, ipiv::AbstractVector{Int32}, d::A
     n = length(d)
     n == 0 && return d
     backend = get_backend(A)
-    ka_lu_perm_kernel!(backend)(d, ipiv, n; ndrange = 1)
-    trsv_l! = ka_lu_trsv_l_col_kernel!(backend)
-    for k in 1:(n - 1)
-        trsv_l!(d, A, k; ndrange = n - k)
-    end
+    ka_lu_perm_l_kernel!(backend, KA_LU_WORKGROUP)(
+        d, A, ipiv, n, Val(KA_LU_WORKGROUP); ndrange = KA_LU_WORKGROUP)
     trsv_u! = ka_lu_trsv_u_col_kernel!(backend)
     for k in n:-1:2
         trsv_u!(d, A, k; ndrange = k - 1)

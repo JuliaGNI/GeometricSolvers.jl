@@ -176,7 +176,7 @@ type and `nothing` otherwise, `info` the index of the first zero pivot, or 0, `s
 the exponent `e` of the power of two `2^e` that the matrix was divided by, and `status` the
 1-element `Int32` device status buffer.
 """
-struct DeviceLU{A <: AbstractGPUArray, P <: AbstractVector{Int32},
+struct DeviceLU{A <: AbstractMatrix, P <: AbstractVector{Int32},
     V <: Union{Nothing, AbstractVector}, S <: AbstractVector{Int32}}
     factors::A
     ipiv::P
@@ -216,7 +216,7 @@ when that differs from the working element type and `nothing` otherwise, `info` 
 first zero diagonal entry of `R`, or 0, `scale_exponent` the exponent `e` of the power of two
 `2^e` that the matrix was divided by, and `status` the 1-element `Int32` device status buffer.
 """
-struct DeviceQR{A <: AbstractGPUArray, T <: AbstractVector,
+struct DeviceQR{A <: AbstractMatrix, T <: AbstractVector,
     V <: Union{Nothing, AbstractVector}, S <: AbstractVector{Int32}}
     factors::A
     τ::T

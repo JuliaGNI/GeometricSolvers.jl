@@ -363,12 +363,14 @@ if Metal.functional() && !on_virtual_gpu()
     @testset "R3 Newton on MtlVector{Float32} with LUFactorization, QRFactorization, SVDFactorization" begin
         function d7_F!(F, x, p)
             n = length(x)
-            x_l = @view x[1:(n - 2)]
-            x_c = @view x[2:(n - 1)]
-            x_r = @view x[3:n]
-            @. F[1:1] = (4.0f0 + 0.5f0 * x[1]^2) * x[1] - x[2] - 1.0f0
-            @. F[2:(n - 1)] = -x_l + (4.0f0 + 0.5f0 * x_c^2) * x_c - x_r - 1.0f0
-            @. F[n:n] = -x[n - 1] + (4.0f0 + 0.5f0 * x[n]^2) * x[n] - 1.0f0
+            @views begin
+                @. F[1:1] = (4.0f0 + 0.5f0 * x[1:1]^2) * x[1:1] - x[2:2] - 1.0f0
+                @. F[2:(n - 1)] = -x[1:(n - 2)] +
+                                  (4.0f0 + 0.5f0 * x[2:(n - 1)]^2) * x[2:(n - 1)] -
+                                  x[3:n] - 1.0f0
+                @. F[n:n] = -x[(n - 1):(n - 1)] +
+                            (4.0f0 + 0.5f0 * x[n:n]^2) * x[n:n] - 1.0f0
+            end
             return F
         end
         prob_d7 = NonlinearProblem(d7_F!)
