@@ -42,11 +42,12 @@ end
 function _validate_batch(
         X::AbstractVector,
         p,
-        order::Union{Nothing, AbstractVector{<:Integer}}
+        order::Union{Nothing, AbstractVector{<:Integer}},
+        prob = nothing
 )
-    if has_dual_type(typeof(X)) || has_dual_type(typeof(p))
+    if has_dual_type(typeof(X)) || has_dual_type(typeof(p)) || has_dual_type(typeof(prob))
         throw(ArgumentError(
-            "`solve_batch!` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` per system"))
+            "solve_batch! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) per system"))
     end
     if p isa PerSystem && length(p.data) != length(X)
         throw(DimensionMismatch(
@@ -69,10 +70,6 @@ function _prepare_batch(
         options::Union{Nothing, Options},
         kwargs
 )
-    if has_dual_type(typeof(prob))
-        throw(ArgumentError(
-            "`solve_batch!` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` per system"))
-    end
     T = eltype(eltype(X))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
@@ -153,10 +150,7 @@ function solve_batch!(
         options::Union{Nothing, Options} = nothing,
         kwargs...
 ) where {R <: Real}
-    if has_dual_type(typeof(X)) || has_dual_type(typeof(p)) || has_dual_type(typeof(prob))
-        throw(ArgumentError(
-            "`solve_batch!` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` per system"))
-    end
+    _validate_batch(X, p, order, prob)
     R_X = real(eltype(eltype(X)))
     if R !== R_X
         throw(ArgumentError(
@@ -170,7 +164,6 @@ function solve_batch!(
         throw(ArgumentError(
             "status vector backend $(get_backend(S)) does not match batch backend $(get_backend(X))"))
     end
-    _validate_batch(X, p, order)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return S
     return _launch!(X, S, prob, m, p, opt, state₀, order)
@@ -185,7 +178,7 @@ function solve_batch!(
         options::Union{Nothing, Options} = nothing,
         kwargs...
 )
-    _validate_batch(X, p, order)
+    _validate_batch(X, p, order, prob)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))

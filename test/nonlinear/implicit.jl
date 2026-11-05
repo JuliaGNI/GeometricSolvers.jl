@@ -341,7 +341,10 @@ end
             Matrix(expected_J); rtol = rtol)
     end
 
-    # Complex state with real dual p across SVector and Array
+    # Complex state with real dual p across SVector, Array, and scalar Number
+    prob_cplx_scalar = NonlinearProblem(
+        (x, p) -> x^2 - Complex{real(typeof(x))}(1, 1) * p,
+        (x, p) -> 2 * x)
     for T in filter(T -> T <: Complex, ELTYPES)
         R = real(T)
         rtol = 1000 * eps(R)
@@ -406,6 +409,35 @@ end
             dx_cplx,
             SVector(T(1, 1) / (2 * xc_star[1]), T(1, -1) / (2 * xc_star[2]));
             rtol = rtol)
+
+        # Complex scalar Number (both real-root and genuinely complex-root tangents)
+        x0_cs = T(R(1.5), R(0.1))
+        p_s_d2 = ForwardDiff.Dual{ImplicitTestTagA}(p1[1], one(R), R(3))
+        xcs_p, stcs_p = solve(PROB_SCALAR, x0_cs, Newton(), p1[1]; options = opt)
+        xcs_d, stcs_d = solve(PROB_SCALAR, x0_cs, Newton(), p_s_d2; options = opt)
+        @test Adapt.adapt(StripDual(), xcs_d) == xcs_p
+        @test stcs_d === stcs_p
+        for (k, scale) in ((1, one(R)), (2, R(3)))
+            pk = complex(
+                ForwardDiff.partials(real(xcs_d), k),
+                ForwardDiff.partials(imag(xcs_d), k))
+            @test isapprox(pk, scale * expected_d[1]; rtol = rtol, atol = rtol)
+        end
+
+        x0_cs2 = T(R(1.5), R(0.5))
+        xcs2_star, stcs2_p = solve(
+            prob_cplx_scalar, x0_cs2, Newton(), p1[1]; options = opt)
+        xcs2_d, stcs2_d = solve(
+            prob_cplx_scalar, x0_cs2, Newton(), p_s_d2; options = opt)
+        @test Adapt.adapt(StripDual(), xcs2_d) == xcs2_star
+        @test stcs2_d === stcs2_p
+        expected_cs2 = T(1, 1) / (2 * xcs2_star)
+        for (k, scale) in ((1, one(R)), (2, R(3)))
+            pk = complex(
+                ForwardDiff.partials(real(xcs2_d), k),
+                ForwardDiff.partials(imag(xcs2_d), k))
+            @test isapprox(pk, scale * expected_cs2; rtol = rtol)
+        end
     end
 end
 
@@ -435,7 +467,7 @@ end
         @test f_dual_calls[] == 0
 
         ls_d = CountingLinear()
-        x_d, st_d = solve(prob_cnt, x0, Newton(; linsolve = ls_d), p_d2)
+        _, st_d = solve(prob_cnt, x0, Newton(; linsolve = ls_d), p_d2)
         @test st_d.iterations == st_p.iterations
         @test ls_d.fac_calls[] == ls_p.fac_calls[] + 1
         @test ls_d.ldiv_calls[] == ls_p.ldiv_calls[] + 2
@@ -464,7 +496,7 @@ end
         @test f_r3_dual_calls[] == 0
 
         ls_r3_d = CountingLinear()
-        xr_d, str_d = solve(
+        _, str_d = solve(
             prob_r3_cnt, Vector(x0), Newton(; linsolve = ls_r3_d), collect(p_d2))
         @test str_d.iterations == str_p.iterations
         @test ls_r3_d.fac_calls[] == ls_r3_p.fac_calls[] + 1
@@ -792,50 +824,112 @@ end
     # Nested dual in p or x0
     @test_throws ArgumentError solve(
         PROB_VAL, x0, Newton(), SVector(d_nested, d_nested))
+    @test_throws "nested ForwardDiff.Dual" solve(
+        PROB_VAL, x0, Newton(), SVector(d_nested, d_nested))
     @test_throws ArgumentError solve(
         PROB_VAL, SVector(d_nested, d_nested), Newton(), p0)
+    @test_throws "nested ForwardDiff.Dual" solve(
+        PROB_VAL, SVector(d_nested, d_nested), Newton(), p0)
     @test_throws ArgumentError solve(
+        PROB_R3, Vector(x0), Newton(), [d_nested, d_nested])
+    @test_throws "nested ForwardDiff.Dual" solve(
         PROB_R3, Vector(x0), Newton(), [d_nested, d_nested])
 
     # Two distinct tags between x0 and p, or within p
     @test_throws ArgumentError solve(
         PROB_VAL, x_dual, Newton(), SVector(dB, dB))
+    @test_throws "single ForwardDiff.Dual tag" solve(
+        PROB_VAL, x_dual, Newton(), SVector(dB, dB))
     prob_tup = NonlinearProblem((x, p) -> SVector(x[1]^2 - p[1], x[2]^2 - p[2]))
     @test_throws ArgumentError solve(prob_tup, x0, Newton(), (dA, dB))
+    @test_throws "single ForwardDiff.Dual tag" solve(prob_tup, x0, Newton(), (dA, dB))
 
     # Dual inside a parameter struct without Adapt.@adapt_structure
     prob_unadapt = NonlinearProblem((x, p) -> SVector(x[1]^2 - p.a, x[2]^2 - p.a))
     @test_throws ArgumentError solve(
         prob_unadapt, x0, Newton(), UnadaptedParam(dA))
+    @test_throws "Adapt.adapt(StripDual()" solve(
+        prob_unadapt, x0, Newton(), UnadaptedParam(dA))
+    prob_unadapt_primal_ok = NonlinearProblem(
+        (x, p) -> SVector(x[1]^2 - ForwardDiff.value(p.a), x[2]^2 - 2.0),
+        (x, p) -> SMatrix{2, 2, eltype(x)}(
+            2 * x[1], zero(eltype(x)), zero(eltype(x)), 2 * x[2]))
+    @test_throws ArgumentError solve(
+        prob_unadapt_primal_ok, x0, Newton(), UnadaptedParam(dA))
+    @test_throws "Adapt.adapt(StripDual()" solve(
+        prob_unadapt_primal_ok, x0, Newton(), UnadaptedParam(dA))
 
-    # Dual captured inside prob.F (with primal x0, p and with dual p)
+    # Dual captured inside prob.F (typed closure and untyped container reaching solve!!)
     prob_cap = NonlinearProblem((x, p) -> SVector(x[1]^2 - dA, x[2]^2 - dA))
     @test_throws ArgumentError solve(prob_cap, x0, Newton(), 2.0)
+    @test_throws "capture" solve(prob_cap, x0, Newton(), 2.0)
     @test_throws ArgumentError solve(prob_cap, x0, Newton(), dA)
+    @test_throws "capture" solve(prob_cap, x0, Newton(), dA)
     prob_cap_r3 = NonlinearProblem((r, x, p) -> (r .= x .^ 2 .- dA; r))
     @test_throws ArgumentError solve(prob_cap_r3, Vector(x0), Newton(), [2.0, 2.0])
+    @test_throws "capture" solve(prob_cap_r3, Vector(x0), Newton(), [2.0, 2.0])
+
+    r_box = Ref{Any}(dA)
+    prob_box = NonlinearProblem((x, p) -> SVector(x[1]^2 - r_box[], x[2]^2 - 2.0))
+    @test_throws ArgumentError solve(prob_box, x0, Newton(), 2.0)
+    @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+        prob_box, x0, Newton(), 2.0)
+    @test_throws ArgumentError solve(prob_box, x0, Newton(), dA)
+    @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+        prob_box, x0, Newton(), dA)
 
     # init and solve! refuse dual x0, x, or p
     @test_throws ArgumentError init(PROB_R3, collect(x_dual), Newton(), collect(p0))
+    @test_throws "use solve(" init(PROB_R3, collect(x_dual), Newton(), collect(p0))
     @test_throws ArgumentError init(PROB_R3, collect(x0), Newton(), collect(p_dual))
+    @test_throws "use solve(" init(PROB_R3, collect(x0), Newton(), collect(p_dual))
+    @test_throws ArgumentError init(prob_cap, x0, Newton(), 2.0)
+    @test_throws "use solve(" init(prob_cap, x0, Newton(), 2.0)
     solver = init(PROB_R3, collect(x0), Newton(), collect(p0))
     @test_throws ArgumentError solve!(solver, collect(x_dual), collect(p0))
+    @test_throws "use solve(" solve!(solver, collect(x_dual), collect(p0))
     @test_throws ArgumentError solve!(solver, collect(x0), collect(p_dual))
+    @test_throws "use solve(" solve!(solver, collect(x0), collect(p_dual))
+    solver_r1 = init(PROB_VAL, x0, Newton(), p0)
+    @test_throws ArgumentError solve!(solver_r1, x_dual, p0)
+    @test_throws "use solve(" solve!(solver_r1, x_dual, p0)
+    @test_throws ArgumentError solve!(solver_r1, x0, p_dual)
+    @test_throws "use solve(" solve!(solver_r1, x0, p_dual)
 
-    # solve_batch! refuses dual X or p in both 4-arg and 5-arg forms, including PerSystem
+    # solve_batch! refuses dual X, p, or prob in both 4-arg and 5-arg forms, including PerSystem
     statuses = Vector{SolverStatus{Float64}}(undef, 1)
     @test_throws ArgumentError solve_batch!(
         [x_dual], statuses, PROB_VAL, Newton(), p0)
+    @test_throws "use solve(" solve_batch!(
+        [x_dual], statuses, PROB_VAL, Newton(), p0)
     @test_throws ArgumentError solve_batch!(
+        [x0], statuses, PROB_VAL, Newton(), p_dual)
+    @test_throws "use solve(" solve_batch!(
         [x0], statuses, PROB_VAL, Newton(), p_dual)
     @test_throws ArgumentError solve_batch!(
         [x0], statuses, PROB_VAL, Newton(), PerSystem([p_dual]))
+    @test_throws "use solve(" solve_batch!(
+        [x0], statuses, PROB_VAL, Newton(), PerSystem([p_dual]))
     @test_throws ArgumentError solve_batch!(
+        [x0], statuses, prob_cap, Newton(), 2.0)
+    @test_throws "use solve(" solve_batch!(
+        [x0], statuses, prob_cap, Newton(), 2.0)
+    @test_throws ArgumentError solve_batch!(
+        [x_dual], PROB_VAL, Newton(), p0)
+    @test_throws "use solve(" solve_batch!(
         [x_dual], PROB_VAL, Newton(), p0)
     @test_throws ArgumentError solve_batch!(
         [x0], PROB_VAL, Newton(), p_dual)
+    @test_throws "use solve(" solve_batch!(
+        [x0], PROB_VAL, Newton(), p_dual)
     @test_throws ArgumentError solve_batch!(
         [x0], PROB_VAL, Newton(), PerSystem([p_dual]))
+    @test_throws "use solve(" solve_batch!(
+        [x0], PROB_VAL, Newton(), PerSystem([p_dual]))
+    @test_throws ArgumentError solve_batch!(
+        [x0], prob_cap, Newton(), 2.0)
+    @test_throws "use solve(" solve_batch!(
+        [x0], prob_cap, Newton(), 2.0)
 end
 
 @testset "R1 dual solve is @inferred, JET.@test_opt clean, and zero-allocating" begin

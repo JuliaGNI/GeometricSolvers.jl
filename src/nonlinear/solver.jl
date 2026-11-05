@@ -112,7 +112,7 @@ function solve!!(
     x = x₀
     Fx = residual!!(residual_buffer(state), prob, x, p)
     has_dual_type(typeof(Fx)) && throw(ArgumentError(
-        "`solve!!` residual contains a `ForwardDiff.Dual` on primal inputs; pass dual parameters through `p` to `solve` rather than capturing them in `prob.F`"))
+        "solve!! residual contains a ForwardDiff.Dual on primal inputs; pass dual parameters through p to solve rather than capturing them in prob.F"))
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
     status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)
@@ -226,7 +226,7 @@ function init(
         options::Union{Nothing, Options} = nothing, kwargs...)
     if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p)) || has_dual_type(typeof(prob))
         throw(ArgumentError(
-            "`init` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` for implicit differentiation"))
+            "init does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
     end
     x, m, opt, state = prepare_solve(prob, x₀, method, p, options, kwargs)
     return NonlinearSolver(prob, x, m, opt, state, p)
@@ -254,7 +254,7 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
         p = solver.p) where {T, P, M, O, S, X, Q}
     if has_dual_type(typeof(x)) || has_dual_type(typeof(p)) || has_dual_type(P)
         throw(ArgumentError(
-            "`solve!` does not accept `ForwardDiff.Dual` inputs; call `solve(prob, x₀, method, p)` for implicit differentiation"))
+            "solve! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
     end
     eltype(x) === T && length(x) == solver.n || throw(ArgumentError(
         "`solve!` needs an iterate like the template given to `init`, of length " *
@@ -313,7 +313,7 @@ function solve(
     end
     if has_dual_type(typeof(prob))
         throw(ArgumentError(
-            "`prob` must not capture `ForwardDiff.Dual` values; pass dual parameters through `p`"))
+            "prob must not capture ForwardDiff.Dual values; pass dual parameters through p"))
     end
     x, m, opt, state = prepare_solve(prob, x₀, method, p, options, kwargs)
     x, status, _ = solve!!(state, prob, x, m, p, opt)
