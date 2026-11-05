@@ -11,6 +11,17 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Numerical stability documentation (`docs/src/stability.md`) and backward-error test suite
+  (`test/linear/stability.jl`, `test/helpers/randsvd.jl`).** `docs/src/stability.md` states the
+  normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
+  `StaticSVD`, `jacobi_eigen`, `DenseLU`, `DenseQR`, `DenseSVD`, `DeviceLU`, `DeviceQR`,
+  `DeviceSVD`, rank-deficient SVD minimum-norm `ldiv!!`, and scaled mixed-precision `ldiv!!`
+  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
+  `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
+  `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
+  across `ELTYPES`, condition numbers `κ₂ ∈ {10, 10⁴}` (`Float32`) and `{10, 10⁴, 10⁸}`
+  (`Float64`), and dimensions `n ∈ {4, 16}` (static) and `n ∈ {4, 16, 64}` (dense and device).
+
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use
   workgroup reductions and column-parallel triangular solves** (decision 48 of the design).

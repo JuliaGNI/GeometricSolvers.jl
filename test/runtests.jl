@@ -23,6 +23,7 @@ if "core" in GROUPS
     @safetestset "KA dense linear solvers" include("linear/ka.jl")
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Factor status and rank" include("linear/status.jl")
+    @safetestset "Linear and spectral stability" include("linear/stability.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
     @safetestset "Line function and globalization" include("globalization/linefunction.jl")
     @safetestset "Merit passes and search trips" include("globalization/passes.jl")
