@@ -31,9 +31,16 @@ so that a compat-only bump can be told apart from an interface change.
   with `status.code === SINGULAR` and `NaN` partials on `x*`; a rank-deficient `SVDFactorization`
   factor with `info == 0` produces the minimum-norm pseudoinverse tangent `-J(x*)⁺ ∂_k F(x*, p)`
   with `status.code === SUCCESS`. Nested duals (`V <: ForwardDiff.Dual`),
-  distinct tags or partial counts across `x₀` and `p`, a user parameter type holding duals without
-  an `Adapt.adapt_structure` method, a `ForwardDiff.Dual` captured inside `prob.F` or `prob.J`, and
-  any `ForwardDiff.Dual` passed to `init`, `solve!`, or `solve_batch!` throw an `ArgumentError`.
+  distinct tags or partial counts across `x₀` and `p`, and a user parameter type holding duals
+  without an `Adapt.adapt_structure` method throw an `ArgumentError`. `solve`, `init`, `solve!` and
+  `solve_batch!` do not check the type of `prob`, so a `prob` whose closure captures an object whose
+  type holds a `ForwardDiff.Dual`, such as a `ForwardDiff.GradientConfig` or a dual work buffer,
+  solves on primal inputs. A residual that contains a `ForwardDiff.Dual` on primal `x` and `p`
+  throws an `ArgumentError` from the run-time check in `solve!!`, which covers `solve` on both its
+  primal and dual paths and `solve!`; an in-place residual that writes a captured dual into its
+  primal buffer throws the `MethodError` of that conversion instead. `init` and `solve!` throw an
+  `ArgumentError` for a `ForwardDiff.Dual` in `x₀` (or `x`) or in `p`, and `solve_batch!` for one in
+  `X` or `p` only, so a `ForwardDiff.Dual` captured in `prob` is not detected in a batch.
 
 - **`SolverStatus{R}` carries the range and spectrum diagnostics `rank::Int32`, `nullnorm::R` and
   `gradratio::R`, and `Newton` with `SVDFactorization` supports factor reuse on a static or scalar
