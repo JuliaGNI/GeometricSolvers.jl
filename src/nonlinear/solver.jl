@@ -113,7 +113,7 @@ function solve!!(
     x = x₀
     Fx = residual!!(residual_buffer(state), prob, x, p)
     has_dual_type(typeof(Fx)) && throw(ArgumentError(
-        "solve!! residual contains a ForwardDiff.Dual; solve!! takes primal x₀ and p and a prob that captures no ForwardDiff.Dual, so pass dual x₀ or p to solve(prob, x₀, method, p)"))
+        "solve!! residual contains a ForwardDiff.Dual; solve!! takes primal x₀ and p and needs a primal residual on them, so pass dual x₀ or p to solve(prob, x₀, method, p)"))
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
     status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)
@@ -219,13 +219,15 @@ Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` from th
 inputs. The solver holds a copy of an array `x₀`, so `init` and [`solve!(solver)`](@ref solve!) do
 not mutate `x₀`; it holds a `StaticArray` or a `Number` `x₀` and `p` themselves. Passing both
 `options` and keyword tolerances raises an `ArgumentError`, and so does an `options` that is not an
-`Options{real(eltype(x₀))}`. Any `ForwardDiff.Dual` in `x₀`, `p`, or `prob` raises an
-`ArgumentError`; use [`solve`](@ref) for implicit differentiation.
+`Options{real(eltype(x₀))}`. Any `ForwardDiff.Dual` in `x₀` or `p` raises an `ArgumentError`; use
+[`solve`](@ref) for implicit differentiation. `init` does not check `prob`, which may capture an
+object whose type holds a `ForwardDiff.Dual`; a residual that contains a `ForwardDiff.Dual` on
+primal `x` and `p` raises an `ArgumentError` in [`solve!`](@ref), from [`solve!!`](@ref).
 """
 function init(
         prob::NonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
-    if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p)) || has_dual_type(typeof(prob))
+    if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p))
         throw(ArgumentError(
             "init does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
     end
@@ -253,7 +255,7 @@ solve!(solver::NonlinearSolver) = solve!(solver, solver.x, solver.p)
 
 function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
         p = solver.p) where {T, P, M, O, S, X, Q}
-    if has_dual_type(typeof(x)) || has_dual_type(typeof(p)) || has_dual_type(P)
+    if has_dual_type(typeof(x)) || has_dual_type(typeof(p))
         throw(ArgumentError(
             "solve! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
     end
@@ -306,18 +308,19 @@ to `Float32`. A non-`SUCCESS` primal solve returns primal values at
 `x*` with `NaN` partials and the primal `status`; a `SINGULAR` tangent factorisation at `x*`
 performs no back-substitution and returns primal values at `x*` with `NaN` partials and
 `status.code === SINGULAR`. Nested duals, distinct dual tags or partial counts across `x₀` and `p`,
-custom structs not registered with `Adapt.@adapt_structure`, and dual values captured in `prob`
-raise an `ArgumentError`.
+and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`.
+
+`prob` may capture an object whose type holds a `ForwardDiff.Dual`, such as a
+`ForwardDiff.GradientConfig` or a dual work buffer, and `solve` does not check it. A residual
+that contains a `ForwardDiff.Dual` on the primal `x` and `p` of the solve raises an
+`ArgumentError` from [`solve!!`](@ref); an in-place residual that writes a `ForwardDiff.Dual` into
+its primal buffer raises the `MethodError` of that conversion instead.
 """
 function solve(
         prob::NonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
     if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p))
         return solve_implicit(prob, x₀, method, p, options, kwargs)
-    end
-    if has_dual_type(typeof(prob))
-        throw(ArgumentError(
-            "prob must not capture ForwardDiff.Dual values; pass dual parameters through p"))
     end
     x, m, opt, state = prepare_solve(prob, x₀, method, p, options, kwargs)
     x, status, _ = solve!!(state, prob, x, m, p, opt)

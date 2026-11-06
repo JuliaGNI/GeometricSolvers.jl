@@ -866,15 +866,17 @@ end
     @test_throws "not both" solve(
         PROB_R3, Vector(x0), Newton(), collect(p_dual); options = opt_both, f_reltol = 0.0)
 
-    # Dual captured inside prob.F (typed closure and untyped container reaching solve!!)
+    # Dual captured inside prob.F (typed closure and untyped container), refused by solve!! when
+    # it reaches the residual; an R3 residual fails on the write into its primal buffer
     prob_cap = NonlinearProblem((x, p) -> SVector(x[1]^2 - dA, x[2]^2 - dA))
     @test_throws ArgumentError solve(prob_cap, x0, Newton(), 2.0)
-    @test_throws "capture" solve(prob_cap, x0, Newton(), 2.0)
+    @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+        prob_cap, x0, Newton(), 2.0)
     @test_throws ArgumentError solve(prob_cap, x0, Newton(), dA)
-    @test_throws "capture" solve(prob_cap, x0, Newton(), dA)
+    @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+        prob_cap, x0, Newton(), dA)
     prob_cap_r3 = NonlinearProblem((r, x, p) -> (r .= x .^ 2 .- dA; r))
-    @test_throws ArgumentError solve(prob_cap_r3, Vector(x0), Newton(), [2.0, 2.0])
-    @test_throws "capture" solve(prob_cap_r3, Vector(x0), Newton(), [2.0, 2.0])
+    @test_throws MethodError solve(prob_cap_r3, Vector(x0), Newton(), [2.0, 2.0])
 
     r_box = Ref{Any}(dA)
     prob_box = NonlinearProblem((x, p) -> SVector(x[1]^2 - r_box[], x[2]^2 - 2.0))
@@ -890,8 +892,9 @@ end
     @test_throws "use solve(" init(PROB_R3, collect(x_dual), Newton(), collect(p0))
     @test_throws ArgumentError init(PROB_R3, collect(x0), Newton(), collect(p_dual))
     @test_throws "use solve(" init(PROB_R3, collect(x0), Newton(), collect(p_dual))
-    @test_throws ArgumentError init(prob_cap, x0, Newton(), 2.0)
-    @test_throws "use solve(" init(prob_cap, x0, Newton(), 2.0)
+    solver_cap = init(prob_cap, x0, Newton(), 2.0)
+    @test_throws ArgumentError solve!(solver_cap)
+    @test_throws "solve!! residual contains a ForwardDiff.Dual" solve!(solver_cap)
     solver = init(PROB_R3, collect(x0), Newton(), collect(p0))
     @test_throws ArgumentError solve!(solver, collect(x_dual), collect(p0))
     @test_throws "use solve(" solve!(solver, collect(x_dual), collect(p0))
@@ -903,7 +906,7 @@ end
     @test_throws ArgumentError solve!(solver_r1, x0, p_dual)
     @test_throws "use solve(" solve!(solver_r1, x0, p_dual)
 
-    # solve_batch! refuses dual X, p, or prob in both 4-arg and 5-arg forms, including PerSystem
+    # solve_batch! refuses dual X or p in both 4-arg and 5-arg forms, including PerSystem
     statuses = Vector{SolverStatus{Float64}}(undef, 1)
     @test_throws ArgumentError solve_batch!(
         [x_dual], statuses, PROB_VAL, Newton(), p0)
@@ -918,10 +921,6 @@ end
     @test_throws "use solve(" solve_batch!(
         [x0], statuses, PROB_VAL, Newton(), PerSystem([p_dual]))
     @test_throws ArgumentError solve_batch!(
-        [x0], statuses, prob_cap, Newton(), 2.0)
-    @test_throws "use solve(" solve_batch!(
-        [x0], statuses, prob_cap, Newton(), 2.0)
-    @test_throws ArgumentError solve_batch!(
         [x_dual], PROB_VAL, Newton(), p0)
     @test_throws "use solve(" solve_batch!(
         [x_dual], PROB_VAL, Newton(), p0)
@@ -933,10 +932,55 @@ end
         [x0], PROB_VAL, Newton(), PerSystem([p_dual]))
     @test_throws "use solve(" solve_batch!(
         [x0], PROB_VAL, Newton(), PerSystem([p_dual]))
-    @test_throws ArgumentError solve_batch!(
-        [x0], prob_cap, Newton(), 2.0)
-    @test_throws "use solve(" solve_batch!(
-        [x0], prob_cap, Newton(), 2.0)
+end
+
+@testset "Primal solve, init, solve! and solve_batch! accept a prob that captures a Dual-typed object" begin
+    x0 = SVector(1.5, 2.5)
+    p0 = SVector(4.0, 9.0)
+    # the closed form holds to the default stopping tolerances; the solve of the same residual
+    # without the capture holds to a few ULPs
+    x_ref = sqrt.(p0)
+    rtol_ref = sqrt(eps(Float64))
+    rtol = 8 * eps(Float64)
+
+    # an R1 F that reads only the primal value of a captured Dual work buffer
+    buf = zeros(ForwardDiff.Dual{ImplicitTestTagA, Float64, 1}, 2)
+    prob_buf = NonlinearProblem((x, p) -> x .^ 2 .- p .+ ForwardDiff.value(buf[1]))
+    x_base, st_base = solve(PROB_VAL_NOJ, x0, Newton(), p0)
+    x, st = solve(prob_buf, x0, Newton(), p0)
+    @test st.code === SUCCESS
+    @test st.iterations == st_base.iterations
+    @test isapprox(x, x_ref; rtol = rtol_ref)
+    @test isapprox(x, x_base; rtol)
+    solver = init(prob_buf, x0, Newton(), p0)
+    x, st = solve!(solver)
+    @test st.code === SUCCESS
+    @test isapprox(x, x_base; rtol)
+    X = [x0, x0]
+    statuses = Vector{SolverStatus{Float64}}(undef, 2)
+    solve_batch!(X, statuses, prob_buf, Newton(), p0)
+    @test all(s -> s.code === SUCCESS, statuses)
+    @test all(xi -> isapprox(xi, x_base; rtol), X)
+    X = [x0, x0]
+    @test solve_batch!(X, prob_buf, Newton(), p0).SUCCESS == 2
+    @test all(xi -> isapprox(xi, x_base; rtol), X)
+
+    # an R3 F that calls ForwardDiff.gradient with a captured GradientConfig
+    g = x -> sum(abs2, x)
+    cfg = ForwardDiff.GradientConfig(g, zeros(2))
+    prob_cfg = NonlinearProblem(
+        (r, x, p) -> (r .= ForwardDiff.gradient(g, x, cfg) .* x ./ 2 .- p; r),
+        r3_analytic_j!)
+    x_base, st_base = solve(PROB_R3_J, Vector(x0), Newton(), Vector(p0))
+    x, st = solve(prob_cfg, Vector(x0), Newton(), Vector(p0))
+    @test st.code === SUCCESS
+    @test st.iterations == st_base.iterations
+    @test isapprox(x, x_ref; rtol = rtol_ref)
+    @test isapprox(x, x_base; rtol)
+    solver = init(prob_cfg, Vector(x0), Newton(), Vector(p0))
+    x, st = solve!(solver)
+    @test st.code === SUCCESS
+    @test isapprox(x, x_base; rtol)
 end
 
 @testset "R1 dual solve is @inferred, JET.@test_opt clean, and zero-allocating" begin

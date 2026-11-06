@@ -351,10 +351,6 @@ end
 function solve_implicit(
         prob::NonlinearProblem, x₀, method, p,
         options::Union{Nothing, Options}, kwargs)
-    if has_dual_type(typeof(prob))
-        throw(ArgumentError(
-            "prob must not capture ForwardDiff.Dual values; pass dual parameters through p"))
-    end
     D_in = validate_dual_types(typeof(x₀), typeof(p))
     x_val = Adapt.adapt(StripDual(), x₀)
     p_val = Adapt.adapt(StripDual(), p)

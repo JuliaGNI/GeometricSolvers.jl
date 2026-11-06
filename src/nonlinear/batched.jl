@@ -42,10 +42,9 @@ end
 function _validate_batch(
         X::AbstractVector,
         p,
-        order::Union{Nothing, AbstractVector{<:Integer}},
-        prob = nothing
+        order::Union{Nothing, AbstractVector{<:Integer}}
 )
-    if has_dual_type(typeof(X)) || has_dual_type(typeof(p)) || has_dual_type(typeof(prob))
+    if has_dual_type(typeof(X)) || has_dual_type(typeof(p))
         throw(ArgumentError(
             "solve_batch! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) per system"))
     end
@@ -132,8 +131,9 @@ iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref
 receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is a
 permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any other `order`
 throws. An `order` that is not `isbits` needs a method of `get_backend`, and an `order` on another
-backend than `X` is copied to the backend of `X`. Any `ForwardDiff.Dual` in `X`, `p`, or `prob`
-raises an `ArgumentError`.
+backend than `X` is copied to the backend of `X`. Any `ForwardDiff.Dual` in `X` or `p` raises an
+`ArgumentError`. `solve_batch!` does not check `prob`, so a `ForwardDiff.Dual` captured in `prob`
+is not detected in a batch.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
@@ -150,7 +150,7 @@ function solve_batch!(
         options::Union{Nothing, Options} = nothing,
         kwargs...
 ) where {R <: Real}
-    _validate_batch(X, p, order, prob)
+    _validate_batch(X, p, order)
     R_X = real(eltype(eltype(X)))
     if R !== R_X
         throw(ArgumentError(
@@ -178,7 +178,7 @@ function solve_batch!(
         options::Union{Nothing, Options} = nothing,
         kwargs...
 )
-    _validate_batch(X, p, order, prob)
+    _validate_batch(X, p, order)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))
