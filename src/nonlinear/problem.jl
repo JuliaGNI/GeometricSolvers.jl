@@ -15,9 +15,13 @@ The call form follows the storage of the iterate, and [`residual!!`](@ref) selec
 storage alone: with no buffer slot the call is `F(x, p)`, for a `Number`, an `MVector` — which
 counts as a value — and an `Array` alike. `J` is the derivative of `F`, which
 [`jvp!!`](@ref) and [`jacobian!!`](@ref) read for the source `nothing`; `AutoForwardDiff` instead
-differentiates `F`. When `jacobian_prototype` is a `SparseMatrixCSC`, `Newton` allocates its
-Jacobian buffer and linear factorisation from that pattern and `AutoSparse` uses its sparsity
-pattern directly.
+differentiates `F`. A method's own operator is a separate Jacobian source. When
+`jacobian_prototype` is a `SparseMatrixCSC`, `Newton` allocates its Jacobian buffer and linear
+factorisation from that pattern and `AutoSparse` uses its sparsity pattern directly. A linear
+solver exists only for a real host `Vector` iterate with a `SparseMatrixCSC{<:Any, Int}`
+prototype, with `Sparspak` loaded and the default `LUFactorization`; a `QRFactorization`, an
+`SVDFactorization`, a dense prototype and a device iterate raise `MethodError` when `Newton`
+initialises. `Picard` and a static or batched iterate ignore the prototype.
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x .* x .- 4);
