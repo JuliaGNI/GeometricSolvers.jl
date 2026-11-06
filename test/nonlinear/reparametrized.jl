@@ -495,7 +495,8 @@ end
         rep_quad = Reparametrized(StationarityProblem(action_quad), g_polar, dg)
         x_quad, st_quad = solve(rep_quad, y_test, Newton(; linsolve = LDLTFactorization()))
         @test st_quad.code == SUCCESS
-        # 1e-8 is the solver's default stopping scale, sqrt(eps(Float64)) = 1.5e-8.
+        # The default residual test is relative at sqrt(eps(Float64)) = 1.5e-8, so 1e-8 on the
+        # iterate is that scale.
         @test norm(x_quad - X_QUAD) <= 1e-8
     end
 
