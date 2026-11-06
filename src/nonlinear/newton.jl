@@ -298,10 +298,11 @@ end
     end
 end
 
-# `‖Fx‖` from the line-search merit `norm2(Fx)` when it lies in the normal range, and otherwise
-# from the norm `fnorm` that the state carries, so that a step takes no extra host/device
-# reduction over `Fx`. `rnorm(Fx)` where neither holds: below the normal range of the merit, and
-# on a state that no `start!!` saw or that `solve!!` returned.
+# `‖Fx‖` with no extra host/device reduction over `Fx` where the state holds it: from the
+# line-search merit `norm2(Fx)` when it is finite and in the normal range, and for any other
+# globalization from the norm `fnorm` that the state carries. `rnorm(Fx)` otherwise: for a merit
+# outside that range, and for a `NaN` norm on a state that no `start!!` saw or that `solve!!`
+# returned.
 @inline residual_norm(Fx, ::Nothing, fnorm) = isnan(fnorm) ? rnorm(Fx) : fnorm
 @inline function residual_norm(Fx, merit::R, fnorm) where {R <: Real}
     isfinite(merit) && merit >= length(Fx) * floatmin(R) && return sqrt(merit)
