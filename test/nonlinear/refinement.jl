@@ -5,6 +5,7 @@ using GeometricSolvers: solve!!
 using JET: JET
 using KernelAbstractions: CPU, @index, @kernel, synchronize
 using LinearAlgebra: Diagonal, norm
+using Random: Xoshiro, randn
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -300,6 +301,64 @@ end
         d0, Refinement(), fac32, nothing, prob_r1, x0, Fx, NaN, nothing, nothing)
     @test d_nf === d0
     @test failed_nf
+
+    # The method forms `fnorm` from `Fx` when the caller holds none: the same direction and flag.
+    d_with, failed_with = GS.refine!!(
+        -GS.ldiv!!(nothing, fac32, Fx), Refinement(), fac32, nothing,
+        prob_r1, x0, Fx, fnorm, nothing, nothing)
+    d_without, failed_without = GS.refine!!(
+        -GS.ldiv!!(nothing, fac32, Fx), Refinement(), fac32, nothing,
+        prob_r1, x0, Fx, nothing, nothing, nothing)
+    @test d_without == d_with
+    @test failed_without == failed_with
+    @test !failed_without
+end
+
+@testset "The mixed step reads a slow TF step and nothing else" begin
+    prob = NonlinearProblem(f_mod_r1, j_mod_r1)
+    x0 = SVector{2, Float64}(2.0, 3.0)
+    Fx0 = f_mod_r1(x0, nothing)
+    m = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement())
+    st = GS.init_state(m, prob, x0, nothing)
+    st = GS.start!!(st, m, prob, x0, Fx0, nothing, GS.rnorm(Fx0))
+    fnorm_old = 1.0
+    η_lin = max(sqrt(eps(Float64)), 1e-4)
+    # an accepted step that lowers ‖F‖ by less than half, on an inaccurate linear model
+    slow = GS.StepInfo{Float64}(SUCCESS, 0.9, 0.1, Int32(0), false, false)
+    # the same step on an accurate linear model
+    accurate = GS.StepInfo{Float64}(SUCCESS, 0.9, 0.1, Int32(0), false, false)
+
+    st1, info1 = GS.read_mixed_stall(st, slow, fnorm_old, 10 * η_lin)
+    @test !st1.promoted
+    @test st1.slow_steps == Int32(1)
+    @test info1 === slow
+    @test info1.code == SUCCESS
+
+    st2, info2 = GS.read_mixed_stall(st1, slow, fnorm_old, 10 * η_lin)
+    @test st2.promoted
+    @test st2.slow_steps == Int32(0)
+    @test info2.promoted
+    @test info2.failures == Int32(1)
+    @test info2.fnorm == slow.fnorm
+    @test info2.stepnorm == slow.stepnorm
+
+    # An accurate linear model returns the step unchanged and resets the count, so that slow,
+    # accurate, slow does not promote.
+    st3, info3 = GS.read_mixed_stall(st1, accurate, fnorm_old, η_lin / 10)
+    @test !st3.promoted
+    @test st3.slow_steps == Int32(0)
+    @test info3 === accurate
+    st4, info4 = GS.read_mixed_stall(st3, slow, fnorm_old, 10 * η_lin)
+    @test !st4.promoted
+    @test st4.slow_steps == Int32(1)
+    @test info4 === slow
+
+    # A step that lowers ‖F‖ by more than half reads nothing, whatever its linear model.
+    fast = GS.StepInfo{Float64}(SUCCESS, 0.4, 0.1, Int32(0), false, false)
+    st5, info5 = GS.read_mixed_stall(st1, fast, fnorm_old, 10 * η_lin)
+    @test !st5.promoted
+    @test st5.slow_steps == Int32(0)
+    @test info5 === fast
 end
 
 @testset "Mixed-precision Newton in R1 and R3 (LU, QR, SVD) and state invariants" begin
@@ -409,7 +468,7 @@ end
         x_r1, st_r1 = solve(prob_ill_r1, x0_r1, m_with_ref; options = opts)
         @test st_r1.code == SUCCESS
         @test st_r1.promoted
-        @test st_r1.step_failures >= 1
+        @test st_r1.step_failures == 1
         @test st_r1.fnorm < 1e-12
         @test norm(x_r1 - x_star) < x_bound
         @test isfinite(st_r1.gradratio)
@@ -495,39 +554,87 @@ end
     @test (@allocated solve!(warm, w_prom)) == 0
 end
 
-@testset "Precision-floor vs linear-quality detector" begin
+@testset "Check 1: a mixed step keeps going where its TF == T control does" begin
+    opts = Options(Float64)
+    # A well-conditioned `F(x) = A x + c .* x.^3 - b`, drawn from one generator: the pure `Float64`
+    # Newton iteration overshoots `‖F‖` on some of these, and a mixed step that read an overshoot
+    # as the floor of `F` would end `STALLED` there while the control converges.
+    rng = Xoshiro(7)
+    for _ in 1:3
+        A = randn(rng, 2, 2) + 3I
+        c = randn(rng, 2)
+        b = 5randn(rng, 2)
+        x0 = SVector{2, Float64}(randn(rng, 2))
+        prob = NonlinearProblem(
+            (x, p) -> A * x .+ c .* x .^ 3 .- b,
+            (x, p) -> A + Diagonal(3 .* c .* x .^ 2))
+        _, st64 = solve(prob, x0, Newton(; linsolve = LUFactorization()); options = opts)
+        _, st32 = solve(prob, x0, Newton(; linsolve = LUFactorization(Float32)); options = opts)
+        @test st64.code == SUCCESS
+        @test st32.code == st64.code
+        @test st32.iterations == st64.iterations
+        @test !st32.promoted
+    end
+
+    # The same generator over a wider set, judged by the two counts of Check 1.
+    codes = ReturnCode[]
+    promoted = Bool[]
+    for _ in 1:30
+        A = randn(rng, 2, 2) + 3I
+        c = randn(rng, 2)
+        b = 5randn(rng, 2)
+        x0 = SVector{2, Float64}(randn(rng, 2))
+        prob = NonlinearProblem(
+            (x, p) -> A * x .+ c .* x .^ 3 .- b,
+            (x, p) -> A + Diagonal(3 .* c .* x .^ 2))
+        _, st32 = solve(prob, x0, Newton(; linsolve = LUFactorization(Float32)); options = opts)
+        push!(codes, st32.code)
+        push!(promoted, st32.promoted)
+    end
+    @test count(==(STALLED), codes) == 0
+    @test count(identity, promoted) == 0
+end
+
+@testset "The floor of F under a mixed step and its TF == T control" begin
     prob_fl_r1 = NonlinearProblem(f_floor_r1, j_floor_r1)
     prob_fl_r3 = NonlinearProblem(f_floor_r3!, j_floor_r3!)
     x0_r1 = SVector{2, Float64}(1.5, 1.8)
-    # The floor reading ends the solve through `max_stalls` consecutive `STALLED` steps, so it
-    # ends below `max_iterations`; `‖F‖` reaches the floor of `F` itself, not a mixed-precision
-    # tolerance below it.
+    # `F` rounds its internal state through `Float32`, so neither precision reaches a tolerance
+    # below the floor of `F`: the control and the mixed run both end `MAXITERS` at the cap, and the
+    # mixed run promotes nothing and counts no failure.
     opts = Options(
         Float64; f_abstol = 1e-14, f_reltol = 1e-14, x_abstol = 0.0, x_reltol = 0.0,
         max_iterations = 10, max_stalls = 2)
+    m_control = Newton(; linsolve = LUFactorization())
     m_floor = Newton(; linsolve = LUFactorization(Float32), refinement = NoRefinement())
     floor_bound = 4 * eps(Float32) * norm(SVector(2.0, 3.0))
 
+    _, st_ctl_r1 = solve(prob_fl_r1, x0_r1, m_control; options = opts)
+    @test st_ctl_r1.code == MAXITERS
+    @test st_ctl_r1.iterations == opts.max_iterations
+
     _, st_fl_r1 = solve(prob_fl_r1, x0_r1, m_floor; options = opts)
-    @test st_fl_r1.code == STALLED
-    @test st_fl_r1.iterations < opts.max_iterations
+    @test st_fl_r1.code == st_ctl_r1.code
+    @test st_fl_r1.iterations == st_ctl_r1.iterations
     @test !st_fl_r1.promoted
     @test st_fl_r1.step_failures == 0
-    @test st_fl_r1.stepnorm > 0
     @test st_fl_r1.fnorm <= floor_bound
 
     for B in ARRAY_BACKENDS
         x0_r3 = B(collect(x0_r1))
+        _, st_ctl_r3 = solve(prob_fl_r3, x0_r3, m_control; options = opts)
+        @test st_ctl_r3.code == MAXITERS
+        @test st_ctl_r3.iterations == opts.max_iterations
         _, st_fl_r3 = solve(prob_fl_r3, x0_r3, m_floor; options = opts)
-        @test st_fl_r3.code == STALLED
-        @test st_fl_r3.iterations < opts.max_iterations
+        @test st_fl_r3.code == st_ctl_r3.code
+        @test st_fl_r3.iterations == st_ctl_r3.iterations
         @test !st_fl_r3.promoted
         @test st_fl_r3.step_failures == 0
-        @test st_fl_r3.stepnorm > 0
         @test st_fl_r3.fnorm <= floor_bound
     end
 
-    # High-nonlinearity O(1) residual with exact linear solve is not misclassified as TF floor.
+    # A step whose linear model is accurate is unchanged, whatever its residual does: an O(1)
+    # overshoot of the Newton iteration is not a reading of the floor of `F`.
     prob_high = NonlinearProblem(
         (x, p) -> SVector(x[1]^20, x[2]^20),
         (x, p) -> SMatrix{2, 2, Float64, 4}(
@@ -660,7 +767,9 @@ end
     end
 end
 
-function _measure_solve_alloc!(solver::S, x::X, x0::X) where {S, X}
+# The allocation probes, behind a function barrier: `@allocated` measures the call it wraps, so
+# each probe warms its own path first and then measures the same call again.
+@noinline function _measure_solve_alloc!(solver::S, x::X, x0::X) where {S, X}
     copyto!(x, x0)
     _, status = solve!(solver, x)
     copyto!(x, x0)
@@ -668,9 +777,17 @@ function _measure_solve_alloc!(solver::S, x::X, x0::X) where {S, X}
     return alloc, Int(status.iterations)
 end
 
-function _measure_solve_r1_alloc(st::S, prob::P, x0::X, m::M, opts::O) where {S, P, X, M, O}
+@noinline function _measure_solve_r1_alloc(
+        st::S, prob::P, x0::X, m::M, opts::O) where {S, P, X, M, O}
     solve!!(st, prob, x0, m, nothing, opts)
     return @allocated solve!!(st, prob, x0, m, nothing, opts)
+end
+
+# A control that must allocate: it shows that the probe sees allocations on this build, so that a
+# measured zero is a zero of the solver and not of the probe.
+@noinline function _measure_control_alloc(x)
+    a = collect(x)
+    return @allocated collect(a)
 end
 
 @testset "Complex mixed-precision refinement, KA @kernel, two-size @allocated, and JET" begin
@@ -725,10 +842,26 @@ end
 
     st_warm = GS.init_state(m_ka, prob_mod_r1, x0_r1, nothing)
     alloc_r1 = _measure_solve_r1_alloc(st_warm, prob_mod_r1, x0_r1, m_ka, opts)
+    @test _measure_control_alloc(x0_r1) > 0
     # `julia-actions/julia-runtest` forces `--check-bounds=yes`, which lets `StaticArrays`' local
     # `MMatrix` escape to the heap, so this assertion holds only where bounds checking is off.
     if Base.JLOptions().check_bounds != 1
         @test alloc_r1 == 0
+    end
+
+    # The reuse path of a mixed R1 solve: the step's mixed half returns a direction of one type on
+    # every branch, so the solve infers, JET finds no dispatch, and nothing allocates.
+    m_qn32 = Newton(; linsolve = LUFactorization(Float32), reuse = 3, refinement = Refinement())
+    f_qn(x, _) = SVector(x[1]^2 + 0.2x[2] - 2.0, 0.1x[1] + x[2]^2 - 3.0)
+    prob_qn = NonlinearProblem(f_qn)
+    x0_qn = SVector(1.5, 1.5)
+    @test (@inferred solve(prob_qn, x0_qn, m_qn32)) isa Tuple
+    st_qn32 = GS.init_state(m_qn32, prob_qn, x0_qn, nothing)
+    JET.@test_opt target_modules=(GS,) GS.solve!!(
+        st_qn32, prob_qn, x0_qn, m_qn32, nothing, opts)
+    alloc_qn32 = _measure_solve_r1_alloc(st_qn32, prob_qn, x0_qn, m_qn32, opts)
+    if Base.JLOptions().check_bounds != 1
+        @test alloc_qn32 == 0
     end
 
     # Two-size (N₁ = 4, N₂ = 8) R3 @allocated solve!(solver, x) check.
@@ -768,4 +901,58 @@ end
         prob_mod_r1, x0_r1, m_ka; options = opts)
     copyto!(w_n1, x0_n1)
     JET.@test_opt target_modules=(GeometricSolvers,) solve!(solver_n1, w_n1)
+end
+
+# The `norm2` seam, counted: the number of reductions one step makes when its factorisation runs
+# in the working precision, which is the step rule's own count. A step in `T` adds no reduction of
+# its own, so the count is a property of the step rule alone.
+const NORM2_CALLS = Ref(0)
+
+function _counted_norm2(a)
+    NORM2_CALLS[] += 1
+    return isempty(a) ? 0.0 : Float64(sum(abs2, a))
+end
+
+for V in (Vector{Float64}, JLArray{Float64, 1})
+    @eval GS.norm2(a::$V) = _counted_norm2(a)
+end
+
+@testset "A step in the working precision adds no reduction" begin
+    function f_red!(F, x, _)
+        xh = Array(x)
+        copyto!(F, [xh[1]^2 + 0.2xh[2] - 2.0, 0.1xh[1] + xh[2]^2 - 3.0])
+        return F
+    end
+    function j_red!(J, x, _)
+        xh = Array(x)
+        copyto!(J, [2xh[1] 0.2; 0.1 2xh[2]])
+        return J
+    end
+    prob = NonlinearProblem(f_red!, j_red!)
+    cases = (
+        ("Newton Static", Newton(), [4, 4, 4]),
+        ("Newton Backtracking", Newton(; globalization = Backtracking()), [3, 3, 3]),
+        ("Newton DogLeg", Newton(; globalization = DogLeg()), [10, 10, 10]),
+        ("Newton reuse=3", Newton(; reuse = 3), [4, 2, 2])
+    )
+    for (name, m, expected) in cases, B in ARRAY_BACKENDS
+
+        x = B([1.5, 1.5])
+        st = GS.init_state(m, prob, x, nothing)
+        Fx = prob.F(GS.residual_buffer(st), x, nothing)
+        st = GS.start!!(st, m, prob, x, Fx, nothing, GS.rnorm(Fx))
+        counts = Int[]
+        for _ in 1:3
+            NORM2_CALLS[] = 0
+            x, Fx, st, info = GS.step!!(st, m, prob, x, Fx, nothing)
+            push!(counts, NORM2_CALLS[])
+        end
+        @test counts == expected
+    end
+end
+
+# The counting methods are the test file's own: drop them, so that every later file on this
+# process sees the package's `norm2`.
+for V in (Vector{Float64}, JLArray{Float64, 1})
+    Base.delete_method(which(GS.norm2, (V,)))
 end

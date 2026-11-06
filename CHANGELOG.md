@@ -855,8 +855,8 @@ so that a compat-only bump can be told apart from an interface change.
 - Mixed-precision iterative refinement (`Refinement(T = Float64; η = √eps(real(T)), maxiter = 5)`,
   `Refinement(maxiter; η = √eps(Float64))`, `Refinement(η, maxiter = 5)`, and
   `GeometricSolvers.refine!!`), factorisation promotion to working precision `T`
-  (`GeometricSolvers.promote_linsolve`), precision-floor detection, and the
-  `QuasiNewton(k; kwargs...)` convenience constructor for `Newton(; reuse = k, kwargs...)`.
+  (`GeometricSolvers.promote_linsolve`), and the `QuasiNewton(k; kwargs...)` convenience
+  constructor for `Newton(; reuse = k, kwargs...)`.
   `Refinement{R <: Real}` (`η::R`, `maxiter::Int32 ≥ 1`, `0 < η < 1`, `isbits`, adapted by
   `ToReal{R}`, with `.eta` and `.max_iterations` property and keyword aliases) performs up to
   `maxiter` defect-correction passes in working precision `T` using the existing factor `fac` and
@@ -879,11 +879,11 @@ so that a compat-only bump can be told apart from an interface change.
   `NewtonState.fac_T.factors` so promotion allocates no extra `n × n` `T` buffer. When `Newton`
   with `TF ≠ T` makes slow progress (`‖F(x₊)‖ > 0.5 ‖F(x)‖`) on two consecutive steps that
   measured their relative linear-model residual `‖F(x) + J(x) d‖ / ‖F(x)‖` and found it above
-  `max(√eps(R), 1e-4)`, it promotes the factorisation to `T` with `promoted = true`; a step
-  whose measured linear residual is at most that threshold while `‖F(x₊)‖ ≥ ‖F(x)‖` is the
-  precision floor of `F` itself and returns `STALLED` with `promoted = false`, so that `solve!!`
-  ends the solve after `max_stalls` consecutive such steps. `scripts/mixed_refinement_eta.jl` compares
-  pure-`Float64` Newton, `η_J = √eps(Float64)`, Kelley's `1e-6`, and Eisenstat–Walker Choice 2 with
-  a `√eps(Float64)` floor on `F(x) = A * x .+ 0.5 .* (x .^ 2)` at `N = 16`, `f_abstol = 1e-12`, and
+  `max(√eps(R), 1e-4)`, it promotes the factorisation to `T` with `promoted = true`; every other
+  step returns unchanged, as a step in `T` does, so a mixed step keeps going wherever its
+  all-`T` control does, and the precision floor of `F` itself is never read.
+  `scripts/mixed_refinement_eta.jl` compares pure-`Float64` Newton, `η_J = √eps(Float64)`,
+  Kelley's `1e-6`, and Eisenstat–Walker Choice 2 with a `√eps(Float64)` floor on
+  `F(x) = A * x .+ 0.5 .* (x .^ 2)` at `N = 16`, `f_abstol = 1e-12`, and
   `κ(J) ∈ (1e2, 1e4, 1e5, 1e6)`.
 

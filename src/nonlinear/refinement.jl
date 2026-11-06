@@ -109,17 +109,18 @@ end
     refine!!(d, ref, fac, jvpprep, prob, x, Fx, fnorm, p, refbuf = nothing) -> (d, failed::Bool)
 
 Refine the initial linear direction `d` for `J(x) d = -F(x)` using the factor `fac` and the JVP
-preparation `jvpprep`. With [`NoRefinement`](@ref), returns `(d, false)`. With
-[`Refinement`](@ref), performs up to `ref.maxiter` defect-correction steps in working precision `T`
-and returns `(d_best, failed)`, where `failed` is `true` if a step does not strictly reduce
-`‖F(x) + J(x) d‖` or if `ref.maxiter` iterations finish above
-`max(ref.η, √eps(real(T))) * fnorm`.
+preparation `jvpprep`. With [`NoRefinement`](@ref), returns `(d, false)` and reads neither `fnorm`
+nor `Fx`. With [`Refinement`](@ref), performs up to `ref.maxiter` defect-correction steps in
+working precision `T` and returns `(d_best, failed)`, where `failed` is `true` if a step does not
+strictly reduce `‖F(x) + J(x) d‖` or if `ref.maxiter` iterations finish above
+`max(ref.η, √eps(real(T))) * fnorm`. `fnorm` is `‖F(x)‖` when the caller already holds it and
+`nothing` otherwise, in which case this method forms it from `Fx`.
 """
 @inline function refine!!(
         d, ref::Refinement, fac, jvpprep, prob, x, Fx, fnorm, p, refbuf = nothing)
     T = eltype(x)
     R = real(T)
-    fnorm_R = R(fnorm)
+    fnorm_R = fnorm === nothing ? R(rnorm(Fx)) : R(fnorm)
     iszero(fnorm_R) && return d, false
     isfinite(fnorm_R) || return d, true
     η_eff = max(R(ref.η), sqrt(eps(R)))
