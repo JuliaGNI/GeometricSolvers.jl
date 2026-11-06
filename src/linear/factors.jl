@@ -323,8 +323,10 @@ The Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` factors of a dense `n × n` host mat
 `work` the LAPACK workspace buffer, `rhs` the right-hand-side buffer of the factor element type
 when that differs from the working element type and `nothing` otherwise, `info` the index of the
 first zero pivot block or `1` for a non-finite entry, or `0`, `scale_exponent` the exponent `e`
-of the power of two `2^e` that the matrix was divided by, and `hermitian` `true` when factorised
-with `hetrf!` / `L D Lᴴ` and `false` when factorised with `sytrf!` / `L D Lᵀ`.
+of the power of two `2^e` that the matrix was divided by, and `hermitian` `true` for a real
+symmetric or complex Hermitian factorisation (`L D Lᴴ`) and `false` for a complex symmetric
+factorisation (`L D Lᵀ`). A `BlasFloat` matrix is factorised by `hetrf!` where `hermitian` and the
+element type is complex, and by `sytrf!` otherwise; another element type by `generic_ldlt!`.
 """
 struct DenseLDLT{A <: AbstractMatrix, P <: AbstractVector, W <: AbstractVector,
     V <: Union{Nothing, AbstractVector}}
@@ -346,8 +348,8 @@ the `n × n` device buffer in the factor element type, `ipiv` the `Int32` pivot 
 working element type and `nothing` otherwise, `info` the index of the first zero pivot block or
 `1` for a non-finite entry, or `0`, `scale_exponent` the exponent `e` of the power of two `2^e`
 that the matrix was divided by, `status` the 1-element `Int32` device status buffer, and
-`hermitian` `true` for a Hermitian (`L D Lᴴ`) factorisation and `false` for a complex symmetric
-(`L D Lᵀ`) factorisation.
+`hermitian` `true` for a real symmetric or complex Hermitian (`L D Lᴴ`) factorisation and `false`
+for a complex symmetric (`L D Lᵀ`) factorisation.
 """
 struct DeviceLDLT{A <: AbstractMatrix, P <: AbstractVector{Int32},
     V <: Union{Nothing, AbstractVector}, S <: AbstractVector{Int32}}

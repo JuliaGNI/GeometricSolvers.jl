@@ -67,7 +67,7 @@ Options(::Type{T}) where {T <: Number}
 
 The factorisation precision `TF` of a linear-solver method is a type parameter. `Nothing` selects
 the working type of the problem, a real float type a lower (or higher) precision, and a marker a
-vendor tensor-core path.
+vendor tensor-core path. These names are exported.
 
 ```@docs
 LUFactorization

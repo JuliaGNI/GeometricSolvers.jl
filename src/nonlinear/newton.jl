@@ -4,8 +4,7 @@
 
 Newton's method for [`NonlinearProblem`](@ref) and [`StationarityProblem`](@ref), with linear
 solver `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
-[`QRFactorization`](@ref) or [`SVDFactorization`](@ref)),
-globalization `globalization`
+[`QRFactorization`](@ref) or [`SVDFactorization`](@ref)), globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
 trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refinement `refinement`
 ([`NoRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period

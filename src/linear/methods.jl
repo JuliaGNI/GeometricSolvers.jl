@@ -68,7 +68,9 @@ struct SVDFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
 Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` factorisation with `1 × 1` and `2 × 2` diagonal pivot blocks
 for symmetric and Hermitian matrices, with the factorisation precision of
-[`LUFactorization`](@ref).
+[`LUFactorization`](@ref). The factorisation reads the lower triangle and does not check that a
+real matrix is symmetric. A complex matrix is factorised as `L D Lᴴ` where it is Hermitian to
+`64 eps` and as the complex symmetric `L D Lᵀ` otherwise.
 """
 struct LDLTFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 

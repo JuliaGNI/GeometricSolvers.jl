@@ -853,7 +853,8 @@ so that a compat-only bump can be told apart from an interface change.
   against it.
 
 - `StationarityProblem(S; E = :, U = :, b = nothing)` (and positional `StationarityProblem(S, E, U, b = nothing)`)
-  and `LDLTFactorization(precision = nothing)`: solve the stationarity condition
+  and `LDLTFactorization()`, with `LDLTFactorization(TF)` for a factorisation precision `TF`: solve
+  the stationarity condition
   $(\nabla S(x, p))_E + b = 0$ over $u = x_U$ of a scalar action $S$, alongside Bunch–Kaufman
   $\mathrm{LDL}^\top$ / $\mathrm{LDL}^\dagger$ factorisation (`StaticLDLT` in R1, zero-allocation
   LAPACK `sytrf!`/`sytrs!` and `hetrf!`/`hetrs!` with generic fallback `DenseLDLT` in R3 host, and
@@ -861,8 +862,11 @@ so that a compat-only bump can be told apart from an interface change.
   `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
   `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, keeps inactive components $x_{\notin U}$
   fixed, and solves through `solve`, `init`, `solve!` (with keyword `b = nothing`) and
-  `solve_batch!`. In R1, `gradient_hessian!!` evaluates both
+  `solve_batch!`. `StationarityProblem` and `NonlinearProblem` share the supertype
+  `AbstractNonlinearProblem`, so `init`, `solve`, `solve!`, `solve!!` and `NonlinearSolver` take
+  either. In R1, `gradient_hessian!!` evaluates both
   $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested `ForwardDiff.Dual` call, and `jvp!!`
   evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional partial. In R3,
-  `ChunkedHessianForwardDiff` and `DIStationarity` provide automatic differentiation without device
-  scalar indexing.
+  `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and on an
+  `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
+  `Array`.

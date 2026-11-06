@@ -35,8 +35,11 @@ end
 
 Evaluate both the stationarity residual `F = (∇S(x, p))_E + b` and its Jacobian
 `J = (∇²S(x, p))_{E, U}` at full state `x` and parameters `p`. In R1 (`F === nothing` and
-`J === nothing`), one nested `ForwardDiff.Dual` evaluation of `prob.S` returns `(F, J)` in a
-single call to `prob.S`. In R3, `F` and `J` are written in place and returned as `(F, J)`.
+`J === nothing`, `prep` the back end `AutoForwardDiff()` that [`prepare_ad`](@ref) returns), one
+nested `ForwardDiff.Dual` evaluation of `prob.S` returns `(F, J)` in a single call to `prob.S`.
+In R3, `F` and `J` are written in place and returned as `(F, J)`. The seven-argument form
+`gradient_hessian!!(F, J, prep, backend, prob, x, p)` takes `prep === nothing` and uses `backend` in
+R1, and uses `prep` and ignores `backend` in R3.
 """
 function gradient_hessian!! end
 
@@ -562,8 +565,8 @@ end
     DIStationarity
 
 The R3 AD preparation for [`StationarityProblem`](@ref) with any `AbstractADType` back end
-other than `AutoForwardDiff`, on a CPU `Array`: the gradient of `S` gives the residual and the
-Hessian of `S` gives the Jacobian, whose `(E, U)` block that Jacobian is.
+other than `AutoForwardDiff`, on a CPU `Array`: the gradient of `S` gives the residual, and the
+`(E, U)` block of the Hessian of `S` gives the Jacobian.
 
 The Jacobian and the Hessian-vector product are the `(E, U)` block of one Hessian of `S`, not the
 derivative of a gradient map: a back end of finite differences would differentiate an already

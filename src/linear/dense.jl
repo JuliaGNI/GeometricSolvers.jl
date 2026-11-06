@@ -217,21 +217,6 @@ function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
     return d
 end
 
-function ldiv!!(
-        d::AbstractVector{T},
-        fac::Union{DenseLDLT, DeviceLDLT},
-        r::AbstractVector{T}) where {T <: Number}
-    s = maximum(abs, r)
-    iszero(s) && return fill!(d, zero(T))
-    rhs = fac.rhs::AbstractVector
-    F = eltype(rhs)
-    rhs .= F.(r ./ s)
-    backsolve!(fac, rhs)
-    frac, ex = frexp(s)
-    d .= T.(ldexp2.(rhs .* frac, ex - fac.scale_exponent))
-    return d
-end
-
 # `backsolve!` and the exponent `t` of the power of two its result is to be multiplied by: 0 for LU,
 # QR and LDLᵀ, and for the SVD the `divisor_exponent` of its coordinates.
 backsolve_shifted!(fac, d) = (backsolve!(fac, d); 0)

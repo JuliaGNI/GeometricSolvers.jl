@@ -24,11 +24,15 @@ include saddle points where ``S`` is indefinite.
 - `S`: a scalar callable `S(x, p)` returning a scalar in the element type of `x`.
 - `E`: `:` (all indices `1:length(x₀)`) or a duplicate-free collection of positive integer indices
   (`Tuple`, `SVector`, `AbstractUnitRange`, or `AbstractVector{<:Integer}`). A `Tuple` of integers
-  is converted to `SVector{N, Int}` so an R1 problem is `isbits`.
+  is converted to `SVector{N, Int}` so an R1 problem is `isbits`. An R1 iterate (a `StaticVector`
+  or a `Number`) takes `:`, a `Tuple` or an `SVector`, and any other index set raises an
+  `ArgumentError` at the solve.
 - `U`: `:` or a duplicate-free collection of positive integer indices of the same length as `E`.
+  `E` and `U` are both `:` or both index sets.
 - `b`: `nothing` (zero datum), a vector of length `|E|`, a `Number`, or a callable `b(p)` returning
-  a vector of length `|E|` or a `Number`. The keyword `b` on [`init`](@ref), [`solve`](@ref), and
-  [`solve!`](@ref) overrides `prob.b` for that solve.
+  a vector of length `|E|` or a `Number`. The keyword `b` on [`init`](@ref), [`solve`](@ref),
+  [`solve!`](@ref) and [`solve_batch!`](@ref) overrides `prob.b` for that solve; in
+  [`solve_batch!`](@ref) a [`PerSystem`](@ref) `b` gives system `i` the datum `b.data[i]`.
 """
 struct StationarityProblem{S, E, U, B} <: AbstractNonlinearProblem
     S::S
@@ -42,8 +46,6 @@ end
 
 const StatProb = StationarityProblem
 const StaticOrNumber = Union{StaticVector, Number}
-const OptOrNothing = Union{Nothing, Options}
-const AbsArr = AbstractArray
 
 @inline _normalize_indices(::Colon) = Colon()
 @inline _normalize_indices(::Nothing) = Colon()
@@ -117,12 +119,10 @@ Adapt.@adapt_structure StationarityProblem
 end
 
 function _validate_stationarity_solve(prob::StationarityProblem, x₀, b_val)
-    if x₀ isa StaticOrNumber
-        if !(prob.E isa Union{Colon, SVector{<:Any, Int}} &&
-             prob.U isa Union{Colon, SVector{<:Any, Int}})
-            throw(ArgumentError(
-                "R1/R2 StationarityProblem with $(typeof(x₀)) requires E and U to be : or SVector{N, Int} (or NTuple{N, Int})"))
-        end
+    if x₀ isa StaticOrNumber && !(prob.E isa Union{Colon, SVector{<:Any, Int}} &&
+         prob.U isa Union{Colon, SVector{<:Any, Int}})
+        throw(ArgumentError(
+            "R1/R2 StationarityProblem with $(typeof(x₀)) requires E and U to be : or SVector{N, Int} (or NTuple{N, Int})"))
     end
     M = x₀ isa Number ? 1 : length(x₀)
     if !(prob.E isa Colon)
@@ -487,38 +487,25 @@ function _solve_stationarity_solver!(solver::NonlinearSolver, x, p, b)
     return solver.x, status
 end
 
-function _extract_batch_p_kw(X, p, kwargs)
-    if p === nothing && haskey(kwargs, :p)
-        p_kw = kwargs[:p]
-        rest = Base.structdiff(values(kwargs), NamedTuple{(:p,)})
-        if !(p_kw isa PerSystem) && p_kw isa AbstractVector && length(p_kw) == length(X)
-            return PerSystem(p_kw), rest
-        end
-        return p_kw, rest
-    end
-    return p, kwargs
-end
-
 function solve_batch!(
         X::AbstractArray, prob::StationarityProblem, method = Newton(), p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing, b = nothing, kwargs...)
-    p_eff, rest_kw = _extract_batch_p_kw(X, p, kwargs)
     b_src = b === nothing ? prob.b : b
-    _validate_batch(X, p_eff, order)
+    _validate_batch(X, p, order)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
     T = eltype(eltype(X))
     R = real(T)
-    opt = resolve_options(T, options, rest_kw)
+    opt = resolve_options(T, options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
     idx₀ = firstindex(X)
-    p₀ = isempty(X) ? nothing : _sample_batch_item(p_eff, idx₀)
+    p₀ = isempty(X) ? nothing : _sample_batch_item(p, idx₀)
     b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
          _sample_batch_item(b_src, idx₀)
     state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = b₀)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))
-    sp = _StationarityBatchParams(p_eff, b_src)
+    sp = _StationarityBatchParams(p, b_src)
     return _tally_return_codes(Array(_launch!(X, codes, prob, m, sp, opt, state₀, order)))
 end
 
@@ -528,9 +515,8 @@ function solve_batch!(
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing, b = nothing,
         kwargs...) where {R <: Real}
-    p_eff, rest_kw = _extract_batch_p_kw(X, p, kwargs)
     b_src = b === nothing ? prob.b : b
-    _validate_batch(X, p_eff, order)
+    _validate_batch(X, p, order)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
     R_X = real(eltype(eltype(X)))
     R === R_X || throw(ArgumentError(
@@ -539,15 +525,15 @@ function solve_batch!(
         "status vector S has length $(length(S)), expected $(length(X)) to match the batch X"))
     get_backend(S) == get_backend(X) || throw(ArgumentError(
         "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
-    opt = resolve_options(eltype(eltype(X)), options, rest_kw)
+    opt = resolve_options(eltype(eltype(X)), options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
     idx₀ = firstindex(X)
-    p₀ = isempty(X) ? nothing : _sample_batch_item(p_eff, idx₀)
+    p₀ = isempty(X) ? nothing : _sample_batch_item(p, idx₀)
     b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
          _sample_batch_item(b_src, idx₀)
     state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = b₀)
     isempty(X) && return S
-    sp = _StationarityBatchParams(p_eff, b_src)
+    sp = _StationarityBatchParams(p, b_src)
     return _launch!(X, S, prob, m, sp, opt, state₀, order)
 end
 

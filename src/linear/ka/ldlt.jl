@@ -7,24 +7,6 @@ using KernelAbstractions: @localmem, @synchronize, @uniform
 
 const KA_LDLT_WORKGROUP = 64
 
-@inline function ka_ldlt_is_hermitian(A, n::Int)
-    F = eltype(A)
-    F <: Real && return true
-    R = real(F)
-    tol = R(64) * eps(R)
-    @inbounds for j in 1:n
-        iszero(imag(A[j, j])) || return false
-        for i in (j + 1):n
-            aij = A[i, j]
-            aji = A[j, i]
-            if abs(aij - conj(aji)) > tol * max(abs(aij), abs(aji))
-                return false
-            end
-        end
-    end
-    return true
-end
-
 @inline function ka_ldlt_all_finite(A, n::Int)
     @inbounds for j in 1:n
         for i in 1:n
@@ -54,7 +36,7 @@ end
             l_ctrl[4] = Int32(1)
             l_ctrl[5] = Int32(1)
         else
-            herm = ka_ldlt_is_hermitian(A, n)
+            herm = is_hermitian_matrix(A)
             if herm && F <: Complex
                 for i in 1:n
                     A[i, i] = F(real(A[i, i]))
@@ -254,7 +236,7 @@ end
             end
             status[1] = Int32(1)
         else
-            herm = ka_ldlt_is_hermitian(A, n)
+            herm = is_hermitian_matrix(A)
             info = generic_ldlt!(A, ipiv, herm)
             status[1] = herm ? info : -(info + Int32(1))
         end

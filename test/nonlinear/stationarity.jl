@@ -570,6 +570,31 @@ end
         @test isapprox(X_sub[i][2], Float64(i); atol = 1e-12)
         @test isapprox(X_sub[i][3], ps.data[i]; atol = 1e-12)
     end
+
+    # solve_batch! refuses a status vector of another real type, of another length, or on another
+    # backend than the batch, and a `PerSystem` datum of another length than the batch
+    X_val = [SVector(0.0, 0.0) for _ in 1:4]
+    @test_throws ArgumentError solve_batch!(
+        copy(X_val), Vector{SolverStatus{Float32}}(undef, 4), prob_b1, m_newt_ldlt, ps)
+    @test_throws DimensionMismatch solve_batch!(
+        copy(X_val), Vector{SolverStatus{Float64}}(undef, 3), prob_b1, m_newt_ldlt, ps)
+    @test_throws ArgumentError solve_batch!(
+        copy(X_val), JLArray(Vector{SolverStatus{Float64}}(undef, 4)),
+        prob_b1, m_newt_ldlt, ps)
+    @test_throws DimensionMismatch solve_batch!(
+        copy(X_val), prob_b1, m_newt_ldlt, ps; b = PerSystem(b_per_vec[1:3]))
+
+    # the datum keyword `b` of `solve!` is for a `StationarityProblem` only
+    solver_nl = init(NonlinearProblem((x, p) -> x), SVector(1.0), Newton())
+    @test_throws ArgumentError solve!(solver_nl; b = 1.0)
+
+    # the batch parameters are positional: a shared vector is shared for every system and
+    # `PerSystem` names the per-system form, so `p` as a keyword is refused, not reinterpreted
+    X_kw = [SVector(0.0, 0.0) for _ in 1:4]
+    @test_throws MethodError solve_batch!(copy(X_kw), prob_b1, m_newt_ldlt; p = ps.data)
+    @test_throws MethodError solve_batch!(
+        copy(X_kw), Vector{SolverStatus{Float64}}(undef, 4), prob_b1, m_newt_ldlt;
+        p = ps.data)
 end
 
 @testset "D1 runtime index rejection, 7-arg gradient_hessian!!, and D3 chunk symmetry" begin
