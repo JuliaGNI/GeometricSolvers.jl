@@ -667,8 +667,8 @@ end
     d, newton = dogleg_direction(m, state, prob, x, Fx, p, fac)
     x₊, F₊, radius, info = dogleg_step(
         state.g, prob, x, Fx, p, Jreg, d, newton, state.rule.radius)
-    state₊ = with_diag(with_rule(state, TrustRadius(radius, state.rule.radius₀)), diag)
-    return x₊, F₊, state₊, info
+    state₊ = with_rule(state, TrustRadius(radius, state.rule.radius₀))
+    return x₊, F₊, with_diag(with_merit(state₊, state.merit, info.fnorm), diag), info
 end
 
 # The direction a `DogLeg` step tries first, and whether it is a Newton step at all: a singular
@@ -693,7 +693,7 @@ end
     R = real(eltype(x))
     pre = mixed_unstarted(state, Fx, R)
     pre === nothing || return x, Fx, state, pre
-    fnorm_old = R(rnorm(Fx))
+    fnorm_old = R(residual_norm(Fx, state.merit, state.fnorm))
     md = mixed_newton!!(state, m, prob, x, Fx, fnorm_old, p, true, false)
     promoted_step = md.state.promoted && !state.promoted
     d, newton = dogleg_direction(md, Fx)
@@ -710,7 +710,8 @@ end
         st, info = read_mixed_stall(md.state, info, fnorm_old, md.lin_rel)
     end
     return x₊, F₊,
-    with_rule(st, TrustRadius(radius, state.rule.radius₀)), info
+    with_merit(with_rule(st, TrustRadius(radius, state.rule.radius₀)), state.merit, info.fnorm),
+    info
 end
 
 @inline function step!!(

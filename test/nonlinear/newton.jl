@@ -147,6 +147,22 @@ end
         5.0).rule === GS.TrustRadius(2.0, 2.0)
 end
 
+@testset "a DogLeg step carries the norm of the residual it returns" begin
+    GS = GeometricSolvers
+    prob = NonlinearProblem((y, q) -> y .* y .- q)
+    x₀ = SVector(3.0, 5.0)
+    p = SVector(4.0, 9.0)
+    for lin in (LUFactorization(), LUFactorization(Float32))
+        m = Newton(; linsolve = lin, globalization = DogLeg())
+        x, F = x₀, prob.F(x₀, p)
+        st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, rnorm(F))
+        for _ in 1:3
+            x, F, st, _ = GS.step!!(st, m, prob, x, F, p)
+            @test st.fnorm == rnorm(F)
+        end
+    end
+end
+
 @testset "a singular step with reuse resets the age" begin
     GS = GeometricSolvers
     prob = NonlinearProblem((x, p) -> x * x - 4, (x, p) -> zero(x))
