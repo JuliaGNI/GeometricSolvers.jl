@@ -19,8 +19,12 @@ so that a compat-only bump can be told apart from an interface change.
   (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
   `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
   `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
-  across `ELTYPES`, condition numbers `κ₂ ∈ {10, 10⁴}` (`Float32`) and `{10, 10⁴, 10⁸}`
-  (`Float64`), and dimensions `n ∈ {4, 16}` (static) and `n ∈ {4, 16, 64}` (dense and device).
+  group by group: the full-rank LU, QR and SVD solves and their singular values over `ELTYPES`,
+  at condition numbers `κ₂ ∈ {10, 10⁴}` (`Float32`) and `{10, 10⁴, 10⁸}` (`Float64`), with
+  `n ∈ {4, 16, 64}` (dense and device) and `n ∈ {4, 16}` (static); `jacobi_eigen` over the same
+  condition numbers with `n ∈ {4, 16}`; the rank-deficient SVD minimum-norm solve at `κ₂ = 100`
+  with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
+  element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
 
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use
