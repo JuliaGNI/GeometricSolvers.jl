@@ -685,6 +685,43 @@ end
     end
 end
 
+@testset "StationarityProblem index sets in a chart" begin
+    allowscalar(false)
+    y0 = SVector(1.5, 0.5)
+
+    # Explicit full index sets, and an E that permutes 1:n, solve as E = U = : does. The
+    # quadratic action has one critical point, so the assertion needs no second solve.
+    for (E, U) in (((1, 2), (1, 2)), ((2, 1), (1, 2)))
+        prob = StationarityProblem(action_quad, E, U)
+        x_r1, st_r1 = solve(Reparametrized(prob, g_polar), y0)
+        @test st_r1.code == SUCCESS
+        @test norm(x_r1 - X_QUAD) <= 1e-8
+        prob_r3 = StationarityProblem(action_quad_r3, collect(E), collect(U))
+        x_r3, st_r3 = solve(Reparametrized(prob_r3, g_polar!), Vector(y0))
+        @test st_r3.code == SUCCESS
+        @test norm(x_r3 - Vector(X_QUAD)) <= 1e-8
+    end
+
+    # A proper subset leaves the residual shorter than the chart, and a U out of order puts the
+    # Jacobian columns out of the order of x. Both raise an ArgumentError before any evaluation.
+    for (E, U) in (((1,), (1,)), ((2,), (1,)), ((1, 2), (2, 1)))
+        rep = Reparametrized(StationarityProblem(action_quad, E, U), g_polar)
+        @test_throws ArgumentError solve(rep, y0)
+        @test_throws ArgumentError init(rep, y0)
+        @test_throws ArgumentError prepare_ad(nothing, rep, nothing, y0, nothing)
+        @test_throws ArgumentError solve_batch!([y0, y0], rep)
+        prob_r3 = StationarityProblem(action_quad_r3, collect(E), collect(U))
+        rep_r3 = Reparametrized(prob_r3, g_polar!)
+        @test_throws ArgumentError solve(rep_r3, Vector(y0))
+        @test_throws ArgumentError init(rep_r3, Vector(y0))
+        @test_throws ArgumentError residual!!(zeros(2), rep_r3, Vector(y0), nothing)
+    end
+
+    # An R1 iterate takes E and U as :, a Tuple or an SVector, as a StationarityProblem does.
+    rep_range = Reparametrized(StationarityProblem(action_quad, 1:2, 1:2), g_polar)
+    @test_throws ArgumentError solve(rep_range, y0)
+end
+
 @testset "R3 chart Jacobian off ∂g in more than one AD chunk ($Arr)" for Arr in ARRAY_BACKENDS
     # The AD chart Jacobian fills one chunk of columns per pass, and a chart of 16 coordinates
     # takes more than one pass at the default chunk size and at the two-column chunk below. A

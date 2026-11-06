@@ -885,4 +885,6 @@ so that a compat-only bump can be told apart from an interface change.
   (default for `StationarityProblem`), the residual is pulled back as
   `F̃(y, p) = transpose(G(y, p)) F(g(y, p), p)`, and the Jacobian is
   `J̃(y, p) = transpose(G) J G + (∂Gᵀ/∂y) F(g(y, p), p)` when `curvature = true` or
-  `transpose(G) J G` when `curvature = false`.
+  `transpose(G) J G` when `curvature = false`. A `StationarityProblem` needs `U = :` or `U = 1:n`
+  in order, where `n` is the chart dimension, and `E = :` or a permutation of `1:n`; `init`,
+  `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set.

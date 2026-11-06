@@ -13,6 +13,9 @@ Solving a `Reparametrized` problem iterates in the chart coordinates `y`. [`solv
 # Arguments and keywords
 
 - `prob`: the inner [`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref) in `x`-coordinates.
+  A [`StationarityProblem`](@ref) needs `U = :` or `U = 1:n` in order, for the chart dimension
+  `n`, and `E = :` or a permutation of `1:n`; [`init`](@ref), [`solve`](@ref),
+  [`solve_batch!`](@ref) and [`prepare_ad`](@ref) raise an `ArgumentError` for any other index set.
 - `g`: the chart map `x = g(y, p)` in R1 (`StaticVector` or `Number`) or `g!(x, y, p)` in R3
   (`AbstractVector`).
 - `∂g = nothing`: optional chart Jacobian `G = ∂g(y, p)` in R1 or `∂g!(G, y, p)` in R3. When
@@ -44,6 +47,21 @@ end
 
 @inline is_stationarity_problem(::StationarityProblem) = true
 @inline is_stationarity_problem(::AbstractNonlinearProblem) = false
+
+# The chart evaluates the inner problem at the full state `x = g(y, p)` and reads its Jacobian
+# as `∂F/∂x`, so a `StationarityProblem` needs `U = :` or `U = 1:n` in order; with the checks of
+# `_validate_stationarity_solve`, `E` is then `:` or a permutation of `1:n`.
+@inline _check_chart_indices(::AbstractNonlinearProblem, y) = nothing
+function _check_chart_indices(prob::StationarityProblem, y)
+    _validate_stationarity_solve(prob, y, nothing)
+    U = prob.U
+    n = length(y)
+    U isa Colon || (length(U) == n && all(c -> U[c] == c, eachindex(U))) ||
+        throw(ArgumentError(
+            "Reparametrized needs a StationarityProblem with U = : or U = 1:n in order, " *
+            "where n = $n is the chart dimension; got U = $U"))
+    return nothing
+end
 
 function Reparametrized(
         prob::P, g::G, ∂g::DG = nothing;
@@ -261,6 +279,7 @@ end
 
 @inline function prepare_ad(
         ::Nothing, reparam::Reparametrized, ::Nothing, y::Union{StaticVector, Number}, p)
+    _check_chart_indices(reparam.prob, y)
     return AutoForwardDiff()
 end
 
@@ -425,6 +444,7 @@ function _prepare_ad_reparam_r3(
         backend, reparam::Reparametrized{P, G, DG, C, K},
         r::AbstractArray, y::AbstractArray, p) where {P, G, DG, C, K}
     check_iterate_shape(y)
+    _check_chart_indices(reparam.prob, y)
     n = length(y)
     T = eltype(y)
     R = real(T)
@@ -764,6 +784,7 @@ struct DenseReparamState{ST, WS}
 end
 
 @inline function _init_reparam_r1(m, reparam::Reparametrized, y₀::StaticOrNumber, p)
+    _check_chart_indices(reparam.prob, y₀)
     m_r = Adapt.adapt(ToReal{real(eltype(y₀))}(), m)
     iprob = _InnerReparametrized(reparam, nothing)
     return StaticReparamState(init_state(m_r, iprob, y₀, p))
