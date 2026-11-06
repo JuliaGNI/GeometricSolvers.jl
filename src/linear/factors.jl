@@ -189,12 +189,13 @@ end
 """
     DenseQR{A, T, W, V}
 
-The Householder QR factors of a dense `n × n` host matrix, with `factors` the `n × n` buffer in
-the factor element type (`R` on and above the diagonal, reflectors below it), `τ` the reflector
-scale vector of length `n`, `work` the LAPACK workspace buffer, `rhs` the right-hand-side buffer
-of the factor element type when that differs from the working element type and `nothing`
-otherwise, `info` the index of the first zero diagonal entry of `R`, or 0, and `scale_exponent`
-the exponent `e` of the power of two `2^e` that the matrix was divided by.
+The Householder QR factors of a dense `m × n` host matrix (`m ≥ n`), with `factors` the `m × n`
+buffer in the factor element type (`R` on and above the diagonal of its leading `n × n` block,
+reflectors below it), `τ` the reflector scale vector of length `n`, `work` the LAPACK workspace
+buffer, `rhs` the right-hand-side buffer of the factor element type, which is `nothing` only
+where the working element type is the factor's and the problem is not a `LeastSquaresProblem`,
+`info` the index of the first zero diagonal entry of `R`, or 0, and `scale_exponent` the
+exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseQR{A <: AbstractMatrix, T <: AbstractVector, W <: AbstractVector,
     V <: Union{Nothing, AbstractVector}}
@@ -209,11 +210,12 @@ end
 """
     DeviceQR{A, T, V, S}
 
-The Householder QR factors of a dense `n × n` device matrix, with `factors` the `n × n` device
-buffer in the factor element type (`R` on and above the diagonal, reflectors below it), `τ` the
-reflector scale vector of length `n`, `rhs` the right-hand-side buffer of the factor element type
-when that differs from the working element type and `nothing` otherwise, `info` the index of the
-first zero diagonal entry of `R`, or 0, `scale_exponent` the exponent `e` of the power of two
+The Householder QR factors of a dense `m × n` device matrix (`m ≥ n`), with `factors` the `m × n`
+device buffer in the factor element type (`R` on and above the diagonal of its leading `n × n`
+block, reflectors below it), `τ` the reflector scale vector of length `n`, `rhs` the
+right-hand-side buffer of the factor element type, which is `nothing` only where the working
+element type is the factor's and the problem is not a `LeastSquaresProblem`, `info` the index of
+the first zero diagonal entry of `R`, or 0, `scale_exponent` the exponent `e` of the power of two
 `2^e` that the matrix was divided by, and `status` the 1-element `Int32` device status buffer.
 """
 struct DeviceQR{A <: AbstractMatrix, T <: AbstractVector,
@@ -229,18 +231,18 @@ end
 """
     DenseSVD{A, S, W, RW, T, V}
 
-The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` host matrix,
-with `factors` the `n × n` Jacobian buffer in the factor element type, `U` and `VT` the `n × n`
-unitary factors, `S` the vector of the singular values `σ̂ · 2^e` of the matrix in the real factor
-type, which overflow to `Inf` where they exceed `floatmax`, `work` the LAPACK workspace buffer,
-`rwork` the real LAPACK workspace during `gesvd` and the singular values `σ̂` of the matrix
-divided by `2^e` in its first `n` entries after `gesvd`, `tmp` the vector workspace buffer, `rhs`
-the right-hand-side buffer of the factor element type when that differs from the working element
-type and `nothing` otherwise, `info` `1` where the matrix has a non-finite entry, which is
-refused before `gesvd`, `gesvd`'s non-convergence code, `1` where a `σ̂` is not finite, or `0`,
-`rank` the number of singular values above the cutoff `√n · eps(real(TF)) · σ̂₁`, and 0 where
-`info ≠ 0`, and `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was
-divided by.
+The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `m × n` host matrix
+(`m ≥ n`), with `factors` the `m × n` Jacobian buffer in the factor element type, `U` the thin
+`m × n` and `VT` the `n × n` unitary factors, `S` the vector of the singular values `σ̂ · 2^e` of
+the matrix in the real factor type, which overflow to `Inf` where they exceed `floatmax`, `work`
+the LAPACK workspace buffer, `rwork` the real LAPACK workspace during `gesvd` and the singular
+values `σ̂` of the matrix divided by `2^e` in its first `n` entries after `gesvd`, `tmp` the
+vector workspace buffer, `rhs` the right-hand-side buffer of the factor element type, which is
+`nothing` only where the working element type is the factor's and the problem is not a
+`LeastSquaresProblem`, `info` `1` where the matrix has a non-finite entry, which is refused before
+`gesvd`, `gesvd`'s non-convergence code, `1` where a `σ̂` is not finite, or `0`, `rank` the number
+of singular values above the cutoff `√m · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and
+`scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     RW <: AbstractVector, T <: AbstractVector,
@@ -261,18 +263,19 @@ end
 """
     DeviceSVD{A, S, F, T, V}
 
-The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` device matrix,
-computed by the parallel one-sided Jacobi iteration of `src/linear/ka/svd.jl`, with `factors` the
-`n × n` Jacobian buffer in the factor element type, `U` and `VT` the `n × n` unitary factors, `S`
-the vector of the singular values `σ̂ · 2^e` of the matrix in the real factor type, `V` the
-`n × n` right-singular-vector workspace during the Jacobi sweep, `σ̂` the vector of the singular
-values of the matrix divided by `2^e` (and the squared column norms during the sweep), `flag` the
-1-element `Int32` rotation-flag buffer, `tmp` the vector workspace buffer, `rhs` the
-right-hand-side buffer of the factor element type when that differs from the working element type
-and `nothing` otherwise, `info` `1` where the Jacobi sweep reaches its sweep cap without
-converging or meets a non-finite entry, or `0`, `rank` the number of singular values above the
-cutoff `√n · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent `e`
-of the power of two `2^e` that the matrix was divided by.
+The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `m × n` device matrix
+(`m ≥ n`), computed by the parallel one-sided Jacobi iteration of `src/linear/ka/svd.jl`, with
+`factors` the `m × n` Jacobian buffer in the factor element type, `U` the thin `m × n` and `VT`
+the `n × n` unitary factors, `S` the vector of the singular values `σ̂ · 2^e` of the matrix in the
+real factor type, `V` the `n × n` right-singular-vector workspace during the Jacobi sweep, `σ̂`
+the vector of the singular values of the matrix divided by `2^e` (and the squared column norms
+during the sweep), `flag` the 1-element `Int32` rotation-flag buffer, `tmp` the vector workspace
+buffer, `rhs` the right-hand-side buffer of the factor element type, which is `nothing` only
+where the working element type is the factor's and the problem is not a `LeastSquaresProblem`,
+`info` `1` where the Jacobi sweep reaches its sweep cap without converging or meets a non-finite
+entry, or `0`, `rank` the number of singular values above the cutoff `√m · eps(real(TF)) · σ̂₁`,
+and 0 where `info ≠ 0`, and `scale_exponent` the exponent `e` of the power of two `2^e` that the
+matrix was divided by.
 """
 struct DeviceSVD{A <: AbstractMatrix, S <: AbstractVector, F <: AbstractVector{Int32},
     T <: AbstractVector, V <: Union{Nothing, AbstractVector}}

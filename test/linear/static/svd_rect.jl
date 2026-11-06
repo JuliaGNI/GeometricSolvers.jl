@@ -120,8 +120,9 @@ end
 
     x = ldiv!!(zero(SVector{6, T}), fac, b)
     x_ref = pinv(Float64.(A); rtol = 10 * sqrt(6) * eps(T)) * Float64.(b)
-    # 256 eps against a measured 5.8e-7 (Float32) and 2.3e-15 (Float64); with the cutoff of the
-    # columns the sixth direction stays in the solve and the relative error is 5.9e5 and 5.4e13
+    # 256 eps against a measured 5.8e-7 (Float32) and 2.3e-15 (Float64), where `σ̂₆/σ̂₁` is
+    # `6.5e-7` and `7.4e-16`, above `√6 eps` and below `√32 eps`: read from the columns, the sixth
+    # direction stays in the solve and divides by that
     @test norm(Float64.(x) - x_ref) <= 256 * eps(T) * norm(x_ref)
 end
 

@@ -24,7 +24,8 @@ end
     JacobianMatrixJVP(J)
 
 The R3 JVP preparation when the problem provides an analytic Jacobian `prob.J(J, x, p)`: a preallocated
-`n × n` matrix buffer `J` into which [`jvp!!`](@ref) evaluates `prob.J(J, x, p)` and multiplies by `v`
+`m × n` matrix buffer `J` (`m = n` unless the problem has more residuals than unknowns) into
+which [`jvp!!`](@ref) evaluates `prob.J(J, x, p)` and multiplies by `v`
 via [`mul!!`](@ref). Because this buffer is distinct from Newton's Jacobian buffer, evaluating a
 line-search slope under Jacobian reuse (`reuse > 1`) leaves the held Newton Jacobian untouched.
 """

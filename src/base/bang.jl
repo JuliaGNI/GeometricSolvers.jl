@@ -161,8 +161,9 @@ of `J`, and return it.
 problem's `J(x, p)`, an `AutoForwardDiff` runs tagged ForwardDiff and returns an `SMatrix` in the
 element type of a vector iterate or a `Number` for a `Number` iterate, and a
 [`JacobianFunction`](@ref) calls the method's own function. [`factorize!!`](@ref) converts the
-result to the factorisation precision `TF`. In R3 `J` is an `n × n` buffer in the element type
-of `x`: `nothing` calls `prob.J(J, x, p)`, a [`JacobianFunction`](@ref) calls `s.f(J, x, p)`, a
+result to the factorisation precision `TF`. In R3 `J` is an `m × n` buffer in the element type
+of `x`, `m = n` unless the problem has more residuals than unknowns: `nothing` calls
+`prob.J(J, x, p)`, a [`JacobianFunction`](@ref) calls `s.f(J, x, p)`, a
 [`DIJacobian`](@ref) runs DifferentiationInterface's prepared `jacobian!`, and a
 [`ChunkedForwardDiff`](@ref) runs the own chunked forward mode. The preparation selects the code.
 """

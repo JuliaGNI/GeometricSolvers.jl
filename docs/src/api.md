@@ -208,7 +208,7 @@ error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies a
 3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
 matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@ref) other than
 [`Static`](@ref) takes a JVP, so under any other globalization the analytic `J` gets no JVP
-preparation and no second `n × n` buffer. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
+preparation and no second `m × n` buffer. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
 then dispatch on the object the preparation returned, so the solver makes no runtime choice and
 carries no `ad` keyword.
 
