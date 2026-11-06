@@ -98,13 +98,14 @@ end
 
 # The workspace of `LevenbergMarquardt` at an iterate `x`: the trial buffers that every path uses,
 # and the buffers of the stacked solve, which only the QR and LU paths and Marquardt's scaling
-# read. The SVD step reads none of them, and a device iterate never reaches the stacked solve (see
-# `check_lm_iterate`), so the stacked slots are allocated only where they are used.
+# read. The SVD step reads none of them, so the stacked slots are allocated only where they are
+# used; a device iterate never asks for them, because `init_state` refuses the stacked step before
+# this function runs (see `check_lm_iterate`).
 @inline function init_globalization(lm::LevenbergMarquardt, linsolve::LinearMethod, x)
     T = eltype(x)
     R = real(T)
     n = x isa Number ? 1 : length(x)
-    stacked = !(x isa AbstractGPUArray) && !lm_svd_path(linsolve, lm.scaling)
+    stacked = !lm_svd_path(linsolve, lm.scaling)
     return (; Jδ = buffer(x), xt = buffer(x), Ft = buffer(x),
         R₀ = stacked ? buffer(x, T, n, n) : nothing,
         c₀ = stacked ? buffer(x, T, n) : nothing,
@@ -408,15 +409,21 @@ end
 # The workspace of the stacked solve for a vector iterate: the factor `(R₀, c₀)` of `[J | -F]` and
 # the damping diagonal, as values. It is immutable, so it crosses a call and a loop iteration
 # without a heap array, and each trial builds the copies it eliminates in the call that reads them.
-struct LMStacked{N, T, D}
-    R₀::SMatrix{N, N, T}
+# `L` is the length parameter of the static arrays the factor is stored in: without it the field
+# type is the `SMatrix{N, N, T}` alias with `L` free, which is not concrete, and the workspace
+# would not be `isbits`.
+struct LMStacked{N, T, L, D}
+    R₀::SMatrix{N, N, T, L}
     c₀::SVector{N, T}
     d_diag::D
 end
 
-# The same workspace for a scalar iterate, whose step is the scalar `δ` of a 1×1 system.
+# The same workspace for a scalar iterate, whose step is the scalar `δ` of a 1×1 system. That step
+# is written out below rather than routed through `lm_qr_solve!`: at `N = 1` the elimination and
+# the back-substitution of that routine are one rotation and one division, and the scalar path
+# needs none of its four buffers.
 struct LMScalar{T, D}
-    R₀::SMatrix{1, 1, T}
+    R₀::SMatrix{1, 1, T, 1}
     c₀::SVector{1, T}
     d_diag::D
 end
@@ -430,7 +437,7 @@ end
     c₀ = local_array(zero(SVector{N, T}))
     lm_stacked_factor!(linsolve, R₀, c₀, J, Fx)
     d_diag = lm_damping_diagonal(J, scaling)
-    return LMStacked{N, T, typeof(d_diag)}(
+    return LMStacked(
         SMatrix{N, N, T}(R₀), SVector{N, T}(c₀), d_diag)
 end
 

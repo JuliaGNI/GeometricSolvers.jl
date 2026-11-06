@@ -5,10 +5,10 @@
 # outer step of the stacked solve, the truncation of the ranks the factor drops, the damping in the
 # units of `Jᴴ J` at both ends of the scale and around the `4 eps` floor, the gain ratio at a
 # positive `ρ_accept` and at a trial that leaves the residual where it was, the `STALLED` return at
-# `μ_max` and the finite damping it keeps there, the rejection of a non-finite trial residual, the
-# refusal of the stacked solve on a device array, the stacked step against the closed form in
-# `Complex{BigFloat}`, the standard reference column, and the storage and allocations of the state
-# and of every path.
+# `μ_max` and the finite damping it keeps there, the rejection of a non-finite trial residual and
+# of a non-finite damped step, the refusal of the stacked solve on a device array, the stacked step
+# against the closed form in `Complex{BigFloat}`, the standard reference column and the eleven cells
+# that the standard set excepts, and the storage and allocations of the state and of every path.
 #
 # The cases that need the step in closed form take a linear problem with an analytic `J` and one
 # `step!!`, so that the expected `δ` is the solution of `(Jᴴ J + μ D²) δ = -Jᴴ F` computed
@@ -89,6 +89,14 @@ function lm_test_rhs(::Val{N}, ::Type{T}) where {N, T}
     return SVector{N, T}(ntuple(i -> T(i) - T(N) / 2, Val(N)))
 end
 
+# The Jacobian of the scalar case is negative on a real element type and complex on a complex one:
+# the reduction of the 1×1 system keeps the entry's sign in the pivot that `givens` returns, and
+# the trial divides by that pivot, so `abs` of the pivot and `|J|` of the entry differ from them.
+lm_test_matrix(::Val{1}, ::Type{T}) where {T <: Real} = SMatrix{1, 1, T}((-T(4),))
+function lm_test_matrix(::Val{1}, ::Type{T}) where {T <: Complex}
+    SMatrix{1, 1, T}((T(-4) + T(4im),))
+end
+
 # `δ(μ) = -(Jᴴ J + μ D²)⁻¹ Jᴴ F` for the damping diagonal `d`, computed in `Complex{BigFloat}`: the
 # reference that carries none of the step's own rounding, so that the tolerance left is the step's
 # and is measured against `eps(real(T)) · κ(J)`.
@@ -131,6 +139,29 @@ function lm_stacked_case(::Val{N}, ::Type{T}, ls, sc, μ₀) where {N, T}
     x1, _, _, info = step!!(st, m, prob, x0, Fx, nothing)
     d_diag = lm_damping_diagonal(J, Val(sc))
     return info, lm_stacked_error(x1 - x0, lm_stacked_reference(J, Fx, μ₀, d_diag), J, R)
+end
+
+# The same for the scalar iterate of `Val(1)`, whose Jacobian, residual and step are numbers and
+# whose factor is the `1×1` matrix the reduction of `[J | -F]` leaves.
+function lm_stacked_case(::Val{1}, ::Type{T}, ls, sc, μ₀) where {T}
+    R = real(T)
+    J = lm_test_matrix(Val(1), T)[1, 1]
+    b = lm_test_rhs(Val(1), T)[1]
+    prob = NonlinearProblem((x, _) -> J * x - b, (_, _) -> J)
+    m = Newton(;
+        linsolve = ls,
+        globalization = LevenbergMarquardt(R; μ₀ = μ₀, μ_min = μ₀, scaling = sc))
+    x0 = zero(T)
+    Fx = prob.F(x0, nothing)
+    st = start!!(init_state(m, prob, x0, nothing), m, prob, x0, Fx, nothing, rnorm(Fx))
+    x1, _, _, info = step!!(st, m, prob, x0, Fx, nothing)
+    Jm = SMatrix{1, 1, T}((J,))
+    d_diag = lm_damping_diagonal(Jm, Val(sc))
+    # `lm_stacked_error` measures over the iterate's coordinate vector, and the scalar step is its
+    # one coordinate.
+    err = lm_stacked_error(
+        [x1 - x0], lm_stacked_reference(Jm, SVector{1, T}((Fx,)), μ₀, d_diag), Jm, R)
+    return info, err
 end
 
 # The same trial on an array iterate, whose factor and elimination buffers are the state's.
@@ -577,6 +608,57 @@ end
         @test last(lm_column).globalization isa LevenbergMarquardt
     end
 
+    @testset "Check 1b: the eleven cells the standard set excepts (Done when 1)" begin
+        # `Done when 1` reads: on every full-rank problem of the standard set where `Newton()` with
+        # `Backtracking()` returns `SUCCESS`, the `"Newton LevenbergMarquardt SVD"` cell returns
+        # `SUCCESS` too, except at the eleven cells below. Each is a case the specification states:
+        # P1 at `u0` and P8 at `u0`, in both precisions; P11 at `u0`, in both; P15 and P16 at `u0`
+        # and `10u0` in `Float64`; and P3 at `u0` in `Float32`. The reference column is `Newton()`
+        # with its default `LUFactorization()`, so that no column is chosen to fit the outcome.
+        excepted = Set([(1, "u0", Float32), (1, "u0", Float64),
+            (8, "u0", Float32), (8, "u0", Float64),
+            (11, "u0", Float32), (11, "u0", Float64),
+            (15, "u0", Float64), (15, "10u0", Float64),
+            (16, "u0", Float64), (16, "10u0", Float64),
+            (3, "u0", Float32)])
+        @test length(excepted) == 11
+        column(name) = last(STANDARD_COLUMNS[findfirst(c -> first(c) == name, STANDARD_COLUMNS)])
+        @test column("Newton Backtracking LU").linsolve isa LUFactorization
+
+        # An excepted cell is one that the reference table does not record as `SUCCESS`.
+        reference = Dict(cell_key(c) => c
+        for c in read_table(STANDARD_REFERENCE)
+        if c.column == "Newton LevenbergMarquardt SVD")
+        for (problem, start, T) in excepted
+            cell = reference[(problem, start, "Newton LevenbergMarquardt SVD", string(T))]
+            @test cell.code != "SUCCESS"
+        end
+
+        # The eleventh cell, run: problem 3 (Powell badly scaled, full rank at its root) from `u0`
+        # in `Float32`. `Newton()` with `Backtracking()` returns `SUCCESS`, while the `Float32` SVD
+        # truncates `J` to rank one and the damped SVD step stalls at `‖F‖ = 6.7e-3`; the same
+        # damping on the stacked QR and LU steps returns `SUCCESS`.
+        sp = STANDARD_PROBLEMS[3]
+        x₀ = Dict(standard_starts(sp, Float32))["u0"]
+        opts = Options(Float32; max_iterations = STANDARD_MAX_ITERATIONS)
+        _, st_bt = solve(
+            sp.prob, copy(x₀), column("Newton Backtracking LU"), nothing; options = opts)
+        _, st_svd = solve(sp.prob, copy(x₀),
+            Newton(; linsolve = SVDFactorization(),
+                globalization = LevenbergMarquardt(Float32)), nothing; options = opts)
+        _, st_qr = solve(sp.prob, copy(x₀),
+            Newton(; linsolve = QRFactorization(),
+                globalization = LevenbergMarquardt(Float32)), nothing; options = opts)
+        _, st_lu = solve(sp.prob, copy(x₀),
+            Newton(; linsolve = LUFactorization(),
+                globalization = LevenbergMarquardt(Float32)), nothing; options = opts)
+        @test st_bt.code == SUCCESS
+        @test string(st_svd.code) ==
+              reference[(3, "u0", "Newton LevenbergMarquardt SVD", "Float32")].code
+        @test st_qr.code == SUCCESS
+        @test st_lu.code == SUCCESS
+    end
+
     @testset "Check 6a: stacked QR against the normal equations (MU6)" begin
         J_ill = @SMatrix [1.0 1.0; 1.0 1.0 + 1e-8]
         x_true = @SVector [1.0, -1.0]
@@ -897,8 +979,10 @@ end
         # trial at `μ₀` compares the step with `-(Jᴴ J + μ D²)⁻¹ Jᴴ F` computed in
         # `Complex{BigFloat}`. The tolerance is `64 eps(R) κ(J)`, a multiple of the `eps · κ` a
         # factorisation of this size costs: the measured error of the branch is at most `0.19` of
-        # that unit, and the error of the dropped `conj` is above `1e5` units.
-        for nv in (Val(3), Val(4)), T in ELTYPES,
+        # that unit, and the error of the dropped `conj` is above `1e5` units. `Val(1)` is the
+        # scalar step, whose pivot is the signed `J` itself, so its fixture is negative on a real
+        # element type: a positive entry could not tell that pivot from its modulus.
+        for nv in (Val(1), Val(3), Val(4)), T in ELTYPES,
             ls in (QRFactorization(), LUFactorization()), sc in (:none, :diagonal),
             μ₀ in (1.0, 4.0)
             info, err = lm_stacked_case(nv, T, ls, sc, μ₀)
@@ -928,6 +1012,32 @@ end
                 @test lm_r1_allocations(nv, T, ls, sc) == 0
             end
         end
+    end
+
+    @testset "Check 6h: a non-finite damped step is a rejected trial" begin
+        # `J = diag(1, 1e-6)` in `Float32` keeps `σ₂` above the factor's cutoff, and a residual of
+        # `1e38` overflows the truncated step at `σ₂`: `1e38 / 1e-6` is `Inf`. That trial is a
+        # rejection, and the residual is not evaluated at the non-finite iterate it would build.
+        J = SMatrix{2, 2, Float32}([1.0 0.0; 0.0 1e-6])
+        b = SVector{2, Float32}(-1.0e38, -1.0e38)
+        finite_x = Bool[]
+        F(x, _) = (push!(finite_x, all(isfinite, x)); J * x - b)
+        prob = NonlinearProblem(F, (_, _) -> J)
+        m = Newton(;
+            linsolve = SVDFactorization(),
+            globalization = LevenbergMarquardt(Float32; μ₀ = 1.0f-14, μ_min = 1.0f-14))
+        x0 = zero(SVector{2, Float32})
+        Fx = prob.F(x0, nothing)
+        st = start!!(init_state(m, prob, x0, nothing), m, prob, x0, Fx, nothing, rnorm(Fx))
+        empty!(finite_x)
+        x1, _, _, info = step!!(st, m, prob, x0, Fx, nothing)
+        @test info.code == STALLED
+        @test x1 === x0
+        # The rejections of a non-finite step cost no residual evaluation, so the loop evaluates
+        # `F` fewer times than it counts a failure.
+        @test !isempty(finite_x)
+        @test all(finite_x)
+        @test length(finite_x) < Int(info.failures)
     end
 
     @testset "The SVD path allocates no stacked buffer" begin
