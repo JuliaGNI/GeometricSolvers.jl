@@ -1,8 +1,7 @@
-# Sparse V-shaped 2×2-block nonlinear test problems matching GeometricBrackets'
+# Sparse 2×2-block nonlinear test problems matching GeometricBrackets'
 # reduced Vlasov–Poisson sparsity pattern and sizes (N = 125…768).
 
 using GeometricSolvers: NonlinearProblem
-using LinearAlgebra: LinearAlgebra
 using Random: AbstractRNG, MersenneTwister
 using SparseArrays: SparseArrays, SparseMatrixCSC, nonzeros, nzrange, rowvals, sparse
 
@@ -51,7 +50,7 @@ end
 """
     sparse_bracket_problem(N::Int, ::Type{T} = Float64; seed::Int = 1)
 
-Build a V-shaped `2 × 2`-block sparse nonlinear test problem of dimension `n = 2N` with four
+Build a `2 × 2`-block sparse nonlinear test problem of dimension `n = 2N` with four
 `7`-diagonal periodic banded blocks (`nnz(P) == 28N`, non-symmetric values `P != transpose(P)`),
 cross-block nonlinear coupling (omitted at row `1` so `(1, N + 1)` is a stored zero at every
 iterate), and a planted solution `z_star`. Returns `(prob_analytic, prob_ad, z0, p_val, z_star)`.

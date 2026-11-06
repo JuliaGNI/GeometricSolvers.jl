@@ -163,7 +163,8 @@ right-hand-side buffer of the factor element type when that differs from the wor
 and `nothing` otherwise, `info` the index of the first zero pivot, or 0, and `scale_exponent`
 the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
-struct DenseLU{A <: AbstractMatrix, P <: AbstractVector, V}
+struct DenseLU{
+    A <: AbstractMatrix, P <: AbstractVector, V <: Union{Nothing, AbstractVector}}
     factors::A
     ipiv::P
     rhs::V

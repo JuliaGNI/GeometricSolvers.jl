@@ -1,0 +1,58 @@
+# The `SciMLBase` extension tests, in their own workflow rather than as a second job in CI.yml.
+#
+# CI.yml is byte-identical in every repository under Packages/ and Experiments/ -- that is what
+# makes the required-status-check list static and keeps branch protection from silently going stale.
+# A repository that needs an extra job therefore gets an extra file, never a local edit to CI.yml.
+#
+# WHAT THIS ADDS TO CI.yml.
+#
+# `SciMLBase` is a weak dependency of `GeometricSolvers` and is not a dependency of
+# `test/Project.toml`, so the main test suite tests the package with no extension loaded. The
+# extension has an environment of its own, `test/sciml/`, which this job instantiates and runs.
+#
+# This job is deliberately NOT a required status check -- its name does not begin with `Julia `.
+
+name: SciML
+
+on:
+    push:
+        branches:
+            - main
+        tags: ["*"]
+    pull_request:
+    workflow_dispatch:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+    sciml:
+        name: SciML - Julia ${{ matrix.version }} - ${{ matrix.os }}
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 60
+        permissions:
+            actions: write
+            contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                version:
+                    - "min"
+                    - "1"
+                os:
+                    - ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: julia-actions/setup-julia@v3
+              with:
+                  version: ${{ matrix.version }}
+            - uses: julia-actions/cache@v3
+            # Not julia-actions/julia-runtest, which runs `test/Project.toml`: this suite is its
+            # own environment, with the package itself through `[sources]`.
+            - name: Run the SciML tests
+              run: |
+                  julia --color=yes --startup-file=no --project=test/sciml -e '
+                      using Pkg
+                      Pkg.instantiate()'
+                  julia --color=yes --startup-file=no --project=test/sciml test/sciml/runtests.jl

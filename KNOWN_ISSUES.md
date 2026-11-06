@@ -70,31 +70,32 @@
 - **kind:** defect
 - **found:** PR #48
 
-### K24 · The sparse `Backtracking` and `Bisection` solves run in `Float64` only
+### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
 
-- **location:** `test/linear/sparspak.jl:277-303`
-- **evidence:** The loop over `(Backtracking(), Bisection())` builds its problem once, as
-  `sparse_bracket_problem(125, Float64)` at `:277`, so both globalised solves and the `jvp!!`
-  comparison of the analytic and `AutoSparse` Jacobians at `:299` run in `Float64` alone, although
-  §V requires every numeric test to run in each element type that the part names. Elsewhere in the
-  file the element types come from `REAL_ELTYPES` (`:75`, `:102`, `:183`, `:342`, and the chord
-  loop at `:306` inside this testset); this block does not.
-- **kind:** missing test
-- **found:** 2026-11-06
-
-### K25 · `LUFactorization(T)` with a sparse prototype passes `init` and raises `MethodError` at `factorize!!`
-
-- **location:** `ext/GeometricSolversSparspakExt.jl:58-63`
-- **evidence:** The extension defines `factorize!!(fac::SparspakLU, ::LUFactorization{Nothing},
-  J::SparseMatrixCSC{T, Int})` and no other method, while
-  `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T})` refuses
-  `factor_eltype(m, T) !== T` and nothing else. `factor_eltype(LUFactorization{Float64},
-  Float64)` is `Float64`, so `Newton(; linsolve = LUFactorization(Float64))` on a
-  `Vector{Float64}` iterate with a `SparseMatrixCSC{Float64, Int}` prototype returns a state from
-  `init` and then raises `MethodError: no method matching
-  factorize!!(::SparspakLU{SparseMatrixCSC{Float64, Int64}, …}, ::LUFactorization{Float64},
-  ::SparseMatrixCSC{Float64, Int64})` (Julia 1.13.3, Sparspak 0.3.15). The part's spec fixes the
-  `LUFactorization{Nothing}` signature, so widening it to `LUFactorization{<:AbstractFloat}` is a
-  decision rather than a local fix.
+- **location:** `src/linear/factors.jl` (`init_linear`)
+- **evidence:** With ComponentArrays 0.15.50 and JLArrays 0.3.3, `x = ComponentVector(JLArray(...))`
+  gives `x isa AbstractGPUArray == false`, `copy(x)` stays a `ComponentVector`, and
+  `similar(x, Float32, 4, 4)` is a `JLArray{Float32, 2}`. `init_linear` selects the device factor
+  by the type of `x`, not by the matrix it allocates, so all three builders return the host
+  factors `DenseLU`, `DenseQR` and `DenseSVD` around a device matrix, and `factorize!!` on
+  `DenseQR` and `DenseSVD` fails with "Scalar indexing is disallowed". The same predicate,
+  `x isa AbstractGPUArray`, is on `main`, in `src/linear/factors.jl` and in `prepare_ad` of
+  `src/ad/di.jl`. ComponentArrays is neither a dependency nor a test dependency of the package, so
+  a wrapped device vector is not a supported input. Support is its own pull request, which selects
+  the factor from the allocated matrix instead of from `x`.
 - **kind:** defect
-- **found:** 2026-11-06
+- **found:** PR #55 (CodeRabbit, on #56)
+
+### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
+
+- **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
+- **evidence:** With `F(x, p) = x^2 - p` and `prob = NonlinearProblem(F)`,
+  `solve(prob, 1.5, Newton(), 4.0)` and `solve(prob, 1.5f0, Newton(), 4.0f0)` return `SUCCESS`,
+  while `solve(prob, 1.5f0, Newton(), 4.0)` raises `MethodError: no method matching
+  SolverStatus{Float32}(::ReturnCode, ::Int32, ::Float64, ::Float32, ::Int32, ::Bool)` (merge of
+  `main` into `task/z`, Julia 1.13.3). The status takes its real type from the start iterate, and
+  the residual norm of a `Float64` parameter is a `Float64`. The implicit-differentiation path of
+  `solve` inherits the same failure. Whether the solve promotes the iterate, converts the norm or
+  refuses the mix with an `ArgumentError` is open.
+- **kind:** defect
+- **found:** PR #53

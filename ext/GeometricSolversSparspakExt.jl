@@ -57,7 +57,7 @@ end
 
 function GeometricSolvers.factorize!!(
         fac::SparspakLU,
-        ::LUFactorization{Nothing},
+        ::LUFactorization,
         J::SparseMatrixCSC{T, Int}
 ) where {T <: AbstractFloat}
     if size(J) != size(fac.factors) ||
@@ -76,7 +76,9 @@ function GeometricSolvers.factorize!!(
     try
         sparspaklu!(fac.lu, fac.factors; allow_pattern_change = false)
     catch e
-        e isa ErrorException || rethrow()
+        # only the numerical factorisation sets `errflag` (a zero pivot); every other error of
+        # Sparspak propagates
+        e isa ErrorException && !iszero(fac.lu.slvr.errflag) || rethrow()
         return SparspakLU(fac.factors, fac.colptr, fac.rowval, fac.lu, 1, 0)
     end
     ok = iszero(fac.lu.slvr.errflag) &&

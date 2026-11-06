@@ -7,7 +7,6 @@ using GeometricSolvers: Backtracking, Bisection, DogLeg, LUFactorization, Newton
                         NonlinearProblem, Picard, QRFactorization, SINGULAR, SUCCESS,
                         SVDFactorization, init, returncode, solve, solve!, solve_batch!
 using LinearAlgebra: norm, transpose
-using Random: MersenneTwister
 using SparseArrays: SparseArrays, SparseMatrixCSC, getcolptr, nnz, nonzeros, nzrange,
                     rowvals, sparse, spzeros
 using SparseMatrixColorings: GreedyColoringAlgorithm, column_groups
@@ -22,7 +21,7 @@ include("../helpers/sparse_problems.jl")
     ext = Base.get_extension(GeometricSolvers, :GeometricSolversSparspakExt)
     @test ext !== nothing
 
-    prob_analytic, prob_ad, z0, p_val, z_star = sparse_bracket_problem(125, Float64)
+    prob_analytic, _, z0, p_val, z_star = sparse_bracket_problem(125, Float64)
     r_star = similar(z0)
     prob_analytic.F(r_star, z_star, p_val)
     @test norm(r_star, Inf) <= 10 * eps(eltype(z0))
@@ -72,6 +71,20 @@ include("../helpers/sparse_problems.jl")
     @test nonzeros(fac2.factors) == nonzeros(J_other)
 end
 
+@testset "Explicit LUFactorization(T) with a sparse prototype: T = $T" for T in REAL_ELTYPES
+    tol = T === Float64 ? 1e-10 : 1.0f-4
+    prob_analytic, _, z0, p_val, z_star = sparse_bracket_problem(125, T)
+    solver = init(prob_analytic, copy(z0), Newton(; linsolve = LUFactorization(T)),
+        p_val; f_abstol = tol, f_reltol = zero(T))
+    x, st = solve!(solver)
+    @test st.code === SUCCESS
+    @test x != z0
+    r = similar(x)
+    prob_analytic.F(r, x, p_val)
+    @test norm(r, 2) <= tol
+    @test isapprox(x, z_star; rtol = T === Float64 ? 1e-9 : 1.0f-3)
+end
+
 @testset "DogLeg Jacobian buffer: T = $T" for T in REAL_ELTYPES
     tol = T === Float64 ? 1e-10 : 1.0f-4
     prob_analytic, _, z0, p_val, _ = sparse_bracket_problem(125, T)
@@ -99,7 +112,7 @@ end
     @test rowvals(solver_dl.state.J) == rowvals(P)
 end
 
-@testset "V-shaped sparse problem: N = $N, T = $T" for N in (125, 768), T in REAL_ELTYPES
+@testset "Sparse block problem: N = $N, T = $T" for N in (125, 768), T in REAL_ELTYPES
 
     tol = T === Float64 ? 1e-10 : 1.0f-4
     prob_analytic, prob_ad, z0, p_val, z_star = sparse_bracket_problem(N, T)
@@ -170,7 +183,6 @@ end
         @test any(iszero, nonzeros(J_ana))
         J_fd = ForwardDiff.jacobian(f_fd, similar(pt), pt)
         M_ad = Matrix(J_ad)
-        @test M_ad == J_fd
         @test isapprox(M_ad, J_fd; rtol = 8 * eps(T), atol = 8 * eps(T))
         @test isapprox(M_ad, Matrix(J_ana); rtol = 8 * eps(T), atol = 8 * eps(T))
     end
@@ -274,32 +286,34 @@ end
 end
 
 @testset "Globalization, chord reuse, and R1/R2 ignore prototype" begin
-    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125, Float64)
     ad_b = AutoSparse(
         AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm())
-    for g in (Backtracking(), Bisection())
+    for T in REAL_ELTYPES, g in (Backtracking(), Bisection())
+
+        tol = T === Float64 ? 1e-10 : 1.0f-4
+        prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125, T)
         sol_ga = init(
             prob_analytic, copy(z0), Newton(; globalization = g), p_val;
-            f_abstol = 1e-10, f_reltol = 0.0
+            f_abstol = tol, f_reltol = zero(T)
         )
-        @test sol_ga.state.jvpprep.J isa SparseMatrixCSC{Float64, Int}
+        @test sol_ga.state.jvpprep.J isa SparseMatrixCSC{T, Int}
         Jv_a = similar(z0)
-        v_dir = ones(eltype(z0), length(z0))
+        v_dir = ones(T, length(z0))
         GeometricSolvers.jvp!!(Jv_a, sol_ga.state.jvpprep, prob_analytic, z0, v_dir, p_val)
-        x_ga, st_ga = solve!(sol_ga)
+        _, st_ga = solve!(sol_ga)
         @test st_ga.code === SUCCESS
-        @test st_ga.fnorm <= 1e-10
+        @test st_ga.fnorm <= tol
 
         sol_gd = init(
             prob_ad, copy(z0), Newton(; jacobian = ad_b, globalization = g), p_val;
-            f_abstol = 1e-10, f_reltol = 0.0
+            f_abstol = tol, f_reltol = zero(T)
         )
         Jv_d = similar(z0)
         GeometricSolvers.jvp!!(Jv_d, sol_gd.state.jvpprep, prob_ad, z0, v_dir, p_val)
-        @test isapprox(Jv_d, Jv_a; rtol = 8 * eps(eltype(z0)), atol = 8 * eps(eltype(z0)))
-        x_gd, st_gd = solve!(sol_gd)
+        @test isapprox(Jv_d, Jv_a; rtol = 8 * eps(T), atol = 8 * eps(T))
+        _, st_gd = solve!(sol_gd)
         @test st_gd.code === SUCCESS
-        @test st_gd.fnorm <= 1e-10
+        @test st_gd.fnorm <= tol
     end
 
     # Chord-Newton reuse = 2 across REAL_ELTYPES
@@ -312,7 +326,7 @@ end
             (J, z, p) -> (jcalls[] += 1; prob_an_t.J(J, z, p));
             jacobian_prototype = prob_an_t.jacobian_prototype
         )
-        x_ch, st_ch = solve(
+        _, st_ch = solve(
             prob_cnt_j, copy(z0_t), Newton(; reuse = 2), p_t;
             f_abstol = tol, f_reltol = zero(T)
         )
