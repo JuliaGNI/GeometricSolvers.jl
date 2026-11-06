@@ -57,7 +57,7 @@ end
 
 function GeometricSolvers.factorize!!(
         fac::SparspakLU,
-        ::LUFactorization{Nothing},
+        ::LUFactorization,
         J::SparseMatrixCSC{T, Int}
 ) where {T <: AbstractFloat}
     if size(J) != size(fac.factors) ||

@@ -71,6 +71,20 @@ include("../helpers/sparse_problems.jl")
     @test nonzeros(fac2.factors) == nonzeros(J_other)
 end
 
+@testset "Explicit LUFactorization(T) with a sparse prototype: T = $T" for T in REAL_ELTYPES
+    tol = T === Float64 ? 1e-10 : 1.0f-4
+    prob_analytic, _, z0, p_val, z_star = sparse_bracket_problem(125, T)
+    solver = init(prob_analytic, copy(z0), Newton(; linsolve = LUFactorization(T)),
+        p_val; f_abstol = tol, f_reltol = zero(T))
+    x, st = solve!(solver)
+    @test st.code === SUCCESS
+    @test x != z0
+    r = similar(x)
+    prob_analytic.F(r, x, p_val)
+    @test norm(r, 2) <= tol
+    @test isapprox(x, z_star; rtol = T === Float64 ? 1e-9 : 1.0f-3)
+end
+
 @testset "DogLeg Jacobian buffer: T = $T" for T in REAL_ELTYPES
     tol = T === Float64 ? 1e-10 : 1.0f-4
     prob_analytic, _, z0, p_val, _ = sparse_bracket_problem(125, T)

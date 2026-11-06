@@ -70,29 +70,12 @@
 - **kind:** defect
 - **found:** PR #48
 
-### K25 · `LUFactorization(T)` with a sparse prototype passes `init` and raises `MethodError` at `factorize!!`
-
-- **location:** `ext/GeometricSolversSparspakExt.jl:58-63`
-- **evidence:** The extension defines `factorize!!(fac::SparspakLU, ::LUFactorization{Nothing},
-  J::SparseMatrixCSC{T, Int})` and no other method, while
-  `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T})` refuses
-  `factor_eltype(m, T) !== T` and nothing else. `factor_eltype(LUFactorization{Float64},
-  Float64)` is `Float64`, so `Newton(; linsolve = LUFactorization(Float64))` on a
-  `Vector{Float64}` iterate with a `SparseMatrixCSC{Float64, Int}` prototype returns a state from
-  `init` and then raises `MethodError: no method matching
-  factorize!!(::SparspakLU{SparseMatrixCSC{Float64, Int64}, …}, ::LUFactorization{Float64},
-  ::SparseMatrixCSC{Float64, Int64})` (Julia 1.13.3, Sparspak 0.3.15). The part's spec fixes the
-  `LUFactorization{Nothing}` signature, so widening it to `LUFactorization{<:AbstractFloat}` is a
-  decision rather than a local fix.
-- **kind:** defect
-- **found:** 2026-11-06
-
 ### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
 
-- **location:** `src/linear/factors.jl` (`dense_factor`)
+- **location:** `src/linear/factors.jl` (`init_linear`)
 - **evidence:** With ComponentArrays 0.15.50 and JLArrays 0.3.3, `x = ComponentVector(JLArray(...))`
   gives `x isa AbstractGPUArray == false`, `copy(x)` stays a `ComponentVector`, and
-  `similar(x, Float32, 4, 4)` is a `JLArray{Float32, 2}`. `dense_factor` selects the device factor
+  `similar(x, Float32, 4, 4)` is a `JLArray{Float32, 2}`. `init_linear` selects the device factor
   by the type of `x`, not by the matrix it allocates, so all three builders return the host
   factors `DenseLU`, `DenseQR` and `DenseSVD` around a device matrix, and `factorize!!` on
   `DenseQR` and `DenseSVD` fails with "Scalar indexing is disallowed". The same predicate,
