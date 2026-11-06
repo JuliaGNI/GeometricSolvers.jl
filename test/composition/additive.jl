@@ -281,20 +281,23 @@ end
 
     # Both members step along `-F(x)`, so the Gram matrix is rank deficient while the combined
     # trial iterate is worse than the best candidate. The two rules count one fallback together,
-    # and the safeguard returns that candidate bit for bit, as in R1.
+    # and the safeguard returns that candidate bit for bit, as in R1. `step!!` writes `F₊` into
+    # the residual buffer it is given, so it gets a copy of `F₀`, and the reference candidates
+    # below are built from `F(x₀)`.
     prob_a = NonlinearProblem(f_mis!)
     x₀ = AT(zeros(T, 2))
     F₀ = residual!!(similar(x₀), prob_a, x₀, nothing)
     st_a = start!!(init_state(m_mis, prob_a, x₀, nothing), m_mis, prob_a, x₀, F₀,
         nothing, rnorm(F₀))
-    x₊, F₊, _, info_a = step!!(st_a, m_mis, prob_a, copy(x₀), F₀, nothing)
+    x₊, F₊, _, info_a = step!!(st_a, m_mis, prob_a, copy(x₀), copy(F₀), nothing)
     @test info_a.failures == Int32(1)
     @test Array(x₊) == Array(x_s)
+    @test Array(F₊) == Array(residual!!(similar(x₀), prob_a, x₊, nothing))
     x_c1 = x₀ .- R(0.5) .* F₀
     x_c2 = x₀ .- R(0.2) .* F₀
     F_c1 = residual!!(similar(x₀), prob_a, x_c1, nothing)
     F_c2 = residual!!(similar(x₀), prob_a, x_c2, nothing)
-    @test rnorm(F₊) <= min(rnorm(F_c1), rnorm(F_c2))
+    @test rnorm(F₊) <= min(rnorm(F_c1), rnorm(F_c2)) * (1 + 8 * eps(R))
 end
 
 @testset "Check 2: Singular Gram matrix in Additive (MU3, MU4), $T" for T in ELTYPES
