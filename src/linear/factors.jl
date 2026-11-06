@@ -290,6 +290,11 @@ exact_solve(fac) = true
 exact_solve(fac::StaticSVD{N}) where {N} = fac.rank == N
 exact_solve(fac::DenseSVD) = fac.rank == length(fac.S)
 
+@inline function factor_diagnostics(
+        d, ::Union{StaticLU, StaticQR, DenseLU, DenseQR}, r, fnorm::R) where {R <: Real}
+    return Int32(-1), R(NaN)
+end
+
 """
     singular_values(fac::StaticSVD)
 

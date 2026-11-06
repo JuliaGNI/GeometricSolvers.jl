@@ -11,6 +11,48 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`SolverStatus{R}` carries the range and spectrum diagnostics `rank::Int32`, `nullnorm::R` and
+  `gradratio::R`, and `Newton` with `SVDFactorization` supports factor reuse on a static or scalar
+  iterate** (decisions 54 and 57 of the design). `SolverStatus{R}` gains the fields `rank::Int32`,
+  `nullnorm::R` and `gradratio::R` (`sizeof(SolverStatus{Float32}) == 36`,
+  `sizeof(SolverStatus{Float64}) == 56`), with a 6-argument constructor that fills their sentinels
+  `(Int32(-1), R(NaN), R(NaN))`, and `GeometricSolvers.record` preserves them across steps. At each
+  fresh `Newton` factorisation, `gradratio` is `‖J(x)ᴴ F(x)‖ / (‖J(x)‖_F ‖F(x)‖)` at the
+  unregularised Jacobian `J(x)` (`zero(R)` when `‖J(x)‖_F == 0` or `‖F(x)‖ == 0`). Where `J(x)ᴴ F(x)`
+  overflows although both norms are finite, the ratio is formed from a copy of `F(x)` scaled by a power
+  of two, so it stays finite; on an array iterate that copy allocates, and only then. When `linsolve`
+  is `SVDFactorization{P}()` and the factor has `info == 0`, `rank` is `Int32(fac.rank)` and
+  `nullnorm` is `‖(I - U_r U_rᴴ) F(x)‖` (`fnorm` when `fac.rank == 0`), computed in the factor
+  precision after scaling a nonzero `F(x)` by `maximum(abs, F(x))` when `TF ≠ T`; for
+  `LUFactorization`, `QRFactorization`, or a failed SVD factor (`info ≠ 0`), `rank == Int32(-1)`
+  and `nullnorm` is `NaN`. Under `regularization = μ ≠ 0`, `rank` and `nullnorm` describe the factored
+  matrix `J(x) + μI`, and `gradratio` describes `J(x)`, so the outcome classification in the
+  `SolverStatus` documentation holds for `μ = 0` only. Every fresh `Newton` factorisation computes
+  these, for LU and QR as well as SVD: `‖J(x)‖_F` and the product `J(x)ᴴ F(x)` with its norm. It takes
+  `‖F(x)‖` from the line-search merit or from the norm that the solve already holds, and reads `F(x)`
+  again where a merit is non-finite or below its normal range, and on a state that no `start!!` saw,
+  or that a solve returned. That is a few matrix-vector passes, of order `n²` against the order `n³`
+  of a dense factorisation. Reused steps keep the diagnostics of the last factorisation unless a
+  line-search failure triggers a fresh retry, `start!!` resets them to their sentinels at the start
+  of each solve, and `finish!!` writes them into the returned `SolverStatus{R}` (while `Picard` and
+  any solve that returns before a factorisation keep the sentinels). `NewtonState` pre-allocates an
+  empty `StaticSVD` factor slot for `Newton(; linsolve = SVDFactorization(), reuse = k)` on a
+  `StaticVector` or `Number` iterate, as it does for `LUFactorization` and `QRFactorization`.
+  Measured against `main` at 27ccb1d on Julia 1.13.3 (Apple silicon, `Float64`), with
+  `F(x) = A x + x.^3 - b`, a diagonally dominant `A` (`A_ii = 4`, `A_ij = 1/(i+j)`), an analytic
+  Jacobian, `x₀ = 0.5` in every entry, and `Newton` with `Static` and no reuse: 5 iterations, so 5
+  factorisations per solve. Each run is a fresh process with `--check-bounds=auto`; each timing sample
+  folds calls until it lasts at least 20 µs, with 300 samples per run. Each tree gives the minimum per
+  run, then the median over 6 cold runs. The load average was 18 to 25, and the run-to-run spread of
+  one tree was up to 25 %. A solve costs +27 % (LU) and +5 % (QR) at `SVector{3}`, from 287 to 366 ns
+  and from 582 to 612 ns, and +34 % (LU) and +16 % (QR) at `SVector{8}`, from 1110 to 1487 ns and from
+  2156 to 2495 ns. A factor step, one `newton_factor` call with its Jacobian evaluation, diagnostics
+  and factorisation, costs +5.9 ns (LU) and +17.6 ns (QR) at `SVector{3}`, from 9.1 to 15.0 ns and from
+  42.9 to 60.5 ns, and +64 ns (LU) and +67 ns (QR) at `SVector{8}`, from 97.2 to 161.1 ns and from
+  280.6 to 347.4 ns. `grad_ratio` by itself measured 6.5 ns at n = 3 and 59 ns at n = 8, in one run.
+  An earlier measurement on another problem gave a solve cost of +19 % and +25 % for LU and +9 % and
+  +15 % for QR, at `SVector{3}` and `SVector{8}`; the cost depends on the problem.
+
 - **`Newton` takes the truncated minimum-norm step of a rank-deficient SVD** (decision 44 of the
   design). The numerical rank of `StaticSVD` and `DenseSVD` is the new field `rank`, the number of
   singular values above `√n · eps(TF) · σ₁`; `info` is nonzero only where the factorisation

@@ -259,3 +259,38 @@ function svd_solve!(fac::DenseSVD{<:StridedMatrix{T}}, d::AbstractVector{T},
     mul!(d, adjoint(fac.VT), fac.tmp)
     return t
 end
+
+function dense_svd_nullnorm!(
+        p::AbstractVector{TF}, U::StridedMatrix{TF}, rk::Int,
+        r::AbstractVector{TF}) where {TF}
+    copyto!(p, r)
+    n = length(r)
+    @inbounds for j in 1:rk
+        s = zero(TF)
+        for i in 1:n
+            s += conj(U[i, j]) * r[i]
+        end
+        for i in 1:n
+            p[i] -= U[i, j] * s
+        end
+    end
+    return rnorm(p)
+end
+
+function factor_diagnostics(
+        d::AbstractVector{T}, fac::DenseSVD{<:StridedMatrix{TF}},
+        r::AbstractVector{T}, fnorm::R) where {T, TF, R <: Real}
+    fac.info == 0 || return Int32(-1), R(NaN)
+    rk = fac.rank
+    rk == 0 && return Int32(0), fnorm
+    if TF === T
+        return Int32(rk), R(dense_svd_nullnorm!(fac.tmp, fac.U, rk, r))
+    end
+    s = maximum(abs, r)
+    iszero(s) && return Int32(rk), zero(R)
+    rhs = fac.rhs::AbstractVector{TF}
+    @inbounds for i in eachindex(rhs, r)
+        rhs[i] = TF(r[i] / s)
+    end
+    return Int32(rk), R(dense_svd_nullnorm!(fac.tmp, fac.U, rk, rhs)) * R(s)
+end
