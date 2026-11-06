@@ -24,6 +24,7 @@ if "core" in GROUPS
     @safetestset "KA dense linear solvers" include("linear/ka.jl")
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Factor status and rank" include("linear/status.jl")
+    @safetestset "Linear and spectral stability" include("linear/stability.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
     @safetestset "Line function and globalization" include("globalization/linefunction.jl")
     @safetestset "Merit passes and search trips" include("globalization/passes.jl")
@@ -37,12 +38,14 @@ if "core" in GROUPS
     @safetestset "Solver loop hooks" include("nonlinear/hooks.jl")
     @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")
     @safetestset "R3 nonlinear" include("nonlinear/r3.jl")
+    @safetestset "Implicit differentiation" include("nonlinear/implicit.jl")
     @safetestset "Rank-deficient Newton" include("nonlinear/rank_deficient.jl")
     @safetestset "Range and spectrum diagnostics" include("nonlinear/diagnostics.jl")
     @safetestset "CommonSolve interface" include("nonlinear/commonsolve.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "Jacobian-vector product" include("ad/jvp.jl")
+    @safetestset "Sparse LU and AutoSparse" include("linear/sparspak.jl")
     @safetestset "Standard test set" include("verification/standard.jl")
 end
 if "slow" in GROUPS

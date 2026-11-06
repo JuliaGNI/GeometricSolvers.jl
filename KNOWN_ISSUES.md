@@ -94,10 +94,10 @@
 
 ### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
 
-- **location:** `src/linear/factors.jl` (`dense_factor`)
+- **location:** `src/linear/factors.jl` (`init_linear`)
 - **evidence:** With ComponentArrays 0.15.50 and JLArrays 0.3.3, `x = ComponentVector(JLArray(...))`
   gives `x isa AbstractGPUArray == false`, `copy(x)` stays a `ComponentVector`, and
-  `similar(x, Float32, 4, 4)` is a `JLArray{Float32, 2}`. `dense_factor` selects the device factor
+  `similar(x, Float32, 4, 4)` is a `JLArray{Float32, 2}`. `init_linear` selects the device factor
   by the type of `x`, not by the matrix it allocates, so all three builders return the host
   factors `DenseLU`, `DenseQR` and `DenseSVD` around a device matrix, and `factorize!!` on
   `DenseQR` and `DenseSVD` fails with "Scalar indexing is disallowed". The same predicate,
@@ -145,3 +145,30 @@
   `solve!` and `solve_batch!`, with a `PerSystem` datum for a batch, is for a later pull request.
 - **kind:** defect
 - **found:** PR #57
+
+### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
+
+- **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
+- **evidence:** With `F(x, p) = x^2 - p` and `prob = NonlinearProblem(F)`,
+  `solve(prob, 1.5, Newton(), 4.0)` and `solve(prob, 1.5f0, Newton(), 4.0f0)` return `SUCCESS`,
+  while `solve(prob, 1.5f0, Newton(), 4.0)` raises `MethodError: no method matching
+  SolverStatus{Float32}(::ReturnCode, ::Int32, ::Float64, ::Float32, ::Int32, ::Bool)` (merge of
+  `main` into `task/z`, Julia 1.13.3). The status takes its real type from the start iterate, and
+  the residual norm of a `Float64` parameter is a `Float64`. The implicit-differentiation path of
+  `solve` inherits the same failure. Whether the solve promotes the iterate, converts the norm or
+  refuses the mix with an `ArgumentError` is open.
+- **kind:** defect
+- **found:** PR #53
+
+### K31 · `solve` on a `StationarityProblem` has no implicit differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`init`, `solve`)
+- **evidence:** `solve` on a `NonlinearProblem` with a `ForwardDiff.Dual` in `x₀` or `p` runs
+  the primal solve and then the implicit-function-theorem tangent solve (`solve_implicit` in
+  `src/nonlinear/implicit.jl`). `solve` on a `StationarityProblem` has no such path. `init`,
+  `solve`, `solve!` and `solve_batch!` on a `StationarityProblem` therefore raise an
+  `ArgumentError` for a `ForwardDiff.Dual` in the iterate or in `p`. Implicit differentiation
+  through the stationarity equations `(∇S)_E + b = 0`, with the Jacobian `(∇²S)_{E, U}`, is for a
+  later pull request.
+- **kind:** defect
+- **found:** PR #58 (CodeRabbit)
