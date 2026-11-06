@@ -188,6 +188,22 @@ end
     end
 end
 
+@testset "the state a solve returns carries the unstarted sentinel, $(newton_norm_label(AT))" for AT in (
+    Nothing, ARRAY_BACKENDS...)
+    GS = GeometricSolvers
+    prob, x₀, p, F₀ = newton_norm_case(AT)
+    for lin in (LUFactorization(), LUFactorization(Float32))
+        m = Newton(; linsolve = lin)
+        x, F = copy(x₀), copy(F₀)
+        st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, rnorm(F))
+        _, _, st_end = GS.solve!!(st, prob, x, m, p)
+        # The state that `solve!!` returns is the one `init_state` built again: the `NaN` norm and
+        # the `slow_steps = -1` sentinel that a mixed step reads before it reports `NONFINITE`.
+        @test isnan(st_end.fnorm)
+        @test st_end.slow_steps == Int32(-1)
+    end
+end
+
 @testset "a singular step with reuse resets the age" begin
     GS = GeometricSolvers
     prob = NonlinearProblem((x, p) -> x * x - 4, (x, p) -> zero(x))
