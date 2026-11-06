@@ -534,7 +534,7 @@ function jvp!!(
     elseif x isa AbstractGPUArray
         backend = get_backend(x)
         _scatter_v_kernel!(backend)(v_full, v, prep.u_pos; ndrange = length(x))
-        synchronize(backend)
+        isgpu(backend) && synchronize(backend)
     else
         fill!(v_full, zero(T))
         u_idx_cpu = prep.u_idx_cpu
@@ -558,49 +558,27 @@ function jvp!!(
     return Jv
 end
 
-struct _DIStationarityContext{X, P}
-    x_ref::X
-    p::P
-end
-
-struct _DIStationarityGrad{S, X, G, GP, B}
-    S_fn::S
-    e_idx::Vector{Int}
-    u_idx::Vector{Int}
-    x_buf::X
-    grad_full::G
-    gradprep::GP
-    backend::B
-end
-
-function (fg::_DIStationarityGrad)(y, u, ctx::_DIStationarityContext)
-    copyto!(fg.x_buf, ctx.x_ref)
-    @inbounds for j in eachindex(u, fg.u_idx)
-        fg.x_buf[fg.u_idx[j]] = u[j]
-    end
-    DI.gradient!(
-        fg.S_fn, fg.grad_full, fg.gradprep, fg.backend, fg.x_buf, DI.Constant(ctx.p))
-    @inbounds for i in eachindex(y, fg.e_idx)
-        y[i] = fg.grad_full[fg.e_idx[i]]
-    end
-    return nothing
-end
-
 """
     DIStationarity
 
 The R3 AD preparation for [`StationarityProblem`](@ref) with any `AbstractADType` back end
-other than `AutoForwardDiff`, on a CPU `Array`.
+other than `AutoForwardDiff`, on a CPU `Array`: the gradient of `S` gives the residual and the
+Hessian of `S` gives the Jacobian, whose `(E, U)` block that Jacobian is.
+
+The Jacobian and the Hessian-vector product are the `(E, U)` block of one Hessian of `S`, not the
+derivative of a gradient map: a back end of finite differences would differentiate an already
+finite-difference gradient, whose noise then swamps the outer difference. The Hessian is taken over
+the whole state, so a state far longer than the unknown set costs more here than under
+`AutoForwardDiff()`, which sweeps `E × U` only.
 """
-struct DIStationarity{B <: AbstractADType, FG, G, GP, JP, VP, U, Y}
+struct DIStationarity{B <: AbstractADType, G, GP, HP, H}
     backend::B
-    fg::FG
     grad_full::G
     gradprep::GP
-    jacprep::JP
-    jvpprep::VP
-    u_buf::U
-    y_buf::Y
+    hessprep::HP
+    hess_full::H
+    e_idx::Vector{Int}
+    u_idx::Vector{Int}
 end
 
 function prepare_ad(
@@ -617,25 +595,16 @@ function prepare_ad(
     _, _, e_cpu, u_cpu = _build_pos_maps(prob, M, n)
     grad_full = similar(x)
     gradprep = DI.prepare_gradient(prob.S, backend, x, DI.Constant(p))
-    gradprep_inner = DI.prepare_gradient(prob.S, backend, similar(x), DI.Constant(p))
-    fg = _DIStationarityGrad(
-        prob.S, e_cpu, u_cpu, similar(x), similar(x), gradprep_inner, backend)
-    u_buf = similar(r)
-    @inbounds for j in 1:n
-        u_buf[j] = x[u_cpu[j]]
-    end
-    ctx = DI.Constant(_DIStationarityContext(x, p))
-    jacprep = DI.prepare_jacobian(fg, similar(r), backend, u_buf, ctx)
-    jvpprep = DI.prepare_pushforward(fg, similar(r), backend, u_buf, (zero(u_buf),), ctx)
-    return DIStationarity(
-        backend, fg, grad_full, gradprep, jacprep, jvpprep, u_buf, similar(r))
+    hess_full = similar(x, eltype(x), M, M)
+    hessprep = DI.prepare_hessian(prob.S, backend, x, DI.Constant(p))
+    return DIStationarity(backend, grad_full, gradprep, hessprep, hess_full, e_cpu, u_cpu)
 end
 
 function _stationarity_residual_r3!(
         F::AbstractVector, prep::DIStationarity,
         prob::StationarityProblem, x::AbstractVector, p, b_eff)
     DI.gradient!(prob.S, prep.grad_full, prep.gradprep, prep.backend, x, DI.Constant(p))
-    e_idx = prep.fg.e_idx
+    e_idx = prep.e_idx
     @inbounds for a in eachindex(F, e_idx)
         F[a] = prep.grad_full[e_idx[a]]
     end
@@ -650,16 +619,23 @@ function residual!!(
     return _stationarity_residual_r3!(F, prep, prob, x, p, b_eff)
 end
 
+function _stationarity_hessian_r3!(
+        prep::DIStationarity, prob::StationarityProblem, x::AbstractVector, p)
+    DI.hessian!(prob.S, prep.hess_full, prep.hessprep, prep.backend, x, DI.Constant(p))
+    return prep.hess_full
+end
+
 function jacobian!!(
         J::AbstractMatrix, prep::DIStationarity,
         prob::StationarityProblem, x::AbstractVector, p)
     isempty(J) && return J
-    u_idx = prep.fg.u_idx
-    @inbounds for j in eachindex(prep.u_buf, u_idx)
-        prep.u_buf[j] = x[u_idx[j]]
+    H = _stationarity_hessian_r3!(prep, prob, x, p)
+    e_idx, u_idx = prep.e_idx, prep.u_idx
+    @inbounds for c in eachindex(u_idx)
+        for a in eachindex(e_idx)
+            J[a, c] = H[e_idx[a], u_idx[c]]
+        end
     end
-    ctx = DI.Constant(_DIStationarityContext(x, p))
-    DI.jacobian!(prep.fg, prep.y_buf, J, prep.jacprep, prep.backend, prep.u_buf, ctx)
     return J
 end
 
@@ -687,13 +663,16 @@ end
 function jvp!!(
         Jv::AbstractVector, prep::DIStationarity,
         prob::StationarityProblem, x::AbstractVector, v::AbstractVector, p)
-    u_idx = prep.fg.u_idx
-    @inbounds for j in eachindex(prep.u_buf, u_idx)
-        prep.u_buf[j] = x[u_idx[j]]
+    H = _stationarity_hessian_r3!(prep, prob, x, p)
+    e_idx, u_idx = prep.e_idx, prep.u_idx
+    T = eltype(Jv)
+    @inbounds for a in eachindex(e_idx)
+        acc = zero(T)
+        for c in eachindex(u_idx)
+            acc += H[e_idx[a], u_idx[c]] * v[c]
+        end
+        Jv[a] = acc
     end
-    ctx = DI.Constant(_DIStationarityContext(x, p))
-    DI.pushforward!(
-        prep.fg, prep.y_buf, (Jv,), prep.jvpprep, prep.backend, prep.u_buf, (v,), ctx)
     return Jv
 end
 

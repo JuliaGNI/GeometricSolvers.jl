@@ -208,7 +208,7 @@ function _extract_u!(u::AbstractVector, x::AbstractVector, u_idx::AbstractVector
     if x isa AbstractGPUArray
         backend = get_backend(x)
         _extract_u_kernel!(backend)(u, x, u_idx; ndrange = length(u))
-        synchronize(backend)
+        isgpu(backend) && synchronize(backend)
     else
         @inbounds for j in eachindex(u, u_idx)
             u[j] = x[u_idx[j]]
@@ -226,7 +226,7 @@ function _embed_u!(x::AbstractVector, x_ref::AbstractVector, u::AbstractVector, 
     if x isa AbstractGPUArray
         backend = get_backend(x)
         _embed_u_kernel!(backend)(x, x_ref, u, u_pos; ndrange = length(x))
-        synchronize(backend)
+        isgpu(backend) && synchronize(backend)
     else
         @inbounds for i in eachindex(x, x_ref, u_pos)
             pos = u_pos[i]
@@ -505,16 +505,17 @@ function solve_batch!(
         options::Union{Nothing, Options} = nothing, b = nothing, kwargs...)
     p_eff, rest_kw = _extract_batch_p_kw(X, p, kwargs)
     b_src = b === nothing ? prob.b : b
-    T = _validate_batch(X, p_eff, order)
+    _validate_batch(X, p_eff, order)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
-    R = real(eltype(T))
+    T = eltype(eltype(X))
+    R = real(T)
     opt = resolve_options(T, options, rest_kw)
     m = Adapt.adapt(ToReal{R}(), method)
     idx₀ = firstindex(X)
     p₀ = isempty(X) ? nothing : _sample_batch_item(p_eff, idx₀)
     b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
          _sample_batch_item(b_src, idx₀)
-    state₀ = init_state(m, prob, zero(T), p₀; b = b₀)
+    state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = b₀)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))
     sp = _StationarityBatchParams(p_eff, b_src)
@@ -529,22 +530,22 @@ function solve_batch!(
         kwargs...) where {R <: Real}
     p_eff, rest_kw = _extract_batch_p_kw(X, p, kwargs)
     b_src = b === nothing ? prob.b : b
-    T = _validate_batch(X, p_eff, order)
+    _validate_batch(X, p_eff, order)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
-    R_X = real(eltype(T))
+    R_X = real(eltype(eltype(X)))
     R === R_X || throw(ArgumentError(
         "solve_batch! requires the status vector S to use the real type $R_X of the batch iterates, got SolverStatus{$R}"))
     length(S) == length(X) || throw(DimensionMismatch(
         "status vector S has length $(length(S)), expected $(length(X)) to match the batch X"))
     get_backend(S) == get_backend(X) || throw(ArgumentError(
         "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
-    opt = resolve_options(T, options, rest_kw)
+    opt = resolve_options(eltype(eltype(X)), options, rest_kw)
     m = Adapt.adapt(ToReal{R}(), method)
     idx₀ = firstindex(X)
     p₀ = isempty(X) ? nothing : _sample_batch_item(p_eff, idx₀)
     b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
          _sample_batch_item(b_src, idx₀)
-    state₀ = init_state(m, prob, zero(T), p₀; b = b₀)
+    state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = b₀)
     isempty(X) && return S
     sp = _StationarityBatchParams(p_eff, b_src)
     return _launch!(X, S, prob, m, sp, opt, state₀, order)

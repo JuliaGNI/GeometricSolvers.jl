@@ -52,7 +52,7 @@ end
     return nothing
 end
 
-function generic_ldlt!(
+@inline function generic_ldlt!(
         A::AbstractMatrix{F}, ipiv::AbstractVector, herm::Bool) where {F <: Number}
     n = size(A, 1)
     P = eltype(ipiv)
@@ -180,7 +180,7 @@ function generic_ldlt!(
     return info
 end
 
-function generic_ldlt_backsolve!(A::AbstractMatrix{F}, ipiv::AbstractVector,
+@inline function generic_ldlt_backsolve!(A::AbstractMatrix{F}, ipiv::AbstractVector,
         x::AbstractVector{F}, herm::Bool) where {F <: Number}
     n = length(x)
     @inbounds begin

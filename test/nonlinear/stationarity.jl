@@ -1,4 +1,5 @@
 using ADTypes: AutoFiniteDiff, AutoForwardDiff
+using FiniteDiff: FiniteDiff
 using ForwardDiff
 using GeometricSolvers
 using GeometricSolvers: AbstractNonlinearProblem, ChunkedHessianForwardDiff, DIStationarity
@@ -104,11 +105,27 @@ end
 @testset "Check 1: Gradient, Hessian, and HVP vs central differences (MU1-MU4)" begin
     allowscalar(false)
     calls_s = Ref(0)
+    # A smooth non-quadratic action that a host array evaluates without a heap allocation, as the
+    # allocation checks below require.
     function action_smooth(x, p)
         calls_s[] += 1
         α = p === nothing ? one(eltype(x)) : eltype(x)(p)
         val = sin(x[1] * x[2]) + 0.5 * x[2] * x[3]^2 - cos(x[1] + 2 * x[4]) + x[3] * x[4]
         return α * val
+    end
+    # A smooth non-quadratic action written with gathers through an index vector and reductions
+    # only, which is how a device array reaches its entries: `x[i]` is scalar indexing there and a
+    # gather is not. `perm` cyclically shifts the entries by one; the central-difference oracle of
+    # the `JLArray` leg is taken from this same closure on the host.
+    function action_smooth_device(perm)
+        return function (x, p)
+            calls_s[] += 1
+            α = p === nothing ? one(eltype(x)) : eltype(x)(p)
+            xp = x[perm]
+            xq = xp[perm]
+            return α * (0.5 * sum(abs2, x) + 0.15 * sum((x .^ 2) .* xp) +
+                    0.1 * sum(x .* xp .* xq) + 0.25 * sum(sin.(x .+ xp)))
+        end
     end
 
     x0_s = SVector(1.2, -0.5, 0.8, 0.4)
@@ -118,10 +135,15 @@ end
 
     case1 = ((1, 2, 3, 4), (1, 2, 3, 4), SVector(0.1, -0.2, 0.3, -0.4))
     case2 = ((1, 2, 3), (2, 3, 4), SVector(0.3, -0.4, 0.7))
-    for (E_idx, U_idx, b_s) in (case1, case2)
+    case3 = ((2, 3, 4), (1, 2, 3), SVector(-0.2, 0.4, 0.1))
+    for (E_idx, U_idx, b_s) in (case1, case2, case3)
         n = length(E_idx)
         F_cd = fd_grad_vec(action_smooth, x0_s, 1.5, E_idx, b_s, h1)
         J_cd = fd_hess_mat(action_smooth, x0_s, 1.5, E_idx, U_idx, h2)
+        # The oracle of the `JLArray` leg: the gather form of the action, on the host.
+        action_dev = action_smooth_device([2, 3, 4, 1])
+        F_cd_dev = fd_grad_vec(action_dev, x0_s, 1.5, E_idx, b_s, h1)
+        J_cd_dev = fd_hess_mat(action_dev, x0_s, 1.5, E_idx, U_idx, h2)
 
         if E_idx == (1, 2, 3, 4)
             prob_s = StationarityProblem(action_smooth; b = b_s)
@@ -153,15 +175,21 @@ end
         tol_jvp = 10 * n * eps(Float64) * norm(J_r1) * norm(v_r1)
         @test norm(jv_r1 - J_r1 * v_r1) <= tol_jvp
 
-        # R3 checks on Array and JLArray
+        # R3 checks on Array and JLArray. A device array cannot reach its entries by scalar
+        # indexing, so its leg evaluates the gather form of the action and is checked against that
+        # form's own central differences, taken on the host.
         for Arr in ARRAY_BACKENDS
+            action_a = Arr === Array ? action_smooth :
+                       action_smooth_device(Arr([2, 3, 4, 1]))
+            F_cd_a = Arr === Array ? F_cd : F_cd_dev
+            J_cd_a = Arr === Array ? J_cd : J_cd_dev
             x0_a = Arr(Vector(x0_s))
             b_a = Arr(Vector(b_s))
             if E_idx == (1, 2, 3, 4)
-                prob_a = StationarityProblem(action_smooth; b = b_a)
+                prob_a = StationarityProblem(action_a; b = b_a)
             else
                 e_vec, u_vec = collect(E_idx), collect(U_idx)
-                prob_a = StationarityProblem(action_smooth; E = e_vec, U = u_vec, b = b_a)
+                prob_a = StationarityProblem(action_a; E = e_vec, U = u_vec, b = b_a)
             end
             F_a = Arr(zeros(Float64, n))
             J_a = Arr(zeros(Float64, n, n))
@@ -172,19 +200,20 @@ end
             @test prep isa ChunkedHessianForwardDiff
 
             residual!!(F_a, prep, prob_a, x0_a, 1.5)
-            @test norm(Array(F_a) - F_cd) / norm(F_cd) <= 1e-6
+            @test norm(Array(F_a) - F_cd_a) / norm(F_cd_a) <= 1e-6
 
             jacobian!!(J_a, prep, prob_a, x0_a, 1.5)
-            @test norm(Array(J_a) - J_cd) / norm(J_cd) <= 1e-6
+            @test norm(Array(J_a) - J_cd_a) / norm(J_cd_a) <= 1e-6
 
             fill!(F_a, 0.0)
             fill!(J_a, 0.0)
             gradient_hessian!!(F_a, J_a, prep, prob_a, x0_a, 1.5)
-            @test norm(Array(F_a) - F_cd) / norm(F_cd) <= 1e-6
-            @test norm(Array(J_a) - J_cd) / norm(J_cd) <= 1e-6
+            @test norm(Array(F_a) - F_cd_a) / norm(F_cd_a) <= 1e-6
+            @test norm(Array(J_a) - J_cd_a) / norm(J_cd_a) <= 1e-6
 
             jvp!!(Jv_a, prep, prob_a, x0_a, v_a, 1.5)
-            @test norm(Array(Jv_a) - J_r1 * v_r1) <= tol_jvp
+            tol_jvp_a = 10 * n * eps(Float64) * norm(Array(J_a)) * norm(v_r1)
+            @test norm(Array(Jv_a) - Array(J_a) * Vector(v_r1)) <= tol_jvp_a
 
             if Arr === Array && Base.JLOptions().check_bounds != 1
                 # skipped where a run forces `--check-bounds=yes`
@@ -402,7 +431,9 @@ end
         @test (@allocated solve!(solver_r3, x_step, nothing; b = b_step)) == 0
     end
 
-    # Saddle-point non-quadratic action where S(x*) < 0 (D2: S is never used as a merit)
+    # A non-quadratic action whose stationarity equations are `x₁ + 0.4x₁³ = 1` and
+    # `0.4x₂³ - x₂ + 2 = 0`, with the root `(0.7972810583155764, -2.1876029597039026)`, and whose
+    # Hessian is indefinite for `|x₂| < 1/√1.2`. `S` is never the merit.
     # S(x, p) = 0.5 * x1^2 - 0.5 * x2^2 + 0.1 * (x1^4 + x2^4) - x1 + 2 * x2
     function saddle_action(x, p)
         return 0.5 * x[1]^2 - 0.5 * x[2]^2 + 0.1 * (x[1]^4 + x[2]^4) - x[1] + 2 * x[2]
@@ -410,12 +441,19 @@ end
     prob_saddle = StationarityProblem(saddle_action)
     x_ref, st_ref = solve(prob_saddle, SVector(0.8, 1.5), m_newt_ldlt)
     @test st_ref.code == SUCCESS
+    @test norm(x_ref - SVector(0.7972810583155764, -2.1876029597039026), Inf) <= 1e-9
 
+    # Every globalization runs the same loop on a `StationarityProblem` as on the equivalent
+    # hand-written `NonlinearProblem`: the two agree in their return code, and their iterates
+    # agree to rounding. The hand-written residual is the analytic gradient of `saddle_action`.
+    prob_nl_saddle = NonlinearProblem((x, p) -> SVector(
+        x[1] + 0.4 * x[1]^3 - 1, -x[2] + 0.4 * x[2]^3 + 2))
     for g in (Static(), Backtracking(), Bisection(), StrongWolfe(), DogLeg())
         m_g = Newton(; linsolve = LDLTFactorization(), globalization = g)
         x_g, st_g = solve(prob_saddle, SVector(0.8, 1.5), m_g)
-        @test st_g.code == SUCCESS
-        @test isapprox(x_g, x_ref; atol = 1e-7)
+        x_nl, st_nl = solve(prob_nl_saddle, SVector(0.8, 1.5), m_g)
+        @test st_g.code === st_nl.code
+        @test norm(x_g - x_nl, Inf) <= 8 * eps(Float64) * max(1.0, norm(x_nl, Inf))
     end
 
     # Picard on StationarityProblem
@@ -425,6 +463,14 @@ end
     x_newt, _ = solve(prob_pic, SVector(0.8, -0.4), Newton())
     @test st_pic.code == SUCCESS
     @test isapprox(x_pic, x_newt; atol = 1e-6)
+
+    # Every globalization converges to the same root of a convex action
+    for g in (Static(), Backtracking(), Bisection(), StrongWolfe(), DogLeg())
+        m_g = Newton(; linsolve = LDLTFactorization(), globalization = g)
+        x_g, st_g = solve(prob_pic, SVector(0.8, -0.4), m_g)
+        @test st_g.code == SUCCESS
+        @test isapprox(x_g, x_newt; atol = 1e-7)
+    end
 
     # R2 solve_batch! on StationarityProblem (both full-state U = : and subset E != U)
     f_b1(x, p) = 0.5 * dot(x, A_ind * x) - p * (x[1] - 2 * x[2])
