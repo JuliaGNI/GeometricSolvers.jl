@@ -2,8 +2,10 @@
 # it on, `cuda_well_conditioned`.
 #
 # Every agreement row of `test/devices/metal_vendor.jl` and of `test/gpu/cuda/runtests.jl` takes
-# its reference from `own_kernel_ldiv!`, so the by-hand run on the Spark computes nothing that
-# `test/devices/own_kernel.jl` does not compute on a `JLArray` against the host solve.
+# its reference from `own_kernel_ldiv!`. `test/devices/own_kernel.jl` checks it against the host
+# solve on a `JLArray`, in an ordinary run: both of its branches and all three backsolves, through
+# the mixed LU and QR rows and the real SVD rows. The same-type LU and QR rows and the complex SVD
+# rows run it on a device only.
 #
 # `factorize!!` divides `J` by `2^e` where the element type of `J` is not that of the factors, and
 # a device `SVD` divides it always, so the `src/linear/ka/` kernels solve with the factors of

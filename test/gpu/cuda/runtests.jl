@@ -364,7 +364,8 @@ if CUDA.functional()
         A_qr_nf[3, 3] = T(RT(NaN))
         @test ext_cuda._cusolver_qr_info(CuArray(A_qr_nf)) == 3
 
-        # Fallback to ka_factorize_lu! when getrf! info_c < 0 and ka_factorize_svd! when gesvdj! info_c > 0
+        # Fallback to ka_factorize_lu! when getrf! info_c < 0 and to ka_factorize_svd! when
+        # gesvdj! info_c != 0
         A_ok = T[4 1; 1 3]
         dA_ok = CuArray(A_ok)
         dx_ok = CuArray(zeros(T, 2))
