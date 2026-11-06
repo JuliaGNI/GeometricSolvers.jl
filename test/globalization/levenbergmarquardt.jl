@@ -990,7 +990,7 @@ end
         # not unitary and the step is wrong on a complex element type and only there. One accepted
         # trial at `μ₀` compares the step with `-(Jᴴ J + μ D²)⁻¹ Jᴴ F` computed in
         # `Complex{BigFloat}`. The tolerance is `64 eps(R) κ(J)`, a multiple of the `eps · κ` a
-        # factorisation of this size costs: the measured error of the branch is at most `1.2` of
+        # factorisation of this size costs: the measured error of the step is at most `1.2` of
         # that unit (`0.19` at `n = 3` and `4`), and the error of the dropped `conj` is above
         # `1e5` units. `Val(1)` is the scalar step, whose pivot is the signed `J` itself, so its
         # fixture is negative on a real element type: a positive entry could not tell that pivot

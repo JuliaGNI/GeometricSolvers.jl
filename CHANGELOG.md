@@ -43,6 +43,7 @@ so that a compat-only bump can be told apart from an interface change.
   `STALLED` and not `NONFINITE`.
   `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 10th column
   `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
+
 - **Numerical stability documentation (`docs/src/stability.md`) and backward-error test suite
   (`test/linear/stability.jl`, `test/helpers/randsvd.jl`).** `docs/src/stability.md` states the
   normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,

@@ -1,5 +1,8 @@
 """
     LevenbergMarquardt{R, S}
+    LevenbergMarquardt(::Type{R} = Float64; μ₀ = R(1e-6), μ_min = max(R(1e-15), 4 * eps(R)),
+                       μ_max = R(1e12), μ_decrease = R(1) / R(3), μ_increase = R(4),
+                       ρ_accept = zero(R), scaling = :none) where {R <: AbstractFloat}
 
 Adaptive Levenberg–Marquardt damping for [`Newton`](@ref), computing the trial step from the
 damped linear model `(J(x)ᴴ J(x) + μ Dᵀ D) δ = -J(x)ᴴ F(x)` with damping parameter `μ > 0`
@@ -24,6 +27,16 @@ Givens rotations, without forming `J(x)ᴴ J(x)`. That path indexes scalars and 
 array: an `init` on a device array iterate raises an `ArgumentError` for it. A `μ` below
 `4 eps` of the working type, which only an initial `μ₀` below the schedule's floor can be, is
 taken as no damping: the truncated step of decision 44.
+
+A solve starts at `μ₀`. A trial is accepted when `ρ > ρ_accept`, and an accepted step sets `μ` to
+`max(μ · μ_decrease, max(μ_min, 4 eps(R)))`. A rejected trial, or one whose step is not finite,
+multiplies `μ` by `μ_increase` and solves again within the same step, with no new Jacobian, until a
+trial is accepted or `μ > μ_max`, which returns `STALLED` with the iterate kept. A step accepted at
+a `μ` above `μ₀` sets `limited` in its [`StepInfo`](@ref). The parameters satisfy `0 < μ_min ≤ μ₀ ≤
+μ_max < Inf`, `0 < μ_decrease < 1 < μ_increase`, `0 ≤ ρ_accept < 1` and `scaling ∈ (:none,
+:diagonal)`, else the constructor raises an `ArgumentError`; [`ToReal`](@ref) converts them to the
+real type of the iterate. `Newton(; globalization = LevenbergMarquardt(), reuse = k)` raises an
+`ArgumentError`.
 """
 struct LevenbergMarquardt{R <: AbstractFloat, S}
     μ₀::R
@@ -260,7 +273,7 @@ end
 
 # The diagonal `D` of the damping term for the stacked solve of `[J; √μ D] δ = [-Fx; 0]`, written
 # in place. `scaling = :none` takes `D = I`, so the damping is `√μ` in the units of `Jᴴ J`, the
-# same number the SVD weight `σ̂_j/(σ̂_j² + 2^{-2e} μ)` divides by. `scaling = :diagonal` takes
+# same number the SVD weight `σ_j/(σ_j² + μ)` divides by. `scaling = :diagonal` takes
 # Marquardt's column norms, floored at `√eps(R)` of the largest of them, so that a zero or
 # near-zero column still receives positive damping; it is scale-invariant on its own.
 #

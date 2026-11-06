@@ -5,8 +5,9 @@
 Newton's method for [`NonlinearProblem`](@ref), with linear solver `linsolve`
 ([`LUFactorization`](@ref), [`QRFactorization`](@ref) or [`SVDFactorization`](@ref)),
 globalization `globalization`
-([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
-trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refinement `refinement`
+([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the
+trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector
+`jacobian`, iterative refinement `refinement`
 ([`NoRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
 `reuse`.
 
@@ -18,7 +19,8 @@ trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refineme
   merit of the residual it returns. A `step!!` with a line search therefore takes only the
   `(x, Fx)` that the last `start!!` or `step!!` on its state returned, as in [`solve!!`](@ref).
   A line-search step on a state that no `start!!` saw, or that `solve!!` returned, returns
-  `NONFINITE` and keeps its iterate.
+  `NONFINITE` and keeps its iterate, and so does a [`LevenbergMarquardt`](@ref) step, whose
+  damping parameter that state holds as `NaN`.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
   `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
@@ -29,8 +31,9 @@ trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refineme
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
   reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step).
   A line search along a reused factor that fails without a step is retried once, in the same
-  step, from a fresh factor. A [`DogLeg`](@ref) globalization takes no reuse: its model needs the
-  Jacobian of the current iterate, and the constructor raises an `ArgumentError`.
+  step, from a fresh factor. A [`DogLeg`](@ref) or [`LevenbergMarquardt`](@ref) globalization takes
+  no reuse: its model needs the Jacobian of the current iterate, and the constructor raises an
+  `ArgumentError`.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     linsolve::L
