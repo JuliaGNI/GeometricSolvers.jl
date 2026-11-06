@@ -1,7 +1,7 @@
 using GeometricSolvers
 using GeometricSolvers: AndersonState, ToReal, effective_kappa_bar, finish!!, init_state,
-                        rdot, residual!!, residual_buffer, rnorm, solve!!, solve_weights,
-                        start!!, step!!, sync_merit
+                        residual_buffer, rnorm, solve!!, solve_weights, start!!, step!!,
+                        sync_merit
 using Adapt
 using GPUArraysCore
 using JET
@@ -493,6 +493,13 @@ end
         @test x_best_r1 == recorded_r1[min_idx_r1][1]
         @test status_best_r1.fnorm == recorded_r1[min_idx_r1][2]
 
+        # The method-first argument order forwards to the generic `solve`
+        x_fwd_r1, status_fwd_r1 = solve(
+            prob_dip_r1, Anderson(Picard(; damping = 0.95), Val(2)), SVector(1.0, -0.5),
+            nothing, opts_div)
+        @test x_fwd_r1 == x_best_r1
+        @test status_fwd_r1.iterations == status_best_r1.iterations
+
         # Same check in R3
         recorded_r3 = Tuple{Vector{Float64}, Float64}[]
         function F_dip_then_grow_r3!(F, x, p)
@@ -711,7 +718,9 @@ end
         @test eltype(γ32) === Float32
         @test all(isfinite, γ32)
 
-        # Full step!! in Float32 (R1 and R3) with a rank-deficient history
+        # Float32 `step!!` in R1 from a history of identical columns, which the angle filter
+        # thins (the regularised solve itself is the `solve_weights` check above), and a
+        # Float32 R3 `solve`
         prob32_r1 = NonlinearProblem((x, p) -> 0.5f0 * x - SVector(0.2f0, -0.1f0, 0.3f0))
         a32_r1 = Adapt.adapt(
             ToReal{Float32}(),
@@ -987,7 +996,7 @@ end
             prob_t_r3 = NonlinearProblem(_AndersonR3LinearF{T, R}(c1))
             for AT in ARRAY_BACKENDS
                 z0_r3 = AT(T[T(R(1 // 10)), T(R(2 // 10))])
-                z_sol_r3, st_t_r3 = solve(prob_t_r3, z0_r3, a_t; options = opts_t)
+                _, st_t_r3 = solve(prob_t_r3, z0_r3, a_t; options = opts_t)
                 @test st_t_r3.code == SUCCESS
             end
         end

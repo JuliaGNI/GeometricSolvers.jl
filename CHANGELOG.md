@@ -889,8 +889,8 @@ so that a compat-only bump can be told apart from an interface change.
   Val(m) = Val(4); c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0,
   safeguard_cos = nothing, grow_depth = false)` (plus the convenience `Anderson(member, m::Integer;
   kwargs...)` forwarding to `Val(Int(m))`) accelerates an inner fixed-point or nonlinear step map
-  $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1 (`m
-  \le 4`, `isbits` state on `StaticVector` and `Number`), R2 (`solve_batch!` kernel), and R3 (no
+  $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1
+  ($m \le 4$, `isbits` state on `StaticVector` and `Number`), R2 (`solve_batch!` kernel), and R3 (no
   upper bound on `m`, zero heap allocations in `step!!` and `solve!` after warm-up on `Array`, and
   a `JLArray` step with no scalar indexing under `allowscalar(false)`). Implements Pollock and
   Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`, defaulting to
@@ -899,6 +899,7 @@ so that a compat-only bump can be told apart from an interface change.
   $\Delta W^H \Delta W \gamma = \Delta W^H w_k$, extrapolation weight and model-decrease safeguards
   ($\sum_{j=0}^{p} |\alpha_j| \le M_\alpha$, optional `safeguard_cos` and `grow_depth`), automatic
   history clears on residual growth ($\|F\| > \text{restart\_factor} \cdot \text{fnorm\_best}$) or
-  stagnation, `StepInfo.failures` counting filter column drops and history restarts,
-  `state.current_depth` in `1:m`, and best-iterate restoration in `finish!!` when `solve!!` exits
-  with `status.code != SUCCESS` and a strictly smaller historical residual norm was recorded.
+  stagnation, `StepInfo.failures` counting filter column drops, rejected weights and history
+  restarts, `state.current_depth` in `1:m` after every step, and best-iterate restoration in
+  `finish!!` when `solve!!` exits with `status.code != SUCCESS` and a strictly smaller historical
+  residual norm was recorded.

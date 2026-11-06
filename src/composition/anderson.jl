@@ -24,6 +24,22 @@ In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4` and the state
 preallocated `n × m` difference matrices and zero allocations in `step!!`. When a solve
 ends with a code other than `SUCCESS`, [`finish!!`](@ref) restores the iterate
 with the smallest residual norm `‖F(x)‖` seen during the solve.
+
+Keywords:
+
+  - `c_s`: angle-filter threshold in `(0, 1)`; a history column is kept only if its
+    component orthogonal to the kept columns has squared norm `≥ c_s² G_jj`.
+  - `κ_bar`: bound of the length filter; `nothing` selects `1 / sqrt(eps(R))` for the
+    real element type `R` of the iterate.
+  - `restart_factor` (`≥ 3`): the history is cleared when `‖F‖` exceeds
+    `restart_factor` times the smallest residual norm seen.
+  - `M_alpha` (`≥ 1`): bound on `∑_{j=0}^p |α_j|` for the extrapolation weights `α`; a
+    step whose weights exceed it, are not finite, or increase the residual of the
+    linear model takes the step of `member` and counts one failure.
+  - `safeguard_cos`: when set, the history is cleared if the cosine between consecutive
+    corrections `w_k` exceeds it in modulus.
+  - `grow_depth`: when `true`, the depth is capped at `ceil(-log10(‖w_k‖))` clamped to
+    `1:m`, so the cap grows as the corrections shrink.
 """
 struct Anderson{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
     member::M
@@ -39,7 +55,7 @@ struct Anderson{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
             M_alpha::R, safeguard_cos::S,
             grow_depth::Bool) where {
             m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
-        m isa Int && !(m isa Bool) ||
+        m isa Int ||
             throw(ArgumentError("Anderson history depth m must be an Int, got $(typeof(m))"))
         m >= 1 ||
             throw(ArgumentError("Anderson history depth m must be >= 1, got $m"))
@@ -71,7 +87,7 @@ function Anderson(
         M_alpha::Real = 25.0,
         safeguard_cos::Union{Nothing, Real} = nothing,
         grow_depth::Bool = false) where {m, M}
-    m isa Int && !(m isa Bool) ||
+    m isa Int ||
         throw(ArgumentError("Anderson history depth m must be an Int, got $(typeof(m))"))
     R_base = promote_type(typeof(c_s), typeof(restart_factor), typeof(M_alpha))
     R_kb = κ_bar === nothing ? R_base : promote_type(R_base, typeof(κ_bar))
@@ -104,6 +120,8 @@ end
     return a.κ_bar === nothing ? inv(sqrt(eps(R))) : R(a.κ_bar)
 end
 
+# The method-first argument order `solve(prob, method, x₀, p, options)` forwards to the
+# generic `solve(prob, x₀, method, p; options)`.
 function solve(
         prob::NonlinearProblem, method::Anderson, x₀, p = nothing,
         options::Union{Nothing, Options} = nothing; kwargs...)
@@ -324,12 +342,7 @@ end
 end
 
 # Shared scalar predicates for the restarts, filters, regularisation, and safeguards.
-@inline function is_unstarted(state::AndersonState)
-    if !isfinite(state.fnorm₀)
-        return true
-    end
-    return false
-end
+@inline is_unstarted(state::AndersonState) = !isfinite(state.fnorm₀)
 
 @inline function effective_depth_cap(a::Anderson{m}, wnorm::R) where {m, R <: Real}
     a.grow_depth || return m
@@ -692,8 +705,9 @@ function step!!(
     Δx_norm = rnorm(Δx_new)
     wnorm = rnorm(w_k)
 
-    # Pre-filter restart checks: incoming residual growth, zero/stagnated newest column,
-    # or optional cosine angle safeguard over Newton.
+    # Pre-filter restart checks: incoming residual growth, a zero or stagnated newest
+    # column, or the optional `safeguard_cos` bound on the cosine between consecutive
+    # corrections.
     if should_restart_growth(fnorm_in, R(a.restart_factor), fnorm_best) ||
        is_degenerate_newest(Δw_norm, f2_1, Δx_norm, rnorm(x)) ||
        should_restart_angle(a, rdot(w_k, state.w_prev), wnorm, rnorm(state.w_prev))
