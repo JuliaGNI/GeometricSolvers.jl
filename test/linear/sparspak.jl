@@ -22,7 +22,7 @@ include("../helpers/sparse_problems.jl")
     ext = Base.get_extension(GeometricSolvers, :GeometricSolversSparspakExt)
     @test ext !== nothing
 
-    prob_analytic, prob_ad, z0, p_val, z_star = sparse_bracket_problem(125)
+    prob_analytic, prob_ad, z0, p_val, z_star = sparse_bracket_problem(125, Float64)
     r_star = similar(z0)
     prob_analytic.F(r_star, z_star, p_val)
     @test norm(r_star, Inf) <= 10 * eps(eltype(z0))
@@ -40,24 +40,6 @@ include("../helpers/sparse_problems.jl")
     st = solver.state
     @test st.J === st.fac.factors
     @test st.J !== P
-    J_dl = GeometricSolvers.init_newton_J(Newton(; globalization = DogLeg()), st.fac, z0)
-    @test J_dl isa SparseMatrixCSC{Float64, Int}
-    @test J_dl !== st.fac.factors
-    @test getcolptr(J_dl) == getcolptr(P)
-    @test rowvals(J_dl) == rowvals(P)
-
-    # DogLeg reads the Jacobian from a buffer of its own, so that buffer carries the prototype's
-    # pattern and is the matrix that `jacobian!!` fills
-    solver_dl = init(
-        prob_analytic, copy(z0), Newton(; globalization = DogLeg()), p_val;
-        f_abstol = 1e-10, f_reltol = 0.0
-    )
-    _, st_dl = solve!(solver_dl)
-    @test st_dl.code === SUCCESS
-    @test st_dl.fnorm <= 1e-10
-    @test solver_dl.state.J !== st.fac.factors
-    @test getcolptr(solver_dl.state.J) == getcolptr(P)
-    @test rowvals(solver_dl.state.J) == rowvals(P)
     which_fac = which(
         GeometricSolvers.factorize!!, (typeof(st.fac), typeof(m.linsolve), typeof(st.J))
     )
@@ -88,6 +70,33 @@ include("../helpers/sparse_problems.jl")
     fac2 = GeometricSolvers.factorize!!(st.fac, LUFactorization(), J_other)
     @test fac2.info == 0
     @test nonzeros(fac2.factors) == nonzeros(J_other)
+end
+
+@testset "DogLeg Jacobian buffer: T = $T" for T in REAL_ELTYPES
+    tol = T === Float64 ? 1e-10 : 1.0f-4
+    prob_analytic, _, z0, p_val, _ = sparse_bracket_problem(125, T)
+    P = GeometricSolvers.jacobian_prototype(prob_analytic)
+
+    # DogLeg reads the Jacobian from a buffer of its own, so that buffer carries the prototype's
+    # pattern and is the matrix that `jacobian!!` fills
+    solver = init(prob_analytic, copy(z0), Newton(), p_val)
+    J_dl = GeometricSolvers.init_newton_J(
+        Newton(; globalization = DogLeg()), solver.state.fac, z0)
+    @test J_dl isa SparseMatrixCSC{T, Int}
+    @test J_dl !== solver.state.fac.factors
+    @test getcolptr(J_dl) == getcolptr(P)
+    @test rowvals(J_dl) == rowvals(P)
+
+    solver_dl = init(
+        prob_analytic, copy(z0), Newton(; globalization = DogLeg()), p_val;
+        f_abstol = tol, f_reltol = zero(T)
+    )
+    _, st_dl = solve!(solver_dl)
+    @test st_dl.code === SUCCESS
+    @test st_dl.fnorm <= tol
+    @test solver_dl.state.J !== solver_dl.state.fac.factors
+    @test getcolptr(solver_dl.state.J) == getcolptr(P)
+    @test rowvals(solver_dl.state.J) == rowvals(P)
 end
 
 @testset "V-shaped sparse problem: N = $N, T = $T" for N in (125, 768), T in REAL_ELTYPES
@@ -171,8 +180,9 @@ end
     @test any(iszero, nonzeros(J_ana))
 end
 
-@testset "Detector override, prototype element types, and structural zeros" begin
-    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125)
+@testset "Detector override: N = $N, T = $T" for N in (125, 768), T in REAL_ELTYPES
+
+    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(N, T)
     P = GeometricSolvers.jacobian_prototype(prob_analytic)
 
     # KnownJacobianSparsityDetector(P) overrides a user-supplied detector (DenseSparsityDetector or NoSparsityDetector)
@@ -191,14 +201,27 @@ end
         )
         )
         solver_det = init(prob_cnt, copy(z0), m_det, p_val)
-        @test calls[] <= 24
+        ncols = length(column_groups(solver_det.state.jacprep.jacprep))
+        @test ncols <= 24
+        @test calls[] <= ncols
+        if N == 768
+            @test ncols < (2 * N) ÷ 12
+        end
         calls[] = 0
         J_det = copy(P)
         GeometricSolvers.jacobian!!(
             J_det, solver_det.state.jacprep, prob_cnt, z0, p_val
         )
-        @test 1 <= calls[] <= 24
+        @test 1 <= calls[] <= ncols
+        if N == 768
+            @test calls[] < (2 * N) ÷ 12
+        end
     end
+end
+
+@testset "Prototype element types and structural zeros" begin
+    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125, Float64)
+    P = GeometricSolvers.jacobian_prototype(prob_analytic)
 
     # Prototype with different element type (Bool and Float32 and Float64-for-Float32) is never mutated
     P_bool = SparseMatrixCSC(
@@ -251,7 +274,7 @@ end
 end
 
 @testset "Globalization, chord reuse, and R1/R2 ignore prototype" begin
-    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125)
+    prob_analytic, prob_ad, z0, p_val, _ = sparse_bracket_problem(125, Float64)
     ad_b = AutoSparse(
         AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm())
     for g in (Backtracking(), Bisection())
@@ -486,7 +509,7 @@ end
     # Default Newton() (ChunkedForwardDiff) with sparse prototype and no analytic J raises MethodError
     @test_throws MethodError solve(prob_ad, copy(z0), Newton(), p_val)
 
-    # Analytic J! that mutates rowvals, colptr, or writes outside the sparsity pattern raises ArgumentError
+    # Analytic J! that mutates rowvals raises ArgumentError
     prob_mut_row = NonlinearProblem(
         prob_analytic.F,
         (J, x, p) -> (prob_analytic.J(J, x, p); rowvals(J)[1] = 250; J);
@@ -508,6 +531,22 @@ end
         jacobian_prototype = P_small
     )
     @test_throws ArgumentError solve(prob_out, [2.0, 2.0], Newton())
+
+    # Moving one entry to another column leaves `rowvals` the same and changes only `colptr`: the
+    # stored entries (1, 1) and (2, 2) become (1, 1) and (2, 1)
+    prob_mut_colptr = NonlinearProblem(
+        (r, x, p) -> (r .= x .- 1.0; r),
+        (J, x, p) -> (copyto!(nonzeros(J), (1.0, 1.0)); getcolptr(J)[2] += 1; J);
+        jacobian_prototype = P_small
+    )
+    err_colptr = try
+        solve(prob_mut_colptr, [2.0, 2.0], Newton())
+        nothing
+    catch e
+        e
+    end
+    @test err_colptr isa ArgumentError
+    @test occursin("jacobian_prototype", sprint(showerror, err_colptr))
 
     # Regularisation > 0 on a prototype missing a diagonal entry mutates the pattern and raises ArgumentError
     P_nodiag = sparse([1, 2], [2, 1], [1.0, 1.0], 2, 2)
