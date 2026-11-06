@@ -4,7 +4,8 @@ solvers run on the CPU and on CUDA, ROCm and Metal devices through KernelAbstrac
 """
 module GeometricSolvers
 
-using ADTypes: AbstractADType, AutoForwardDiff
+using ADTypes: AbstractADType, AutoForwardDiff, AutoSparse, KnownJacobianSparsityDetector,
+               coloring_algorithm, dense_ad
 using Adapt: Adapt
 import CommonSolve: init, solve, solve!
 using DifferentiationInterface: DifferentiationInterface as DI
@@ -14,6 +15,7 @@ using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
                           get_backend, isgpu, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, ldiv!,
                      lu!, mul!, qr!
+using SparseArrays: SparseArrays
 using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
                     StaticMatrix, StaticVector, SVector,
                     setindex
