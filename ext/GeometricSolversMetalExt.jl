@@ -6,8 +6,18 @@
 module GeometricSolversMetalExt
 
 using GeometricSolvers: GeometricSolvers, DeviceLU, LUFactorization
-using LinearAlgebra: LinearAlgebra, BlasInt, LU
+using LinearAlgebra: LinearAlgebra, BlasInt, LU, diagind
 using Metal: MtlMatrix, MtlVector
+
+# `info` of an MPS factorisation that reports the status `-2`: MPS reports a singular matrix
+# without the index of its pivot, so `info` is the first index of the smallest `|aᵢᵢ|` over the
+# diagonal of the factors, read by one host copy of that diagonal as `_cusolver_qr_info` reads
+# its own.
+function _mps_lu_info(A::AbstractMatrix)
+    diag_A = Array(@view(A[diagind(A)]))
+    _, i = findmin(abs, diag_A)
+    return Int(i)
+end
 
 function _mps_lu_finish!(
         fac::DeviceLU{<:MtlMatrix{Float32}},
@@ -21,7 +31,7 @@ function _mps_lu_finish!(
         return DeviceLU(fac.factors, fac.ipiv, fac.rhs, 0, e, fac.status)
     elseif status_code == -2 || status_code > 0
         fac.ipiv === F_ipiv || (fac.ipiv .= Int32.(F_ipiv))
-        info = status_code > 0 ? Int(status_code) : 1
+        info = status_code > 0 ? Int(status_code) : _mps_lu_info(fac.factors)
         return DeviceLU(fac.factors, fac.ipiv, fac.rhs, info, e, fac.status)
     else
         return GeometricSolvers.ka_factorize_lu!(fac, J)

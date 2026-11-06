@@ -8,10 +8,11 @@ using GeometricSolvers
 using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
 using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
 using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!,
-                        ka_factorize_lu!, ka_lu_backsolve!, ldiv!!, returncode
+                        ka_factorize_lu!, ldiv!!, returncode
 
 include("../helpers/matrix.jl")
 include("../helpers/metal_device.jl")
+include("../helpers/own_kernel.jl")
 
 if Metal.functional() && !on_virtual_gpu()
     allowscalar(false)
@@ -20,34 +21,7 @@ if Metal.functional() && !on_virtual_gpu()
 
     metal_vendor_noop(r, y, p) = nothing
 
-    # Asserts that `factorize!!` and `backsolve!` on a factor of `T` on storage `S` keep the own
-    # KA kernels of `src/linear/ka/`, for an element type that no MPS path covers. `Float16` is
-    # reached through `which` only, never through a factorisation: a `Float16` factorisation on
-    # Metal crashes the process (§10.D finding 2).
-    function ka_retention(T::Type, S::Type)
-        Mat = MtlMatrix{T, S}
-        Vec = MtlVector{T, S}
-        VecR = MtlVector{real(T), S}
-        VecI32 = MtlVector{Int32, S}
-        DevLU = DeviceLU{Mat, VecI32, Nothing, VecI32}
-        m_lu_fac = which(factorize!!, (DevLU, LUFactorization{Nothing}, Mat))
-        m_lu_bs = which(backsolve!, (DevLU, Vec))
-        @test m_lu_fac.module === GeometricSolvers
-        @test m_lu_bs.module === GeometricSolvers
-        @test endswith(replace(String(m_lu_fac.file), '\\' => '/'), "src/linear/ka/lu.jl")
-        @test endswith(replace(String(m_lu_bs.file), '\\' => '/'), "src/linear/ka/lu.jl")
-        DevQR = DeviceQR{Mat, Vec, Nothing, VecI32}
-        @test which(factorize!!, (DevQR, QRFactorization{Nothing}, Mat)).module ===
-              GeometricSolvers
-        @test which(backsolve!, (DevQR, Vec)).module === GeometricSolvers
-        DevSVD = DeviceSVD{Mat, VecR, VecI32, Vec, Nothing}
-        @test which(factorize!!, (DevSVD, SVDFactorization{Nothing}, Mat)).module ===
-              GeometricSolvers
-        @test which(backsolve!, (DevSVD, Vec)).module === GeometricSolvers
-        return nothing
-    end
-
-    @testset "GeometricSolversMetalExt dispatch, KA retention, and Metal census alignment" begin
+    @testset "GeometricSolversMetalExt dispatch and Metal census alignment" begin
         ext_mtl = Base.get_extension(GeometricSolvers, :GeometricSolversMetalExt)
         @test ext_mtl !== nothing
 
@@ -74,27 +48,27 @@ if Metal.functional() && !on_virtual_gpu()
                 backsolve!, (DevLU_F32, VecF32); optimize = false))[1])
             @test occursin("ldiv!", ci_bs) && !occursin("ka_lu_backsolve!", ci_bs)
 
-            # The element types that no MPS path covers keep the own KA kernels
-            ka_retention(ComplexF32, S)
-            ka_retention(Float16, S)
-        end
-
-        # Metal capability census alignment: `Float32` `lu!` is the sole pass factorisation cell
-        # of `ELTYPES` that `GeometricSolversMetalExt` covers.
-        VecI32_P = MtlVector{Int32, Metal.PrivateStorage}
-        for T in ELTYPES
-            Mat = MtlMatrix{T, Metal.PrivateStorage}
-            Vec = MtlVector{T, Metal.PrivateStorage}
-            VecR = MtlVector{real(T), Metal.PrivateStorage}
-            DevLU = DeviceLU{Mat, VecI32_P, Nothing, VecI32_P}
-            DevQR = DeviceQR{Mat, Vec, Nothing, VecI32_P}
-            DevSVD = DeviceSVD{Mat, VecR, VecI32_P, Vec, Nothing}
-            @test (which(factorize!!, (DevLU, LUFactorization{Nothing}, Mat)).module ===
-                   ext_mtl) == (T === Float32)
-            @test which(factorize!!, (DevQR, QRFactorization{Nothing}, Mat)).module ===
-                  GeometricSolvers
-            @test which(factorize!!, (DevSVD, SVDFactorization{Nothing}, Mat)).module ===
-                  GeometricSolvers
+            # Metal capability census alignment: of the `(T, factor)` cells for `T ∈ ELTYPES ∪
+            # {Float16}` and the three device factors, `(Float32, DeviceLU)` alone has both
+            # `factorize!!` and `backsolve!` in `GeometricSolversMetalExt`, and every other cell
+            # has neither and keeps the own KA kernels of `src/linear/ka/`. `Float16` is reached
+            # through `which` only, never through a factorisation: a `Float16` factorisation on
+            # Metal crashes the process (§10.D finding 2).
+            for T in (ELTYPES..., Float16)
+                Mat = MtlMatrix{T, S}
+                Vec = MtlVector{T, S}
+                DevLU = DeviceLU{Mat, VecI32, Nothing, VecI32}
+                DevQR = DeviceQR{Mat, Vec, Nothing, VecI32}
+                DevSVD = DeviceSVD{Mat, MtlVector{real(T), S}, VecI32, Vec, Nothing}
+                cells = ((DevLU, LUFactorization{Nothing}, T === Float32),
+                    (DevQR, QRFactorization{Nothing}, false),
+                    (DevSVD, SVDFactorization{Nothing}, false))
+                for (Fac, method, in_ext) in cells
+                    @test (which(factorize!!, (Fac, method, Mat)).module === ext_mtl) ==
+                          in_ext
+                    @test (which(backsolve!, (Fac, Vec)).module === ext_mtl) == in_ext
+                end
+            end
         end
     end
 
@@ -131,8 +105,7 @@ if Metal.functional() && !on_virtual_gpu()
 
         fac_ka = ka_factorize_lu!(fac_ka, dA)
         @test fac_ka.info == 0
-        copyto!(dx_ka, db)
-        ka_lu_backsolve!(fac_ka, dx_ka)
+        own_kernel_ldiv!(dx_ka, fac_ka, db)
 
         x_ext = Array(dx_ext)
         x_ka = Array(dx_ka)
@@ -199,23 +172,27 @@ if Metal.functional() && !on_virtual_gpu()
         d0 = ldiv!!(similar(x0), fac0, b0)
         @test length(d0) == 0
 
-        # Singular matrices: equal rows (MPS status -2), zero matrix, zero column 2
+        # Singular matrices: equal rows (MPS status -2), zero matrix, zero column 2. `info` is the
+        # pivot that the own kernel names: MPS reports `-2` without an index, so the extension
+        # takes the first index of the smallest `|aᵢᵢ|` of its factors.
         x4 = MtlArray(zeros(Float32, 4))
         prob4 = NonlinearProblem(x4, metal_vendor_noop)
+        ka_info(A) = ka_factorize_lu!(dense_factor(m, prob4, x4, nothing), MtlArray(A)).info
+
         A_sing = Float32[1 2 3 4; 1 2 3 4; 0 1 1 1; 0 0 1 2]
         fac_sing = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_sing))
-        @test fac_sing.info > 0
+        @test fac_sing.info == ka_info(A_sing)
         @test returncode(fac_sing) === SINGULAR
 
         fac_z = factorize!!(
             dense_factor(m, prob4, x4, nothing), m, MtlArray(zeros(Float32, 4, 4)))
-        @test fac_z.info > 0
+        @test fac_z.info == ka_info(zeros(Float32, 4, 4))
         @test returncode(fac_z) === SINGULAR
 
         A_c2 = Matrix{Float32}(I, 4, 4)
         A_c2[:, 2] .= 0.0f0
         fac_c2 = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_c2))
-        @test fac_c2.info > 0
+        @test fac_c2.info == ka_info(A_c2)
         @test returncode(fac_c2) === SINGULAR
 
         # Direct status mapping checks on _mps_lu_finish!: status 0, -2, >0, and <0 fallback
@@ -240,8 +217,10 @@ if Metal.functional() && !on_virtual_gpu()
             @test fac_st0.info == 0
             @test returncode(fac_st0) === SUCCESS
 
+            # the factors of `[4 1; 1 3]` have the diagonal `[4, 2.75]`, so the smallest `|aᵢᵢ|`
+            # is the second
             fac_stm2 = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, -2)
-            @test fac_stm2.info == 1
+            @test fac_stm2.info == 2
             @test returncode(fac_stm2) === SINGULAR
 
             fac_stpos = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, 2)

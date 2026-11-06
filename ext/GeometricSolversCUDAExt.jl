@@ -134,6 +134,13 @@ function GeometricSolvers.factorize!!(
         fac.factors, fac.U, fac.S, fac.VT, fac.V,
         fac.σ̂, fac.flag, fac.tmp, fac.rhs, 0, 0, 0)
     RT = real(T)
+    # `J` goes into `fac.factors`, the Jacobian buffer that the factor documents and that a caller
+    # may pass back as `J`, and `J / 2^e` into `fac.U`, the matrix that `gesvdj!` factorises.
+    if eltype(J) === T
+        J === fac.factors || copyto!(fac.factors, J)
+    else
+        fac.factors .= J
+    end
     if !all(isfinite, J)
         fill!(fac.flag, Int32(1))
         fill!(fac.S, zero(RT))
@@ -143,8 +150,8 @@ function GeometricSolvers.factorize!!(
             fac.σ̂, fac.flag, fac.tmp, fac.rhs, 1, 0, 0)
     end
     e = GeometricSolvers.matrix_exponent(J)
-    fac.factors .= GeometricSolvers.ldexp2.(J, -e)
-    if !all(isfinite, fac.factors)
+    fac.U .= GeometricSolvers.ldexp2.(J, -e)
+    if !all(isfinite, fac.U)
         fill!(fac.flag, Int32(1))
         fill!(fac.S, zero(RT))
         fill!(fac.σ̂, zero(RT))
@@ -152,7 +159,7 @@ function GeometricSolvers.factorize!!(
             fac.factors, fac.U, fac.S, fac.VT, fac.V,
             fac.σ̂, fac.flag, fac.tmp, fac.rhs, 1, 0, e)
     end
-    U, S, V = CUDA.CUSOLVER.gesvdj!('V', 1, fac.factors)
+    U, S, V = CUDA.CUSOLVER.gesvdj!('V', 1, fac.U)
     info_c = Int(Array(CUDA.CUSOLVER.dense_handle().info)[1])
     return _cusolver_svd_finish!(fac, J, U, S, V, info_c, e)
 end

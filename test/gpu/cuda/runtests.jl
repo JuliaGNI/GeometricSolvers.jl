@@ -11,9 +11,10 @@ using GeometricSolvers: LUFactorization, Newton, NonlinearProblem, QRFactorizati
                         SVDFactorization
 using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factor_eltype,
                         factorize!!, init, jacobi_tolerance, ka_factorize_lu!,
-                        ka_factorize_qr!, ka_factorize_svd!, ka_lu_backsolve!,
-                        ka_qr_backsolve!, ka_svd_backsolve!, ldiv!!, returncode, solve,
+                        ka_factorize_qr!, ka_factorize_svd!, ldiv!!, returncode, solve,
                         solve!
+
+include("../../helpers/own_kernel.jl")
 
 @testset "GeometricSolversCUDAExt extension loading, dispatch, and CUDA census alignment" begin
     ext_cuda = Base.get_extension(GeometricSolvers, :GeometricSolversCUDAExt)
@@ -101,19 +102,6 @@ if CUDA.functional()
 
     const CUDA_BLAS_ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
 
-    function cuda_well_conditioned(T::Type, n::Int, seed::Integer = 0x5eed)
-        rng = Xoshiro(seed + n)
-        if n <= 256
-            A = randn(rng, T, n, n) + T(2 * n) * Matrix{T}(I, n, n)
-        else
-            A = Matrix{T}(Diagonal(fill(T(4), n)))
-            A[1:16, 1:16] .+= randn(rng, T, 16, 16) .* real(T)(0.05)
-            A[(n - 15):n, (n - 15):n] .+= randn(rng, T, 16, 16) .* real(T)(0.05)
-        end
-        b = randn(rng, T, n)
-        return A, b
-    end
-
     function cuda_rank_deficient(seed::Integer, ::Type{T}, n::Int, r::Int) where {T}
         rng = Xoshiro(seed)
         U = Matrix{T}(qr(randn(rng, T, n, n)).Q)
@@ -160,15 +148,8 @@ if CUDA.functional()
                     @test maximum(abs.(S_ext .- S_ka)) <= 8 * n * epsT * S_ka[1]
                 end
                 @test fac_ka.info == 0
-                # the own KA kernel; the extension's LU and QR `backsolve!` calls cuSOLVER
-                copyto!(dx_ka, db)
-                if M === LUFactorization
-                    ka_lu_backsolve!(fac_ka, dx_ka)
-                elseif M === QRFactorization
-                    ka_qr_backsolve!(fac_ka, dx_ka)
-                else
-                    ka_svd_backsolve!(fac_ka, dx_ka)
-                end
+                # the own KA kernels, the reference of `test/devices/own_kernel.jl`
+                own_kernel_ldiv!(dx_ka, fac_ka, db)
 
                 x_ext = Array(dx_ext)
                 x_ka = Array(dx_ka)
@@ -212,12 +193,7 @@ if CUDA.functional()
                         fac_ka = ka_factorize_qr!(fac_ka, dA)
                     end
                     @test fac_ka.info == 0
-                    copyto!(dx_ka, db)
-                    if M === LUFactorization
-                        ka_lu_backsolve!(fac_ka, dx_ka)
-                    else
-                        ka_qr_backsolve!(fac_ka, dx_ka)
-                    end
+                    own_kernel_ldiv!(dx_ka, fac_ka, db)
                     x_ka = Array(dx_ka)
                     @test norm(x_ext - x_ka, Inf) / max(norm(x_ka, Inf), epsT) <=
                           8 * n * epsT * κ
@@ -255,8 +231,7 @@ if CUDA.functional()
                 @test fac_ka.info == 0
 
                 # the own KA kernel; the extension's SVD `backsolve!` delegates to it
-                copyto!(dx_ka, db)
-                ka_svd_backsolve!(fac_ka, dx_ka)
+                own_kernel_ldiv!(dx_ka, fac_ka, db)
 
                 x_ext = Array(dx_ext)
                 x_ka = Array(dx_ka)
@@ -291,12 +266,8 @@ if CUDA.functional()
                 else
                     fac_ka = ka_factorize_qr!(fac_ka, dA)
                 end
-                copyto!(dx_ka, db)
-                if M === LUFactorization
-                    ka_lu_backsolve!(fac_ka, dx_ka)
-                else
-                    ka_qr_backsolve!(fac_ka, dx_ka)
-                end
+                # the own KA kernels in the factor element type `Float32`
+                own_kernel_ldiv!(dx_ka, fac_ka, db)
 
                 x_ext = Array(dx_ext)
                 x_ka = Array(dx_ka)
@@ -335,8 +306,7 @@ if CUDA.functional()
             @test maximum(abs.(S_ext .- S_ka)) <= 8 * n * Float64(eps(Float32)) * S_ka[1]
 
             # the own KA kernel; the extension's SVD `backsolve!` delegates to it
-            copyto!(dx_ka, db)
-            ka_svd_backsolve!(fac_ka, dx_ka)
+            own_kernel_ldiv!(dx_ka, fac_ka, db)
 
             x_ext = Array(dx_ext)
             x_ka = Array(dx_ka)
@@ -461,6 +431,21 @@ if CUDA.functional()
         @test fac_nan.info == 1
         @test Array(fac_nan.flag)[1] == Int32(1)
         @test returncode(fac_nan) === SINGULAR
+
+        # `gesvdj!` factorises `J / 2^e` in `fac.U`, and `fac.factors` keeps `J`: both where the
+        # caller passes the factor buffer back as `J` and where it passes another matrix.
+        A_keep = T[4 1; 1 3]
+        dx_keep = CuArray(zeros(T, 2))
+        fac_keep = dense_factor(
+            m_svd, NonlinearProblem(dx_keep, cuda_noop), dx_keep, nothing)
+        copyto!(fac_keep.factors, CuArray(A_keep))
+        fac_keep = factorize!!(fac_keep, m_svd, fac_keep.factors)
+        @test fac_keep.info == 0
+        @test Array(fac_keep.factors) == A_keep
+        A_keep2 = T[3 1; 2 5]
+        fac_keep = factorize!!(fac_keep, m_svd, CuArray(A_keep2))
+        @test fac_keep.info == 0
+        @test Array(fac_keep.factors) == A_keep2
     end
 
     @testset "CUDA capability census probe" begin

@@ -21,6 +21,7 @@ if "core" in GROUPS
     @safetestset "Jacobi eigensolver" include("linear/static/eigen.jl")
     @safetestset "Dense linear solvers" include("linear/dense.jl")
     @safetestset "KA dense linear solvers" include("linear/ka.jl")
+    @safetestset "Own-kernel reference solve" include("devices/own_kernel.jl")
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Factor status and rank" include("linear/status.jl")
     @safetestset "Line searches" include("globalization/linesearch.jl")
