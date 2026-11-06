@@ -76,17 +76,19 @@
   `src/globalization/dogleg.jl`
 - **evidence:** With `F(x, p) = SVector(x[1] + 0.4x[1]^3 - 1, -x[2] + 0.4x[2]^3 + 2)`,
   `prob = NonlinearProblem(F)` and `solve(prob, SVector(0.8, 1.5), Newton(; linsolve =
-  LUFactorization(), globalization = g))`, the tree of `0cf64d7` returns
+  LUFactorization(), globalization = g))`, the tree of `613c564` returns
   `Bisection: [0.7985352209656604, 0.9128709291833161] LINESEARCH_FAILED it=3`,
   `StrongWolfe: [0.7972843024431895, 0.912870914067057] STALLED it=9` and
   `DogLeg: [0.7972810583101553, 0.9128713775004471] LINESEARCH_FAILED it=14`, while `Static` and
   `Backtracking` return `SUCCESS` at the root `[0.7972810583155764, -2.1876029597039026]` (Julia
-  1.13.3, cold process). The same three fail on the stationarity problem of that action in
+  1.13.3). The same three fail on the stationarity problem of that action in
   `test/nonlinear/stationarity.jl`, with `LDLTFactorization()` and with the same iterates, so the
-  fault is in the globalizations and not in the problem type. Along the Newton direction at the
-  starting point `‖F‖₂²` falls from `3.42252304` at `α = 0` to `3.42183864` at `α = 1e-4` and
-  `2.61197704` at `α = 1`, so a short enough step exists; the three searches stop with
-  `stepnorm = 0` at a point where the second component of the residual is `1.3914`.
+  outcome does not depend on the problem type. The three stop next to
+  `x̂ = [0.7972810583155764, 1/√1.2]`, where `F(x̂) = [0, 1.3914193805498154]`, the Jacobian is
+  singular (`−1 + 1.2x̂₂² = 0`), and `‖F‖₂²` has a strict local minimum: `‖F(x̂)‖₂² = 1.9360478926`,
+  its `ForwardDiff` gradient is `[0, 0]` and its Hessian has the eigenvalues `6.0969` and `6.2148`.
+  So the measurement shows the three searches stopping at a nonzero local minimum of their merit,
+  not a defect in them.
 - **kind:** found late
 - **found:** 2026-11-06
 
