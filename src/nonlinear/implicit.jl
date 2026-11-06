@@ -348,22 +348,6 @@ function _implicit_tangent(
     return x_out, status
 end
 
-@inline _merge_options(::Type{T}, options::Nothing, kwargs) where {T} = options, kwargs
-@inline function _merge_options(::Type{T}, options::Options, kwargs) where {T}
-    isempty(kwargs) && return options, kwargs
-    check_options(T, options)
-    merged = Options(T;
-        f_abstol = options.f_abstol,
-        f_reltol = options.f_reltol,
-        x_abstol = options.x_abstol,
-        x_reltol = options.x_reltol,
-        min_iterations = options.min_iterations,
-        max_iterations = options.max_iterations,
-        max_stalls = options.max_stalls,
-        kwargs...)
-    return merged, (;)
-end
-
 function solve_implicit(
         prob::NonlinearProblem, x₀, method, p,
         options::Union{Nothing, Options}, kwargs)
@@ -378,8 +362,7 @@ function solve_implicit(
         throw(ArgumentError(
             "Adapt.adapt(StripDual(), ...) left a ForwardDiff.Dual in x₀ or p; mark custom parameter structs with Adapt.@adapt_structure"))
     end
-    opt_in, kw_in = _merge_options(eltype(x_val), options, kwargs)
-    x, m, opt, state = prepare_solve(prob, x_val, method, p_val, opt_in, kw_in)
+    x, m, opt, state = prepare_solve(prob, x_val, method, p_val, options, kwargs)
     x_star, status, state = solve!!(state, prob, x, m, p_val, opt)
     D = _working_dual_type(D_in, eltype(x_star))
     if status.code !== SUCCESS

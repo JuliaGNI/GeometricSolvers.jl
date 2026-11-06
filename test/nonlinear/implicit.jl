@@ -859,6 +859,13 @@ end
     @test_throws "Adapt.adapt(StripDual()" solve(
         prob_unadapt_primal_ok, x0, Newton(), UnadaptedParam(dA))
 
+    # options together with keyword tolerances, refused as on primal inputs
+    opt_both = Options(Float64; f_abstol = 1e-14)
+    @test_throws "not both" solve(
+        PROB_VAL, x0, Newton(), p_dual; options = opt_both, f_reltol = 0.0)
+    @test_throws "not both" solve(
+        PROB_R3, Vector(x0), Newton(), collect(p_dual); options = opt_both, f_reltol = 0.0)
+
     # Dual captured inside prob.F (typed closure and untyped container reaching solve!!)
     prob_cap = NonlinearProblem((x, p) -> SVector(x[1]^2 - dA, x[2]^2 - dA))
     @test_throws ArgumentError solve(prob_cap, x0, Newton(), 2.0)

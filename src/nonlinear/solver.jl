@@ -90,7 +90,8 @@ When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` i
 returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds
 at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it returns `MAXITERS`
 with `0` iterations. `options` must be an `Options{real(eltype(x₀))}`; any other raises an
-`ArgumentError`.
+`ArgumentError`, and so does an `Fx` that contains a `ForwardDiff.Dual`: [`solve`](@ref) takes
+dual inputs.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
@@ -112,7 +113,7 @@ function solve!!(
     x = x₀
     Fx = residual!!(residual_buffer(state), prob, x, p)
     has_dual_type(typeof(Fx)) && throw(ArgumentError(
-        "solve!! residual contains a ForwardDiff.Dual on primal inputs; pass dual parameters through p to solve rather than capturing them in prob.F"))
+        "solve!! residual contains a ForwardDiff.Dual; solve!! takes primal x₀ and p and a prob that captures no ForwardDiff.Dual, so pass dual x₀ or p to solve(prob, x₀, method, p)"))
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
     status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)
@@ -298,7 +299,10 @@ strips duals via [`StripDual`](@ref), runs the primal nonlinear solve to `(x*, s
 `status.code === SUCCESS` solves the implicit-function-theorem tangent equation
 ``J(x^*, p)\\,\\dot{x}_k = -(\\partial F / \\partial p_k)(x^*, p)`` at `x*` from a single
 unregularised factorisation of ``J(x^*, p)`` and one dual residual evaluation ``F(\\hat{x}, p)``
-seeded with zero partials on ``\\hat{x}``. A non-`SUCCESS` primal solve returns primal values at
+seeded with zero partials on ``\\hat{x}``. Each tangent is one back-substitution with that factor,
+without `refinement`, so its accuracy is that of the factor element type of `linsolve`: with
+`LUFactorization(Float32)` on a `Float64` iterate, `x*` is accurate to `Float64` and the tangent
+to `Float32`. A non-`SUCCESS` primal solve returns primal values at
 `x*` with `NaN` partials and the primal `status`; a `SINGULAR` tangent factorisation at `x*`
 performs no back-substitution and returns primal values at `x*` with `NaN` partials and
 `status.code === SINGULAR`. Nested duals, distinct dual tags or partial counts across `x₀` and `p`,
