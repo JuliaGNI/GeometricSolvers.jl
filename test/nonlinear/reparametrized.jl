@@ -722,6 +722,40 @@ end
     @test_throws ArgumentError solve(rep_range, y0)
 end
 
+# The critical point of the quadratic action with the datum b is X_QUAD - (b₁ / 2, b₂ / 4); a
+# scalar b is b₁ = b₂.
+x_quad_datum(b) = X_QUAD - SVector(first(b) / 2, last(b) / 4)
+
+@testset "Datum b of init and solve through the chart in $R, b = $b" for (R, prob, chart, it, b) in (
+    ("R1", StationarityProblem(action_quad), g_polar, identity, SVector(1.0, 2.0)),
+    ("R1", StationarityProblem(action_quad), g_polar, identity, 0.5),
+    ("R3", StationarityProblem(action_quad_r3), g_polar!, Vector, [1.0, 2.0]),
+    ("R3", StationarityProblem(action_quad_r3), g_polar!, Vector, 0.5))
+    allowscalar(false)
+    y0 = it(SVector(1.5, 0.5))
+    rep = Reparametrized(prob, chart)
+    # The plain problem from the chart's initial point, with the same datum.
+    x_plain, _ = solve(prob, it(g_polar(SVector(1.5, 0.5), nothing)), Newton(); b = b)
+    @testset "solve" begin
+        x, st = solve(rep, y0, Newton(); b = b)
+        @test st.code == SUCCESS
+        @test norm(x - x_plain) <= 1e-8
+        @test norm(x - x_quad_datum(b)) <= 1e-8
+    end
+    @testset "init and solve!" begin
+        x, st = solve!(init(rep, y0; b = b))
+        @test st.code == SUCCESS
+        @test norm(x - x_plain) <= 1e-8
+        @test norm(x - x_quad_datum(b)) <= 1e-8
+    end
+end
+
+@testset "Datum b of a chart around a NonlinearProblem" begin
+    rep_nl = Reparametrized(NonlinearProblem(f_polar_target), g_polar)
+    @test_throws ArgumentError solve(rep_nl, SVector(1.5, 0.5); b = 1.0)
+    @test_throws ArgumentError init(rep_nl, SVector(1.5, 0.5); b = 1.0)
+end
+
 @testset "R3 chart Jacobian off ∂g in more than one AD chunk ($Arr)" for Arr in ARRAY_BACKENDS
     # The AD chart Jacobian fills one chunk of columns per pass, and a chart of 16 coordinates
     # takes more than one pass at the default chunk size and at the two-column chunk below. A

@@ -8,7 +8,10 @@ Coordinate-chart wrapper `x = g(y, p)` around an [`AbstractNonlinearProblem`](@r
 Solving a `Reparametrized` problem iterates in the chart coordinates `y`. [`solve`](@ref) and
 [`init`](@ref) / [`solve!`](@ref) return `(x*, status)` and [`solve!!`](@ref) returns
 `(x*, status, state)`, where `x* = g(y*, p)` is evaluated at the returned chart iterate `y*`;
-[`solve_batch!`](@ref) writes each system's `x*` into the batch.
+[`solve_batch!`](@ref) writes each system's `x*` into the batch. For a
+[`StationarityProblem`](@ref), the keyword `b` of [`init`](@ref) and [`solve`](@ref) sets the
+datum of the inner problem, as it does without the chart; with any other inner problem, `b`
+raises an `ArgumentError`.
 
 # Arguments and keywords
 
@@ -985,26 +988,32 @@ function solve_batch!(
     return _tally_return_codes(Array(_launch!(Y, codes, reparam, m, p, opt, state₀, order)))
 end
 
-# Define CommonSolve.init, CommonSolve.solve, and CommonSolve.solve! for Reparametrized
-# and ReparametrizedSolver in an internal submodule so that `m.module === GeometricSolvers`
-# in `test/nonlinear/commonsolve.jl` continues to see only `NonlinearProblem` and
-# `NonlinearSolver`.
-module _ReparametrizedCommonSolve
-import CommonSolve: init, solve, solve!
-import ..GeometricSolvers: Newton, Reparametrized, ReparametrizedSolver
-import ..GeometricSolvers: _init_reparametrized, _solve_reparametrized,
-                           _solve_reparametrized_solver!
-
-function init(
-        reparam::Reparametrized, y₀, m = Newton(), p = nothing;
-        options = nothing, kw...)
-    return _init_reparametrized(reparam, y₀, m, p, options, kw)
+# The chart with the datum `b` of `init` or `solve` set on its inner `StationarityProblem`, as
+# `_init_stationarity` stores it. Any other inner problem takes no datum.
+function _with_datum(r::Reparametrized, b)
+    b === nothing || throw(ArgumentError(
+        "keyword `b` is only supported for a `Reparametrized` `StationarityProblem`"))
+    return r
 end
 
-function solve(
-        reparam::Reparametrized, y₀, m = Newton(), p = nothing;
-        options = nothing, kw...)
-    return _solve_reparametrized(reparam, y₀, m, p, options, kw)
+function _with_datum(
+        r::Reparametrized{P, G, DG, C, K}, b) where {P <: StationarityProblem, G, DG, C, K}
+    prob = _with_datum(r.prob, b)
+    return Reparametrized{typeof(prob), G, DG, C, K}(prob, r.g, r.∂g)
+end
+
+# `CommonSolve.init`, `CommonSolve.solve` and `CommonSolve.solve!` on `Reparametrized` and
+# `ReparametrizedSolver`, which add methods for types of this package to the functions imported
+# in `src/GeometricSolvers.jl`, as `src/nonlinear/stationarity.jl` does.
+
+function init(reparam::Reparametrized, y₀, m = Newton(), p = nothing;
+        b = nothing, options = nothing, kw...)
+    return _init_reparametrized(_with_datum(reparam, b), y₀, m, p, options, kw)
+end
+
+function solve(reparam::Reparametrized, y₀, m = Newton(), p = nothing;
+        b = nothing, options = nothing, kw...)
+    return _solve_reparametrized(_with_datum(reparam, b), y₀, m, p, options, kw)
 end
 
 function solve!(solver::ReparametrizedSolver)
@@ -1013,5 +1022,4 @@ end
 
 function solve!(solver::ReparametrizedSolver, y, p = solver.p)
     return _solve_reparametrized_solver!(solver, y, p)
-end
 end
