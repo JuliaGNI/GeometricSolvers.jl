@@ -35,6 +35,7 @@ if "core" in GROUPS
     @safetestset "Solver loop hooks" include("nonlinear/hooks.jl")
     @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")
     @safetestset "R3 nonlinear" include("nonlinear/r3.jl")
+    @safetestset "Implicit differentiation" include("nonlinear/implicit.jl")
     @safetestset "Rank-deficient Newton" include("nonlinear/rank_deficient.jl")
     @safetestset "Range and spectrum diagnostics" include("nonlinear/diagnostics.jl")
     @safetestset "CommonSolve interface" include("nonlinear/commonsolve.jl")
