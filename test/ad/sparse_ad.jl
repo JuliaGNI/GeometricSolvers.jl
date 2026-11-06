@@ -23,6 +23,17 @@ include(joinpath(@__DIR__, "..", "helpers", "sparse_problems.jl"))
 
 const GS = GeometricSolvers
 
+# The `AutoSparse` back end that every testset here uses: `TracerSparsityDetector` finds the
+# pattern and `GreedyColoringAlgorithm` colours it. `chunksize = nothing` leaves the chunk size to
+# `AutoForwardDiff`; `chunksize = 1` seeds one column per dual pass.
+function sparse_backend(; chunksize = nothing)
+    AutoSparse(
+        AutoForwardDiff(; chunksize);
+        sparsity_detector = TracerSparsityDetector(),
+        coloring_algorithm = GreedyColoringAlgorithm()
+    )
+end
+
 @testset "GeometricSolversSparseADExt automatic sparsity detection" begin
     ext_sparspak = Base.get_extension(GeometricSolvers, :GeometricSolversSparspakExt)
     @test ext_sparspak !== nothing
@@ -34,11 +45,7 @@ const GS = GeometricSolvers
         F_diag!(r, x, p) = (r .= x .^ 2 .- one(eltype(x)); r)
         prob = NonlinearProblem(F_diag!)
         @test prob.jacobian_prototype === nothing
-        backend = AutoSparse(
-            AutoForwardDiff();
-            sparsity_detector = TracerSparsityDetector(),
-            coloring_algorithm = GreedyColoringAlgorithm()
-        )
+        backend = sparse_backend()
         x0 = [1.5, 2.0]
         prep = GS.prepare_ad(backend, prob, similar(x0), x0, nothing)
 
@@ -68,11 +75,7 @@ const GS = GeometricSolvers
         @test n == 2 * N
         tol = T === Float32 ? 1.0f-4 : 1.0e-10
 
-        backend = AutoSparse(
-            AutoForwardDiff();
-            sparsity_detector = TracerSparsityDetector(),
-            coloring_algorithm = GreedyColoringAlgorithm()
-        )
+        backend = sparse_backend()
 
         # Counting wrapper on F!
         eval_count = Ref(0)
@@ -128,11 +131,7 @@ const GS = GeometricSolvers
         # `AutoForwardDiff(; chunksize = 1)` seeds one column per dual pass, so one `jacobian!!`
         # evaluates the residual exactly once per colour. The default chunk size packs several
         # colour groups into one pass and needs fewer evaluations than there are colours.
-        backend_c1 = AutoSparse(
-            AutoForwardDiff(; chunksize = 1);
-            sparsity_detector = TracerSparsityDetector(),
-            coloring_algorithm = GreedyColoringAlgorithm()
-        )
+        backend_c1 = sparse_backend(; chunksize = 1)
         prep_c1 = GS.prepare_ad(backend_c1, prob_counted, similar(z0), z0, p_val)
         @test length(column_groups(prep_c1.jacprep)) == ncolors
 
@@ -151,24 +150,19 @@ const GS = GeometricSolvers
         @test Matrix(J_star_c1) == J_fd_star
     end
 
-    @testset "All-coupled dense residual detected as n x n SparseMatrixCSC with n colours" begin
+    @testset "All-coupled dense residual detected as n x n SparseMatrixCSC with n colours (T = $T)" for T in REAL_ELTYPES
         n = 6
         function F_dense!(r, x, p)
             s = sum(x)
             @inbounds for i in eachindex(r, x)
-                r[i] = x[i]^2 + T_val(0.05, eltype(x)) * s - one(eltype(x))
+                r[i] = x[i]^2 + T(0.05) * s - one(T)
             end
             return r
         end
-        T_val(v, ::Type{T}) where {T} = T(v)
 
         prob_dense = NonlinearProblem(F_dense!)
-        backend = AutoSparse(
-            AutoForwardDiff();
-            sparsity_detector = TracerSparsityDetector(),
-            coloring_algorithm = GreedyColoringAlgorithm()
-        )
-        x0 = fill(1.2, n)
+        backend = sparse_backend()
+        x0 = fill(T(1.2), n)
         prep = GS.prepare_ad(backend, prob_dense, similar(x0), x0, nothing)
         pat = GS.jacobian_pattern(prob_dense, prep)
         @test pat isa SparseMatrixCSC{<:Any, Int}
@@ -176,29 +170,27 @@ const GS = GeometricSolvers
         @test nnz(pat) == n * n
         @test length(column_groups(prep.jacprep)) == n
 
+        # Measured on the last step: ‖F‖ = 1.75f-6 in `Float32` and 3.2e-13 in `Float64`.
+        tol = T === Float32 ? 1.0f-4 : 1.0e-10
         solver = init(
             prob_dense, copy(x0), Newton(; jacobian = backend);
-            f_abstol = 1.0e-10, f_reltol = 0.0
+            f_abstol = tol, f_reltol = zero(T)
         )
-        @test solver.state.fac isa ext_sparspak.SparspakLU{SparseMatrixCSC{Float64, Int}}
+        @test solver.state.fac isa ext_sparspak.SparspakLU{SparseMatrixCSC{T, Int}}
         x_sol, st = solve!(solver)
         @test st.code === SUCCESS
         r_sol = similar(x_sol)
         F_dense!(r_sol, x_sol, nothing)
-        @test norm(r_sol) <= 1.0e-10
+        @test norm(r_sol) <= tol
     end
 
-    @testset "Explicit jacobian_prototype wins over TracerSparsityDetector" begin
-        F_diag!(r, x, p) = (r .= x .^ 2 .- 1.0; r)
+    @testset "Explicit jacobian_prototype wins over TracerSparsityDetector (T = $T)" for T in REAL_ELTYPES
+        F_diag!(r, x, p) = (r .= x .^ 2 .- one(T); r)
         # Prototype with an extra stored structural entry at (1, 2)
-        P_explicit = sparse([1, 1, 2], [1, 2, 2], [1.0, 0.0, 1.0], 2, 2)
+        P_explicit = sparse([1, 1, 2], [1, 2, 2], T[1, 0, 1], 2, 2)
         prob_proto = NonlinearProblem(F_diag!; jacobian_prototype = P_explicit)
-        backend = AutoSparse(
-            AutoForwardDiff();
-            sparsity_detector = TracerSparsityDetector(),
-            coloring_algorithm = GreedyColoringAlgorithm()
-        )
-        x0 = [1.5, 2.0]
+        backend = sparse_backend()
+        x0 = T[1.5, 2.0]
         prep = GS.prepare_ad(backend, prob_proto, similar(x0), x0, nothing)
         @test prep.backend.sparsity_detector isa KnownJacobianSparsityDetector
         @test GS.jacobian_pattern(prob_proto, prep) === P_explicit
@@ -214,22 +206,19 @@ const GS = GeometricSolvers
 
         solver = init(
             prob_proto, copy(x0), Newton(; jacobian = backend);
-            f_abstol = 1.0e-12, f_reltol = 0.0
+            f_abstol = T === Float32 ? 1.0f-6 : 1.0e-12, f_reltol = zero(T)
         )
         @test findnz(solver.state.J)[1:2] == findnz(P_explicit)[1:2]
         x_sol, st = solve!(solver)
         @test st.code === SUCCESS
-        @test isapprox(x_sol, [1.0, 1.0]; atol = 1.0e-11)
+        @test isapprox(x_sol, ones(T, 2); atol = T === Float32 ? 1.0f-5 : 1.0e-11)
     end
 
+    # `Float64` only: K24 records that the globalised sparse solves are tested in `Float64` alone.
     @testset "Globalization (Backtracking JVP) with TracerSparsityDetector" begin
         _, prob_with_proto, z0, p_val, z_star = sparse_bracket_problem(125, Float64)
         prob = NonlinearProblem(prob_with_proto.F)
-        backend = AutoSparse(
-            AutoForwardDiff();
-            sparsity_detector = TracerSparsityDetector(),
-            coloring_algorithm = GreedyColoringAlgorithm()
-        )
+        backend = sparse_backend()
         solver = init(
             prob, copy(z0),
             Newton(; jacobian = backend, globalization = Backtracking()),
@@ -244,11 +233,7 @@ const GS = GeometricSolvers
     @testset "Guard rails: device array and invalid shapes" begin
         F_simple!(r, x, p) = (r .= x .^ 2 .- one(eltype(x)); r)
         prob = NonlinearProblem(F_simple!)
-        backend = AutoSparse(
-            AutoForwardDiff();
-            sparsity_detector = TracerSparsityDetector(),
-            coloring_algorithm = GreedyColoringAlgorithm()
-        )
+        backend = sparse_backend()
         x_dev = JLArray(Float32[1.5, 2.0])
         # The refusal is `prepare_ad`'s own, not whichever error the back end raises on a device
         # array afterwards: the message names the AutoForwardDiff-only rule.
@@ -269,10 +254,12 @@ const GS = GeometricSolvers
             backend, prob_badsz, similar(x_cpu), x_cpu, nothing)
     end
 
-    @testset "Clean subprocess without SparseConnectivityTracer has extension === nothing" begin
-        pkg_root = normpath(joinpath(@__DIR__, "..", ".."))
+    @testset "Subprocess with SparseMatrixColorings and no SparseConnectivityTracer" begin
+        # The extension takes both packages as triggers, so loading one of them must leave it
+        # unloaded: a trigger narrowed to `SparseMatrixColorings` alone would load it here.
         sub_code = """
         using GeometricSolvers
+        using SparseMatrixColorings
         ext = Base.get_extension(GeometricSolvers, :GeometricSolversSparseADExt)
         ext === nothing || error("expected nothing, got \$ext")
         """
@@ -282,7 +269,7 @@ const GS = GeometricSolvers
             copy(ENV)
         )
         proc = run(ignorestatus(setenv(
-            `$julia_exe --startup-file=no --compiled-modules=existing --project=$pkg_root -e $sub_code`,
+            `$julia_exe --startup-file=no --compiled-modules=existing --project=$(Base.active_project()) -e $sub_code`,
             env_clean
         )))
         @test proc.exitcode == 0
