@@ -308,3 +308,50 @@ function backsolve_shifted!(fac::DenseSVD{<:AbstractGPUArray{T}},
         d::AbstractVector{T}) where {T <: Number}
     return ka_svd_backsolve!(fac, d, true)
 end
+
+@kernel function ka_svd_null_residual_kernel!(
+        out, r, @Const(U), @Const(tmp), n::Int, rank::Int)
+    i = @index(Global, Linear)
+    @inbounds if i <= n
+        acc = zero(eltype(out))
+        for j in 1:rank
+            acc += U[i, j] * tmp[j]
+        end
+        out[i] = r[i] - acc
+    end
+end
+
+function ka_svd_nullnorm!(
+        out::AbstractVector{TF}, fac::DenseSVD{<:AbstractGPUArray{TF, 2}},
+        r::AbstractVector{TF}, rk::Int) where {TF}
+    n = length(r)
+    n == 0 && return zero(real(TF))
+    backend = get_backend(fac.U)
+    kbackend = ka_kernel_backend(backend)
+    GC.@preserve fac out r begin
+        tmp_k = ka_kernel_array(backend, fac.tmp)
+        U_k = ka_kernel_array(backend, fac.U)
+        r_k = ka_kernel_array(backend, r)
+        out_k = ka_kernel_array(backend, out)
+        ka_svd_ut_mul_kernel!(kbackend)(tmp_k, U_k, r_k, n, rk; ndrange = n)
+        ka_svd_null_residual_kernel!(kbackend)(out_k, r_k, U_k, tmp_k, n, rk; ndrange = n)
+    end
+    synchronize(kbackend)
+    return rnorm(out)
+end
+
+function factor_diagnostics(
+        d::AbstractVector{T}, fac::DenseSVD{<:AbstractGPUArray{TF, 2}},
+        r::AbstractVector{T}, fnorm::R) where {T, TF, R <: Real}
+    fac.info == 0 || return Int32(-1), R(NaN)
+    rk = fac.rank
+    rk == 0 && return Int32(0), fnorm
+    if TF === T
+        return Int32(rk), R(ka_svd_nullnorm!(d, fac, r, rk))
+    end
+    s = maximum(abs, r)
+    iszero(s) && return Int32(rk), zero(R)
+    rhs = fac.rhs::AbstractVector{TF}
+    rhs .= TF.(r ./ s)
+    return Int32(rk), R(ka_svd_nullnorm!(rhs, fac, rhs, rk)) * R(s)
+end

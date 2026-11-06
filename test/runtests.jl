@@ -35,6 +35,7 @@ if "core" in GROUPS
     @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")
     @safetestset "R3 nonlinear" include("nonlinear/r3.jl")
     @safetestset "Rank-deficient Newton" include("nonlinear/rank_deficient.jl")
+    @safetestset "Range and spectrum diagnostics" include("nonlinear/diagnostics.jl")
     @safetestset "CommonSolve interface" include("nonlinear/commonsolve.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")

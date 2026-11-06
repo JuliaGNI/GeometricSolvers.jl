@@ -14,6 +14,30 @@ is in `R = real(T)` for the element type `T` of the iterate.
   one count.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
+- `rank::Int32`: the numerical rank of the last fresh factorisation where it is an SVD factor
+  with `info == 0`, else `Int32(-1)`: no factorisation, an LU or QR factor, or a failed SVD
+  factor.
+- `nullnorm::R`: ``\\|(I - U_r U_r^H) F(x_k)\\|`` at the iterate ``x_k`` of the last fresh
+  factorisation, with ``U_r`` the first `rank` columns of ``U``, where `rank` is not
+  `Int32(-1)`, else `R(NaN)`.
+- `gradratio::R`: ``\\|J(x_k)^H F(x_k)\\| / (\\|J(x_k)\\|_F \\|F(x_k)\\|)`` at the iterate
+  ``x_k`` of the last fresh factorisation, `zero(R)` when ``\\|J(x_k)\\|_F = 0`` or
+  ``\\|F(x_k)\\| = 0``, or `R(NaN)` when no Jacobian was factorised.
+
+The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
+``x`` at return. With `regularization = μ ≠ 0`, `rank` and `nullnorm` are those of the
+factored matrix ``J(x_k) + μ I`` and `gradratio` is that of ``J(x_k)``, so the classification
+below holds for `μ = 0` only. For a [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any
+nonzero scalar Jacobian has `gradratio == 1`, and `rank == 1` with an SVD factor), they
+classify the outcome and a `STALLED` or
+`MAXITERS` return: a consistent rank-deficient system that converged has a small residual
+(`fnorm` small) and nothing outside the range (`rank < n`, `nullnorm ≈ 0`); a least-squares
+point with no root has a ratio near zero (`gradratio ≈ 0`, `fnorm > 0`) and the residual
+outside the range (`rank < n`, ``\\text{nullnorm} \\approx \\|F(x_k)\\| > 0``); a stall in
+nearly singular directions has the residual inside the range (`nullnorm ≈ 0`) at a fine SVD
+cutoff and outside it (`rank < n`, ``\\text{nullnorm} \\approx \\|F(x_k)\\|``) at a coarse
+cutoff; and an in-range stall from conditioning or step acceptance has `gradratio` bounded
+away from zero and `nullnorm ≈ 0`.
 
 The predicates `GeometricSolvers.isconverged` and `GeometricSolvers.isstalled` read the code. They
 are not exported, because they are generic names that a package doing `using GeometricSolvers`
@@ -26,6 +50,17 @@ struct SolverStatus{R <: Real}
     stepnorm::R
     step_failures::Int32
     promoted::Bool
+    rank::Int32
+    nullnorm::R
+    gradratio::R
+end
+
+@inline function SolverStatus{R}(
+        code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool) where {R <: Real}
+    return SolverStatus{R}(
+        code, iterations, fnorm, stepnorm, step_failures, promoted,
+        Int32(-1), R(NaN), R(NaN))
 end
 
 """
@@ -57,7 +92,8 @@ end
     record(status::SolverStatus{R}, info::StepInfo{R})
 
 Fold the result of one step into the status: count the iteration, take the code and the norms of
-the step, add its failures, and keep `promoted` once it is set.
+the step, add its failures, keep `promoted` once it is set, and preserve `rank`, `nullnorm` and
+`gradratio`.
 """
 function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
     SolverStatus{R}(info.code,
@@ -65,7 +101,10 @@ function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
         info.fnorm,
         info.stepnorm,
         status.step_failures + info.failures,
-        status.promoted | info.promoted)
+        status.promoted | info.promoted,
+        status.rank,
+        status.nullnorm,
+        status.gradratio)
 end
 
 const ReturnCodeCounts = NamedTuple{
