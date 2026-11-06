@@ -202,10 +202,11 @@ end
 
 # `r(x) = (x - 1, x - 2, 2x)` has its least-squares minimum at `x* = 1/2`, and a line search over a
 # measured slope stops where `g_tol = √eps` allows rather than at that minimum, `6e-9` short of it
-# in `Float64`. The assertion is therefore not an approximation of `x*` but the same problem written
-# by hand on `SVector{1}`: code, iteration count and iterate agree bit for bit, whichever Jacobian
-# source and method run, and the method's own operator takes the `Number` the caller's problem is
-# written for.
+# in `Float64`. The one-variable problem `r(x) = x² + x - 2` joins it, with a residual and a
+# hand-written derivative that are both `Number`s. The assertion is therefore not an approximation
+# of `x*` but the same problem written by hand on `SVector{1}`: code, iteration count and iterate
+# agree bit for bit, whichever Jacobian source and method run, and the method's own operator takes
+# the `Number` the caller's problem is written for.
 
 @testset "Number iterate: the same solve as the hand-written SVector{1} problem, $T" for T in REAL_ELTYPES
     f_num(x, p) = SVector(x - one(T), x - T(2), T(2) * x)
@@ -213,15 +214,28 @@ end
     j_mat(x, p) = SMatrix{3, 1, T, 3}(one(T), one(T), T(2))
     f_one(x, p) = SVector(x[1] - one(T), x[1] - T(2), T(2) * x[1])
     j_one(x, p) = SMatrix{3, 1, T, 3}(one(T), one(T), T(2))
+    # A `Number` residual (`m = 1`) with the derivative as a `Number` too: `x² + x - 2` has the
+    # nonzero derivative `1` at the start, so the lifted `1 × 1` Jacobian is that value.
+    f_sc(x, p) = x^2 + x - T(2)
+    j_sc(x, p) = T(2) * x + one(T)
+    f_sc_one(x, p) = SVector(x[1]^2 + x[1] - T(2))
+    j_sc_one(x, p) = SMatrix{1, 1, typeof(x[1]), 1}((T(2) * x[1] + one(T),))
     x0_num = zero(T)
     x0_one = SVector{1, T}(zero(T))
 
     # The Jacobian sources: the problem's `J` or the method's operator, each written as the column
     # `(1, 1, 2)` or as the `3 × 1` matrix, and the two automatic-differentiation sources. The
     # hand-written problem of a source written as a column carries the matrix, which is that
-    # source's lifted form.
+    # source's lifted form. The one-variable sources write the residual as a `Number` and, where the
+    # source is hand-written, the derivative too, so their lifted problems are the `1 × 1` ones.
     sources = [
         ("AD", LeastSquaresProblem(f_num), LeastSquaresProblem(f_one), (;), (;)),
+        ("Number residual, AD", LeastSquaresProblem(f_sc), LeastSquaresProblem(f_sc_one),
+            (;), (;)),
+        ("Number residual, problem J", LeastSquaresProblem(f_sc, j_sc),
+            LeastSquaresProblem(f_sc_one, j_sc_one), (;), (;)),
+        ("Number residual, method jacobian", LeastSquaresProblem(f_sc),
+            LeastSquaresProblem(f_sc_one), (; jacobian = j_sc), (; jacobian = j_sc_one)),
         ("problem J as a vector", LeastSquaresProblem(f_num, j_vec),
             LeastSquaresProblem(f_one, j_one), (;), (;)),
         ("problem J as a matrix", LeastSquaresProblem(f_num, j_mat),

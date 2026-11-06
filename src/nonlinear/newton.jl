@@ -345,30 +345,20 @@ end
 # `ScalarJacobian`, which read the `Number` out of the one-entry iterate and lift what the caller's
 # function returns.
 
-"""
-    ScalarResidual(F)
-
-The residual `F(x, p)` of a one-variable problem, called on the one-entry iterate `x` the vector
-path carries: `(x, p) -> lift_residual(F(first(x), p))`.
-
-Internal: [`lift_scalar_iterate`](@ref) builds it.
-"""
+# `ScalarResidual` is the residual `F(x, p)` of a one-variable problem, called on the one-entry
+# iterate `x` the vector path carries: `(x, p) -> lift_residual(F(first(x), p))`, which
+# `lift_scalar_iterate` builds.
 struct ScalarResidual{F}
     F::F
 end
 
 @inline (r::ScalarResidual)(x::SVector{1}, p) = lift_residual(r.F(first(x), p))
 
-"""
-    ScalarJacobian(J)
-
-The Jacobian `J(x, p)` of a one-variable problem, called on the one-entry iterate `x`: its value
-is the `M × 1` column of the `M`-entry residual's derivative, whether `J` returns that column or
-the one-entry matrix itself.
-
-Internal: [`lift_scalar_iterate`](@ref) builds it, and so does `lift_scalar_operator` for the
-Jacobian operator of a method.
-"""
+# `ScalarJacobian` is the Jacobian `J(x, p)` of a one-variable problem, called on the one-entry
+# iterate `x`: its value is the `M × 1` column of the `M`-entry residual's derivative, whether `J`
+# returns that column, the one-entry matrix, or — for `M = 1` — the derivative as a `Number`.
+# `lift_scalar_iterate` builds it, and so does `lift_scalar_operator` for the Jacobian operator of a
+# method.
 struct ScalarJacobian{J}
     J::J
 end
@@ -376,23 +366,19 @@ end
 @inline (J::ScalarJacobian)(x::SVector{1}, p) = lift_jacobian(J.J(first(x), p))
 
 # The one-entry forms: a scalar residual is a one-entry vector, and the derivative of an `M`-entry
-# residual along the one variable is its column.
+# residual along the one variable is its column, or — for a one-variable problem written with a
+# `Number` residual — the derivative itself.
 @inline lift_residual(r::Number) = SVector{1, typeof(r)}((r,))
 @inline lift_residual(r::StaticVector) = r
 @inline lift_jacobian(J::StaticMatrix) = J
 @inline lift_jacobian(J::StaticVector{M, T}) where {M, T} = SMatrix{M, 1, T, M}(J)
+@inline lift_jacobian(J::Number) = SMatrix{1, 1, typeof(J), 1}((J,))
 
-"""
-    lift_scalar_iterate(prob, method, x)
-
-The problem, the method and the iterate of a `Number` iterate on the one-entry vector path: a
-`LeastSquaresProblem` whose residual and Jacobian take an `SVector{1}` and return the lifted
-residual and derivative, and a `Newton` method whose own Jacobian operator takes that iterate.
-Everything else about both is unchanged.
-
-Internal: [`init_state`](@ref) and [`solve!!`](@ref) lift with it, so that no step, factorisation
-or line search needs a `Number` method of its own.
-"""
+# `lift_scalar_iterate` gives the problem, the method and the iterate of a `Number` iterate on the
+# one-entry vector path: a `LeastSquaresProblem` whose residual and Jacobian take an `SVector{1}`
+# and return the lifted residual and derivative, and a `Newton` method whose own Jacobian operator
+# takes that iterate. Everything else about both is unchanged. `init_state` and `solve!!` lift with
+# it, so that no step, factorisation or line search needs a `Number` method of its own.
 @inline function lift_scalar_iterate(prob::LeastSquaresProblem, m::Newton, x::Number)
     F = ScalarResidual(prob.F)
     J = prob.J === nothing ? nothing : ScalarJacobian(prob.J)
