@@ -166,12 +166,13 @@ backward_error(A, x, b) = norm(A * x - b) / (opnorm(Matrix(A), 2) * norm(x) + no
             R = real(T)
             for n in (4, 16)
                 r = n - 2
-                A, U, σ, V = randsvd(rng, T, n, R(100); rank = r)
+                κ = R(100)
+                A, U, σ, V = randsvd(rng, T, n, κ; rank = r)
                 b_range = U[:, 1:r] * randn(rng, T, r)
                 b_null = U[:, (r + 1):n] * (R(0.1) .* randn(rng, T, n - r))
                 b = b_range + b_null
                 x_min = minnorm_solution(U, σ, V, b, r)
-                rel_bound = C_BOUND * n * R(100) * eps(R) * (norm(b) / norm(A * x_min))
+                rel_bound = C_BOUND * n * κ * eps(R) * (norm(b) / norm(A * x_min))
                 m = SVDFactorization()
 
                 fac_s = factorize!!(nothing, m, SMatrix{n, n, T}(A))

@@ -15,10 +15,14 @@ Throughout this page:
   epsilon ``\varepsilon_R = \texttt{eps}(R)``.
 - ``n`` denotes the matrix dimension and ``\kappa_2(A) = \sigma_1(A) / \sigma_r(A)`` the 2-norm
   condition number of a matrix ``A \in T^{n \times n}`` of numerical rank ``r``.
-- The empirical backward-error and spectral constant used across all bounds is
+- The cited theorems bound each error by a low-degree polynomial in ``n`` times
+  ``\varepsilon_R``, with the growth factor or the condition number where stated. The test
+  suite asserts each bound with the explicit constant
   ```math
-  c = 16.
+  c = 16,
   ```
+  a test threshold with a margin above the measured errors, not a constant derived from the
+  theorems.
 
 ---
 
@@ -30,8 +34,8 @@ Throughout this page:
 | Householder QR | [`StaticQR`](@ref), [`DenseQR`](@ref), [`DeviceQR`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_R`` | Higham (2002), §19.3 |
 | SVD (one-sided Jacobi and LAPACK) | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_R``, ``\;\dfrac{\max_i \lvert \hat{\sigma}_i - \sigma_i \rvert}{\sigma_1} \le c \cdot n \cdot \varepsilon_R`` | Demmel and Veselić (1992); Higham (2002) |
 | Hermitian Jacobi eigensolver | [`jacobi_eigen`](@ref) | ``\dfrac{\lVert H \hat{V} - \hat{V} \operatorname{Diagonal}(\hat{\lambda}) \rVert_2}{\lVert H \rVert_2} \le c \cdot n \cdot \varepsilon_R``, ``\;\lVert \hat{V}^* \hat{V} - I \rVert_2 \le c \cdot n \cdot \varepsilon_R``, ``\;\dfrac{\max_i \lvert \hat{\lambda}_i - \lambda_i \rvert}{\lambda_1} \le c \cdot n \cdot \varepsilon_R`` | Demmel and Veselić (1992) |
-| Rank-deficient SVD minimum-norm solve | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert \hat{x} - x_{\min} \rVert_2}{\lVert x_{\min} \rVert_2} \le c \cdot n \cdot \kappa_2(A) \cdot \varepsilon_R \cdot \dfrac{\lVert b \rVert_2}{\lVert A x_{\min} \rVert_2}`` | Demmel and Veselić (1992); Higham (2002), §20.4 |
-| Mixed-precision scaled solve (`TF ≠ T`) | [`ldiv!!`](@ref) on [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_{\operatorname{real}(F)}`` | Kelley (2023), eqs. 2.17–2.18 |
+| Rank-deficient SVD minimum-norm solve | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert \hat{x} - x_{\min} \rVert_2}{\lVert x_{\min} \rVert_2} \le c \cdot n \cdot \varepsilon_R \cdot \bigl(\kappa_2(A) + \kappa_2(A)^2 \tan\theta\bigr)``, ``\;\tan\theta = \dfrac{\lVert b - A x_{\min} \rVert_2}{\lVert A x_{\min} \rVert_2}`` | Demmel and Veselić (1992); Higham (2002), §20.4 |
+| Mixed-precision scaled solve (`TF ≠ T`) | [`ldiv!!`](@ref) on [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \max(\varepsilon_R, \varepsilon_{\operatorname{real}(F)})`` | Kelley (2023), eqs. 2.17–2.18 |
 
 ---
 
@@ -48,7 +52,8 @@ Throughout this page:
 By Higham (2002, §9.3–9.4), Gaussian elimination with partial pivoting produces a computed
 solution ``\hat{x}`` to ``A x = b`` that is the exact solution of ``(A + \Delta A)\hat{x} = b``,
 where ``\|\Delta A\|_2 / \|A\|_2`` is bounded by ``O(n \, \rho_n \, \varepsilon_R)`` for growth
-factor ``\rho_n``. On systems with moderate pivot growth, the normwise backward error satisfies
+factor ``\rho_n``. On systems with moderate pivot growth, the test suite verifies the normwise
+backward error bound
 
 ```math
 \frac{\|A \hat{x} - b\|_2}{\|A\|_2 \|\hat{x}\|_2 + \|b\|_2} \le c \cdot n \cdot \varepsilon_R, \qquad c = 16.
@@ -68,8 +73,9 @@ factor ``\rho_n``. On systems with moderate pivot growth, the normwise backward 
   reduction and reflector application).
 
 By Higham (2002, Theorem 19.4, §19.3), Householder QR factorization and triangular
-back-substitution are unconditionally backward stable. For any nonsingular square system
-``A x = b``, the computed solution ``\hat{x}`` satisfies the normwise backward error bound
+back-substitution are unconditionally backward stable, with a normwise backward error of order
+``n \, \varepsilon_R``. For a nonsingular square system ``A x = b``, the test suite verifies the
+normwise backward error bound for the computed solution ``\hat{x}``
 
 ```math
 \frac{\|A \hat{x} - b\|_2}{\|A\|_2 \|\hat{x}\|_2 + \|b\|_2} \le c \cdot n \cdot \varepsilon_R, \qquad c = 16.
@@ -90,7 +96,8 @@ back-substitution are unconditionally backward stable. For any nonsingular squar
 For Hermitian matrices `H::SMatrix{n, n, T}`, [`jacobi_eigen`](@ref) computes the spectral
 decomposition ``H = V \operatorname{Diagonal}(\lambda) V^*`` by two-sided cyclic Jacobi sweeps.
 
-By Demmel and Veselić (1992) and Higham (2002):
+By Demmel and Veselić (1992) and Higham (2002), these algorithms are backward stable, with
+errors of order ``n \, \varepsilon_R``. The test suite verifies:
 
 1. **Full-rank linear solve (`ldiv!!`)**: For nonsingular ``A``, the pseudoinverse backsolve
    ``\hat{x} = \hat{V} \hat{\Sigma}^{-1} \hat{U}^* b`` satisfies the normwise backward error bound
@@ -129,11 +136,17 @@ By Demmel and Veselić (1992) and Higham (2002, §20.4), the truncated pseudoinv
 ``x_{\min} = V_{1:r} \Sigma_{1:r}^{-1} U_{1:r}^* b`` with relative forward error bounded by
 
 ```math
-\frac{\|\hat{x} - x_{\min}\|_2}{\|x_{\min}\|_2} \le c \cdot n \cdot \kappa_2(A) \cdot \varepsilon_R \cdot \frac{\|b\|_2}{\|A x_{\min}\|_2}, \qquad c = 16,
+\frac{\|\hat{x} - x_{\min}\|_2}{\|x_{\min}\|_2} \le c \cdot n \cdot \varepsilon_R \cdot \bigl(\kappa_2(A) + \kappa_2(A)^2 \tan\theta\bigr), \qquad
+\tan\theta = \frac{\|b - A x_{\min}\|_2}{\|A x_{\min}\|_2}, \qquad c = 16,
 ```
 
 where ``\kappa_2(A) = \sigma_1 / \sigma_r`` is the 2-norm condition number of the nonzero
-singular spectrum.
+singular spectrum and ``\theta`` is the angle between ``b`` and the range of ``A``. The term
+``\kappa_2(A)^2 \tan\theta`` is the residual term of least-squares perturbation theory; for a
+consistent system, ``\tan\theta = 0``. The test suite draws ``b`` with a component outside the
+range of ``A`` and asserts the stronger bound
+``c \cdot n \cdot \kappa_2(A) \cdot \varepsilon_R \cdot \|b\|_2 / \|A x_{\min}\|_2``, which implies
+the one above because ``\|b\|_2 / \|A x_{\min}\|_2 = \sqrt{1 + \tan^2\theta} \le 1 + \kappa_2(A) \tan\theta``.
 
 ---
 
@@ -157,11 +170,16 @@ Kelley (2023, eqs. 2.17–2.18):
 4. Rescale by ``s \cdot 2^{-e}`` and convert back to working precision ``T``.
 
 The resulting solution ``\hat{x} \in T^n`` satisfies the normwise backward error bound at the
-factor precision ``\varepsilon_{\operatorname{real}(F)} = \texttt{eps}(\operatorname{real}(F))``:
+coarser of the working precision ``\varepsilon_R`` and the factor precision
+``\varepsilon_{\operatorname{real}(F)} = \texttt{eps}(\operatorname{real}(F))``:
 
 ```math
-\frac{\|A \hat{x} - b\|_2}{\|A\|_2 \|\hat{x}\|_2 + \|b\|_2} \le c \cdot n \cdot \varepsilon_{\operatorname{real}(F)}, \qquad c = 16.
+\frac{\|A \hat{x} - b\|_2}{\|A\|_2 \|\hat{x}\|_2 + \|b\|_2} \le c \cdot n \cdot \max(\varepsilon_R, \varepsilon_{\operatorname{real}(F)}), \qquad c = 16.
 ```
+
+For a reduced factor precision, as in the examples above, the maximum is
+``\varepsilon_{\operatorname{real}(F)}``. For a wider factor precision, the rounding of
+``\hat{x}`` to ``T`` limits the bound to ``\varepsilon_R``.
 
 ---
 
@@ -179,9 +197,11 @@ distributed singular values or eigenvalues:
   (``R = \texttt{Float64}``); ``\kappa_2 = 100`` with rank ``r = n - 2`` for rank-deficient SVD;
   ``\kappa_2 \in \{10, 10^4\}`` with ``T \in \{\texttt{Float64}, \texttt{ComplexF64}\}`` and
   ``\texttt{TF} = \texttt{Float32}`` for mixed-precision solves.
-- **System dimensions**: ``n \in \{4, 16, 64\}`` across dense (`Array`) and device (`JLArray`
-  under `allowscalar(false)`) backends, and ``n \in \{4, 16\}`` across static (`SMatrix{n, n, T}`)
-  kernels.
+- **System dimensions**: ``n \in \{4, 16, 64\}`` for the full-rank and mixed-precision solves
+  across dense (`Array`) and device (`JLArray` under `allowscalar(false)`) backends,
+  ``n \in \{4, 16\}`` for the rank-deficient SVD solve across dense and device backends, and
+  ``n \in \{4, 16\}`` across static (`SMatrix{n, n, T}`) kernels, which include
+  [`jacobi_eigen`](@ref).
 
 ---
 
