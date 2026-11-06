@@ -56,7 +56,10 @@ end
         r::Reparametrized{P, G, DG, C, K}, s::Symbol) where {P, G, DG, C, K}
     s === :covariant && return C
     s === :curvature && return K
-    return getfield(r, s)
+    s === :prob && return getfield(r, :prob)
+    s === :g && return getfield(r, :g)
+    s === :∂g && return getfield(r, :∂g)
+    throw(ArgumentError("type Reparametrized has no field $s"))
 end
 
 Base.propertynames(::Reparametrized) = (:prob, :g, :∂g, :covariant, :curvature)
