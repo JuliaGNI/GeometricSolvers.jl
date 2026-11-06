@@ -190,6 +190,22 @@ end
     @test GeometricSolvers.regularize!!(J_rect, T(10)) ==
           SMatrix{3, 2, T}(T(11), T(2), T(3), T(4), T(15), T(6))
     @test GeometricSolvers.regularize!!(J_rect, zero(T)) === J_rect
+    # and so does a rectangular dense `Matrix`, tall or wide, with no write past its last entry:
+    # the matrix wraps the head of a buffer whose tail must stay zero
+    for (rows, cols) in ((3, 2), (2, 3))
+        len = rows * cols
+        buf = zeros(T, len + 8)
+        buf[1:len] .= T.(1:len)
+        J_shifted = reshape(copy(buf[1:len]), rows, cols)
+        for i in 1:min(rows, cols)
+            J_shifted[i, i] += T(10)
+        end
+        GC.@preserve buf begin
+            J_dense = unsafe_wrap(Array, pointer(buf), (rows, cols))
+            @test GeometricSolvers.regularize!!(J_dense, T(10)) == J_shifted
+        end
+        @test all(iszero, @view buf[(len + 1):end])
+    end
 
     # Underdetermined m < n throws DimensionMismatch
     p_under_s = LeastSquaresProblem((x, p) -> SVector{2}(x[1], x[2]))
@@ -417,7 +433,6 @@ end
     # R1 LM SVD vs stacked QR
     J_s = SMatrix{m, n, T}(A_h)
     Fx_s = SVector{m, T}(b_h)
-    d_s = zero(SVector{n, T})
     d_qr_s, ok_qr_s = lm_stacked_qr_step(nothing, J_s, Fx_s, μ, Val(:none))
     d_svd_s = lm_svd_step(nothing, factorize!!(nothing, SVDFactorization(), J_s), Fx_s, μ)
     @test ok_qr_s
@@ -535,7 +550,7 @@ end
         Newton(; globalization = LevenbergMarquardt()),
         Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
         solver = init(prob12_d, zeros(T, 5), alg; options = opt)
-        x, st = solve!(solver)
+        _, st = solve!(solver)
         @test isconverged(st)
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
@@ -551,7 +566,7 @@ end
         GaussNewton(; globalization = Backtracking()),
         Newton(; globalization = LevenbergMarquardt()),
         Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
-        x, st = solve(prob8_s, x0_8, alg; options = opt)
+        _, st = solve(prob8_s, x0_8, alg; options = opt)
         @test isconverged(st)
         @test st.iterations >= 2
         @test st.stationary === true
@@ -565,7 +580,7 @@ end
         Newton(; globalization = LevenbergMarquardt()),
         Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
         solver = init(prob8_d, ones(T, 3), alg; options = opt)
-        x, st = solve!(solver)
+        _, st = solve!(solver)
         @test isconverged(st)
         @test st.iterations >= 2
         @test st.stationary === true
@@ -583,7 +598,7 @@ end
             Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())),
         x0 in (SVector{2, T}(T(0.3), T(0.4)), SVector{2, T}(T(0.25), T(0.26)))
 
-        x, st = solve(prob6_s, x0, alg; options = opt)
+        _, st = solve(prob6_s, x0, alg; options = opt)
         @test isconverged(st)
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
@@ -596,7 +611,7 @@ end
     for (x0_js, alg) in ((T[0.3, 0.4], Newton(; globalization = LevenbergMarquardt())),
         (T[0.25, 0.26], Newton(; globalization = LevenbergMarquardt())))
         solver = init(prob6_d, x0_js, alg; options = opt)
-        x, st = solve!(solver)
+        _, st = solve!(solver)
         @test isconverged(st)
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
@@ -650,7 +665,7 @@ end
     # MGH #11 leaves both holding — ‖r‖ = √5 < f_abstol = 2.3, and the ratio 0.4 < g_tol = 0.5 —
     # and the status must name the residual test.
     opt_both = Options(T; f_abstol = T(2.3), g_tol = T(0.5))
-    x_both, st_both = solve(LeastSquaresProblem(mgh11_static), ones(SVector{5, T}),
+    _, st_both = solve(LeastSquaresProblem(mgh11_static), ones(SVector{5, T}),
         GaussNewton(); options = opt_both)
     @test st_both.gradratio <= opt_both.g_tol
     @test st_both.code === SUCCESS
@@ -699,9 +714,10 @@ end
         @test stopping_test(st_zj) === :none
     end
 
-    # MU4 guard: newton_stepkind on LeastSquaresProblem is MeasuredSlope(), so Backtracking() uses
-    # φ'(0) = -‖J d‖₂² instead of -2 φ(0). On a problem with a large orthogonal residual C = 100,
-    # 2 φ(0) = (x₁ - 1)² + C² >> ‖J d‖₂² = (x₁ - 1)², so ExactStep() rejects even α = 1!
+    # MU4 guard: `newton_stepkind` on a LeastSquaresProblem is MeasuredSlope(), so Backtracking()
+    # uses the measured slope φ′(0) = -2‖J d‖₂² of the merit φ = ‖F‖₂², not the exact-step slope
+    # -2 φ(0). With the orthogonal residual C = 100 below, φ(0) = (x₁ - 1)² + (x₂ - 2)² + C² >>
+    # ‖J d‖₂² = (x₁ - 1)² + (x₂ - 2)², so ExactStep() would reject even α = 1.
     @test newton_stepkind(prob_zj_s, GaussNewton()) === MeasuredSlope()
     @test newton_stepkind(prob_zj_d, GaussNewton()) === MeasuredSlope()
     @test newton_stepkind(prob_zj_s, GaussNewton(), T, true) === MeasuredSlope()
@@ -760,13 +776,13 @@ end
     for alg in (
         GaussNewton(; reuse = 2),
         GaussNewton(; linsolve = SVDFactorization(), reuse = 2))
-        x, st = solve(LeastSquaresProblem(mgh11_static), ones(SVector{5, T}), alg)
+        _, st = solve(LeastSquaresProblem(mgh11_static), ones(SVector{5, T}), alg)
         @test st.code === SUCCESS
         @test stopping_test(st) === :stationarity
         @test isapprox(st.fnorm^2, T(5); rtol = 64 * eps(T))
         for AT in ARRAY_BACKENDS
             solver = init(LeastSquaresProblem(mgh11_inplace!, 10), AT(ones(T, 5)), alg)
-            xa, sta = solve!(solver)
+            _, sta = solve!(solver)
             @test sta.code === SUCCESS
             @test stopping_test(sta) === :stationarity
             @test isapprox(sta.fnorm^2, T(5); rtol = 64 * eps(T))
@@ -995,7 +1011,7 @@ end
     prob_r1 = LeastSquaresProblem(mgh8_static)
     x0_r1 = ones(SVector{3, T})
     let ad = AutoForwardDiff()
-        x, st = solve(prob_r1, x0_r1, GaussNewton(; jacobian = ad))
+        _, st = solve(prob_r1, x0_r1, GaussNewton(; jacobian = ad))
         @test isconverged(st)
         @test st.stationary === true
         @test isapprox(st.fnorm^2, T(8.214877306578994e-3); rtol = T === Float64 ? 1e-6 :
@@ -1008,7 +1024,7 @@ end
     prob_r3 = LeastSquaresProblem(mgh8_inplace!, 15)
     let ad = AutoForwardDiff()
         solver = init(prob_r3, ones(T, 3), GaussNewton(; jacobian = ad))
-        x, st = solve!(solver)
+        _, st = solve!(solver)
         @test isconverged(st)
         @test st.stationary === true
         @test isapprox(st.fnorm^2, T(8.214877306578994e-3); rtol = T === Float64 ? 1e-6 :

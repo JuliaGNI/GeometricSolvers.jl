@@ -171,18 +171,17 @@ function solve!!(
                 return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
         end
-        if !(info.code == STALLED || info.limited)
-            # the residual test fails: the step test, or a zero step, ends the solve unconverged,
-            # unless the iterate it returns is stationary, which a step of zero length cannot show
-            if step_converged(options, status, rnorm(x)) ||
-               (info.code == SUCCESS && iszero(info.stepnorm) &&
-                status.iterations >= options.min_iterations)
-                state = refresh_diagnostics!!(state, method, prob, x, Fx, p)
-                if stationary_converged(prob, options, state, status)
-                    return finish!!(state, method, prob, x, Fx, stationary_status(status))
-                end
-                return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
+        # the residual test fails: the step test, or a zero step, ends the solve unconverged,
+        # unless the iterate it returns is stationary, which a step of zero length cannot show
+        if !(info.code == STALLED || info.limited) &&
+           (step_converged(options, status, rnorm(x)) ||
+            (info.code == SUCCESS && iszero(info.stepnorm) &&
+             status.iterations >= options.min_iterations))
+            state = refresh_diagnostics!!(state, method, prob, x, Fx, p)
+            if stationary_converged(prob, options, state, status)
+                return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
+            return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
         end
         if info.code == STALLED
             stalls += one(Int32)

@@ -25,7 +25,9 @@ is in `R = real(T)` for the element type `T` of the iterate.
   ``\\|F(x_k)\\| = 0``, or `R(NaN)` when no Jacobian was factorised.
 
 The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
-``x`` at return. For a [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any nonzero scalar
+``x`` at return; a solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has
+factorised afresh at the iterate it returns, so its numbers are that iterate's. For a
+[`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any nonzero scalar
 Jacobian has `gradratio == 1` and `rank == 1`), they classify the outcome and a `STALLED` or
 `MAXITERS` return: a consistent rank-deficient system that converged has a small residual
 (`fnorm` small) and nothing outside the range (`rank < n`, `nullnorm ≈ 0`); a least-squares

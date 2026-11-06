@@ -2,7 +2,8 @@
     Newton(; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
              refinement = NoRefinement(), regularization = 0, reuse = nothing)
 
-Newton's method for [`NonlinearProblem`](@ref), with linear solver `linsolve`
+Newton's method for [`NonlinearProblem`](@ref) and, as [`GaussNewton`](@ref) configures it, for
+[`LeastSquaresProblem`](@ref), with linear solver `linsolve`
 ([`LUFactorization`](@ref), [`QRFactorization`](@ref) or [`SVDFactorization`](@ref)),
 globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
@@ -25,7 +26,8 @@ trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refineme
   `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
 - `refinement::RF`: the refinement setting ([`NoRefinement`](@ref)).
 - `regularization::R`: non-negative finite diagonal shift ``μ ≥ 0`` added as ``J + μ I`` before
-  factorisation when `μ > 0`.
+  factorisation when `μ > 0`. A [`LeastSquaresProblem`](@ref) with more residuals than unknowns
+  takes none, and `μ > 0` raises an `ArgumentError` where the state is built.
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
   reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step).
   A line search along a reused factor that fails without a step is retried once, in the same

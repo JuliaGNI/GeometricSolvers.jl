@@ -13,7 +13,9 @@ Factorise the matrix `J` with the linear-solver method `method` and return the f
 
 For a static matrix (R1), `fac` is `nothing` or an earlier factor of the same type, whose value
 is not used, and the result is a new [`StaticLU`](@ref), [`StaticQR`](@ref) or
-[`StaticSVD`](@ref). `J` is converted to the element type of the factors,
+[`StaticSVD`](@ref) for a square `J`, and a [`StaticRectQR`](@ref) or [`StaticRectSVD`](@ref) for
+the QR or SVD of an `M × N` matrix with `M > N` (the LU has no rectangular method). `J` is
+converted to the element type of the factors,
 [`factor_eltype`](@ref). Where that is not the element type of `J`, `J` is first divided by the
 power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
 exponent range allows, and `e` is kept in the factor, so that the overall scale of `J` neither
@@ -23,7 +25,8 @@ records the first zero pivot in `info`, QR the first zero diagonal entry of `R`,
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 The SVD records its numerical rank in `rank`, the number of singular values above the cutoff
-`√n · eps(TF) · σ₁`, and a rank deficiency gives `info == 0` and `SUCCESS`; its `info` is nonzero
+`√m · eps(TF) · σ₁`, `m` the number of rows of `J`, and a rank deficiency gives `info == 0` and
+`SUCCESS`; its `info` is nonzero
 only where the sweep did not converge or a singular value is not finite, and `rank` is then 0. The
 SVD is prescaled at the working precision too, because the sweep squares the entries.
 
@@ -49,7 +52,10 @@ function factorize!! end
 """
     ldiv!!(d, fac, r)
 
-Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element type of `r`.
+Solve `A d = r` with the factors `fac` of `A`, and return `d` in the element type of `r`. For a
+rectangular `A` of size `m × n` with `m > n` (the QR and SVD factors of a
+[`LeastSquaresProblem`](@ref)), `r` has `m` entries, `d` has `n`, and `d` is the least-squares
+solution of `A d = r`, the minimum-norm one where an SVD factor has numerical rank below `n`.
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
@@ -416,7 +422,7 @@ exact_solve(fac::Union{DenseSVD, DeviceSVD}) = fac.rank == length(fac.S)
 end
 
 """
-    singular_values(fac::StaticSVD)
+    singular_values(fac::Union{StaticSVD, StaticRectSVD})
 
 The singular values of the matrix that [`factorize!!`](@ref) factorised, in non-increasing order,
 as an `SVector` in `real(TF)`: the stored `σ̂` of the matrix divided by `2^e`, multiplied by `2^e`.

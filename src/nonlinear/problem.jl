@@ -6,9 +6,10 @@
 
 The supertype of the problems a [`NonlinearSolver`](@ref) solves: [`NonlinearProblem`](@ref), whose
 residual has as many entries as the iterate has variables, and [`LeastSquaresProblem`](@ref), whose
-residual may have more. [`init`](@ref), [`solve`](@ref), [`solve!`](@ref), [`solve!!`](@ref) and
-[`solve_batch!`](@ref) take it, and so does [`Newton`](@ref) with each of its globalizations, so one
-solver loop serves both problem types; [`Picard`](@ref) takes the square [`NonlinearProblem`](@ref).
+residual may have more. [`init`](@ref), [`solve`](@ref), [`solve!`](@ref) and [`solve!!`](@ref)
+take it, and so does [`Newton`](@ref) with each of its globalizations, so one solver loop serves
+both problem types; [`Picard`](@ref) and [`solve_batch!`](@ref) take the square
+[`NonlinearProblem`](@ref).
 """
 abstract type AbstractNonlinearProblem end
 

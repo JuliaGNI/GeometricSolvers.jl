@@ -42,7 +42,9 @@ regularize!!
 Every type on this page is `isbits`, so a kernel can hold it, and every real field is in
 `R = real(T)` for the element type `T` of the iterate. [`SolverStatus`](@ref) also carries the
 range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
-``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return.
+``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return; a
+solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has factorised afresh
+at the iterate it returns.
 For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1` and `rank = 1`),
 they classify the outcome and a `STALLED` or `MAXITERS` return: a consistent rank-deficient
 system that converged has a small residual (`fnorm` small) and nothing outside the range

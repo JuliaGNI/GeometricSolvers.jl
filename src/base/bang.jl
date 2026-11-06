@@ -132,7 +132,7 @@ function regularize!!(J::AbstractMatrix{T}, μ) where {T}
     if !iszero(μ)
         μT = T(μ)
         if J isa Matrix
-            @inbounds for i in axes(J, 1)
+            @inbounds for i in 1:min(size(J, 1), size(J, 2))
                 J[i, i] += μT
             end
         else

@@ -1,8 +1,9 @@
 """
     LineFunction(prob, x, Fx, d, p, jvpprep, xt = nothing, Ft = nothing, Jv = nothing)
 
-The line function along the ray from `x` in the direction `d` for [`NonlinearProblem`](@ref) `prob`
-with parameters `p`, Jacobian-vector preparation `jvpprep`, and workspace slots `xt`, `Ft` and `Jv`;
+The line function along the ray from `x` in the direction `d` for
+[`AbstractNonlinearProblem`](@ref) `prob` with parameters `p`, Jacobian-vector preparation
+`jvpprep`, and workspace slots `xt`, `Ft` and `Jv`;
 `Fx` is the residual at `x`. It is a callable struct, not a subtype of `Function`, so `isbits` holds
 when its fields are `isbits`.
 
