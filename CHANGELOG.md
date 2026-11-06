@@ -863,7 +863,7 @@ so that a compat-only bump can be told apart from an interface change.
   matrix-free Jacobian-vector products `jvp!!`: each pass forms `r = -F(x) - J(x) d` in `T`, solves
   `fac \ r` in `TF` for `δd`, updates `d ← d + δd`, and stops once
   `‖F(x) + J(x) d‖ ≤ max(η, √eps(R)) ‖F(x)‖`. Combining `Refinement` (or `refinement = true`)
-  with `AutoFiniteDiff` throws an `ArgumentError` at construction and in `init` because
+  with `AutoFiniteDiff` raises an `ArgumentError` in `init` because
   finite-difference directional derivatives corrupt the defect correction near the
   finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
   (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold, `refine!!` returns the best
@@ -877,12 +877,12 @@ so that a compat-only bump can be told apart from an interface change.
   `SolverStatus.promoted`). In R1 (`Fx === nothing`), `NewtonState.fac_T` is `nothing` even when
   `reuse` is set, and in R3 with `LUFactorization` and a line search, `NewtonState.J` aliases
   `NewtonState.fac_T.factors` so promotion allocates no extra `n × n` `T` buffer. When `Newton`
-  with `TF ≠ T` makes slow progress (`‖F(x₊)‖ ≥ 0.5 ‖F(x)‖`) across two consecutive fresh-factor
-  steps without converging, it checks the relative linear-model residual
-  `‖F(x) + J(x) d‖ / ‖F(x)‖` against `max(√eps(R), 1e-4)`: a large linear residual promotes the
-  factorisation to `T` with `promoted = true`, whereas an accurate linear model near the `TF`
-  residual floor with non-decreasing nonlinear residual is classified as the precision floor of `F`
-  and terminates with `STALLED` and `promoted = false`. `scripts/mixed_refinement_eta.jl` compares
+  with `TF ≠ T` makes slow progress (`‖F(x₊)‖ > 0.5 ‖F(x)‖`) on two consecutive steps that
+  measured their relative linear-model residual `‖F(x) + J(x) d‖ / ‖F(x)‖` and found it above
+  `max(√eps(R), 1e-4)`, it promotes the factorisation to `T` with `promoted = true`; a step
+  whose measured linear residual is at most that threshold while `‖F(x₊)‖ ≥ ‖F(x)‖` is the
+  precision floor of `F` itself and returns `STALLED` with `promoted = false`, so that `solve!!`
+  ends the solve after `max_stalls` consecutive such steps. `scripts/mixed_refinement_eta.jl` compares
   pure-`Float64` Newton, `η_J = √eps(Float64)`, Kelley's `1e-6`, and Eisenstat–Walker Choice 2 with
   a `√eps(Float64)` floor on `F(x) = A * x .+ 0.5 .* (x .^ 2)` at `N = 16`, `f_abstol = 1e-12`, and
   `κ(J) ∈ (1e2, 1e4, 1e5, 1e6)`.

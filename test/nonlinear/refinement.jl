@@ -198,17 +198,21 @@ end
         @test GS.promote_linsolve(M(Float32), ComplexF64) === M(Float64)
     end
 
-    @test_throws ArgumentError Newton(;
-        linsolve = LUFactorization(Float32), jacobian = AutoFiniteDiff(),
-        refinement = Refinement())
-    @test_throws ArgumentError Newton(;
-        linsolve = LUFactorization(Float32), jacobian = AutoFiniteDiff(),
-        refinement = true)
     prob_fd = NonlinearProblem((F, x, p) -> (F .= x .^ 2 .- 2.0; F))
     @test_throws ArgumentError init(
         prob_fd,
         [1.5, 1.5],
         Newton(; jacobian = AutoFiniteDiff(), refinement = Refinement()))
+    @test_throws ArgumentError init(
+        prob_fd,
+        [1.5, 1.5],
+        Newton(;
+            linsolve = LUFactorization(Float32), jacobian = AutoFiniteDiff(),
+            refinement = true))
+    @test_throws ArgumentError init(
+        prob_fd, SVector{2, Float64}(1.5, 1.5),
+        Newton(; linsolve = LUFactorization(Float32), jacobian = AutoFiniteDiff(),
+            refinement = Refinement()))
 
     qn = QuasiNewton(3)
     @test qn isa Newton
@@ -326,12 +330,11 @@ end
     @test info_u.stepnorm == 0.0
     @test x_u == x0_r1
 
-    st_dirty = GS.with_mixed(st_unstarted, true, Int32(2), Int32(1))
+    st_dirty = GS.with_mixed(st_unstarted, true, Int32(2))
     st_started = GS.start!!(
         st_dirty, m_stat, prob_mod_r1, x0_r1, Fx0, nothing, GS.rnorm(Fx0))
     @test !st_started.promoted
     @test st_started.slow_steps == Int32(0)
-    @test st_started.floor_steps == Int32(0)
     _, st_status = solve(prob_mod_r1, x0_r1, m_stat; options = opts)
     _, _, st_finished = GS.finish!!(
         st_started, m_stat, prob_mod_r1, x0_r1, Fx0, st_status)
@@ -456,28 +459,72 @@ end
         @test st_nr_r3.fnorm < 1e-12
         @test norm(Array(x_nr_r3) - collect(x_star)) < x_bound
     end
+
+    # The factor in `T` is the slot that `init_state` reserves, so a promotion allocates nothing:
+    # the second solve is measured after the first has compiled and warmed the state, on a problem
+    # whose own residual and Jacobian write their buffers in place.
+    function f_prom!(F, x, _)
+        T = eltype(x)
+        a11, a21, a12, a22 = T.(Tuple(A_ILL))
+        b1, b2 = T.(Tuple(B_ILL))
+        u1 = a11 * x[1] + a12 * x[2]
+        u2 = a21 * x[1] + a22 * x[2]
+        @inbounds F[1] = u1 + T(0.1) * u1^2 - b1
+        @inbounds F[2] = u2 - T(0.2) * u2^2 - b2
+        return F
+    end
+    function j_prom!(J, x, _)
+        T = eltype(x)
+        a11, a21, a12, a22 = T.(Tuple(A_ILL))
+        u1 = a11 * x[1] + a12 * x[2]
+        u2 = a21 * x[1] + a22 * x[2]
+        d1 = one(T) + T(0.2) * u1
+        d2 = one(T) - T(0.4) * u2
+        @inbounds J[1, 1] = d1 * a11
+        @inbounds J[1, 2] = d1 * a12
+        @inbounds J[2, 1] = d2 * a21
+        @inbounds J[2, 2] = d2 * a22
+        return J
+    end
+    warm = init(
+        NonlinearProblem(f_prom!, j_prom!), collect(x0_r1), m_no_ref; options = opts)
+    w_prom = collect(x0_r1)
+    solve!(warm, w_prom)
+    @test warm.state.promoted
+    copyto!(w_prom, collect(x0_r1))
+    @test (@allocated solve!(warm, w_prom)) == 0
 end
 
 @testset "Precision-floor vs linear-quality detector" begin
     prob_fl_r1 = NonlinearProblem(f_floor_r1, j_floor_r1)
     prob_fl_r3 = NonlinearProblem(f_floor_r3!, j_floor_r3!)
     x0_r1 = SVector{2, Float64}(1.5, 1.8)
+    # The floor reading ends the solve through `max_stalls` consecutive `STALLED` steps, so it
+    # ends below `max_iterations`; `‖F‖` reaches the floor of `F` itself, not a mixed-precision
+    # tolerance below it.
     opts = Options(
         Float64; f_abstol = 1e-14, f_reltol = 1e-14, x_abstol = 0.0, x_reltol = 0.0,
-        max_iterations = 5, max_stalls = 5)
+        max_iterations = 10, max_stalls = 2)
     m_floor = Newton(; linsolve = LUFactorization(Float32), refinement = NoRefinement())
+    floor_bound = 4 * eps(Float32) * norm(SVector(2.0, 3.0))
 
     _, st_fl_r1 = solve(prob_fl_r1, x0_r1, m_floor; options = opts)
     @test st_fl_r1.code == STALLED
+    @test st_fl_r1.iterations < opts.max_iterations
     @test !st_fl_r1.promoted
-    @test st_fl_r1.fnorm < 1e-5
+    @test st_fl_r1.step_failures == 0
+    @test st_fl_r1.stepnorm > 0
+    @test st_fl_r1.fnorm <= floor_bound
 
     for B in ARRAY_BACKENDS
         x0_r3 = B(collect(x0_r1))
         _, st_fl_r3 = solve(prob_fl_r3, x0_r3, m_floor; options = opts)
         @test st_fl_r3.code == STALLED
+        @test st_fl_r3.iterations < opts.max_iterations
         @test !st_fl_r3.promoted
-        @test st_fl_r3.fnorm < 1e-5
+        @test st_fl_r3.step_failures == 0
+        @test st_fl_r3.stepnorm > 0
+        @test st_fl_r3.fnorm <= floor_bound
     end
 
     # High-nonlinearity O(1) residual with exact linear solve is not misclassified as TF floor.
@@ -519,6 +566,37 @@ end
     @test !st_qn.promoted
     @test st_qn.fnorm < 1e-12
     @test norm(x_qn - x0_rot) > 0.1
+
+    # Check 5: the refactorisation happens at the step the reused factor fails, in `TF` and not in
+    # `T`. A host counter over the Jacobian of this problem reads one evaluation per
+    # factorisation and one per refinement pass, so a step reads 2 when its factor is fresh and 4
+    # when a reused factor fails refinement, is refactorised and refines again.
+    j_calls = Ref(0)
+    function j_rot_r1_counted(x, _)
+        j_calls[] += 1
+        return SMatrix{2, 2, Float64, 4}(
+            3.0 * x[1]^2 - 3.0 * x[2]^2, 6.0 * x[1] * x[2],
+            -6.0 * x[1] * x[2], 3.0 * x[1]^2 - 3.0 * x[2]^2)
+    end
+    prob_counted = NonlinearProblem(f_rot_r1, j_rot_r1_counted)
+    st_count = GS.init_state(m_qn, prob_counted, x0_rot, nothing)
+    Fx_count = f_rot_r1(x0_rot, nothing)
+    x_count = x0_rot
+    st_count = GS.start!!(
+        st_count, m_qn, prob_counted, x_count, Fx_count, nothing, GS.rnorm(Fx_count))
+    counts = Int[]
+    for _ in 1:2
+        before = j_calls[]
+        x_count, Fx_count, st_count, info_count = GS.step!!(
+            st_count, m_qn, prob_counted, x_count, Fx_count, nothing)
+        push!(counts, j_calls[] - before)
+        @test info_count.code == SUCCESS
+    end
+    @test counts == [2, 4]
+    @test st_count.rule === GS.FactorAge(Int32(1), false)
+    @test !st_count.promoted
+    # each early refactorisation is one step-rule failure, and the solve counts them
+    @test st_qn.step_failures >= 1
 
     function f_rot_r3!(F, x, _)
         xh = x isa Array ? x : Array(x)
@@ -620,11 +698,11 @@ end
         @test st_s.fnorm < 1e-11
         x_work = copy(x0_vec)
         alloc, steps = _measure_solve_alloc!(solver, x_work, x0_vec)
-        # A mixed-precision step boxes its factor handle once (48 bytes): the promotion branch
-        # gives the step's factor a union type. Nothing in the step scales with n — `state.fac_T`
-        # is preallocated by `init_state` and `state.J` aliases its factors, so a promotion adds no
-        # `n × n` buffer — and the R1 kernel path below allocates nothing at all.
-        @test alloc == 48 * steps
+        # `state.fac_T` is preallocated by `init_state` and `state.J` aliases its factors, so a
+        # promotion adds no `n × n` buffer, and the step holds no value that could box either
+        # factor: a solve allocates nothing.
+        @test steps > 0
+        @test alloc == 0
     end
 
     # KernelAbstractions @kernel on CPU() for R1 SVector with LUFactorization(Float32)
@@ -647,7 +725,11 @@ end
 
     st_warm = GS.init_state(m_ka, prob_mod_r1, x0_r1, nothing)
     alloc_r1 = _measure_solve_r1_alloc(st_warm, prob_mod_r1, x0_r1, m_ka, opts)
-    @test alloc_r1 == 0
+    # `julia-actions/julia-runtest` forces `--check-bounds=yes`, which lets `StaticArrays`' local
+    # `MMatrix` escape to the heap, so this assertion holds only where bounds checking is off.
+    if Base.JLOptions().check_bounds != 1
+        @test alloc_r1 == 0
+    end
 
     # Two-size (N₁ = 4, N₂ = 8) R3 @allocated solve!(solver, x) check.
     function make_nd_prob(N::Int)
@@ -674,11 +756,12 @@ end
     solver_n2 = init(prob_n2, x0_n2, m_ka; options = opts)
     w_n1 = copy(x0_n1)
     w_n2 = copy(x0_n2)
-    # The same 48 bytes per step at both sizes: the step's allocation does not scale with n.
+    # The same zero at both sizes: the step's allocation does not scale with n.
     b1, n_steps1 = _measure_solve_alloc!(solver_n1, w_n1, x0_n1)
     b2, n_steps2 = _measure_solve_alloc!(solver_n2, w_n2, x0_n2)
-    @test b1 == 48 * n_steps1
-    @test b2 == 48 * n_steps2
+    @test n_steps1 > 0 && n_steps2 > 0
+    @test b1 == 0
+    @test b2 == 0
 
     # JET.@test_opt target_modules = (GeometricSolvers,)
     JET.@test_opt target_modules=(GeometricSolvers,) solve(
