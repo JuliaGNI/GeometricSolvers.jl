@@ -72,6 +72,16 @@ end
         status.step_failures, status.promoted)
 end
 
+# `residual!!` at a primal iterate of a solve, refused when the residual contains a
+# `ForwardDiff.Dual`. `solve!!` and the globalizations evaluate every residual of a solve through it.
+# The test reads only the type, so it costs nothing on a residual of one primal type.
+@inline function primal_residual!!(y, prob, x, p)
+    Fx = residual!!(y, prob, x, p)
+    has_dual_type(typeof(Fx)) && throw(ArgumentError(
+        "solve!! residual contains a ForwardDiff.Dual; solve!! takes primal x₀ and p and needs a primal residual on them, so pass dual x₀ or p to solve(prob, x₀, method, p)"))
+    return Fx
+end
+
 """
     solve!!(state, prob::NonlinearProblem, x₀, method, p = nothing, options = Options(eltype(x₀)))
 
@@ -90,8 +100,8 @@ When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` i
 returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds
 at `0` iterations, it returns `SUCCESS`. When `options.max_iterations == 0`, it returns `MAXITERS`
 with `0` iterations. `options` must be an `Options{real(eltype(x₀))}`; any other raises an
-`ArgumentError`, and so does an `Fx` that contains a `ForwardDiff.Dual`: [`solve`](@ref) takes
-dual inputs.
+`ArgumentError`, and so does a residual that contains a `ForwardDiff.Dual`, at `x₀` or at any later
+evaluation inside a step: [`solve`](@ref) takes dual inputs.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
@@ -111,9 +121,7 @@ function solve!!(
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
     check_options(eltype(x₀), options)
     x = x₀
-    Fx = residual!!(residual_buffer(state), prob, x, p)
-    has_dual_type(typeof(Fx)) && throw(ArgumentError(
-        "solve!! residual contains a ForwardDiff.Dual; solve!! takes primal x₀ and p and needs a primal residual on them, so pass dual x₀ or p to solve(prob, x₀, method, p)"))
+    Fx = primal_residual!!(residual_buffer(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
     status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)

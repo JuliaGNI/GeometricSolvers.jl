@@ -887,6 +887,27 @@ end
     @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
         prob_box, x0, Newton(), dA)
 
+    # a residual that is primal at x0 and contains a captured Dual once x[1] ≥ 1.9, which the
+    # first step reaches: refused at the residual that the step evaluates, under every
+    # globalization of Newton and Picard
+    prob_late = NonlinearProblem(
+        (x, p) -> x[1] < 1.9 ? SVector(x[1]^2 - p[1], x[2]^2 - p[2]) :
+                  SVector(x[1]^2 - dA, x[2]^2 - p[2]))
+    prob_late_sc = NonlinearProblem((x, p) -> x < 1.9 ? x^2 - p : x^2 - dA)
+    @test prob_late.F(x0, p0) isa SVector{2, Float64}
+    for m in (Newton(), Newton(; globalization = Backtracking()),
+        Newton(; globalization = StrongWolfe()), Newton(; globalization = DogLeg()),
+        Picard(), Picard(; globalization = Backtracking()))
+        @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+            prob_late, x0, m, p0)
+        @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+            prob_late, x0, m, p_dual)
+        @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+            prob_late_sc, 1.5, m, 4.0)
+        @test_throws "solve!! residual contains a ForwardDiff.Dual" solve!(
+            init(prob_late, x0, m, p0))
+    end
+
     # init and solve! refuse dual x0, x, or p
     @test_throws ArgumentError init(PROB_R3, collect(x_dual), Newton(), collect(p0))
     @test_throws "use solve(" init(PROB_R3, collect(x_dual), Newton(), collect(p0))

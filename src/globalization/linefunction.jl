@@ -31,7 +31,7 @@ end
 
 @inline function merit_and_residual(lf::LineFunction, α)
     xα = update_iterate!!(lf.xt, lf.x, α, lf.d)
-    Fα = residual!!(lf.Ft, lf.prob, xα, lf.p)
+    Fα = primal_residual!!(lf.Ft, lf.prob, xα, lf.p)
     return norm2(Fα), Fα
 end
 
@@ -45,7 +45,7 @@ shared_trial_residual(lf::LineFunction) = !(lf.Ft === nothing)
 
 @inline function φ′(lf::LineFunction, α)
     xα = update_iterate!!(lf.xt, lf.x, α, lf.d)
-    Fα = residual!!(lf.Ft, lf.prob, xα, lf.p)
+    Fα = primal_residual!!(lf.Ft, lf.prob, xα, lf.p)
     Jv = jvp!!(lf.Jv, lf.jvpprep, lf.prob, xα, lf.d, lf.p)
     return 2 * rdot(Fα, Jv)
 end
@@ -108,7 +108,7 @@ step `res.α` and reports `failures = 1`; otherwise the iterate stays at `x` wit
         return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false, false)
     end
     x₊ = update_iterate!!(g_xt(g), x, s, d)
-    F₊ = residual!!(g_Ft(g), prob, x₊, p)
+    F₊ = primal_residual!!(g_Ft(g), prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     if !isfinite(fnorm₊)
         return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false, false)
