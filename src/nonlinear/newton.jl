@@ -582,7 +582,7 @@ end
             d, Jreg, with_diag(state, diag), zero(R), true, exact_solve(fac), true, Int32(0))
     end
     failures = Int32(0)
-    if !fresh && state.fac.info == Int32(0)
+    if !fresh
         d, ref_failed = newton_direction(m, state, prob, x, Fx, p, state.fac)
         ref_failed || return MixedNewton(
             d, state.J,
@@ -779,7 +779,7 @@ end
         elseif md.fresh && !was_fresh
             age₊ = age_fresh
         end
-        lin_rel = (md.fresh && !promoted_step && !st.promoted) ? md.lin_rel : zero(R)
+        lin_rel = md.lin_rel
         sk = md.exact ? newton_stepkind(m, T, md.fresh, st.promoted) : MeasuredSlope()
         x₊, F₊, _, info, merit = globalize_merit!!(
             state.g, m.globalization, prob, x, Fx, md.d, p, state.jvpprep, sk, state.merit)

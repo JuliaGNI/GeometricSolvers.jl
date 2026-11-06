@@ -13,6 +13,26 @@ const GS = GeometricSolvers
 
 include("../helpers/matrix.jl")
 
+# The allocation probes sit behind a function barrier: `@allocated` measures the call it wraps, so
+# each probe warms its own path first and then measures the same call again. `allocations` is the
+# control: it shows that the barrier sees an allocation on this build, so that a measured zero is
+# the solver's and not the probe's.
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+
+@noinline function _measure_solve_alloc!(solver::S, x::X, x0::X) where {S, X}
+    copyto!(x, x0)
+    _, status = solve!(solver, x)
+    copyto!(x, x0)
+    alloc = @allocated solve!(solver, x)
+    return alloc, Int(status.iterations)
+end
+
+@noinline function _measure_solve_r1_alloc(
+        st::S, prob::P, x0::X, m::M, opts::O) where {S, P, X, M, O}
+    solve!!(st, prob, x0, m, nothing, opts)
+    return @allocated solve!!(st, prob, x0, m, nothing, opts)
+end
+
 # Moderately conditioned system (cond(J) ≈ 1.8e5) where Float32 factorisation has initial
 # relative linear residual > 1e-4, 1 refinement pass stays above √eps(Float64), and Refinement()
 # (up to 5 passes) recovers a Float64 Newton step without promoting to Float64.
@@ -519,8 +539,45 @@ end
         @test norm(Array(x_nr_r3) - collect(x_star)) < x_bound
     end
 
+    # A promotion counts one step-rule failure at each site that can make it: the line search, the
+    # `DogLeg` trial loop, and a reused factor (`reuse = 3`). The one step and the whole solve each
+    # count it once, so a step that is counted twice fails a test here.
+    A_site = SMatrix{2, 2, Float64, 4}(1.0, 1.0, 1.0, 1.0 + 1e-7)
+    U_site = A_site * SVector(1.0, 2.0)
+    B_site = SVector(U_site[1] + 0.1 * U_site[1]^2, U_site[2] - 0.2 * U_site[2]^2)
+    function f_site(x::SVector{2, T}, _) where {T}
+        u = SMatrix{2, 2, T, 4}(A_site) * x
+        return SVector{2, T}(
+            u[1] + T(0.1) * u[1]^2 - B_site[1], u[2] - T(0.2) * u[2]^2 - B_site[2])
+    end
+    function j_site(x::SVector{2, T}, _) where {T}
+        u = SMatrix{2, 2, T, 4}(A_site) * x
+        return Diagonal(SVector{2, T}(one(T) + T(0.2) * u[1], one(T) - T(0.4) * u[2])) *
+               SMatrix{2, 2, T, 4}(A_site)
+    end
+    prob_site = NonlinearProblem(f_site, j_site)
+    x_site = SVector{2, Float64}(2.0, 3.0)
+    for m_site in (
+        Newton(; linsolve = LUFactorization(Float32), refinement = Refinement()),
+        Newton(;
+        linsolve = LUFactorization(Float32), refinement = Refinement(),
+        globalization = DogLeg()),
+        Newton(; linsolve = LUFactorization(Float32), refinement = Refinement(), reuse = 3))
+        Fx_site = f_site(x_site, nothing)
+        st_site = GS.start!!(
+            GS.init_state(m_site, prob_site, x_site, nothing), m_site, prob_site, x_site,
+            Fx_site, nothing, GS.rnorm(Fx_site))
+        _, _, st_site, info_site = GS.step!!(
+            st_site, m_site, prob_site, x_site, Fx_site, nothing)
+        @test st_site.promoted
+        @test info_site.failures == 1
+        _, s_site = solve(prob_site, x_site, m_site; options = opts)
+        @test s_site.promoted
+        @test s_site.step_failures == 1
+    end
+
     # The factor in `T` is the slot that `init_state` reserves, so a promotion allocates nothing:
-    # the second solve is measured after the first has compiled and warmed the state, on a problem
+    # the measured solve runs after warm-up solves have compiled and warmed the state, on a problem
     # whose own residual and Jacobian write their buffers in place.
     function f_prom!(F, x, _)
         T = eltype(x)
@@ -550,8 +607,12 @@ end
     w_prom = collect(x0_r1)
     solve!(warm, w_prom)
     @test warm.state.promoted
-    copyto!(w_prom, collect(x0_r1))
-    @test (@allocated solve!(warm, w_prom)) == 0
+    # The measurement sits behind the function barrier, and the control asserts that the barrier
+    # sees an allocation on this build: a measured zero is then the solver's and not the probe's.
+    alloc_prom, steps_prom = _measure_solve_alloc!(warm, w_prom, collect(x0_r1))
+    @test steps_prom > 0
+    @test alloc_prom == 0
+    @test allocations(collect, x0_r1) > 0
 end
 
 @testset "Check 1: a mixed step keeps going where its TF == T control does" begin
@@ -767,29 +828,6 @@ end
     end
 end
 
-# The allocation probes, behind a function barrier: `@allocated` measures the call it wraps, so
-# each probe warms its own path first and then measures the same call again.
-@noinline function _measure_solve_alloc!(solver::S, x::X, x0::X) where {S, X}
-    copyto!(x, x0)
-    _, status = solve!(solver, x)
-    copyto!(x, x0)
-    alloc = @allocated solve!(solver, x)
-    return alloc, Int(status.iterations)
-end
-
-@noinline function _measure_solve_r1_alloc(
-        st::S, prob::P, x0::X, m::M, opts::O) where {S, P, X, M, O}
-    solve!!(st, prob, x0, m, nothing, opts)
-    return @allocated solve!!(st, prob, x0, m, nothing, opts)
-end
-
-# A control that must allocate: it shows that the probe sees allocations on this build, so that a
-# measured zero is a zero of the solver and not of the probe.
-@noinline function _measure_control_alloc(x)
-    a = collect(x)
-    return @allocated collect(a)
-end
-
 @testset "Complex mixed-precision refinement, KA @kernel, two-size @allocated, and JET" begin
     x_star = SVector{2, Float64}(1.0, 2.0)
     opts = Options(Float64; f_abstol = 1e-12, f_reltol = 0.0)
@@ -842,7 +880,7 @@ end
 
     st_warm = GS.init_state(m_ka, prob_mod_r1, x0_r1, nothing)
     alloc_r1 = _measure_solve_r1_alloc(st_warm, prob_mod_r1, x0_r1, m_ka, opts)
-    @test _measure_control_alloc(x0_r1) > 0
+    @test allocations(collect, x0_r1) > 0
     # `julia-actions/julia-runtest` forces `--check-bounds=yes`, which lets `StaticArrays`' local
     # `MMatrix` escape to the heap, so this assertion holds only where bounds checking is off.
     if Base.JLOptions().check_bounds != 1

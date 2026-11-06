@@ -100,11 +100,6 @@ end
     return d, false
 end
 
-@inline function refine!!(
-        d, ::NoRefinement, fac, jvpprep, prob::NonlinearProblem, x, Fx, fnorm, p)
-    return d, false
-end
-
 """
     refine!!(d, ref, fac, jvpprep, prob, x, Fx, fnorm, p, refbuf = nothing) -> (d, failed::Bool)
 

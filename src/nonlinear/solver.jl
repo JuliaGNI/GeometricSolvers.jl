@@ -6,8 +6,6 @@ step unchanged.
 """
 struct NoRefinement end
 
-@inline refine!!(d_slot, ::NoRefinement, prob, x, Fx, d, fac, p, jvpprep) = d
-
 """
     init_state(method, prob::NonlinearProblem, x, p)
 
