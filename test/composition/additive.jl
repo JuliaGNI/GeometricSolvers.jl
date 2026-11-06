@@ -279,11 +279,13 @@ end
     x_s, _, _, info_s = @inferred step!!(st_s, m_mis, prob_s, x₀s, F₀s, nothing)
     @test info_s.failures == Int32(1)
 
-    # Both members step along `-F(x)`, so the Gram matrix is rank deficient while the combined
-    # trial iterate is worse than the best candidate. The two rules count one fallback together,
-    # and the safeguard returns that candidate bit for bit, as in R1. `step!!` writes `F₊` into
-    # the residual buffer it is given, so it gets a copy of `F₀`, and the reference candidates
-    # below are built from `F(x₀)`.
+    # Both members step along `-F(x)`, so the Gram matrix is rank deficient and the rank rule
+    # keeps the smaller-residual candidate. The safeguard reacts to that candidate's one-weight
+    # secant weight, `|w| < 0.1`, and not to the trial residual, which the combination improves
+    # here (about 2.3 against the kept candidate's 63.2). The two rules count one fallback
+    # together, and the safeguard returns that candidate bit for bit, as in R1. `step!!` writes
+    # `F₊` into the residual buffer it is given, so it gets a copy of `F₀`, and the reference
+    # candidates below are built from `F(x₀)`.
     prob_a = NonlinearProblem(f_mis!)
     x₀ = AT(zeros(T, 2))
     F₀ = residual!!(similar(x₀), prob_a, x₀, nothing)
@@ -298,6 +300,46 @@ end
     F_c1 = residual!!(similar(x₀), prob_a, x_c1, nothing)
     F_c2 = residual!!(similar(x₀), prob_a, x_c2, nothing)
     @test rnorm(F₊) <= min(rnorm(F_c1), rnorm(F_c2)) * (1 + 8 * eps(R))
+end
+
+@testset "Check 1 in R3: relative-residual safeguard trigger, $T, $(nameof(AT))" for T in ELTYPES,
+    AT in ARRAY_BACKENDS
+
+    R = real(T)
+    # Two `Picard` steps from `(0, 0)` give candidates whose Gram matrix has full rank and whose
+    # weights are not small, while the combined iterate's residual is about three times the
+    # smaller candidate's: only the `fnorm₊ > ρ * f_best` rule of the safeguard can reject it. A
+    # large `ρ` keeps the combined iterate; `ρ = 1` falls back to that candidate.
+    function f_rho!(F, x, p)
+        F .= x
+        F[1:1] .= (x[1:1] .- T(2)) .+ T(5) .* x[1:1] .* (x[1:1] .- one(T)) .+ x[2:2]
+        F[2:2] .= (x[2:2] .- one(T)) .+ x[1:1]
+        return F
+    end
+    prob_rho = NonlinearProblem(f_rho!)
+    x₀ = AT(zeros(T, 2))
+    F₀ = residual!!(similar(x₀), prob_rho, x₀, nothing)
+    members_rho = (Picard(; damping = 0.5), Picard(; damping = 0.2))
+
+    function step_rho(ρ)
+        m = Adapt.adapt(ToReal{R}(), Additive(members_rho...; weights = OptimalWeights(ρ)))
+        st = start!!(init_state(m, prob_rho, x₀, nothing), m, prob_rho, x₀, F₀,
+            nothing, rnorm(F₀))
+        return step!!(st, m, prob_rho, copy(x₀), copy(F₀), nothing)
+    end
+
+    f_best = min(rnorm(residual!!(similar(x₀), prob_rho, x₀ .- R(0.5) .* F₀, nothing)),
+        rnorm(residual!!(similar(x₀), prob_rho, x₀ .- R(0.2) .* F₀, nothing)))
+
+    x_big, F_big, _, info_big = step_rho(R(1e6))
+    @test info_big.failures == Int32(0)
+    @test all(isfinite, x_big) && all(isfinite, F_big)
+    @test rnorm(F_big) > 2 * f_best
+
+    x_sf, F_sf, _, info_sf = step_rho(one(R))
+    @test info_sf.failures == Int32(1)
+    @test rnorm(F_sf) <= f_best * (1 + 8 * eps(R))
+    @test Array(F_sf) == Array(residual!!(similar(x₀), prob_rho, x_sf, nothing))
 end
 
 @testset "Check 2: Singular Gram matrix in Additive (MU3, MU4), $T" for T in ELTYPES
