@@ -214,20 +214,19 @@ end
         @test isapprox(x_sol, ones(T, 2); atol = T === Float32 ? 1.0f-5 : 1.0e-11)
     end
 
-    # `Float64` only: K24 records that the globalised sparse solves are tested in `Float64` alone.
-    @testset "Globalization (Backtracking JVP) with TracerSparsityDetector" begin
-        _, prob_with_proto, z0, p_val, z_star = sparse_bracket_problem(125, Float64)
+    @testset "Globalization (Backtracking JVP) with TracerSparsityDetector (T = $T)" for T in REAL_ELTYPES
+        _, prob_with_proto, z0, p_val, z_star = sparse_bracket_problem(125, T)
         prob = NonlinearProblem(prob_with_proto.F)
         backend = sparse_backend()
         solver = init(
             prob, copy(z0),
             Newton(; jacobian = backend, globalization = Backtracking()),
             p_val;
-            f_abstol = 1.0e-10, f_reltol = 0.0
+            f_abstol = T === Float32 ? 1.0f-4 : 1.0e-10, f_reltol = zero(T)
         )
         x_sol, st = solve!(solver)
         @test st.code === SUCCESS
-        @test isapprox(x_sol, z_star; rtol = 1.0e-7)
+        @test isapprox(x_sol, z_star; rtol = T === Float32 ? 1.0f-3 : 1.0e-7)
     end
 
     @testset "Guard rails: device array and invalid shapes" begin
