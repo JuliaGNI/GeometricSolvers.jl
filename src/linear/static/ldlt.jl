@@ -125,7 +125,9 @@ end
                 if iszero(d11)
                     info == 0 && (info = Int32(k))
                 else
-                    inv_d11 = inv(d11)
+                    # `one(F) / x`, not `inv(x)`: in a device kernel, where this function also
+                    # runs, `inv` of a `ComplexF32` lowers to a `Float64` path that Metal rejects
+                    inv_d11 = one(F) / d11
                     for j in (k + 1):n
                         l_jk = A[j, k] * inv_d11
                         w_jk = herm ? conj(l_jk) : l_jk
@@ -154,8 +156,8 @@ end
                 if iszero(d21) || iszero(denom)
                     info == 0 && (info = Int32(k))
                 else
-                    inv_d12_det = inv(d12 * denom)
-                    inv_d21_det = inv(d21 * denom)
+                    inv_d12_det = one(F) / (d12 * denom)
+                    inv_d21_det = one(F) / (d21 * denom)
                     for j in (k + 2):n
                         a_jk = A[j, k]
                         a_jk1 = A[j, k + 1]

@@ -5,12 +5,31 @@ using GeometricSolvers
 using GeometricSolvers: AbstractNonlinearProblem, ChunkedHessianForwardDiff, DIStationarity
 using GeometricSolvers: gradient_hessian!!, jacobian!!, jvp!!, prepare_ad, residual!!
 using GPUArraysCore: allowscalar
+using JET: JET, @test_opt
 using JLArrays: JLArray
 using LinearAlgebra: Diagonal, dot, norm
 using StaticArrays: SMatrix, SVector, setindex
 using Test
 
 include("../helpers/matrix.jl")
+
+# On a Julia it does not support, JET loads empty stubs that throw. JET 0.12 exports
+# `JET_AVAILABLE` to say so; JET 0.9 and 0.10 name the same flag `JET_LOADABLE`.
+const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
+
+# The bytes of a call, after one warm call of the same function through the barrier.
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+
+# A smooth action with an indefinite Hessian and one stationarity point, for the inference,
+# allocation and JET checks of the R1 solve.
+function saddle_action_r1(x, p)
+    0.5 * x[1]^2 - 0.5 * x[2]^2 + 0.1 * (x[1]^4 + x[2]^4) - x[1] + 2 * x[2]
+end
+
+# The bytes of one `solve` of the R1 problem, after one warm call through the barrier.
+function stationarity_solve_allocations(prob::P, x₀::X, m::M) where {P, X, M}
+    (solve(prob, x₀, m); @allocated solve(prob, x₀, m))
+end
 
 function fd_grad_entry(f, x0::SVector{4, Float64}, p, E_idx, b_s, h1::Float64, a::Int)
     ei = E_idx[a]
@@ -73,6 +92,7 @@ end
     # Construction-time validation errors
     @test_throws ArgumentError StationarityProblem(s_quad; E = (1, 2), U = (1, 2, 3))
     @test_throws ArgumentError StationarityProblem(s_quad; E = (), U = ())
+    @test_throws ArgumentError StationarityProblem(s_quad; E = Int[], U = Int[])
     @test_throws ArgumentError StationarityProblem(s_quad; E = :, U = (1, 2))
     @test_throws ArgumentError StationarityProblem(s_quad; E = (1, 2), U = :)
     @test_throws ArgumentError StationarityProblem(s_quad; E = (0, 1), U = (1, 2))
@@ -102,13 +122,20 @@ end
     @test_throws ArgumentError solve!(solver_ok, [1.0, 2.0, 3.0]; b = [1.0, 2.0, 3.0])
 end
 
+# The number of outer partials a dual of the action's argument carries: one for a Jacobian-vector
+# product, `n` for a formed Hessian, and one where the action runs on plain reals.
+outer_partials(::ForwardDiff.Dual{<:Any, <:Any, N}) where {N} = N
+outer_partials(::Any) = 1
+
 @testset "Check 1: Gradient, Hessian, and HVP vs central differences (MU1-MU4)" begin
     allowscalar(false)
     calls_s = Ref(0)
+    nparts_s = Ref(0)
     # A smooth non-quadratic action that a host array evaluates without a heap allocation, as the
     # allocation checks below require.
     function action_smooth(x, p)
         calls_s[] += 1
+        nparts_s[] = outer_partials(x[1])
         α = p === nothing ? one(eltype(x)) : eltype(x)(p)
         val = sin(x[1] * x[2]) + 0.5 * x[2] * x[3]^2 - cos(x[1] + 2 * x[4]) + x[3] * x[4]
         return α * val
@@ -170,8 +197,11 @@ end
 
         v_r1 = SVector{n, Float64}(ntuple(i -> 0.3 * i - 0.5, n))
         calls_s[] = 0
+        nparts_s[] = 0
         jv_r1 = jvp!!(nothing, ad_fd, prob_s, x0_s, v_r1, 1.5)
         @test calls_s[] == 1
+        # one outer partial: the matrix-free HVP, not a formed Hessian (`n` outer partials)
+        @test nparts_s[] == 1
         tol_jvp = 10 * n * eps(Float64) * norm(J_r1) * norm(v_r1)
         @test norm(jv_r1 - J_r1 * v_r1) <= tol_jvp
 
@@ -420,6 +450,19 @@ end
     A_mat = Matrix(A_ind)
     f_mat(x, p) = 0.5 * dot(x, A_mat, x)
     prob_r3 = StationarityProblem(f_mat; b = [1.0, -1.0])
+
+    # A scalar datum on R3 fills the datum buffer of the solve and is added to every equation of
+    # the direct R3 residual
+    prob_r3_scalar = StationarityProblem(f_mat; b = 1.5)
+    x_sc, st_sc = solve(prob_r3_scalar, [0.0, 0.0], m_newt_ldlt)
+    @test st_sc.code == SUCCESS
+    @test isapprox(x_sc, -(A_mat \ [1.5, 1.5]); rtol = 1e-12)
+    x_pt = [0.3, -0.4]
+    F_sc = zeros(2)
+    prep_sc = prepare_ad(AutoForwardDiff(), prob_r3_scalar, F_sc, x_pt, nothing)
+    residual!!(F_sc, prep_sc, prob_r3_scalar, x_pt, nothing)
+    @test isapprox(F_sc, A_mat * x_pt .+ 1.5; rtol = 1e-12)
+
     x0_vec = [0.0, 0.0]
     solver_r3 = init(prob_r3, x0_vec, m_newt_ldlt)
     b_step = [0.5, -1.5]
@@ -601,4 +644,52 @@ end
     @test calls_d3[] == 6
     @test isapprox(F_d3, F_full; rtol = 1e-12)
     @test isapprox(J_d3, J_full; rtol = 1e-12)
+
+    # D3: for E != U the E × U block of the Hessian need not be symmetric, so every chunk pair
+    # runs and `prep.sym` is false. An E != U case of more than one chunk is what tells a false
+    # symmetry from the true one: with `sym` set, the chunk pairs below the diagonal would be
+    # filled from the transpose of the pairs above it.
+    K6 = SMatrix{6, 6, Float64, 36}(ntuple(36) do idx
+        i, j = mod1(idx, 6), cld(idx, 6)
+        return i == j ? 1.0 + 0.25 * i : 0.05 + 0.1 * i * j
+    end)
+    f_sym6(x, p) = 0.5 * dot(x, K6 * x)
+    E6 = SVector(1, 2, 3, 4, 5, 6)
+    U6 = SVector(5, 6, 1, 2, 3, 4)
+    prob_sym6 = StationarityProblem(f_sym6; E = E6, U = U6)
+    x6 = collect(range(0.5, 1.5; length = 6))
+    J6 = zeros(6, 6)
+    prep6 = prepare_ad(ad_c2, prob_sym6, zeros(6), x6, nothing)
+    @test prep6.sym === false
+    J6_exact = Matrix(K6)[collect(E6), collect(U6)]
+    @test !isapprox(J6_exact, transpose(J6_exact); rtol = 1e-3)
+    jacobian!!(J6, prep6, prob_sym6, x6, nothing)
+    @test isapprox(J6, J6_exact; rtol = 1e-12)
+    J6_full = zeros(6, 6)
+    prep6_full = prepare_ad(
+        AutoForwardDiff(; chunksize = 6), prob_sym6, zeros(6), x6, nothing)
+    jacobian!!(J6_full, prep6_full, prob_sym6, x6, nothing)
+    @test isapprox(J6_full, J6_exact; rtol = 1e-12)
+end
+
+@testset "R1 solve: isbits state, inferred, JET clean and allocation-free" begin
+    m = Newton(; linsolve = LDLTFactorization())
+    prob = StationarityProblem(saddle_action_r1)
+    x₀ = SVector(0.8, 1.5)
+    x, st = @inferred solve(prob, x₀, m)
+    @test st.code == SUCCESS
+    @test x isa SVector{2, Float64}
+    @test norm(x - SVector(0.7972810583155764, -2.1876029597039026), Inf) <= 1e-9
+    # `--check-bounds=yes` lets the static factors' `MMatrix` escape to the heap, so a run that
+    # forces it skips this assertion
+    if Base.JLOptions().check_bounds != 1
+        @test stationarity_solve_allocations(prob, x₀, m) == 0
+    end
+    # the control: the barrier sees an allocation where there is one
+    @test allocations(collect, x₀) > 0
+    if JET_WORKS
+        @test_opt solve(prob, x₀, m)
+    else
+        @test_skip JET_WORKS  # issue #8
+    end
 end

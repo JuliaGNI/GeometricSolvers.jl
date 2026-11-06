@@ -857,11 +857,11 @@ so that a compat-only bump can be told apart from an interface change.
   $(\nabla S(x, p))_E + b = 0$ over $u = x_U$ of a scalar action $S$, alongside Bunch–Kaufman
   $\mathrm{LDL}^\top$ / $\mathrm{LDL}^\dagger$ factorisation (`StaticLDLT` in R1, zero-allocation
   LAPACK `sytrf!`/`sytrs!` and `hetrf!`/`hetrs!` with generic fallback `DenseLDLT` in R3 host, and
-  `KernelAbstractions` `DeviceLDLT` in R3 device) and Nocedal–Wright Algorithm 3.3 inertia
-  regularization on `Newton` when `E == U`. `StationarityProblem` accepts `E` and `U` as `Colon()`,
-  an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an `AbstractUnitRange{<:Integer}`, or a
-  `Vector{Int}`, keeps inactive components $x_{\notin U}$ fixed, and solves through `solve`, `init`,
-  `solve!` (with keyword `b = nothing`) and `solve_batch!`. In R1, `gradient_hessian!!` evaluates both
+  `KernelAbstractions` `DeviceLDLT` in R3 device). `StationarityProblem` accepts `E` and `U` as
+  `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
+  `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, keeps inactive components $x_{\notin U}$
+  fixed, and solves through `solve`, `init`, `solve!` (with keyword `b = nothing`) and
+  `solve_batch!`. In R1, `gradient_hessian!!` evaluates both
   $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested `ForwardDiff.Dual` call, and `jvp!!`
   evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional partial. In R3,
   `ChunkedHessianForwardDiff` and `DIStationarity` provide automatic differentiation without device

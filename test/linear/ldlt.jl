@@ -4,6 +4,7 @@ using GeometricSolvers: DenseLDLT, DeviceLDLT, StaticLDLT, backsolve, backsolve!
 using GeometricSolvers: dense_factor, exact_solve, factor_diagnostics, factor_eltype
 using GeometricSolvers: factorize!!, ldiv!!, returncode, rnorm
 using GPUArraysCore: @allowscalar, allowscalar
+using JET: JET, @test_opt
 using JLArrays: JLArray
 using LinearAlgebra: Diagonal, Hermitian, I, Symmetric, cond, dot, norm, opnorm, qr
 using Random: Xoshiro, randn
@@ -11,6 +12,22 @@ using StaticArrays: MMatrix, SMatrix, SVector
 using Test
 
 include("../helpers/matrix.jl")
+
+# On a Julia it does not support, JET loads empty stubs that throw. JET 0.12 exports
+# `JET_AVAILABLE` to say so; JET 0.9 and 0.10 name the same flag `JET_LOADABLE`.
+const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
+
+# The bytes of a call, after one warm call of the same function through the barrier.
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+
+# The bytes of one `factorize!!` and one `ldiv!!` on a static factor, after one warm call.
+function ldlt_factor_allocations(M::A) where {A}
+    (factorize!!(nothing, LDLTFactorization(), M);
+        @allocated factorize!!(nothing, LDLTFactorization(), M))
+end
+function ldlt_solve_allocations(fac::F, b::B) where {F, B}
+    (ldiv!!(nothing, fac, b); @allocated ldiv!!(nothing, fac, b))
+end
 
 # Seeded symmetric or Hermitian indefinite matrix with identically zero diagonal (A[i, i] == 0).
 function zero_diag_indefinite(::Type{T}, n::Int, seed::Int) where {T}
@@ -158,8 +175,9 @@ end
         ldiv!!(d_jl, fac_jl, b_jl)
         @test backward_error(A_d, Array(d_jl), b_d) <= 10 * 2 * eps(R)
 
-        # Seeded zero-diagonal matrices of sizes n in (4, 16, 64)
-        for n in (4, 16, 64)
+        # Seeded zero-diagonal matrices of sizes n in (4, 16, 64, 128): above the device workgroup
+        # of 64 a device backend runs the serial kernels
+        for n in (4, 16, 64, 128)
             A_n = zero_diag_indefinite(T, n, 400 + n)
             b_n = randn(Xoshiro(500 + n), T, n)
             if n <= 16
@@ -422,5 +440,30 @@ end
         # skipped where a run forces `--check-bounds=yes`
         @test (@allocated factorize!!(fd_64, LDLTFactorization(), Ad_64)) == 0
         @test (@allocated ldiv!!(dd_64, fd_64, bd_64)) == 0
+    end
+end
+
+@testset "StaticLDLT: isbits, inferred, JET clean and allocation-free, $T" for T in REAL_ELTYPES
+    A = SMatrix{3, 3, T, 9}(
+        zero(T), T(2), -one(T), T(2), one(T), T(1) / 2, -one(T), T(1) / 2, T(-3))
+    b = SVector{3, T}(one(T), T(-2), T(1) / 2)
+    fac = @inferred factorize!!(nothing, LDLTFactorization(), A)
+    @test fac isa StaticLDLT{3, T, 9}
+    @test isbits(fac)
+    x = @inferred ldiv!!(nothing, fac, b)
+    @test x isa SVector{3, T}
+    # `--check-bounds=yes` lets the static factors' `MMatrix` escape to the heap, so a run that
+    # forces it skips these assertions
+    if Base.JLOptions().check_bounds != 1
+        @test ldlt_factor_allocations(A) == 0
+        @test ldlt_solve_allocations(fac, b) == 0
+    end
+    # the control: the barrier sees an allocation where there is one
+    @test allocations(collect, b) > 0
+    if JET_WORKS
+        @test_opt factorize!!(nothing, LDLTFactorization(), A)
+        @test_opt ldiv!!(nothing, fac, b)
+    else
+        @test_skip JET_WORKS  # issue #8
     end
 end

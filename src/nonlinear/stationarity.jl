@@ -551,13 +551,10 @@ function solve_batch!(
     return _launch!(X, S, prob, m, sp, opt, state₀, order)
 end
 
-# Define CommonSolve.init and CommonSolve.solve for StationarityProblem in an internal
-# submodule so that `m.module === GeometricSolvers` in `test/nonlinear/commonsolve.jl`
-# continues to see only `NonlinearProblem`.
-module _StationarityCommonSolve
-import CommonSolve: init, solve
-import ..GeometricSolvers: Options, Newton, StationarityProblem, StatProb
-import ..GeometricSolvers: _init_stationarity, _solve_stationarity
+# `CommonSolve.init` and `CommonSolve.solve` on `StationarityProblem`, defined in
+# `GeometricSolvers` beside the methods on `NonlinearProblem` that they mirror, so that every
+# CommonSolve method the package adds has its defining module here and its first argument one of
+# the package's own problem types.
 
 function init(pr::StatProb, x₀, m, p = nothing; b = nothing, options = nothing, kw...)
     return _init_stationarity(pr, x₀, m, p, b, options, kw)
@@ -570,4 +567,3 @@ function solve(pr::StatProb, x₀, m, p = nothing; b = nothing, options = nothin
 end
 
 solve(pr::StatProb, x₀; kw...) = solve(pr, x₀, Newton(), nothing; kw...)
-end

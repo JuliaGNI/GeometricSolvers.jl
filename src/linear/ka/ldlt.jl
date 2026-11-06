@@ -128,7 +128,9 @@ end
                             l_ctrl[3] == Int32(0) && (l_ctrl[3] = Int32(k))
                             l_ctrl[2] = Int32(0)
                         else
-                            l_coef[1] = inv(d11)
+                            # `one(F) / x`, not `inv(x)`: in a device kernel `inv` of a
+                            # `ComplexF32` lowers to a `Float64` path, which Metal rejects
+                            l_coef[1] = one(F) / d11
                             l_ctrl[2] = Int32(1)
                         end
                         l_ctrl[5] = Int32(1)
@@ -151,8 +153,8 @@ end
                         else
                             l_coef[1] = δ11
                             l_coef[2] = δ22
-                            l_coef[3] = inv(d12 * denom)
-                            l_coef[4] = inv(d21 * denom)
+                            l_coef[3] = one(F) / (d12 * denom)
+                            l_coef[4] = one(F) / (d21 * denom)
                             l_ctrl[2] = Int32(1)
                         end
                         l_ctrl[5] = Int32(2)
