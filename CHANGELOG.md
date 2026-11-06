@@ -418,6 +418,29 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **A `SciMLBase` package extension (`GeometricSolversSciMLBaseExt`) accepts a
+  `SciMLBase.NonlinearProblem` in `solve` and `init`, and returns `(x, status)`** (decision 52 of
+  the design). `SciMLBase` is a weak dependency (`[compat] SciMLBase = "3.55"`), so the package and
+  its main test suite load without it. When `SciMLBase` is loaded,
+  `solve(prob::SciMLBase.NonlinearProblem, method::Union{Newton, Picard}; kwargs...)` translates
+  `prob` to a native `NonlinearProblem` and returns `(x, status)`, and `init` with the same
+  arguments translates `prob` by the same rules and returns a `NonlinearSolver`, so
+  `solve!(init(prob, method; kwargs...))` returns what `solve(prob, method; kwargs...)` returns and
+  the native `solve!` serves the solver. An out-of-place `f(u, p)` with a `StaticArray` or a
+  `Number` `u0` solves in R1; an in-place `f(du, u, p)` with an array `u0` that is not a
+  `StaticArray` solves in R3 on a copy of `u0`; an out-of-place `f(u, p)` with such an array `u0`
+  solves in R3 through `(y, x, p) -> (y .= f(x, p))` (and the same wrapper for `prob.f.jac`); and
+  an in-place `f` with a `StaticArray` or a `Number` `u0`, or a problem with `jac_prototype`,
+  `sparsity`, `lb` or `ub` set, raises an `ArgumentError`. `prob.p` reaches `f` and `jac`
+  unchanged, `SciMLBase.NullParameters()` included. `prob.kwargs` and the call's keywords merge
+  with the call's winning over the closed set `abstol` (`f_abstol`, with `f_reltol = 0` when
+  `reltol` is absent), `reltol` (`f_reltol`), `maxiters` (`max_iterations`) and `options`; any
+  other keyword raises an `ArgumentError`. `GeometricSolvers.sciml_retcode(code::ReturnCode)`
+  (`public`, not exported, with its method in the extension) maps the six `ReturnCode` values to
+  `SciMLBase.ReturnCode.Success`, `Stalled`, `MaxIters`, `InternalLinearSolveFailed`, `Unstable`
+  and `InternalLineSearchFailed` (`sciml_retcode(status.code)`). `test/sciml/` and
+  `.github/workflows/SciML.yml` test the extension in its own environment.
+
 - The empty package skeleton: `Project.toml`, the module and its
   docstring, a test harness with Aqua and a diagnostic JET check, and `test/backends.jl` — the
   array backends a test loops over (`Array`, `JLArray`, and the KernelAbstractions `CPU()`

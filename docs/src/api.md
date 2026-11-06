@@ -55,6 +55,7 @@ with `nullnorm ≈ 0`.
 
 ```@docs
 ReturnCode
+sciml_retcode
 SolverStatus
 StepInfo
 Options
@@ -177,6 +178,35 @@ Newton
 Picard
 NoRefinement
 ```
+
+### SciMLBase extension
+
+When [SciMLBase](https://github.com/SciML/SciMLBase.jl) is loaded, the package extension
+`GeometricSolversSciMLBaseExt` adds methods of [`solve`](@ref) and [`init`](@ref) for a
+`SciMLBase.NonlinearProblem` and a method [`Newton`](@ref) or [`Picard`](@ref). Both translate the
+problem and call the native [`solve`](@ref) or [`init`](@ref), so `solve` returns `(x, status)`,
+`init` returns a [`NonlinearSolver`](@ref) that holds a copy of an array `u0`, and
+`solve!(init(prob, method; kwargs...))` returns what `solve(prob, method; kwargs...)` returns; the
+native [`solve!`](@ref) serves the solver. A SciML caller maps `status.code` to a
+`SciMLBase.ReturnCode.T` with [`sciml_retcode`](@ref)
+(`GeometricSolvers.sciml_retcode(status.code)`), which is `public` and not exported.
+
+The call form follows `SciMLBase.isinplace(prob)` and `u0 = prob.u0`: an out-of-place `f(u, p)`
+with a `StaticArray` or a `Number` `u0` solves in R1 and returns a value of the type of `u0` (with
+an `SVector` `u0`, an out-of-place `jac(u, p)` must return an `SMatrix`, as the native R1 `J`
+does); an in-place `f(du, u, p)` with an array `u0` that is not a `StaticArray` solves in R3 on a
+copy of `u0`; an out-of-place `f(u, p)` with such an array `u0` solves in R3 through a closure
+wrapper `(y, x, p) -> (y .= f(x, p))` (and `(A, x, p) -> (A .= jac(x, p))` for `prob.f.jac`),
+which allocates as `f` and `jac` do; and an in-place `f` with a `StaticArray` or a `Number` `u0`
+raises an `ArgumentError`. `prob.f.jac` becomes the `J` of the native problem (overridden by a
+method's own `jacobian` field), and `prob.p` is passed unchanged, `SciMLBase.NullParameters()`
+included. A problem with `jac_prototype`, `sparsity`, `lb` or `ub` set raises an `ArgumentError`.
+
+The extension merges `prob.kwargs` with the call's keywords (the call's winning) and accepts the
+closed set `abstol`, `reltol`, `maxiters` and `options`: `abstol` maps to `f_abstol` (and sets
+`f_reltol = 0` when `reltol` is not given), `reltol` maps to `f_reltol`, `maxiters` maps to
+`max_iterations`, and `options` passes an [`Options`](@ref) alone; any other keyword, or `options`
+together with another keyword, raises an `ArgumentError`.
 
 ## Automatic differentiation
 
