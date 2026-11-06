@@ -200,16 +200,22 @@ if Metal.functional() && !on_virtual_gpu()
         # extension names for the missing pivot is not the index of the smallest diagonal entry
         # itself. Two checks come first: without them a later MPS release that returned a positive
         # status would send this case down the `status_code > 0` branch and the case would assert
-        # nothing about how `-2` is named.
+        # nothing about how `-2` is named. The factor takes the size of `A_neg`: `load_factors!`
+        # copies the matrix into the factor buffer with `copyto!`, entry by entry in linear order,
+        # so a buffer of another length holds a matrix that `A_neg` does not describe, and the
+        # entries that the copy does not reach keep what `similar` returned.
         A_neg = Float32[-5 1 0; 1 -4 0; 0 0 0]
         F_neg = LinearAlgebra.lu!(MtlArray(copy(A_neg)); check = false)
         @test F_neg.info == -2
         diag_neg = Array(@view(F_neg.factors[LinearAlgebra.diagind(F_neg.factors)]))
         @test any(<(0), diag_neg)
 
-        fac_neg = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_neg))
+        x3 = MtlArray(zeros(Float32, 3))
+        prob3 = NonlinearProblem(x3, metal_vendor_noop)
+        fac_neg = factorize!!(dense_factor(m, prob3, x3, nothing), m, MtlArray(A_neg))
         @test fac_neg.info == 3
-        @test fac_neg.info == ka_info(A_neg)
+        @test fac_neg.info ==
+              ka_factorize_lu!(dense_factor(m, prob3, x3, nothing), MtlArray(A_neg)).info
         @test returncode(fac_neg) === SINGULAR
 
         # Direct status mapping checks on _mps_lu_finish!: status 0, -2, >0, and <0 fallback
