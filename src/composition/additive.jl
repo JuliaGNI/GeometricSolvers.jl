@@ -268,7 +268,7 @@ function step!!(
     end
     d = _combine_r1_dir(x, xs_cand, w)
     x₊ = update_iterate!!(nothing, x, one(R), d)
-    F₊ = residual!!(nothing, prob, x₊, p)
+    F₊ = primal_residual!!(nothing, prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     safeguard_fallback = false
     if m.weights isa OptimalWeights
@@ -313,7 +313,7 @@ function step!!(
     end
     combine_directions!(state.d, x, state.xs, w)
     x₊ = update_iterate!!(state.xt, x, one(R), state.d)
-    F₊ = residual!!(state.Fx, prob, x₊, p)
+    F₊ = primal_residual!!(state.Fx, prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     safeguard_fallback = false
     if m.weights isa OptimalWeights

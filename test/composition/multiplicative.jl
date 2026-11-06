@@ -189,6 +189,24 @@ end
     @test st_nest_sync.states[3].s2.merit === R(4)
 end
 
+@testset "sync_merit resets the residual norm of a Static Newton member, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem(R1QuadMultF(T(2), T(3)))
+    m₁ = Adapt.adapt(ToReal{T}(), Picard(; damping = 0.2))
+    m₂ = Adapt.adapt(ToReal{T}(), Newton(; globalization = Static()))
+    m = Multiplicative(m₁, m₂)
+    x = SVector{2, T}(T(2), T(2))
+    Fx = residual!!(nothing, prob, x, nothing)
+    st = start!!(init_state(m, prob, x, nothing), m, prob, x, Fx, nothing, rnorm(Fx))
+    for _ in 1:2
+        y, Fy, _, _ = step!!(st.states[1], m₁, prob, x, Fx, nothing)
+        x, Fx, st, _ = step!!(st, m, prob, x, Fx, nothing)
+        # Member 2 factorises J(y) = 2 diag(y) at the iterate y that member 1 returns, so its
+        # gradratio is ‖J(y)ᴴ F(y)‖ / (‖J(y)‖_F ‖F(y)‖) with the norm of F(y), not of F(x).
+        gr = rnorm(2 .* y .* Fy) / (2 * rnorm(y)) / rnorm(Fy)
+        @test isapprox(st.states[2].diag.gradratio, gr; rtol = 8 * eps(T))
+    end
+end
+
 @testset "Check 4: Pollock Picard + Newton vs Newton, $T" for T in REAL_ELTYPES
     x₀_s = SVector{2, T}(T(3), T(3))
     prob_s = NonlinearProblem(R1PollockF())

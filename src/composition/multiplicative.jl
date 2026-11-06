@@ -39,14 +39,16 @@ end
 Update a started line-search member state's stored baseline merit
 ``\\phi(x) = \\|F(x)\\|_2^2`` to `merit` when another member has moved the iterate `(x, Fx)`
 since `state`'s last step. Preserves `NaN` on an un-started state so calling `step!!`
-without `start!!` still fails closed with `NONFINITE`, and is a no-op for `Static` and
-`DogLeg` states (`merit === nothing`).
+without `start!!` still fails closed with `NONFINITE`, and leaves the merit of a `Static` or
+`DogLeg` state (`merit === nothing`) as it is. A `Newton` state also sets the residual norm it
+carries to `NaN`, so that its next step measures ``\\|F(x)\\|`` of the residual it is given.
 """
 @inline sync_merit(state, method, merit::Real) = state
 
 @inline function sync_merit(state::NewtonState, ::Newton, merit::Real)
-    state.merit isa Real && isfinite(state.merit) || return state
-    return with_merit(state, oftype(state.merit, merit))
+    φ = state.merit isa Real && isfinite(state.merit) ? oftype(state.merit, merit) :
+        state.merit
+    return with_merit(state, φ, NaN)
 end
 
 @inline function sync_merit(state::PicardState, ::Picard, merit::Real)
