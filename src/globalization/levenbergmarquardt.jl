@@ -596,7 +596,8 @@ end
 
 # The value-iterate calls carry the workspace tuple of the R3 state, which those paths do not
 # read: the two methods below drop it. Their signatures stay disjoint from the dense one above,
-# which takes an `AbstractMatrix` and an `AbstractVector`.
+# which takes an `AbstractMatrix` and an `AbstractVector`. A `Number` Jacobian is a scalar
+# iterate's, which has no storage slot, so its bag is `nothing` and never a vector.
 @inline function lm_stacked_qr_step(
         δ_buf::Union{Nothing, StaticVector}, J::StaticMatrix,
         Fx::StaticVector, μ::R,
@@ -605,7 +606,7 @@ end
 end
 
 @inline function lm_stacked_qr_step(
-        δ_buf::Union{Nothing, StaticVector}, J::Number, Fx::Number, μ::R,
+        δ_buf::Nothing, J::Number, Fx::Number, μ::R,
         scaling::Union{Val{:none}, Val{:diagonal}}, _) where {R <: AbstractFloat}
     return lm_stacked_qr_step(δ_buf, J, Fx, μ, scaling)
 end

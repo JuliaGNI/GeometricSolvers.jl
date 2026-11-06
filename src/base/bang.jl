@@ -56,6 +56,10 @@ retraction is a second method of it, and no algorithm changes.
 update_iterate!!(::Nothing, x, α, d) = x + α * d
 update_iterate!!(y::AbstractArray, x, α, d) = (y .= x .+ α .* d; y)
 
+# A `Number` iterate is one variable, and a one-column factor returns its step as a one-entry
+# vector: the iterate is a value, so the updated iterate is a `Number` again.
+update_iterate!!(::Nothing, x::Number, α, d::StaticVector{1}) = x + α * first(d)
+
 """
     map!!(f, y, xs...)
 
@@ -108,17 +112,21 @@ end
 """
     regularize!!(J, μ)
 
-Add `μ * I` to the Jacobian `J` in its storage, and return it. When `iszero(μ)` holds, `J` is
-returned untouched. On a `Matrix` the diagonal is shifted in a loop so bounds-checked runs
+Add `μ * I` to the Jacobian `J` in its storage, and return it — on a rectangular `J`, to the
+`min(M, N)` entries of its leading diagonal. When `iszero(μ)` holds, `J` is returned untouched. On
+a `Matrix` the diagonal is shifted in a loop so bounds-checked runs
 allocate nothing; on any other `AbstractMatrix` the diagonal view `view(J, diagind(J))` is updated
-by broadcast so device arrays perform no scalar indexing.
+by broadcast so device arrays perform no scalar indexing. An `SMatrix` has immutable entries, so
+its shifted diagonal is a rebuilt tuple.
 """
-function regularize!!(J::SMatrix{N, N, T, L}, μ) where {N, T, L}
+function regularize!!(J::SMatrix{M, N, T, L}, μ) where {M, N, T, L}
     iszero(μ) && return J
     μT = T(μ)
-    return SMatrix{N, N, T, L}(ntuple(Val(L)) do k
-        i, j = divrem(k - 1, N)
-        @inbounds J[k] + ifelse(i == j, μT, zero(T))
+    # `k` runs over the column-major storage, so `divrem(k - 1, M)` gives the column and the row of
+    # entry `k`: the diagonal entry is the one whose two agree
+    return SMatrix{M, N, T, L}(ntuple(Val(L)) do k
+        col, row = divrem(k - 1, M)
+        @inbounds J[k] + ifelse(col == row, μT, zero(T))
     end)
 end
 

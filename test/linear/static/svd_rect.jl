@@ -101,6 +101,30 @@ end
     @test isapprox(nn_z, one(T); rtol = 8 * eps(T))
 end
 
+@testset "rank cutoff grows with the rows: 32 × 6 of rank 5, $T" for T in REAL_ELTYPES
+    # A `32 × 6` matrix of rank 5 whose rounding leaves `σ̂₆/σ̂₁` above the cutoff of the 6 columns,
+    # `√6 eps σ̂₁`, and below that of the 32 rows, `√32 eps σ̂₁`: a one-sided sweep's truncated
+    # direction accumulates its residual over the rows, so the rank is read from them. The seed
+    # differs by precision so that the case sits inside that window in each of them.
+    seed = T === Float32 ? 3 : 34
+    rng = Xoshiro(seed)
+    A = SMatrix{32, 6, T}(T.(randn(rng, 32, 5) * randn(rng, 5, 6)))
+    b = SVector{32, T}(randn(rng, 32))
+
+    fac = factorize!!(SVDFactorization(), nothing, A)
+    @test returncode(fac) === SUCCESS
+    @test fac.S[6] > sqrt(T(6)) * eps(T) * fac.S[1]
+    @test fac.S[6] <= sqrt(T(32)) * eps(T) * fac.S[1]
+    @test fac.rank == Int32(5)
+    @test all(iszero, fac.U[:, 6])
+
+    x = ldiv!!(zero(SVector{6, T}), fac, b)
+    x_ref = pinv(Float64.(A); rtol = 10 * sqrt(6) * eps(T)) * Float64.(b)
+    # 256 eps against a measured 5.8e-7 (Float32) and 2.3e-15 (Float64); with the cutoff of the
+    # columns the sixth direction stays in the solve and the relative error is 5.9e5 and 5.4e13
+    @test norm(Float64.(x) - x_ref) <= 256 * eps(T) * norm(x_ref)
+end
+
 @testset "square dispatch, dimension guards, and size limit, $T" for T in REAL_ELTYPES
     A_sq = SMatrix{3, 3, T}(I)
     fac_sq = factorize!!(SVDFactorization(), nothing, A_sq)
@@ -128,16 +152,10 @@ end
         @test (@inferred factor_diagnostics(fac, b)) isa Tuple{Int32, T}
         # skipped where a run forces --check-bounds=yes
         if Base.JLOptions().check_bounds != 1
-            alloc_fac = let m = m, A = A
-                factorize!!(m, nothing, A)
-                @allocated factorize!!(m, nothing, A)
-            end
-            alloc_ldiv = let d = d, fac = fac, b = b
-                ldiv!!(d, fac, b)
-                @allocated ldiv!!(d, fac, b)
-            end
-            @test alloc_fac == 0
-            @test alloc_ldiv == 0
+            @test allocations(factorize!!, m, nothing, A) == 0
+            @test allocations(ldiv!!, d, fac, b) == 0
+            # the control: `allocations` sees an allocation where there is one
+            @test allocations(collect, b) > 0
         end
     end
 

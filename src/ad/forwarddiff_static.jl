@@ -33,9 +33,19 @@ function prepare_ad(
     backend
 end
 
-function jacobian!!(::Nothing, ::Nothing, prob, x::Union{StaticVector, Number}, p)
+function jacobian!!(::Nothing, ::Nothing, prob, x::StaticVector, p)
     return prob.J(x, p)
 end
+
+function jacobian!!(::Nothing, ::Nothing, prob, x::Number, p)
+    return jacobian_column(prob.J(x, p))
+end
+
+# A `Number` iterate is `n = 1`, and the derivative of its `M`-entry residual is a one-column
+# matrix: a vector-valued Jacobian of a scalar iterate is that column, and a scalar one stays the
+# `Number` it is.
+@inline jacobian_column(J) = J
+@inline jacobian_column(J::StaticVector{M, T}) where {M, T} = SMatrix{M, 1, T, M}(J)
 
 function jacobian!!(
         ::Nothing, s::JacobianFunction, prob, x::Union{StaticVector, Number}, p)
@@ -64,8 +74,9 @@ end
         ntuple(k -> dual_partial(rdual[mod1(k, M)], fld1(k, M)), Val(M * N)))
 end
 
-# A `Number` iterate is `n = 1`, and its Jacobian is a `Number` in the same element type: the
-# Jacobian–vector product in the direction one.
+# A `Number` iterate is `n = 1`: its Jacobian is the derivative of the residual in the direction
+# one, as a `Number` for a scalar residual and as the one column of an `M × 1` matrix for a
+# vector-valued one.
 function jacobian!!(::Nothing, backend::AutoForwardDiff, prob, x::Number, p)
-    return jvp!!(nothing, backend, prob, x, one(x), p)
+    return jacobian_column(jvp!!(nothing, backend, prob, x, one(x), p))
 end

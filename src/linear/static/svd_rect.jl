@@ -144,7 +144,7 @@ function factorize!!(::Union{Nothing, StaticSVD, StaticRectSVD},
 
     ok = converged && all(isfinite, σ)
     info = ok ? Int32(0) : Int32(1)
-    cutoff = jacobi_tolerance(N, R) * σ[1]
+    cutoff = jacobi_tolerance(M, R) * σ[1]
     rank = Int32(0)
     if ok
         for j in 1:N

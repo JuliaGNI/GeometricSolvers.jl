@@ -117,16 +117,10 @@ end
         @test (@inferred factor_diagnostics(fac, b)) isa Tuple{Int32, T}
         # skipped where a run forces --check-bounds=yes
         if Base.JLOptions().check_bounds != 1
-            alloc_fac = let m = m, A = A
-                factorize!!(m, nothing, A)
-                @allocated factorize!!(m, nothing, A)
-            end
-            alloc_ldiv = let d = d, fac = fac, b = b
-                ldiv!!(d, fac, b)
-                @allocated ldiv!!(d, fac, b)
-            end
-            @test alloc_fac == 0
-            @test alloc_ldiv == 0
+            @test allocations(factorize!!, m, nothing, A) == 0
+            @test allocations(ldiv!!, d, fac, b) == 0
+            # the control: `allocations` sees an allocation where there is one
+            @test allocations(collect, b) > 0
         end
     end
 

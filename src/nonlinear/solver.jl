@@ -119,10 +119,14 @@ keeps its new iterate, increments
 `status.step_failures`, and continues. The residual test returns `SUCCESS` with
 `status.stationary == false`; on a [`LeastSquaresProblem`](@ref) where the residual test does not
 hold, the stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ options.g_tol` (with `‖J‖_F > 0` and
-`‖F‖ > 0`) returns `SUCCESS` with `status.stationary == true`. When neither test holds
+`‖F‖ > 0`) returns `SUCCESS` with `status.stationary == true`. The state's diagnostics are those
+of its last fresh factorisation, at the start of the step, so the ratio is re-measured at the
+iterate the solve returns before it ends on this test. When neither test holds
 after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
 at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
-would start; `min_iterations` bounds both. After a `STALLED` step only the residual and
+would start — unless the stationarity test, re-measured at that iterate, holds, which a
+nonzero-residual least-squares minimum reaches with a step of any length, a zero one included;
+`min_iterations` bounds both. After a `STALLED` step only the residual and
 stationarity tests apply,
 and `options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose
 `limited` is set only the residual and stationarity tests apply too, because a radius, not the
@@ -162,15 +166,21 @@ function solve!!(
             return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
         if stationary_converged(prob, options, state, status)
-            return finish!!(state, method, prob, x, Fx, stationary_status(status))
+            state = refresh_diagnostics!!(state, method, prob, x, Fx, p)
+            if stationary_converged(prob, options, state, status)
+                return finish!!(state, method, prob, x, Fx, stationary_status(status))
+            end
         end
         if !(info.code == STALLED || info.limited)
-            # the residual test fails: the step test, or a zero step, ends the solve unconverged
-            if step_converged(options, status, rnorm(x))
-                return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
-            end
-            if info.code == SUCCESS && iszero(info.stepnorm) &&
-               status.iterations >= options.min_iterations
+            # the residual test fails: the step test, or a zero step, ends the solve unconverged,
+            # unless the iterate it returns is stationary, which a step of zero length cannot show
+            if step_converged(options, status, rnorm(x)) ||
+               (info.code == SUCCESS && iszero(info.stepnorm) &&
+                status.iterations >= options.min_iterations)
+                state = refresh_diagnostics!!(state, method, prob, x, Fx, p)
+                if stationary_converged(prob, options, state, status)
+                    return finish!!(state, method, prob, x, Fx, stationary_status(status))
+                end
                 return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
             end
         end

@@ -183,7 +183,6 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
     m_rows, n = size(U)
     backend = get_backend(U)
     tol = jacobi_tolerance(m_rows, R)
-    cutoff_tol = jacobi_tolerance(n, R)
     m = n + Int(isodd(n))
     n_pairs = m ÷ 2
     valG = ka_svd_workgroup(backend)
@@ -218,14 +217,14 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
         ka_jacobi_sort_columns_kernel!(backend)(σ̂, U, V, m_rows, n; ndrange = 1)
     end
     ka_jacobi_finalize_svd_kernel!(backend)(
-        U, S, VT, V, σ̂, m_rows, n, e, cutoff_tol; ndrange = n)
+        U, S, VT, V, σ̂, m_rows, n, e, tol; ndrange = n)
     isgpu(backend) && synchronize(backend)
     # the status and the rank from one host read of the sorted `σ̂`, and no scalar read of a
     # device array: `info` reports a sweep that did not converge or a singular value that is
     # not finite, and the rank is then 0
     σ̂_host = Array(σ̂)
     ok = converged && all(isfinite, σ̂_host)
-    return ok ? 0 : 1, ok ? svd_rank(σ̂_host) : 0
+    return ok ? 0 : 1, ok ? svd_rank(σ̂_host, m_rows) : 0
 end
 
 function ka_factorize_svd!(fac::DeviceSVD, J::AbstractMatrix)

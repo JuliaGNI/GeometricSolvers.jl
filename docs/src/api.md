@@ -84,7 +84,8 @@ A linear-solver method enters a solve through [`dense_factor`](@ref), [`factoriz
 `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
 `Int32` pivots, [`StaticQR`](@ref) and [`StaticRectQR`](@ref) are Householder QR without column
 pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a one-sided Jacobi singular
-value decomposition whose solve truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what
+value decomposition whose solve truncates at the rank cutoff `√n · eps(TF) · σ₁` for a square
+matrix and `√m · eps(TF) · σ₁` for a rectangular one, `m` its row count, which is what
 makes a rank-revealing solve finite. For a vector state (R3)
 [`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
 on a host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an

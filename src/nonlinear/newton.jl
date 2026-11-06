@@ -169,8 +169,8 @@ end
     zu = zeros(SMatrix{M, N, TF})
     zv = zeros(SMatrix{N, N, TF})
     σ = zeros(SVector{N, real(TF)})
-    return StaticRectSVD{M, N, TF, real(TF), M * N, N * N}(
-        zu, zv, σ, Int32(0), Int32(0), Int32(0))
+    return StaticRectSVD{M, N, TF, M * N, N * N, real(TF)}(
+        zu, zv, σ, σ, Int32(0), Int32(0), Int32(0))
 end
 
 @inline function empty_static_factor(
@@ -257,11 +257,6 @@ struct NewtonDiagnostics{R <: Real}
     jnorm::R
 end
 
-@inline function NewtonDiagnostics(
-        rank::Int32, nullnorm::R, gradratio::R) where {R <: Real}
-    return NewtonDiagnostics{R}(rank, nullnorm, gradratio, R(NaN))
-end
-
 @inline function NewtonDiagnostics(::Type{R}) where {R <: Real}
     return NewtonDiagnostics{R}(Int32(-1), R(NaN), R(NaN), zero(R))
 end
@@ -288,6 +283,21 @@ end
 
 @inline state_gradratio(state::NewtonState) = state.diag.gradratio
 @inline state_jnorm(state::NewtonState) = state.diag.jnorm
+
+# The state whose diagnostics measure the stationarity test at `(x, Fx)`: `solve!!` re-measures
+# them at the iterate it returns, because a step's diagnostics are those of the last fresh
+# factorisation, at the start of that step. Every other method and problem keeps its reading.
+@inline refresh_diagnostics!!(state, method, prob, x, Fx, p) = state
+@inline function refresh_diagnostics!!(
+        state::NewtonState, m::Newton, prob::LeastSquaresProblem, x, Fx, p)
+    R = real(eltype(x))
+    _, _, diag = if m.globalization isa LevenbergMarquardt
+        lm_newton_factor(m, state, prob, x, Fx, p, R(rnorm(Fx)))
+    else
+        newton_factor(m, state, prob, x, Fx, p)
+    end
+    return with_diag(state, diag)
+end
 
 @inline function with_factor(s::NewtonState, fac)
     return NewtonState(
@@ -397,7 +407,6 @@ end
     return MeasuredSlope()
 end
 @inline newton_stepkind(::LeastSquaresProblem, m::Newton) = MeasuredSlope()
-@inline newton_stepkind(::LeastSquaresProblem, linsolve, refinement) = MeasuredSlope()
 
 # `‖Fx‖` from the line-search merit `norm2(Fx)` when it lies in the normal range, so that a
 # line-search step takes no extra host/device reduction over `Fx`, and `rnorm(Fx)` otherwise.
@@ -420,11 +429,6 @@ end
              (Fx isa StaticVector ? SVector(Fx) : Fx)
     g = mul!!(d, adjoint(Jmat), Fx_vec)
     return R(rnorm(g)) / jnorm / fnorm, jnorm
-end
-
-@inline function grad_ratio(d, J, Fx, fnorm::R) where {R <: Real}
-    gr, _ = grad_ratio_and_norm(d, J, Fx, fnorm)
-    return gr
 end
 
 # The Jacobian at `x`, regularised, its factor, and the diagnostics of both: the one
@@ -522,7 +526,7 @@ end
     return x₊, F₊, state₊, info
 end
 
-@inline function lm_svd_factor(state, m, ::Number, Jreg)
+@inline function lm_svd_factor(state, m, ::Number, Jreg::Number)
     return factorize!!(state.fac, m.linsolve, SMatrix{1, 1, typeof(Jreg)}((Jreg,)))
 end
 @inline lm_svd_factor(state, m, _, Jreg) = factorize!!(state.fac, m.linsolve, Jreg)

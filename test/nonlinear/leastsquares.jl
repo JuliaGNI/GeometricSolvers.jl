@@ -125,12 +125,13 @@ end
     @test p2 isa LeastSquaresProblem{typeof(f_oop), typeof(j_oop), Nothing}
     p3 = LeastSquaresProblem(f_ip, 5)
     @test p3 isa LeastSquaresProblem{typeof(f_ip), Nothing, Int}
-    @test p3.m == 5
+    @test p3.output_length == 5
     p4 = LeastSquaresProblem(f_ip, j_ip, 5)
     @test p4 isa LeastSquaresProblem{typeof(f_ip), typeof(j_ip), Int}
-    @test p4.m == 5
-    p5 = LeastSquaresProblem(f_ip; m = 5, jacobian = j_ip)
-    @test p5.m == 5 && p5.J === j_ip
+    @test p4.output_length == 5
+    p5 = LeastSquaresProblem(f_ip, j_ip; output_length = 5)
+    @test p5.output_length == 5 && p5.J === j_ip
+    @test LeastSquaresProblem(f_oop).output_length === nothing
 
     @test_throws ArgumentError LeastSquaresProblem(f_ip, 0)
     @test_throws ArgumentError LeastSquaresProblem(f_ip, -3)
@@ -184,6 +185,12 @@ end
     @test_throws ArgumentError init(
         p3, ones(T, 2), Newton(; linsolve = QRFactorization(), regularization = 1e-6))
 
+    # A rectangular static Jacobian takes `μ` on its leading diagonal and nowhere else
+    J_rect = SMatrix{3, 2, T}(one(T), T(2), T(3), T(4), T(5), T(6))
+    @test GeometricSolvers.regularize!!(J_rect, T(10)) ==
+          SMatrix{3, 2, T}(T(11), T(2), T(3), T(4), T(15), T(6))
+    @test GeometricSolvers.regularize!!(J_rect, zero(T)) === J_rect
+
     # Underdetermined m < n throws DimensionMismatch
     p_under_s = LeastSquaresProblem((x, p) -> SVector{2}(x[1], x[2]))
     @test_throws DimensionMismatch solve(p_under_s, SVector{3, T}(1, 2, 3), GaussNewton())
@@ -191,7 +198,50 @@ end
     @test_throws DimensionMismatch init(p_under_d, ones(T, 3), GaussNewton())
 end
 
+# ─── D1: a `Number` iterate, whose `M`-entry residual is a vector ────────────
+
+@testset "Number iterate with an SVector residual, $T, $name" for T in REAL_ELTYPES,
+    (name, J_form) in (("AD", nothing), ("J vector", :vector), ("J matrix", :matrix))
+
+    f_num(x, p) = SVector(x - one(T), x - T(2), T(2) * x)
+    j_vec(x, p) = SVector(one(T), one(T), T(2))
+    j_mat(x, p) = SMatrix{3, 1, T, 3}(one(T), one(T), T(2))
+    J_num = J_form === nothing ? nothing : (J_form === :vector ? j_vec : j_mat)
+    prob_num = LeastSquaresProblem(f_num, J_num)
+    # the minimum of (x - 1)² + (x - 2)² + 4x² is x* = (1 + 2) / 6
+    xstar = T(3) / T(6)
+    for alg in (GaussNewton(),
+        GaussNewton(; linsolve = SVDFactorization()),
+        Newton(; globalization = LevenbergMarquardt()),
+        Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
+        x, st = solve(prob_num, zero(T), alg)
+        @test x isa T
+        @test st.code === SUCCESS
+        @test stopping_test(st) === :stationarity
+        # the Gauss–Newton step of this linear problem is exact (0 eps), and the damped step stops
+        # at its damping floor `4 eps`, a few hundred eps from the minimum (334 in Float64 and
+        # 3.5 in Float32 over the runs of this testset)
+        tol = alg.globalization isa LevenbergMarquardt ? 1024 * eps(T) : 16 * eps(T)
+        @test isapprox(x, xstar; rtol = tol)
+    end
+end
+
 # ─── Clause 1c: Dense and device rectangular QR and SVD ──────────────────────
+
+# `factorize!!` of a mutable matrix writes its factors into that matrix, so a measured call needs
+# the matrix restored first: the barrier's warm-up call does that copy, and the measured one does
+# the same work again.
+function factorize_fresh!!(fac, method, A, A_src)
+    copyto!(A, A_src)
+    return factorize!!(fac, method, A)
+end
+
+# A measured `solve!(solver)` runs from the initial iterate every time, so the barrier restores it
+# into the solver before the call: the warm-up call does the same work as the measured one.
+function solve_from_start!(solver, x0)
+    copyto!(solver.x, x0)
+    return solve!(solver)
+end
 
 @testset "Dense and device rectangular QR and SVD, $T" for T in REAL_ELTYPES
     m, n = 6, 3
@@ -218,18 +268,10 @@ end
         A_work = copy(A_h)
         fac = factorize!!(fac, method, A_work)
         ldiv!!(d, fac, b_h)
-        alloc_fac = let fac = fac, method = method, A_work = A_work
-            copyto!(A_work, A_h)
-            factorize!!(fac, method, A_work)
-            copyto!(A_work, A_h)
-            @allocated factorize!!(fac, method, A_work)
-        end
-        alloc_ldiv = let d = d, fac = fac, b_h = b_h
-            ldiv!!(d, fac, b_h)
-            @allocated ldiv!!(d, fac, b_h)
-        end
-        @test alloc_fac == 0
-        @test alloc_ldiv == 0
+        @test allocations(factorize_fresh!!, fac, method, A_work, A_h) == 0
+        @test allocations(ldiv!!, d, fac, b_h) == 0
+        # the control: `allocations` sees an allocation where there is one
+        @test allocations(copy, b_h) > 0
     end
 
     # Rank-deficient rectangular DenseSVD and DeviceSVD
@@ -271,6 +313,29 @@ end
     @test fac_dev_svd.rank[] == Int32(2)
     ldiv!!(d_dev_svd, fac_dev_svd, b_d)
     @test isapprox(Array(d_dev_svd), x_pinv; rtol = 64 * sqrt(eps(T)))
+
+    # A rank-5 32 × 6 matrix: rounding leaves `σ̂₆/σ̂₁` above the cutoff of the 6 columns and below
+    # that of the 32 rows, so the rank is read from the rows, and the truncated direction stays out
+    # of the solve. The seed differs by precision so that the case sits inside that window.
+    seed32 = T === Float32 ? 3 : 34
+    rng32 = Xoshiro(seed32)
+    A32 = randn(rng32, 32, 5) * randn(rng32, 5, 6)
+    b32 = randn(rng32, 32)
+    A_def32 = T.(A32)
+    b_def32 = T.(b32)
+    x32_ref = pinv(Float64.(A_def32); rtol = 10 * sqrt(6) * eps(T)) * Float64.(b_def32)
+    prob32 = LeastSquaresProblem((r, x, p) -> r, 32)
+    for AT in ARRAY_BACKENDS
+        d32 = AT(zeros(T, 6))
+        fac32 = factorize!!(
+            dense_factor(SVDFactorization(), prob32, d32, nothing), SVDFactorization(),
+            AT(copy(A_def32)))
+        @test fac32.rank[] == Int32(5)
+        ldiv!!(d32, fac32, AT(b_def32))
+        # 256 eps against a measured 6.6e-7 (Float32) and 2.0e-15 (Float64); with the cutoff of the
+        # columns the sixth direction stays in the solve, and the relative error is 6.2e6 and 4.0e15
+        @test norm(Float64.(Array(d32)) - x32_ref) <= 256 * eps(T) * norm(x32_ref)
+    end
 
     # Direct LM SVD step vs stacked QR step on rectangular LeastSquaresProblem (catches MU7)
     J_lm = copy(A_h)
@@ -338,7 +403,12 @@ end
 
 @testset "MGH nonzero-residual problems, $T" for T in REAL_ELTYPES
     opt = Options(T; max_iterations = 200)
-    rtol_val = T === Float64 ? 1e-10 : 1e-4
+    # `‖r*‖²` is a sum of squares of the residuals the solve reached, and every method below
+    # reaches the published value to a few ulp of it: measured over the runs of this testset,
+    # 1.59e-6 = 13.4 eps in Float32 and 2.75e-15 = 12.4 eps in Float64. The tolerance is 64 eps
+    # in both precisions, which no wrong minimum reaches and which a 5× regression in the last
+    # digits fails.
+    val_rtol = 64 * eps(T)
 
     # MGH #11: Full-rank linear (m = 10, n = 5), f* = 5, x* = -ones(5)
     x0_11 = ones(SVector{5, T})
@@ -353,7 +423,7 @@ end
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
         @test st.gradratio <= opt.g_tol
-        @test isapprox(st.fnorm^2, T(5); rtol = rtol_val)
+        @test isapprox(st.fnorm^2, T(5); rtol = val_rtol)
         @test isapprox(Vector(x), fill(T(-1), 5); atol = sqrt(eps(T)))
     end
 
@@ -368,7 +438,7 @@ end
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
         @test st.gradratio <= opt.g_tol
-        @test isapprox(st.fnorm^2, T(5); rtol = rtol_val)
+        @test isapprox(st.fnorm^2, T(5); rtol = val_rtol)
         @test isapprox(Array(x), fill(T(-1), 5); atol = sqrt(eps(T)))
     end
 
@@ -383,7 +453,7 @@ end
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
         @test st.gradratio <= opt.g_tol
-        @test isapprox(st.fnorm^2, T(15) / T(7); rtol = rtol_val)
+        @test isapprox(st.fnorm^2, T(15) / T(7); rtol = val_rtol)
         if alg.linsolve isa SVDFactorization && alg.globalization isa Static
             @test st.rank == Int32(1)
             x_minnorm = [T(j) / T(385) for j in 1:5]
@@ -400,14 +470,13 @@ end
         @test isconverged(st)
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
-        @test isapprox(st.fnorm^2, T(15) / T(7); rtol = rtol_val)
+        @test isapprox(st.fnorm^2, T(15) / T(7); rtol = val_rtol)
     end
 
     # MGH #8: Bard function (m = 15, n = 3), f* ≈ 8.214877306578994e-3
     x0_8 = ones(SVector{3, T})
     prob8_s = LeastSquaresProblem(mgh8_static)
     bard_min = T(8.214877306578994e-3)
-    bard_rtol = T === Float64 ? 1e-8 : 5e-4
     for alg in (GaussNewton(),
         GaussNewton(; linsolve = SVDFactorization()),
         GaussNewton(; globalization = Backtracking()),
@@ -419,7 +488,7 @@ end
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
         @test st.gradratio <= opt.g_tol
-        @test isapprox(st.fnorm^2, bard_min; rtol = bard_rtol)
+        @test isapprox(st.fnorm^2, bard_min; rtol = val_rtol)
     end
 
     prob8_d = LeastSquaresProblem(mgh8_inplace!, 15)
@@ -432,7 +501,7 @@ end
         @test st.iterations >= 2
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
-        @test isapprox(st.fnorm^2, bard_min; rtol = bard_rtol)
+        @test isapprox(st.fnorm^2, bard_min; rtol = val_rtol)
     end
 
     # MGH #6: Jennrich–Sampson (m = 10, n = 2), f* ≈ 124.3621823556148 at x* ≈ (0.25782521, 0.25782521).
@@ -441,7 +510,6 @@ end
     # at (0.25, 0.26), nearer the minimum.
     prob6_s = LeastSquaresProblem(mgh6_static)
     js_min = T(124.3621823556148)
-    js_rtol = T === Float64 ? 1e-7 : 1e-3
     for alg in (Newton(; globalization = LevenbergMarquardt()),
             Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())),
         x0 in (SVector{2, T}(T(0.3), T(0.4)), SVector{2, T}(T(0.25), T(0.26)))
@@ -450,7 +518,7 @@ end
         @test isconverged(st)
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
-        @test isapprox(st.fnorm^2, js_min; rtol = js_rtol)
+        @test isapprox(st.fnorm^2, js_min; rtol = val_rtol)
     end
     # The undamped step is unbounded at a minimum with equal Jacobian columns and a nonzero
     # residual, which is why no `GaussNewton()` run of this problem is asserted here.
@@ -463,47 +531,61 @@ end
         @test isconverged(st)
         @test st.stationary === true
         @test stopping_test(st) === :stationarity
-        @test isapprox(st.fnorm^2, js_min; rtol = js_rtol)
+        @test isapprox(st.fnorm^2, js_min; rtol = val_rtol)
     end
 end
 
 # ─── Clause 3: Zero-residual problem and stationarity guards (MU4, MU5, MU6) ─
 
 @testset "Zero-residual and stationarity guards, $T" for T in REAL_ELTYPES
-    # Consistent overdetermined problem: F(x*) = 0 at x* = (1, 2)
-    f_zero_s = (x, p) -> SVector{4}(
+    # Check 3: a consistent overdetermined system, m = 6 > n = 3, with r(x*) = 0 at x* = (1, 2, -1)
+    f_zero_s = (x, p) -> SVector{6}(
         x[1] - one(T),
         x[2] - T(2),
+        x[3] + one(T),
         x[1] + x[2] - T(3),
-        x[1]^2 - one(T))
+        x[1] * x[3] + one(T),
+        x[2] * x[3] + T(2))
     prob_zero_s = LeastSquaresProblem(f_zero_s)
-    x0_z = SVector{2, T}(T(2), T(3))
+    x0_z = SVector{3, T}(T(2), T(3), zero(T))
     for alg in (GaussNewton(), Newton(; globalization = LevenbergMarquardt()))
         x, st = solve(prob_zero_s, x0_z, alg)
         @test isconverged(st)
         @test st.code === SUCCESS
         @test st.stationary === false
         @test stopping_test(st) === :residual
-        @test isapprox(Vector(x), T[1, 2]; atol = 10 * sqrt(eps(T)))
+        @test isapprox(Vector(x), T[1, 2, -1]; atol = 10 * sqrt(eps(T)))
     end
 
     f_zero_d! = (r, x, p) -> begin
         r[1] = x[1] - one(T)
         r[2] = x[2] - T(2)
-        r[3] = x[1] + x[2] - T(3)
-        r[4] = x[1]^2 - one(T)
+        r[3] = x[3] + one(T)
+        r[4] = x[1] + x[2] - T(3)
+        r[5] = x[1] * x[3] + one(T)
+        r[6] = x[2] * x[3] + T(2)
         return r
     end
-    prob_zero_d = LeastSquaresProblem(f_zero_d!, 4)
+    prob_zero_d = LeastSquaresProblem(f_zero_d!, 6)
     for alg in (GaussNewton(), Newton(; globalization = LevenbergMarquardt()))
-        solver = init(prob_zero_d, T[2, 3], alg)
+        solver = init(prob_zero_d, T[2, 3, 0], alg)
         x, st = solve!(solver)
         @test isconverged(st)
         @test st.code === SUCCESS
         @test st.stationary === false
         @test stopping_test(st) === :residual
-        @test isapprox(x, T[1, 2]; atol = 10 * sqrt(eps(T)))
+        @test isapprox(x, T[1, 2, -1]; atol = 10 * sqrt(eps(T)))
     end
+
+    # MU6 guard: the residual test is tested before the stationarity test. The first step of
+    # MGH #11 leaves both holding — ‖r‖ = √5 < f_abstol = 2.3, and the ratio 0.4 < g_tol = 0.5 —
+    # and the status must name the residual test.
+    opt_both = Options(T; f_abstol = T(2.3), g_tol = T(0.5))
+    x_both, st_both = solve(LeastSquaresProblem(mgh11_static), ones(SVector{5, T}),
+        GaussNewton(); options = opt_both)
+    @test st_both.gradratio <= opt_both.g_tol
+    @test st_both.code === SUCCESS
+    @test stopping_test(st_both) === :residual
 
     # NonlinearProblem must NEVER pass the stationarity stopping test
     prob_nl_s = NonlinearProblem((x, p) -> SVector{2}(x[1]^2 + one(T), x[2]^2 + one(T)))
@@ -555,8 +637,6 @@ end
     @test newton_stepkind(prob_zj_d, GaussNewton()) === MeasuredSlope()
     @test newton_stepkind(prob_zj_s, GaussNewton(), T, true) === MeasuredSlope()
     @test newton_stepkind(prob_zj_d, GaussNewton(), T, true) === MeasuredSlope()
-    @test newton_stepkind(prob_zj_s, QRFactorization(), NoRefinement()) === MeasuredSlope()
-    @test newton_stepkind(prob_zj_d, QRFactorization(), NoRefinement()) === MeasuredSlope()
     f_big_orth = (x, p) -> SVector{3}(x[1] - one(T), x[2] - T(2), T(100))
     prob_big_orth = LeastSquaresProblem(f_big_orth)
     x_bo, st_bo = solve(prob_big_orth, zero(SVector{2, T}),
@@ -564,6 +644,65 @@ end
     @test isconverged(st_bo)
     @test st_bo.stationary === true
     @test isapprox(Vector(x_bo), T[1, 2]; atol = 10 * sqrt(eps(T)))
+
+    # The stationarity test respects `min_iterations`: from the minimum of this problem every step
+    # is zero, and the solve takes the minimum number of steps before it names the test (D5).
+    for alg in (GaussNewton(), GaussNewton(; linsolve = SVDFactorization()))
+        x_min, st_min = solve(prob_big_orth, SVector{2, T}(one(T), T(2)), alg;
+            options = Options(T; min_iterations = 3))
+        @test st_min.iterations >= 3
+        @test st_min.code === SUCCESS
+        @test stopping_test(st_min) === :stationarity
+        @test isapprox(Vector(x_min), T[1, 2]; atol = 10 * sqrt(eps(T)))
+    end
+end
+
+# ─── The iterate a `:stationarity` status names, and factor reuse ────────────
+
+@testset "the iterate a :stationarity status returns is stationary, $T" for T in REAL_ELTYPES
+    # `f` starts at 1e-9 with a slope of 1e-12 and grows quadratically, so the start is stationary
+    # to `g_tol` and the undamped step is `-f / f′ = -1000`, where the ratio is 1. A status that
+    # named the test on the reading at the start of the step would return that point.
+    fs(t) = T(1e-9) + T(1e-12) * t + T(1e-3) * t^2
+    r_st(x, p) = SVector(fs(x[1]), one(T))
+    J_st(x, p) = SMatrix{2, 1, T, 2}(T(1e-12) + T(2e-3) * x[1], zero(T))
+    function ratio_st(x)
+        rv = r_st(x, nothing)
+        Jm = J_st(x, nothing)
+        return norm(Jm' * rv) / (norm(Jm) * norm(rv))
+    end
+    prob_st = LeastSquaresProblem(r_st, J_st)
+    for alg in (GaussNewton(), GaussNewton(; linsolve = SVDFactorization()))
+        @test ratio_st(SVector{1, T}(zero(T))) <= Options(T).g_tol
+        x, st = solve(prob_st, SVector{1, T}(zero(T)), alg)
+        @test st.code === SUCCESS
+        @test stopping_test(st) === :stationarity
+        @test ratio_st(x) <= Options(T).g_tol
+        @test st.gradratio <= Options(T).g_tol
+        # still at the start's residual, not at the 1000 of the step's end
+        @test isapprox(st.fnorm, one(T); rtol = sqrt(eps(T)))
+    end
+end
+
+@testset "factor reuse names the stationarity test at the minimum, $T" for T in REAL_ELTYPES
+    # The diagnostics of a reused factor belong to the iterate before the step that reused it.
+    # MGH #11 is linear, so the first step reaches the minimum and the second, on the reused factor,
+    # is zero: the solve names the stationarity test there instead of stalling.
+    for alg in (
+        GaussNewton(; reuse = 2),
+        GaussNewton(; linsolve = SVDFactorization(), reuse = 2))
+        x, st = solve(LeastSquaresProblem(mgh11_static), ones(SVector{5, T}), alg)
+        @test st.code === SUCCESS
+        @test stopping_test(st) === :stationarity
+        @test isapprox(st.fnorm^2, T(5); rtol = 64 * eps(T))
+        for AT in ARRAY_BACKENDS
+            solver = init(LeastSquaresProblem(mgh11_inplace!, 10), AT(ones(T, 5)), alg)
+            xa, sta = solve!(solver)
+            @test sta.code === SUCCESS
+            @test stopping_test(sta) === :stationarity
+            @test isapprox(sta.fnorm^2, T(5); rtol = 64 * eps(T))
+        end
+    end
 end
 
 # ─── Clause 4: 8-unit tanh network fit of sin(πx) on 101 points ──────────────
@@ -608,11 +747,15 @@ end
         return J
     end
 
-    # Fixed seeded/deterministic start breaking symmetry across the 8 hidden units
+    # The start is fixed and seeded: each hidden unit's weight starts at 2 and its bias at
+    # -1.4 + 0.4 (k - 1), both jittered by `Xoshiro(1)` so that the eight units break symmetry from
+    # the first step, and the output weights alternate ±0.5. The fit reaches 1.7e-5 of the start's
+    # residual in Float32 and 1.6e-5 in Float64, inside the 1e-4 below.
+    rng_tanh = Xoshiro(1)
     θ0 = Vector{T}(undef, n)
     for k in 1:K
-        θ0[k] = T(2)
-        θ0[K + k] = T(-1.4 + 0.4 * (k - 1))
+        θ0[k] = T(2) * (one(T) + T(0.1) * T(randn(rng_tanh)))
+        θ0[K + k] = T(-1.4) + T(0.4) * T(k - 1) + T(0.1) * T(randn(rng_tanh))
         θ0[2 * K + k] = isodd(k) ? T(0.5) : T(-0.5)
     end
 
@@ -642,19 +785,13 @@ end
             Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
             res = @inferred solve(prob, x0, alg)
             @test isconverged(res[2])
-            # The LM factor with `SVDFactorization` allocates its working arrays on the base as
-            # well, so only its inference and its result are asserted.
-            lm_svd = alg.globalization isa LevenbergMarquardt &&
-                     alg.linsolve isa SVDFactorization
             # skipped where a run forces --check-bounds=yes
-            if Base.JLOptions().check_bounds != 1 && !lm_svd
-                alloc = let prob = prob, x0 = x0, alg = alg
-                    solve(prob, x0, alg)
-                    @allocated solve(prob, x0, alg)
-                end
-                @test alloc == 0
+            if Base.JLOptions().check_bounds != 1
+                @test allocations(solve, prob, x0, alg) == 0
             end
         end
+        # the control: `allocations` sees an allocation where there is one
+        @test allocations(collect, x0) > 0
     end
 
     @testset "JET: solve on R1 LeastSquaresProblem is optimisable" begin
@@ -723,14 +860,10 @@ end
         x0_a = zeros(T, 2)
         solver = init(prob_alloc, copy(x0_a), alg)
         solve!(solver)
-        alloc = let solver = solver, x0_a = x0_a
-            copyto!(solver.x, x0_a)
-            solve!(solver)
-            copyto!(solver.x, x0_a)
-            @allocated solve!(solver)
-        end
-        @test alloc == 0
+        @test allocations(solve_from_start!, solver, x0_a) == 0
     end
+    # the control: `allocations` sees an allocation where there is one
+    @test allocations(copy, zeros(T, 2)) > 0
 
     # JLArray R3 under allowscalar(false) for GaussNewton (QR and SVD) and LM (QR and SVD)
     prob11_d = LeastSquaresProblem(mgh11_inplace!, 10)

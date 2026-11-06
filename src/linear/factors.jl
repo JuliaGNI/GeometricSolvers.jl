@@ -474,18 +474,6 @@ function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T}) where {F, M, N, T}
     return SMatrix{M, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
 end
 
-# `μ` added to the leading diagonal of a rectangular static Jacobian: its entries are immutable, so
-# it is rebuilt rather than written through a view. The square method of `base/bang.jl` covers
-# `M == N`, and the `AbstractMatrix` one writes through `diagind`, which a static array cannot take.
-function regularize!!(J::StaticMatrix{M, N, T}, μ) where {M, N, T}
-    iszero(μ) && return J
-    μT = T(μ)
-    return SMatrix{M, N, T, M * N}(ntuple(Val(M * N)) do k
-        i, j = divrem(k - 1, N)
-        @inbounds J[k] + ifelse(i == j, μT, zero(T))
-    end)
-end
-
 # A mutable local copy of a static array for the scalar loops of the R1 kernels: an `MMatrix` or
 # `MVector` for an `isbits` element type, which the compiler keeps off the heap, and otherwise a
 # `SizedMatrix` or `SizedVector` on a heap array, because a mutable static array of a non-`isbits`

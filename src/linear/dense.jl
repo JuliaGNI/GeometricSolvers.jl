@@ -204,14 +204,9 @@ function backsolve!(fac::DenseQR{<:StridedMatrix{T}}, d::AbstractVector{T}) wher
     if m == n
         BLAS.trsv!('U', 'N', 'N', fac.factors, d)
     else
-        A = fac.factors
-        @inbounds for k in n:-1:1
-            dk = d[k] / A[k, k]
-            d[k] = dk
-            for i in 1:(k - 1)
-                d[i] -= A[i, k] * dk
-            end
-        end
+        # the leading `n × n` triangle of the `m × n` factors, and the first `n` entries of the
+        # vector, whose remaining `m - n` entries are the tail of `Qᴴ r`
+        BLAS.trsv!('U', 'N', 'N', view(fac.factors, 1:n, 1:n), view(d, 1:n))
     end
     return d
 end
@@ -241,7 +236,7 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
     # from them, a singular value that is not finite being a failure too
     ok = iszero(info) && all(isfinite, fac.S)
     status = ok ? 0 : (iszero(info) ? 1 : info)
-    rank = ok ? svd_rank(fac.S) : 0
+    rank = ok ? svd_rank(fac.S, size(fac.factors, 1)) : 0
     # `σ̂` into `rwork`, which `gesvd` no longer needs, for the solve, and the singular values
     # `σ̂ · 2^e` of `J` into `S`, which overflow to `Inf` where `σ̂ · 2^e` exceeds `floatmax`
     @inbounds for i in eachindex(fac.S)
@@ -254,10 +249,12 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
         status, rank, e)
 end
 
-# The number of the non-increasing singular values `S` above the rank cutoff `√n · eps(R) · S[1]`.
-function svd_rank(S::AbstractVector{R}) where {R <: Real}
+# The number of the non-increasing singular values `S` of an `m_rows × n` matrix above the rank
+# cutoff `√m_rows · eps(R) · S[1]`: the rows, not the columns, are what the residual of a truncated
+# direction accumulates over.
+function svd_rank(S::AbstractVector{R}, m_rows::Integer) where {R <: Real}
     isempty(S) && return 0
-    cutoff = jacobi_tolerance(length(S), R) * S[1]
+    cutoff = jacobi_tolerance(m_rows, R) * S[1]
     return count(>(cutoff), S)
 end
 
