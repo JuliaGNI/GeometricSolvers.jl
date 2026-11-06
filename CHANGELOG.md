@@ -18,8 +18,7 @@ so that a compat-only bump can be told apart from an interface change.
   info, scale_exponent, status)`), `DeviceQR` (`(factors, τ, rhs, info, scale_exponent, status)`)
   and `DeviceSVD` (`(factors, U, S, VT, V, σ̂, flag, tmp, rhs, info, rank, scale_exponent)`), and on
   `x::AbstractVector` to construct host `DenseLU` (which drops `status`), `DenseQR` and `DenseSVD`,
-  removing the `x isa AbstractGPUArray` branches, the `ka_factorize_lu!`, `ka_svd!` and
-  `ka_svd_backsolve!` entries in `test/quality/jet.jl`, the duplicate `BlasFloat` `backsolve!` and
+  removing the `x isa AbstractGPUArray` branches, the duplicate `BlasFloat` `backsolve!` and
   `backsolve_shifted!` methods, and the `unsafe_wrap` `JLArray` adapter in `src/linear/ka/svd.jl`.
   `ka_divisor_exponent` uses `zero(σ)` in place of `zero(R)` inside its `mapreduce` closure so the
   closure is `isbits` on Metal and CUDA. `ka_lu!` replaces its single-thread pivot/swap/scale kernel
