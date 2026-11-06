@@ -442,7 +442,8 @@ end
         @test fz_jl.info > 0
         @test returncode(fz_jl) == SINGULAR
 
-        # Non-finite input to DenseLDLT refuses before LAPACK and sets info = 1 (catches MU8)
+        # Non-finite input to DenseLDLT refuses before LAPACK, sets info = 1 (catches MU8) and
+        # leaves identity pivots, which a later backsolve can read
         A_nf = Matrix{T}(I, 3, 3)
         A_nf[2, 2] = T(NaN)
         fnf = dense_factor(LDLTFactorization(), nothing, bz_d, nothing)
@@ -450,8 +451,21 @@ end
         fnf = factorize!!(fnf, LDLTFactorization(), A_nf)
         @test fnf.info == 1
         @test returncode(fnf) == SINGULAR
-        @test all(==(77), fnf.ipiv)
+        @test fnf.ipiv == 1:3
+        ldiv!!(similar(bz_d), fnf, bz_d)
     end
+
+    # Non-finite input to the generic DenseLDLT path leaves identity pivots as well
+    A_nf_bf = Matrix{BigFloat}(I, 3, 3)
+    A_nf_bf[2, 2] = BigFloat(Inf)
+    b_nf_bf = ones(BigFloat, 3)
+    fnf_bf = dense_factor(LDLTFactorization(), nothing, b_nf_bf, nothing)
+    fill!(fnf_bf.ipiv, 77)
+    fnf_bf = factorize!!(fnf_bf, LDLTFactorization(), A_nf_bf)
+    @test fnf_bf.info == 1
+    @test returncode(fnf_bf) == SINGULAR
+    @test fnf_bf.ipiv == 1:3
+    ldiv!!(similar(b_nf_bf), fnf_bf, b_nf_bf)
 
     # BigFloat on StaticLDLT and DenseLDLT (generic fallback)
     As_bf = SMatrix{3, 3, BigFloat, 9}(0, 2, -1, 2, 1, 3, -1, 3, -2)

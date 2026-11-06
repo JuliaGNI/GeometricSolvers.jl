@@ -16,7 +16,7 @@ using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagi
                      lu!, mul!, qr!
 using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
                     StaticMatrix, StaticVector, SVector,
-                    setindex
+                    setindex, similar_type
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options

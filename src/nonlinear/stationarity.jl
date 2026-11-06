@@ -25,7 +25,9 @@ does not apply, and [`LUFactorization`](@ref) or [`QRFactorization`](@ref) does.
 
 The state `x` must be real. For a complex state the default automatic differentiation raises an
 error: an `ArgumentError` from ForwardDiff for an array iterate, and a `MethodError` for an R1
-iterate.
+iterate. A `StationarityProblem` has no implicit differentiation: [`init`](@ref),
+[`solve`](@ref), [`solve!`](@ref) and [`solve_batch!`](@ref) raise an `ArgumentError` for a
+`ForwardDiff.Dual` in the iterate or in `p`.
 
 # Arguments
 
@@ -147,9 +149,21 @@ function _validate_stationarity_solve(prob::StationarityProblem, x₀, b_val)
     return nothing
 end
 
+# The datum of an R1/R2 solve as an `SVector` of the `m` equations, or a scalar for a scalar
+# iterate. A vector datum of another length than `m` raises an `ArgumentError`. For a
+# `StaticVector` datum both lengths are constants, so the check folds away where they agree and a
+# device kernel compiles no `throw`; a mismatch is refused on the host first, when the state for
+# the first system of a batch is initialised.
+@inline function _check_datum_length(b::AbstractVector, m::Int)
+    length(b) == m ||
+        throw(ArgumentError("datum b must have length $m, got $(length(b))"))
+    return nothing
+end
+
 @inline _static_datum(::StationarityProblem, x₀, ::Nothing) = nothing
 @inline function _static_datum(p, ::StaticVector{M, T}, b::AbstractVector) where {M, T}
     m = _num_equations(p.E, M)
+    _check_datum_length(b, m)
     return SVector{m, T}(ntuple(i -> T(@inbounds(b[i])), Val(m)))
 end
 @inline function _static_datum(p, ::StaticVector{M, T}, b::Number) where {M, T}
@@ -158,6 +172,7 @@ end
     return SVector{m, T}(ntuple(_ -> tb, Val(m)))
 end
 @inline function _static_datum(::Any, ::T, b::AbstractVector) where {T <: Number}
+    _check_datum_length(b, 1)
     return T(@inbounds(b[1]))
 end
 @inline _static_datum(::Any, ::T, b::Number) where {T <: Number} = T(b)
@@ -194,12 +209,18 @@ end
 @inline _embed_unknowns(::Colon, x_ref::Number, u::Number) = u
 @inline _embed_unknowns(::SVector{1, Int}, x_ref::Number, u::Number) = u
 
+# The solution `x` of an R1/R2 solve in the static array type of the initial iterate `x₀`, so that
+# an `MVector` start gives an `MVector`, as `solve!` on a `NonlinearSolver` does.
+@inline _like_iterate(x₀::StaticVector, x::StaticVector) = similar_type(x₀, eltype(x))(x)
+@inline _like_iterate(::Number, x::Number) = x
+
 @kernel function _extract_u_kernel!(u, @Const(x), @Const(u_idx))
     j = @index(Global, Linear)
     @inbounds u[j] = x[u_idx[j]]
 end
 
-@kernel function _embed_u_kernel!(x, @Const(x_ref), @Const(u), @Const(u_pos))
+# `x_ref` is not `@Const`: the R3 reduced problem passes its workspace as both `x` and `x_ref`.
+@kernel function _embed_u_kernel!(x, x_ref, @Const(u), @Const(u_pos))
     i = @index(Global, Linear)
     @inbounds begin
         pos = u_pos[i]
@@ -422,7 +443,7 @@ end
     rprob = _ReducedStationarityProblem(prob, x₀, b_eff)
     u₀ = _extract_unknowns(prob.U, x₀)
     u, status, inner₊ = solve!!(s.inner, rprob, u₀, m, p_sys, opt)
-    x = _embed_unknowns(prob.U, x₀, u)
+    x = _like_iterate(x₀, _embed_unknowns(prob.U, x₀, u))
     return x, status, StaticStationarityState(inner₊)
 end
 
@@ -565,13 +586,25 @@ end
 # imported in `src/GeometricSolvers.jl`, so these definitions add methods to them for a problem
 # type of this package instead of defining a second `init` or `solve`.
 
+# Implicit differentiation of a `StationarityProblem` is not implemented, so `init` and `solve`
+# refuse a `ForwardDiff.Dual` in `x₀` or `p`, as `solve!` does, rather than return a primal result.
+function _refuse_stationarity_duals(f::Symbol, x₀, p)
+    if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p))
+        throw(ArgumentError(
+            "$f does not accept ForwardDiff.Dual inputs for a StationarityProblem; implicit differentiation of a StationarityProblem is not implemented"))
+    end
+    return nothing
+end
+
 function init(pr::StatProb, x₀, m, p = nothing; b = nothing, options = nothing, kw...)
+    _refuse_stationarity_duals(:init, x₀, p)
     return _init_stationarity(pr, x₀, m, p, b, options, kw)
 end
 
 init(pr::StatProb, x₀; kw...) = init(pr, x₀, Newton(), nothing; kw...)
 
 function solve(pr::StatProb, x₀, m, p = nothing; b = nothing, options = nothing, kw...)
+    _refuse_stationarity_duals(:solve, x₀, p)
     return _solve_stationarity(pr, x₀, m, p, b, options, kw)
 end
 

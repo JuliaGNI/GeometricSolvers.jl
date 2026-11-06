@@ -3,12 +3,13 @@ using FiniteDiff: FiniteDiff
 using ForwardDiff
 using GeometricSolvers
 using GeometricSolvers: AbstractNonlinearProblem, ChunkedHessianForwardDiff, DIStationarity
-using GeometricSolvers: gradient_hessian!!, jacobian!!, jvp!!, prepare_ad, residual!!
+using GeometricSolvers: gradient_hessian!!, init_state, jacobian!!, jvp!!, prepare_ad,
+                        residual!!, solve!!
 using GPUArraysCore: allowscalar
 using JET: JET, @test_opt
 using JLArrays: JLArray
 using LinearAlgebra: Diagonal, dot, norm
-using StaticArrays: SMatrix, SVector, setindex
+using StaticArrays: MVector, SMatrix, SVector, setindex
 using Test
 
 include("../helpers/matrix.jl")
@@ -624,6 +625,77 @@ end
     @test_throws MethodError solve_batch!(
         copy(X_kw), Vector{SolverStatus{Float64}}(undef, 4), prob_b1, m_newt_ldlt;
         p = ps.data)
+end
+
+@testset "R1/R2 datum length checked at every resolution" begin
+    A_dl = SMatrix{2, 2, Float64, 4}(0.0, 2.0, 2.0, -1.0)
+    f_dl(x, p) = 0.5 * dot(x, A_dl * x) - p * (x[1] - 2 * x[2])
+    m_dl = Newton(; linsolve = LDLTFactorization())
+    ps_dl = PerSystem([1.0, 2.0, -1.0, 0.5])
+
+    # a callable datum whose vector has the right length for the first system of a host batch and
+    # the wrong length for a later one
+    b_ragged_fn(p) = p > 1.5 ? [0.25] : [0.25, -0.5]
+    prob_ragged = StationarityProblem(f_dl; b = b_ragged_fn)
+    X_dl = [SVector(0.0, 0.0) for _ in 1:4]
+    @test_throws ArgumentError solve_batch!(copy(X_dl), prob_ragged, m_dl, ps_dl)
+    @test_throws ArgumentError solve_batch!(
+        copy(X_dl), Vector{SolverStatus{Float64}}(undef, 4), prob_ragged, m_dl, ps_dl)
+
+    # direct `solve!!` on an R1 state, with a datum of another length than at `init_state`
+    prob_dl = StationarityProblem(f_dl)
+    st_dl = init_state(m_dl, prob_dl, SVector(0.0, 0.0), 1.0)
+    @test_throws ArgumentError solve!!(
+        st_dl, prob_dl, SVector(0.0, 0.0), m_dl, 1.0; b = [0.25])
+    x_ok, st_ok, _ = solve!!(st_dl, prob_dl, SVector(0.0, 0.0), m_dl, 1.0; b = [0.25, -0.5])
+    @test st_ok.code == SUCCESS
+    @test isapprox(x_ok, A_dl \ (SVector(1.0, -2.0) - SVector(0.25, -0.5)); rtol = 1e-12)
+
+    # the static residual of a vector and of a scalar iterate
+    for b_bad in ([0.25], [0.25, -0.5, 1.0])
+        @test_throws ArgumentError residual!!(
+            nothing, StationarityProblem(f_dl; b = b_bad), SVector(0.0, 0.0), 1.0)
+    end
+    f_sc(x, p) = 0.5 * x^2
+    @test_throws ArgumentError residual!!(
+        nothing, StationarityProblem(f_sc; b = [1.0, 2.0]), 0.0, nothing)
+    @test residual!!(nothing, StationarityProblem(f_sc; b = [1.0]), 0.5, nothing) == 1.5
+end
+
+@testset "R1/R2 solve keeps the static array type of the start iterate" begin
+    A_mv = SMatrix{2, 2, Float64, 4}(0.0, 2.0, 2.0, -1.0)
+    f_mv(x, p) = 0.5 * dot(x, A_mv * x) - (x[1] - 2 * x[2])
+    f_mv3(x, p) = 0.5 * ((x[2] - x[1])^2 + (x[3] - p)^2)
+    m_mv = Newton(; linsolve = LDLTFactorization())
+    cases = ((StationarityProblem(f_mv), MVector(0.0, 0.0), nothing),
+        (StationarityProblem(f_mv3; E = (2, 3), U = (2, 3)), MVector(1.0, 0.0, 0.0), 2.0))
+    for (prob_mv, x0_mv, p_mv) in cases
+        x_one, st_one = solve(prob_mv, x0_mv, m_mv, p_mv)
+        x_pre, st_pre = solve!(init(prob_mv, x0_mv, m_mv, p_mv))
+        @test st_one.code == SUCCESS
+        @test x_one isa typeof(x0_mv)
+        @test x_pre isa typeof(x0_mv)
+        @test x_one == x_pre
+        @test x_one != x0_mv
+        x_sv, _ = solve(prob_mv, SVector(x0_mv), m_mv, p_mv)
+        @test x_sv isa SVector
+        @test x_sv == x_one
+    end
+end
+
+@testset "StationarityProblem refuses ForwardDiff.Dual inputs" begin
+    f_du(x, p) = 0.5 * sum(abs2, x) - p * sum(x)
+    prob_du = StationarityProblem(f_du)
+    d = ForwardDiff.Dual(1.0, 1.0)
+    for x0_du in (SVector(0.0, 0.0), [0.0, 0.0])
+        @test_throws ArgumentError solve(prob_du, x0_du, Newton(), d)
+        @test_throws ArgumentError init(prob_du, x0_du, Newton(), d)
+        x0_dual = x0_du isa SVector ? SVector(d, d) : [d, d]
+        @test_throws ArgumentError solve(prob_du, x0_dual, Newton(), 1.0)
+        @test_throws ArgumentError init(prob_du, x0_dual, Newton(), 1.0)
+    end
+    @test_throws ArgumentError solve_batch!([SVector(0.0, 0.0)], prob_du, Newton(), d)
+    @test_throws ArgumentError solve_batch!([SVector(d, d)], prob_du, Newton(), 1.0)
 end
 
 @testset "D1 runtime index rejection, 7-arg gradient_hessian!!, and D3 chunk symmetry" begin

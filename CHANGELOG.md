@@ -937,7 +937,9 @@ so that a compat-only bump can be told apart from an interface change.
   accepts `E` and `U` as `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
   `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, and for an R1 iterate as `:`, a `Tuple` or an
   `SVector`; it keeps inactive components $x_{\notin U}$ fixed, and solves through `solve`, `init`,
-  `solve!` (with keyword `b = nothing`) and `solve_batch!`. `StationarityProblem` and
+  `solve!` (with keyword `b = nothing`) and `solve_batch!`, which refuse a `ForwardDiff.Dual` in
+  the iterate or in `p` with an `ArgumentError`: a `StationarityProblem` has no implicit
+  differentiation in this release (K31). `StationarityProblem` and
   `NonlinearProblem` share the supertype `AbstractNonlinearProblem`: `solve!`, `solve!!` and
   `NonlinearSolver` take either, and `init` and `solve` have a method for each problem type. In R1,
   `gradient_hessian!!` evaluates both $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested

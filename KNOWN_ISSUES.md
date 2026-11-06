@@ -145,3 +145,16 @@
   refuses the mix with an `ArgumentError` is open.
 - **kind:** defect
 - **found:** PR #53
+
+### K31 · `solve` on a `StationarityProblem` has no implicit differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`init`, `solve`)
+- **evidence:** `solve` on a `NonlinearProblem` with a `ForwardDiff.Dual` in `x₀` or `p` runs
+  the primal solve and then the implicit-function-theorem tangent solve (`solve_implicit` in
+  `src/nonlinear/implicit.jl`). `solve` on a `StationarityProblem` has no such path. `init`,
+  `solve`, `solve!` and `solve_batch!` on a `StationarityProblem` therefore raise an
+  `ArgumentError` for a `ForwardDiff.Dual` in the iterate or in `p`. Implicit differentiation
+  through the stationarity equations `(∇S)_E + b = 0`, with the Jacobian `(∇²S)_{E, U}`, is for a
+  later pull request.
+- **kind:** defect
+- **found:** PR #58 (CodeRabbit)

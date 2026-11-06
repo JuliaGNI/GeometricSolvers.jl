@@ -391,6 +391,7 @@ function factorize!!(fac::DenseLDLT{<:StridedMatrix{<:BlasFloat}}, ::LDLTFactori
         J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     if !all(isfinite, fac.factors)
+        copyto!(fac.ipiv, eachindex(fac.ipiv))
         return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, 1, e, true)
     end
     isempty(fac.factors) &&
@@ -408,6 +409,7 @@ function factorize!!(
         fac::DenseLDLT{<:AbstractMatrix}, ::LDLTFactorization, J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     if !all(isfinite, fac.factors)
+        copyto!(fac.ipiv, eachindex(fac.ipiv))
         return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, 1, e, true)
     end
     isempty(fac.factors) &&
