@@ -175,8 +175,9 @@ end
         ldiv!!(d_jl, fac_jl, b_jl)
         @test backward_error(A_d, Array(d_jl), b_d) <= 10 * 2 * eps(R)
 
-        # Seeded zero-diagonal matrices of sizes n in (4, 16, 64, 128): above the device workgroup
-        # of 64 a device backend runs the serial kernels
+        # Seeded zero-diagonal matrices of sizes n in (4, 16, 64, 128): above the workgroup of 64
+        # the CPU backend runs the serial kernels, while a GPU backend keeps the workgroup kernel
+        # at every n
         for n in (4, 16, 64, 128)
             A_n = zero_diag_indefinite(T, n, 400 + n)
             b_n = randn(Xoshiro(500 + n), T, n)
@@ -443,7 +444,7 @@ end
     end
 end
 
-@testset "StaticLDLT: isbits, inferred, JET clean and allocation-free, $T" for T in REAL_ELTYPES
+@testset "StaticLDLT: isbits, inferred, JET clean and allocation-free, $T" for T in ELTYPES
     A = SMatrix{3, 3, T, 9}(
         zero(T), T(2), -one(T), T(2), one(T), T(1) / 2, -one(T), T(1) / 2, T(-3))
     b = SVector{3, T}(one(T), T(-2), T(1) / 2)

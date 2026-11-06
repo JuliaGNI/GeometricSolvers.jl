@@ -5,9 +5,9 @@ using Random: Xoshiro
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
-using GeometricSolvers: LUFactorization, Newton, NonlinearProblem, Options, QRFactorization,
-                        SVDFactorization
+using GeometricSolvers: DeviceLDLT, DeviceLU, DeviceQR, DeviceSVD
+using GeometricSolvers: LDLTFactorization, LUFactorization, Newton, NonlinearProblem
+using GeometricSolvers: Options, QRFactorization, SVDFactorization
 using GeometricSolvers: backsolve!, dense_factor, factorize!!, init, jacobi_tolerance,
                         ldiv!!, returncode, solve, solve!
 
@@ -82,6 +82,41 @@ if Metal.functional() && !on_virtual_gpu()
                 fwd = norm(x_h - d_cpu, Inf) / norm(d_cpu, Inf)
                 @test fwd <= 8 * n * eps32 * κ
             end
+        end
+    end
+
+    @testset "Metal KA LDLT on Hermitian indefinite matrices: $T, n = $n" for T in METAL_ELTYPES,
+        n in (2, 16, 65)
+
+        # A zero-diagonal matrix forces the 2 × 2 pivot blocks; a diagonally dominant one takes
+        # 1 × 1 pivots, whose step is `one(F) / d11` because a `ComplexF32` Metal build rejects
+        # `inv` of a complex value
+        rng = Xoshiro(0x1d17 + n)
+        S = Matrix{T}(randn(rng, T, n, n))
+        H = T <: Real ? (S + transpose(S)) / 2 : (S + S') / 2
+        A_z = copy(H)
+        for i in 1:n
+            A_z[i, i] = zero(T)
+        end
+        A_d = H + T(4 * n) * I
+        b = randn(rng, T, n)
+
+        for A in (A_z, A_d)
+            m = LDLTFactorization()
+            fac = dense_factor(m, nothing, MtlArray(b), nothing)
+            @test fac isa DeviceLDLT
+            fac = factorize!!(fac, m, MtlArray(A))
+            @test fac.info == 0
+            @test fac.hermitian === true
+            @test returncode(fac) === SUCCESS
+            # the pivot record names the branch: a negative entry is a 2 × 2 block
+            piv = Array(fac.ipiv)
+            @test A === A_z ? any(<(0), piv) : all(>(0), piv)
+            d = ldiv!!(similar(MtlArray(b)), fac, MtlArray(b))
+            @test d isa MtlVector{T}
+            x = Array(d)
+            bwd = norm(A * x - b) / (opnorm(A) * norm(x) + norm(b))
+            @test bwd <= 10 * n * eps(Float32)
         end
     end
 

@@ -693,3 +693,43 @@ end
         @test_skip JET_WORKS  # issue #8
     end
 end
+
+# A quadratic action of three variables whose equations and unknowns are the distinct index sets
+# `E = (1, 2)` and `U = (2, 3)`, with `x[1]` one of the fixed components of the solve.
+function quadratic_subset_action_r1(x, p)
+    return x[1]^2 + x[1] * x[2] + 3 * x[2]^2 / 2 + x[2] * x[3] + x[3]^2 -
+           (x[1] - 2 * x[2] + x[3] / 2)
+end
+
+# The bytes of one `solve` of an R1 problem with index sets, after one warm call through the
+# barrier.
+function stationarity_subset_solve_allocations(prob::P, x₀::X, m::M) where {P, X, M}
+    (solve(prob, x₀, m); @allocated solve(prob, x₀, m))
+end
+
+@testset "R1 solve with index sets E != U: isbits, inferred, JET clean and allocation-free" begin
+    prob = StationarityProblem(
+        quadratic_subset_action_r1; E = (1, 2), U = (2, 3), b = SVector(1 / 4, -1 / 2))
+    m = Newton(; linsolve = LUFactorization())
+    x₀ = SVector(0.4, 0.7, -1.1)
+    @test isbits(prob)
+    x, st = @inferred solve(prob, x₀, m)
+    @test st.code == SUCCESS
+    @test st.iterations == Int32(1)
+    @test x isa SVector{3, Float64}
+    # the fixed component `x[1] = x₀[1]` survives the embedding of `u = x[U]` into `x`
+    @test x[1] == x₀[1]
+    @test norm(x - SVector(0.4, -0.05, -1.75), Inf) <= 1e-12
+    # `--check-bounds=yes` lets the static factors' `MMatrix` escape to the heap, so a run that
+    # forces it skips this assertion
+    if Base.JLOptions().check_bounds != 1
+        @test stationarity_subset_solve_allocations(prob, x₀, m) == 0
+    end
+    # the control: the barrier sees an allocation where there is one
+    @test allocations(collect, x₀) > 0
+    if JET_WORKS
+        @test_opt solve(prob, x₀, m)
+    else
+        @test_skip JET_WORKS  # issue #8
+    end
+end
