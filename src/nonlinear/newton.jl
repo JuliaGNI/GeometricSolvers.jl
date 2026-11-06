@@ -408,8 +408,9 @@ end
     return rnorm(Fx)
 end
 
-# `‖Jᴴ Fx‖ / (‖J‖_F ‖Fx‖)` at the unregularised Jacobian `J`, before `regularize!!` or
-# `factorize!!` touches `J`, and `0` when `‖J‖_F` or `‖Fx‖` is `0`.
+# The ratio `‖Jᴴ Fx‖ / (‖J‖_F ‖Fx‖)` at the unregularised Jacobian `J`, before `regularize!!` or
+# `factorize!!` touches `J`, and `0` when `‖J‖_F` or `‖Fx‖` is `0`, returned together with
+# `‖J‖_F`: the stationarity stopping test reads both.
 @inline function grad_ratio_and_norm(d, J, Fx, fnorm::R) where {R <: Real}
     Jmat = J isa Number ? SMatrix{1, 1, typeof(J)}((J,)) :
            (J isa StaticMatrix ? SMatrix(J) : J)
