@@ -129,6 +129,16 @@ function f_polar_target!(F, x, p)
     return F
 end
 
+# A chart with a dense Jacobian, so a chunk of columns that the AD loop does not fill stays at
+# zero and no other column moves.
+function g_chunk!(x, y, p)
+    x .= y .^ 2 .+ sin.(y) .+ 0.1 * sum(y)
+    return x
+end
+
+# The identity residual: its Jacobian is `I`, so the non-covariant chart Jacobian is exactly `G`.
+f_identity!(F, x, p) = copyto!(F, x)
+
 function action_polar(x, p)
     T = eltype(x)
     return T(1 // 4) * (x[1]^2 + x[2]^2 - T(4))^2 + T(1 // 2) * (x[1] - x[2])^2
@@ -544,6 +554,84 @@ end
     Fy_adj = adjoint(G_c) * Fx_c
     @test norm(Fy_trans - Fy_adj) > 0.5
 
+    # The same complex chart in R3, over both array backends, with the chart Jacobian given and
+    # computed: `transpose(G)` and `adjoint(G)` differ here, so this separates them.
+    function g_cplx!(x::Array, y::Array, p)
+        @inbounds begin
+            y1, y2 = y[1], y[2]
+            x[1] = y1^2 + im * y2
+            x[2] = y1 - im * y2^2
+        end
+        return x
+    end
+    function g_cplx!(x, y, p)
+        T = eltype(y)
+        e1 = JLArray(T[1, 0])
+        e2 = JLArray(T[0, 1])
+        y1 = sum(y .* e1)
+        y2 = sum(y .* e2)
+        x .= (y1^2 + im * y2) .* e1 .+ (y1 - im * y2^2) .* e2
+        return x
+    end
+    function dg_cplx!(G::Array, y::Array, p)
+        @inbounds begin
+            y1, y2 = y[1], y[2]
+            G[1, 1] = 2 * y1
+            G[2, 1] = one(y1)
+            G[1, 2] = im
+            G[2, 2] = -2 * im * y2
+        end
+        return G
+    end
+    function dg_cplx!(G, y, p)
+        T = eltype(y)
+        e1 = JLArray(T[1, 0])
+        e2 = JLArray(T[0, 1])
+        y1 = sum(y .* e1)
+        y2 = sum(y .* e2)
+        copyto!(G, T[2 * y1 im; one(T) (-2 * im * y2)])
+        return G
+    end
+    function f_cplx!(F::Array, x::Array, p)
+        @inbounds begin
+            x1, x2 = x[1], x[2]
+            F[1] = x1^2 - (1.0 + 0.5im)
+            F[2] = x2^2 - (0.5 - 0.25im)
+        end
+        return F
+    end
+    function f_cplx!(F, x, p)
+        T = eltype(x)
+        e1 = JLArray(T[1, 0])
+        e2 = JLArray(T[0, 1])
+        x1 = sum(x .* e1)
+        x2 = sum(x .* e2)
+        F .= (x1^2 - (1.0 + 0.5im)) .* e1 .+ (x2^2 - (0.5 - 0.25im)) .* e2
+        return F
+    end
+    function j_cplx!(J::Array, x::Array, p)
+        @inbounds begin
+            x1, x2 = x[1], x[2]
+            Z = zero(eltype(x))
+            J[1, 1] = 2 * x1
+            J[2, 1] = Z
+            J[1, 2] = Z
+            J[2, 2] = 2 * x2
+        end
+        return J
+    end
+    function j_cplx!(J, x, p)
+        T = eltype(x)
+        e1 = JLArray(T[1, 0])
+        e2 = JLArray(T[0, 1])
+        x1 = sum(x .* e1)
+        x2 = sum(x .* e2)
+        Z = zero(T)
+        copyto!(J, T[2 * x1 Z; Z (2 * x2)])
+        return J
+    end
+    prob_cplx_r3 = NonlinearProblem(f_cplx!, j_cplx!)
+
     for dg_c in (dg_cplx, nothing)
         rep_c_curv = Reparametrized(
             prob_cplx, g_cplx, dg_c; covariant = true, curvature = true)
@@ -565,6 +653,55 @@ end
         J_fd_c = hcat(c1, c2)
         Jy_c = jacobian!!(nothing, AutoForwardDiff(), rep_c_curv, y_c, nothing)
         @test norm(Jy_c - J_fd_c, Inf) <= 1e-6 * max(1.0, norm(J_fd_c, Inf))
+
+        # The same chart in R3, with the in-place chart Jacobian that R3 takes: the covariant
+        # pull-back is `transpose(G)` there too, and the curvature term keeps it so.
+        dg_c_r3 = dg_c === nothing ? nothing : dg_cplx!
+        for Arr in ARRAY_BACKENDS
+            rep_c_curv_r3 = Reparametrized(
+                prob_cplx_r3, g_cplx!, dg_c_r3; covariant = true, curvature = true)
+            rep_c_nocurv_r3 = Reparametrized(
+                prob_cplx_r3, g_cplx!, dg_c_r3; covariant = true, curvature = false)
+            y_a = Arr(Vector(y_c))
+            Fy_a = Arr(zeros(ComplexF64, 2))
+            Jy_a = Arr(zeros(ComplexF64, 2, 2))
+            Jy_nc_a = Arr(zeros(ComplexF64, 2, 2))
+            prep_curv = prepare_ad(AutoForwardDiff(), rep_c_curv_r3, Fy_a, y_a, nothing)
+            prep_nocurv = prepare_ad(AutoForwardDiff(), rep_c_nocurv_r3, Fy_a, y_a, nothing)
+            residual!!(Fy_a, prep_curv, rep_c_curv_r3, y_a, nothing)
+            jacobian!!(Jy_a, prep_curv, rep_c_curv_r3, y_a, nothing)
+            jacobian!!(Jy_nc_a, prep_nocurv, rep_c_nocurv_r3, y_a, nothing)
+            Jy_pullback_c = transpose(G_c) * Jx_c * G_c
+            @test norm(Array(Fy_a) - Vector(Fy_trans), Inf) <=
+                  64 * eps(Float64) * max(1.0, norm(Fy_trans, Inf))
+            @test norm(Array(Fy_a) - Vector(Fy_adj), Inf) > 0.5
+            @test norm(Array(Jy_nc_a) - Matrix(Jy_pullback_c), Inf) <=
+                  64 * eps(Float64) * max(1.0, norm(Jy_pullback_c, Inf))
+            @test norm(Array(Jy_nc_a) - Matrix(adjoint(G_c) * Jx_c * G_c), Inf) > 0.5
+            @test norm(Array(Jy_a) - Matrix(J_fd_c), Inf) <=
+                  1e-6 * max(1.0, norm(J_fd_c, Inf))
+        end
+    end
+end
+
+@testset "R3 chart Jacobian off ∂g in more than one AD chunk ($Arr)" for Arr in ARRAY_BACKENDS
+    # The AD chart Jacobian fills one chunk of columns per pass, and a chart of 16 coordinates
+    # takes more than one pass at the default chunk size and at the two-column chunk below. A
+    # pass the loop drops therefore leaves columns of the reference Jacobian at zero.
+    n = 16
+    y_base = [0.4 + 0.3i for i in 1:n]
+    G_ref = fill(0.1, n, n)
+    for i in 1:n
+        G_ref[i, i] = 2 * y_base[i] + cos(y_base[i]) + 0.1
+    end
+    prob_identity = NonlinearProblem(f_identity!)
+    reparam_chunk = Reparametrized(prob_identity, g_chunk!, nothing; covariant = false)
+    for backend in (AutoForwardDiff(), AutoForwardDiff(; chunksize = 2))
+        y_a = Arr(copy(y_base))
+        Jy_a = Arr(zeros(n, n))
+        prep = prepare_ad(backend, reparam_chunk, Arr(zeros(n)), y_a, nothing)
+        jacobian!!(Jy_a, prep, reparam_chunk, y_a, nothing)
+        @test norm(Array(Jy_a) - G_ref, Inf) <= 64 * eps(Float64) * norm(G_ref, Inf)
     end
 end
 

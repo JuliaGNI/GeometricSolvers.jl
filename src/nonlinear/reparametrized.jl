@@ -148,12 +148,6 @@ end
     return residual!!(nothing, prob, x, p)
 end
 
-@inline function jacobian!!(
-        ::Nothing, backend::AutoForwardDiff,
-        prob::StationarityProblem, x::StaticVector{N, T}, p) where {N, T}
-    return gradient_hessian!!(nothing, nothing, backend, prob, x, p)[2]
-end
-
 @inline function _inner_jac_r1(backend, prob::NonlinearProblem, x, p)
     prob.J !== nothing && return prob.J(x, p)
     return jacobian!!(nothing, backend, prob, x, p)
@@ -796,14 +790,19 @@ function init_state(m, reparam::Reparametrized, y₀::AbstractVector, p)
     return _init_reparam_r3(m, reparam, y₀, p)
 end
 
-@inline function solve!!(
-        s::StaticReparamState, reparam::Reparametrized, y₀, m,
-        p = nothing, opt::Options{R} = Options(eltype(y₀))) where {R <: Real}
+@inline function _solve_static_reparam!(
+        s::StaticReparamState, reparam::Reparametrized, y₀, m, p, opt)
     m_r = Adapt.adapt(ToReal{real(eltype(y₀))}(), m)
     iprob = _InnerReparametrized(reparam, nothing)
     y_star, status, inner₊ = solve!!(s.inner, iprob, y₀, m_r, p, opt)
-    x_star = reparam.g(y_star, p)
-    return x_star, status, StaticReparamState(inner₊)
+    return y_star, status, StaticReparamState(inner₊)
+end
+
+@inline function solve!!(
+        s::StaticReparamState, reparam::Reparametrized, y₀, m,
+        p = nothing, opt::Options{R} = Options(eltype(y₀))) where {R <: Real}
+    y_star, status, state₊ = _solve_static_reparam!(s, reparam, y₀, m, p, opt)
+    return reparam.g(y_star, p), status, state₊
 end
 
 function solve!!(
@@ -890,13 +889,11 @@ function _solve_reparametrized_solver!(
     st = solver.state
     reparam = solver.prob
     if st isa StaticReparamState
-        iprob = _InnerReparametrized(reparam, nothing)
-        y_star, status, inner₊ = solve!!(
-            st.inner, iprob, y, solver.method, p, solver.options)
-        x_star = reparam.g(y_star, p)
+        y_star, status, state₊ = _solve_static_reparam!(
+            st, reparam, y, solver.method, p, solver.options)
         solver.y = y_star
-        solver.x = x_star
-        solver.state = StaticReparamState(inner₊)
+        solver.x = reparam.g(y_star, p)
+        solver.state = state₊
         return solver.x, status
     else
         x_buf, status, state₊ = solve!!(
