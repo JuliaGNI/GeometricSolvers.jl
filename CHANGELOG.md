@@ -858,15 +858,16 @@ so that a compat-only bump can be told apart from an interface change.
   $(\nabla S(x, p))_E + b = 0$ over $u = x_U$ of a scalar action $S$, alongside Bunch–Kaufman
   $\mathrm{LDL}^\top$ / $\mathrm{LDL}^\dagger$ factorisation (`StaticLDLT` in R1, zero-allocation
   LAPACK `sytrf!`/`sytrs!` and `hetrf!`/`hetrs!` with generic fallback `DenseLDLT` in R3 host, and
-  `KernelAbstractions` `DeviceLDLT` in R3 device). `StationarityProblem` accepts `E` and `U` as
-  `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
-  `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, keeps inactive components $x_{\notin U}$
-  fixed, and solves through `solve`, `init`, `solve!` (with keyword `b = nothing`) and
-  `solve_batch!`. `StationarityProblem` and `NonlinearProblem` share the supertype
-  `AbstractNonlinearProblem`, so `init`, `solve`, `solve!`, `solve!!` and `NonlinearSolver` take
-  either. In R1, `gradient_hessian!!` evaluates both
-  $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested `ForwardDiff.Dual` call, and `jvp!!`
-  evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional partial. In R3,
+  `KernelAbstractions` `DeviceLDLT` in R3 device). For an array iterate `StationarityProblem`
+  accepts `E` and `U` as `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
+  `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, and for an R1 iterate as `:`, a `Tuple` or an
+  `SVector`; it keeps inactive components $x_{\notin U}$ fixed, and solves through `solve`, `init`,
+  `solve!` (with keyword `b = nothing`) and `solve_batch!`. `StationarityProblem` and
+  `NonlinearProblem` share the supertype `AbstractNonlinearProblem`: `solve!`, `solve!!` and
+  `NonlinearSolver` take either, and `init` and `solve` have a method for each problem type. In R1,
+  `gradient_hessian!!` evaluates both $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested
+  `ForwardDiff.Dual` call, and `jvp!!` evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional
+  partial. In R3,
   `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and on an
   `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
   `Array`.
