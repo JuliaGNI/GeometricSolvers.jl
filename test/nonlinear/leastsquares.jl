@@ -168,7 +168,8 @@ end
         false, true, Int32(2), T(0.5), T(1e-9))
     @test st10.stationary === true
     @test stopping_test(st10) === :stationarity
-    @test record(st10, StepInfo{T}(SUCCESS, T(1), T(1e-6), Int32(0), false, false)).stationary === true
+    @test record(st10, StepInfo{T}(SUCCESS, T(1), T(1e-6), Int32(0), false, false)).stationary ===
+          true
     st_fail = SolverStatus{T}(MAXITERS, Int32(10), T(1), T(1), Int32(0),
         false, false, Int32(2), T(0.5), T(1e-1))
     @test stopping_test(st_fail) === :none
@@ -180,7 +181,8 @@ end
 
     # Regularization > 0 on rectangular m > n is rejected
     @test_throws ArgumentError solve(p1, x0_s, Newton(; linsolve = QRFactorization(), regularization = 1e-6))
-    @test_throws ArgumentError init(p3, ones(T, 2), Newton(; linsolve = QRFactorization(), regularization = 1e-6))
+    @test_throws ArgumentError init(
+        p3, ones(T, 2), Newton(; linsolve = QRFactorization(), regularization = 1e-6))
 
     # Underdetermined m < n throws DimensionMismatch
     p_under_s = LeastSquaresProblem((x, p) -> SVector{2}(x[1], x[2]))
@@ -413,7 +415,7 @@ end
     js_min = T(124.3621823556148)
     js_rtol = T === Float64 ? 1e-7 : 1e-3
     for alg in (Newton(; globalization = LevenbergMarquardt()),
-        Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())),
+            Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())),
         x0 in (SVector{2, T}(T(0.3), T(0.4)), SVector{2, T}(T(0.25), T(0.26)))
 
         x, st = solve(prob6_s, x0, alg; options = opt)
@@ -485,7 +487,8 @@ end
     @test st_nl_s.stationary === false
     @test stopping_test(st_nl_s) === :none
 
-    prob_nl_d = NonlinearProblem((r, x, p) -> (r[1] = x[1]^2 + one(T); r[2] = x[2]^2 + one(T); r))
+    prob_nl_d = NonlinearProblem((r, x, p) -> (
+        r[1] = x[1]^2 + one(T); r[2] = x[2]^2 + one(T); r))
     solver_nl_d = init(prob_nl_d, T[1e-4, 1e-4],
         Newton(; globalization = LevenbergMarquardt()); options = Options(T; max_iterations = 25))
     _, st_nl_d = solve!(solver_nl_d)
@@ -505,11 +508,11 @@ end
     end
 
     prob_zj_d = LeastSquaresProblem((r, x, p) -> begin
-        r[1] = x[1]^2 + one(T)
-        r[2] = x[2]^2 + one(T)
-        r[3] = x[1]^2 + x[2]^2 + one(T)
-        return r
-    end, 3)
+            r[1] = x[1]^2 + one(T)
+            r[2] = x[2]^2 + one(T)
+            r[3] = x[1]^2 + x[2]^2 + one(T)
+            return r
+        end, 3)
     for alg in (GaussNewton(; linsolve = SVDFactorization()),
         Newton(; globalization = LevenbergMarquardt()))
         solver_zj = init(prob_zj_d, zeros(T, 2), alg; options = Options(T; max_iterations = 10))
@@ -604,6 +607,7 @@ end
 
 @testset "R1 inference, zero allocation, and JET" begin
     @testset "$T, M = $M" for T in REAL_ELTYPES, (M, N) in ((4, 2), (10, 5), (32, 4))
+
         prob = r1_least_squares(Val(M), Val(N), T)
         x0 = zeros(SVector{N, T})
         for alg in (GaussNewton(),
@@ -652,7 +656,8 @@ end
         x, st = solve(prob_r1, x0_r1, GaussNewton(; jacobian = ad))
         @test isconverged(st)
         @test st.stationary === true
-        @test isapprox(st.fnorm^2, T(8.214877306578994e-3); rtol = T === Float64 ? 1e-6 : 1e-3)
+        @test isapprox(st.fnorm^2, T(8.214877306578994e-3); rtol = T === Float64 ? 1e-6 :
+                                                                   1e-3)
     end
 
     # The finite-difference backend has no in-place path through DifferentiationInterface in this
@@ -664,7 +669,8 @@ end
         x, st = solve!(solver)
         @test isconverged(st)
         @test st.stationary === true
-        @test isapprox(st.fnorm^2, T(8.214877306578994e-3); rtol = T === Float64 ? 1e-6 : 1e-3)
+        @test isapprox(st.fnorm^2, T(8.214877306578994e-3); rtol = T === Float64 ? 1e-6 :
+                                                                   1e-3)
     end
 
     # Zero allocation of solve!(solver) in R3 on Array with analytic Jacobian

@@ -107,6 +107,7 @@ end
 
 @testset "StaticRectQR is isbits, inferred, allocation-free, and JET-clean" begin
     @testset "$T, ($M, $N)" for T in REAL_ELTYPES, (M, N) in RECT_SIZES
+
         A, b = rect_qr_system(200 * M + N, T, Val(M), Val(N))
         m = QRFactorization()
         d = zero(SVector{N, T})
@@ -136,8 +137,10 @@ end
                 m = QRFactorization()
                 JET.test_opt(factorize!!, (typeof(m), Nothing, SMatrix{4, 2, T, 8}))
                 JET.test_call(factorize!!, (typeof(m), Nothing, SMatrix{4, 2, T, 8}))
-                JET.test_opt(ldiv!!, (SVector{2, T}, StaticRectQR{4, 2, T, 8}, SVector{4, T}))
-                JET.test_call(ldiv!!, (SVector{2, T}, StaticRectQR{4, 2, T, 8}, SVector{4, T}))
+                JET.test_opt(ldiv!!, (
+                    SVector{2, T}, StaticRectQR{4, 2, T, 8}, SVector{4, T}))
+                JET.test_call(ldiv!!, (
+                    SVector{2, T}, StaticRectQR{4, 2, T, 8}, SVector{4, T}))
             end
         else
             @test_skip "JET does not load on Julia $(VERSION)"  # issue #8

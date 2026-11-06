@@ -356,7 +356,8 @@ function ka_svd_nullnorm!(
     m_rows == 0 && return zero(real(TF))
     backend = get_backend(fac.U)
     ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, r, m_rows, n, rk; ndrange = n)
-    ka_svd_null_residual_kernel!(backend)(out, r, fac.U, fac.tmp, m_rows, rk; ndrange = m_rows)
+    ka_svd_null_residual_kernel!(backend)(
+        out, r, fac.U, fac.tmp, m_rows, rk; ndrange = m_rows)
     isgpu(backend) && synchronize(backend)
     return rnorm(out)
 end

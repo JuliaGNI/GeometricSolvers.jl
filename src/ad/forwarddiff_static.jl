@@ -56,8 +56,9 @@ end
 
 # The `M × N` Jacobian of `rdual`, the residual of a dual iterate: entry `(i, j)` is partial `i` of
 # residual entry `j`, and `M` is a type parameter of `rdual` so that the matrix type is inferred.
-@inline function static_jacobian(rdual::StaticVector{M, D}, ::Val{N}, ::Type{T}) where {M, D, N,
-    T}
+@inline function static_jacobian(rdual::StaticVector{M, D}, ::Val{N}, ::Type{T}) where {
+        M, D, N,
+        T}
     return SMatrix{M, N, T, M * N}(
         ntuple(k -> dual_partial(rdual[mod1(k, M)], fld1(k, M)), Val(M * N)))
 end

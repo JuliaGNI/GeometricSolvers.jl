@@ -541,7 +541,8 @@ end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G <: LevenbergMarquardt, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {
+        L, G <: LevenbergMarquardt, J, RF, Reg}
     R = real(eltype(x))
     fnorm = R(rnorm(Fx))
     μ = state.rule.μ

@@ -31,7 +31,8 @@ struct Options{R <: Real}
 end
 
 function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
-        min_iterations::Integer, max_iterations::Integer, max_stalls::Integer) where {R <: Real}
+        min_iterations::Integer, max_iterations::Integer, max_stalls::Integer) where {R <:
+                                                                                      Real}
     return Options{R}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
         Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), sqrt(eps(R)))
 end

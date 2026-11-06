@@ -75,6 +75,7 @@ end
     rotations = 0
     m = N + isodd(N)
     for r in 0:(m - 2), k in 0:(m ÷ 2 - 1)
+
         p, q = jacobi_pair(N, r, k)
         p > N && continue
         α = @inbounds norms[p]
@@ -202,6 +203,7 @@ function svd_rect_solve(
     end
     x = local_array(zero(SVector{N, TF}))
     @inbounds for i in 1:N, j in 1:rk
+
         x[i] += V[i, j] * d[j]
     end
     return SVector{N, TF}(x), t
@@ -244,7 +246,8 @@ end
 end
 
 @inline function factor_diagnostics(
-        ::Nothing, fac::StaticRectSVD{M, N, TF}, r::StaticVector{M, T}, fnorm::R) where {
+        ::Nothing, fac::StaticRectSVD{M, N, TF}, r::StaticVector{M, T},
+        fnorm::R) where {
         M, N, TF, T, R <: Real}
     getfield(fac, :info) == Int32(0) || return Int32(-1), R(NaN)
     rk = getfield(fac, :rank)

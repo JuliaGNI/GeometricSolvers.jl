@@ -386,6 +386,7 @@ end
     @inbounds if idx == 1
         T = eltype(δ)
         for j in 1:n, i in 1:m
+
             Rmat[i, j] = J[i, j]
         end
         for i in 1:m
