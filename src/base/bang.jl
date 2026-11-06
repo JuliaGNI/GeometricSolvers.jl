@@ -56,10 +56,6 @@ retraction is a second method of it, and no algorithm changes.
 update_iterate!!(::Nothing, x, α, d) = x + α * d
 update_iterate!!(y::AbstractArray, x, α, d) = (y .= x .+ α .* d; y)
 
-# A `Number` iterate is one variable, and a one-column factor returns its step as a one-entry
-# vector: the iterate is a value, so the updated iterate is a `Number` again.
-update_iterate!!(::Nothing, x::Number, α, d::StaticVector{1}) = x + α * first(d)
-
 """
     map!!(f, y, xs...)
 

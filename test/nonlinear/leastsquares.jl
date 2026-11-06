@@ -198,32 +198,87 @@ end
     @test_throws DimensionMismatch init(p_under_d, ones(T, 3), GaussNewton())
 end
 
-# ─── D1: a `Number` iterate, whose `M`-entry residual is a vector ────────────
+# ─── D1: a `Number` iterate, solved on the one-entry vector path ─────────────
 
-@testset "Number iterate with an SVector residual, $T, $name" for T in REAL_ELTYPES,
-    (name, J_form) in (("AD", nothing), ("J vector", :vector), ("J matrix", :matrix))
+# `r(x) = (x - 1, x - 2, 2x)` has its least-squares minimum at `x* = 1/2`, and a line search over a
+# measured slope stops where `g_tol = √eps` allows rather than at that minimum, `6e-9` short of it
+# in `Float64`. The assertion is therefore not an approximation of `x*` but the same problem written
+# by hand on `SVector{1}`: code, iteration count and iterate agree bit for bit, whichever Jacobian
+# source and method run, and the method's own operator takes the `Number` the caller's problem is
+# written for.
 
+@testset "Number iterate: the same solve as the hand-written SVector{1} problem, $T" for T in REAL_ELTYPES
     f_num(x, p) = SVector(x - one(T), x - T(2), T(2) * x)
     j_vec(x, p) = SVector(one(T), one(T), T(2))
     j_mat(x, p) = SMatrix{3, 1, T, 3}(one(T), one(T), T(2))
-    J_num = J_form === nothing ? nothing : (J_form === :vector ? j_vec : j_mat)
-    prob_num = LeastSquaresProblem(f_num, J_num)
-    # the minimum of (x - 1)² + (x - 2)² + 4x² is x* = (1 + 2) / 6
-    xstar = T(3) / T(6)
-    for alg in (GaussNewton(),
-        GaussNewton(; linsolve = SVDFactorization()),
-        Newton(; globalization = LevenbergMarquardt()),
-        Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
-        x, st = solve(prob_num, zero(T), alg)
-        @test x isa T
-        @test st.code === SUCCESS
-        @test stopping_test(st) === :stationarity
-        # the Gauss–Newton step of this linear problem is exact (0 eps), and the damped step stops
-        # at its damping floor `4 eps`, a few hundred eps from the minimum (334 in Float64 and
-        # 3.5 in Float32 over the runs of this testset)
-        tol = alg.globalization isa LevenbergMarquardt ? 1024 * eps(T) : 16 * eps(T)
-        @test isapprox(x, xstar; rtol = tol)
+    f_one(x, p) = SVector(x[1] - one(T), x[1] - T(2), T(2) * x[1])
+    j_one(x, p) = SMatrix{3, 1, T, 3}(one(T), one(T), T(2))
+    x0_num = zero(T)
+    x0_one = SVector{1, T}(zero(T))
+
+    # The Jacobian sources: the problem's `J` or the method's operator, each written as the column
+    # `(1, 1, 2)` or as the `3 × 1` matrix, and the two automatic-differentiation sources. The
+    # hand-written problem of a source written as a column carries the matrix, which is that
+    # source's lifted form.
+    sources = [
+        ("AD", LeastSquaresProblem(f_num), LeastSquaresProblem(f_one), (;), (;)),
+        ("problem J as a vector", LeastSquaresProblem(f_num, j_vec),
+            LeastSquaresProblem(f_one, j_one), (;), (;)),
+        ("problem J as a matrix", LeastSquaresProblem(f_num, j_mat),
+            LeastSquaresProblem(f_one, j_one), (;), (;)),
+        ("method jacobian as a vector", LeastSquaresProblem(f_num),
+            LeastSquaresProblem(f_one), (; jacobian = j_vec), (; jacobian = j_one)),
+        ("method jacobian as a matrix", LeastSquaresProblem(f_num),
+            LeastSquaresProblem(f_one), (; jacobian = j_mat), (; jacobian = j_one)),
+        ("AutoForwardDiff", LeastSquaresProblem(f_num), LeastSquaresProblem(f_one),
+            (; jacobian = AutoForwardDiff()), (; jacobian = AutoForwardDiff()))
+    ]
+
+    # Every Gauss–Newton globalization with both factorisations and, where the method takes it, a
+    # factor reuse of two steps, then Levenberg–Marquardt, which takes no reuse.
+    methods = [("GaussNewton Static $lname",
+                   (; globalization = Static(), linsolve = ls), true)
+               for (lname, ls) in (("QR", QRFactorization()), ("SVD", SVDFactorization()))]
+    append!(methods,
+        [("GaussNewton $gname $lname", (; globalization = g, linsolve = ls), reuse_ok)
+         for (gname, g, reuse_ok) in (
+            ("Backtracking", Backtracking(), true), ("Bisection", Bisection(), true),
+            ("StrongWolfe", StrongWolfe(), true), ("DogLeg", DogLeg(), false)),
+        (lname, ls) in (("QR", QRFactorization()), ("SVD", SVDFactorization()))])
+    append!(methods,
+        [("LevenbergMarquardt $lname",
+             (; globalization = LevenbergMarquardt(), linsolve = ls), false)
+         for (lname, ls) in (("QR", QRFactorization()), ("SVD", SVDFactorization()))])
+
+    for (label, prob_num, prob_one, kw_num, kw_one) in sources,
+        (mname, mkw, reuse_ok) in methods,
+        reuse in (reuse_ok ? (nothing, 2) : (nothing,))
+        rkw = reuse === nothing ? mkw : (; mkw..., reuse)
+        @testset "$label, $mname, reuse = $(reuse === nothing ? "none" : reuse)" begin
+            x_num, st_num = solve(prob_num, x0_num, GaussNewton(; rkw..., kw_num...))
+            x_one, st_one = solve(prob_one, x0_one, GaussNewton(; rkw..., kw_one...))
+            @test x_num isa T
+            @test isconverged(st_num)
+            @test st_num.code === st_one.code
+            @test st_num.iterations == st_one.iterations
+            @test x_num === x_one[1]
+        end
     end
+
+    # The inferred, allocation-free calls of the `Number` path, through a barrier of concrete types
+    # whose warm-up call runs before the measurement.
+    number_solve(prob, x0, m) = @inferred solve(prob, x0, m)
+    prob_num = LeastSquaresProblem(f_num)
+    for m in (GaussNewton(), GaussNewton(; linsolve = SVDFactorization()),
+        Newton(; globalization = LevenbergMarquardt()))
+        @test number_solve(prob_num, x0_num, m) isa Tuple{T, SolverStatus{T}}
+        # skipped where a run forces --check-bounds=yes
+        if Base.JLOptions().check_bounds != 1
+            @test allocations(solve, prob_num, x0_num, m) == 0
+        end
+    end
+    # the control: `allocations` sees an allocation where there is one
+    @test allocations(collect, SVector{3, T}(1, 2, 3)) > 0
 end
 
 # ─── Clause 1c: Dense and device rectangular QR and SVD ──────────────────────
@@ -701,6 +756,116 @@ end
             @test sta.code === SUCCESS
             @test stopping_test(sta) === :stationarity
             @test isapprox(sta.fnorm^2, T(5); rtol = 64 * eps(T))
+        end
+    end
+end
+
+# ─── Check 5 under factor reuse, after a stationarity refresh that fails ─────
+
+# r(t) = (1e-9 + 1e-12 t + 1e-3 t², 1) from t = 0: the start reads stationary, the first step goes
+# to t = -1000, where the refreshed reading is not, so the solve goes on, and its next step reuses
+# the factor. The refresh under reuse stores the factor it factorised, so R1 — whose factor is a
+# value that no storage holds — and R3 — whose `factorize!!` writes into the factor's storage —
+# continue from the factor of the same iterate and take the same steps.
+@testset "R1 and R3 agree under reuse after a refresh, $T" for T in REAL_ELTYPES
+    for reuse in (2, 3)
+        fs(t) = T(1e-9) + T(1e-12) * t + T(1e-3) * t^2
+        dfs(t) = T(1e-12) + T(2e-3) * t
+        r_s(x, p) = SVector(fs(x[1]), one(T))
+        J_s(x, p) = SMatrix{2, 1, T, 2}(dfs(x[1]), zero(T))
+        function r_d!(r, x, p)
+            view(r, 1:1) .= T(1e-9) .+ T(1e-12) .* x .+ T(1e-3) .* x .^ 2
+            view(r, 2:2) .= one(T)
+            return r
+        end
+        function J_d!(J, x, p)
+            view(J, 1:1, 1:1) .= T(1e-12) .+ T(2e-3) .* reshape(x, 1, 1)
+            view(J, 2:2, 1:1) .= zero(T)
+            return J
+        end
+        for alg in (GaussNewton(; reuse), GaussNewton(; linsolve = SVDFactorization(), reuse))
+            x1, st1 = solve(LeastSquaresProblem(r_s, J_s), SVector{1, T}(zero(T)), alg)
+            for AT in ARRAY_BACKENDS
+                @testset "reuse = $reuse, $(nameof(typeof(alg.linsolve))), $AT" begin
+                    solver = init(LeastSquaresProblem(r_d!, J_d!, 2), AT(zeros(T, 1)), alg)
+                    x3, st3 = solve!(solver)
+                    @test st3.code === st1.code
+                    @test st3.iterations == st1.iterations
+                    @test isapprox(Array(x3)[1], x1[1]; rtol = 8 * eps(T), atol = 8 *
+                                                                                  eps(T))
+                end
+            end
+        end
+    end
+end
+
+# The iterate that two steps of `m` from `x0` return, its residual, and the state that a
+# [`refresh_diagnostics!!`](@ref) there leaves. The steps are the solve's own, so the state carries
+# the factor the second step reused and the age that the step after the refresh reads.
+function refreshed_state(prob, x0, m, p)
+    state = GeometricSolvers.init_state(m, prob, x0, p)
+    Fx = GeometricSolvers.residual!!(GeometricSolvers.residual_buffer(state), prob, x0, p)
+    state = GeometricSolvers.start!!(state, m, prob, x0, Fx, p, GeometricSolvers.rnorm(Fx))
+    for _ in 1:2
+        x0, Fx, state, _ = GeometricSolvers.step!!(state, m, prob, x0, Fx, p)
+    end
+    return x0, Fx, GeometricSolvers.refresh_diagnostics!!(state, m, prob, x0, Fx, p)
+end
+
+# A factorisation of the Jacobian at the iterate, in the storage the regime's factors live in: R1's
+# factor is a value, and R3 factorises into a dense buffer.
+fresh_factor(ls, prob, ::SVector, J) = factorize!!(nothing, ls, J)
+
+function fresh_factor(ls, prob, x::AbstractVector, J)
+    return factorize!!(dense_factor(ls, prob, x, nothing), ls, J)
+end
+
+# The step of `fac` at the right-hand side `Fx`, in the storage of the regime: R1's `ldiv!!` returns
+# the step, and R3's writes it into a buffer.
+step_of(fac, ::SVector, Fx) = ldiv!!(nothing, fac, Fx)
+step_of(fac, x::AbstractVector, Fx) = ldiv!!(similar(x), fac, Fx)
+
+@testset "refresh_diagnostics!! stores the factor it factorises under reuse, $T" for T in REAL_ELTYPES
+
+    # r(x) = (x² - 2, x - 1) from x = 3: two Gauss–Newton steps, the second on the reused factor,
+    # leave an iterate whose reading is not stationary — the reading that a refresh makes before a
+    # solve goes on. The refresh leaves the factor of that iterate and the age of a fresh
+    # factorisation, or the reused step after it reads the factor of the earlier iterate.
+    f_s(x, p) = SVector(x[1]^2 - T(2), x[1] - one(T))
+    j_s(x, p) = SMatrix{2, 1, T, 2}(T(2) * x[1], one(T))
+    function f_d!(r, x, p)
+        view(r, 1:1) .= x .^ 2 .- T(2)
+        view(r, 2:2) .= x .- one(T)
+        return r
+    end
+    function j_d!(J, x, p)
+        view(J, 1:1, 1:1) .= T(2) .* reshape(x, 1, 1)
+        view(J, 2:2, 1:1) .= one(T)
+        return J
+    end
+    alg = GaussNewton(; reuse = 3)
+    prob_s = LeastSquaresProblem(f_s, j_s)
+    prob_d = LeastSquaresProblem(f_d!, j_d!, 2)
+
+    for (regime, prob, x0) in (("R1", prob_s, SVector{1, T}(T(3))),
+        ("Array", prob_d, Array{T}([3])), ("JLArray", prob_d, JLArray(T[3])))
+        x, Fx, state = refreshed_state(prob, x0, alg, nothing)
+        @testset "$regime" begin
+            # the refreshed reading fails, so a solve would go on from this iterate
+            @test GeometricSolvers.state_gradratio(state) > Options(T).g_tol
+            # the age of a factor that a step has just factorised, and no stall
+            @test state.rule == GeometricSolvers.FactorAge(Int32(1), false)
+            # the step of the factor the state kept is the step of a fresh factor at this iterate
+            δ_stored = step_of(state.fac, x, Fx)
+            J = GeometricSolvers.jacobian!!(state.J, state.jacprep, prob, x, nothing)
+            fac = fresh_factor(alg.linsolve, prob, x, J)
+            @test δ_stored == step_of(fac, x, Fx)
+        end
+        # a period of one step reuses no factor, so the refreshed factor is due at once
+        for (reuse, age) in ((1, Int32(0)), (2, Int32(1)), (3, Int32(1)))
+            m = GaussNewton(; reuse)
+            _, _, state_k = refreshed_state(prob, x0, m, nothing)
+            @test state_k.rule == GeometricSolvers.FactorAge(age, false)
         end
     end
 end

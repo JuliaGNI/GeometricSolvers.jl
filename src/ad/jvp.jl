@@ -80,10 +80,5 @@ end
 
 function jvp!!(::Nothing, backend::AutoForwardDiff, prob, x::T, v::T, p) where {T <: Number}
     D = dual_type(typeof(x), typeof(tag_of(backend, prob, x)), 1)
-    return dual_jvp(prob.F(seed(zero(D), x, tuple(v)), p), T)
+    return dual_partial(prob.F(seed(zero(D), x, tuple(v)), p), 1)
 end
-
-# The derivative of the residual of a dual iterate along one direction: a `Number` residual's is
-# the partial itself, and an `M`-entry one's is the vector of its `M` partials.
-@inline dual_jvp(rdual::Number, ::Type{T}) where {T} = dual_partial(rdual, 1)
-@inline dual_jvp(rdual::StaticVector{M}, ::Type{T}) where {M, T} = static_jvp(rdual, T)

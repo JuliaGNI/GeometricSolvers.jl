@@ -215,6 +215,10 @@ struct FactorAge
     stalled::Bool
 end
 
+# The age of a factor that a step has just factorised: the next step reuses it unless the period
+# is one step long.
+@inline fresh_age(m::Newton) = m.reuse == Int32(1) ? Int32(0) : Int32(1)
+
 # The rule state of `Newton` with `DogLeg`: the radius, and the initial radius that each solve
 # starts from, `0` when the first step sets it.
 struct TrustRadius{R}
@@ -289,7 +293,8 @@ end
 # factorisation, at the start of that step. Every other method and problem keeps its reading.
 @inline refresh_diagnostics!!(state, method, prob, x, Fx, p) = state
 @inline function refresh_diagnostics!!(
-        state::NewtonState, m::Newton, prob::LeastSquaresProblem, x, Fx, p)
+        state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing}, prob::LeastSquaresProblem,
+        x, Fx, p) where {L, G, J, RF, Reg}
     R = real(eltype(x))
     _, _, diag = if m.globalization isa LevenbergMarquardt
         lm_newton_factor(m, state, prob, x, Fx, p, R(rnorm(Fx)))
@@ -297,6 +302,18 @@ end
         newton_factor(m, state, prob, x, Fx, p)
     end
     return with_diag(state, diag)
+end
+
+# Under factor reuse the refresh's factorisation is also the factor that a later step reuses, so
+# the state keeps it, as the retry path of `step!!` keeps the factor it recurs to. R1 drops a
+# factor that no field holds and R3 writes into the factor's storage, so without the stored factor
+# and its fresh age the two regimes continue from factors of different iterates.
+@inline function refresh_diagnostics!!(
+        state::NewtonState, m::Newton{L, G, J, RF, Reg, Int32}, prob::LeastSquaresProblem,
+        x, Fx, p) where {L, G, J, RF, Reg}
+    _, fac, diag = newton_factor(m, state, prob, x, Fx, p)
+    state = with_diag(with_factor(state, fac), diag)
+    return with_rule(state, FactorAge(fresh_age(m), false))
 end
 
 @inline function with_factor(s::NewtonState, fac)
@@ -317,6 +334,86 @@ end
 @inline function with_diag(s::NewtonState, diag)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, diag)
+end
+
+# ─── A `Number` iterate on the one-entry vector path ─────────────────────────
+#
+# The steps, factorisations and line searches of a least-squares problem run on a vector iterate,
+# so a one-variable least-squares problem is solved as the one-entry `SVector` problem it is: the
+# solver lifts the iterate once, where it starts, and takes the result back to a `Number` at
+# return. A residual and every Jacobian source enter that path through `ScalarResidual` and
+# `ScalarJacobian`, which read the `Number` out of the one-entry iterate and lift what the caller's
+# function returns.
+
+"""
+    ScalarResidual(F)
+
+The residual `F(x, p)` of a one-variable problem, called on the one-entry iterate `x` the vector
+path carries: `(x, p) -> lift_residual(F(first(x), p))`.
+
+Internal: [`lift_scalar_iterate`](@ref) builds it.
+"""
+struct ScalarResidual{F}
+    F::F
+end
+
+@inline (r::ScalarResidual)(x::SVector{1}, p) = lift_residual(r.F(first(x), p))
+
+"""
+    ScalarJacobian(J)
+
+The Jacobian `J(x, p)` of a one-variable problem, called on the one-entry iterate `x`: its value
+is the `M × 1` column of the `M`-entry residual's derivative, whether `J` returns that column or
+the one-entry matrix itself.
+
+Internal: [`lift_scalar_iterate`](@ref) builds it, and so does `lift_scalar_operator` for the
+Jacobian operator of a method.
+"""
+struct ScalarJacobian{J}
+    J::J
+end
+
+@inline (J::ScalarJacobian)(x::SVector{1}, p) = lift_jacobian(J.J(first(x), p))
+
+# The one-entry forms: a scalar residual is a one-entry vector, and the derivative of an `M`-entry
+# residual along the one variable is its column.
+@inline lift_residual(r::Number) = SVector{1, typeof(r)}((r,))
+@inline lift_residual(r::StaticVector) = r
+@inline lift_jacobian(J::StaticMatrix) = J
+@inline lift_jacobian(J::StaticVector{M, T}) where {M, T} = SMatrix{M, 1, T, M}(J)
+
+"""
+    lift_scalar_iterate(prob, method, x)
+
+The problem, the method and the iterate of a `Number` iterate on the one-entry vector path: a
+`LeastSquaresProblem` whose residual and Jacobian take an `SVector{1}` and return the lifted
+residual and derivative, and a `Newton` method whose own Jacobian operator takes that iterate.
+Everything else about both is unchanged.
+
+Internal: [`init_state`](@ref) and [`solve!!`](@ref) lift with it, so that no step, factorisation
+or line search needs a `Number` method of its own.
+"""
+@inline function lift_scalar_iterate(prob::LeastSquaresProblem, m::Newton, x::Number)
+    F = ScalarResidual(prob.F)
+    J = prob.J === nothing ? nothing : ScalarJacobian(prob.J)
+    return LeastSquaresProblem(F, J, prob.output_length), lift_scalar_operator(m),
+    SVector{1, typeof(x)}((x,))
+end
+
+# The Jacobian operator of a method takes the problem's signature, so it takes the one-entry
+# iterate here. A back end differentiates the lifted residual unchanged.
+@inline function lift_scalar_operator(m::Newton)
+    j = m.jacobian
+    (j === nothing || j isa AbstractADType) && return m
+    return Newton(m.linsolve, m.globalization, ScalarJacobian(j), m.refinement,
+        m.regularization, m.reuse)
+end
+
+# The state of a one-variable least-squares problem is the state of the lifted problem at the
+# lifted iterate.
+@inline function init_state(m::Newton, prob::LeastSquaresProblem, x::Number, p)
+    prob, m, x = lift_scalar_iterate(prob, m, x)
+    return init_state(m, prob, x, p)
 end
 
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
@@ -506,7 +603,7 @@ end
     else
         (nothing, state.fac, state.diag)
     end
-    age_fresh = m.reuse == Int32(1) ? Int32(0) : Int32(1)
+    age_fresh = fresh_age(m)
     age₊ = fresh ? age_fresh :
            (rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32))
     x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, fresh)
@@ -526,7 +623,7 @@ end
     return x₊, F₊, state₊, info
 end
 
-@inline function lm_svd_factor(state, m, ::Number, Jreg::Number)
+@inline function lm_svd_factor(state, m, ::Number, Jreg)
     return factorize!!(state.fac, m.linsolve, SMatrix{1, 1, typeof(Jreg)}((Jreg,)))
 end
 @inline lm_svd_factor(state, m, _, Jreg) = factorize!!(state.fac, m.linsolve, Jreg)

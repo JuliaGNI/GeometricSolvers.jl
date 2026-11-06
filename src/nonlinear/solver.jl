@@ -198,6 +198,15 @@ function solve!!(
     end
 end
 
+# A one-variable least-squares problem iterates on the one-entry vector path, and its result goes
+# back to the caller as the `Number` it is: the state is the lifted state that `init_state` built.
+function solve!!(state, prob::LeastSquaresProblem, x₀::Number, method, p = nothing,
+        options::Options{R} = Options(eltype(x₀))) where {R <: Real}
+    prob, method, x₀ = lift_scalar_iterate(prob, method, x₀)
+    x, status, state₊ = solve!!(state, prob, x₀, method, p, options)
+    return first(x), status, state₊
+end
+
 # The options of a solve whose iterate has element type `T`: the keywords, or an `Options{real(T)}`,
 # never both.
 @inline function resolve_options(
