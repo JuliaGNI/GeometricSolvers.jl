@@ -11,6 +11,35 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
+  `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
+  extension `GeometricSolversSparspakExt`** (decision 53 of the design). `NonlinearProblem{F, J, P
+  <: Union{Nothing, AbstractMatrix}}` gains a third field `jacobian_prototype::P` defaulting to
+  `nothing` by keyword (`NonlinearProblem(F, J = nothing; jacobian_prototype = nothing)`), so
+  `NonlinearProblem(F)` and `NonlinearProblem(F, J)` remain `isbits` when `F` and `J` are `isbits`.
+  `GeometricSolvers.init_linear(method, pattern, x)` dispatches on `(method, pattern, x)` (with
+  `dense_factor` forwarding `jacobian_prototype(prob)` and `Newton`'s `init_factor` forwarding
+  `jacobian_pattern(prob, jacprep)`), building dense host and device factors when `pattern ===
+  nothing`. When `Sparspak` (`0.3.15`) is loaded, `GeometricSolversSparspakExt` defines `SparspakLU`
+  and extends `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T}) where
+  {T <: AbstractFloat}`, `factorize!!` and `ldiv!!`: `init_linear` allocates a `similar(P, T)`
+  buffer (never mutating `P`), records `colptr` and `rowval`, and builds the unfactorised
+  `Sparspak.SparseSolver` via `sparspaklu(factors; factorize = false)`; `factorize!!` checks that
+  the sparsity pattern matches `jacobian_prototype` and that `nonzeros(factors)` is finite before
+  calling `sparspaklu!(lu, factors; allow_pattern_change = false)` (which runs symbolic ordering
+  and factorisation on the first call and reuses them thereafter), catches an `ErrorException`
+  only when `lu.slvr.errflag` is set (a zero pivot) and rethrows any other error, and checks
+  `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz` and `lu.slvr.unz` so
+  singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR`
+  without throwing. `init_newton_J` allocates `similar(fac.factors, eltype(x))` when `fac.factors`
+  is a `SparseMatrixCSC` and cannot be aliased directly (such as under `DogLeg`). `prepare_ad` on a
+  DifferentiationInterface back end validates `size(P) == (length(r), length(x))` whenever
+  `jacobian_prototype` is set, and an `AutoSparse` backend then takes `P` as its
+  `ADTypes.KnownJacobianSparsityDetector(P)` for column-coloured sparse AD, replacing any detector
+  it carries, while `ChunkedForwardDiff`'s `jacobian!!` is restricted to `J::DenseMatrix`.
+  `SparseArrays` joins `[deps]` and `Sparspak` joins `[weakdeps]` with the `[extensions]` entry
+  `GeometricSolversSparspakExt`.
+
 - **Numerical stability documentation (`docs/src/stability.md`) and backward-error test suite
   (`test/linear/stability.jl`, `test/helpers/randsvd.jl`).** `docs/src/stability.md` states the
   normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
@@ -26,11 +55,13 @@ so that a compat-only bump can be told apart from an interface change.
   with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
   element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
 
-- **`solve(prob, x₀, method, p)` differentiates implicitly through a converged solve when `x₀` or
-  `p` contains `ForwardDiff.Dual` values** (decision 50 of the design). `GeometricSolvers.StripDual`
-  (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from `ForwardDiff.Dual`,
-  `Complex{<:ForwardDiff.Dual}`, and arrays of either through `Adapt.adapt(StripDual(), p)` while
-  leaving tuples, named tuples, numbers and other arrays unchanged. When `x₀` or `p` carries
+- **`solve(prob, x₀, method, p)` on a `NonlinearProblem` differentiates implicitly through a
+  converged solve when `x₀` or `p` contains `ForwardDiff.Dual` values** (decision 50 of the
+  design); on a `StationarityProblem` it raises an `ArgumentError` (K31).
+  `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from
+  `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
+  `Adapt.adapt(StripDual(), p)` while leaving tuples, named tuples, numbers and other arrays
+  unchanged. When `x₀` or `p` carries
   `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted value type of the dual leaves of
   `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`, runs the primal solve via `solve!!`
   at the precision of the stripped `x₀` (`status::SolverStatus{R}` with `R = real(eltype(x₀))`),

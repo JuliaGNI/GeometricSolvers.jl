@@ -6,14 +6,19 @@ CurrentModule = GeometricSolvers
 
 ## The problem
 
-A problem holds functions and nothing else: the residual and optionally its derivative in
-[`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets, and an
-optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call form,
-so one problem serves every regime. These names are exported.
+A problem holds functions and, for a [`NonlinearProblem`](@ref), an optional Jacobian prototype:
+the residual, optionally its derivative, and optionally `jacobian_prototype` for a sparse R3
+Jacobian in [`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets,
+and an optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call
+form of the functions, so one problem serves every regime. `NonlinearProblem` and
+`StationarityProblem` are exported; `GeometricSolvers.jacobian_prototype` and
+`GeometricSolvers.jacobian_pattern` are internal accessors.
 
 ```@docs
 NonlinearProblem
 StationarityProblem
+jacobian_prototype
+jacobian_pattern
 ```
 
 ## The storage seam
@@ -82,23 +87,31 @@ BF16
 
 ### Factorisation and solve
 
-A linear-solver method enters a solve through [`dense_factor`](@ref), [`factorize!!`](@ref) and
-[`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
-`isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
-`Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` with `1×1` and `2×2`
-diagonal blocks, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
-a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
-`√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
-[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
-[`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref), [`DeviceQR`](@ref)
-or [`DeviceSVD`](@ref) on an `AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse
-its buffers in place: through LAPACK on the host, and through `KernelAbstractions` on a device.
+A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense_factor`](@ref)),
+[`factorize!!`](@ref) and [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and
+[`ldiv!!`](@ref) return new `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU
+with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufman `L D Lᵀ` /
+`L D Lᴴ` with `1×1` and `2×2` diagonal blocks, [`StaticQR`](@ref) Householder QR without column
+pivoting, and [`StaticSVD`](@ref) a one-sided Jacobi singular value decomposition whose solve
+truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve
+finite. For a vector state (R3) with no prototype (`jacobian_prototype === nothing`),
+[`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
+[`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref),
+[`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an `AbstractGPUArray`, and [`factorize!!`](@ref) and
+[`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host, and through `KernelAbstractions` on a device. When `Sparspak` is loaded
+and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
+AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for an `LUFactorization` whose
+factor element type is `T` (`LUFactorization()` or `LUFactorization(T)`); the first `factorize!!`
+call runs symbolic ordering and symbolic factorisation, and subsequent `factorize!!` and `ldiv!!`
+calls reuse them across Newton steps.
 [`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
-in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact
-or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These
-names are not exported and are reached as `GeometricSolvers.name`.
+in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is
+exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref).
+These names are not exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
+init_linear
 dense_factor
 factorize!!
 ldiv!!
@@ -163,8 +176,9 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
 `x₀` is an array, and returns `(x, status)`; when `x₀` or `p` carries a `ForwardDiff.Dual` leaf,
-[`solve`](@ref) strips duals via [`StripDual`](@ref), runs the primal solve, and on `SUCCESS`
-differentiates the root implicitly at `x*`. With the same arguments,
+[`solve`](@ref) on a [`NonlinearProblem`](@ref) strips duals via [`StripDual`](@ref), runs the
+primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while on a
+[`StationarityProblem`](@ref) it raises an `ArgumentError`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
 [`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`

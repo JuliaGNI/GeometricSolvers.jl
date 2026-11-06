@@ -68,7 +68,7 @@ function GeometricSolvers.empty_static_factor(
 end
 
 function GeometricSolvers.init_factor(
-        m::CountingLinear, prob, x::AbstractVector, p)
+        m::CountingLinear, prob, x::AbstractVector, p, jacprep)
     return CountingFactor(
         GeometricSolvers.dense_factor(m.inner, prob, x, p), 0, m.ldiv_calls, m.ldiv_fac_ids)
 end
