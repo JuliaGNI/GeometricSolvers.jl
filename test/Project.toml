@@ -15,6 +15,9 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SparseMatrixColorings = "0a514795-09f3-496d-8182-132a7b665d35"
+Sparspak = "e56a9233-b9d6-4f03-8d0f-1825330902ac"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
@@ -29,6 +32,7 @@ JET = "0.12"
 JLArrays = "0.3"
 Random = "1"
 SafeTestsets = "0.1"
+SparseMatrixColorings = "0.4.23"
 Test = "1"
 
 [preferences.Metal]

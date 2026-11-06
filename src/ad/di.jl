@@ -18,6 +18,11 @@ replaced on every call.
 gives a [`DIJacobian`](@ref) on a CPU iterate, and raises `ArgumentError` on a device array
 iterate: DifferentiationInterface's `jacobian!` raises "Scalar indexing is disallowed" on an
 `MtlArray`, a `CuArray` and a `JLArray`. The iterate must be a vector.
+
+Where `prob` carries a `jacobian_prototype`, a back end other than `AutoForwardDiff()` raises
+`ArgumentError` unless the prototype has the size of the Jacobian, and an `AutoSparse` back end
+takes that prototype as its sparsity pattern, whatever detector it carries. `AutoForwardDiff()`
+does not read the prototype.
 """
 function prepare_ad end
 
@@ -57,12 +62,38 @@ function prepare_ad(backend::AbstractADType, prob, r::AbstractArray, x::Abstract
     )
     )
     check_iterate_shape(x)
+    P = prob isa NonlinearProblem ? jacobian_prototype(prob) : nothing
+    if P !== nothing
+        size(P) == (length(r), length(x)) || throw(
+            ArgumentError(
+            "jacobian_prototype has size $(size(P)), expected ($(length(r)), $(length(x)))"
+        )
+        )
+    end
+    eff_backend = if P !== nothing && backend isa AutoSparse
+        AutoSparse(
+            dense_ad(backend);
+            sparsity_detector = KnownJacobianSparsityDetector(P),
+            coloring_algorithm = coloring_algorithm(backend)
+        )
+    else
+        backend
+    end
+    jvp_backend = backend isa AutoSparse ? dense_ad(backend) : backend
     context = DI.Constant(p)
-    jacprep = DI.prepare_jacobian(prob.F, similar(r), backend, x, context)
+    jacprep = DI.prepare_jacobian(prob.F, similar(r), eff_backend, x, context)
     # the tangent is zeroed, so that preparation does not evaluate the residual on whatever is in
     # a fresh buffer
-    jvpprep = DI.prepare_pushforward(prob.F, similar(r), backend, x, (zero(x),), context)
-    return DIJacobian(backend, jacprep, jvpprep, similar(r))
+    jvpprep = DI.prepare_pushforward(
+        prob.F, similar(r), jvp_backend, x, (zero(x),), context)
+    return DIJacobian(eff_backend, jacprep, jvpprep, similar(r))
+end
+
+function jvp!!(Jv, prep::DIJacobian{<:AutoSparse}, prob, x, v, p)
+    DI.pushforward!(
+        prob.F, prep.y, (Jv,), prep.jvpprep, dense_ad(prep.backend), x, (v,), DI.Constant(p)
+    )
+    return Jv
 end
 
 function jacobian!!(J, prep::DIJacobian, prob, x, p)

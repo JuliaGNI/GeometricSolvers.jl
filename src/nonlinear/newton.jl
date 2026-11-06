@@ -80,6 +80,17 @@ end
 
 Adapt.@adapt_structure Newton
 
+@inline function jacobian_matrix_jvp(g, x, prob)
+    return jacobian_matrix_jvp(g, x)
+end
+@inline function jacobian_matrix_jvp(::LineSearch, x, prob)
+    P = jacobian_prototype(prob)
+    return JacobianMatrixJVP(
+        P === nothing ? buffer(x, eltype(x), length(x), length(x)) : similar(P, eltype(x))
+    )
+end
+@inline jacobian_matrix_jvp(::Static, x, prob) = nothing
+
 @inline function newton_ad_preps(m::Newton, prob::NonlinearProblem, Fx, x, p)
     if m.jacobian === nothing && prob.J === nothing
         prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
@@ -96,7 +107,7 @@ Adapt.@adapt_structure Newton
             JacobianFunction(m.jacobian)
         end
         jvpprep = if prob.J !== nothing
-            Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x)
+            Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x, prob)
         elseif m.jacobian isa AbstractADType
             prepare_ad(m.jacobian, prob, Fx, x, p)
         else
@@ -151,19 +162,30 @@ end
     return StaticSVD{1, TF, real(TF), 1}(z, z, σ, Int32(0), Int32(0), Int32(0))
 end
 
+"""
+    jacobian_pattern(prob, jacprep)
+
+Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_prototype` for a
+[`NonlinearProblem`](@ref) and `nothing` for `nothing`.
+"""
+@inline jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype
+@inline jacobian_pattern(::Nothing, jacprep) = nothing
+
 @inline function init_factor(
-        ls::Union{LUFactorization, QRFactorization, SVDFactorization},
-        prob, x::Union{StaticVector, Number}, p)
+        ls::LinearMethod, prob, x::Union{StaticVector, Number}, p, jacprep)
     return empty_static_factor(ls, x)
 end
 
-@inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p)
-    return dense_factor(ls, prob, x, p)
+@inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p, jacprep)
+    return init_linear(ls, jacobian_pattern(prob, jacprep), x)
 end
 
 @inline function init_newton_J(m::Newton, fac, x)
     if !(m.globalization isa DogLeg) && factor_eltype(m.linsolve, eltype(x)) === eltype(x)
         return fac.factors
+    end
+    if fac.factors isa SparseArrays.SparseMatrixCSC
+        return similar(fac.factors, eltype(x))
     end
     n = length(x)
     return buffer(x, eltype(x), n, n)
@@ -258,11 +280,11 @@ end
     R = real(eltype(x))
     diag = NewtonDiagnostics(R)
     if Fx === nothing
-        fac = m.reuse === nothing ? nothing : init_factor(m.linsolve, prob, x, p)
+        fac = m.reuse === nothing ? nothing : init_factor(m.linsolve, prob, x, p, jacprep)
         return NewtonState(jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule,
             merit, R(NaN), diag)
     else
-        fac = init_factor(m.linsolve, prob, x, p)
+        fac = init_factor(m.linsolve, prob, x, p, jacprep)
         return NewtonState(jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, x),
             init_globalization(m.globalization, x), rule, merit, R(NaN), diag)
     end
