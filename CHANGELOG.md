@@ -19,7 +19,7 @@ so that a compat-only bump can be told apart from an interface change.
   `GaussNewton(; linsolve = QRFactorization(), globalization = Static(), jacobian = nothing,
   refinement = NoRefinement(), regularization = 0, reuse = nothing)` (exported) constructs a
   `Newton` method configured for least-squares problems, using `MeasuredSlope()` for line-search
-  globalizations (`φ′(0) = 2 Re⟨F, J d⟩ = -2 ‖J d‖₂²`). `StaticRectQR{M, N, T, L}` and
+  globalizations (`φ′(0) = 2 Re⟨F, J d⟩ = -2 ‖J d‖₂²`). `StaticRectQR{M, N, TF, L}` and
   `StaticRectSVD{M, N, TF, L, LN, R}` factorise rectangular static matrices `SMatrix{M, N, T}` with
   `M > N ≥ 1` and `M ≤ 32` without allocation (delegating `M == N` to `StaticQR` and `StaticSVD`,
   and throwing `DimensionMismatch` for `M < N` or `N == 0` and `ArgumentError` for `M > 32`), and

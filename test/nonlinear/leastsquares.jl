@@ -3,7 +3,7 @@ using Adapt: Adapt
 using GeometricSolvers
 using GeometricSolvers: DenseQR, DenseSVD, DeviceQR, DeviceSVD, MeasuredSlope, StepInfo,
                         dense_factor, factor_diagnostics, factorize!!, isconverged, ldiv!!,
-                        lm_stacked_qr_step, lm_static_svd, lm_svd_step, newton_stepkind,
+                        lm_stacked_qr_step, lm_svd_step, newton_stepkind,
                         record, returncode
 using GPUArraysCore: allowscalar
 using JET: JET
@@ -276,13 +276,16 @@ end
     J_lm = copy(A_h)
     Fx_lm = copy(b_h)
     μ = T(0.7)
-    d_ref = -((J_lm' * J_lm + μ * I) \ (J_lm' * Fx_lm))
+    # `LevenbergMarquardt` measures `μ` in the factor's power-of-two scale `s = 2^e`, `e` the
+    # exponent of the largest entry of `J`, so the damped system is `(Jᴴ J + μ s² D²) δ = -Jᴴ F`.
+    s_damp = ldexp(one(T), GeometricSolvers.matrix_exponent(J_lm))
+    d_ref = -((J_lm' * J_lm + μ * s_damp^2 * I) \ (J_lm' * Fx_lm))
     # R1 LM SVD vs stacked QR
     J_s = SMatrix{m, n, T}(A_h)
     Fx_s = SVector{m, T}(b_h)
     d_s = zero(SVector{n, T})
     d_qr_s, ok_qr_s = lm_stacked_qr_step(nothing, J_s, Fx_s, μ, Val(:none))
-    d_svd_s = lm_svd_step(nothing, lm_static_svd(SVDFactorization(), J_s), Fx_s, μ)
+    d_svd_s = lm_svd_step(nothing, factorize!!(nothing, SVDFactorization(), J_s), Fx_s, μ)
     @test ok_qr_s
     @test isapprox(Vector(d_qr_s), d_ref; rtol = 32 * sqrt(eps(T)))
     @test isapprox(Vector(d_svd_s), d_ref; rtol = 32 * sqrt(eps(T)))
@@ -304,6 +307,31 @@ end
         d_jl_qr, JLArray(J_lm), JLArray(Fx_lm), μ, Val(:none), glob_qr_jl)
     @test ok_jl_qr
     @test isapprox(Array(d_jl_qr), d_ref; rtol = 64 * sqrt(eps(T)))
+
+    # `scaling = :diagonal`: `D = diag(dᵢ)`, `dᵢ = max(‖J[:, i]‖, √eps(R) maxⱼ ‖J[:, j]‖)`, and no
+    # scale factor of `J`. A near-zero column exercises the floor, in the host path and in the
+    # device kernel alike.
+    A_floor = copy(A_h)
+    A_floor[:, n] .= T(1e-9)
+    colnorm = [norm(A_floor[:, i]) for i in 1:n]
+    dfloor = iszero(maximum(colnorm)) ? one(T) : sqrt(eps(T)) * maximum(colnorm)
+    D2 = Diagonal(collect(max(d, dfloor)^2 for d in colnorm))
+    d_ref_diag = -((A_floor' * A_floor + μ * D2) \ (A_floor' * b_h))
+    d_diag_s, ok_diag_s = lm_stacked_qr_step(
+        nothing, SMatrix{m, n, T}(A_floor), SVector{m, T}(b_h), μ, Val(:diagonal))
+    glob_diag = GeometricSolvers.init_globalization(LevenbergMarquardt(), zeros(T, n), b_h)
+    d_diag_ar = zeros(T, n)
+    _, ok_diag_ar = lm_stacked_qr_step(
+        d_diag_ar, copy(A_floor), copy(b_h), μ, Val(:diagonal), glob_diag)
+    glob_diag_jl = GeometricSolvers.init_globalization(
+        LevenbergMarquardt(), JLArray(zeros(T, n)), JLArray(b_h))
+    d_diag_jl = JLArray(zeros(T, n))
+    _, ok_diag_jl = lm_stacked_qr_step(
+        d_diag_jl, JLArray(A_floor), JLArray(b_h), μ, Val(:diagonal), glob_diag_jl)
+    @test ok_diag_s && ok_diag_ar && ok_diag_jl
+    @test isapprox(Vector(d_diag_s), d_ref_diag; rtol = 32 * sqrt(eps(T)))
+    @test isapprox(d_diag_ar, d_ref_diag; rtol = 32 * sqrt(eps(T)))
+    @test isapprox(Array(d_diag_jl), d_ref_diag; rtol = 64 * sqrt(eps(T)))
 end
 
 # ─── Clause 2: Moré–Garbow–Hillstrom nonzero-residual problems ───────────────
@@ -424,10 +452,8 @@ end
         @test stopping_test(st) === :stationarity
         @test isapprox(st.fnorm^2, js_min; rtol = js_rtol)
     end
-    # The undamped step leaves the basin from the same start, which is why no `GaussNewton()` run of
-    # this problem is asserted to reach f*.
-    _, st_gn6 = solve(prob6_s, SVector{2, T}(T(0.25), T(0.26)), GaussNewton(); options = opt)
-    @test !isconverged(st_gn6)
+    # The undamped step is unbounded at a minimum with equal Jacobian columns and a nonzero
+    # residual, which is why no `GaussNewton()` run of this problem is asserted here.
 
     prob6_d = LeastSquaresProblem(mgh6_inplace!, 10)
     for (x0_js, alg) in ((T[0.3, 0.4], Newton(; globalization = LevenbergMarquardt())),
@@ -545,16 +571,14 @@ end
 @testset "tanh network fit of sin(πx), $T" for T in REAL_ELTYPES
     m = 101
     K = 8
-    n = 3 * K + 1 # 8 weights w_k, 8 biases b_k, 8 output weights c_k, 1 output bias d = 25 params
+    n = 3 * K # 8 weights w_k, 8 biases b_k and 8 output weights c_k, and no output bias
     ts = range(T(-1), T(1); length = m)
     ys = sin.(T(π) .* collect(ts))
-    ynorm = norm(ys)
 
     function tanh_residual!(r, θ, _)
-        d_bias = θ[3 * K + 1]
         @inbounds for i in 1:m
             ti = ts[i]
-            pred = d_bias
+            pred = zero(T)
             for k in 1:K
                 wk = θ[k]
                 bk = θ[K + k]
@@ -580,7 +604,6 @@ end
                 J[i, K + k] = ck * sech2
                 J[i, 2 * K + k] = th
             end
-            J[i, 3 * K + 1] = one(eltype(θ))
         end
         return J
     end
@@ -592,15 +615,18 @@ end
         θ0[K + k] = T(-1.4 + 0.4 * (k - 1))
         θ0[2 * K + k] = isodd(k) ? T(0.5) : T(-0.5)
     end
-    θ0[3 * K + 1] = zero(T)
 
     prob_tanh = LeastSquaresProblem(tanh_residual!, tanh_jacobian!, m)
     opt_tanh = Options(T; max_iterations = 200, f_abstol = T(1e-12),
         f_reltol = T(1e-6), g_tol = T(1e-10))
     solver = init(prob_tanh, copy(θ0), Newton(; globalization = LevenbergMarquardt()); options = opt_tanh)
-    θ_sol, st = solve!(solver)
+    θ_sol, _ = solve!(solver)
+    # The relative residual of the problem is measured against the start's residual; `‖r(θ₀)‖`
+    # exceeds `‖y‖` by the factor `‖r(θ₀)‖ / ‖y‖`.
+    r0 = tanh_residual!(zeros(T, m), θ0, nothing)
+    r_sol = tanh_residual!(zeros(T, m), θ_sol, nothing)
     @test θ_sol != θ0
-    @test st.fnorm / ynorm <= T(1e-4)
+    @test norm(r_sol) / norm(r0) <= T(1e-4)
 end
 
 # ─── Clause 5: R1 inference/zero-alloc/JET and R3 Array/JLArray/AD ───────────

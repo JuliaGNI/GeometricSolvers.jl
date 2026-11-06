@@ -55,9 +55,11 @@ end
 end
 
 @testset "CommonSolve's functions dispatch their first argument on the package's types" begin
-    # the first positional argument of every method that the package adds
-    for (f, owned) in ((CommonSolve.init, NonlinearProblem),
-        (CommonSolve.solve, NonlinearProblem), (CommonSolve.solve!, NonlinearSolver))
+    # the first positional argument of every method that the package adds: `init` and `solve` take
+    # any `AbstractNonlinearProblem`, so that a `LeastSquaresProblem` reaches one solver loop
+    for (f, owned) in ((CommonSolve.init, GS.AbstractNonlinearProblem),
+        (CommonSolve.solve, GS.AbstractNonlinearProblem),
+        (CommonSolve.solve!, NonlinearSolver))
         ours = filter(m -> m.module === GS, collect(methods(f)))
         @test !isempty(ours)
         for m in ours

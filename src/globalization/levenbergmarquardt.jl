@@ -19,8 +19,8 @@ With [`SVDFactorization`](@ref) and `scaling = :none`, `J(x) = U Σ Vᴴ` is fac
 outer step and each trial `μ` evaluates the damped pseudoinverse step from `(U, Σ, V)` without
 refactoring `J(x)`. With [`QRFactorization`](@ref) or [`LUFactorization`](@ref) (or when
 `scaling = :diagonal`), the damped step is solved by Givens QR elimination of the stacked matrix
-`[J(x); √μ s D]` without forming `J(x)ᴴ J(x)`; that path indexes scalars and runs on a host
-array.
+`[J(x); √μ s D]` without forming `J(x)ᴴ J(x)`; on a host array that path indexes scalars, and on
+a device a single kernel work item performs the same elimination.
 """
 struct LevenbergMarquardt{R <: AbstractFloat, S}
     μ₀::R
@@ -262,8 +262,9 @@ end
 # takes Marquardt's column norms, floored at `√eps(R)` of the largest of them, so that a zero or
 # near-zero column still receives positive damping; it is scale-invariant on its own.
 #
-# Returns the diagonal and `√μ` folded with that scale; the caller treats a damping entry that is
-# not representable as a failed trial.
+# Returns the diagonal and the scalar that `√μ` is multiplied by — `1` under `:diagonal` and the
+# power of two `2^e` under `:none`; the caller treats a damping entry that is not representable as
+# a failed trial.
 function lm_damping_diagonal(
         J::StaticMatrix{M, N, T}, scaling::Val{:diagonal}) where {M, N, T}
     R = real(T)
@@ -289,7 +290,7 @@ function lm_damping_diagonal(J::StaticMatrix{M, N, T}, ::Val{:none}) where {M, N
     return SVector{N, R}(ntuple(_ -> one(R), Val(N))), ldexp2(one(R), matrix_exponent(J))
 end
 
-# Stacked QR solve of [J; √μ s D] δ = [-Fx; 0] via Householder QR of J followed by Givens
+# Stacked QR solve of [J; √μ s D] δ = [-Fx; 0] via Givens QR of J followed by Givens
 # elimination of √μ s D, without forming Jᴴ J.
 function lm_stacked_qr_step(
         ::Nothing, J::StaticMatrix{M, N, T}, Fx::StaticVector{M, T},

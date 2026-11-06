@@ -317,6 +317,14 @@ function dense_factor(
     return DeviceLU(factors, ipiv, rhs, 0, 0, status)
 end
 
+# The right-hand side buffer of a factor, or `nothing` where the solve writes the iterate itself.
+# A buffer is needed where the factor's element type is not the iterate's, and where the problem
+# has more residuals than unknowns, which only a `LeastSquaresProblem` can: both halves are
+# decided by types, so a factor's type is inferred from its call.
+@inline function factor_rhs(x, ::Type{F}, ::Type{T}, m_rows, prob) where {F, T}
+    return F === T && !(prob isa LeastSquaresProblem) ? nothing : similar(x, F, m_rows)
+end
+
 function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
@@ -324,7 +332,7 @@ function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {
     factors = similar(x, F, m_rows, n)
     τ = similar(x, F, n)
     work = similar(x, F, qr_work_length(factors, τ))
-    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
+    rhs = factor_rhs(x, F, T, m_rows, prob)
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end
 
@@ -335,7 +343,7 @@ function dense_factor(
     m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
     factors = similar(x, F, m_rows, n)
     τ = similar(x, F, n)
-    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
+    rhs = factor_rhs(x, F, T, m_rows, prob)
     status = similar(x, Int32, 1)
     return DeviceQR(factors, τ, rhs, 0, 0, status)
 end
@@ -353,7 +361,7 @@ function dense_factor(
     rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : n)
     work = similar(x, F, svd_work_length(factors, S, U, VT, rwork))
     tmp = similar(x, F, n)
-    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
+    rhs = factor_rhs(x, F, T, m_rows, prob)
     return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0, 0)
 end
 
@@ -371,7 +379,7 @@ function dense_factor(
     σ̂ = similar(x, R, n)
     flag = similar(x, Int32, 1)
     tmp = similar(x, F, n)
-    rhs = (F === T && m_rows == n) ? nothing : similar(x, F, m_rows)
+    rhs = factor_rhs(x, F, T, m_rows, prob)
     return DeviceSVD(factors, U, S, VT, V, σ̂, flag, tmp, rhs, 0, 0, 0)
 end
 

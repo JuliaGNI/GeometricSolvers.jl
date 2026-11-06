@@ -569,10 +569,6 @@ end
         info = StepInfo{R}(SUCCESS, fnorm, zero(R), Int32(0), false, false)
         return x, Fx, state_d, info
     end
-    if iszero(diag.gradratio)
-        info = StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
-        return x, Fx, state_d, info
-    end
     failures = Int32(0)
     while true
         if use_svd
