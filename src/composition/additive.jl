@@ -10,9 +10,11 @@ const WeightRule = Union{OptimalWeights, FixedWeights}
 Parallel nonlinear combinator that runs one step of each member from the same iterate
 `(x, F(x))` to obtain candidates ``(x_i, F(x_i))`` and forms
 ``x_+ = x + \\sum_{i=1}^m w_i (x_i - x)`` using [`OptimalWeights`](@ref) or
-[`FixedWeights`](@ref). Under `OptimalWeights`, a rank-deficient Gram matrix or a trial
-iterate that violates the PETSc safeguard falls back to the candidate with the smallest
-residual norm and increments `step_failures`.
+[`FixedWeights`](@ref). Under `OptimalWeights`, a rank-deficient Gram matrix drops the collinear
+candidate directions and solves the weights over the ones kept, a one-weight secant step when one
+survives; a trial iterate that violates the PETSc safeguard is replaced by the candidate with the
+smallest residual norm. Each rule counts one failure in `step_failures`, and a step on which both
+fire counts one.
 """
 struct Additive{M <: Tuple, W <: WeightRule}
     members::M

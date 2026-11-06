@@ -848,7 +848,7 @@ so that a compat-only bump can be told apart from an interface change.
   $\sin^2\theta$ rank rule ($\tau_{\sin^2} = 10^{-3}$), for $m = 2$,
   $\sin^2\theta = 1 - (G_{12} / G_{11})(G_{12} / G_{22})$ (and for $m \ge 3$, incremental Cholesky
   ordered by non-decreasing $\|F(x_i)\|$, with ties keeping the lowest member index) drops
-  collinear or zero directions ($\sin^2\theta < 10^{-3}$ or $r_{jj}^2 \le \tau_{\sin^2} G_{jj}$),
+  collinear or zero directions ($\sin^2\theta < 10^{-3}$ for $p \ge 1$, or $r_{jj}^2 \le 0$),
   sets `rank_fallback = true` (incrementing `step_failures` by 1), and either solves the 1-weight
   secant step $w_k = b_k / (G_{kk}(1 + \operatorname{eps}(R)))$ along the kept smallest-residual
   candidate ($w_k = 1$ if $G_{kk} = 0$) or solves the kept $p \times p$ system ($p \ge 2$) with

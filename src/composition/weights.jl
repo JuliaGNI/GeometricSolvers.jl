@@ -1,5 +1,5 @@
 # The weight rules (`OptimalWeights`, `FixedWeights`) and the shared real-weight
-# least-squares solver used by `Additive` and `Anderson`.
+# least-squares solver used by `Additive`.
 
 """
     OptimalWeights(ρ = 1.0)
@@ -77,15 +77,7 @@ end
     return nothing
 end
 
-@inline function init_weight_workspace(
-        ::FixedWeights, ::Union{StaticArray, Number}, ::Val{M}) where {M}
-    return nothing
-end
-
-@inline function init_weight_workspace(
-        ::FixedWeights, ::AbstractArray, ::Val{M}) where {M}
-    return nothing
-end
+@inline init_weight_workspace(::FixedWeights, ::Any, ::Val) = nothing
 
 function init_weight_workspace(
         ::OptimalWeights, x::AbstractArray{T}, ::Val{M}) where {T, M}
