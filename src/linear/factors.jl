@@ -29,7 +29,7 @@ SVD is prescaled at the working precision too, because the sweep squares the ent
 
 For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref),
 [`DenseSVD`](@ref), [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref)
-built by [`dense_factor`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
+built by [`init_linear`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
 place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
 divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors` on the host before
@@ -40,6 +40,11 @@ singular value of `J / 2^e` is not finite; for [`DeviceSVD`](@ref) it is `1` whe
 sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
 numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD then
 reports `SINGULAR`, and the step that the LU or QR factors give is not specified.
+
+For a sparse factor (R3), which an extension builds in [`init_linear`](@ref) from a
+`SparseMatrixCSC` `jacobian_prototype`, `J` must have the sparsity pattern of that prototype, or
+`ArgumentError` is raised. A zero pivot, a non-finite entry of `J` and a non-finite factor give
+`info = 1` and `SINGULAR` without throwing.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.

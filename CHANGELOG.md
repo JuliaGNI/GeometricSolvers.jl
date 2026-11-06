@@ -31,11 +31,13 @@ so that a compat-only bump can be told apart from an interface change.
   zero pivot at row 1, and checks `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz`
   and `lu.slvr.unz` so singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR`
   without throwing. `init_newton_J` allocates `similar(fac.factors, eltype(x))` when `fac.factors`
-  is a `SparseMatrixCSC` and cannot be aliased directly (such as under `DogLeg`). In `prepare_ad`,
-  an `AutoSparse` backend paired with a non-`nothing` `jacobian_prototype` validates `size(P) ==
-  (length(r), length(x))` and wraps `P` in `ADTypes.KnownJacobianSparsityDetector(P)` for
-  column-coloured sparse AD via DifferentiationInterface, while `ChunkedForwardDiff`'s `jacobian!!`
-  is restricted to `J::DenseMatrix`.
+  is a `SparseMatrixCSC` and cannot be aliased directly (such as under `DogLeg`). `prepare_ad` on a
+  DifferentiationInterface back end validates `size(P) == (length(r), length(x))` whenever
+  `jacobian_prototype` is set, and an `AutoSparse` backend then takes `P` as its
+  `ADTypes.KnownJacobianSparsityDetector(P)` for column-coloured sparse AD, replacing any detector
+  it carries, while `ChunkedForwardDiff`'s `jacobian!!` is restricted to `J::DenseMatrix`.
+  `SparseArrays` joins `[deps]` and `Sparspak` joins `[weakdeps]` with the `[extensions]` entry
+  `GeometricSolversSparspakExt`.
 
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use

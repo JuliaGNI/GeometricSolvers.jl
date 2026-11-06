@@ -76,9 +76,9 @@
 - **evidence:** The loop over `(Backtracking(), Bisection())` builds its problem once, as
   `sparse_bracket_problem(125, Float64)` at `:277`, so both globalised solves and the `jvp!!`
   comparison of the analytic and `AutoSparse` Jacobians at `:299` run in `Float64` alone, although
-  §V requires every numeric test to run in each element type that the part names. The other sparse
-  testsets of the file loop over `REAL_ELTYPES` (`:75`, `:102`, `:183`, `:342`, and `:306` inside
-  this testset); this block does not.
+  §V requires every numeric test to run in each element type that the part names. Elsewhere in the
+  file the element types come from `REAL_ELTYPES` (`:75`, `:102`, `:183`, `:342`, and the chord
+  loop at `:306` inside this testset); this block does not.
 - **kind:** missing test
 - **found:** 2026-11-06
 
