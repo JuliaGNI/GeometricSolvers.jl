@@ -172,9 +172,10 @@ if Metal.functional() && !on_virtual_gpu()
         d0 = ldiv!!(similar(x0), fac0, b0)
         @test length(d0) == 0
 
-        # Singular matrices: equal rows (MPS status -2), zero matrix, zero column 2. `info` is the
-        # pivot that the own kernel names: MPS reports `-2` without an index, so the extension
-        # takes the first index of the smallest `|aᵢᵢ|` of its factors.
+        # Singular matrices: equal rows (MPS status -2), zero matrix, zero column 2, and a
+        # negative diagonal beside a zero row, whose own check pins the MPS status at `-2`.
+        # `info` is the pivot that the own kernel names: MPS reports `-2` without an index, so
+        # the extension takes the first index of the smallest `|aᵢᵢ|` of its factors.
         x4 = MtlArray(zeros(Float32, 4))
         prob4 = NonlinearProblem(x4, metal_vendor_noop)
         ka_info(A) = ka_factorize_lu!(dense_factor(m, prob4, x4, nothing), MtlArray(A)).info
@@ -195,53 +196,67 @@ if Metal.functional() && !on_virtual_gpu()
         @test fac_c2.info == ka_info(A_c2)
         @test returncode(fac_c2) === SINGULAR
 
+        # A singular matrix whose factors carry a negative diagonal entry, so that the index the
+        # extension names for the missing pivot is not the index of the smallest diagonal entry
+        # itself. Two checks come first: without them a later MPS release that returned a positive
+        # status would send this case down the `status_code > 0` branch and the case would assert
+        # nothing about how `-2` is named.
+        A_neg = Float32[-5 1 0; 1 -4 0; 0 0 0]
+        F_neg = LinearAlgebra.lu!(MtlArray(copy(A_neg)); check = false)
+        @test F_neg.info == -2
+        diag_neg = Array(@view(F_neg.factors[LinearAlgebra.diagind(F_neg.factors)]))
+        @test any(<(0), diag_neg)
+
+        fac_neg = factorize!!(dense_factor(m, prob4, x4, nothing), m, MtlArray(A_neg))
+        @test fac_neg.info == 3
+        @test fac_neg.info == ka_info(A_neg)
+        @test returncode(fac_neg) === SINGULAR
+
         # Direct status mapping checks on _mps_lu_finish!: status 0, -2, >0, and <0 fallback
         x2 = MtlArray(zeros(Float32, 2))
         prob2 = NonlinearProblem(x2, metal_vendor_noop)
-        if ext_mtl !== nothing && isdefined(ext_mtl, :_mps_lu_finish!)
-            A_ok = Float32[4 1; 1 3]
-            dA_ok = MtlArray(A_ok)
-            dx_ok = MtlArray(zeros(Float32, 2))
-            fac_st = dense_factor(m, prob2, dx_ok, nothing)
-            F_ok = LinearAlgebra.lu!(copy(dA_ok); check = false)
-            copyto!(fac_st.factors, F_ok.factors)
+        @test ext_mtl !== nothing
+        @test isdefined(ext_mtl, :_mps_lu_finish!)
+        A_ok = Float32[4 1; 1 3]
+        dA_ok = MtlArray(A_ok)
+        dx_ok = MtlArray(zeros(Float32, 2))
+        fac_st = dense_factor(m, prob2, dx_ok, nothing)
+        F_ok = LinearAlgebra.lu!(copy(dA_ok); check = false)
+        copyto!(fac_st.factors, F_ok.factors)
 
-            fac_mps = dense_factor(m, prob2, dx_ok, nothing)
-            fill!(fac_mps.status, Int32(7))
-            fac_mps = factorize!!(fac_mps, m, dA_ok)
-            @test fac_mps.info == 0
-            @test Array(fac_mps.status)[1] == Int32(7)
-            @test_throws DimensionMismatch backsolve!(fac_mps, MtlArray(Float32[1.0f0]))
+        fac_mps = dense_factor(m, prob2, dx_ok, nothing)
+        fill!(fac_mps.status, Int32(7))
+        fac_mps = factorize!!(fac_mps, m, dA_ok)
+        @test fac_mps.info == 0
+        @test Array(fac_mps.status)[1] == Int32(7)
+        @test_throws DimensionMismatch backsolve!(fac_mps, MtlArray(Float32[1.0f0]))
 
-            fac_st0 = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, 0)
-            @test fac_st0.info == 0
-            @test returncode(fac_st0) === SUCCESS
+        fac_st0 = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, 0)
+        @test fac_st0.info == 0
+        @test returncode(fac_st0) === SUCCESS
 
-            # the factors of `[4 1; 1 3]` have the diagonal `[4, 2.75]`, so the smallest `|aᵢᵢ|`
-            # is the second
-            fac_stm2 = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, -2)
-            @test fac_stm2.info == 2
-            @test returncode(fac_stm2) === SINGULAR
+        # the factors of `[4 1; 1 3]` have the diagonal `[4, 2.75]`, so the smallest `|aᵢᵢ|`
+        # is the second
+        fac_stm2 = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, -2)
+        @test fac_stm2.info == 2
+        @test returncode(fac_stm2) === SINGULAR
 
-            fac_stpos = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, 2)
-            @test fac_stpos.info == 2
-            @test returncode(fac_stpos) === SINGULAR
+        fac_stpos = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, 2)
+        @test fac_stpos.info == 2
+        @test returncode(fac_stpos) === SINGULAR
 
-            fac_fb = dense_factor(m, prob2, dx_ok, nothing)
-            fac_fb = ext_mtl._mps_lu_finish!(fac_fb, dA_ok, fac_fb.ipiv, -1)
-            @test fac_fb.info == 0
-            @test returncode(fac_fb) === SUCCESS
-            ldiv!!(dx_ok, fac_fb, MtlArray(Float32[5, 4]))
-            @test isapprox(Array(dx_ok), Float32[1, 1]; rtol = 1.0f-5)
+        fac_fb = dense_factor(m, prob2, dx_ok, nothing)
+        fac_fb = ext_mtl._mps_lu_finish!(fac_fb, dA_ok, fac_fb.ipiv, -1)
+        @test fac_fb.info == 0
+        @test returncode(fac_fb) === SUCCESS
+        ldiv!!(dx_ok, fac_fb, MtlArray(Float32[5, 4]))
+        @test isapprox(Array(dx_ok), Float32[1, 1]; rtol = 1.0f-5)
 
-            fac_fb_sing = dense_factor(m, prob2, dx_ok, nothing)
-            fac_fb_sing = ext_mtl._mps_lu_finish!(
-                fac_fb_sing, MtlArray(zeros(Float32, 2, 2)), fac_fb_sing.ipiv, -3)
-            @test fac_fb_sing.info == 1
-            @test returncode(fac_fb_sing) === SINGULAR
-        else
-            @test ext_mtl !== nothing
-        end
+        fac_fb_sing = dense_factor(m, prob2, dx_ok, nothing)
+        fac_fb_sing = ext_mtl._mps_lu_finish!(
+            fac_fb_sing, MtlArray(zeros(Float32, 2, 2)), fac_fb_sing.ipiv, -3)
+        @test fac_fb_sing.info == 1
+        @test returncode(fac_fb_sing) === SINGULAR
     end
 
     BLAS.set_num_threads(old_blas_threads)
