@@ -1,9 +1,9 @@
 # `Additive` combinator in R1, R2 and R3: constructor validation, affine exactness and PETSc
-# safeguard (Check 1, MU1, MU2), singular Gram fallback (Check 2, MU3, MU4), `FixedWeights`
-# and complex real weights (Check 3), R3 member isolation (Check 4, MU5), un-started
-# fail-closed guard (Check 5), `finish!!` diagnostics (D8), and R1/R2/R3 `isbits`,
-# `@inferred`, zero allocations, `JLArray` under `allowscalar(false)`, and `solve_batch!`
-# (Check 6).
+# safeguard (Check 1, MU1, MU2) in R1 and in R3, singular Gram fallback (Check 2, MU3, MU4),
+# `FixedWeights` and complex real weights (Check 3), five `FixedWeights` members in R3, R3
+# member isolation (Check 4, MU5), un-started fail-closed guard (Check 5), `finish!!`
+# diagnostics (D8), and R1/R2/R3 `isbits`, `@inferred`, zero allocations, `JLArray` under
+# `allowscalar(false)`, and `solve_batch!` (Check 6).
 
 using Adapt: Adapt
 using GPUArraysCore: allowscalar
@@ -250,9 +250,51 @@ end
     Fsw₀ = residual!!(nothing, prob_smallw, x₀, nothing)
     st_sw = start!!(st_sw, m_mis, prob_smallw, x₀, Fsw₀, nothing, rnorm(Fsw₀))
     xsw₁, Fsw₁, _, info_sw = step!!(st_sw, m_mis, prob_smallw, x₀, Fsw₀, nothing)
-    @test info_sw.failures >= Int32(1)
+    @test info_sw.failures == Int32(1)
     @test all(isfinite, xsw₁)
     @test all(isfinite, Fsw₁)
+end
+
+@testset "Check 1 in R3: safeguard and one composite fallback, $T, $(nameof(AT))" for T in ELTYPES,
+    AT in ARRAY_BACKENDS
+
+    R = real(T)
+    f_mis!(F, x, p) = (F .= x;
+        F[1:1] .= (x[1:1] .- one(T)) .+
+                  T(50) .* (x[1:1] .- T(R(0.5))) .* (x[1:1] .- T(R(0.2)));
+        F)
+    function f_mis(x, p)
+        y1 = x[1] - one(T) + T(50) * (x[1] - T(R(0.5))) * (x[1] - T(R(0.2)))
+        return SVector{2, T}(y1, x[2])
+    end
+    m_mis = Adapt.adapt(ToReal{R}(), Additive(Picard(; damping = 0.5), Picard(;
+        damping = 0.2)))
+
+    # R1 reference step from the same start
+    prob_s = NonlinearProblem(f_mis)
+    x₀s = zero(SVector{2, T})
+    F₀s = residual!!(nothing, prob_s, x₀s, nothing)
+    st_s = start!!(init_state(m_mis, prob_s, x₀s, nothing), m_mis, prob_s, x₀s, F₀s,
+        nothing, rnorm(F₀s))
+    x_s, _, _, info_s = @inferred step!!(st_s, m_mis, prob_s, x₀s, F₀s, nothing)
+    @test info_s.failures == Int32(1)
+
+    # Both members step along `-F(x)`, so the Gram matrix is rank deficient while the combined
+    # trial iterate is worse than the best candidate. The two rules count one fallback together,
+    # and the safeguard returns that candidate bit for bit, as in R1.
+    prob_a = NonlinearProblem(f_mis!)
+    x₀ = AT(zeros(T, 2))
+    F₀ = residual!!(similar(x₀), prob_a, x₀, nothing)
+    st_a = start!!(init_state(m_mis, prob_a, x₀, nothing), m_mis, prob_a, x₀, F₀,
+        nothing, rnorm(F₀))
+    x₊, F₊, _, info_a = step!!(st_a, m_mis, prob_a, copy(x₀), F₀, nothing)
+    @test info_a.failures == Int32(1)
+    @test Array(x₊) == Array(x_s)
+    x_c1 = x₀ .- R(0.5) .* F₀
+    x_c2 = x₀ .- R(0.2) .* F₀
+    F_c1 = residual!!(similar(x₀), prob_a, x_c1, nothing)
+    F_c2 = residual!!(similar(x₀), prob_a, x_c2, nothing)
+    @test rnorm(F₊) <= min(rnorm(F_c1), rnorm(F_c2))
 end
 
 @testset "Check 2: Singular Gram matrix in Additive (MU3, MU4), $T" for T in ELTYPES
@@ -334,6 +376,47 @@ end
     expected = x₀ + (w₁ * (x_cand1 - x₀) + w₂ * (x_cand2 - x₀))
     @test x_fw === expected
     @test info_fw.failures == Int32(0)
+end
+
+@testset "Check 3 in R3: five FixedWeights members, $T, $(nameof(AT))" for T in ELTYPES,
+    AT in ARRAY_BACKENDS
+
+    R = real(T)
+    prob_a = NonlinearProblem(R3QuadF(T(2), T(3)))
+    dampings = (R(0.5), R(0.4), R(0.3), R(0.2), R(0.1))
+    weights = (R(0.1), R(0.2), R(0.3), R(0.2), R(0.2))
+    members = ntuple(i -> Picard(; damping = dampings[i]), 5)
+    m_fw = Adapt.adapt(ToReal{R}(), Additive(members...; weights = FixedWeights(weights...)))
+
+    x₀ = AT(T[2, 2])
+    x_ref = Array(x₀)
+    F₀ = residual!!(similar(x₀), prob_a, x₀, nothing)
+    x_in = copy(x₀)
+
+    # The five candidates of the standalone members. The fifth member is the one a combination
+    # loop that stops at `N` members loses, and its direction and weight are non-zero.
+    xs = map(1:5) do i
+        m_i = Adapt.adapt(ToReal{R}(), members[i])
+        x_i = copy(x₀)
+        Fx_i = copy(F₀)
+        s_i = start!!(init_state(m_i, prob_a, x_i, nothing), m_i, prob_a, x_i, Fx_i,
+            nothing, rnorm(Fx_i))
+        x_cand, _, _, _ = step!!(s_i, m_i, prob_a, x_i, Fx_i, nothing)
+        return Array(x_cand)
+    end
+    @test !iszero(weights[5])
+    @test rnorm(xs[5] - x_ref) > 0
+
+    st_fw = start!!(init_state(m_fw, prob_a, x_in, nothing), m_fw, prob_a, x_in, F₀,
+        nothing, rnorm(F₀))
+    x₊, _, _, info_fw = step!!(st_fw, m_fw, prob_a, copy(x₀), copy(F₀), nothing)
+    @test info_fw.failures == Int32(0)
+
+    d = zero(x_ref)
+    for i in 1:5
+        d = d .+ weights[i] .* (xs[i] - x_ref)
+    end
+    @test isapprox(Array(x₊), x_ref .+ d; rtol = 8 * eps(R))
 end
 
 @testset "Check 4: R3 isolation (MU5), $T" for T in ELTYPES
