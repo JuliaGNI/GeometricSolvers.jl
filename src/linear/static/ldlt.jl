@@ -10,20 +10,33 @@ function is_hermitian_matrix(A::AbstractMatrix{<:Real})
     return true
 end
 
+# `true` where a complex `A` is factorised as `L D Lᴴ`: each diagonal entry is real to `64 eps` of
+# the entry, and either every pair `A[i, j], A[j, i]` is Hermitian to `64 eps` of the pair, or the
+# largest Hermitian mismatch `|A[i, j] - conj(A[j, i])|`, the diagonal's included, is no larger than
+# the largest symmetric mismatch `|A[i, j] - A[j, i]|`, so that the factorisation discards the
+# smaller part of `A`. A pair that is small beside the matrix then does not select `L D Lᵀ` for a
+# matrix whose other pairs are Hermitian, and a matrix that is complex symmetric to the last bit
+# keeps `L D Lᵀ` at any scale of its entries, unless every pair is also Hermitian to `64 eps`.
 function is_hermitian_matrix(A::AbstractMatrix{<:Complex{R}}) where {R <: Real}
     n = size(A, 1)
     tol = R(64) * eps(R)
+    pairwise = true
+    mismatch_herm = zero(R)
+    mismatch_sym = zero(R)
     @inbounds for j in 1:n
-        iszero(imag(A[j, j])) || return false
+        ajj = A[j, j]
+        abs(imag(ajj)) <= tol * abs(ajj) || return false
+        mismatch_herm = max(mismatch_herm, 2 * abs(imag(ajj)))
         for i in (j + 1):n
             aij = A[i, j]
             aji = A[j, i]
-            if abs(aij - conj(aji)) > tol * max(abs(aij), abs(aji))
-                return false
-            end
+            dh = abs(aij - conj(aji))
+            pairwise &= dh <= tol * max(abs(aij), abs(aji))
+            mismatch_herm = max(mismatch_herm, dh)
+            mismatch_sym = max(mismatch_sym, abs(aij - aji))
         end
     end
-    return true
+    return pairwise || mismatch_herm <= mismatch_sym
 end
 
 @inline function ldlt_swap_lower!(

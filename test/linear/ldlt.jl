@@ -89,6 +89,23 @@ function backward_error(A::AbstractMatrix, x::AbstractVector, b::AbstractVector)
     return norm(A_h * x_h - b_h, 2) / denom
 end
 
+# The static, dense host and JLArray device LDLᵀ factors of `A`, each with its solution for `b` as
+# a host `Vector`.
+function ldlt_all_paths(A::Matrix{T}, b::Vector{T}) where {T}
+    n = size(A, 1)
+    m = LDLTFactorization()
+    fs = factorize!!(nothing, m, SMatrix{n, n, T, n * n}(A))
+    xs = Vector(ldiv!!(nothing, fs, SVector{n, T}(b)))
+    fd = factorize!!(dense_factor(m, nothing, b, nothing), m, A)
+    xd = similar(b)
+    ldiv!!(xd, fd, b)
+    bjl = JLArray(b)
+    fjl = factorize!!(dense_factor(m, nothing, bjl, nothing), m, JLArray(A))
+    xjl = similar(bjl)
+    ldiv!!(xjl, fjl, bjl)
+    return ((fs, xs), (fd, xd), (fjl, Array(xjl)))
+end
+
 @testset "LDLTFactorization method and factor types" begin
     @test LDLTFactorization() === LDLTFactorization{Nothing}()
     @test LDLTFactorization(Float32) === LDLTFactorization{Float32}()
@@ -283,7 +300,8 @@ end
             @test backward_error(A_sym, Array(xjl), b) <= 16 * n * eps(R)
         end
 
-        # D5: exact zero imaginary diagonal required, and 64 * eps(R) off-diagonal tolerance
+        # D5: an imaginary diagonal part above 64 * eps(R) of the entry selects `L D Lᵀ`, and the
+        # off-diagonal pairs are Hermitian to 64 * eps(R)
         A_bad_diag = T[1 + R(1 // 2) * im 2 - im; 2 + im 3]
         fs_bad = factorize!!(nothing, LDLTFactorization(), SMatrix{2, 2, T, 4}(A_bad_diag))
         @test fs_bad.hermitian === false
@@ -304,6 +322,38 @@ end
         fjl_nr = dense_factor(LDLTFactorization(), nothing, JLArray(ones(T, 2)), nothing)
         fjl_nr = factorize!!(fjl_nr, LDLTFactorization(), JLArray(A_near_real))
         @test fjl_nr.hermitian === true
+
+        # A pair that is small beside the matrix, and neither Hermitian nor symmetric or only
+        # symmetric, does not select `L D Lᵀ` for a matrix whose other pairs are Hermitian
+        s = R(1e-20)
+        A_herm = T[4 1+im 0; 1-im 3 R(0.5); 0 R(0.5) 2]
+        b3 = T[1, -2im, R(0.5)]
+        for (a31, a13) in ((s, -s), (s * im, s * im))
+            A_tiny = copy(A_herm)
+            A_tiny[3, 1] = a31
+            A_tiny[1, 3] = a13
+            for (fac, x) in ldlt_all_paths(A_tiny, b3)
+                @test fac.hermitian === true
+                @test backward_error(A_tiny, x, b3) <= 16 * 3 * eps(R)
+            end
+        end
+
+        # A diagonal entry that is real to rounding does not select `L D Lᵀ` either
+        A_diag_noise = copy(A_herm)
+        A_diag_noise[3, 3] += eps(R) * im
+        for (fac, x) in ldlt_all_paths(A_diag_noise, b3)
+            @test fac.hermitian === true
+            @test backward_error(A_diag_noise, x, b3) <= 16 * 3 * eps(R)
+        end
+
+        # A complex symmetric block keeps `L D Lᵀ` beside a real block 10²⁰ times larger
+        A_cs = T[s (1 + im)*s 0 0; (1 + im)*s 2s 0 0; 0 0 2 1; 0 0 1 3]
+        b4 = T[1, -2im, R(0.5), 1]
+        x_cs = A_cs \ b4
+        for (fac, x) in ldlt_all_paths(A_cs, b4)
+            @test fac.hermitian === false
+            @test isapprox(x, x_cs; rtol = 64 * eps(R))
+        end
     end
 end
 
@@ -434,14 +484,26 @@ end
     Ad_64 = Matrix(A_f64)
     bd_64 = Vector(b_f64)
     dd_64 = similar(bd_64)
-    fd_64 = dense_factor(LDLTFactorization(), nothing, bd_64, nothing)
-    factorize!!(fd_64, LDLTFactorization(), Ad_64)
+    # `fd_64` is assigned once: `@allocated` captures it in a closure, which boxes a reassigned
+    # variable
+    fd0_64 = dense_factor(LDLTFactorization(), nothing, bd_64, nothing)
+    fd_64 = factorize!!(fd0_64, LDLTFactorization(), Ad_64)
+    @test fd_64.info == 0
     ldiv!!(dd_64, fd_64, bd_64)
+    @test backward_error(Ad_64, dd_64, bd_64) <= 10 * 3 * eps(Float64)
     if Base.JLOptions().check_bounds != 1
         # skipped where a run forces `--check-bounds=yes`
         @test (@allocated factorize!!(fd_64, LDLTFactorization(), Ad_64)) == 0
         @test (@allocated ldiv!!(dd_64, fd_64, bd_64)) == 0
     end
+
+    # The LAPACK solve takes a contiguous view and refuses a vector that LAPACK cannot read as
+    # contiguous, as `DenseLU` does, instead of solving it with the generic routine
+    dv_64 = view(zeros(5), 2:4)
+    ldiv!!(dv_64, fd_64, bd_64)
+    @test dv_64 ≈ dd_64
+    @test_throws MethodError ldiv!!(view(zeros(5), [1, 2, 3]), fd_64, bd_64)
+    @test_throws ArgumentError ldiv!!(view(zeros(6), 1:2:5), fd_64, bd_64)
 end
 
 @testset "StaticLDLT: isbits, inferred, JET clean and allocation-free, $T" for T in ELTYPES

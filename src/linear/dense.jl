@@ -97,6 +97,8 @@ for (sytrf, sytrs, hetrf, hetrs, elty) in (
 
         function sytrs!(uplo::AbstractChar, A::StridedMatrix{$elty},
                 ipiv::AbstractVector{BlasInt}, B::StridedVecOrMat{$elty})
+            stride(B, 1) == 1 ||
+                throw(ArgumentError("matrix does not have contiguous columns"))
             n = size(A, 1)
             nrhs = size(B, 2)
             lda = max(1, stride(A, 2))
@@ -127,6 +129,8 @@ for (sytrf, sytrs, hetrf, hetrs, elty) in (
 
         function hetrs!(uplo::AbstractChar, A::StridedMatrix{$elty},
                 ipiv::AbstractVector{BlasInt}, B::StridedVecOrMat{$elty})
+            stride(B, 1) == 1 ||
+                throw(ArgumentError("matrix does not have contiguous columns"))
             n = size(A, 1)
             nrhs = size(B, 2)
             lda = max(1, stride(A, 2))
@@ -414,7 +418,7 @@ function factorize!!(
 end
 
 function backsolve!(
-        fac::DenseLDLT{<:StridedMatrix{T}}, d::StridedVector{T}) where {T <: BlasFloat}
+        fac::DenseLDLT{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <: BlasFloat}
     isempty(d) && return d
     if fac.hermitian && T <: Complex
         hetrs!('L', fac.factors, fac.ipiv, d)
