@@ -32,7 +32,7 @@ Throughout this page:
 |:---|:---|:---|:---|
 | LU with partial pivoting | [`StaticLU`](@ref), [`DenseLU`](@ref), [`DeviceLU`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_R`` | Higham (2002), §9.3–9.4 |
 | Householder QR | [`StaticQR`](@ref), [`DenseQR`](@ref), [`DeviceQR`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_R`` | Higham (2002), §19.3 |
-| SVD (one-sided Jacobi and LAPACK) | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_R``, ``\;\dfrac{\max_i \lvert \hat{\sigma}_i - \sigma_i \rvert}{\sigma_1} \le c \cdot n \cdot \varepsilon_R`` | Demmel and Veselić (1992); Higham (2002) |
+| SVD (one-sided Jacobi and LAPACK) | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_R`` for ``A`` of numerical rank ``n``, ``\;\dfrac{\max_i \lvert \hat{\sigma}_i - \sigma_i \rvert}{\sigma_1} \le c \cdot n \cdot \varepsilon_R`` | Demmel and Veselić (1992); Higham (2002) |
 | Hermitian Jacobi eigensolver | [`jacobi_eigen`](@ref) | ``\dfrac{\lVert H \hat{V} - \hat{V} \operatorname{Diagonal}(\hat{\lambda}) \rVert_2}{\lVert H \rVert_2} \le c \cdot n \cdot \varepsilon_R``, ``\;\lVert \hat{V}^* \hat{V} - I \rVert_2 \le c \cdot n \cdot \varepsilon_R``, ``\;\dfrac{\max_i \lvert \hat{\lambda}_i - \lambda_i \rvert}{\lambda_1} \le c \cdot n \cdot \varepsilon_R`` | Demmel and Veselić (1992) |
 | Rank-deficient SVD minimum-norm solve (`TF = T`) | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert \hat{x} - x_{\min} \rVert_2}{\lVert x_{\min} \rVert_2} \le c \cdot n \cdot \varepsilon_R \cdot \bigl(\kappa_2(A) + \kappa_2(A)^2 \tan\theta\bigr)``, ``\;\tan\theta = \dfrac{\lVert b - A x_{\min} \rVert_2}{\lVert A x_{\min} \rVert_2}`` | Demmel and Veselić (1992); Higham (2002), §20.4 |
 | Mixed-precision scaled solve (`TF ≠ T`) | [`ldiv!!`](@ref) on [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref) of numerical rank ``n`` | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \max(\varepsilon_R, \varepsilon_{\operatorname{real}(F)})`` in the tested cases | Kelley (2023), eqs. 2.17–2.18 |
@@ -99,7 +99,8 @@ decomposition ``H = V \operatorname{Diagonal}(\lambda) V^*`` by two-sided cyclic
 By Demmel and Veselić (1992) and Higham (2002), these algorithms are backward stable, with
 errors of order ``n \, \varepsilon_R``. The test suite verifies:
 
-1. **Full-rank linear solve (`ldiv!!`)**: For nonsingular ``A``, the pseudoinverse backsolve
+1. **Full-rank linear solve (`ldiv!!`)**: For ``A`` of numerical rank ``n``
+   (``\sigma_n / \sigma_1 > \sqrt{n} \, \varepsilon_R``), the pseudoinverse backsolve
    ``\hat{x} = \hat{V} \hat{\Sigma}^{-1} \hat{U}^* b`` satisfies the normwise backward error bound
    ```math
    \frac{\|A \hat{x} - b\|_2}{\|A\|_2 \|\hat{x}\|_2 + \|b\|_2} \le c \cdot n \cdot \varepsilon_R, \qquad c = 16.
