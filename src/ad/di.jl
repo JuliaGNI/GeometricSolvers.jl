@@ -19,9 +19,10 @@ gives a [`DIJacobian`](@ref) on a CPU iterate, and raises `ArgumentError` on a d
 iterate: DifferentiationInterface's `jacobian!` raises "Scalar indexing is disallowed" on an
 `MtlArray`, a `CuArray` and a `JLArray`. The iterate must be a vector.
 
-Where `prob` carries a `jacobian_prototype`, the back end must see a Jacobian of its size, and
-`ArgumentError` is raised for any other size. An `AutoSparse` back end takes that prototype as its
-sparsity pattern, whatever detector it carries.
+Where `prob` carries a `jacobian_prototype`, a back end other than `AutoForwardDiff()` raises
+`ArgumentError` unless the prototype has the size of the Jacobian, and an `AutoSparse` back end
+takes that prototype as its sparsity pattern, whatever detector it carries. `AutoForwardDiff()`
+does not read the prototype.
 """
 function prepare_ad end
 
