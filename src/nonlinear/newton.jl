@@ -166,7 +166,11 @@ end
     jacobian_pattern(prob, jacprep)
 
 Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_prototype` for a
-[`NonlinearProblem`](@ref) and `nothing` for `nothing`.
+[`NonlinearProblem`](@ref) and `nothing` for `nothing`. The `GeometricSolversSparseADExt` extension
+adds a method for a problem with no prototype and a [`DIJacobian`](@ref) of an `AutoSparse` back
+end, which returns the pattern that back end's sparsity detector found; a back end with no detector
+finds only a pattern that is true everywhere, so that method returns `nothing` and the dense path
+runs.
 """
 @inline jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype
 @inline jacobian_pattern(::Nothing, jacprep) = nothing

@@ -11,7 +11,8 @@ using LinearAlgebra
 using SparseArrays
 using ForwardDiff
 using FiniteDiff: FiniteDiff
-using ADTypes: AutoFiniteDiff, AutoForwardDiff, AutoSparse, KnownJacobianSparsityDetector
+using ADTypes: AutoFiniteDiff, AutoForwardDiff, AutoSparse, KnownJacobianSparsityDetector,
+               NoSparsityDetector
 using SparseConnectivityTracer: TracerSparsityDetector
 using SparseMatrixColorings: GreedyColoringAlgorithm, column_groups, sparsity_pattern
 using Sparspak
@@ -62,6 +63,22 @@ end
         # returns the problem's prototype, which is `nothing` here.
         prep_fd = GS.prepare_ad(AutoFiniteDiff(), prob, similar(x0), x0, nothing)
         @test GS.jacobian_pattern(prob, prep_fd) === nothing
+
+        # An `AutoSparse` back end with no sparsity detector prepares a pattern that is true
+        # everywhere, which no dense `init_linear` accepts: the extension returns `nothing` there,
+        # so the solve keeps a dense factor and a dense Jacobian.
+        backend_nodet = AutoSparse(
+            AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm())
+        prep_nodet = GS.prepare_ad(backend_nodet, prob, similar(x0), x0, nothing)
+        @test prep_nodet.backend.sparsity_detector isa NoSparsityDetector
+        @test all(sparsity_pattern(prep_nodet.jacprep))
+        @test GS.jacobian_pattern(prob, prep_nodet) === nothing
+        solver_nodet = init(prob, copy(x0), Newton(; jacobian = backend_nodet))
+        @test solver_nodet.state.fac isa GS.DenseLU
+        @test solver_nodet.state.J isa Matrix
+        x_nodet, st_nodet = solve!(solver_nodet)
+        @test st_nodet.code === SUCCESS
+        @test isapprox(x_nodet, ones(2); atol = 1.0e-11)
     end
 
     @testset "Sparse bracket problem without jacobian_prototype (T = $T, N = $N)" for T in REAL_ELTYPES,
@@ -170,7 +187,7 @@ end
         @test nnz(pat) == n * n
         @test length(column_groups(prep.jacprep)) == n
 
-        # Measured on the last step: ‖F‖ = 1.75f-6 in `Float32` and 3.2e-13 in `Float64`.
+        # The final residual norm is 1.75f-6 in `Float32` and 3.2e-13 in `Float64`, below `tol`.
         tol = T === Float32 ? 1.0f-4 : 1.0e-10
         solver = init(
             prob_dense, copy(x0), Newton(; jacobian = backend);
