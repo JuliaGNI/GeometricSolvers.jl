@@ -155,13 +155,15 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 `refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
-`x₀` is an array, and returns `(x, status)`. With the same arguments,
+`x₀` is an array, and returns `(x, status)`; when `x₀` or `p` carries a `ForwardDiff.Dual` leaf,
+[`solve`](@ref) strips duals via [`StripDual`](@ref), runs the primal solve, and on `SUCCESS`
+differentiates the root implicitly at `x*`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
 [`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
 with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
-`solve!(init(args...))` returns what `solve(args...)` returns. [`solve!!`](@ref) takes a solver
+`solve!(init(args...))` returns what `solve(args...)` returns on primal inputs. [`solve!!`](@ref) takes a solver
 state from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch
 `X` of independent small systems, [`solve_batch!`](@ref) solves each in place on `get_backend(X)`
 with one work-item per system, and [`PerSystem`](@ref) wraps an indexable collection of
@@ -288,6 +290,7 @@ zoom_step
 LinearMethod
 jacobi_rotation
 ToReal
+StripDual
 parameters
 record
 converged

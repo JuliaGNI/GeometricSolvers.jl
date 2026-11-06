@@ -152,8 +152,7 @@ end
 end
 
 @inline function init_factor(
-        ls::Union{LUFactorization, QRFactorization, SVDFactorization},
-        prob, x::Union{StaticVector, Number}, p)
+        ls::LinearMethod, prob, x::Union{StaticVector, Number}, p)
     return empty_static_factor(ls, x)
 end
 
