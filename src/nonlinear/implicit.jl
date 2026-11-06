@@ -325,9 +325,10 @@ function _implicit_tangent(
         p, p_val, status::SolverStatus
 ) where {Tg, V, N, D <: ForwardDiff.Dual{Tg, V, N}}
     linsolve = m isa Newton ? m.linsolve : LUFactorization()
-    fac_slot = m isa Newton ? state.fac : init_factor(linsolve, prob, x_star, p_val)
-    J_slot = m isa Newton ? state.J : fac_slot.factors
     jacprep = _tangent_jacprep(state, prob, x_star, p_val)
+    fac_slot = m isa Newton ? state.fac :
+               init_factor(linsolve, prob, x_star, p_val, jacprep)
+    J_slot = m isa Newton ? state.J : fac_slot.factors
     Jmat = jacobian!!(J_slot, jacprep, prob, x_star, p_val)
     fac = factorize!!(fac_slot, linsolve, Jmat)
     if returncode(fac) === SINGULAR

@@ -43,6 +43,7 @@ if "core" in GROUPS
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "Jacobian-vector product" include("ad/jvp.jl")
+    @safetestset "Sparse LU and AutoSparse" include("linear/sparspak.jl")
     @safetestset "Standard test set" include("verification/standard.jl")
 end
 if "slow" in GROUPS
