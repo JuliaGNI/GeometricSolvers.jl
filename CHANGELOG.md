@@ -900,6 +900,9 @@ so that a compat-only bump can be told apart from an interface change.
   ($\sum_{j=0}^{p} |\alpha_j| \le M_\alpha$, optional `safeguard_cos` and `grow_depth`), automatic
   history clears on residual growth ($\|F\| > \text{restart\_factor} \cdot \text{fnorm\_best}$) or
   stagnation, `StepInfo.failures` counting filter column drops, rejected weights and history
-  restarts, `state.current_depth` in `1:m` after every step, and best-iterate restoration in
-  `finish!!` when `solve!!` exits with `status.code != SUCCESS` and a strictly smaller historical
-  residual norm was recorded.
+  restarts, `state.current_depth` in `1:m` after every step except one that ends in a hard member
+  failure (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with no step taken), which leaves it
+  unchanged, and best-iterate restoration in `finish!!` when `solve!!` exits with
+  `status.code != SUCCESS` and a strictly smaller historical residual norm was recorded.
+  `solve(prob, method::Anderson, x₀, p, options)` forwards to
+  `solve(prob, x₀, method, p; options)`.

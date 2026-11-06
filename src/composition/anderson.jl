@@ -21,9 +21,9 @@ solves the `eps(R)`-regularised normal equations `(G_K + λI) γ = b_K` with
 
 In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4` and the state is
 `isbits`. In R3 (`Array` or `AbstractGPUArray`), any `m >= 1` is supported with
-preallocated `n × m` difference matrices and zero allocations in `step!!`. When a solve
-ends with a code other than `SUCCESS`, [`finish!!`](@ref) restores the iterate
-with the smallest residual norm `‖F(x)‖` seen during the solve.
+preallocated `n × m` difference matrices, and `step!!` on an `Array` allocates nothing.
+When a solve ends with a code other than `SUCCESS`, [`finish!!`](@ref) restores the
+iterate with the smallest residual norm `‖F(x)‖` seen during the solve.
 
 Keywords:
 

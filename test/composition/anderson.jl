@@ -435,8 +435,9 @@ end
         _, _, st_s1, info_s1 = step!!(st_s, a_stag, prob_stag, x0_s, Fx0_s, nothing)
         @test info_s1.failures == 0
 
-        # Next step enters with x_almost_same ≈ x0_s (within 0.5 * eps(Float64) * ‖x0_s‖)
-        # while Δw_new is nonzero so ONLY the Δx_new stagnation clause catches it!
+        # Next step enters with x_stag == x0_s (the shift of 0.25 * eps(Float64) rounds away),
+        # so Δx_new = 0 while Δw_new is nonzero, and ONLY the Δx_new stagnation clause
+        # catches it!
         x_stag = x0_s + SVector(0.25 * eps(Float64), 0.0)
         Fx_stag = SVector(0.8, 0.9)
         _, _, st_s2, info_s2 = step!!(
@@ -445,7 +446,7 @@ end
         @test st_s2.depth == 0
         @test st_s2.current_depth == 1
 
-        # 2c. step_failures equals the number of history clears across a full solve
+        # 2c. `failures` summed over steps equals the number of history clears
         step_counter = Ref(0)
         function F_multi_clear(x, p)
             step_counter[] += 1
