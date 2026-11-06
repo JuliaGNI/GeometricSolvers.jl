@@ -357,7 +357,8 @@ if CUDA.functional()
             end
         end
 
-        # Direct check on _cusolver_qr_info for zero and non-finite R diagonal
+        # Direct check on _cusolver_qr_info for a non-finite R diagonal; the zero diagonal is
+        # checked through factorize!! above
         A_qr_nf = Matrix{T}(I, 4, 4)
         A_qr_nf[3, 3] = T(RT(NaN))
         @test ext_cuda._cusolver_qr_info(CuArray(A_qr_nf)) == 3
@@ -387,7 +388,7 @@ if CUDA.functional()
         ldiv!!(dx_ok, fac_svd_fb, CuArray(T[5, 4]))
         @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
 
-        # SVD prescaling on subnormal and near-overflow inputs
+        # SVD prescaling on a subnormal input
         m_svd = SVDFactorization()
         E_sub = exponent(floatmin(RT)) - 8
         B_cpu = T[i + j for i in 1:4, j in 1:4]

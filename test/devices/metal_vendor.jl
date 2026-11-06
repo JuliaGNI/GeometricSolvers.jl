@@ -202,8 +202,8 @@ if Metal.functional() && !on_virtual_gpu()
         # status would send this case down the `status_code > 0` branch and the case would assert
         # nothing about how `-2` is named. The factor takes the size of `A_neg`: `load_factors!`
         # copies the matrix into the factor buffer with `copyto!`, entry by entry in linear order,
-        # so a buffer of another length holds a matrix that `A_neg` does not describe, and the
-        # entries that the copy does not reach keep what `similar` returned.
+        # so a longer buffer keeps what `similar` returned in the entries that the copy does not
+        # reach, and a shorter one does not hold `A_neg` at all.
         A_neg = Float32[-5 1 0; 1 -4 0; 0 0 0]
         F_neg = LinearAlgebra.lu!(MtlArray(copy(A_neg)); check = false)
         @test F_neg.info == -2
