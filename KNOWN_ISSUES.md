@@ -69,3 +69,17 @@
   `test/helpers/matrix.jl` leave this system out for LU and QR.
 - **kind:** defect
 - **found:** PR #48
+
+### K24 · The stacked solve of `LevenbergMarquardt` carries its own Givens rotation
+
+- **location:** `src/globalization/levenbergmarquardt.jl:259` (`lm_givens`)
+- **evidence:** `grep -n lm_givens src/globalization/levenbergmarquardt.jl` gives the definition at
+  `:259` and the two callers of the stacked solve, the factorisation of `[J | -F]` at `:336` and
+  the elimination of the damping rows at `:383`. For a real pair it zeroes `b` with the rotation
+  `LinearAlgebra.givens(a, b)` gives, up to the sign of `r`, which it takes from `a` rather than
+  making positive, so it is a second copy of a standard routine that a change to one and not the
+  other can pull apart. It is kept because the value form runs on the `MMatrix` buffers of a static
+  iterate and over any `Number`, and a port to `LinearAlgebra.givens` would have to re-check its
+  complex phase convention on every element type of `ELTYPES`.
+- **kind:** defect
+- **found:** 2026-11-06

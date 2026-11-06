@@ -2,9 +2,11 @@
 # validation, the adapted damping, the rule state and its fail-closed initialisation, the damped
 # step against the damped normal equations in every element type and on both array ranks, the one
 # factorisation per Jacobian across rejected trials, the truncation of the ranks the factor drops,
-# the damping in the units of `Jᴴ J` at both ends of the scale, the `STALLED` return at `μ_max`,
-# the rejection of a non-finite trial residual, the standard reference column, and the storage of
-# the state.
+# the damping in the units of `Jᴴ J` at both ends of the scale and around the `4 eps` floor, the
+# gain ratio at a positive `ρ_accept` and at a trial that leaves the residual where it was, the
+# `STALLED` return at `μ_max` and the finite damping it keeps there, the rejection of a non-finite
+# trial residual, the refusal of the stacked solve on a device array, the standard reference
+# column, and the storage and allocations of the state.
 #
 # The cases that need the step in closed form take a linear problem with an analytic `J` and one
 # `step!!`, so that the expected `δ` is the solution of `(Jᴴ J + μ D²) δ = -Jᴴ F` computed
@@ -16,18 +18,39 @@ using Adapt: Adapt
 using GPUArraysCore: allowscalar
 using JET: JET, @test_opt
 using JLArrays: JLArray
-using LinearAlgebra: I, norm
+using LinearAlgebra: I, mul!, norm
 using StaticArrays: @SMatrix, @SVector, SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: finish!!, init_state, lm_damping_diagonal, lm_svd_coord, rnorm,
-                        start!!, step!!
+using GeometricSolvers: LinearMethod, finish!!, init_state, lm_damping_diagonal,
+                        lm_svd_coord, norm2, rdot, rnorm, start!!, step!!
 
 include("../helpers/matrix.jl")
 include("../helpers/standard_cells.jl")
 
 allowscalar(false)
+
+# An allocation measurement through a function barrier, which calls the function once before it
+# measures, and `allocations(collect, x)` is the control that shows the helper sees an allocation.
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+
+# A linear method that counts its factorisations, so that a test can see how many times a step
+# factorises `J`: the SVD step factorises once per outer step, however many trials it rejects.
+# Every other call is the wrapped method's.
+struct CountingFactorization{M <: LinearMethod} <: LinearMethod{Nothing}
+    method::M
+    count::Base.RefValue{Int}
+end
+
+GeometricSolvers.lm_svd_path(::CountingFactorization, ::Val{:none}) = true
+function GeometricSolvers.factorize!!(fac, m::CountingFactorization, J)
+    m.count[] += 1
+    return GeometricSolvers.factorize!!(fac, m.method, J)
+end
+function GeometricSolvers.init_factor(m::CountingFactorization, prob, x, p)
+    GeometricSolvers.init_factor(m.method, prob, x, p)
+end
 
 # The damped step `(Jᴴ J + μ I) δ = -Jᴴ F` solved directly, for a linear problem `F = J x - b`
 # from `x₀ = 0` at the start of a solve. `μ` is in the units of `Jᴴ J`.
@@ -228,14 +251,55 @@ end
         @test info.code == SUCCESS
         @test isapprox(x1[1], 1.0; atol = 1e-9)
         @test abs(x1[2]) <= 1e-6
+
+        # The same on R1: the static factor zeroes the column beyond its rank, so this pins the
+        # truncated step of the value-iterate path against the closed form.
+        prob_r1 = NonlinearProblem((x, _) -> J1 * x - b1, (_, _) -> J1)
+        m_r1 = Newton(;
+            linsolve = SVDFactorization(),
+            globalization = LevenbergMarquardt(; μ₀ = 1e-14, μ_min = 1e-14))
+        x0_r1 = zero(SVector{2, Float64})
+        Fx0_r1 = prob_r1.F(x0_r1, nothing)
+        st_r1 = start!!(
+            init_state(m_r1, prob_r1, x0_r1, nothing), m_r1, prob_r1, x0_r1, Fx0_r1, nothing,
+            rnorm(Fx0_r1))
+        x1_r1, _, _, info_r1 = step!!(st_r1, m_r1, prob_r1, x0_r1, Fx0_r1, nothing)
+        @test info_r1.code == SUCCESS
+        @test isapprox(x1_r1[1], 1.0; atol = 1e-9)
+        @test abs(x1_r1[2]) <= 1e-6
+
+        # A dropped singular value that is exactly zero, on the no-damping path: the static
+        # factor zeroes the column beyond its rank, and the coordinate weight of a zero `σ̂` with
+        # no damping is `0/0`. The loop must stop at the rank, so the first trial is the truncated
+        # step and it is accepted; a sum over `N` forms the `NaN` and rejects the trial.
+        J0 = @SMatrix [1.0 0.0; 0.0 0.0]
+        b0 = @SVector [1.0, 1.0]
+        prob0 = NonlinearProblem((x, _) -> J0 * x - b0, (_, _) -> J0)
+        m0 = Newton(;
+            linsolve = SVDFactorization(),
+            globalization = LevenbergMarquardt(; μ₀ = 1e-16, μ_min = 1e-16))
+        x0_s = zero(SVector{2, Float64})
+        Fx0_s = prob0.F(x0_s, nothing)
+        st0_s = start!!(
+            init_state(m0, prob0, x0_s, nothing), m0, prob0, x0_s, Fx0_s, nothing,
+            rnorm(Fx0_s))
+        x1_s, _, _, info_s = step!!(st0_s, m0, prob0, x0_s, Fx0_s, nothing)
+        @test info_s.code == SUCCESS
+        @test info_s.failures == 0
+        @test all(isfinite, x1_s)
+        @test isapprox(x1_s[1], 1.0; atol = 1e-9)
+        @test iszero(x1_s[2])
     end
 
     @testset "Check 3: one Jacobian and one factorisation per step (MU3)" begin
         jac_calls = Ref(0)
+        factors = Ref(0)
         prob = NonlinearProblem(
             (x, _) -> norm(x) > 1.5 ? SVector(NaN, NaN) : SVector(x[1] - 1, x[2] - 1),
             (_, _) -> (jac_calls[] += 1; @SMatrix [0.01 0.0; 0.0 0.01]))
-        m = Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())
+        m = Newton(;
+            linsolve = CountingFactorization(SVDFactorization(), factors),
+            globalization = LevenbergMarquardt())
         x = SVector(0.0, 0.0)
         Fx = prob.F(x, nothing)
         st = init_state(m, prob, x, nothing)
@@ -245,6 +309,8 @@ end
         @test info.failures >= 2
         # MU3: a factorisation inside the trial loop evaluates the Jacobian once per trial
         @test jac_calls[] == 1
+        # MU3: and it factorises once per trial, where the step factorises once per outer step
+        @test factors[] == 1
         # the accepted trial's damping had grown past `μ₀`, so the step is a limited one
         @test info.limited
     end
@@ -282,6 +348,23 @@ end
         @test info.failures >= 1
         @test all(isfinite, x1)
         @test info.fnorm < rnorm(Fx0)
+    end
+
+    @testset "Check 4b: STALLED with μ_max above floatmax / μ_increase" begin
+        # The constructor allows a `μ_max` above `floatmax(R) / μ_increase`, and the last
+        # rejection then overflows `μ`. The state must keep a finite damping: a non-finite one
+        # reads as the un-started state on the stall that follows, and the solve would end
+        # `NONFINITE` where it stalled.
+        prob = NonlinearProblem((x, _) -> SVector(x[1]^2 + 1, x[2]))
+        for R in REAL_ELTYPES, μ_max in (floatmax(R) / 2, floatmax(R)),
+            ls in (SVDFactorization(), QRFactorization())
+            m = Newton(;
+                linsolve = ls, globalization = LevenbergMarquardt(R; μ_max = μ_max))
+            x0 = zero(SVector{2, R})
+            x, st = solve(prob, x0, m)
+            @test st.code == STALLED
+            @test x === x0
+        end
     end
 
     @testset "Check 5: the standard reference column" begin
@@ -467,6 +550,18 @@ end
         @test info_z.code == SUCCESS
         @test info_z.stepnorm == 0
         @test x_z === x0
+
+        # And before the Jacobian is read: a non-finite `J` at a root is not a failed step.
+        prob_root = NonlinearProblem(
+            (x, _) -> zero(x),
+            (_, _) -> SMatrix{2, 2, Float64}(NaN, NaN, NaN, NaN))
+        st_root = start!!(
+            init_state(m, prob_root, x0, nothing), m, prob_root, x0, Fx_zero, nothing,
+            rnorm(Fx_zero))
+        x_root, _, _, info_root = step!!(st_root, m, prob_root, x0, Fx_zero, nothing)
+        @test info_root.code == SUCCESS
+        @test info_root.stepnorm == 0
+        @test x_root === x0
     end
 
     @testset "Check 6d: R1 and R3 storage, Float32/Float64, Array and JLArray" begin
@@ -474,13 +569,16 @@ end
         m = Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())
         x0 = SVector(2.0, 2.0)
         Fx0 = prob.F(x0, nothing)
-        st = init_state(m, prob, x0, nothing)
+        st = @inferred init_state(m, prob, x0, nothing)
         @test isbits(st)
+        if Base.JLOptions().check_bounds != 1
+            @test allocations(s -> init_state(m, prob, s, nothing), x0) == 0
+        end
         st = @inferred start!!(st, m, prob, x0, Fx0, nothing, rnorm(Fx0))
         @inferred step!!(st, m, prob, x0, Fx0, nothing)
         if Base.JLOptions().check_bounds != 1
-            step!!(st, m, prob, x0, Fx0, nothing)
-            @test @allocated(step!!(st, m, prob, x0, Fx0, nothing)) == 0
+            @test allocations(s -> step!!(s, m, prob, x0, Fx0, nothing), st) == 0
+            @test allocations(collect, x0) > 0
         end
         @test_opt solve(prob, x0, m)
         @test_opt solve(NonlinearProblem((x, _) -> x^2 - 2, (x, _) -> 2x), 1.5, m)
@@ -509,9 +607,11 @@ end
             solver.state = start!!(
                 solver.state, solver.method, solver.prob, solver.x, solver.state.Fx,
                 nothing, rnorm(solver.state.Fx))
-            @test @allocated(step!!(
-                solver.state, solver.method, solver.prob, solver.x, solver.state.Fx,
-                nothing)) == 0
+            args = (solver.state, solver.method, solver.prob, solver.x, solver.state.Fx)
+            if Base.JLOptions().check_bounds != 1
+                @test allocations(
+                    t -> step!!(t[1], t[2], t[3], t[4], t[5], nothing), args) == 0
+            end
         end
 
         # Float32 on R1 and R3, and the device path under `allowscalar(false)`.
@@ -548,6 +648,104 @@ end
                 @test st.code == SUCCESS
                 @test isapprox(x, x_star; atol = sqrt(eps(real(T))))
             end
+        end
+    end
+
+    @testset "Check 6e: R3 in ELTYPES, both scalings, both backends" begin
+        # The damped step of every element type and linear method on an array iterate: the dense
+        # SVD, the dense stacked QR and Marquardt's scaling are separate code from the static
+        # ones, and a complex `T` separates `conj` from no `conj` in either.
+        for AT in ARRAY_BACKENDS, T in ELTYPES,
+            ls in (SVDFactorization(), QRFactorization(), LUFactorization()),
+            sc in (:none, :diagonal)
+            A = T[3 1; 1 2] + (T <: Complex ? T[0 im; -im 0] : zeros(T, 2, 2))
+            b = T[4, 3]
+            Ad, bd = AT(A), AT(b)
+            prob = NonlinearProblem(
+                (F, x, _) -> (mul!(F, Ad, x); F .-= bd; nothing),
+                (J, _, _) -> (copyto!(J, Ad); nothing))
+            m = Newton(;
+                linsolve = ls,
+                globalization = LevenbergMarquardt(real(T); scaling = sc))
+            if AT === JLArray && !(ls isa SVDFactorization && sc === :none)
+                # The stacked path indexes scalars: a device iterate is refused at `init` rather
+                # than throwing "Scalar indexing is disallowed" at its first trial.
+                @test_throws ArgumentError init(prob, AT(zeros(T, 2)), m)
+            else
+                x, st = solve(prob, AT(zeros(T, 2)), m)
+                @test st.code == SUCCESS
+                @test norm(Array(x) - A \ b) <= sqrt(eps(real(T)))
+            end
+        end
+    end
+
+    @testset "The no-damping floor of 4 eps is bracketed" begin
+        # `μ` is absolute, in the units of `Jᴴ J`: on the scale `2^-400` of `J` a `μ` above
+        # `4 eps(Float64)` is far above `σ² = 2^-800` and the step stands still, while a `μ`
+        # below that floor is no damping at all and the step is the truncated one of decision 44.
+        # The two cases bracket the floor from each side.
+        x_star = SVector(1.0, -2.0)
+        s = ldexp(1.0, -400)
+        J = @SMatrix [s 0.0; 0.0 s]
+        b = J * x_star
+        prob = NonlinearProblem((x, _) -> J * x - b, (_, _) -> J)
+        x0 = zero(SVector{2, Float64})
+        opts = Options(Float64; f_abstol = s * 1e-12, f_reltol = 1e-12)
+        for (μ₀, code) in ((3 * eps(Float64), SUCCESS), (6 * eps(Float64), STALLED))
+            for ls in (SVDFactorization(), QRFactorization())
+                m = Newton(;
+                    linsolve = ls,
+                    globalization = LevenbergMarquardt(; μ₀ = μ₀, μ_min = μ₀))
+                _, st = solve(prob, x0, m, nothing; options = opts)
+                @test st.code == code
+            end
+        end
+    end
+
+    @testset "The gain ratio at a positive ρ_accept" begin
+        # D6's predicted decrease carries `-‖Jδ‖²`, and a `ρ_accept` above zero reads it: the
+        # ratio of the true `pred` and of the one without that term straddle a `ρ_accept` between
+        # them, so the same trial is accepted by the rule and rejected by the other `pred`.
+        prob = NonlinearProblem((x, _) -> SVector(x[1]^2 - 2, x[2]^2 - 3))
+        x0 = SVector(2.0, 2.0)
+        μ₀ = 0.5
+        J = @SMatrix [2 * x0[1] 0.0; 0.0 2 * x0[2]]
+        Fx = prob.F(x0, nothing)
+        fnorm = rnorm(Fx)
+        δ = -((transpose(J) * J + μ₀ * SMatrix{2, 2, Float64}(I)) \ (transpose(J) * Fx))
+        Jδ = J * δ
+        pred = -2 * rdot(Fx, Jδ) - norm2(Jδ)
+        pred_mut = -2 * rdot(Fx, Jδ) + norm2(Jδ)
+        Ft = prob.F(x0 + δ, nothing)
+        ared = (fnorm - rnorm(Ft)) * (fnorm + rnorm(Ft))
+        ρ = ared / pred
+        ρ_mut = ared / pred_mut
+        @test 0 < pred < pred_mut
+        @test 0 < ρ_mut < ρ
+        @test ρ - ρ_mut > 0.1
+        ρ_accept = (ρ + ρ_mut) / 2
+        m = Newton(;
+            linsolve = SVDFactorization(),
+            globalization = LevenbergMarquardt(; μ₀ = μ₀, μ_min = μ₀, ρ_accept = ρ_accept))
+        st = start!!(
+            init_state(m, prob, x0, nothing), m, prob, x0, Fx, nothing, rnorm(Fx))
+        _, _, _, info = step!!(st, m, prob, x0, Fx, nothing)
+        @test info.code == SUCCESS
+        @test info.failures == 0
+
+        # A trial that leaves the residual where it was has `ared == 0` and `ρ == 0`, which the
+        # acceptance edge `ρ > ρ_accept` rejects at `ρ_accept = 0`. `F` is constant here, so
+        # every trial has it, and a rule that accepted it would step away from a residual it
+        # cannot reduce; the solve can only stall.
+        prob_flat = NonlinearProblem(
+            (x, _) -> SVector(1.0, 1.0),
+            (_, _) -> @SMatrix [0.25 0.0; 0.0 0.25])
+        x_flat = SVector(0.0, 0.0)
+        for ls in (SVDFactorization(), QRFactorization())
+            m_flat = Newton(; linsolve = ls, globalization = LevenbergMarquardt())
+            x_s, st_s = solve(prob_flat, x_flat, m_flat)
+            @test st_s.code == STALLED
+            @test x_s === x_flat
         end
     end
 

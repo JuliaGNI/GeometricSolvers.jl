@@ -18,10 +18,12 @@ by `k²` and leaves `μ` as it is, so a damping of `μ` on `k J(x)` acts as `μ 
 With [`SVDFactorization`](@ref) and `scaling = :none`, `J(x) = U Σ Vᴴ` is factorised once per
 outer step and each trial `μ` evaluates the damped pseudoinverse step from `(U, Σ, V)` without
 refactoring `J(x)`. With [`QRFactorization`](@ref) or [`LUFactorization`](@ref) (or when
-`scaling = :diagonal`), the damped step is solved by Givens QR elimination of the stacked matrix
-`[J(x); √μ D]` without forming `J(x)ᴴ J(x)`; that path indexes scalars and runs on a host
-array. A `μ` below `4 eps` of the working type, which only an initial `μ₀` below the schedule's
-floor can be, is taken as no damping: the truncated step of decision 44.
+`scaling = :diagonal`), `[J(x) | -F(x)]` is reduced once per outer step to an upper-triangular
+`(R₀, c₀)` and each trial `μ` copies that pair and eliminates only its own damping rows `√μ D` by
+Givens rotations, without forming `J(x)ᴴ J(x)`. That path indexes scalars and runs on a host
+array: an `init` on a device array iterate raises an `ArgumentError` for it. A `μ` below
+`4 eps` of the working type, which only an initial `μ₀` below the schedule's floor can be, is
+taken as no damping: the truncated step of decision 44.
 """
 struct LevenbergMarquardt{R <: AbstractFloat, S}
     μ₀::R
@@ -75,13 +77,39 @@ function LevenbergMarquardt(
         μ₀_r, μ_min_r, μ_max_r, μ_dec_r, μ_inc_r, ρ_acc_r, Val(scaling))
 end
 
+# Whether the damped step of this method comes from the one SVD factor of `J(x)`, which every
+# trial reuses, rather than from the stacked QR system that each trial damps again.
+@inline lm_svd_path(::SVDFactorization, ::Val{:none}) = true
+@inline lm_svd_path(::Any, ::Any) = false
+
+# The stacked QR solve indexes the entries of its workspace one at a time, which a device array
+# disallows, and only the SVD step has a device form. `init_state` refuses the combination, so
+# that a device solve raises a clear error instead of a scalar-indexing error at its first trial.
+@inline function check_lm_iterate(lm::LevenbergMarquardt, linsolve, x)
+    if x isa AbstractGPUArray && !lm_svd_path(linsolve, lm.scaling)
+        throw(ArgumentError(
+            "a device array iterate takes LevenbergMarquardt() with SVDFactorization() and " *
+            "scaling = :none only: the damped step of QRFactorization(), LUFactorization() and " *
+            "scaling = :diagonal is the stacked QR solve, which indexes scalars. Solve on an " *
+            "Array to use that step."))
+    end
+    return nothing
+end
+
 @inline function init_globalization(::LevenbergMarquardt, x)
     T = eltype(x)
     R = real(T)
     n = x isa Number ? 1 : length(x)
+    # A device iterate takes the SVD step (see `check_lm_iterate`), which reads none of the
+    # stacked buffers: allocate them on the host only.
+    stacked = !(x isa AbstractGPUArray)
     return (; Jδ = buffer(x), xt = buffer(x), Ft = buffer(x),
-        Rmat = buffer(x, T, n, n), rhs = buffer(x, T, n),
-        d_diag = buffer(x, R, n), w_row = buffer(x, T, n))
+        R0 = stacked ? buffer(x, T, n, n) : nothing,
+        c0 = stacked ? buffer(x, T, n) : nothing,
+        R = stacked ? buffer(x, T, n, n) : nothing,
+        c = stacked ? buffer(x, T, n) : nothing,
+        d_diag = stacked ? buffer(x, R, n) : nothing,
+        w = stacked ? buffer(x, T, n) : nothing)
 end
 
 @inline lm_Jδ(::Nothing) = nothing
@@ -246,234 +274,200 @@ end
     return cs, sn, phase * r_val
 end
 
-# The diagonal `D` of the damping term for the stacked solve of `[J; √μ D] δ = [-Fx; 0]`.
-# `scaling = :none` takes `D = I`, so the damping is `√μ` in the units of `Jᴴ J`, the same number
-# the SVD weight `σ̂_j/(σ̂_j² + 2^{-2e} μ)` divides by. `scaling = :diagonal` takes Marquardt's
-# column norms, floored at `√eps(R)` of the largest of them, so that a zero or near-zero column
-# still receives positive damping; it is scale-invariant on its own.
+# The diagonal `D` of the damping term for the stacked solve of `[J; √μ D] δ = [-Fx; 0]`, written
+# in place. `scaling = :none` takes `D = I`, so the damping is `√μ` in the units of `Jᴴ J`, the
+# same number the SVD weight `σ̂_j/(σ̂_j² + 2^{-2e} μ)` divides by. `scaling = :diagonal` takes
+# Marquardt's column norms, floored at `√eps(R)` of the largest of them, so that a zero or
+# near-zero column still receives positive damping; it is scale-invariant on its own.
 #
-# Returns the diagonal, which the caller folds into `√μ`; a damping entry that is not
-# representable is a failed trial.
-function lm_damping_diagonal(
-        J::StaticMatrix{N, N, T}, scaling::Val{:diagonal}) where {N, T}
-    R = real(T)
-    d_diag = local_array(zero(SVector{N, R}))
+# The caller folds `√μ` into the diagonal; a damping entry that is not representable is a failed
+# trial.
+function lm_damping_diagonal!(
+        d::AbstractVector, J::AbstractMatrix, ::Val{:diagonal})
+    R = real(eltype(d))
+    n = length(d)
     dmax = zero(R)
-    @inbounds for j in 1:N
-        col = local_array(zero(SVector{N, T}))
-        for i in 1:N
-            col[i] = J[i, j]
-        end
-        d_diag[j] = rnorm(SVector(col))
-        dmax = max(dmax, d_diag[j])
+    @inbounds for j in 1:n
+        d[j] = rnorm(view(J, :, j))
+        dmax = max(dmax, d[j])
     end
     floor = iszero(dmax) ? one(R) : sqrt(eps(R)) * dmax
-    @inbounds for j in 1:N
-        d_diag[j] = max(d_diag[j], floor)
+    @inbounds for j in 1:n
+        d[j] = max(d[j], floor)
     end
-    return SVector{N, R}(d_diag)
+    return d
 end
 
-function lm_damping_diagonal(::StaticMatrix{N, N, T}, ::Val{:none}) where {N, T}
+function lm_damping_diagonal!(
+        d::AbstractVector, ::AbstractMatrix, ::Val{:none})
+    return fill!(d, one(real(eltype(d))))
+end
+
+# The same diagonal of a static matrix, as a value: the damping of the R1 stacked solve.
+function lm_damping_diagonal(
+        J::StaticMatrix{N, N, T}, scaling::Val) where {N, T}
     R = real(T)
-    return SVector{N, R}(ntuple(_ -> one(R), Val(N)))
+    d = local_array(zero(SVector{N, R}))
+    lm_damping_diagonal!(d, J, scaling)
+    return SVector{N, R}(d)
 end
 
-# Stacked QR solve of [J; √μ D] δ = [-Fx; 0] via Householder QR of J followed by Givens
-# elimination of √μ D, without forming Jᴴ J.
-function lm_stacked_qr_step(
-        ::Nothing, J::StaticMatrix{N, N, T}, Fx::StaticVector{N, T},
-        μ::R, scaling::Union{Val{:none}, Val{:diagonal}}) where {N, T, R}
-    d_diag = lm_damping_diagonal(J, scaling)
-    sqrt_μ = sqrt(lm_step_damping(μ))
-    damping_ok = isfinite(sqrt_μ) && all(d -> isfinite(sqrt_μ * d), d_diag)
-    damping_ok || return zero(SVector{N, T}), false
-    Rmat = local_array(SMatrix{N, N, T}(J))
-    rhs = local_array(-SVector{N, T}(Fx))
-    # Reduce Rmat to upper triangular by Givens rotations on rows and apply to rhs.
-    @inbounds for j in 1:N
-        for i in (j + 1):N
-            a = Rmat[j, j]
-            b = Rmat[i, j]
-            iszero(b) && continue
-            cs, sn, r_val = lm_givens(a, b)
-            Rmat[j, j] = r_val
-            Rmat[i, j] = zero(T)
-            for k in (j + 1):N
-                u = Rmat[j, k]
-                v = Rmat[i, k]
-                Rmat[j, k] = cs * u + sn * v
-                Rmat[i, k] = -conj(sn) * u + cs * v
-            end
-            u_r = rhs[j]
-            v_r = rhs[i]
-            rhs[j] = cs * u_r + sn * v_r
-            rhs[i] = -conj(sn) * u_r + cs * v_r
-        end
-    end
-    # Eliminate the diagonal damping block √μ s D row by row with Givens rotations.
-    w_row = local_array(zero(SVector{N, T}))
-    @inbounds for j in 1:N
-        fill!(w_row, zero(T))
-        w_row[j] = T(sqrt_μ * d_diag[j])
-        w_rhs = zero(T)
-        for k in j:N
-            a = Rmat[k, k]
-            b = w_row[k]
-            iszero(b) && continue
-            cs, sn, r_val = lm_givens(a, b)
-            Rmat[k, k] = r_val
-            w_row[k] = zero(T)
-            for l in (k + 1):N
-                u = Rmat[k, l]
-                v = w_row[l]
-                Rmat[k, l] = cs * u + sn * v
-                w_row[l] = -conj(sn) * u + cs * v
-            end
-            u_r = rhs[k]
-            rhs[k] = cs * u_r + sn * w_rhs
-            w_rhs = -conj(sn) * u_r + cs * w_rhs
-        end
-    end
-    # Back-substitution on the damped upper-triangular factor Rmat.
-    δ = local_array(zero(SVector{N, T}))
-    @inbounds for i in N:-1:1
-        s = rhs[i]
-        for j in (i + 1):N
-            s -= Rmat[i, j] * δ[j]
-        end
-        r_ii = Rmat[i, i]
-        if iszero(r_ii) || !isfinite(r_ii)
-            return zero(SVector{N, T}), false
-        end
-        δ[i] = s / r_ii
-    end
-    res = SVector{N, T}(δ)
-    return res, all(isfinite, res)
-end
+# The stacked damped solve `[J; √μ D] δ = [-F; 0]` without forming `Jᴴ J`, in two phases:
+# `[J | -F]` is reduced once per outer step to the upper-triangular pair `(R0, c0)`, and each
+# trial `μ` copies that pair and eliminates only its own diagonal damping rows, so a rejected
+# trial costs no factorisation of `J`.
 
-function lm_stacked_qr_step(
-        δ_buf::StaticVector{N, T}, J::StaticMatrix{N, N, T}, Fx::StaticVector{N, T},
-        μ::R, scaling::Union{Val{:none}, Val{:diagonal}}) where {N, T, R}
-    res, ok = lm_stacked_qr_step(nothing, J, Fx, μ, scaling)
-    copyto!(δ_buf, res)
-    return δ_buf, ok
-end
-
-function lm_stacked_qr_step(
-        ::Nothing, J::T, Fx::T, μ::R,
-        scaling::Union{Val{:none}, Val{:diagonal}}) where {T <: Number, R}
-    res, ok = lm_stacked_qr_step(
-        nothing, SMatrix{1, 1, T}((J,)), SVector{1, T}((Fx,)), μ, scaling)
-    return res[1], ok
-end
-
-function lm_stacked_qr_step(
-        δ::AbstractVector{T}, J::AbstractMatrix{T}, Fx::AbstractVector{T},
-        μ::R, scaling::Union{Val{:none}, Val{:diagonal}}, g = nothing) where {T, R}
-    n = length(Fx)
-    Rmat = g === nothing || g.Rmat === nothing ? Matrix{T}(undef, n, n) : g.Rmat
-    copyto!(Rmat, J)
-    rhs = g === nothing || g.rhs === nothing ? Vector{T}(undef, n) : g.rhs
-    @inbounds for i in 1:n
-        rhs[i] = -Fx[i]
-    end
-    d_diag = g === nothing || g.d_diag === nothing ? Vector{R}(undef, n) : g.d_diag
-    dmax = zero(R)
+# Reduce `[J | -F]`, written into `R0` and `c0`, to the upper-triangular pair `(R0, c0)` by
+# Givens rotations on its rows.
+function lm_qr_factor!(
+        R0::AbstractMatrix, c0::AbstractVector, J::AbstractMatrix, Fx::AbstractVector)
+    n = length(c0)
     @inbounds for j in 1:n
-        if scaling === Val(:diagonal)
-            cn = rnorm(@view(Rmat[:, j]))
-            d_diag[j] = cn
-            dmax = max(dmax, cn)
-        else
-            d_diag[j] = one(R)
+        c0[j] = -Fx[j]
+        for i in 1:n
+            R0[i, j] = J[i, j]
         end
-    end
-    if scaling === Val(:diagonal)
-        floor = iszero(dmax) ? one(R) : sqrt(eps(R)) * dmax
-        @inbounds for j in 1:n
-            d_diag[j] = max(d_diag[j], floor)
-        end
-    end
-    sqrt_μ = sqrt(lm_step_damping(μ))
-    damping_ok = isfinite(sqrt_μ)
-    @inbounds for j in 1:n
-        damping_ok &= isfinite(sqrt_μ * d_diag[j])
-    end
-    damping_ok || begin
-        fill!(δ, zero(T))
-        return δ, false
     end
     @inbounds for j in 1:n
         for i in (j + 1):n
-            a = Rmat[j, j]
-            b = Rmat[i, j]
+            b = R0[i, j]
             iszero(b) && continue
+            a = R0[j, j]
             cs, sn, r_val = lm_givens(a, b)
-            Rmat[j, j] = r_val
-            Rmat[i, j] = zero(T)
+            R0[j, j] = r_val
+            R0[i, j] = zero(eltype(R0))
             for k in (j + 1):n
-                u = Rmat[j, k]
-                v = Rmat[i, k]
-                Rmat[j, k] = cs * u + sn * v
-                Rmat[i, k] = -conj(sn) * u + cs * v
+                u = R0[j, k]
+                v = R0[i, k]
+                R0[j, k] = cs * u + sn * v
+                R0[i, k] = -conj(sn) * u + cs * v
             end
-            u_r = rhs[j]
-            v_r = rhs[i]
-            rhs[j] = cs * u_r + sn * v_r
-            rhs[i] = -conj(sn) * u_r + cs * v_r
+            u_r = c0[j]
+            v_r = c0[i]
+            c0[j] = cs * u_r + sn * v_r
+            c0[i] = -conj(sn) * u_r + cs * v_r
         end
     end
-    w_row = g === nothing || g.w_row === nothing ? zeros(T, n) : g.w_row
+    return R0, c0
+end
+
+# Whether `√μ D` is representable: a damping entry that overflows is a failed trial, which raises
+# `μ`, not a step along a non-finite direction.
+@inline function lm_damping_ok(sqrt_μ::Real, d_diag)
+    isfinite(sqrt_μ) || return false
+    for j in eachindex(d_diag)
+        isfinite(sqrt_μ * d_diag[j]) || return false
+    end
+    return true
+end
+
+# Copy the stored factor `(R0, c0)` into the trial buffers `(R, c)` of the state, eliminate the
+# damping rows `√μ d_j e_jᵀ` of `[R; √μ D] δ = [c; 0]` against the copy by Givens rotations, and
+# back-substitute into `δ`; `w` is the length-`n` scratch row of the elimination. Returns `false`
+# and zeroes `δ` where a pivot is zero or not finite.
+function lm_qr_solve!(
+        δ::AbstractVector, R::AbstractMatrix, c::AbstractVector, w::AbstractVector,
+        R0::AbstractMatrix, c0::AbstractVector, sqrt_μ::Real, d_diag::AbstractVector)
+    n = length(c)
+    T = eltype(c)
+    copyto!(R, R0)
+    copyto!(c, c0)
     @inbounds for j in 1:n
-        fill!(w_row, zero(T))
-        w_row[j] = T(sqrt_μ * d_diag[j])
+        fill!(w, zero(T))
+        w[j] = T(sqrt_μ * d_diag[j])
         w_rhs = zero(T)
         for k in j:n
-            a = Rmat[k, k]
-            b = w_row[k]
+            b = w[k]
             iszero(b) && continue
+            a = R[k, k]
             cs, sn, r_val = lm_givens(a, b)
-            Rmat[k, k] = r_val
-            w_row[k] = zero(T)
+            R[k, k] = r_val
+            w[k] = zero(T)
             for l in (k + 1):n
-                u = Rmat[k, l]
-                v = w_row[l]
-                Rmat[k, l] = cs * u + sn * v
-                w_row[l] = -conj(sn) * u + cs * v
+                u = R[k, l]
+                v = w[l]
+                R[k, l] = cs * u + sn * v
+                w[l] = -conj(sn) * u + cs * v
             end
-            u_r = rhs[k]
-            rhs[k] = cs * u_r + sn * w_rhs
+            u_r = c[k]
+            c[k] = cs * u_r + sn * w_rhs
             w_rhs = -conj(sn) * u_r + cs * w_rhs
         end
     end
     @inbounds for i in n:-1:1
-        s = rhs[i]
+        s = c[i]
         for j in (i + 1):n
-            s -= Rmat[i, j] * δ[j]
+            s -= R[i, j] * δ[j]
         end
-        r_ii = Rmat[i, i]
+        r_ii = R[i, i]
         if iszero(r_ii) || !isfinite(r_ii)
             fill!(δ, zero(T))
-            return δ, false
+            return false
         end
         δ[i] = s / r_ii
     end
-    return δ, all(isfinite, δ)
+    return all(isfinite, δ)
 end
 
-# The value-iterate calls carry the workspace tuple of the R3 state, which those paths do not
-# read: the two methods below drop it. Their signatures stay disjoint from the dense one above,
-# which takes an `AbstractMatrix` and an `AbstractVector`.
-@inline function lm_stacked_qr_step(
-        δ_buf::Union{Nothing, StaticVector}, J::StaticMatrix,
-        Fx::StaticVector, μ::R,
-        scaling::Union{Val{:none}, Val{:diagonal}}, _) where {R <: AbstractFloat}
-    return lm_stacked_qr_step(δ_buf, J, Fx, μ, scaling)
+# One trial of the stacked solve: the damping `√μ D` eliminated against the stored factor, and
+# `δ` read out of the result. `false` where the damping is not representable or the damped factor
+# is singular, and `δ` is then zero.
+@inline function lm_qr_step!(p, μ::R) where {R <: Real}
+    sqrt_μ = sqrt(lm_step_damping(μ))
+    if !lm_damping_ok(sqrt_μ, p.d_diag)
+        fill!(p.δ, zero(eltype(p.δ)))
+        return false
+    end
+    return lm_qr_solve!(p.δ, p.R, p.c, p.w, p.R0, p.c0, sqrt_μ, p.d_diag)
 end
 
-@inline function lm_stacked_qr_step(
-        δ_buf::Union{Nothing, StaticVector}, J::Number, Fx::Number, μ::R,
-        scaling::Union{Val{:none}, Val{:diagonal}}, _) where {R <: AbstractFloat}
-    return lm_stacked_qr_step(δ_buf, J, Fx, μ, scaling)
+# The workspace of the stacked solve for a value iterate, factored at the start of an outer step:
+# the factor `(R0, c0)` of `[J | -F]` and the trial buffers, all static, which `local_array` keeps
+# off the heap where the element type is `isbits`.
+@inline function lm_qr_prepare(
+        ::Nothing, g, J::StaticMatrix{N, N, T}, Fx::StaticVector{N, T},
+        scaling::Union{Val{:none}, Val{:diagonal}}) where {N, T}
+    R0 = local_array(zero(SMatrix{N, N, T}))
+    c0 = local_array(zero(SVector{N, T}))
+    Rm = local_array(zero(SMatrix{N, N, T}))
+    cm = local_array(zero(SVector{N, T}))
+    w = local_array(zero(SVector{N, T}))
+    δ = local_array(zero(SVector{N, T}))
+    d_diag = lm_damping_diagonal(J, scaling)
+    lm_qr_factor!(R0, c0, J, Fx)
+    return (; R0, c0, R = Rm, c = cm, w, δ, d_diag)
+end
+
+# The same workspace for an array iterate, whose buffers `init_globalization` holds in the state.
+@inline function lm_qr_prepare(
+        δ::AbstractVector, g, J::AbstractMatrix, Fx::AbstractVector,
+        scaling::Union{Val{:none}, Val{:diagonal}})
+    lm_damping_diagonal!(g.d_diag, J, scaling)
+    lm_qr_factor!(g.R0, g.c0, J, Fx)
+    return (; R0 = g.R0, c0 = g.c0, R = g.R, c = g.c, w = g.w, δ, d_diag = g.d_diag)
+end
+
+# A scalar iterate is the 1×1 case of the static workspace.
+@inline function lm_qr_prepare(
+        ::Nothing, g, J::T, Fx::T,
+        scaling::Union{Val{:none}, Val{:diagonal}}) where {T <: Number}
+    return lm_qr_prepare(
+        nothing, g, SMatrix{1, 1, T}((J,)), SVector{1, T}((Fx,)), scaling)
+end
+
+# The trial step `δ(μ)`: a value for a value iterate, and the buffer of the state for an array
+# iterate.
+@inline function lm_qr_step(p, ::StaticMatrix, μ::R) where {R <: Real}
+    ok = lm_qr_step!(p, μ)
+    return SVector(p.δ), ok
+end
+
+@inline function lm_qr_step(p, ::Number, μ::R) where {R <: Real}
+    ok = lm_qr_step!(p, μ)
+    return p.δ[1], ok
+end
+
+@inline function lm_qr_step(p, ::AbstractMatrix, μ::R) where {R <: Real}
+    ok = lm_qr_step!(p, μ)
+    return p.δ, ok
 end

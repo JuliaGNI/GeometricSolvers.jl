@@ -30,12 +30,17 @@ so that a compat-only bump can be told apart from an interface change.
   `J(x)/2^e` via the scale-safe coordinate weight `lm_svd_coord` across static (`StaticSVD`), host
   (`DenseSVD`) and device (`DeviceSVD`) factors; where `2^{-e} √μ` overflows, at the bottom of the
   factor's scale range, the weight is taken as zero and never as a `NaN`. On `QRFactorization()` or
-  `LUFactorization()`, or when `scaling = :diagonal`, each trial step solves the damped model via
-  Givens QR elimination of the stacked system `[J; √μ D]` without forming `Jᴴ J`. Steps are
-  accepted when the gain ratio
+  `LUFactorization()`, or when `scaling = :diagonal`, the step reduces `[J | -F]` once per outer
+  step to an upper-triangular `(R₀, c₀)` and each trial `μ` copies that pair and eliminates only its
+  own damping rows `√μ D` by Givens rotations, without forming `Jᴴ J`, so a rejected trial costs no
+  factorisation of `J(x)`; that path indexes scalars, and an `init` on a device array iterate
+  raises an `ArgumentError` that names `SVDFactorization()` with `scaling = :none` as the device
+  step. Steps are accepted when the gain ratio
   `ρ = (‖F(x)‖² - ‖F(x + δ)‖²) / (‖F(x)‖² - ‖F(x) + J δ‖²)` satisfies `ρ > ρ_accept`, decreasing
   `μ` to `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`, and rejected steps multiply `μ` by
-  `μ_increase` inside the step until a trial step is accepted or `μ > μ_max` returns `STALLED`.
+  `μ_increase` inside the step until a trial step is accepted or `μ > μ_max` returns `STALLED`
+  with a finite `μ` in the rule state, so that a solve confined to a stationary point ends
+  `STALLED` and not `NONFINITE`.
   `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 10th column
   `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
 

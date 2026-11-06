@@ -264,6 +264,8 @@ end
 end
 
 @inline function init_state(m::Newton, prob::NonlinearProblem, x, p)
+    m.globalization isa LevenbergMarquardt &&
+        check_lm_iterate(m.globalization, m.linsolve, x)
     Fx = buffer(x)
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
@@ -441,7 +443,7 @@ end
     Jmat = jacobian!!(state.J, state.jacprep, prob, x, p)
     gr = grad_ratio(state.d, Jmat, Fx, fnorm)
     Jreg = regularize!!(Jmat, m.regularization)
-    if m.linsolve isa SVDFactorization && m.globalization.scaling === Val(:none)
+    if lm_svd_path(m.linsolve, m.globalization.scaling)
         fac = lm_svd_factor(state, m, x, Jreg)
         rk, nn = factor_diagnostics(state.d, fac, Fx, fnorm)
         return Jreg, fac, NewtonDiagnostics{R}(rk, nn, gr)
@@ -459,6 +461,12 @@ end
         info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
         return x, Fx, state, info
     end
+    # A root is a step of zero: it is answered before the Jacobian is read, so that a non-finite
+    # `J` at a root is not what the step reports.
+    if iszero(fnorm)
+        info = StepInfo{R}(SUCCESS, zero(R), zero(R), Int32(0), false, false)
+        return x, Fx, state, info
+    end
     lm = m.globalization
     μ_min_eff = max(R(lm.μ_min), 4 * eps(R))
     Jreg, fac, diag = lm_newton_factor(m, state, prob, x, Fx, p, fnorm)
@@ -468,22 +476,21 @@ end
         info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
         return x, Fx, state_d, info
     end
-    use_svd = m.linsolve isa SVDFactorization && lm.scaling === Val(:none)
+    use_svd = lm_svd_path(m.linsolve, lm.scaling)
     if use_svd && fac.info > 0
         info = StepInfo{R}(SINGULAR, fnorm, zero(R), Int32(0), false, false)
         return x, Fx, state_d, info
     end
-    if iszero(fnorm)
-        info = StepInfo{R}(SUCCESS, fnorm, zero(R), Int32(0), false, false)
-        return x, Fx, state_d, info
-    end
+    # The stacked solve factors `[J | -F]` once per outer step, here, so that a trial pays only
+    # the elimination of its own damping rows.
+    qr = use_svd ? nothing : lm_qr_prepare(state.d, state.g, Jreg, Fx, lm.scaling)
     failures = Int32(0)
     while true
         if use_svd
             δ = lm_svd_step(state.d, fac, Fx, μ)
             step_ok = δ isa Number ? isfinite(δ) : all(isfinite, δ)
         else
-            δ, step_ok = lm_stacked_qr_step(state.d, Jreg, Fx, μ, lm.scaling, state.g)
+            δ, step_ok = lm_qr_step(qr, Jreg, μ)
         end
         if step_ok
             Jδ = mul!!(lm_Jδ(state.g), Jreg, δ)
@@ -514,7 +521,9 @@ end
         failures += Int32(1)
         μ *= R(lm.μ_increase)
         if !isfinite(μ) || μ > R(lm.μ_max)
-            state_fail = with_rule(state_d, DampingParameter(μ))
+            # The state keeps a finite damping: a `μ` that overflows is at the bound, and a
+            # non-finite one would read as the un-started state on the stall that follows.
+            state_fail = with_rule(state_d, DampingParameter(min(μ, floatmax(R))))
             info = StepInfo{R}(STALLED, fnorm, zero(R), failures, false, false)
             return x, Fx, state_fail, info
         end

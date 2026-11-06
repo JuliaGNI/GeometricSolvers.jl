@@ -24,7 +24,14 @@ const SYNC = "the backend package defines `synchronize` on a `GPU` backend"
 # JET's message, neither of which holds a line number, with the reason it is not a defect.
 const KNOWN_FALSE_POSITIVES = [
     (f = "_launch!", msg = "gpu__solve_kernel!", reason = LAUNCH),
-    (f = "_launch!", msg = "`synchronize(::KernelAbstractions.GPU)`", reason = SYNC)
+    (f = "_launch!", msg = "`synchronize(::KernelAbstractions.GPU)`", reason = SYNC),
+    # The three kernels of the damped SVD step are launched from `lm_svd_step` itself, whose
+    # keyword call of the launch is the innermost frame of the report, and that step
+    # synchronises the backend itself.
+    (f = "lm_svd_step", msg = "gpu_ka_lm_svd_ut_kernel!", reason = LAUNCH),
+    (f = "lm_svd_step", msg = "gpu_ka_lm_svd_weight_kernel!", reason = LAUNCH),
+    (f = "lm_svd_step", msg = "gpu_ka_svd_v_mul_kernel!", reason = LAUNCH),
+    (f = "lm_svd_step", msg = "`synchronize(::KernelAbstractions.GPU)`", reason = SYNC)
 ]
 
 # The name of the function of a report's innermost frame, with the `#name#n` of a keyword
