@@ -113,7 +113,9 @@ with `0` iterations. `options` must be an `Options{real(eltype(x₀))}`; any oth
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
 (meaning the failed line-search trial did not decrease the merit) stops immediately with
-`LINESEARCH_FAILED`; one that decreased the merit keeps its new iterate, increments
+`LINESEARCH_FAILED`, unless the stationarity test below holds, which a nonzero-residual
+least-squares minimum reaches with every step a line search can try; one that decreased the merit
+keeps its new iterate, increments
 `status.step_failures`, and continues. The residual test returns `SUCCESS` with
 `status.stationary == false`; on a [`LeastSquaresProblem`](@ref) where the residual test does not
 hold, the stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ options.g_tol` (with `‖J‖_F > 0` and

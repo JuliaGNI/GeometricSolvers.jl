@@ -12,7 +12,7 @@ so that a compat-only bump can be told apart from an interface change.
 ### Changed
 
 - **`LeastSquaresProblem`, `GaussNewton`, rectangular static, host and device QR and SVD, and the
-  stationarity stopping test** (decisions 34 and 54 of the design). `AbstractNonlinearProblem` is
+  stationarity stopping test** (decisions 44 and 57 of the design). `AbstractNonlinearProblem` is
   the common supertype of `NonlinearProblem` and `LeastSquaresProblem{F, J, M}` (exported), which
   constructs an overdetermined or square least-squares problem `min_x ½ ‖F(x, p)‖₂²` with `m ≥ n`
   residuals (2-argument `F(x, p)` in R1, and 3-argument `F!(r, x, p)` with `m::Int` in R3).
@@ -20,7 +20,7 @@ so that a compat-only bump can be told apart from an interface change.
   refinement = NoRefinement(), regularization = 0, reuse = nothing)` (exported) constructs a
   `Newton` method configured for least-squares problems, using `MeasuredSlope()` for line-search
   globalizations (`φ′(0) = 2 Re⟨F, J d⟩ = -2 ‖J d‖₂²`). `StaticRectQR{M, N, T, L}` and
-  `StaticRectSVD{M, N, T, R, L1, L2}` factorise rectangular static matrices `SMatrix{M, N, T}` with
+  `StaticRectSVD{M, N, TF, L, LN, R}` factorise rectangular static matrices `SMatrix{M, N, T}` with
   `M > N ≥ 1` and `M ≤ 32` without allocation (delegating `M == N` to `StaticQR` and `StaticSVD`,
   and throwing `DimensionMismatch` for `M < N` or `N == 0` and `ArgumentError` for `M > 32`), and
   solve the minimum-norm least-squares problem in `ldiv!!`; `DenseQR`, `DeviceQR`, `DenseSVD` and

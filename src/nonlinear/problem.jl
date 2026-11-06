@@ -1,6 +1,15 @@
 # The problem: the residual and its derivative, and nothing else. Parameters arrive at solve time,
 # so one problem serves a whole time-stepping loop, and a batch shares one object.
 
+"""
+    AbstractNonlinearProblem
+
+The supertype of the problems a [`NonlinearSolver`](@ref) solves: [`NonlinearProblem`](@ref), whose
+residual has as many entries as the iterate has variables, and [`LeastSquaresProblem`](@ref), whose
+residual may have more. [`init`](@ref), [`solve`](@ref), [`solve!`](@ref), [`solve!!`](@ref) and
+[`solve_batch!`](@ref) take it, and so does every method — [`Newton`](@ref), [`Picard`](@ref) and
+each globalization — so one solver loop serves both problem types.
+"""
 abstract type AbstractNonlinearProblem end
 
 """
