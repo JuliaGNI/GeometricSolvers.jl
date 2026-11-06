@@ -2,6 +2,7 @@ using Adapt: Adapt
 using CommonSolve: CommonSolve
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
+using JET: JET, @test_opt
 using JLArrays: JLArray
 using LinearAlgebra: Diagonal, I, norm, transpose
 using StaticArrays: SMatrix, SVector
@@ -12,14 +13,17 @@ using GeometricSolvers: AbstractNonlinearProblem, AutoForwardDiff, Backtracking,
                         LDLTFactorization, LUFactorization, MAXITERS, Newton,
                         NonlinearProblem, Options, Picard, Reparametrized,
                         ReparametrizedSolver, SUCCESS, SolverStatus, StationarityProblem,
-                        Static, ToReal, init, jacobian!!, jvp!!, prepare_ad, residual!!,
-                        solve, solve!, solve!!, solve_batch!
+                        Static, ToReal, gradient_hessian!!, init, jacobian!!, jvp!!,
+                        prepare_ad, residual!!, solve, solve!, solve!!, solve_batch!
 
 const GS = GeometricSolvers
 
 include("../helpers/matrix.jl")
 
 allowscalar(false)
+
+# Allocation measured through a barrier, after one call that compiles the path.
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
 
 # Polar chart x = g(r, θ) = (r cos θ, r sin θ) and its analytic Jacobian G(r, θ).
 g_polar(y, p) = SVector(y[1] * cos(y[2]), y[1] * sin(y[2]))
@@ -147,6 +151,32 @@ function action_polar_r3(x, p)
     return T(1 // 4) * (x1^2 + x2^2 - T(4))^2 + T(1 // 2) * (x1 - x2)^2
 end
 
+# A convex quadratic action has one critical point, so a chart solve and an x-space solve name
+# the same x* and a solve test can assert it without a second solve.
+const X_QUAD = SVector(1.5, 0.75)
+
+function action_quad(x, p)
+    T = eltype(x)
+    return (x[1] - T(3 // 2))^2 + 2 * (x[2] - T(3 // 4))^2
+end
+
+function action_quad_r3(x::Array, p)
+    T = eltype(x)
+    @inbounds begin
+        x1, x2 = x[1], x[2]
+        return (x1 - T(3 // 2))^2 + 2 * (x2 - T(3 // 4))^2
+    end
+end
+
+function action_quad_r3(x, p)
+    T = eltype(x)
+    m1 = JLArray(T[1, 0])
+    m2 = JLArray(T[0, 1])
+    x1 = sum(x .* m1)
+    x2 = sum(x .* m2)
+    return (x1 - T(3 // 2))^2 + 2 * (x2 - T(3 // 4))^2
+end
+
 @testset "Reparametrized construction, properties, exports, and Adapt" begin
     @test Base.isexported(GS, :Reparametrized)
     @test Base.isexported(GS, :ReparametrizedSolver)
@@ -236,7 +266,7 @@ end
         @test st_init2.iterations == Int32(0)
         @test x_init2 == x_init
 
-        # solve!(solver, y_new) and solve!(solver, y_new, p_new)
+        # solve!(solver, y_new)
         y_new = SVector{2, T}(T(5 // 2), T(3 // 4))
         x_new, st_new = solve!(solver, y_new)
         @test st_new.code == SUCCESS
@@ -368,6 +398,7 @@ end
     x_ret, st_ret = solve(rep_nan, y0_nan, m_bt; max_iterations = 1)
     # Because the line search fails without moving, y* == y0_nan == [1.0, 2.0],
     # so x* MUST be g(y*, p) == [3.0, 5.0], NOT the rejected trial's g(y_trial, p).
+    @test st_ret.code != SUCCESS
     @test x_ret == [3.0, 5.0]
 
     solver_nan = init(rep_nan, copy(y0_nan), m_bt; max_iterations = 1)
@@ -402,7 +433,8 @@ end
     x_test = g_polar(y_test, nothing)
     G_exact = dg_polar(y_test, nothing)
     Fx_exact = residual!!(nothing, prob_stat, x_test, nothing)
-    Jx_exact = jacobian!!(nothing, AutoForwardDiff(), prob_stat, x_test, nothing)
+    Jx_exact = gradient_hessian!!(
+        nothing, nothing, AutoForwardDiff(), prob_stat, x_test, nothing)[2]
     Fy_expected = transpose(G_exact) * Fx_exact
     Jy_pullback = transpose(G_exact) * Jx_exact * G_exact
 
@@ -447,20 +479,19 @@ end
         @test isapprox(jv_nocurv, Jy_nocurv * v_dir; rtol = 16 * eps(Float64))
     end
 
-    # Solving covariant StationarityProblem with LDLTFactorization in R1 and R3
-    x_stat_dir, st_stat_dir = solve(prob_stat, x_test, Newton(;
-        linsolve = LDLTFactorization()))
-    @test st_stat_dir.code == SUCCESS
+    # A covariant chart solve converges to the critical point of the action. The quadratic
+    # action has one, so the assertion needs no second solve and holds in every chart.
     for dg in (nothing, dg_polar)
-        rep_stat = Reparametrized(prob_stat, g_polar, dg)
-        x_stat_rep, st_stat_rep = solve(rep_stat, y_test, Newton(;
-            linsolve = LDLTFactorization()))
-        @test st_stat_rep.code == SUCCESS
-        @test norm(x_stat_rep - x_stat_dir) <= 1e-10
+        rep_quad = Reparametrized(StationarityProblem(action_quad), g_polar, dg)
+        x_quad, st_quad = solve(rep_quad, y_test, Newton(; linsolve = LDLTFactorization()))
+        @test st_quad.code == SUCCESS
+        # 1e-8 is the solver's default stopping scale, sqrt(eps(Float64)) = 1.5e-8.
+        @test norm(x_quad - X_QUAD) <= 1e-8
     end
 
     # R3 covariant StationarityProblem across Array and JLArray, with dg_polar! and nothing
     prob_stat_r3 = StationarityProblem(action_polar_r3)
+    prob_quad_r3 = StationarityProblem(action_quad_r3)
     for Arr in ARRAY_BACKENDS, dg_r3 in (nothing, dg_polar!)
 
         rep_stat_r3 = Reparametrized(prob_stat_r3, g_polar!, dg_r3)
@@ -487,10 +518,11 @@ end
         jvp!!(Jv_r3, prep_c, rep_stat_r3, y_r3, v_r3, nothing)
         @test isapprox(Array(Jv_r3), Array(Jy_r3) * [0.7, -0.4]; rtol = 32 * eps(Float64))
 
+        rep_quad_r3 = Reparametrized(prob_quad_r3, g_polar!, dg_r3)
         m_r3 = Arr === Array ? Newton(; linsolve = LDLTFactorization()) : Newton()
-        x_sol_r3, st_sol_r3 = solve(rep_stat_r3, y_r3, m_r3)
+        x_sol_r3, st_sol_r3 = solve(rep_quad_r3, y_r3, m_r3)
         @test st_sol_r3.code == SUCCESS
-        @test norm(Array(x_sol_r3) - Vector(x_stat_dir)) <= 1e-10
+        @test norm(Array(x_sol_r3) - Vector(X_QUAD)) <= 1e-8
     end
 
     # Complex covariant problem: transpose(G) vs adjoint(G)
@@ -551,10 +583,9 @@ end
 
     if Base.JLOptions().check_bounds != 1
         # skipped where a run forces `--check-bounds=yes`
-        @test (@allocated solve(rep_nl, y0, Newton())) == 0
-        @test (@allocated solve(rep_nl_ad, y0, Newton())) == 0
-        @test (@allocated solve(rep_stat, y0, Newton(; linsolve = LDLTFactorization()))) ==
-              0
+        @test allocations(a -> solve(rep_nl, a, Newton()), y0) == 0
+        @test allocations(a -> solve(rep_nl_ad, a, Newton()), y0) == 0
+        @test allocations(a -> solve(rep_stat, a, Newton()), y0) == 0
 
         for rep_r3 in (
             Reparametrized(NonlinearProblem(f_polar_target!), g_polar!, dg_polar!),
@@ -565,7 +596,28 @@ end
             solver_r3 = init(rep_r3, [1.5, 0.5], Newton())
             solve!(solver_r3, [1.5, 0.5])
             y_in = [1.5, 0.5]
-            @test (@allocated solve!(solver_r3, y_in)) == 0
+            @test allocations(a -> solve!(solver_r3, a), y_in) == 0
         end
+    end
+end
+
+@testset "JET.@test_opt on the R1 chart path, which the R2 kernel runs ($T)" for T in REAL_ELTYPES
+    y0 = SVector{2, T}(T(3 // 2), T(1 // 2))
+    prob_nl = NonlinearProblem(f_polar_target)
+    prob_stat = StationarityProblem(action_polar)
+    for dg in (dg_polar, nothing)
+        rep = Reparametrized(prob_nl, g_polar, dg)
+        @test_opt residual!!(nothing, rep, y0, nothing)
+        @test_opt jacobian!!(nothing, AutoForwardDiff(), rep, y0, nothing)
+        @test_opt jvp!!(nothing, AutoForwardDiff(), rep, y0, y0, nothing)
+        @test_opt solve(rep, y0, Newton())
+        rep_nc = Reparametrized(prob_nl, g_polar, dg; covariant = true, curvature = false)
+        @test_opt jacobian!!(nothing, AutoForwardDiff(), rep_nc, y0, nothing)
+    end
+    for dg in (dg_polar, nothing)
+        rep = Reparametrized(prob_stat, g_polar, dg)
+        @test_opt residual!!(nothing, rep, y0, nothing)
+        @test_opt jacobian!!(nothing, AutoForwardDiff(), rep, y0, nothing)
+        @test_opt solve(rep, y0, Newton())
     end
 end

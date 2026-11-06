@@ -5,9 +5,10 @@
 Coordinate-chart wrapper `x = g(y, p)` around an [`AbstractNonlinearProblem`](@ref) `prob`
 ([`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref)).
 
-Solving a `Reparametrized` problem with [`solve`](@ref), [`init`](@ref) / [`solve!`](@ref),
-[`solve!!`](@ref), or [`solve_batch!`](@ref) iterates in the chart coordinates `y` and returns
-`(x*, status)` where `x* = g(y*, p)` is evaluated at the returned chart iterate `y*`.
+Solving a `Reparametrized` problem with [`solve`](@ref), [`init`](@ref) / [`solve!`](@ref), or
+[`solve!!`](@ref) iterates in the chart coordinates `y` and returns `(x*, status)` where
+`x* = g(y*, p)` is evaluated at the returned chart iterate `y*`; [`solve_batch!`](@ref) writes
+each system's `x*` into the batch.
 
 # Arguments and keywords
 
@@ -150,13 +151,6 @@ end
     return gradient_hessian!!(nothing, nothing, backend, prob, x, p)[2]
 end
 
-@inline function jacobian!!(
-        ::Nothing, backend::AutoForwardDiff,
-        rprob::_ReducedStationarityProblem, u::StaticVector{N, T}, p) where {N, T}
-    x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)[2]
-end
-
 @inline function _inner_jac_r1(backend, prob::NonlinearProblem, x, p)
     prob.J !== nothing && return prob.J(x, p)
     return jacobian!!(nothing, backend, prob, x, p)
@@ -167,10 +161,6 @@ end
 
 @inline function _inner_res_jac_r1(backend, prob::StationarityProblem, x, p)
     return gradient_hessian!!(nothing, nothing, backend, prob, x, p)
-end
-@inline function _inner_res_jac_r1(backend, rprob::_ReducedStationarityProblem, u, p)
-    x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)
 end
 @inline function _inner_res_jac_r1(backend, prob::AbstractNonlinearProblem, x, p)
     return _inner_res_r1(prob, x, p), _inner_jac_r1(backend, prob, x, p)
