@@ -200,17 +200,13 @@ end
     δ₀ = dogleg_initial_radius(dl, R)
     return TrustRadius(δ₀, δ₀)
 end
-@inline function newton_rule(::LevenbergMarquardt, x)
-    return DampingParameter(real(eltype(x))(NaN))
-end
 @inline function newton_rule(::LevenbergMarquardt, ::Nothing, ::Type{R}) where {R}
     return DampingParameter(R(NaN))
 end
 
-@inline reset_rule(::Nothing) = nothing
-@inline reset_rule(::FactorAge) = FactorAge(Int32(0), false)
-@inline reset_rule(r::TrustRadius) = TrustRadius(r.radius₀, r.radius₀)
-@inline reset_rule(r, _) = reset_rule(r)
+@inline reset_rule(::Nothing, _) = nothing
+@inline reset_rule(::FactorAge, _) = FactorAge(Int32(0), false)
+@inline reset_rule(r::TrustRadius, _) = TrustRadius(r.radius₀, r.radius₀)
 @inline function reset_rule(::DampingParameter{R}, lm::LevenbergMarquardt) where {R}
     return DampingParameter(R(lm.μ₀))
 end
@@ -435,9 +431,8 @@ end
     return x₊, F₊, state₊, info
 end
 
-@inline lm_svd_factor(_, m, ::StaticVector, Jreg) = lm_static_svd(m.linsolve, Jreg)
-@inline function lm_svd_factor(_, m, ::Number, Jreg)
-    return lm_static_svd(m.linsolve, SMatrix{1, 1, typeof(Jreg)}((Jreg,)))
+@inline function lm_svd_factor(state, m, ::Number, Jreg)
+    return factorize!!(state.fac, m.linsolve, SMatrix{1, 1, typeof(Jreg)}((Jreg,)))
 end
 @inline lm_svd_factor(state, m, _, Jreg) = factorize!!(state.fac, m.linsolve, Jreg)
 
@@ -469,7 +464,7 @@ end
     Jreg, fac, diag = lm_newton_factor(m, state, prob, x, Fx, p, fnorm)
     state_d = with_diag(state, diag)
     j_ok = Jreg isa Number ? isfinite(Jreg) : all(isfinite, Jreg)
-    if !j_ok || !isfinite(diag.gradratio)
+    if !j_ok
         info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
         return x, Fx, state_d, info
     end

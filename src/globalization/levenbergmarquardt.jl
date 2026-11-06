@@ -2,18 +2,25 @@
     LevenbergMarquardt{R, S}
 
 Adaptive Levenberg–Marquardt damping for [`Newton`](@ref), computing the trial step from the
-damped linear model `(J(x)ᴴ J(x) + μ Dᵀ D) δ = -J(x)ᴴ F(x)` with damping parameter `μ > 0`
+damped linear model `(J(x)ᴴ J(x) + μ s² Dᵀ D) δ = -J(x)ᴴ F(x)` with damping parameter `μ > 0`
 adapted from the gain ratio
 
 ```math
 \\rho = \\frac{\\|F(x)\\|_2^2 - \\|F(x + \\delta)\\|_2^2}{\\|F(x)\\|_2^2 - \\|F(x) + J(x)\\,\\delta\\|_2^2}.
 ```
 
+`μ` is measured in the power-of-two scale `s = 2^e` that the factorisation of `J(x)` divides it
+by, `e` the exponent of the largest entry of `J(x)`, so a step is the same for `J(x)` and for
+`2^k J(x)`: the undamped truncated step of decision 44 is scale-free, and a damping of `μ` is
+too. With `scaling = :diagonal`, `D` is instead the diagonal of the column norms of `J(x)`,
+floored at `√eps` of the largest of them.
+
 With [`SVDFactorization`](@ref) and `scaling = :none`, `J(x) = U Σ Vᴴ` is factorised once per
 outer step and each trial `μ` evaluates the damped pseudoinverse step from `(U, Σ, V)` without
 refactoring `J(x)`. With [`QRFactorization`](@ref) or [`LUFactorization`](@ref) (or when
-`scaling = :diagonal`), the damped step is solved via Givens QR elimination of the stacked matrix
-`[J(x); √μ D]` without forming `J(x)ᴴ J(x)`.
+`scaling = :diagonal`), the damped step is solved by Givens QR elimination of the stacked matrix
+`[J(x); √μ s D]` without forming `J(x)ᴴ J(x)`; that path indexes scalars and runs on a host
+array.
 """
 struct LevenbergMarquardt{R <: AbstractFloat, S}
     μ₀::R
@@ -83,134 +90,32 @@ end
 @inline lm_Ft(::Nothing) = nothing
 @inline lm_Ft(g) = g.Ft
 
-# Effective regularization damping: when μ < eps(R), squaring keeps the stacked-QR diagonal √μ_reg
-# at or below eps(R) while remaining strictly positive.
-@inline function lm_effective_mu(μ::R) where {R <: AbstractFloat}
-    return μ < eps(R) ? μ * μ : μ
+# The damping a trial step uses. The schedule floors `μ` at `max(μ_min, 4 eps(R))` after every
+# accepted step, so a `μ` below that floor arrives only as the initial `μ₀` that `start!!` stores,
+# and the schedule never returns to it. It is taken as no damping: the truncated step of decision
+# 44, which is the `μ → 0` limit of the damped one.
+@inline function lm_step_damping(μ::R) where {R <: AbstractFloat}
+    return μ < 4 * eps(R) ? zero(R) : μ
 end
 
-# Scale-safe SVD coordinate weight for a singular value σ > 0 and coordinate y = u_jᴴ F(x).
-# Scaling by s = max(σ, √μ) avoids overflow and underflow of σ² + μ across the floating-point
-# range; when 0 < σ < √floatmin(R) so that σ² underflows to zero in R, rescaling the singular
-# equation by σ preserves a finite nonzero damped step coordinate.
-@inline function lm_svd_coord(σ::R, y::T, μ::R) where {R <: AbstractFloat, T <: Number}
-    μ_reg = lm_effective_mu(μ)
-    if σ < sqrt(floatmin(R))
-        σ_s = one(R)
-        μ_s = sqrt(μ_reg)
-        w = σ_s / (σ_s * σ_s + μ_s * μ_s)
-        return T(w) * (y / σ)
-    end
-    s = max(σ, sqrt(μ_reg))
-    σ_s = σ / s
-    μ_s = sqrt(μ_reg) / s
+# The damped coefficient of the SVD step: the coordinate `y = u_jᴴ F(x)` is multiplied by
+# `2^-e σ̂_j / (σ̂_j² + μ)` from the stored singular value `σ̂_j` of the scaled matrix `J / 2^e`.
+# That coefficient is `σ_j / (σ_j² + 2^{2e} μ)` in the units of `J`: the damping is measured in the
+# factor's own power-of-two scale, which is what makes the step the same for `J` and for `2^k J`,
+# as the undamped truncated step of decision 44 already is.
+#
+# `s = max(σ̂, √μ)` evaluates the ratio without forming `σ̂² + μ`: `σ̂` and `√μ` are rescaled by
+# their larger one first, so neither a tiny `σ̂` nor a `μ` far above `σ̂²` can underflow or
+# overflow the weight, and the `2^-e` is applied to the weight alone rather than to `σ̂`, which
+# would overflow.
+@inline function lm_svd_coord(σ̂::R, e::Int, y::T, μ::R) where {
+        R <: AbstractFloat, T <: Number}
+    damping = lm_step_damping(μ)
+    s = max(σ̂, sqrt(damping))
+    σ_s = σ̂ / s
+    μ_s = sqrt(damping) / s
     w = (σ_s / (σ_s * σ_s + μ_s * μ_s)) / s
-    return T(w) * y
-end
-
-# Scale-safe one-sided Jacobi SVD for StaticMatrix that preserves columns whose norm is below
-# √floatmin(R) or below tol * σ₁ when they do not cancel against a larger column.
-function lm_static_svd(
-        method::SVDFactorization{<:Union{Nothing, AbstractFloat}},
-        J::StaticMatrix{N, N, T}) where {N, T}
-    F = factor_eltype(method, T)
-    R = real(F)
-    Â, e = svd_matrix(F, J)
-    A = local_array(Â)
-    V = local_array(one(SMatrix{N, N, F}))
-    tol = jacobi_tolerance(N, R)
-    col_scale = local_array(zero(SVector{N, R}))
-    @inbounds for j in 1:N
-        col = local_array(zero(SVector{N, F}))
-        for i in 1:N
-            col[i] = A[i, j]
-        end
-        col_scale[j] = rnorm(SVector(col))
-    end
-    sweeps = 0
-    converged = false
-    m = N + isodd(N)
-    while sweeps < JACOBI_MAX_SWEEPS
-        sweeps += 1
-        rotations = 0
-        for r in 0:(m - 2), k in 0:(m ÷ 2 - 1)
-
-            p, q = jacobi_pair(N, r, k)
-            p > N && continue
-            col_p = local_array(zero(SVector{N, F}))
-            col_q = local_array(zero(SVector{N, F}))
-            @inbounds for i in 1:N
-                col_p[i] = A[i, p]
-                col_q[i] = A[i, q]
-            end
-            np = rnorm(SVector(col_p))
-            nq = rnorm(SVector(col_q))
-            (iszero(np) || iszero(nq)) && continue
-            s_pq = max(np, nq)
-            γ = zero(F)
-            @inbounds for i in 1:N
-                γ += conj(A[i, p] / s_pq) * (A[i, q] / s_pq)
-            end
-            abs(γ) <= tol * (np / s_pq) * (nq / s_pq) && continue
-            α = (np / s_pq)^2
-            β = (nq / s_pq)^2
-            cs, sn = jacobi_rotation(α, β, γ)
-            rotate_columns!(A, p, q, cs, sn)
-            rotate_columns!(V, p, q, cs, sn)
-            s_init = max(col_scale[p], col_scale[q])
-            col_scale[p] = s_init
-            col_scale[q] = s_init
-            rotations += 1
-        end
-        if iszero(rotations)
-            converged = true
-            break
-        end
-    end
-    σ = zero(SVector{N, R})
-    for j in 1:N
-        col = local_array(zero(SVector{N, F}))
-        @inbounds for i in 1:N
-            col[i] = A[i, j]
-        end
-        σ = setindex(σ, rnorm(SVector(col)), j)
-    end
-    for j in 1:(N - 1)
-        k = j
-        for i in (j + 1):N
-            σ[i] > σ[k] && (k = i)
-        end
-        k == j && continue
-        σj = σ[j]
-        σ = setindex(setindex(σ, σ[k], j), σj, k)
-        col_scale[j], col_scale[k] = col_scale[k], col_scale[j]
-        @inbounds for i in 1:N
-            A[i, j], A[i, k] = A[i, k], A[i, j]
-            V[i, j], V[i, k] = V[i, k], V[i, j]
-        end
-    end
-    ok = converged && all(isfinite, σ)
-    info = ok ? Int32(0) : Int32(1)
-    rank = Int32(0)
-    if ok
-        for j in 1:N
-            cutoff = tol * max(col_scale[j], floatmin(R))
-            (σ[j] > cutoff || (σ[j] > zero(R) && σ[j] == col_scale[j])) || break
-            rank += Int32(1)
-        end
-    end
-    for j in 1:N
-        if j <= rank
-            @inbounds for i in 1:N
-                A[i, j] /= σ[j]
-            end
-        else
-            @inbounds for i in 1:N
-                A[i, j] = zero(F)
-            end
-        end
-    end
-    return StaticSVD(SMatrix(A), SMatrix(V), σ, info, rank, e)
+    return T(ldexp2(w, -e)) * y
 end
 
 # Evaluate δ = -∑_{j=1}^{rank} w_j (u_jᴴ Fx) v_j from a StaticSVD factorisation.
@@ -227,8 +132,7 @@ function lm_svd_step(
         for i in 1:N
             y_j += T(conj(U[i, j])) * Fx[i]
         end
-        σ_j = ldexp2(R(fac.σ̂[j]), e)
-        c_j = -lm_svd_coord(σ_j, y_j, μ)
+        c_j = -lm_svd_coord(R(fac.σ̂[j]), e, y_j, μ)
         for i in 1:N
             δ[i] += T(V[i, j]) * c_j
         end
@@ -266,8 +170,7 @@ function lm_svd_step(
         for i in 1:n
             y_j += T(conj(U[i, j])) * Fx[i]
         end
-        σ_j = ldexp2(R(fac.rwork[j]), e)
-        c_j = -lm_svd_coord(σ_j, y_j, μ)
+        c_j = -lm_svd_coord(R(fac.rwork[j]), e, y_j, μ)
         for i in 1:n
             δ[i] += T(conj(VT[j, i])) * c_j
         end
@@ -296,8 +199,7 @@ end
     j = @index(Global, Linear)
     @inbounds if j <= rk
         F = eltype(tmp)
-        σ_j = ldexp2(R(σ̂[j]), e)
-        tmp[j] = -F(lm_svd_coord(σ_j, tmp[j], μ))
+        tmp[j] = -F(lm_svd_coord(R(σ̂[j]), e, tmp[j], μ))
     end
 end
 
@@ -338,28 +240,51 @@ end
     return cs, sn, phase * r_val
 end
 
-# Stacked QR solve of [J; √μ D] δ = [-Fx; 0] via Householder QR of J followed by Givens
-# elimination of √μ D, without forming Jᴴ J.
+# The diagonal `D^{1/2}` of the damping term and the scalar `√μ` it is multiplied by, for the
+# stacked solve of `[J; √μ s D] δ = [-Fx; 0]`. `scaling = :none` takes `D = I` and measures `μ` in
+# the factor's power-of-two scale `2^e`, the scale the SVD path divides `J` by, so that both paths
+# solve the same damped system and neither changes with the units of `J`. `scaling = :diagonal`
+# takes Marquardt's column norms, floored at `√eps(R)` of the largest of them, so that a zero or
+# near-zero column still receives positive damping; it is scale-invariant on its own.
+#
+# Returns the diagonal and `√μ` folded with that scale; the caller treats a damping entry that is
+# not representable as a failed trial.
+function lm_damping_diagonal(
+        J::StaticMatrix{N, N, T}, scaling::Val{:diagonal}) where {N, T}
+    R = real(T)
+    d_diag = local_array(zero(SVector{N, R}))
+    dmax = zero(R)
+    @inbounds for j in 1:N
+        col = local_array(zero(SVector{N, T}))
+        for i in 1:N
+            col[i] = J[i, j]
+        end
+        d_diag[j] = rnorm(SVector(col))
+        dmax = max(dmax, d_diag[j])
+    end
+    floor = iszero(dmax) ? one(R) : sqrt(eps(R)) * dmax
+    @inbounds for j in 1:N
+        d_diag[j] = max(d_diag[j], floor)
+    end
+    return SVector{N, R}(d_diag), one(R)
+end
+
+function lm_damping_diagonal(J::StaticMatrix{N, N, T}, ::Val{:none}) where {N, T}
+    R = real(T)
+    return SVector{N, R}(ntuple(_ -> one(R), Val(N))), ldexp2(one(R), matrix_exponent(J))
+end
+
+# Stacked QR solve of [J; √μ s D] δ = [-Fx; 0] via Householder QR of J followed by Givens
+# elimination of √μ s D, without forming Jᴴ J.
 function lm_stacked_qr_step(
         ::Nothing, J::StaticMatrix{N, N, T}, Fx::StaticVector{N, T},
         μ::R, scaling::Union{Val{:none}, Val{:diagonal}}) where {N, T, R}
-    μ_reg = lm_effective_mu(μ)
-    sqrt_μ = sqrt(μ_reg)
+    d_diag, d_scale = lm_damping_diagonal(J, scaling)
+    sqrt_μ = sqrt(lm_step_damping(μ)) * d_scale
+    damping_ok = isfinite(sqrt_μ) && all(d -> isfinite(sqrt_μ * d), d_diag)
+    damping_ok || return zero(SVector{N, T}), false
     Rmat = local_array(SMatrix{N, N, T}(J))
     rhs = local_array(-SVector{N, T}(Fx))
-    d_diag = local_array(zero(SVector{N, R}))
-    @inbounds for j in 1:N
-        if scaling === Val(:diagonal)
-            col = local_array(zero(SVector{N, T}))
-            for i in 1:N
-                col[i] = J[i, j]
-            end
-            cn = rnorm(SVector(col))
-            d_diag[j] = cn > zero(R) ? cn : one(R)
-        else
-            d_diag[j] = one(R)
-        end
-    end
     # Reduce Rmat to upper triangular by Givens rotations on rows and apply to rhs.
     @inbounds for j in 1:N
         for i in (j + 1):N
@@ -381,7 +306,7 @@ function lm_stacked_qr_step(
             rhs[i] = -conj(sn) * u_r + cs * v_r
         end
     end
-    # Eliminate the diagonal damping block √μ_reg * D row by row with Givens rotations.
+    # Eliminate the diagonal damping block √μ s D row by row with Givens rotations.
     w_row = local_array(zero(SVector{N, T}))
     @inbounds for j in 1:N
         fill!(w_row, zero(T))
@@ -442,8 +367,6 @@ function lm_stacked_qr_step(
         δ::AbstractVector{T}, J::AbstractMatrix{T}, Fx::AbstractVector{T},
         μ::R, scaling::Union{Val{:none}, Val{:diagonal}}, g = nothing) where {T, R}
     n = length(Fx)
-    μ_reg = lm_effective_mu(μ)
-    sqrt_μ = sqrt(μ_reg)
     Rmat = g === nothing || g.Rmat === nothing ? Matrix{T}(undef, n, n) : g.Rmat
     copyto!(Rmat, J)
     rhs = g === nothing || g.rhs === nothing ? Vector{T}(undef, n) : g.rhs
@@ -451,13 +374,33 @@ function lm_stacked_qr_step(
         rhs[i] = -Fx[i]
     end
     d_diag = g === nothing || g.d_diag === nothing ? Vector{R}(undef, n) : g.d_diag
+    dmax = zero(R)
     @inbounds for j in 1:n
         if scaling === Val(:diagonal)
             cn = rnorm(@view(Rmat[:, j]))
-            d_diag[j] = cn > zero(R) ? cn : one(R)
+            d_diag[j] = cn
+            dmax = max(dmax, cn)
         else
             d_diag[j] = one(R)
         end
+    end
+    d_scale = one(R)
+    if scaling === Val(:diagonal)
+        floor = iszero(dmax) ? one(R) : sqrt(eps(R)) * dmax
+        @inbounds for j in 1:n
+            d_diag[j] = max(d_diag[j], floor)
+        end
+    else
+        d_scale = ldexp2(one(R), matrix_exponent(J))
+    end
+    sqrt_μ = sqrt(lm_step_damping(μ)) * d_scale
+    damping_ok = isfinite(sqrt_μ)
+    @inbounds for j in 1:n
+        damping_ok &= isfinite(sqrt_μ * d_diag[j])
+    end
+    damping_ok || begin
+        fill!(δ, zero(T))
+        return δ, false
     end
     @inbounds for j in 1:n
         for i in (j + 1):n
@@ -517,8 +460,18 @@ function lm_stacked_qr_step(
     return δ, all(isfinite, δ)
 end
 
+# The value-iterate calls carry the workspace tuple of the R3 state, which those paths do not
+# read: the two methods below drop it. Their signatures stay disjoint from the dense one above,
+# which takes an `AbstractMatrix` and an `AbstractVector`.
 @inline function lm_stacked_qr_step(
-        δ_buf::Union{Nothing, StaticVector}, J, Fx, μ::R,
+        δ_buf::Union{Nothing, StaticVector}, J::StaticMatrix,
+        Fx::StaticVector, μ::R,
+        scaling::Union{Val{:none}, Val{:diagonal}}, _) where {R <: AbstractFloat}
+    return lm_stacked_qr_step(δ_buf, J, Fx, μ, scaling)
+end
+
+@inline function lm_stacked_qr_step(
+        δ_buf::Union{Nothing, StaticVector}, J::Number, Fx::Number, μ::R,
         scaling::Union{Val{:none}, Val{:diagonal}}, _) where {R <: AbstractFloat}
     return lm_stacked_qr_step(δ_buf, J, Fx, μ, scaling)
 end
