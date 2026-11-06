@@ -111,7 +111,6 @@ end
 @inline function solve_optimal_weights(
         G::SMatrix{1, 1, R}, b::SVector{1, R},
         fnorms::NTuple{1, R}) where {R <: AbstractFloat}
-    fnorms[1] == zero(R) && return (one(R),), false
     g11 = G[1, 1]
     b1 = b[1]
     if isfinite(g11) && g11 > zero(R) && isfinite(b1)
@@ -124,8 +123,6 @@ end
 @inline function solve_optimal_weights(
         G::SMatrix{2, 2, R}, b::SVector{2, R},
         fnorms::NTuple{2, R}) where {R <: AbstractFloat}
-    fnorms[1] == zero(R) && return (one(R), zero(R)), false
-    fnorms[2] == zero(R) && return (zero(R), one(R)), false
     τ_sin2 = R(1e-3)
     g11 = G[1, 1]
     g22 = G[2, 2]
@@ -184,7 +181,6 @@ end
         end
         order = setindex(order, key, j + 1)
     end
-    fnorms[order[1]] == zero(R) && return single_weight(Val(M), order[1], one(R)), false
     if !all(isfinite, G) || !all(isfinite, b)
         k = order[1]
         gkk = G[k, k]

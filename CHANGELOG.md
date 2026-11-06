@@ -844,10 +844,8 @@ so that a compat-only bump can be told apart from an interface change.
   and $b$ (`SVector{m, R}`) are formed by `rdot` with zero allocations; in R3, $\delta F_i$ are
   stored in `work.ΔF` ($n \times m$), $G = \operatorname{Re}(\Delta F^{\mathrm{H}} \Delta F)$ and
   $b = -\operatorname{Re}(\Delta F^{\mathrm{H}} F(x))$ are formed by `mul!!`, and on a device array
-  the small $m \times m$ and $m$ buffers are copied to the host once per step. When a candidate has
-  already reached an exact root ($\|F(x_{\text{best}})\| = 0$), `OptimalWeights` assigns exact unit
-  weight $w_{k_{\text{best}}} = 1$ without Tikhonov regularisation. Under the $\sin^2\theta$
-  rank rule ($\tau_{\sin^2} = 10^{-3}$), for $m = 2$,
+  the small $m \times m$ and $m$ buffers are copied to the host once per step. Under the
+  $\sin^2\theta$ rank rule ($\tau_{\sin^2} = 10^{-3}$), for $m = 2$,
   $\sin^2\theta = 1 - (G_{12} / G_{11})(G_{12} / G_{22})$ (and for $m \ge 3$, incremental Cholesky
   ordered by non-decreasing $\|F(x_i)\|$, with ties keeping the lowest member index) drops
   collinear or zero directions ($\sin^2\theta < 10^{-3}$ or $r_{jj}^2 \le \tau_{\sin^2} G_{jj}$),

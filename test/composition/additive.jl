@@ -215,9 +215,10 @@ end
     @test xnc₁ === (rnorm(F_nc1) <= rnorm(F_nc2) ? x_nc1 : x_nc2)
     @test info_nc.failures == Int32(1)
 
-    # A candidate that has already reached an exact root takes the exact unit weight, so
-    # the composite returns it bit for bit and counts no fallback. `F(x) = 2x - 4` from
-    # `x₀ = 1` puts `Newton` on `x = 2`, where `F(x) = 0` exactly.
+    # A candidate that has already reached an exact root goes through the Gram solve like any
+    # other. `F(x) = 2x - 4` from `x₀ = 1` puts each member on `x = 2`, where `F(x) = 0`
+    # exactly; the combined step lands beside it by rounding, so the safeguard returns the
+    # candidate bit for bit and counts one fallback.
     prob_root = NonlinearProblem((x, p) -> T(2) * x - T(4))
     x_r0 = one(T)
     Fr0 = residual!!(nothing, prob_root, x_r0, nothing)
@@ -235,7 +236,7 @@ end
         x_r, F_r, _, info_r = root_step(m_raw, x_r0, Fr0)
         @test x_r === T(2)
         @test iszero(F_r)
-        @test info_r.failures == Int32(0)
+        @test info_r.failures == Int32(1)
     end
 
     # Small weight L1 norm `sum(abs, w) < 0.1` also triggers PETSc safeguard
@@ -269,6 +270,21 @@ end
     @test all(isfinite, x₁_eq) && all(isfinite, F₁_eq)
     @test info_eq.failures == Int32(1)
 
+    # Two equal candidates that both land on an exact root: the Gram matrix is singular, the
+    # 1-weight step lands beside the root by rounding, and the safeguard returns the candidate
+    # bit for bit, the pair of rules counting one fallback.
+    prob_root = NonlinearProblem((x, p) -> T(2) * x - T(4))
+    x_r0 = one(T)
+    Fr0 = residual!!(nothing, prob_root, x_r0, nothing)
+    m_root = Adapt.adapt(ToReal{R}(), Additive(n_st, n_st))
+    st_root = init_state(m_root, prob_root, x_r0, nothing)
+    st_root = start!!(st_root, m_root, prob_root, x_r0, Fr0, nothing, rnorm(Fr0))
+    x₁_root, F₁_root, _, info_root = @inferred step!!(
+        st_root, m_root, prob_root, x_r0, Fr0, nothing)
+    @test x₁_root === T(2)
+    @test iszero(F₁_root)
+    @test info_root.failures == Int32(1)
+
     # Nearly-collinear candidates (`Picard(0.8)` vs `Picard(0.8 * (1 - 1e-5))`) where
     # candidate 1 has smaller residual than candidate 2 on `F(x) = x - [1, 1]` from `[2, 2]`
     prob_lin = NonlinearProblem((x, p) -> x .- SVector{2, T}(one(T), one(T)))
@@ -290,7 +306,7 @@ end
     st_c21 = start!!(st_c21, m_col21, prob_q, x₀, Fx₀, nothing, rnorm(Fx₀))
     xc21, Fc21, _, infoc21 = @inferred step!!(st_c21, m_col21, prob_q, x₀, Fx₀, nothing)
     @test all(isfinite, xc21) && all(isfinite, Fc21)
-    @test infoc21.failures >= Int32(1)
+    @test infoc21.failures == Int32(1)
 end
 
 @testset "Check 3: FixedWeights combination and real weights, $T" for T in ELTYPES
