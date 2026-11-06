@@ -214,7 +214,7 @@ end
         @test isapprox(x_sol, ones(T, 2); atol = T === Float32 ? 1.0f-5 : 1.0e-11)
     end
 
-    @testset "Globalization (Backtracking JVP) with TracerSparsityDetector (T = $T)" for T in REAL_ELTYPES
+    @testset "Backtracking globalization with TracerSparsityDetector (T = $T)" for T in REAL_ELTYPES
         _, prob_with_proto, z0, p_val, z_star = sparse_bracket_problem(125, T)
         prob = NonlinearProblem(prob_with_proto.F)
         backend = sparse_backend()
