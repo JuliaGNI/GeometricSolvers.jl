@@ -14,7 +14,7 @@ so that a compat-only bump can be told apart from an interface change.
 - **Automatic Jacobian sparsity detection and colouring for R3 nonlinear solves via the
   `GeometricSolversSparseADExt` package extension (`SparseConnectivityTracer` and
   `SparseMatrixColorings`)** (decision 53 of the design). `Project.toml` adds
-  `SparseConnectivityTracer` (`"1"`) and `SparseMatrixColorings` (`"0.4"`) as weak dependencies
+  `SparseConnectivityTracer` (`"1"`) and `SparseMatrixColorings` (`"0.4.23"`) as weak dependencies
   triggering `GeometricSolversSparseADExt`. When both packages are loaded and a `NonlinearProblem`
   has `jacobian_prototype === nothing`, `GeometricSolvers.jacobian_pattern(::NonlinearProblem{<:Any,
   <:Any, Nothing}, prep::DIJacobian{<:AutoSparse})` returns
