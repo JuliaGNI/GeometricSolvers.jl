@@ -20,12 +20,12 @@ end
 
 function _mps_lu_finish!(
         fac::DeviceLU{<:MtlMatrix{Float32}},
-        J::AbstractMatrix,
+        A::AbstractMatrix,
         F_ipiv::AbstractVector{<:Integer},
         status_code::Integer,
         e::Int = 0
 )
-    status_code < 0 && status_code != -2 && return GeometricSolvers.ka_factorize_lu!(fac, J)
+    status_code < 0 && status_code != -2 && return GeometricSolvers.ka_factorize_lu!(fac, A)
     fac.ipiv === F_ipiv || (fac.ipiv .= F_ipiv)
     info = status_code >= 0 ? Int(status_code) : _mps_lu_info(fac.factors)
     return DeviceLU(fac.factors, fac.ipiv, fac.rhs, info, e, fac.status)
@@ -39,8 +39,12 @@ function GeometricSolvers.factorize!!(
     e = GeometricSolvers.load_factors!(fac.factors, J)
     isempty(fac.factors) &&
         return DeviceLU(fac.factors, fac.ipiv, fac.rhs, 0, e, fac.status)
+    # `lu!` writes the factors over the matrix in `fac.factors`. A fallback to the own kernel
+    # reads the matrix again, so it keeps a copy of the matrix where the caller passed that
+    # buffer back as `J`.
+    A = J === fac.factors ? copy(fac.factors) : J
     F = LinearAlgebra.lu!(fac.factors; check = false)
-    return _mps_lu_finish!(fac, J, F.ipiv, Int(F.info), e)
+    return _mps_lu_finish!(fac, A, F.ipiv, Int(F.info), e)
 end
 
 function GeometricSolvers.backsolve!(

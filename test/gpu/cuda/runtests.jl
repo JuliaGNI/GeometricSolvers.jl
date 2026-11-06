@@ -377,6 +377,17 @@ if CUDA.functional()
         ldiv!!(dx_ok, fac_lu_fb, CuArray(T[5, 4]))
         @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
 
+        # The factor buffer passed back as `J`: `getrf!` writes the factors over it, so
+        # `factorize!!` keeps a copy of the matrix for a fallback, and the aliased call
+        # factorises and solves with the matrix it is given.
+        fac_al = dense_factor(LUFactorization(), prob2, dx_ok, nothing)
+        copyto!(fac_al.factors, dA_ok)
+        fac_al = factorize!!(fac_al, LUFactorization(), fac_al.factors)
+        @test fac_al.info == 0
+        @test returncode(fac_al) === SUCCESS
+        ldiv!!(dx_ok, fac_al, CuArray(T[5, 4]))
+        @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
+
         fac_svd_fb = dense_factor(SVDFactorization(), prob2, dx_ok, nothing)
         fill!(fac_svd_fb.U, zero(T))
         fill!(fac_svd_fb.σ̂, zero(RT))
