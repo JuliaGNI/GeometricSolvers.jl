@@ -867,7 +867,6 @@ so that a compat-only bump can be told apart from an interface change.
   `NonlinearSolver` take either, and `init` and `solve` have a method for each problem type. In R1,
   `gradient_hessian!!` evaluates both $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested
   `ForwardDiff.Dual` call, and `jvp!!` evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional
-  partial. In R3,
-  `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and on an
-  `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
+  partial. In R3, `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and
+  on an `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
   `Array`.
