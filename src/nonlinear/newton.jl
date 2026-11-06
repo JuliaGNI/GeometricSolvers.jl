@@ -278,7 +278,7 @@ end
     else
         fac = init_factor(m.linsolve, prob, x, p)
         return NewtonState(jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, x),
-            init_globalization(m.globalization, x), rule, merit, diag)
+            init_globalization(m.globalization, m.linsolve, x), rule, merit, diag)
     end
 end
 
@@ -481,17 +481,12 @@ end
         info = StepInfo{R}(SINGULAR, fnorm, zero(R), Int32(0), false, false)
         return x, Fx, state_d, info
     end
-    # The stacked solve factors `[J | -F]` once per outer step, here, so that a trial pays only
-    # the elimination of its own damping rows.
-    qr = use_svd ? nothing : lm_qr_prepare(state.d, state.g, Jreg, Fx, lm.scaling)
+    # The trial loop's workspace: the stored SVD factor, which needs no reduction, or the reduction
+    # of `[J | -F]` that the stacked path does once per outer step.
+    trial = lm_trial_workspace(m.linsolve, lm.scaling, state.d, state.g, fac, Jreg, Fx)
     failures = Int32(0)
     while true
-        if use_svd
-            δ = lm_svd_step(state.d, fac, Fx, μ)
-            step_ok = δ isa Number ? isfinite(δ) : all(isfinite, δ)
-        else
-            δ, step_ok = lm_qr_step(qr, Jreg, μ)
-        end
+        δ, step_ok = lm_trial(trial, μ)
         if step_ok
             Jδ = mul!!(lm_Jδ(state.g), Jreg, δ)
             pred = -2 * rdot(Fx, Jδ) - norm2(Jδ)

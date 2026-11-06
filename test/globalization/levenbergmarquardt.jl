@@ -1,24 +1,27 @@
 # `LevenbergMarquardt`, the damped-step globalization of `Newton`: the parameters and their
 # validation, the adapted damping, the rule state and its fail-closed initialisation, the damped
 # step against the damped normal equations in every element type and on both array ranks, the one
-# factorisation per Jacobian across rejected trials, the truncation of the ranks the factor drops,
-# the damping in the units of `Jᴴ J` at both ends of the scale and around the `4 eps` floor, the
-# gain ratio at a positive `ρ_accept` and at a trial that leaves the residual where it was, the
-# `STALLED` return at `μ_max` and the finite damping it keeps there, the rejection of a non-finite
-# trial residual, the refusal of the stacked solve on a device array, the standard reference
-# column, and the storage and allocations of the state.
+# factorisation per Jacobian across rejected trials, the one triangularisation of `[J | -F]` per
+# outer step of the stacked solve, the truncation of the ranks the factor drops, the damping in the
+# units of `Jᴴ J` at both ends of the scale and around the `4 eps` floor, the gain ratio at a
+# positive `ρ_accept` and at a trial that leaves the residual where it was, the `STALLED` return at
+# `μ_max` and the finite damping it keeps there, the rejection of a non-finite trial residual, the
+# refusal of the stacked solve on a device array, the stacked step against the closed form in
+# `Complex{BigFloat}`, the standard reference column, and the storage and allocations of the state
+# and of every path.
 #
 # The cases that need the step in closed form take a linear problem with an analytic `J` and one
 # `step!!`, so that the expected `δ` is the solution of `(Jᴴ J + μ D²) δ = -Jᴴ F` computed
-# directly, with `D` the identity or, under `scaling = :diagonal`, the diagonal of the floored
-# column norms. `μ` is absolute, measured in the units of `Jᴴ J`, so the reference takes it as it
-# is and a factor's power-of-two scale reaches the step only through `Jᴴ J`.
+# directly, in the working precision or in `Complex{BigFloat}`, with `D` the identity or, under
+# `scaling = :diagonal`, the diagonal of the floored column norms. `μ` is absolute, measured in the
+# units of `Jᴴ J`, so the reference takes it as it is and a factor's power-of-two scale reaches the
+# step only through `Jᴴ J`.
 
 using Adapt: Adapt
 using GPUArraysCore: allowscalar
 using JET: JET, @test_opt
 using JLArrays: JLArray
-using LinearAlgebra: I, mul!, norm
+using LinearAlgebra: I, cond, mul!, norm
 using StaticArrays: @SMatrix, @SVector, SMatrix, SVector
 using Test
 
@@ -50,6 +53,133 @@ function GeometricSolvers.factorize!!(fac, m::CountingFactorization, J)
 end
 function GeometricSolvers.init_factor(m::CountingFactorization, prob, x, p)
     GeometricSolvers.init_factor(m.method, prob, x, p)
+end
+
+# A linear method that counts the triangularisation of `[J | -F]`, the `O(n³)` reduction that an
+# outer step of the stacked solve does once. That path never calls `factorize!!`, so the count is
+# on the hook the reduction goes through.
+struct CountingStacked{M <: LinearMethod} <: LinearMethod{Nothing}
+    method::M
+    count::Base.RefValue{Int}
+end
+
+function GeometricSolvers.lm_stacked_factor!(m::CountingStacked, R₀, c₀, J, Fx)
+    m.count[] += 1
+    return GeometricSolvers.lm_qr_factor!(R₀, c₀, J, Fx)
+end
+function GeometricSolvers.init_factor(m::CountingStacked, prob, x::AbstractVector, p)
+    GeometricSolvers.init_factor(m.method, prob, x, p)
+end
+function GeometricSolvers.init_factor(m::CountingStacked, prob, x, p)
+    GeometricSolvers.init_factor(m.method, prob, x, p)
+end
+
+# A dense Jacobian with no zero entry: the imaginary part is separated from the real one per entry.
+# `N` is a `Val` so that the matrix is a concrete `SMatrix` at the call site, which an allocation
+# measurement needs.
+function lm_test_matrix(::Val{N}, ::Type{T}) where {N, T}
+    return SMatrix{N, N, T}(ntuple(
+        i -> T((i * 7) % 5 + 2) +
+             (T <: Complex ? T(im) * T((i * 3) % 4 + 1) : zero(T)),
+        Val(N * N)))
+end
+
+# The right-hand side `b` of the linear system `F(x) = J x - b`.
+function lm_test_rhs(::Val{N}, ::Type{T}) where {N, T}
+    return SVector{N, T}(ntuple(i -> T(i) - T(N) / 2, Val(N)))
+end
+
+# `δ(μ) = -(Jᴴ J + μ D²)⁻¹ Jᴴ F` for the damping diagonal `d`, computed in `Complex{BigFloat}`: the
+# reference that carries none of the step's own rounding, so that the tolerance left is the step's
+# and is measured against `eps(real(T)) · κ(J)`.
+function lm_stacked_reference(J, F, μ, d)
+    B = Complex{BigFloat}
+    n = size(J, 1)
+    Jb = [B(J[i, j]) for i in 1:n, j in 1:n]
+    Fb = [B(F[i]) for i in 1:n]
+    A = Jb' * Jb
+    for i in 1:n
+        A[i, i] += B(μ) * B(d[i])^2
+    end
+    return -(A \ (Jb' * Fb))
+end
+
+# The error of one stacked step against `lm_stacked_reference`, relative to `‖δ‖ · eps(R) · κ(J)`.
+function lm_stacked_error(δ, δ_ref, J, ::Type{R}) where {R}
+    scale = Float64(norm(δ_ref)) * eps(R) * cond(ComplexF64.(J))
+    return norm(ComplexF64.(δ) - ComplexF64.(δ_ref)) / scale
+end
+
+# The iterate of the `N`-dimensional case: a `Number` for `N = 1`, which is the scalar path of the
+# stacked solve, and an `SVector` above it.
+lm_test_iterate(::Val{1}, ::Type{T}) where {T} = zero(T)
+lm_test_iterate(::Val{N}, ::Type{T}) where {N, T} = zero(SVector{N, T})
+
+# One accepted trial of the stacked solve on the dense system of `lm_test_matrix`, with its
+# `StepInfo` and the error of its step against the closed form.
+function lm_stacked_case(::Val{N}, ::Type{T}, ls, sc, μ₀) where {N, T}
+    R = real(T)
+    J = lm_test_matrix(Val(N), T)
+    b = lm_test_rhs(Val(N), T)
+    prob = NonlinearProblem((x, _) -> J * x - b, (_, _) -> J)
+    m = Newton(;
+        linsolve = ls,
+        globalization = LevenbergMarquardt(R; μ₀ = μ₀, μ_min = μ₀, scaling = sc))
+    x0 = lm_test_iterate(Val(N), T)
+    Fx = prob.F(x0, nothing)
+    st = start!!(init_state(m, prob, x0, nothing), m, prob, x0, Fx, nothing, rnorm(Fx))
+    x1, _, _, info = step!!(st, m, prob, x0, Fx, nothing)
+    d_diag = lm_damping_diagonal(J, Val(sc))
+    return info, lm_stacked_error(x1 - x0, lm_stacked_reference(J, Fx, μ₀, d_diag), J, R)
+end
+
+# The same trial on an array iterate, whose factor and elimination buffers are the state's.
+function lm_stacked_case_r3(::Val{N}, ::Type{T}, sc) where {N, T}
+    R = real(T)
+    J = lm_test_matrix(Val(N), T)
+    b = lm_test_rhs(Val(N), T)
+    Jd, bd = Matrix(J), Vector(b)
+    prob = NonlinearProblem(
+        (F, x, _) -> (mul!(F, Jd, x); F .-= bd; nothing),
+        (Jm, _, _) -> (copyto!(Jm, Jd); nothing))
+    m = Newton(;
+        linsolve = QRFactorization(),
+        globalization = LevenbergMarquardt(R; μ₀ = 1.0, μ_min = 1.0, scaling = sc))
+    solver = init(prob, zeros(T, N), m)
+    prob.F(solver.state.Fx, solver.x, nothing)
+    st = start!!(
+        solver.state, m, prob, solver.x, solver.state.Fx, nothing, rnorm(solver.state.Fx))
+    x1, _, _, info = step!!(st, m, prob, solver.x, solver.state.Fx, nothing)
+    d_diag = lm_damping_diagonal(J, Val(sc))
+    return info, lm_stacked_error(
+        Array(x1), lm_stacked_reference(J, -b, 1.0, d_diag), J, R)
+end
+
+# The bytes one `step!!` on a value iterate allocates, through a function barrier: `N` and `T` are
+# static parameters, so the barrier's argument has a concrete type.
+function lm_r1_allocations(::Val{N}, ::Type{T}, ls, sc) where {N, T}
+    J = lm_test_matrix(Val(N), T)
+    b = lm_test_rhs(Val(N), T)
+    prob = NonlinearProblem((x, _) -> J * x - b, (_, _) -> J)
+    m = Newton(; linsolve = ls, globalization = LevenbergMarquardt(real(T); scaling = sc))
+    x0 = lm_test_iterate(Val(N), T)
+    Fx = prob.F(x0, nothing)
+    st = start!!(init_state(m, prob, x0, nothing), m, prob, x0, Fx, nothing, rnorm(Fx))
+    args = (st, m, prob, x0, Fx, nothing)
+    return allocations(t -> step!!(t[1], t[2], t[3], t[4], t[5], t[6]), args)
+end
+
+# The same for a scalar iterate, where the Jacobian is the one entry and not a `1×1` matrix.
+function lm_r1_allocations(::Val{1}, ::Type{T}, ls, sc) where {T}
+    J = lm_test_matrix(Val(1), T)[1, 1]
+    b = lm_test_rhs(Val(1), T)[1]
+    prob = NonlinearProblem((x, _) -> J * x - b, (_, _) -> J)
+    m = Newton(; linsolve = ls, globalization = LevenbergMarquardt(real(T); scaling = sc))
+    x0 = zero(T)
+    Fx = prob.F(x0, nothing)
+    st = start!!(init_state(m, prob, x0, nothing), m, prob, x0, Fx, nothing, rnorm(Fx))
+    args = (st, m, prob, x0, Fx, nothing)
+    return allocations(t -> step!!(t[1], t[2], t[3], t[4], t[5], t[6]), args)
 end
 
 # The damped step `(Jᴴ J + μ I) δ = -Jᴴ F` solved directly, for a linear problem `F = J x - b`
@@ -173,6 +303,33 @@ end
         # D2: a zero Jacobian floors every column norm at `one(R)`.
         @test lm_damping_diagonal(zero(SMatrix{2, 2, Float64}), Val(:diagonal)) ==
               SVector(1.0, 1.0)
+
+        # D2's floor is `√eps(R) · maxⱼ dⱼ`, and not `eps(R) · maxⱼ dⱼ`: a column norm between the
+        # two lies on the scale of the matrix and still takes the floor.
+        @test lm_damping_diagonal(@SMatrix([1.0 0.0; 0.0 1e-12]), Val(:diagonal)) ==
+              SVector(1.0, sqrt(eps(Float64)))
+        @test lm_damping_diagonal(@SMatrix([1.0e8 0.0; 0.0 1.0e-4]), Val(:diagonal)) ==
+              SVector(1.0e8, sqrt(eps(Float64)) * 1.0e8)
+        # A column norm above the floor is kept as it is.
+        @test lm_damping_diagonal(@SMatrix([1.0 0.0; 0.0 0.5]), Val(:diagonal)) ==
+              SVector(1.0, 0.5)
+
+        # A scalar iterate takes the 1×1 stacked solve: `(J² + μ d²) δ = J b` for `F = J x - b`.
+        for ls in (QRFactorization(), LUFactorization()), sc in (:none, :diagonal)
+
+            J, b, μ0 = 3.0, 4.0, 1e-2
+            prob = NonlinearProblem((x, _) -> J * x - b, (_, _) -> J)
+            x, _ = solve(
+                prob, 0.0,
+                Newton(;
+                    linsolve = ls,
+                    globalization = LevenbergMarquardt(; μ₀ = μ0, μ_min = μ0,
+                        scaling = sc)),
+                nothing; options = Options(Float64; f_abstol = 1e-30, f_reltol = 0.0,
+                    max_iterations = 1))
+            d = sc === :none ? 1.0 : J
+            @test isapprox(x, J * b / (J^2 + μ0 * d^2); rtol = 1e-12)
+        end
     end
 
     @testset "Check 1: quadratic tail at μ_min in REAL_ELTYPES (MU1)" begin
@@ -313,6 +470,50 @@ end
         @test factors[] == 1
         # the accepted trial's damping had grown past `μ₀`, so the step is a limited one
         @test info.limited
+    end
+
+    @testset "Check 3b: the stacked solve reduces [J | -F] once per step (MU3)" begin
+        # The stacked path never calls `factorize!!`: its `O(n³)` work per step is the
+        # triangularisation of `[J | -F]`, which `CountingStacked` counts. A count above one is a
+        # trial that factorises `J` again after a rejected damping.
+        F_nan(x) = norm(x) > 1.5 ? SVector(NaN, NaN) : SVector(x[1] - 1, x[2] - 1)
+        J_small = @SMatrix [0.01 0.0; 0.0 0.01]
+        for (ls, sc) in ((QRFactorization(), :none), (LUFactorization(), :none),
+            (SVDFactorization(), :diagonal))
+            count = Ref(0)
+            prob = NonlinearProblem((x, _) -> F_nan(x), (_, _) -> J_small)
+            m = Newton(;
+                linsolve = CountingStacked(ls, count),
+                globalization = LevenbergMarquardt(; scaling = sc))
+            x = SVector(0.0, 0.0)
+            Fx = prob.F(x, nothing)
+            st = start!!(
+                init_state(m, prob, x, nothing), m, prob, x, Fx, nothing, rnorm(Fx))
+            _, _, _, info = step!!(st, m, prob, x, Fx, nothing)
+            @test info.code == SUCCESS
+            @test info.failures >= 2
+            @test count[] == 1
+        end
+        # The same on an array iterate, where the factor lives in the buffers of the state.
+        for (ls, sc) in ((QRFactorization(), :none), (LUFactorization(), :none),
+            (SVDFactorization(), :diagonal))
+            count = Ref(0)
+            prob = NonlinearProblem(
+                (F, x, _) -> (copyto!(F, F_nan(x)); nothing),
+                (J, _, _) -> (copyto!(J, J_small); nothing))
+            m = Newton(;
+                linsolve = CountingStacked(ls, count),
+                globalization = LevenbergMarquardt(; scaling = sc))
+            solver = init(prob, [0.0, 0.0], m)
+            prob.F(solver.state.Fx, solver.x, nothing)
+            st = start!!(
+                solver.state, m, prob, solver.x, solver.state.Fx, nothing,
+                rnorm(solver.state.Fx))
+            _, _, _, info = step!!(st, m, prob, solver.x, solver.state.Fx, nothing)
+            @test info.code == SUCCESS
+            @test info.failures >= 2
+            @test count[] == 1
+        end
     end
 
     @testset "Check 4: STALLED at μ_max and a non-finite trial (MU4, MU5)" begin
@@ -669,13 +870,84 @@ end
                 globalization = LevenbergMarquardt(real(T); scaling = sc))
             if AT === JLArray && !(ls isa SVDFactorization && sc === :none)
                 # The stacked path indexes scalars: a device iterate is refused at `init` rather
-                # than throwing "Scalar indexing is disallowed" at its first trial.
-                @test_throws ArgumentError init(prob, AT(zeros(T, 2)), m)
+                # than throwing "Scalar indexing is disallowed" at its first trial, and the
+                # message names the step a device iterate takes.
+                err = try
+                    init(prob, AT(zeros(T, 2)), m)
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa ArgumentError
+                msg = err isa ArgumentError ? err.msg : ""
+                pattern = "^a device array iterate takes LevenbergMarquardt\\(\\) with " *
+                          "SVDFactorization\\(\\) and scaling = :none only"
+                @test occursin(Regex(pattern), msg)
             else
                 x, st = solve(prob, AT(zeros(T, 2)), m)
                 @test st.code == SUCCESS
                 @test norm(Array(x) - A \ b) <= sqrt(eps(real(T)))
             end
+        end
+    end
+
+    @testset "Check 6f: the stacked step against the closed form in ELTYPES (MU10)" begin
+        # The Givens rotations of the stacked solve carry `-conj(sn)`; with `-sn` the rotation is
+        # not unitary and the step is wrong on a complex element type and only there. One accepted
+        # trial at `μ₀` compares the step with `-(Jᴴ J + μ D²)⁻¹ Jᴴ F` computed in
+        # `Complex{BigFloat}`. The tolerance is `64 eps(R) κ(J)`, a multiple of the `eps · κ` a
+        # factorisation of this size costs: the measured error of the branch is at most `0.19` of
+        # that unit, and the error of the dropped `conj` is above `1e5` units.
+        for nv in (Val(3), Val(4)), T in ELTYPES,
+            ls in (QRFactorization(), LUFactorization()), sc in (:none, :diagonal),
+            μ₀ in (1.0, 4.0)
+            info, err = lm_stacked_case(nv, T, ls, sc, μ₀)
+            @test info.code == SUCCESS
+            @test info.failures == 0
+            @test err <= 64.0
+        end
+        # The same on an array iterate, whose factor and elimination run on the state's buffers.
+        for nv in (Val(3), Val(4)), T in ELTYPES, sc in (:none, :diagonal)
+            info, err = lm_stacked_case_r3(nv, T, sc)
+            @test info.code == SUCCESS
+            @test info.failures == 0
+            @test err <= 64.0
+        end
+    end
+
+    @testset "Check 6g: the R1 step allocates nothing on every path" begin
+        # The stacked solve keeps `(R₀, c₀, d_diag)` as values and builds its elimination copies
+        # in the call that reads them, so no mutable array crosses a call or a loop iteration.
+        # `--check-bounds=yes` lets `StaticArrays`' `MMatrix` escape to the heap and skips the
+        # assertion, which `run-tests.jl` runs with that flag on a Julia before 1.13.
+        if Base.JLOptions().check_bounds != 1
+            @test allocations(collect, [1.0, 2.0]) > 0
+            for nv in (Val(1), Val(2), Val(4)), T in ELTYPES,
+                ls in (SVDFactorization(), QRFactorization(), LUFactorization()),
+                sc in (:none, :diagonal)
+                @test lm_r1_allocations(nv, T, ls, sc) == 0
+            end
+        end
+    end
+
+    @testset "The SVD path allocates no stacked buffer" begin
+        # The stacked solve reads its own buffers and the SVD step reads none of them: an `init`
+        # of the SVD path allocates none, and one of the stacked path allocates them all.
+        prob_r3 = NonlinearProblem(
+            (F, x, _) -> (F .= x .^ 2 .- 4.0; nothing),
+            (J, x, _) -> (J[1, 1] = 2 * x[1]; J[2, 2] = 2 * x[2]; J[1, 2] = 0.0;
+                J[2, 1] = 0.0; nothing))
+        for (ls, sc, stacked) in ((SVDFactorization(), :none, false),
+            (SVDFactorization(), :diagonal, true), (QRFactorization(), :none, true),
+            (LUFactorization(), :none, true))
+            m = Newton(;
+                linsolve = ls, globalization = LevenbergMarquardt(; scaling = sc))
+            g = init(prob_r3, [3.0, 3.0], m).state.g
+            @test (g.R₀ !== nothing) === stacked
+            @test (g.R !== nothing) === stacked
+            @test (g.d_diag !== nothing) === stacked
+            @test (g.w !== nothing) === stacked
+            @test g.Jδ !== nothing && g.xt !== nothing && g.Ft !== nothing
         end
     end
 

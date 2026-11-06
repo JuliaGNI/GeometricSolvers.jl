@@ -62,6 +62,11 @@ Allocate the workspace named tuple for globalization method `g` at iterate `x` t
 @inline init_globalization(::LineSearch, x) = (;
     xt = buffer(x), Ft = buffer(x), Jv = buffer(x))
 
+# A globalization whose workspace depends on the linear method of the solve — `LevenbergMarquardt`
+# allocates the stacked buffers only for the paths that read them — takes the method; any other
+# globalization has the workspace above.
+@inline init_globalization(g, ::LinearMethod, x) = init_globalization(g, x)
+
 # The merit `norm2(F)` of the current residual, which a solver carries in its state for a line
 # search, the one globalization that reads it: the anchor merit of the next step. Any other
 # globalization carries `nothing`, and computes none; `Static` searches nothing. `init_merit` is

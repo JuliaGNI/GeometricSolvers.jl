@@ -12,8 +12,8 @@ using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
 using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
                           get_backend, isgpu, synchronize
-using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, ldiv!,
-                     lu!, mul!, qr!
+using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, givens,
+                     ldiv!, lu!, mul!, qr!
 using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
                     StaticMatrix, StaticVector, SVector,
                     setindex
