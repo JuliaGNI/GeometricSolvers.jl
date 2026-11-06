@@ -131,3 +131,17 @@
   for a later pull request.
 - **kind:** defect
 - **found:** PR #58
+
+### K29 · `solve!` and `solve_batch!` on a `Reparametrized` stationarity problem do not take the datum `b`
+
+- **location:** `src/nonlinear/reparametrized.jl` (`solve!(::ReparametrizedSolver)`, `solve_batch!`)
+- **evidence:** With `S(x, p) = sum(abs2, x) / 2 - sum(x)`, `g(y, p) = y` and
+  `r = Reparametrized(StationarityProblem(S), g)`, `solve(r, SVector(0.1, 0.2); b = 1.0)` returns
+  the root `[2.8e-17, 5.6e-17]` of `x - 1 + b`. `solve!(init(r, SVector(0.1, 0.2)); b = 1.0)`
+  raises `MethodError: no method matching solve!(::ReparametrizedSolver{…}; b::Float64)`, and
+  `solve_batch!([SVector(0.1, 0.2), SVector(0.3, 0.4)], r; b = 1.0)` raises
+  `MethodError: no method matching Options(::Type{Float64}; b::Float64)` (tree of `9807131`,
+  Julia 1.13.3). A plain `StationarityProblem` takes `b` on all four entry points. Support on
+  `solve!` and `solve_batch!`, with a `PerSystem` datum for a batch, is for a later pull request.
+- **kind:** defect
+- **found:** PR #57
