@@ -107,3 +107,27 @@
   the factor from the allocated matrix instead of from `x`.
 - **kind:** defect
 - **found:** PR #55 (CodeRabbit, on #56)
+
+### K27 · `init` accepts `LDLTFactorization` for a `StationarityProblem` with `E ≠ U`, whose Jacobian is not symmetric
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring, `init`)
+- **evidence:** `LDLTFactorization` reads only the lower triangle of `J = (∇²S)_{E, U}`, and `J`
+  is symmetric only where `E == U`. The `StationarityProblem` docstring states this limit, but
+  `init`, `solve`, `solve!` and `solve_batch!` do not check it, so a solve with `E ≠ U` and
+  `LDLTFactorization` factorises the wrong matrix with no error. The check is for a later pull
+  request: `init` raises an `ArgumentError` for `LDLTFactorization` when `E ≠ U`.
+- **kind:** defect
+- **found:** PR #58
+
+### K28 · A `StationarityProblem` with a complex state fails in the default automatic differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring)
+- **evidence:** With `S(x, p) = sum(abs2, x) / 2 - sum(x)`, `solve(StationarityProblem(S), x0)`
+  returns `SUCCESS` at `[1.0, 1.0]` for `x0 = Float64[0.1, 0.2]`. For `ComplexF64[0.1, 0.2]` it
+  raises `ArgumentError: Cannot create a dual over scalar type ComplexF64`, and for an
+  `SVector{2, ComplexF64}` or a `ComplexF64` it raises `MethodError: no method matching
+  _stationarity_residual_r1(::ADTypes.AutoForwardDiff{nothing, Nothing}, …)` (tree of `989000e`,
+  Julia 1.13.3). The docstring states that the state must be real. Support for a complex state is
+  for a later pull request.
+- **kind:** defect
+- **found:** PR #58

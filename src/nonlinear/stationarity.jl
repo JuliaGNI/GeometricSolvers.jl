@@ -23,6 +23,10 @@ Where `E == U`, `J` is a block of the Hessian of `S` and is symmetric. For other
 not symmetric in general, so [`LDLTFactorization`](@ref), which reads only the lower triangle,
 does not apply, and [`LUFactorization`](@ref) or [`QRFactorization`](@ref) does.
 
+The state `x` must be real. For a complex state the default automatic differentiation raises an
+error: an `ArgumentError` from ForwardDiff for an array iterate, and a `MethodError` for an R1
+iterate.
+
 # Arguments
 
 - `S`: a scalar callable `S(x, p)` returning a scalar in the element type of `x`.
