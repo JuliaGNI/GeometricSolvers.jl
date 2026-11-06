@@ -913,9 +913,8 @@ function _counted_norm2(a)
     return isempty(a) ? 0.0 : Float64(sum(abs2, a))
 end
 
-for V in (Vector{Float64}, JLArray{Float64, 1})
-    @eval GS.norm2(a::$V) = _counted_norm2(a)
-end
+GS.norm2(a::Vector{Float64}) = _counted_norm2(a)
+GS.norm2(a::JLArray{Float64, 1}) = _counted_norm2(a)
 
 @testset "A step in the working precision adds no reduction" begin
     function f_red!(F, x, _)
@@ -944,7 +943,7 @@ end
         counts = Int[]
         for _ in 1:3
             NORM2_CALLS[] = 0
-            x, Fx, st, info = GS.step!!(st, m, prob, x, Fx, nothing)
+            x, Fx, st, _ = GS.step!!(st, m, prob, x, Fx, nothing)
             push!(counts, NORM2_CALLS[])
         end
         @test counts == expected
