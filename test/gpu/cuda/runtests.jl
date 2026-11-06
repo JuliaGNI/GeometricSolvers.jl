@@ -1,18 +1,19 @@
+# The tests of `GeometricSolversCUDAExt`, run by hand on a machine with a CUDA device:
+# `julia --project=test/gpu/cuda test/gpu/cuda/runtests.jl`. The extension loading and dispatch
+# rows run without a device; every row that factorises runs where `CUDA.functional()`.
+
 using CUDA
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, BlasFloat, Diagonal, I, LU, cond, lu!, norm, opnorm, qr, qr!,
-                     svd!
+using LinearAlgebra: BLAS, Diagonal, I, LU, cond, lu!, norm, opnorm, qr, qr!, svd!
 using Random: Xoshiro
 using Test
 
 using GeometricSolvers
 using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
-using GeometricSolvers: LUFactorization, Newton, NonlinearProblem, QRFactorization,
-                        SVDFactorization
-using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factor_eltype,
-                        factorize!!, init, jacobi_tolerance, ka_factorize_lu!,
-                        ka_factorize_qr!, ka_factorize_svd!, ldiv!!, returncode, solve,
-                        solve!
+using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
+using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!,
+                        ka_factorize_lu!, ka_factorize_qr!, ka_factorize_svd!, ldiv!!,
+                        returncode
 
 include("../../helpers/own_kernel.jl")
 

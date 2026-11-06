@@ -36,8 +36,7 @@ function cuda_well_conditioned(T::Type, n::Int, seed::Integer = 0x5eed)
 end
 
 # The `src/` kernel that solves with the factors of `fac`, in the factor element type `F`: the
-# device kernels of `src/linear/ka/` that the `ka_*_backsolve!` methods of the two extensions
-# wrap, called on the factor's own buffers.
+# device kernels of `src/linear/ka/`, called on the factor's own buffers.
 own_kernel_backsolve!(fac::DeviceLU, d) = (ka_lu_backsolve!(fac.factors, fac.ipiv, d); d)
 own_kernel_backsolve!(fac::DeviceQR, d) = (ka_qr_backsolve!(fac.factors, fac.τ, d); d)
 own_kernel_backsolve!(fac::DeviceSVD, d) = (ka_svd_backsolve!(fac, d, false); d)

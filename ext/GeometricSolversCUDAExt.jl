@@ -7,8 +7,7 @@ module GeometricSolversCUDAExt
 
 using CUDA: CUDA, CuMatrix, CuVector
 using GeometricSolvers: GeometricSolvers, DeviceLU, DeviceQR, DeviceSVD,
-                        LUFactorization, QRFactorization, SVDFactorization,
-                        jacobi_tolerance
+                        LUFactorization, QRFactorization, SVDFactorization
 using LinearAlgebra: LinearAlgebra, BlasFloat, adjoint!, diagind
 
 function _cusolver_lu_finish!(
@@ -34,13 +33,6 @@ function GeometricSolvers.factorize!!(
         return DeviceLU(fac.factors, fac.ipiv, fac.rhs, 0, e, fac.status)
     _, _, info_c = CUDA.CUSOLVER.getrf!(fac.factors, fac.ipiv)
     return _cusolver_lu_finish!(fac, J, info_c, e)
-end
-
-function GeometricSolvers.ka_lu_backsolve!(
-        fac::DeviceLU{<:CuMatrix},
-        d::CuVector
-)
-    return GeometricSolvers.ka_lu_backsolve!(fac.factors, fac.ipiv, d)
 end
 
 function GeometricSolvers.backsolve!(
@@ -71,13 +63,6 @@ function GeometricSolvers.factorize!!(
     return DeviceQR(fac.factors, fac.τ, fac.rhs, info, e, fac.status)
 end
 
-function GeometricSolvers.ka_qr_backsolve!(
-        fac::DeviceQR{<:CuMatrix},
-        d::CuVector
-)
-    return GeometricSolvers.ka_qr_backsolve!(fac.factors, fac.τ, d)
-end
-
 function GeometricSolvers.backsolve!(
         fac::DeviceQR{<:CuMatrix{T}},
         d::CuVector{T}
@@ -88,25 +73,32 @@ function GeometricSolvers.backsolve!(
     return d
 end
 
+# The factor of a matrix that cannot be factorised, a non-finite entry in the matrix or in its
+# factors: `info = 1` and `rank = 0`, the zero step, with `flag` raised and no singular value.
+function _cusolver_svd_failed!(fac::DeviceSVD{<:CuMatrix{T}}, e::Int) where {T}
+    RT = real(T)
+    fill!(fac.flag, Int32(1))
+    fill!(fac.S, zero(RT))
+    fill!(fac.σ̂, zero(RT))
+    return DeviceSVD(
+        fac.factors, fac.U, fac.S, fac.VT, fac.V,
+        fac.σ̂, fac.flag, fac.tmp, fac.rhs, 1, 0, e)
+end
+
 function _cusolver_svd_finish!(
         fac::DeviceSVD{<:CuMatrix{T}},
         J::AbstractMatrix,
         U::AbstractMatrix{T},
-        S::AbstractVector{RT},
+        S::AbstractVector{<:Real},
         V::AbstractMatrix{T},
         info_c::Integer,
         e::Int = 0
-) where {T <: BlasFloat, RT <: Real}
+) where {T <: BlasFloat}
     if info_c != 0
         return GeometricSolvers.ka_factorize_svd!(fac, J)
     end
     if !all(isfinite, S) || !all(isfinite, U) || !all(isfinite, V)
-        fill!(fac.flag, Int32(1))
-        fill!(fac.S, zero(RT))
-        fill!(fac.σ̂, zero(RT))
-        return DeviceSVD(
-            fac.factors, fac.U, fac.S, fac.VT, fac.V,
-            fac.σ̂, fac.flag, fac.tmp, fac.rhs, 1, 0, e)
+        return _cusolver_svd_failed!(fac, e)
     end
     copyto!(fac.U, U)
     copyto!(fac.V, V)
@@ -114,10 +106,7 @@ function _cusolver_svd_finish!(
     copyto!(fac.σ̂, S)
     fac.S .= GeometricSolvers.ldexp2.(S, e)
     n = size(fac.factors, 1)
-    tol = jacobi_tolerance(n, RT)
-    σ1 = maximum(fac.σ̂)
-    cutoff = tol * σ1
-    r = σ1 > zero(RT) ? Int(count(>(cutoff), fac.σ̂)) : 0
+    r = GeometricSolvers.svd_rank(Array(fac.σ̂))
     r < n && fill!(@view(fac.U[:, (r + 1):n]), zero(T))
     fill!(fac.flag, Int32(0))
     return DeviceSVD(
@@ -133,7 +122,6 @@ function GeometricSolvers.factorize!!(
     isempty(fac.factors) && return DeviceSVD(
         fac.factors, fac.U, fac.S, fac.VT, fac.V,
         fac.σ̂, fac.flag, fac.tmp, fac.rhs, 0, 0, 0)
-    RT = real(T)
     # `J` goes into `fac.factors`, the Jacobian buffer that the factor documents and that a caller
     # may pass back as `J`, and `J / 2^e` into `fac.U`, the matrix that `gesvdj!` factorises.
     if eltype(J) === T
@@ -141,43 +129,21 @@ function GeometricSolvers.factorize!!(
     else
         fac.factors .= J
     end
-    if !all(isfinite, J)
-        fill!(fac.flag, Int32(1))
-        fill!(fac.S, zero(RT))
-        fill!(fac.σ̂, zero(RT))
-        return DeviceSVD(
-            fac.factors, fac.U, fac.S, fac.VT, fac.V,
-            fac.σ̂, fac.flag, fac.tmp, fac.rhs, 1, 0, 0)
-    end
+    all(isfinite, J) || return _cusolver_svd_failed!(fac, 0)
     e = GeometricSolvers.matrix_exponent(J)
     fac.U .= GeometricSolvers.ldexp2.(J, -e)
-    if !all(isfinite, fac.U)
-        fill!(fac.flag, Int32(1))
-        fill!(fac.S, zero(RT))
-        fill!(fac.σ̂, zero(RT))
-        return DeviceSVD(
-            fac.factors, fac.U, fac.S, fac.VT, fac.V,
-            fac.σ̂, fac.flag, fac.tmp, fac.rhs, 1, 0, e)
-    end
+    all(isfinite, fac.U) || return _cusolver_svd_failed!(fac, e)
     U, S, V = CUDA.CUSOLVER.gesvdj!('V', 1, fac.U)
     info_c = Int(Array(CUDA.CUSOLVER.dense_handle().info)[1])
     return _cusolver_svd_finish!(fac, J, U, S, V, info_c, e)
-end
-
-function GeometricSolvers.ka_svd_backsolve!(
-        fac::DeviceSVD{<:CuMatrix},
-        d::CuVector
-)
-    GeometricSolvers.ka_svd_backsolve!(fac, d, false)
-    return d
 end
 
 function GeometricSolvers.backsolve!(
         fac::DeviceSVD{<:CuMatrix{T}},
         d::CuVector{T}
 ) where {T <: BlasFloat}
-    isempty(d) && return d
-    return GeometricSolvers.ka_svd_backsolve!(fac, d)
+    GeometricSolvers.ka_svd_backsolve!(fac, d, false)
+    return d
 end
 
 end # module GeometricSolversCUDAExt

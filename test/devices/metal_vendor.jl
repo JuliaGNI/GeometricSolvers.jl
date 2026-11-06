@@ -1,5 +1,5 @@
 using GPUArraysCore: allowscalar
-using LinearAlgebra: LinearAlgebra, BLAS, Diagonal, I, LU, cond, lu!, norm, opnorm
+using LinearAlgebra: LinearAlgebra, BLAS, I, LU, cond, lu!, norm, opnorm
 using Metal
 using Random: Xoshiro
 using Test
