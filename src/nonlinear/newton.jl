@@ -245,7 +245,8 @@ end
 # of the last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the
 # working-precision factor slot for mixed-precision promotion, the promotion flag, and the count
 # of consecutive slow steps a promotion waits for (`slow_steps = Int32(-1)` before `start!!` and
-# after `finish!!`).
+# after `finish!!`). The norm `‖Fx‖` of the current residual is `NaN` on a state that no
+# `start!!` saw or that `solve!!` returned.
 struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT}
     jacprep::JP
     jvpprep::VP
@@ -292,6 +293,8 @@ end
         s.refbuf, s.fac_T, s.promoted, s.slow_steps)
 end
 
+# The merit of the current residual and its norm: the two values a step returns, or that a solve
+# starts from.
 @inline function with_merit(s::NewtonState, merit, fnorm)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit,
