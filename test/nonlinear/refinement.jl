@@ -14,9 +14,10 @@ const GS = GeometricSolvers
 include("../helpers/matrix.jl")
 
 # The allocation probes sit behind a function barrier: `@allocated` measures the call it wraps, so
-# each probe warms its own path first and then measures the same call again. `allocations` is the
-# control: it shows that the barrier sees an allocation on this build, so that a measured zero is
-# the solver's and not the probe's.
+# each probe warms its own path first and then measures the same call again. The step count beside
+# a measurement is the warm-up solve's; the measured call takes the same deterministic path.
+# `allocations` is the control: it shows that the barrier sees an allocation on this build, so that
+# a measured zero is the solver's and not the probe's.
 allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
 
 @noinline function _measure_solve_alloc!(solver::S, x::X, x0::X) where {S, X}
@@ -263,6 +264,12 @@ end
         d0, NoRefinement(), fac32, nothing, prob_r1, x0, Fx, fnorm, nothing, nothing)
     @test d_noref === d0
     @test !failed_noref
+    # `refbuf` is optional in the documented signature, so the same call without it is the same
+    # answer: the method reads neither `fnorm` nor `Fx` and no buffer.
+    d_noref9, failed_noref9 = GS.refine!!(
+        d0, NoRefinement(), fac32, nothing, prob_r1, x0, Fx, fnorm, nothing)
+    @test d_noref9 === d0
+    @test !failed_noref9
 
     # Refinement reduces the linear residual ‖F(x0) + J(x0) d‖ below max(η, √eps(R)) * ‖F(x0)‖.
     r0_rel = GS.rnorm(Fx + J * d0) / fnorm
@@ -542,36 +549,21 @@ end
     # A promotion counts one step-rule failure at each site that can make it: the line search, the
     # `DogLeg` trial loop, and a reused factor (`reuse = 3`). The one step and the whole solve each
     # count it once, so a step that is counted twice fails a test here.
-    A_site = SMatrix{2, 2, Float64, 4}(1.0, 1.0, 1.0, 1.0 + 1e-7)
-    U_site = A_site * SVector(1.0, 2.0)
-    B_site = SVector(U_site[1] + 0.1 * U_site[1]^2, U_site[2] - 0.2 * U_site[2]^2)
-    function f_site(x::SVector{2, T}, _) where {T}
-        u = SMatrix{2, 2, T, 4}(A_site) * x
-        return SVector{2, T}(
-            u[1] + T(0.1) * u[1]^2 - B_site[1], u[2] - T(0.2) * u[2]^2 - B_site[2])
-    end
-    function j_site(x::SVector{2, T}, _) where {T}
-        u = SMatrix{2, 2, T, 4}(A_site) * x
-        return Diagonal(SVector{2, T}(one(T) + T(0.2) * u[1], one(T) - T(0.4) * u[2])) *
-               SMatrix{2, 2, T, 4}(A_site)
-    end
-    prob_site = NonlinearProblem(f_site, j_site)
-    x_site = SVector{2, Float64}(2.0, 3.0)
     for m_site in (
         Newton(; linsolve = LUFactorization(Float32), refinement = Refinement()),
         Newton(;
         linsolve = LUFactorization(Float32), refinement = Refinement(),
         globalization = DogLeg()),
         Newton(; linsolve = LUFactorization(Float32), refinement = Refinement(), reuse = 3))
-        Fx_site = f_site(x_site, nothing)
+        Fx_site = f_ill_r1(x0_r1, nothing)
         st_site = GS.start!!(
-            GS.init_state(m_site, prob_site, x_site, nothing), m_site, prob_site, x_site,
+            GS.init_state(m_site, prob_ill_r1, x0_r1, nothing), m_site, prob_ill_r1, x0_r1,
             Fx_site, nothing, GS.rnorm(Fx_site))
         _, _, st_site, info_site = GS.step!!(
-            st_site, m_site, prob_site, x_site, Fx_site, nothing)
+            st_site, m_site, prob_ill_r1, x0_r1, Fx_site, nothing)
         @test st_site.promoted
         @test info_site.failures == 1
-        _, s_site = solve(prob_site, x_site, m_site; options = opts)
+        _, s_site = solve(prob_ill_r1, x0_r1, m_site; options = opts)
         @test s_site.promoted
         @test s_site.step_failures == 1
     end
@@ -602,8 +594,8 @@ end
         @inbounds J[2, 2] = d2 * a22
         return J
     end
-    warm = init(
-        NonlinearProblem(f_prom!, j_prom!), collect(x0_r1), m_no_ref; options = opts)
+    prob_prom = NonlinearProblem(f_prom!, j_prom!)
+    warm = init(prob_prom, collect(x0_r1), m_no_ref; options = opts)
     w_prom = collect(x0_r1)
     solve!(warm, w_prom)
     @test warm.state.promoted
@@ -613,6 +605,19 @@ end
     @test steps_prom > 0
     @test alloc_prom == 0
     @test allocations(collect, x0_r1) > 0
+
+    # A promotion on a refinement failure is the mixed step's other promotion branch, and it holds
+    # the same `T` factor from `init_state`: the solve counts exactly one failure and measures the
+    # same zero.
+    m_ref_prom = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement())
+    warm_ref_prom = init(prob_prom, collect(x0_r1), m_ref_prom; options = opts)
+    w_ref_prom = collect(x0_r1)
+    _, st_ref_prom = solve!(warm_ref_prom, w_ref_prom)
+    @test st_ref_prom.promoted
+    @test st_ref_prom.step_failures == 1
+    alloc_ref_prom, steps_ref_prom = _measure_solve_alloc!(warm_ref_prom, w_ref_prom, collect(x0_r1))
+    @test steps_ref_prom > 0
+    @test alloc_ref_prom == 0
 end
 
 @testset "Check 1: a mixed step keeps going where its TF == T control does" begin
@@ -853,9 +858,9 @@ end
         @test st_s.fnorm < 1e-11
         x_work = copy(x0_vec)
         alloc, steps = _measure_solve_alloc!(solver, x_work, x0_vec)
-        # `state.fac_T` is preallocated by `init_state` and `state.J` aliases its factors, so a
-        # promotion adds no `n × n` buffer, and the step holds no value that could box either
-        # factor: a solve allocates nothing.
+        # `state.fac_T` is preallocated by `init_state` and `state.J` aliases its factors, so the
+        # step adds no `n × n` buffer and holds no value that could box either factor: a solve
+        # allocates nothing.
         @test steps > 0
         @test alloc == 0
     end

@@ -96,7 +96,7 @@ end
 end
 
 @inline function refine!!(
-        d, ::NoRefinement, fac, jvpprep, prob, x, Fx, fnorm, p, refbuf)
+        d, ::NoRefinement, fac, jvpprep, prob, x, Fx, fnorm, p, refbuf = nothing)
     return d, false
 end
 
