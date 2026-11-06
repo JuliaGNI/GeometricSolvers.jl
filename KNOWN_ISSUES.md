@@ -131,3 +131,17 @@
   for a later pull request.
 - **kind:** defect
 - **found:** PR #58
+
+### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
+
+- **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
+- **evidence:** With `F(x, p) = x^2 - p` and `prob = NonlinearProblem(F)`,
+  `solve(prob, 1.5, Newton(), 4.0)` and `solve(prob, 1.5f0, Newton(), 4.0f0)` return `SUCCESS`,
+  while `solve(prob, 1.5f0, Newton(), 4.0)` raises `MethodError: no method matching
+  SolverStatus{Float32}(::ReturnCode, ::Int32, ::Float64, ::Float32, ::Int32, ::Bool)` (merge of
+  `main` into `task/z`, Julia 1.13.3). The status takes its real type from the start iterate, and
+  the residual norm of a `Float64` parameter is a `Float64`. The implicit-differentiation path of
+  `solve` inherits the same failure. Whether the solve promotes the iterate, converts the norm or
+  refuses the mix with an `ArgumentError` is open.
+- **kind:** defect
+- **found:** PR #53
