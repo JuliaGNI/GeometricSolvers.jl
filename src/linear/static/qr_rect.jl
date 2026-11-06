@@ -124,6 +124,8 @@ function ldiv!!(
     return map(a -> T(ldexp2(a * frac, ex - fac.scale_exponent)), d)
 end
 
+returncode(fac::StaticRectQR) = iszero(fac.info) ? SUCCESS : SINGULAR
+
 function factor_diagnostics(
         fac::StaticRectQR{M, N, TF}, r::StaticVector{M, T}) where {M, N, TF, T}
     R = real(T)
@@ -149,4 +151,9 @@ function factor_diagnostics(
         tail += abs2(x[i])
     end
     return rk, R(sqrt(tail)) / R(rn)
+end
+
+@inline function factor_diagnostics(
+        ::Nothing, ::StaticRectQR, r, fnorm::R) where {R <: Real}
+    return Int32(-1), R(NaN)
 end

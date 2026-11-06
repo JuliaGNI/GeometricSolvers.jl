@@ -34,12 +34,12 @@ end
 
 # The R3 JVP preparation from an analytic Jacobian under globalization `g`. Only a line search
 # that searches takes the slope of the merit, so `Static`, `DogLeg` and every other
-# globalization get `nothing` and no `n × n` buffer.
-function jacobian_matrix_jvp(::LineSearch, x, m::Int = length(x))
-    JacobianMatrixJVP(buffer(x, eltype(x), m, length(x)))
+# globalization get `nothing` and no `m × n` buffer.
+function jacobian_matrix_jvp(::LineSearch, x, Fx)
+    return JacobianMatrixJVP(buffer(x, eltype(x), length(Fx), length(x)))
 end
-jacobian_matrix_jvp(g, x, m::Int = length(x)) = nothing
-jacobian_matrix_jvp(::Static, x, m::Int = length(x)) = nothing
+jacobian_matrix_jvp(g, x, Fx) = nothing
+jacobian_matrix_jvp(::Static, x, Fx) = nothing
 
 function jvp!!(Jv::AbstractVector, prep::JacobianMatrixJVP, prob,
         x::AbstractVector, v::AbstractVector, p)
@@ -69,8 +69,12 @@ function jvp!!(::Nothing, backend::AutoForwardDiff, prob, x::StaticVector{N, T},
         v::StaticVector{N, T}, p) where {N, T}
     D = dual_type(T, typeof(tag_of(backend, prob, x)), 1)
     xdual = SVector{N, D}(ntuple(i -> seed(zero(D), x[i], (v[i],)), Val(N)))
-    rdual = prob.F(xdual, p)
-    M = length(rdual)
+    return static_jvp(prob.F(xdual, p), T)
+end
+
+# The directional derivative of `rdual`, the residual of a dual iterate seeded in one direction:
+# `M` is a type parameter of `rdual`, so that the vector type is inferred.
+@inline function static_jvp(rdual::StaticVector{M, D}, ::Type{T}) where {M, D, T}
     return SVector{M, T}(ntuple(i -> dual_partial(rdual[i], 1), Val(M)))
 end
 

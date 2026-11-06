@@ -27,6 +27,7 @@ end
 
 singular_values(fac::StaticRectSVD) = getfield(fac, :S)
 exact_solve(fac::StaticRectSVD{M, N}) where {M, N} = getfield(fac, :rank) == N
+returncode(fac::StaticRectSVD) = iszero(getfield(fac, :info)) ? SUCCESS : SINGULAR
 
 @inline function factorize!!(
         method::SVDFactorization{<:Union{Nothing, AbstractFloat}},

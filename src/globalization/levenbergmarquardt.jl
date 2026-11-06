@@ -120,20 +120,31 @@ end
 end
 
 # Evaluate δ = -∑_{j=1}^{rank} w_j (u_jᴴ Fx) v_j from a StaticSVD or StaticRectSVD factorisation.
+# One method per factor type: over their `Union` the fields of `fac` are read at run time.
+@inline function lm_svd_step(
+        ::Nothing, fac::StaticSVD{N, TF}, Fx::StaticVector{M, T},
+        μ::R) where {M, N, TF, T, R <: AbstractFloat}
+    return lm_svd_step(fac.factors, fac.V, fac.σ̂, Int(fac.rank),
+        Int(fac.scale_exponent), Fx, μ)
+end
+
+@inline function lm_svd_step(
+        ::Nothing, fac::StaticRectSVD{<:Any, N, TF}, Fx::StaticVector{M, T},
+        μ::R) where {M, N, TF, T, R <: AbstractFloat}
+    return lm_svd_step(getfield(fac, :U), getfield(fac, :V), getfield(fac, :σ̂),
+        Int(getfield(fac, :rank)), Int(getfield(fac, :scale_exponent)), Fx, μ)
+end
+
 function lm_svd_step(
-        ::Nothing, fac::Union{StaticSVD{N, TF}, StaticRectSVD{<:Any, N, TF}},
-        Fx::StaticVector{M, T}, μ::R) where {M, N, TF, T, R <: AbstractFloat}
-    U = fac.factors
-    V = fac.V
-    rk = Int(fac.rank)
-    e = Int(fac.scale_exponent)
+        U::StaticMatrix, V::StaticMatrix{<:Any, N}, σ̂::StaticVector,
+        rk::Int, e::Int, Fx::StaticVector{M, T}, μ::R) where {M, N, T, R <: AbstractFloat}
     δ = local_array(zero(SVector{N, T}))
     @inbounds for j in 1:rk
         y_j = zero(T)
         for i in 1:M
             y_j += T(conj(U[i, j])) * Fx[i]
         end
-        c_j = -lm_svd_coord(R(fac.σ̂[j]), e, y_j, μ)
+        c_j = -lm_svd_coord(R(σ̂[j]), e, y_j, μ)
         for i in 1:N
             δ[i] += T(V[i, j]) * c_j
         end

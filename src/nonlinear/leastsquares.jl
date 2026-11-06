@@ -46,7 +46,9 @@ end
     return m
 end
 
-@inline function check_static_residual_length(prob::LeastSquaresProblem, m::Int, n::Int)
+@inline function check_static_residual_length(prob::LeastSquaresProblem, Fx, x)
+    m = length(Fx)
+    n = length(x)
     if prob.m !== nothing && prob.m != m
         throw(DimensionMismatch("LeastSquaresProblem: residual length $m does not match output_length $(prob.m)"))
     end
@@ -54,8 +56,6 @@ end
         throw(DimensionMismatch("LeastSquaresProblem: requires m >= n (overdetermined or square), got m = $m < n = $n"))
     return nothing
 end
-
-@inline check_static_residual_length(::NonlinearProblem, ::Int, ::Int) = nothing
 
 """
     GaussNewton(; linsolve = QRFactorization(), globalization = Static(),

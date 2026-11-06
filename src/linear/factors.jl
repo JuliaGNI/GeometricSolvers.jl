@@ -381,9 +381,9 @@ end
 `SUCCESS` for a factor with `info == 0`, and `SINGULAR` otherwise.
 """
 function returncode(
-        fac::Union{StaticLU, StaticQR, StaticRectQR, StaticSVD, StaticRectSVD,
-        DenseLU, DenseQR, DenseSVD, DeviceLU, DeviceQR, DeviceSVD})
-    return iszero(getfield(fac, :info)) ? SUCCESS : SINGULAR
+        fac::Union{StaticLU, StaticQR, StaticSVD, DenseLU, DenseQR, DenseSVD,
+        DeviceLU, DeviceQR, DeviceSVD})
+    return iszero(fac.info) ? SUCCESS : SINGULAR
 end
 
 """
@@ -399,7 +399,7 @@ exact_solve(fac::StaticSVD{N}) where {N} = fac.rank == N
 exact_solve(fac::Union{DenseSVD, DeviceSVD}) = fac.rank == length(fac.S)
 
 @inline function factor_diagnostics(
-        d, ::Union{StaticLU, StaticQR, StaticRectQR, DenseLU, DenseQR, DeviceLU, DeviceQR},
+        d, ::Union{StaticLU, StaticQR, DenseLU, DenseQR, DeviceLU, DeviceQR},
         r, fnorm::R) where {R <: Real}
     return Int32(-1), R(NaN)
 end
@@ -464,6 +464,18 @@ function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T}) where {F, M, N, T}
     F === T && return SMatrix{M, N, F}(J), Int32(0)
     e = matrix_exponent(J)
     return SMatrix{M, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
+end
+
+# `μ` added to the leading diagonal of a rectangular static Jacobian: its entries are immutable, so
+# it is rebuilt rather than written through a view. The square method of `base/bang.jl` covers
+# `M == N`, and the `AbstractMatrix` one writes through `diagind`, which a static array cannot take.
+function regularize!!(J::StaticMatrix{M, N, T}, μ) where {M, N, T}
+    iszero(μ) && return J
+    μT = T(μ)
+    return SMatrix{M, N, T, M * N}(ntuple(Val(M * N)) do k
+        i, j = divrem(k - 1, N)
+        @inbounds J[k] + ifelse(i == j, μT, zero(T))
+    end)
 end
 
 # A mutable local copy of a static array for the scalar loops of the R1 kernels: an `MMatrix` or

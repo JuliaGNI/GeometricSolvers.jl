@@ -24,7 +24,7 @@ end
 
     A, b = rect_svd_system(300 * M + N, T, Val(M), Val(N))
     fac = factorize!!(SVDFactorization(), nothing, A)
-    @test fac isa StaticRectSVD{M, N, T, T, M * N, N * N}
+    @test fac isa StaticRectSVD{M, N, T, M * N, N * N, T}
     @test factorize!!(nothing, SVDFactorization(), A) === fac
     @test factorize!!(fac, SVDFactorization(), A) === fac
     @test factorize!!(nothing, SVDFactorization(), MMatrix(A)) === fac
@@ -147,8 +147,8 @@ end
                 m = SVDFactorization()
                 JET.test_opt(factorize!!, (typeof(m), Nothing, SMatrix{4, 2, T, 8}))
                 JET.test_call(factorize!!, (typeof(m), Nothing, SMatrix{4, 2, T, 8}))
-                JET.test_opt(ldiv!!, (SVector{2, T}, StaticRectSVD{4, 2, T, T, 8, 4}, SVector{4, T}))
-                JET.test_call(ldiv!!, (SVector{2, T}, StaticRectSVD{4, 2, T, T, 8, 4}, SVector{4, T}))
+                JET.test_opt(ldiv!!, (SVector{2, T}, StaticRectSVD{4, 2, T, 8, 4, T}, SVector{4, T}))
+                JET.test_call(ldiv!!, (SVector{2, T}, StaticRectSVD{4, 2, T, 8, 4, T}, SVector{4, T}))
             end
         else
             @test_skip "JET does not load on Julia $(VERSION)"  # issue #8

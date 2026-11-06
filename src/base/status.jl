@@ -64,6 +64,14 @@ end
 
 @inline function SolverStatus{R}(
         code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool, stationary::Bool) where {R <: Real}
+    return SolverStatus{R}(
+        code, iterations, fnorm, stepnorm, step_failures, promoted, stationary,
+        Int32(-1), R(NaN), R(NaN))
+end
+
+@inline function SolverStatus{R}(
+        code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
         step_failures::Int32, promoted::Bool) where {R <: Real}
     return SolverStatus{R}(
         code, iterations, fnorm, stepnorm, step_failures, promoted, false,

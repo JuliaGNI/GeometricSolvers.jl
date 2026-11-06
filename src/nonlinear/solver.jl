@@ -152,7 +152,8 @@ function solve!!(
         if info.code == SINGULAR || info.code == NONFINITE
             return finish!!(state, method, prob, x, Fx, status)
         end
-        if info.code == LINESEARCH_FAILED && iszero(info.stepnorm)
+        if info.code == LINESEARCH_FAILED && iszero(info.stepnorm) &&
+           !stationary_converged(prob, options, state, status)
             return finish!!(state, method, prob, x, Fx, status)
         end
         if residual_converged(options, status, fnorm₀)
