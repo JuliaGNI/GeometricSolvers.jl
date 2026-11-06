@@ -19,11 +19,14 @@ so that a compat-only bump can be told apart from an interface change.
   has `jacobian_prototype === nothing`, `GeometricSolvers.jacobian_pattern(::NonlinearProblem{<:Any,
   <:Any, Nothing}, prep::DIJacobian{<:AutoSparse})` returns
   `SparseMatrixCSC(SparseMatrixColorings.sparsity_pattern(prep.jacprep))` (`SparseMatrixCSC{Bool,
-  Int}`), so `Newton(; jacobian = AutoSparse(AutoForwardDiff(); sparsity_detector =
-  TracerSparsityDetector(), coloring_algorithm = GreedyColoringAlgorithm()))` detects the sparsity
-  pattern once in `prepare_ad`, colours the columns, and feeds the detected `SparseMatrixCSC`
-  prototype into `init_linear` (allocating `SparspakLU` when `Sparspak` is loaded) and compressed
-  `jacobian!!` evaluations without a user-supplied `jacobian_prototype`. When a `NonlinearProblem`
+  Int}`) whenever the `AutoSparse` back end carries a sparsity detector (a back end left at
+  ADTypes' `NoSparsityDetector` default finds only a pattern that is true everywhere, so the
+  method returns `nothing` and the solve keeps the dense factor and Jacobian), so `Newton(;
+  jacobian = AutoSparse(AutoForwardDiff(); sparsity_detector = TracerSparsityDetector(),
+  coloring_algorithm = GreedyColoringAlgorithm()))` detects the sparsity pattern once in
+  `prepare_ad`, colours the columns, and feeds the detected `SparseMatrixCSC` prototype into
+  `init_linear` (allocating `SparspakLU` when `Sparspak` is loaded) and compressed `jacobian!!`
+  evaluations without a user-supplied `jacobian_prototype`. When a `NonlinearProblem`
   carries an explicit `jacobian_prototype = P` alongside `AutoSparse`, `prepare_ad` wraps `P` in
   `KnownJacobianSparsityDetector(P)` and the extension method (restricted to
   `NonlinearProblem{<:Any, <:Any, Nothing}`) does not match, so
