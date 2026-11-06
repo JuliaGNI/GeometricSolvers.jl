@@ -5,8 +5,8 @@
 # `2^(ex - e)` in one step, both in the wider of `F` and `T`, and only then converted to `T`, so
 # that it overflows or underflows only where the solution itself does.
 
-function ldiv!!(d::AbstractVector{T}, fac::Union{DenseLU, DenseQR, DenseSVD},
-        r::AbstractVector{T}) where {T <: Number}
+function ldiv!!(
+        d::AbstractVector{T}, fac::DenseFactor, r::AbstractVector{T}) where {T <: Number}
     s = maximum(abs, r)
     iszero(s) && return fill!(d, zero(T))
     rhs = fac.rhs::AbstractVector

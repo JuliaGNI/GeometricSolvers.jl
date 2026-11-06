@@ -69,3 +69,19 @@
   `test/helpers/matrix.jl` leave this system out for LU and QR.
 - **kind:** defect
 - **found:** PR #48
+
+### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
+
+- **location:** `src/linear/factors.jl` (`dense_factor`)
+- **evidence:** With ComponentArrays 0.15.50 and JLArrays 0.3.3, `x = ComponentVector(JLArray(...))`
+  gives `x isa AbstractGPUArray == false`, `copy(x)` stays a `ComponentVector`, and
+  `similar(x, Float32, 4, 4)` is a `JLArray{Float32, 2}`. `dense_factor` selects the device factor
+  by the type of `x`, not by the matrix it allocates, so all three builders return the host
+  factors `DenseLU`, `DenseQR` and `DenseSVD` around a device matrix, and `factorize!!` on
+  `DenseQR` and `DenseSVD` fails with "Scalar indexing is disallowed". The same predicate,
+  `x isa AbstractGPUArray`, is on `main`, in `src/linear/factors.jl` and in `prepare_ad` of
+  `src/ad/di.jl`. ComponentArrays is neither a dependency nor a test dependency of the package, so
+  a wrapped device vector is not a supported input. Support is its own pull request, which selects
+  the factor from the allocated matrix instead of from `x`.
+- **kind:** defect
+- **found:** PR #55 (CodeRabbit, on #56)
