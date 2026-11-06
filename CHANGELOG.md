@@ -18,12 +18,19 @@ so that a compat-only bump can be told apart from an interface change.
   `sizeof(SolverStatus{Float64}) == 56`), with a 6-argument constructor that fills their sentinels
   `(Int32(-1), R(NaN), R(NaN))`, and `GeometricSolvers.record` preserves them across steps. At each
   fresh `Newton` factorisation, `gradratio` is `‖J(x)ᴴ F(x)‖ / (‖J(x)‖_F ‖F(x)‖)` at the
-  unregularised Jacobian `J(x)` (`zero(R)` when `‖J(x)‖_F == 0` or `‖F(x)‖ == 0`). When `linsolve`
+  unregularised Jacobian `J(x)` (`zero(R)` when `‖J(x)‖_F == 0` or `‖F(x)‖ == 0`). Where `J(x)ᴴ F(x)`
+  overflows although both norms are finite, the ratio is formed from a copy of `F(x)` scaled by a power
+  of two, so it stays finite; on an array iterate that copy allocates, and only then. When `linsolve`
   is `SVDFactorization{P}()` and the factor has `info == 0`, `rank` is `Int32(fac.rank)` and
   `nullnorm` is `‖(I - U_r U_rᴴ) F(x)‖` (`fnorm` when `fac.rank == 0`), computed in the factor
   precision after scaling a nonzero `F(x)` by `maximum(abs, F(x))` when `TF ≠ T`; for
   `LUFactorization`, `QRFactorization`, or a failed SVD factor (`info ≠ 0`), `rank == Int32(-1)`
-  and `nullnorm` is `NaN`. Reused steps keep the diagnostics of the last factorisation unless a
+  and `nullnorm` is `NaN`. Under `regularization = μ ≠ 0`, `rank` and `nullnorm` describe the factored
+  matrix `J(x) + μI`, and `gradratio` describes `J(x)`, so the outcome classification in the
+  `SolverStatus` documentation holds for `μ = 0` only. Every fresh `Newton` factorisation computes
+  these, for LU and QR as well as SVD: `‖J(x)‖_F`, the product `J(x)ᴴ F(x)` with its norm, and `‖F(x)‖`
+  where no line-search merit supplies it. That is a few matrix-vector passes, of order `n²` against
+  the order `n³` of a dense factorisation. Reused steps keep the diagnostics of the last factorisation unless a
   line-search failure triggers a fresh retry, `start!!` resets them to their sentinels at the start
   of each solve, and `finish!!` writes them into the returned `SolverStatus{R}` (while `Picard` and
   any solve that returns before a factorisation keep the sentinels). `NewtonState` pre-allocates an

@@ -298,22 +298,27 @@ end
 # line-search step takes no extra host/device reduction over `Fx`, and `rnorm(Fx)` otherwise.
 @inline residual_norm(Fx, ::Nothing) = rnorm(Fx)
 @inline function residual_norm(Fx, merit::R) where {R <: Real}
-    n = Fx isa Number ? 1 : length(Fx)
-    isfinite(merit) && merit >= n * floatmin(R) && return sqrt(merit)
+    isfinite(merit) && merit >= length(Fx) * floatmin(R) && return sqrt(merit)
     return rnorm(Fx)
 end
 
 # `‖Jᴴ Fx‖ / (‖J‖_F ‖Fx‖)` at the unregularised Jacobian `J`, before `regularize!!` or
-# `factorize!!` touches `J`, and `0` when `‖J‖_F` or `‖Fx‖` is `0`.
+# `factorize!!` touches `J`, and `0` when `‖J‖_F` or `‖Fx‖` is `0`. Where `Jᴴ Fx` overflows
+# with both norms finite, it is computed again from `Fx` scaled by `2^{-e}`, with `2^e` the power
+# of two of `‖Fx‖`, so that the scaled product is below `2‖J‖_F`; on an array iterate the
+# scaled copy allocates. A mutable static `J` or `Fx` is read as an `SMatrix` or `SVector`, so
+# that `Jᴴ Fx` allocates nothing.
 @inline function grad_ratio(d, J, Fx, fnorm::R) where {R <: Real}
-    Jmat = J isa Number ? SMatrix{1, 1, typeof(J)}((J,)) :
-           (J isa StaticMatrix ? SMatrix(J) : J)
+    Jmat = J isa StaticMatrix ? SMatrix(J) : J
+    Fv = Fx isa StaticVector ? SVector(Fx) : Fx
     jnorm = rnorm(Jmat)
     (iszero(jnorm) || iszero(fnorm)) && return zero(R)
-    Fx_vec = Fx isa Number ? SVector{1, typeof(Fx)}((Fx,)) :
-             (Fx isa StaticVector ? SVector(Fx) : Fx)
-    g = mul!!(d, adjoint(Jmat), Fx_vec)
-    return R(rnorm(g)) / jnorm / fnorm
+    gnorm = R(rnorm(mul!!(d, adjoint(Jmat), Fv)))
+    isfinite(gnorm) && return gnorm / jnorm / fnorm
+    (isfinite(jnorm) && isfinite(fnorm)) || return gnorm / jnorm / fnorm
+    e = exponent(fnorm)
+    gscaled = R(rnorm(mul!!(d, adjoint(Jmat), Fv .* ldexp(one(R), -e))))
+    return gscaled / jnorm / ldexp(fnorm, -e)
 end
 
 # The Jacobian at `x`, regularised, its factor, and the diagnostics of both: the one
