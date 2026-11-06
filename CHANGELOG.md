@@ -16,29 +16,35 @@ so that a compat-only bump can be told apart from an interface change.
   (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from `ForwardDiff.Dual`,
   `Complex{<:ForwardDiff.Dual}`, and arrays of either through `Adapt.adapt(StripDual(), p)` while
   leaving tuples, named tuples, numbers and other arrays unchanged. When `x₀` or `p` carries
-  `ForwardDiff.Dual{Tg, V, N}` values, `solve` strips the dual layer from `x₀` and `p`, runs the
-  primal solve via `solve!!` in primal precision (`status::SolverStatus{real(V)}`), and on
-  `status.code === SUCCESS` computes the tangent `ẋ` of the solution `x*` from the implicit function
-  theorem `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3 (`Array`,
-  `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one factorisation
-  at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with `prob.J` or
-  `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*` with zero
-  partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single factor. The
-  tangent depends only on `(x*, p)`, never on the partials of `x₀`. When `status.code !== SUCCESS`,
-  `solve` skips the tangent solve and returns `(x*, status)` with `NaN` partials of type
-  `ForwardDiff.Dual{Tg, V, N}`. If the tangent factorisation at `(x*, p_val)` fails
-  (`returncode(fac) === SINGULAR`), `solve` performs no back-substitution and returns `(x*, status)`
-  with `status.code === SINGULAR` and `NaN` partials on `x*`; a rank-deficient `SVDFactorization`
-  factor with `info == 0` produces the minimum-norm pseudoinverse tangent `-J(x*)⁺ ∂_k F(x*, p)`
-  with `status.code === SUCCESS`. Nested duals (`V <: ForwardDiff.Dual`),
-  distinct tags or partial counts across `x₀` and `p`, and a user parameter type holding duals
-  without an `Adapt.adapt_structure` method throw an `ArgumentError`. `solve`, `init`, `solve!` and
-  `solve_batch!` do not check the type of `prob`, so a `prob` whose closure captures an object whose
-  type holds a `ForwardDiff.Dual`, such as a `ForwardDiff.GradientConfig` or a dual work buffer,
-  solves on primal inputs. A residual that contains a `ForwardDiff.Dual` on primal `x` and `p`
-  throws an `ArgumentError` from the run-time check in `solve!!`, which covers `solve` on both its
-  primal and dual paths and `solve!`; an in-place residual that writes a captured dual into its
-  primal buffer throws the `MethodError` of that conversion instead. `init` and `solve!` throw an
+  `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted value type of the dual leaves of
+  `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`, runs the primal solve via `solve!!`
+  at the precision of the stripped `x₀` (`status::SolverStatus{R}` with `R = real(eltype(x₀))`),
+  and on `status.code === SUCCESS` computes the tangent `ẋ` of the solution `x*` from the implicit
+  function theorem `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3
+  (`Array`, `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one
+  factorisation at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with
+  `prob.J` or `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*`
+  with zero partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single
+  factor. The tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS`
+  path and on the `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}`
+  with `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
+  `ForwardDiff.Dual{Tg, Float32, 1}`, `W` is `Float64`. When `status.code !== SUCCESS`, `solve`
+  skips the tangent solve and returns `(x*, status)` with `NaN` partials. If the tangent
+  factorisation at `(x*, p_val)` fails (`returncode(fac) === SINGULAR`), `solve` performs no
+  back-substitution and returns `(x*, status)` with `status.code === SINGULAR` and `NaN` partials on
+  `x*`; a rank-deficient `SVDFactorization` factor with `info == 0` produces the minimum-norm
+  pseudoinverse tangent `-J(x*)⁺ ∂_k F(x*, p)` with `status.code === SUCCESS`. Nested duals
+  (`V <: ForwardDiff.Dual`), distinct tags or partial counts across `x₀` and `p`, and a user
+  parameter type holding duals without an `Adapt.adapt_structure` method throw an `ArgumentError`.
+  `solve`, `init`, `solve!` and `solve_batch!` do not check the type of `prob`, so a `prob` whose
+  closure captures an object whose type holds a `ForwardDiff.Dual`, such as a
+  `ForwardDiff.GradientConfig` or a dual work buffer, solves on primal inputs. A residual that
+  contains a `ForwardDiff.Dual` on primal `x` and `p` throws an `ArgumentError` from the run-time
+  check in `solve!!`, which runs at `x₀` and at every residual a `Newton` or `Picard` step
+  evaluates, through one helper, and covers `solve` on both its primal and dual paths and `solve!`.
+  So a residual that is primal at `x₀` but contains a `ForwardDiff.Dual` only at a later iterate
+  throws the same `ArgumentError`. An in-place residual that writes a captured dual into its primal
+  buffer throws the `MethodError` of that conversion instead. `init` and `solve!` throw an
   `ArgumentError` for a `ForwardDiff.Dual` in `x₀` (or `x`) or in `p`, and `solve_batch!` for one in
   `X` or `p` only, so a `ForwardDiff.Dual` captured in `prob` is not detected in a batch.
 
