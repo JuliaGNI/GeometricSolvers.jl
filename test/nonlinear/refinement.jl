@@ -972,10 +972,10 @@ GS.norm2(a::JLArray{Float64, 1}) = _counted_norm2(a)
     end
     prob = NonlinearProblem(f_red!, j_red!)
     cases = (
-        ("Newton Static", Newton(), [4, 4, 4]),
+        ("Newton Static", Newton(), [3, 3, 3]),
         ("Newton Backtracking", Newton(; globalization = Backtracking()), [3, 3, 3]),
-        ("Newton DogLeg", Newton(; globalization = DogLeg()), [10, 10, 10]),
-        ("Newton reuse=3", Newton(; reuse = 3), [4, 2, 2])
+        ("Newton DogLeg", Newton(; globalization = DogLeg()), [9, 9, 9]),
+        ("Newton reuse=3", Newton(; reuse = 3), [3, 2, 2])
     )
     for (name, m, expected) in cases, B in ARRAY_BACKENDS
 
