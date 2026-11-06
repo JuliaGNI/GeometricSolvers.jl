@@ -70,18 +70,6 @@
 - **kind:** defect
 - **found:** PR #48
 
-### K24 · The sparse `Backtracking` and `Bisection` solves run in `Float64` only
-
-- **location:** `test/linear/sparspak.jl:277-303`
-- **evidence:** The loop over `(Backtracking(), Bisection())` builds its problem once, as
-  `sparse_bracket_problem(125, Float64)` at `:277`, so both globalised solves and the `jvp!!`
-  comparison of the analytic and `AutoSparse` Jacobians at `:299` run in `Float64` alone, although
-  §V requires every numeric test to run in each element type that the part names. Elsewhere in the
-  file the element types come from `REAL_ELTYPES` (`:75`, `:102`, `:183`, `:342`, and the chord
-  loop at `:306` inside this testset); this block does not.
-- **kind:** missing test
-- **found:** 2026-11-06
-
 ### K25 · `LUFactorization(T)` with a sparse prototype passes `init` and raises `MethodError` at `factorize!!`
 
 - **location:** `ext/GeometricSolversSparspakExt.jl:58-63`

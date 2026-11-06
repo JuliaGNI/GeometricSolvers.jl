@@ -27,9 +27,10 @@ so that a compat-only bump can be told apart from an interface change.
   `Sparspak.SparseSolver` via `sparspaklu(factors; factorize = false)`; `factorize!!` checks that
   the sparsity pattern matches `jacobian_prototype` and that `nonzeros(factors)` is finite before
   calling `sparspaklu!(lu, factors; allow_pattern_change = false)` (which runs symbolic ordering
-  and factorisation on the first call and reuses them thereafter), catches `ErrorException` from a
-  zero pivot at row 1, and checks `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz`
-  and `lu.slvr.unz` so singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR`
+  and factorisation on the first call and reuses them thereafter), catches an `ErrorException`
+  only when `lu.slvr.errflag` is set (a zero pivot) and rethrows any other error, and checks
+  `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz` and `lu.slvr.unz` so
+  singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR`
   without throwing. `init_newton_J` allocates `similar(fac.factors, eltype(x))` when `fac.factors`
   is a `SparseMatrixCSC` and cannot be aliased directly (such as under `DogLeg`). `prepare_ad` on a
   DifferentiationInterface back end validates `size(P) == (length(r), length(x))` whenever

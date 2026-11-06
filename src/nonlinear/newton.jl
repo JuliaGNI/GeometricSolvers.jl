@@ -171,8 +171,6 @@ Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_
 @inline jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype
 @inline jacobian_pattern(::Nothing, jacprep) = nothing
 
-@inline init_factor(ls, prob, x, p) = init_factor(ls, prob, x, p, nothing)
-
 @inline function init_factor(
         ls::Union{LUFactorization, QRFactorization, SVDFactorization},
         prob, x::Union{StaticVector, Number}, p, jacprep)
