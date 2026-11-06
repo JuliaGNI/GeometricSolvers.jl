@@ -218,7 +218,8 @@ explicit `jacobian_prototype` on the [`NonlinearProblem`](@ref) (which [`prepare
 loaded and `jacobian_prototype === nothing`, a sparsity detector such as `TracerSparsityDetector()`
 alongside a colouring algorithm such as `GreedyColoringAlgorithm()`. The
 `GeometricSolversSparseADExt` package extension then extracts the detected pattern from the prepared
-[`DIJacobian`](@ref) via [`jacobian_pattern`](@ref) as a `SparseMatrixCSC{Bool, Int}` so
+[`DIJacobian`](@ref) via [`jacobian_pattern`](@ref) as a `SparseMatrixCSC{<:Any, Int}` — a
+`SparseMatrixCSC{Bool, Int}` for `TracerSparsityDetector` — so
 [`init_linear`](@ref) allocates the sparse factor and Jacobian buffer without a user-supplied
 prototype; when an explicit `jacobian_prototype` is also given, the explicit prototype takes
 precedence.

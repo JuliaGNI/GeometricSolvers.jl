@@ -5,7 +5,7 @@ using GeometricSolvers: GeometricSolvers, DIJacobian, NonlinearProblem
 using SparseArrays: SparseMatrixCSC
 using SparseMatrixColorings: SparseMatrixColorings
 
-# The pattern a sparsity detector found inside the preparation, as the `SparseMatrixCSC{Bool, Int}`
+# The pattern a sparsity detector found inside the preparation, as the `SparseMatrixCSC{<:Any, Int}`
 # that `init_linear` dispatches on. The problem is restricted to one with no prototype, so this
 # method never matches a problem that carries one: the core method returns the prototype, which
 # then wins over detection. A back end with no sparsity detector finds only a pattern that is true
