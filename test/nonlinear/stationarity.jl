@@ -673,6 +673,7 @@ end
         x_one, st_one = solve(prob_mv, x0_mv, m_mv, p_mv)
         x_pre, st_pre = solve!(init(prob_mv, x0_mv, m_mv, p_mv))
         @test st_one.code == SUCCESS
+        @test st_pre.code == SUCCESS
         @test x_one isa typeof(x0_mv)
         @test x_pre isa typeof(x0_mv)
         @test x_one == x_pre
