@@ -495,13 +495,14 @@ end
 end
 
 # The same trial for a scalar iterate: `[J; √μ d] δ = [-F; 0]` is one rotation of the pair, and
-# the rotated right-hand side over the rotated pivot is `δ`. A zero pivot gives a non-finite `δ`,
-# which `step!!` reads as a failed trial.
+# the rotated right-hand side over the rotated pivot is `δ`. A zero pivot, or a `δ` that overflows,
+# is a failed trial, as on the other paths.
 @inline function lm_trial(p::LMScalar{T}, μ::R) where {T, R <: Real}
     sqrt_μ = sqrt(lm_step_damping(μ))
     lm_damping_ok(sqrt_μ, p.d_diag) || return zero(T), false
     G, r = givens(p.R₀[1, 1], T(sqrt_μ * p.d_diag[1]), 1, 2)
-    return G.c * p.c₀[1] / r, true
+    δ = G.c * p.c₀[1] / r
+    return δ, isfinite(δ)
 end
 
 # The same trial for an array iterate, whose buffers the state holds.

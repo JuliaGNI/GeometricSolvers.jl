@@ -626,13 +626,25 @@ end
         @test column("Newton Backtracking LU").linsolve isa LUFactorization
 
         # An excepted cell is one that the reference table does not record as `SUCCESS`.
+        cells = read_table(STANDARD_REFERENCE)
         reference = Dict(cell_key(c) => c
-        for c in read_table(STANDARD_REFERENCE)
-        if c.column == "Newton LevenbergMarquardt SVD")
+        for c in cells if c.column == "Newton LevenbergMarquardt SVD")
         for (problem, start, T) in excepted
             cell = reference[(problem, start, "Newton LevenbergMarquardt SVD", string(T))]
             @test cell.code != "SUCCESS"
         end
+
+        # ... and the eleven are the whole of the difference: a cell where the reference column
+        # succeeds and the damped SVD column does not is one of them, so that no failure of the
+        # damping lies outside the cells the specification states.
+        reference_ok = Set((c.problem, c.start, c.eltype)
+        for c in cells
+        if c.column == "Newton Backtracking LU" && c.code == "SUCCESS")
+        svd_ok = Set((c.problem, c.start, c.eltype)
+        for c in cells
+        if c.column == "Newton LevenbergMarquardt SVD" && c.code == "SUCCESS")
+        @test setdiff(reference_ok, svd_ok) ==
+              Set((problem, start, string(T)) for (problem, start, T) in excepted)
 
         # The eleventh cell, run: problem 3 (Powell badly scaled, full rank at its root) from `u0`
         # in `Float32`. `Newton()` with `Backtracking()` returns `SUCCESS`, while the `Float32` SVD
@@ -978,10 +990,11 @@ end
         # not unitary and the step is wrong on a complex element type and only there. One accepted
         # trial at `μ₀` compares the step with `-(Jᴴ J + μ D²)⁻¹ Jᴴ F` computed in
         # `Complex{BigFloat}`. The tolerance is `64 eps(R) κ(J)`, a multiple of the `eps · κ` a
-        # factorisation of this size costs: the measured error of the branch is at most `0.19` of
-        # that unit, and the error of the dropped `conj` is above `1e5` units. `Val(1)` is the
-        # scalar step, whose pivot is the signed `J` itself, so its fixture is negative on a real
-        # element type: a positive entry could not tell that pivot from its modulus.
+        # factorisation of this size costs: the measured error of the branch is at most `1.2` of
+        # that unit (`0.19` at `n = 3` and `4`), and the error of the dropped `conj` is above
+        # `1e5` units. `Val(1)` is the scalar step, whose pivot is the signed `J` itself, so its
+        # fixture is negative on a real element type: a positive entry could not tell that pivot
+        # from its modulus.
         for nv in (Val(1), Val(3), Val(4)), T in ELTYPES,
             ls in (QRFactorization(), LUFactorization()), sc in (:none, :diagonal),
             μ₀ in (1.0, 4.0)
@@ -1002,6 +1015,11 @@ end
     @testset "Check 6g: the R1 step allocates nothing on every path" begin
         # The stacked solve keeps `(R₀, c₀, d_diag)` as values and builds its elimination copies
         # in the call that reads them, so no mutable array crosses a call or a loop iteration.
+        # The factor's `SMatrix` field carries its length parameter: without it the field type is
+        # the `SMatrix{N, N, T}` alias with `L` free, and the workspace is not `isbits`.
+        @test isbits(GeometricSolvers.lm_qr_prepare(
+            QRFactorization(), nothing, nothing,
+            lm_test_matrix(Val(2), Float64), lm_test_rhs(Val(2), Float64), Val(:none)))
         # `--check-bounds=yes` lets `StaticArrays`' `MMatrix` escape to the heap and skips the
         # assertion, which `run-tests.jl` runs with that flag on a Julia before 1.13.
         if Base.JLOptions().check_bounds != 1
@@ -1038,6 +1056,34 @@ end
         @test !isempty(finite_x)
         @test all(finite_x)
         @test length(finite_x) < Int(info.failures)
+
+        # A scalar iterate is the 1×1 case of the same solve, whose step is one rotation and one
+        # division rather than a call of `lm_qr_solve!`, and it reports a non-finite step as a
+        # rejected trial the same way. `J = 1e-6` and a residual of `3e38` overflow the damped
+        # minimiser `-J F / (J² + μ)` in `Float32` until `μ` reaches the size of `J²`, so the
+        # smallest trials are non-finite and the loop raises `μ` until it stalls at `μ_max`.
+        for ls in (QRFactorization(), LUFactorization()),
+            μ₀ in (1.0f-14, 1.0f-20)
+
+            Js = 1.0f-6
+            bs = -3.0f38
+            scales = Bool[]
+            Fs(x, _) = (push!(scales, isfinite(x)); Js * x - bs)
+            prob_s = NonlinearProblem(Fs, (_, _) -> Js)
+            m_s = Newton(; linsolve = ls,
+                globalization = LevenbergMarquardt(Float32; μ₀ = μ₀, μ_min = μ₀))
+            x_s = 0.0f0
+            Fx_s = prob_s.F(x_s, nothing)
+            st_s = start!!(init_state(m_s, prob_s, x_s, nothing), m_s, prob_s, x_s, Fx_s,
+                nothing, rnorm(Fx_s))
+            empty!(scales)
+            x_s1, _, _, info_s = step!!(st_s, m_s, prob_s, x_s, Fx_s, nothing)
+            @test info_s.code == STALLED
+            @test x_s1 === x_s
+            @test !isempty(scales)
+            @test all(scales)
+            @test length(scales) < Int(info_s.failures)
+        end
     end
 
     @testset "The SVD path allocates no stacked buffer" begin
