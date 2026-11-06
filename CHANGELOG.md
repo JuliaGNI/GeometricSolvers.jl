@@ -11,6 +11,21 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Numerical stability documentation (`docs/src/stability.md`) and backward-error test suite
+  (`test/linear/stability.jl`, `test/helpers/randsvd.jl`).** `docs/src/stability.md` states the
+  normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
+  `StaticSVD`, `jacobi_eigen`, `DenseLU`, `DenseQR`, `DenseSVD`, `DeviceLU`, `DeviceQR`,
+  `DeviceSVD`, rank-deficient SVD minimum-norm `ldiv!!`, and scaled mixed-precision `ldiv!!`
+  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
+  `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
+  `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
+  group by group: the full-rank LU, QR and SVD solves and their singular values over `ELTYPES`,
+  at condition numbers `κ₂ ∈ {10, 10⁴}` (`Float32`) and `{10, 10⁴, 10⁸}` (`Float64`), with
+  `n ∈ {4, 16, 64}` (dense and device) and `n ∈ {4, 16}` (static); `jacobi_eigen` over the same
+  condition numbers with `n ∈ {4, 16}`; the rank-deficient SVD minimum-norm solve at `κ₂ = 100`
+  with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
+  element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
+
 - **`solve(prob, x₀, method, p)` differentiates implicitly through a converged solve when `x₀` or
   `p` contains `ForwardDiff.Dual` values** (decision 50 of the design). `GeometricSolvers.StripDual`
   (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from `ForwardDiff.Dual`,
