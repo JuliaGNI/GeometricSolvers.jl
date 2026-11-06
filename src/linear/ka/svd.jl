@@ -1,28 +1,19 @@
-# KernelAbstractions parallel round-robin one-sided Jacobi SVD for DenseSVD on AbstractGPUArray.
+# KernelAbstractions parallel round-robin one-sided Jacobi SVD for DeviceSVD on AbstractGPUArray.
 #
 # Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `jacobi_rotation` and `jacobi_pair` from
-# `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.factors`
-# holds the right singular vectors `V`, `fac.work` is the 1-element `Int32` rotation flag, and
-# `fac.rwork` holds the column norms squared during the sweep and the sorted scaled singular values
-# `σ̂` of `J / 2^e` after it.
+# `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.V` holds
+# the right singular vectors `V`, `fac.flag` is the 1-element `Int32` rotation flag, and `fac.σ̂`
+# holds the squared column norms during the sweep and the sorted scaled singular values `σ̂` of
+# `J / 2^e` after it.
 
-@inline function ka_rotate_columns!(A, n::Int, p::Int, q::Int, c, s)
-    sc = conj(s)
-    @inbounds for i in 1:n
-        u = A[i, p]
-        v = A[i, q]
-        A[i, p] = c * u - sc * v
-        A[i, q] = s * u + c * v
-    end
-    return nothing
-end
+using KernelAbstractions: @localmem, @synchronize
 
 @kernel function ka_jacobi_col_norms2_kernel!(
-        rwork, work, U, V, n::Int, neg_e::Int, init_v::Bool, take_sqrt::Bool)
+        σ̂, flag, U, V, n::Int, neg_e::Int, init_v::Bool, take_sqrt::Bool)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(U)
-        R = eltype(rwork)
+        R = eltype(σ̂)
         if init_v
             for i in 1:n
                 if neg_e != 0
@@ -35,57 +26,108 @@ end
         for i in 1:n
             s += abs2(U[i, j])
         end
-        rwork[j] = ifelse(take_sqrt, sqrt(s), s)
+        σ̂[j] = ifelse(take_sqrt, sqrt(s), s)
         if !take_sqrt && j == 1
-            work[1] = Int32(0)
+            flag[1] = Int32(0)
         end
     end
 end
 
-@kernel function ka_jacobi_svd_round_kernel!(U, V, work, n::Int, r::Int, tol, negligible)
-    k = @index(Global, Linear)
-    m = n + Int(isodd(n))
-    @inbounds if k <= m ÷ 2
-        p, q = jacobi_pair(n, r, k - 1)
+@kernel function ka_jacobi_svd_round_kernel!(
+        U, V, flag, n::Int, r::Int, tol, negligible, ::Val{G}) where {G}
+    pair = @index(Group, Linear)
+    tid = @index(Local, Linear)
+    l_α = @localmem real(eltype(U)) (G,)
+    l_β = @localmem real(eltype(U)) (G,)
+    l_γ = @localmem eltype(U) (G,)
+    l_c = @localmem real(eltype(U)) (1,)
+    l_s = @localmem eltype(U) (1,)
+    l_rot = @localmem Int32 (1,)
+    @inbounds begin
+        F = eltype(U)
+        R = real(F)
+        p, q = jacobi_pair(n, r, pair - 1)
+        α_loc = zero(R)
+        β_loc = zero(R)
+        γ_loc = zero(F)
         if p <= n
-            F = eltype(U)
-            R = real(F)
-            α = zero(R)
-            β = zero(R)
-            γ = zero(F)
-            for i in 1:n
+            i = tid
+            while i <= n
                 up = U[i, p]
                 uq = U[i, q]
-                α += abs2(up)
-                β += abs2(uq)
-                γ += conj(up) * uq
+                α_loc += abs2(up)
+                β_loc += abs2(uq)
+                γ_loc += conj(up) * uq
+                i += G
             end
-            if !(α <= negligible || β <= negligible) && !(abs(γ) <= tol * sqrt(α * β))
-                c, s = jacobi_rotation(α, β, γ)
-                ka_rotate_columns!(U, n, p, q, c, s)
-                ka_rotate_columns!(V, n, p, q, c, s)
-                work[1] = Int32(1)
-            end
+        end
+        l_α[tid] = α_loc
+        l_β[tid] = β_loc
+        l_γ[tid] = γ_loc
+    end
+    @synchronize()
+    for step in 1:trailing_zeros(G)
+        s = G >> step
+        @inbounds if tid <= s
+            l_α[tid] += l_α[tid + s]
+            l_β[tid] += l_β[tid + s]
+            l_γ[tid] += l_γ[tid + s]
+        end
+        @synchronize()
+    end
+    @inbounds if tid == 1
+        p, _ = jacobi_pair(n, r, pair - 1)
+        α = l_α[1]
+        β = l_β[1]
+        γ = l_γ[1]
+        if p <= n && !(α <= negligible || β <= negligible) &&
+           !(abs(γ) <= tol * sqrt(α * β))
+            c, s = jacobi_rotation(α, β, γ)
+            l_c[1] = c
+            l_s[1] = s
+            l_rot[1] = Int32(1)
+            flag[1] = Int32(1)
+        else
+            l_rot[1] = Int32(0)
+        end
+    end
+    @synchronize()
+    @inbounds if l_rot[1] == Int32(1)
+        p, q = jacobi_pair(n, r, pair - 1)
+        c = l_c[1]
+        s = l_s[1]
+        sc = conj(s)
+        i = tid
+        while i <= n
+            up = U[i, p]
+            uq = U[i, q]
+            U[i, p] = c * up - sc * uq
+            U[i, q] = s * up + c * uq
+            vp = V[i, p]
+            vq = V[i, q]
+            V[i, p] = c * vp - sc * vq
+            V[i, q] = s * vp + c * vq
+            i += G
         end
     end
 end
 
-@kernel function ka_jacobi_sort_columns_kernel!(rwork, U, V, n::Int)
+@kernel function ka_jacobi_sort_columns_kernel!(σ̂, U, V, n::Int)
     idx = @index(Global, Linear)
     @inbounds if idx == 1
         for p in 1:(n - 1)
             q_max = p
-            s_max = rwork[p]
+            s_max = σ̂[p]
             for q in (p + 1):n
-                sq = rwork[q]
+                sq = σ̂[q]
                 if sq > s_max
                     q_max = q
                     s_max = sq
                 end
             end
             if q_max != p
-                rwork[q_max] = rwork[p]
-                rwork[p] = s_max
+                σ̂[q_max] = σ̂[p]
+                σ̂[p] = s_max
                 for i in 1:n
                     up = U[i, p]
                     U[i, p] = U[i, q_max]
@@ -100,16 +142,15 @@ end
 end
 
 @kernel function ka_jacobi_finalize_svd_kernel!(
-        U, S, VT, @Const(V), @Const(rwork), n::Int, e::Int, tol)
+        U, S, VT, @Const(V), @Const(σ̂), n::Int, e::Int, tol)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(U)
-        σj = rwork[j]
+        σj = σ̂[j]
         S[j] = ldexp2(σj, e)
-        if σj > tol * rwork[1]
-            inv_σ = inv(σj)
+        if σj > tol * σ̂[1]
             for i in 1:n
-                U[i, j] = inv_σ * U[i, j]
+                U[i, j] = U[i, j] / σj
             end
         else
             for i in 1:n
@@ -122,78 +163,62 @@ end
     end
 end
 
-@inline ka_kernel_backend(backend) = ka_kernel_backend(Val(isgpu(backend)), backend)
-@inline ka_kernel_backend(::Val{true}, backend) = backend
-@inline ka_kernel_backend(::Val{false}, _) = KernelAbstractions.CPU()
+const KA_SVD_WORKGROUP = 32
 
-@inline ka_kernel_array(backend, A::AbstractArray) = ka_kernel_array(Val(isgpu(backend)), A)
-@inline ka_kernel_array(::Val{true}, A::AbstractArray) = A
-@inline ka_kernel_array(::Val{false}, A::AbstractArray) = unsafe_wrap(Array, pointer(A), size(A))
-
-@inline ka_host_vec(v::Array) = v
-@inline ka_host_vec(v::AbstractArray) = Array(v)
-
-function ka_svd!(U::AbstractMatrix{F}, V::AbstractMatrix{F}, S::AbstractVector{R},
-        VT::AbstractMatrix{F}, work::AbstractVector{Int32}, rwork::AbstractVector{R},
+function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
+        VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
         e::Int, neg_e::Int) where {F, R}
     n = size(U, 1)
     backend = get_backend(U)
-    kbackend = ka_kernel_backend(backend)
     tol = jacobi_tolerance(n, R)
     m = n + Int(isodd(n))
     n_pairs = m ÷ 2
     converged = n <= 1
-    GC.@preserve U V S VT work rwork begin
-        U_k = ka_kernel_array(backend, U)
-        V_k = ka_kernel_array(backend, V)
-        VT_k = ka_kernel_array(backend, VT)
-        S_k = ka_kernel_array(backend, S)
-        work_k = ka_kernel_array(backend, work)
-        rwork_k = ka_kernel_array(backend, rwork)
-        col_norms2_kernel! = ka_jacobi_col_norms2_kernel!(kbackend)
-        if n >= 2
-            round_kernel! = ka_jacobi_svd_round_kernel!(kbackend)
-            for sweep in 1:JACOBI_MAX_SWEEPS
-                col_norms2_kernel!(
-                    rwork_k, work_k, U_k, V_k, n, neg_e, sweep == 1, false; ndrange = n)
-                # `max` propagates `NaN`, so one reduction tests every column norm for finiteness.
-                max_norm2 = maximum(rwork_k)
-                isfinite(max_norm2) || break
-                negligible = max_norm2 * tol^2
-                for r in 0:(m - 2)
-                    round_kernel!(
-                        U_k, V_k, work_k, n, r, tol, negligible; ndrange = n_pairs)
-                end
-                if iszero(ka_host_vec(work_k)[1])
-                    converged = true
-                    break
-                end
+    col_norms2_kernel! = ka_jacobi_col_norms2_kernel!(backend)
+    if n >= 2
+        round_kernel! = ka_jacobi_svd_round_kernel!(backend, KA_SVD_WORKGROUP)
+        for sweep in 1:JACOBI_MAX_SWEEPS
+            col_norms2_kernel!(
+                σ̂, flag, U, V, n, neg_e, sweep == 1, false; ndrange = n)
+            # `max` propagates `NaN`, so one reduction tests every column norm for finiteness.
+            max_norm2 = maximum(σ̂)
+            isfinite(max_norm2) || break
+            negligible = max_norm2 * tol^2
+            for r in 0:(m - 2)
+                round_kernel!(
+                    U, V, flag, n, r, tol, negligible, Val(KA_SVD_WORKGROUP);
+                    ndrange = n_pairs * KA_SVD_WORKGROUP)
             end
-            col_norms2_kernel!(
-                rwork_k, work_k, U_k, V_k, n, 0, false, true; ndrange = n)
-        else
-            col_norms2_kernel!(
-                rwork_k, work_k, U_k, V_k, n, neg_e, true, true; ndrange = n)
+            if iszero(Array(flag)[1])
+                converged = true
+                break
+            end
         end
-        if n >= 2
-            ka_jacobi_sort_columns_kernel!(kbackend)(rwork_k, U_k, V_k, n; ndrange = 1)
-        end
-        ka_jacobi_finalize_svd_kernel!(kbackend)(
-            U_k, S_k, VT_k, V_k, rwork_k, n, e, tol; ndrange = n)
-        synchronize(kbackend)
-        # the status and the rank from one host read of the sorted `σ̂`, and no scalar read of a
-        # device array: `info` reports a sweep that did not converge or a singular value that is
-        # not finite, and the rank is then 0
-        σ̂ = ka_host_vec(rwork_k)
-        ok = converged && all(isfinite, σ̂)
-        return ok ? 0 : 1, ok ? svd_rank(σ̂) : 0
+        col_norms2_kernel!(
+            σ̂, flag, U, V, n, 0, false, true; ndrange = n)
+    else
+        col_norms2_kernel!(
+            σ̂, flag, U, V, n, neg_e, true, true; ndrange = n)
     end
+    if n >= 2
+        ka_jacobi_sort_columns_kernel!(backend)(σ̂, U, V, n; ndrange = 1)
+    end
+    ka_jacobi_finalize_svd_kernel!(backend)(
+        U, S, VT, V, σ̂, n, e, tol; ndrange = n)
+    isgpu(backend) && synchronize(backend)
+    # the status and the rank from one host read of the sorted `σ̂`, and no scalar read of a
+    # device array: `info` reports a sweep that did not converge or a singular value that is
+    # not finite, and the rank is then 0
+    σ̂_host = Array(σ̂)
+    ok = converged && all(isfinite, σ̂_host)
+    return ok ? 0 : 1, ok ? svd_rank(σ̂_host) : 0
 end
 
-function ka_factorize_svd!(fac::DenseSVD, J::AbstractMatrix)
+function ka_factorize_svd!(fac::DeviceSVD, J::AbstractMatrix)
     n = size(fac.U, 1)
-    n == 0 && return DenseSVD(
-        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs, 0, 0, 0)
+    n == 0 && return DeviceSVD(
+        fac.factors, fac.U, fac.S, fac.VT, fac.V, fac.σ̂, fac.flag, fac.tmp, fac.rhs,
+        0, 0, 0)
     F = eltype(fac.U)
     e = matrix_exponent(J)
     if eltype(J) === F
@@ -203,13 +228,13 @@ function ka_factorize_svd!(fac::DenseSVD, J::AbstractMatrix)
         fac.U .= ldexp2.(J, -e)
         neg_e = 0
     end
-    info, rank = ka_svd!(fac.U, fac.factors, fac.S, fac.VT, fac.work, fac.rwork, e, neg_e)
-    return DenseSVD(
-        fac.factors, fac.U, fac.S, fac.VT, fac.work, fac.rwork, fac.tmp, fac.rhs,
+    info, rank = ka_svd!(fac.U, fac.V, fac.S, fac.VT, fac.flag, fac.σ̂, e, neg_e)
+    return DeviceSVD(
+        fac.factors, fac.U, fac.S, fac.VT, fac.V, fac.σ̂, fac.flag, fac.tmp, fac.rhs,
         info, rank, e)
 end
 
-function factorize!!(fac::DenseSVD{<:AbstractGPUArray}, ::SVDFactorization, J::AbstractMatrix)
+function factorize!!(fac::DeviceSVD, ::SVDFactorization, J::AbstractMatrix)
     return ka_factorize_svd!(fac, J)
 end
 
@@ -229,10 +254,10 @@ end
     end
 end
 
-@kernel function ka_svd_divide_kernel!(tmp, @Const(rwork), rank::Int, t::Int)
+@kernel function ka_svd_divide_kernel!(tmp, @Const(σ̂), rank::Int, t::Int)
     j = @index(Global, Linear)
     @inbounds if j <= rank
-        tmp[j] = tmp[j] / (iszero(t) ? rwork[j] : ldexp2(rwork[j], t))
+        tmp[j] = tmp[j] / (iszero(t) ? σ̂[j] : ldexp2(σ̂[j], t))
     end
 end
 
@@ -248,63 +273,46 @@ end
 end
 
 # The `divisor_exponent` of the coordinates `Uᴴ d` in `tmp`, from one reduction over `tmp` and
-# `rwork` once the kernel that writes `tmp` has run. The reduction runs over the whole of both, of
+# `σ̂` once the kernel that writes `tmp` has run. The reduction runs over the whole of both, of
 # length `n` on a device, and not over views of their first `rank` entries, so that only device
 # arrays reach it: past the rank `tmp` holds the zero that the kernel wrote, which adds nothing.
-function ka_divisor_exponent(kbackend, fac::DenseSVD, ::Type{T}, n::Int) where {T}
-    synchronize(kbackend)
+function ka_divisor_exponent(
+        fac::DeviceSVD{<:AbstractGPUArray}, ::Type{T}, n::Int) where {T}
+    backend = get_backend(fac.U)
+    isgpu(backend) && synchronize(backend)
     c = coordinate_bound(T, n)
     R = real(T)
-    q = mapreduce((y, σ) -> iszero(y) ? zero(R) : coordinate_ratio(y, σ, c), max,
-        fac.tmp, fac.rwork; init = zero(R))
+    q = mapreduce((y, σ) -> iszero(y) ? zero(σ) : coordinate_ratio(y, σ, c), max,
+        fac.tmp, fac.σ̂; init = zero(R))
     return shift_exponent(q)
 end
 
-# The solve with the factors of `J / 2^e` divides by their singular values `σ̂` in `rwork`, the
+# The solve with the factors of `J / 2^e` divides by their singular values `σ̂`, the
 # same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ d`; returns `t`.
-function ka_svd_backsolve!(fac::DenseSVD, d::AbstractVector{T}, shift::Bool) where {T <:
-                                                                                    Number}
+function ka_svd_backsolve!(
+        fac::DeviceSVD{<:AbstractGPUArray}, d::AbstractVector{T}, shift::Bool) where {T <:
+                                                                                      Number}
     n = length(d)
     n == 0 && return 0
     # a failed factor, whose `σ̂` can hold a finite leading value beside a `NaN`, and a zero
     # matrix give the zero step; `rank` is a host field, so this reads no device array
     iszero(fac.rank) && (fill!(d, zero(T)); return 0)
-    backend = get_backend(d)
-    kbackend = ka_kernel_backend(backend)
-    t = 0
-    GC.@preserve fac d begin
-        tmp_k = ka_kernel_array(backend, fac.tmp)
-        U_k = ka_kernel_array(backend, fac.U)
-        VT_k = ka_kernel_array(backend, fac.VT)
-        rwork_k = ka_kernel_array(backend, fac.rwork)
-        d_k = ka_kernel_array(backend, d)
-        ka_svd_ut_mul_kernel!(kbackend)(tmp_k, U_k, d_k, n, fac.rank; ndrange = n)
-        shift && (t = ka_divisor_exponent(kbackend, fac, T, n))
-        ka_svd_divide_kernel!(kbackend)(tmp_k, rwork_k, fac.rank, t; ndrange = fac.rank)
-        ka_svd_v_mul_kernel!(kbackend)(d_k, VT_k, tmp_k, n; ndrange = n)
-    end
-    synchronize(kbackend)
+    backend = get_backend(fac.U)
+    ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, d, n, fac.rank; ndrange = n)
+    t = shift ? ka_divisor_exponent(fac, T, n) : 0
+    ka_svd_divide_kernel!(backend)(fac.tmp, fac.σ̂, fac.rank, t; ndrange = fac.rank)
+    ka_svd_v_mul_kernel!(backend)(d, fac.VT, fac.tmp, n; ndrange = n)
+    isgpu(backend) && synchronize(backend)
     return t
 end
 
 function backsolve!(
-        fac::DenseSVD{<:AbstractGPUArray{T}}, d::AbstractVector{T}) where {T <: BlasFloat}
+        fac::DeviceSVD{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <: Number}
     ka_svd_backsolve!(fac, d, false)
     return d
 end
 
-function backsolve!(
-        fac::DenseSVD{<:AbstractGPUArray{T}}, d::AbstractVector{T}) where {T <: Number}
-    ka_svd_backsolve!(fac, d, false)
-    return d
-end
-
-function backsolve_shifted!(fac::DenseSVD{<:AbstractGPUArray{T}},
-        d::AbstractVector{T}) where {T <: BlasFloat}
-    return ka_svd_backsolve!(fac, d, true)
-end
-
-function backsolve_shifted!(fac::DenseSVD{<:AbstractGPUArray{T}},
+function backsolve_shifted!(fac::DeviceSVD{<:AbstractMatrix{T}},
         d::AbstractVector{T}) where {T <: Number}
     return ka_svd_backsolve!(fac, d, true)
 end
@@ -322,26 +330,19 @@ end
 end
 
 function ka_svd_nullnorm!(
-        out::AbstractVector{TF}, fac::DenseSVD{<:AbstractGPUArray{TF, 2}},
+        out::AbstractVector{TF}, fac::DeviceSVD{<:AbstractGPUArray{TF, 2}},
         r::AbstractVector{TF}, rk::Int) where {TF}
     n = length(r)
     n == 0 && return zero(real(TF))
     backend = get_backend(fac.U)
-    kbackend = ka_kernel_backend(backend)
-    GC.@preserve fac out r begin
-        tmp_k = ka_kernel_array(backend, fac.tmp)
-        U_k = ka_kernel_array(backend, fac.U)
-        r_k = ka_kernel_array(backend, r)
-        out_k = ka_kernel_array(backend, out)
-        ka_svd_ut_mul_kernel!(kbackend)(tmp_k, U_k, r_k, n, rk; ndrange = n)
-        ka_svd_null_residual_kernel!(kbackend)(out_k, r_k, U_k, tmp_k, n, rk; ndrange = n)
-    end
-    synchronize(kbackend)
+    ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, r, n, rk; ndrange = n)
+    ka_svd_null_residual_kernel!(backend)(out, r, fac.U, fac.tmp, n, rk; ndrange = n)
+    isgpu(backend) && synchronize(backend)
     return rnorm(out)
 end
 
 function factor_diagnostics(
-        d::AbstractVector{T}, fac::DenseSVD{<:AbstractGPUArray{TF, 2}},
+        d::AbstractVector{T}, fac::DeviceSVD{<:AbstractMatrix{TF}},
         r::AbstractVector{T}, fnorm::R) where {T, TF, R <: Real}
     fac.info == 0 || return Int32(-1), R(NaN)
     rk = fac.rank

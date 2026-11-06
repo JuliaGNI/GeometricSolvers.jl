@@ -112,7 +112,8 @@ function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix) where {F}
     return e
 end
 
-const DenseFactor{A} = Union{DenseLU{A}, DenseQR{A}, DenseSVD{A}}
+const DenseFactor{A} = Union{
+    DenseLU{A}, DenseQR{A}, DenseSVD{A}, DeviceLU{A}, DeviceQR{A}, DeviceSVD{A}}
 
 # The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve_shifted!`
 # solves with the factors of `J / 2^e` in place, an SVD dividing by `σ̂ 2^t`, and the step for `J` is
@@ -141,14 +142,14 @@ function factorize!!(fac::DenseLU{<:StridedMatrix{<:BlasFloat}}, ::LUFactorizati
         J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     _, ipiv, info = LAPACK.getrf!(fac.factors, fac.ipiv; check = false)
-    return DenseLU(fac.factors, ipiv, fac.rhs, Int(info), e, fac.status)
+    return DenseLU(fac.factors, ipiv, fac.rhs, Int(info), e)
 end
 
 function factorize!!(fac::DenseLU{<:AbstractMatrix}, ::LUFactorization, J::AbstractMatrix)
     e = load_factors!(fac.factors, J)
     F = lu!(fac.factors, RowMaximum(); check = false)
     copyto!(fac.ipiv, F.ipiv)
-    return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info), e, fac.status)
+    return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info), e)
 end
 
 function backsolve!(fac::DenseLU{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:

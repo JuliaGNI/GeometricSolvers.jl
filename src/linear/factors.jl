@@ -3,7 +3,8 @@
 # `factorize!!` and `ldiv!!` follow the `!!` convention of `bang.jl`: the first argument is a
 # buffer where the storage has one and `nothing` where it does not, and the caller always uses
 # the returned value. R1 has no buffer: its factors are `isbits` values, returned new. R3 holds
-# its Jacobian and workspace buffers in `DenseLU`, `DenseQR` and `DenseSVD`.
+# its Jacobian and workspace buffers in `DenseLU`, `DenseQR` and `DenseSVD` on the host and in
+# `DeviceLU`, `DeviceQR` and `DeviceSVD` on a device.
 
 """
     factorize!!(fac, method, J)
@@ -26,15 +27,16 @@ The SVD records its numerical rank in `rank`, the number of singular values abov
 only where the sweep did not converge or a singular value is not finite, and `rank` is then 0. The
 SVD is prescaled at the working precision too, because the sweep squares the entries.
 
-For a dense factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
+For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref),
+[`DenseSVD`](@ref), [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref)
 built by [`dense_factor`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
-place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) divides `J` by `2^e`
-unconditionally, `J === fac.factors` too: into `fac.factors` on the host before `gesvd`, and into
-`fac.U` on a device before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
-`info` is `1` on the host where `J` has a non-finite entry, which is refused before `gesvd` and
+place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
+divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors` on the host before
+`gesvd`, and into `fac.U` on a device before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
+`info` is `1` where `J` has a non-finite entry, which is refused before `gesvd` and
 leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
-singular value of `J / 2^e` is not finite; on a device it is `1` where the Jacobi
+singular value of `J / 2^e` is not finite; for [`DeviceSVD`](@ref) it is `1` where the Jacobi
 sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
 numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD then
 reports `SINGULAR`, and the step that the LU or QR factors give is not specified.
@@ -148,17 +150,35 @@ struct StaticSVD{N, TF, R, L}
 end
 
 """
-    DenseLU{A, P, V, S}
+    DenseLU{A, P, V}
 
-The LU factors with partial pivoting of a dense `n × n` matrix, with `factors` the `n × n`
-buffer in the factor element type, `ipiv` the pivot vector of length `n` (`BlasInt` on the host,
-`Int32` on a device), `rhs` the right-hand-side buffer of the factor element type when that differs
-from the working element type and `nothing` otherwise, `info` the index of the first zero pivot, or
-0, `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by, and
-`status` the 1-element `Int32` status buffer on a device array and `nothing` on the host.
+The LU factors with partial pivoting of a dense `n × n` host matrix, with `factors` the `n × n`
+buffer in the factor element type, `ipiv` the `BlasInt` pivot vector of length `n`, `rhs` the
+right-hand-side buffer of the factor element type when that differs from the working element type
+and `nothing` otherwise, `info` the index of the first zero pivot, or 0, and `scale_exponent`
+the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
-struct DenseLU{A <: AbstractMatrix, P <: AbstractVector,
-    V <: Union{Nothing, AbstractVector}, S <: Union{Nothing, AbstractVector{Int32}}}
+struct DenseLU{
+    A <: AbstractMatrix, P <: AbstractVector, V <: Union{Nothing, AbstractVector}}
+    factors::A
+    ipiv::P
+    rhs::V
+    info::Int
+    scale_exponent::Int
+end
+
+"""
+    DeviceLU{A, P, V, S}
+
+The LU factors with partial pivoting of a dense `n × n` device matrix, with `factors` the `n × n`
+device buffer in the factor element type, `ipiv` the `Int32` pivot vector of length `n`, `rhs`
+the right-hand-side buffer of the factor element type when that differs from the working element
+type and `nothing` otherwise, `info` the index of the first zero pivot, or 0, `scale_exponent`
+the exponent `e` of the power of two `2^e` that the matrix was divided by, and `status` the
+1-element `Int32` device status buffer.
+"""
+struct DeviceLU{A <: AbstractMatrix, P <: AbstractVector{Int32},
+    V <: Union{Nothing, AbstractVector}, S <: AbstractVector{Int32}}
     factors::A
     ipiv::P
     rhs::V
@@ -170,13 +190,12 @@ end
 """
     DenseQR{A, T, W, V}
 
-The Householder QR factors of a dense `n × n` matrix, with `factors` the `n × n` buffer in the
-factor element type (`R` on and above the diagonal, reflectors below it), `τ` the reflector scale
-vector of length `n`, `work` the workspace buffer (the LAPACK workspace on the host, and the
-1-element `Int32` status buffer on a device), `rhs` the right-hand-side buffer of the factor
-element type when that differs from the working element type and `nothing` otherwise, `info` the
-index of the first zero diagonal entry of `R`, or 0, and `scale_exponent` the exponent `e` of the
-power of two `2^e` that the matrix was divided by.
+The Householder QR factors of a dense `n × n` host matrix, with `factors` the `n × n` buffer in
+the factor element type (`R` on and above the diagonal, reflectors below it), `τ` the reflector
+scale vector of length `n`, `work` the LAPACK workspace buffer, `rhs` the right-hand-side buffer
+of the factor element type when that differs from the working element type and `nothing`
+otherwise, `info` the index of the first zero diagonal entry of `R`, or 0, and `scale_exponent`
+the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseQR{A <: AbstractMatrix, T <: AbstractVector, W <: AbstractVector,
     V <: Union{Nothing, AbstractVector}}
@@ -189,23 +208,40 @@ struct DenseQR{A <: AbstractMatrix, T <: AbstractVector, W <: AbstractVector,
 end
 
 """
+    DeviceQR{A, T, V, S}
+
+The Householder QR factors of a dense `n × n` device matrix, with `factors` the `n × n` device
+buffer in the factor element type (`R` on and above the diagonal, reflectors below it), `τ` the
+reflector scale vector of length `n`, `rhs` the right-hand-side buffer of the factor element type
+when that differs from the working element type and `nothing` otherwise, `info` the index of the
+first zero diagonal entry of `R`, or 0, `scale_exponent` the exponent `e` of the power of two
+`2^e` that the matrix was divided by, and `status` the 1-element `Int32` device status buffer.
+"""
+struct DeviceQR{A <: AbstractMatrix, T <: AbstractVector,
+    V <: Union{Nothing, AbstractVector}, S <: AbstractVector{Int32}}
+    factors::A
+    τ::T
+    rhs::V
+    info::Int
+    scale_exponent::Int
+    status::S
+end
+
+"""
     DenseSVD{A, S, W, RW, T, V}
 
-The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` matrix, with
-`factors` the `n × n` Jacobian buffer in the factor element type (which holds `V` during the
-device Jacobi sweep), `U` and `VT` the `n × n` unitary factors, `S` the vector of the singular
-values `σ̂ · 2^e` of the matrix in the real factor type, which overflow to `Inf` where they exceed
-`floatmax`, `work` (the LAPACK workspace on the host, and the 1-element `Int32` rotation-flag
-buffer on a device), `rwork` (the real LAPACK workspace during `gesvd` on the host, and the
-singular values `σ̂` of the matrix divided by `2^e` in its first `n` entries, on the host after
-`gesvd` and on a device after the sweep) and `tmp` the workspace buffers, `rhs`
+The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` host matrix,
+with `factors` the `n × n` Jacobian buffer in the factor element type, `U` and `VT` the `n × n`
+unitary factors, `S` the vector of the singular values `σ̂ · 2^e` of the matrix in the real factor
+type, which overflow to `Inf` where they exceed `floatmax`, `work` the LAPACK workspace buffer,
+`rwork` the real LAPACK workspace during `gesvd` and the singular values `σ̂` of the matrix
+divided by `2^e` in its first `n` entries after `gesvd`, `tmp` the vector workspace buffer, `rhs`
 the right-hand-side buffer of the factor element type when that differs from the working element
-type and `nothing` otherwise, `info` `1` where the host matrix has a non-finite entry, which is
-refused before `gesvd`, `gesvd`'s non-convergence code, `1` where a host `σ̂` is not finite or the
-device Jacobi sweep reaches its sweep cap without converging
-or meets a non-finite entry, or `0`, `rank` the number of singular values above
-the cutoff `√n · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent
-`e` of the power of two `2^e` that the matrix was divided by.
+type and `nothing` otherwise, `info` `1` where the matrix has a non-finite entry, which is
+refused before `gesvd`, `gesvd`'s non-convergence code, `1` where a `σ̂` is not finite, or `0`,
+`rank` the number of singular values above the cutoff `√n · eps(real(TF)) · σ̂₁`, and 0 where
+`info ≠ 0`, and `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was
+divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
     RW <: AbstractVector, T <: AbstractVector,
@@ -224,19 +260,62 @@ struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
 end
 
 """
+    DeviceSVD{A, S, F, T, V}
+
+The singular value decomposition factors `U * Diagonal(S) * VT` of a dense `n × n` device matrix,
+computed by the parallel one-sided Jacobi iteration of `src/linear/ka/svd.jl`, with `factors` the
+`n × n` Jacobian buffer in the factor element type, `U` and `VT` the `n × n` unitary factors, `S`
+the vector of the singular values `σ̂ · 2^e` of the matrix in the real factor type, `V` the
+`n × n` right-singular-vector workspace during the Jacobi sweep, `σ̂` the vector of the singular
+values of the matrix divided by `2^e` (and the squared column norms during the sweep), `flag` the
+1-element `Int32` rotation-flag buffer, `tmp` the vector workspace buffer, `rhs` the
+right-hand-side buffer of the factor element type when that differs from the working element type
+and `nothing` otherwise, `info` `1` where the Jacobi sweep reaches its sweep cap without
+converging or meets a non-finite entry, or `0`, `rank` the number of singular values above the
+cutoff `√n · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent `e`
+of the power of two `2^e` that the matrix was divided by.
+"""
+struct DeviceSVD{A <: AbstractMatrix, S <: AbstractVector, F <: AbstractVector{Int32},
+    T <: AbstractVector, V <: Union{Nothing, AbstractVector}}
+    factors::A
+    U::A
+    S::S
+    VT::A
+    V::A
+    σ̂::S
+    flag::F
+    tmp::T
+    rhs::V
+    info::Int
+    rank::Int
+    scale_exponent::Int
+end
+
+"""
     dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
-Build the dense factor [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) of `method` for
-the state vector `x`.
+Build the dense factor [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a host
+vector `x`, or the device factor [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on
+a device vector `x::AbstractGPUArray`, for `method`.
 """
 function dense_factor(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
-    ipiv = x isa AbstractGPUArray ? similar(x, Int32, n) : Vector{BlasInt}(undef, n)
+    ipiv = Vector{BlasInt}(undef, n)
     rhs = F === T ? nothing : similar(x, F, n)
-    status = x isa AbstractGPUArray ? similar(x, Int32, 1) : nothing
-    return DenseLU(factors, ipiv, rhs, 0, 0, status)
+    return DenseLU(factors, ipiv, rhs, 0, 0)
+end
+
+function dense_factor(
+        m::LUFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    ipiv = similar(x, Int32, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    status = similar(x, Int32, 1)
+    return DeviceLU(factors, ipiv, rhs, 0, 0, status)
 end
 
 function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
@@ -244,10 +323,20 @@ function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {
     n = length(x)
     factors = similar(x, F, n, n)
     τ = similar(x, F, n)
-    work = x isa AbstractGPUArray ? similar(x, Int32, 1) :
-           similar(x, F, qr_work_length(factors, τ))
+    work = similar(x, F, qr_work_length(factors, τ))
     rhs = F === T ? nothing : similar(x, F, n)
     return DenseQR(factors, τ, work, rhs, 0, 0)
+end
+
+function dense_factor(
+        m::QRFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    τ = similar(x, F, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    status = similar(x, Int32, 1)
+    return DeviceQR(factors, τ, rhs, 0, 0, status)
 end
 
 function dense_factor(
@@ -259,13 +348,28 @@ function dense_factor(
     U = similar(x, F, n, n)
     S = similar(x, R, n)
     VT = similar(x, F, n, n)
-    rwork = x isa AbstractGPUArray ? similar(x, R, n) :
-            similar(x, R, F <: Complex ? max(1, 5 * n) : n)
-    work = x isa AbstractGPUArray ? similar(x, Int32, 1) :
-           similar(x, F, svd_work_length(factors, S, U, VT, rwork))
+    rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : n)
+    work = similar(x, F, svd_work_length(factors, S, U, VT, rwork))
     tmp = similar(x, F, n)
     rhs = F === T ? nothing : similar(x, F, n)
     return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0, 0)
+end
+
+function dense_factor(
+        m::SVDFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+    F = factor_eltype(m, T)
+    R = real(F)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    U = similar(x, F, n, n)
+    S = similar(x, R, n)
+    VT = similar(x, F, n, n)
+    V = similar(x, F, n, n)
+    σ̂ = similar(x, R, n)
+    flag = similar(x, Int32, 1)
+    tmp = similar(x, F, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DeviceSVD(factors, U, S, VT, V, σ̂, flag, tmp, rhs, 0, 0, 0)
 end
 
 """
@@ -274,7 +378,8 @@ end
 `SUCCESS` for a factor with `info == 0`, and `SINGULAR` otherwise.
 """
 function returncode(
-        fac::Union{StaticLU, StaticQR, StaticSVD, DenseLU, DenseQR, DenseSVD})
+        fac::Union{StaticLU, StaticQR, StaticSVD, DenseLU, DenseQR, DenseSVD,
+        DeviceLU, DeviceQR, DeviceSVD})
     return iszero(fac.info) ? SUCCESS : SINGULAR
 end
 
@@ -288,10 +393,11 @@ is the slope of an exact Newton step alone.
 """
 exact_solve(fac) = true
 exact_solve(fac::StaticSVD{N}) where {N} = fac.rank == N
-exact_solve(fac::DenseSVD) = fac.rank == length(fac.S)
+exact_solve(fac::Union{DenseSVD, DeviceSVD}) = fac.rank == length(fac.S)
 
 @inline function factor_diagnostics(
-        d, ::Union{StaticLU, StaticQR, DenseLU, DenseQR}, r, fnorm::R) where {R <: Real}
+        d, ::Union{StaticLU, StaticQR, DenseLU, DenseQR, DeviceLU, DeviceQR},
+        r, fnorm::R) where {R <: Real}
     return Int32(-1), R(NaN)
 end
 

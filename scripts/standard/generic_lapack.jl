@@ -14,7 +14,7 @@ using LinearAlgebra
         F = LinearAlgebra.generic_lufact!(
             fac.factors, RowMaximum(), fac.ipiv; check = false,
             allowsingular = true)
-        return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info), e, fac.status)
+        return DenseLU(fac.factors, fac.ipiv, fac.rhs, Int(F.info), e)
     end
 
     function backsolve!(fac::DenseLU{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:
