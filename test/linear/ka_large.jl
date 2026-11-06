@@ -73,6 +73,36 @@ ka_noop(r, y, p) = nothing
     end
 end
 
+# n > 2 KA_LU_WORKGROUP = 2 KA_QR_WORKGROUP, so that the strided row loops of the workgroup solve
+# kernels `ka_lu_perm_l_kernel!` and `ka_qr_qadj_kernel!` take more than one stride.
+@testset "KA device LU and QR solves agree with CPU LAPACK at n = 130 on JLArray" begin
+    n = 130
+    @testset "$M ($T, n = $n)" for T in ELTYPES, M in (LUFactorization, QRFactorization)
+
+        rng = Xoshiro(0x50b5 + hash(T))
+        A_cpu = randn(rng, T, n, n) + T(2 * n) * I
+        b_cpu = randn(rng, T, n)
+        A_wide = promote_type(T, Float64).(A_cpu)
+        x_ref = A_wide \ promote_type(T, Float64).(b_cpu)
+        anorm = opnorm(A_cpu, Inf)
+        κ = opnorm(A_wide, Inf) * opnorm(inv(A_wide), Inf)
+        @test κ <= 10.0
+
+        m = M()
+        x_dev_init = JLArray(zeros(T, n))
+        prob_dev = NonlinearProblem(x_dev_init, ka_noop)
+        fac_dev = factorize!!(dense_factor(m, prob_dev, x_dev_init, nothing), m, JLArray(A_cpu))
+        @test returncode(fac_dev) === SUCCESS
+        d_dev = ldiv!!(similar(x_dev_init), fac_dev, JLArray(b_cpu))
+        @test d_dev isa JLVector{T}
+
+        x_dev = Array(d_dev)
+        @test norm(A_cpu * x_dev - b_cpu, Inf) <=
+              4 * n * eps(real(T)) * anorm * norm(x_dev, Inf)
+        @test norm(x_dev - x_ref, Inf) / norm(x_ref, Inf) <= 8 * n * eps(real(T)) * κ
+    end
+end
+
 @testset "JET.@test_opt on dense_factor, factorize!!, and ldiv!! for KA factorizations on JLArray" begin
     for (T, TF) in PRECISION_PAIRS
         for M in (LUFactorization, QRFactorization, SVDFactorization)

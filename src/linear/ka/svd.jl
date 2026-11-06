@@ -168,7 +168,6 @@ Base.@assume_effects :foldable function ka_svd_workgroup(::B) where {B}
 end
 
 ka_unwrap_val(::Val{N}) where {N} = N
-
 function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
         VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
         e::Int, neg_e::Int) where {F, R}

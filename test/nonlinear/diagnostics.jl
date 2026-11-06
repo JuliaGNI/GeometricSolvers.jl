@@ -129,7 +129,8 @@ end
     m = Newton(; linsolve = SVDFactorization(TF))
     for (prob, x₀, pp) in (
         (SPROB, zero(SVector{3, T}), p1),
-        (APROB, zeros(T, 3), array_p(p1))
+        (APROB, zeros(T, 3), array_p(p1)),
+        (APROB, JLArray(zeros(T, 3)), backend_p(JLArray, p1))
     )
         _, st = solve(prob, x₀, m, pp)
         @test st.rank === Int32(1)
@@ -142,7 +143,8 @@ end
     for (prob, x₀, pp, method) in (
         (SPROB, SVector{2, T}(2, 1), p_root, m),
         (APROB, T[2, 1], array_p(p_root), m),
-        (APROB, JLArray(T[2, 1]), backend_p(JLArray, p_root), svd_newton())
+        (APROB, JLArray(T[2, 1]), backend_p(JLArray, p_root), svd_newton()),
+        (APROB, JLArray(T[2, 1]), backend_p(JLArray, p_root), m)
     )
         _, st_z = solve(prob, x₀, method, pp; min_iterations = 1)
         @test st_z.rank === Int32(2)
@@ -280,6 +282,26 @@ end
         _, st = solve(prob, x₀, svd_newton(), pp)
         @test near(st.gradratio, inv(sqrt(R(6))), R)
     end
+end
+
+# J = s I and F(0) = -s (1, 1) with s² above floatmax: Jᴴ F overflows, the ratio is 1/√2.
+@testset "gradratio where Jᴴ F overflows, $T" for T in ELTYPES
+    R = real(T)
+    s = 4 * sqrt(floatmax(R))
+    p = (A = SMatrix{2, 2, T}(s, 0, 0, s), b = SVector{2, T}(s, s))
+    for (prob, x₀, pp) in (
+            (SPROB, zero(SVector{2, T}), p),
+            (APROB, zeros(T, 2), array_p(p)),
+            (APROB, JLArray(zeros(T, 2)), backend_p(JLArray, p))
+        ),
+        m in (Newton(), svd_newton())
+
+        _, st = solve(prob, x₀, m, pp; max_iterations = 1)
+        @test near(st.gradratio, inv(sqrt(R(2))), R)
+    end
+    _, st1 = solve(NonlinearProblem((x, p) -> p * x - p, (x, p) -> p), zero(T), Newton(),
+        T(s); max_iterations = 1)
+    @test near(st1.gradratio, one(R), R)
 end
 
 @testset "start!! resets and factorisation at F = 0, $T" for T in REAL_ELTYPES

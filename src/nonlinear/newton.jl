@@ -154,8 +154,7 @@ end
 end
 
 @inline function init_factor(
-        ls::Union{LUFactorization, QRFactorization, SVDFactorization},
-        prob, x::Union{StaticVector, Number}, p)
+        ls::LinearMethod, prob, x::Union{StaticVector, Number}, p)
     return empty_static_factor(ls, x)
 end
 
@@ -226,11 +225,12 @@ end
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
 # globalization workspace, the rule state of its reuse, its `DogLeg` or its `LevenbergMarquardt`,
 # the merit `norm2(Fx)` of the current residual for a line search (`nothing` for any other
-# globalization), and the diagnostics of the last factorisation. For a value iterate the
-# workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The
-# factor slot is the storage that each factorisation writes into; only a step with reuse stores
-# the factor it returns, because only such a step reads it again.
-struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, DG}
+# globalization), the norm `‖Fx‖` of the current residual, and the diagnostics of the last
+# factorisation. For a value iterate the workspace slots are `nothing`, and so is the factor slot
+# unless the factor is reused. The factor slot is the storage that each factorisation writes into;
+# only a step with reuse stores the factor it returns, because only such a step reads it again.
+# The norm is `NaN` on a state that no `start!!` saw or that `solve!!` returned.
+struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG}
     jacprep::JP
     jvpprep::VP
     Fx::FX
@@ -240,27 +240,29 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, DG}
     g::G
     rule::RS
     merit::PH
+    fnorm::R
     diag::DG
 end
 
 @inline function with_factor(s::NewtonState, fac)
     return NewtonState(
-        s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.diag)
+        s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag)
 end
 
 @inline function with_rule(s::NewtonState, rule)
     return NewtonState(
-        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.diag)
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.fnorm, s.diag)
 end
 
-@inline function with_merit(s::NewtonState, merit)
-    return NewtonState(
-        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit, s.diag)
+# The merit and the norm of the residual that a step returns, or that a solve starts from.
+@inline function with_merit(s::NewtonState, merit, fnorm)
+    return NewtonState(s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit,
+        oftype(s.fnorm, fnorm), s.diag)
 end
 
 @inline function with_diag(s::NewtonState, diag)
     return NewtonState(
-        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, diag)
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, diag)
 end
 
 @inline function init_state(m::Newton, prob::NonlinearProblem, x, p)
@@ -270,15 +272,16 @@ end
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
     merit = init_merit(m.globalization, x)
-    diag = NewtonDiagnostics(real(eltype(x)))
+    R = real(eltype(x))
+    diag = NewtonDiagnostics(R)
     if Fx === nothing
         fac = m.reuse === nothing ? nothing : init_factor(m.linsolve, prob, x, p)
-        return NewtonState(
-            jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule, merit, diag)
+        return NewtonState(jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule,
+            merit, R(NaN), diag)
     else
         fac = init_factor(m.linsolve, prob, x, p)
         return NewtonState(jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, x),
-            init_globalization(m.globalization, m.linsolve, x), rule, merit, diag)
+            init_globalization(m.globalization, m.linsolve, x), rule, merit, R(NaN), diag)
     end
 end
 
@@ -286,20 +289,20 @@ end
 
 @inline function start!!(state::NewtonState, m::Newton, prob, x, Fx, p, fnorm₀)
     state = with_rule(state, reset_rule(state.rule, m.globalization))
-    state = with_merit(state, start_merit(m.globalization, Fx))
+    state = with_merit(state, start_merit(m.globalization, Fx), fnorm₀)
     return with_diag(state, NewtonDiagnostics(real(eltype(x))))
 end
 
-# The state that `solve!!` returns carries the merit of `init_state` again, so that a line-search
-# step on it fails closed as on a fresh state, and `finish!!` copies the diagnostics of the last
-# factorisation into the returned `SolverStatus`.
+# The state that `solve!!` returns carries the merit and the norm of `init_state` again, so that
+# a line-search step on it fails closed as on a fresh state, and `finish!!` copies the
+# diagnostics of the last factorisation into the returned `SolverStatus`.
 @inline function finish!!(
         state::NewtonState, m::Newton, prob, x, Fx, status::SolverStatus{R}) where {R}
     d = state.diag
     st = SolverStatus{R}(
         status.code, status.iterations, status.fnorm, status.stepnorm,
         status.step_failures, status.promoted, d.rank, d.nullnorm, d.gradratio)
-    state_out = with_merit(state, init_merit(m.globalization, x))
+    state_out = with_merit(state, init_merit(m.globalization, x), NaN)
     if state.rule isa DampingParameter
         state_out = with_rule(state_out, DampingParameter(R(NaN)))
     end
@@ -316,33 +319,41 @@ end
     end
 end
 
-# `‖Fx‖` from the line-search merit `norm2(Fx)` when it lies in the normal range, so that a
-# line-search step takes no extra host/device reduction over `Fx`, and `rnorm(Fx)` otherwise.
-@inline residual_norm(Fx, ::Nothing) = rnorm(Fx)
-@inline function residual_norm(Fx, merit::R) where {R <: Real}
-    n = Fx isa Number ? 1 : length(Fx)
-    isfinite(merit) && merit >= n * floatmin(R) && return sqrt(merit)
+# `‖Fx‖` with no extra host/device reduction over `Fx` where the state holds it: from the
+# line-search merit `norm2(Fx)` when it is finite and in the normal range, and for any other
+# globalization from the norm `fnorm` that the state carries. `rnorm(Fx)` otherwise: for a merit
+# outside that range, and for a `NaN` norm on a state that no `start!!` saw or that `solve!!`
+# returned.
+@inline residual_norm(Fx, ::Nothing, fnorm) = isnan(fnorm) ? rnorm(Fx) : fnorm
+@inline function residual_norm(Fx, merit::R, fnorm) where {R <: Real}
+    isfinite(merit) && merit >= length(Fx) * floatmin(R) && return sqrt(merit)
     return rnorm(Fx)
 end
 
 # `‖Jᴴ Fx‖ / (‖J‖_F ‖Fx‖)` at the unregularised Jacobian `J`, before `regularize!!` or
-# `factorize!!` touches `J`, and `0` when `‖J‖_F` or `‖Fx‖` is `0`.
+# `factorize!!` touches `J`, and `0` when `‖J‖_F` or `‖Fx‖` is `0`. Where `Jᴴ Fx` overflows
+# with both norms finite, it is computed again from `Fx` scaled by `2^{-e}`, with `2^e` the power
+# of two of `‖Fx‖`, so that the scaled product is below `2‖J‖_F`; on an array iterate the
+# scaled copy allocates. A mutable static `J` or `Fx` is read as an `SMatrix` or `SVector`, so
+# that `Jᴴ Fx` allocates nothing.
 @inline function grad_ratio(d, J, Fx, fnorm::R) where {R <: Real}
-    Jmat = J isa Number ? SMatrix{1, 1, typeof(J)}((J,)) :
-           (J isa StaticMatrix ? SMatrix(J) : J)
+    Jmat = J isa StaticMatrix ? SMatrix(J) : J
+    Fv = Fx isa StaticVector ? SVector(Fx) : Fx
     jnorm = rnorm(Jmat)
     (iszero(jnorm) || iszero(fnorm)) && return zero(R)
-    Fx_vec = Fx isa Number ? SVector{1, typeof(Fx)}((Fx,)) :
-             (Fx isa StaticVector ? SVector(Fx) : Fx)
-    g = mul!!(d, adjoint(Jmat), Fx_vec)
-    return R(rnorm(g)) / jnorm / fnorm
+    gnorm = R(rnorm(mul!!(d, adjoint(Jmat), Fv)))
+    isfinite(gnorm) && return gnorm / jnorm / fnorm
+    (isfinite(jnorm) && isfinite(fnorm)) || return gnorm / jnorm / fnorm
+    e = exponent(fnorm)
+    gscaled = R(rnorm(mul!!(d, adjoint(Jmat), Fv .* ldexp(one(R), -e))))
+    return gscaled / jnorm / ldexp(fnorm, -e)
 end
 
 # The Jacobian at `x`, regularised, its factor, and the diagnostics of both: the one
 # factorisation of every `Newton` step.
 @inline function newton_factor(m::Newton, state::NewtonState, prob, x, Fx, p)
     R = real(eltype(x))
-    fnorm = R(residual_norm(Fx, state.merit))
+    fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
     Jmat = jacobian!!(state.J, state.jacprep, prob, x, p)
     gr = grad_ratio(state.d, Jmat, Fx, fnorm)
     Jreg = regularize!!(Jmat, m.regularization)
@@ -377,7 +388,7 @@ end
         prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     _, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, true)
-    return x₊, F₊, with_diag(with_merit(state, merit), diag), info
+    return x₊, F₊, with_diag(with_merit(state, merit, info.fnorm), diag), info
 end
 
 # The `DogLeg` step: one Jacobian, one factorisation and one Newton step, then the trial loop of
@@ -399,7 +410,8 @@ end
     end
     x₊, F₊, radius, info = dogleg_step(
         state.g, prob, x, Fx, p, Jreg, d, newton, state.rule.radius)
-    state₊ = with_diag(with_rule(state, TrustRadius(radius, state.rule.radius₀)), diag)
+    state₊ = with_rule(state, TrustRadius(radius, state.rule.radius₀))
+    state₊ = with_diag(with_merit(state₊, state.merit, info.fnorm), diag)
     return x₊, F₊, state₊, info
 end
 
@@ -425,7 +437,7 @@ end
         age₊ = age_fresh
         x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, true)
     end
-    state = with_diag(with_merit(with_factor(state, fac), merit), diag)
+    state = with_diag(with_merit(with_factor(state, fac), merit, info.fnorm), diag)
     if info.code == SINGULAR
         return x₊, F₊, with_rule(state, FactorAge(Int32(0), false)), info
     end

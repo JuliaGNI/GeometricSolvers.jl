@@ -27,7 +27,7 @@ export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
 export Newton, NoRefinement, PerSystem, Picard, NonlinearSolver, init, solve, solve!
 export solve_batch!
 
-public solve!!
+public solve!!, sciml_retcode
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -67,6 +67,7 @@ include("globalization/levenbergmarquardt.jl")
 include("nonlinear/solver.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
+include("nonlinear/implicit.jl")
 include("nonlinear/batched.jl")
 
 end

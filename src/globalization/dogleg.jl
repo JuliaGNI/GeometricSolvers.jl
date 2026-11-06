@@ -146,7 +146,7 @@ end
         Flin = axpby!!(g_Ft(g), one(R), Fx, one(R), Js)
         pred = fnorm - rnorm(Flin)
         x₊ = update_iterate!!(g_xt(g), x, one(R), s)
-        F₊ = residual!!(g_Ft(g), prob, x₊, p)
+        F₊ = primal_residual!!(g_Ft(g), prob, x₊, p)
         fnorm₊ = rnorm(F₊)
         ared = fnorm - fnorm₊
         # a non-finite `F₊` gives an `ared` of `-Inf` or `NaN`, which fails the test
