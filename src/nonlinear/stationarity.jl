@@ -19,6 +19,10 @@ where ``x(u)_i = u_c`` for ``i = U_c`` and ``x(u)_i = (x_0)_i`` for ``i \\notin 
 ``\\|F\\|_2^2 = \\|(\\nabla S)_E + b\\|_2^2``, because stationarity points of physical actions
 include saddle points where ``S`` is indefinite.
 
+Where `E == U`, `J` is a block of the Hessian of `S` and is symmetric. For other index sets it is
+not symmetric in general, so [`LDLTFactorization`](@ref), which reads only the lower triangle,
+does not apply, and [`LUFactorization`](@ref) or [`QRFactorization`](@ref) does.
+
 # Arguments
 
 - `S`: a scalar callable `S(x, p)` returning a scalar in the element type of `x`.
@@ -275,12 +279,6 @@ const ReducedStatProb = _ReducedStationarityProblem
     return TR(prob, x_ref, b, nothing, nothing, nothing, nothing)
 end
 
-@inline function _ReducedStationarityProblem(
-        prob, x_ref, b, u_idx, u_pos, has_b::Bool)
-    return _ReducedStationarityProblem(
-        prob, x_ref, b, Ref(has_b), u_idx, u_pos, nothing)
-end
-
 struct StaticStationarityState{ST}
     inner::ST
 end
@@ -487,6 +485,29 @@ function _solve_stationarity_solver!(solver::NonlinearSolver, x, p, b)
     return solver.x, status
 end
 
+# The index sets of `prob` against the iterate type of the batch `X`, and the length of a shared
+# vector datum or of every vector of a `PerSystem` datum `b_src`, which the batch checks before it
+# initialises a state. A callable datum is checked when the state for the first system is
+# initialised, which an empty batch skips.
+function _validate_stationarity_batch(X, prob::StationarityProblem, b_src)
+    x₀ = zero(eltype(X))
+    b_shared = b_src isa AbstractVector ? b_src : nothing
+    _validate_stationarity_solve(prob, x₀, b_shared)
+    m = _num_equations(prob.E, x₀ isa Number ? 1 : length(x₀))
+    for nb in _datum_lengths(b_src)
+        nb == m || throw(ArgumentError("datum b must have length $m, got $nb"))
+    end
+    return nothing
+end
+
+# The lengths of the vectors of a `PerSystem` datum: one, from the type, for static vectors, which
+# a device array also holds, and one per system for a host array of other vectors.
+_datum_lengths(b) = ()
+_datum_lengths(b::PerSystem) = _per_system_lengths(b.data)
+_per_system_lengths(data) = ()
+_per_system_lengths(data::AbstractArray{<:StaticVector}) = (length(eltype(data)),)
+_per_system_lengths(data::AbstractArray{<:AbstractVector}) = (length(bi) for bi in data)
+
 function solve_batch!(
         X::AbstractArray, prob::StationarityProblem, method = Newton(), p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
@@ -498,12 +519,11 @@ function solve_batch!(
     R = real(T)
     opt = resolve_options(T, options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
-    idx₀ = firstindex(X)
-    p₀ = isempty(X) ? nothing : _sample_batch_item(p, idx₀)
-    b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
-         _sample_batch_item(b_src, idx₀)
-    state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = b₀)
+    _validate_stationarity_batch(X, prob, b_src)
     isempty(X) && return _tally_return_codes(ReturnCode[])
+    idx₀ = firstindex(X)
+    p₀ = _sample_batch_item(p, idx₀)
+    state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     codes = allocate(get_backend(X), ReturnCode, length(X))
     sp = _StationarityBatchParams(p, b_src)
     return _tally_return_codes(Array(_launch!(X, codes, prob, m, sp, opt, state₀, order)))
@@ -527,12 +547,11 @@ function solve_batch!(
         "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
     opt = resolve_options(eltype(eltype(X)), options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
-    idx₀ = firstindex(X)
-    p₀ = isempty(X) ? nothing : _sample_batch_item(p, idx₀)
-    b₀ = isempty(X) ? (b_src isa PerSystem ? nothing : b_src) :
-         _sample_batch_item(b_src, idx₀)
-    state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = b₀)
+    _validate_stationarity_batch(X, prob, b_src)
     isempty(X) && return S
+    idx₀ = firstindex(X)
+    p₀ = _sample_batch_item(p, idx₀)
+    state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     sp = _StationarityBatchParams(p, b_src)
     return _launch!(X, S, prob, m, sp, opt, state₀, order)
 end

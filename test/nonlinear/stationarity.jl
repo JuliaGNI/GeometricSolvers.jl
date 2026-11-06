@@ -584,6 +584,35 @@ end
     @test_throws DimensionMismatch solve_batch!(
         copy(X_val), prob_b1, m_newt_ldlt, ps; b = PerSystem(b_per_vec[1:3]))
 
+    # every vector of a `PerSystem` datum has the length of the equations, not only the first
+    b_ragged = PerSystem([[0.25, -0.5], [1.0], [0.5, 0.5], [0.0, 1.0]])
+    @test_throws ArgumentError solve_batch!(
+        copy(X_val), prob_b1, m_newt_ldlt, ps; b = b_ragged)
+    @test_throws ArgumentError solve_batch!(
+        copy(X_val), Vector{SolverStatus{Float64}}(undef, 4),
+        StationarityProblem(f_b1; b = b_ragged), m_newt_ldlt, ps)
+    @test_throws ArgumentError solve_batch!(copy(X_val), prob_b1, m_newt_ldlt, ps;
+        b = PerSystem([SVector(1.0, 2.0, 3.0) for _ in 1:4]))
+
+    # An empty batch returns without evaluating a problem-stored `PerSystem` or callable datum, and
+    # still refuses an index beyond the iterate and a shared vector datum of the wrong length
+    X_empty = SVector{2, Float64}[]
+    ps_empty = PerSystem(Float64[])
+    for b_empty in (PerSystem(SVector{2, Float64}[]), p -> SVector(p, -2 * p))
+        prob_empty = StationarityProblem(f_b1; b = b_empty)
+        counts_empty = solve_batch!(copy(X_empty), prob_empty, m_newt_ldlt, ps_empty)
+        @test counts_empty.SUCCESS == 0
+        S_empty = SolverStatus{Float64}[]
+        @test solve_batch!(copy(X_empty), S_empty, prob_empty, m_newt_ldlt, ps_empty) ===
+              S_empty
+    end
+    for prob_bad in (StationarityProblem(f_b1; E = (1, 3), U = (1, 2)),
+        StationarityProblem(f_b1; b = [1.0, 2.0, 3.0]))
+        @test_throws ArgumentError solve_batch!(copy(X_empty), prob_bad, m_newt_ldlt, ps_empty)
+        @test_throws ArgumentError solve_batch!(
+            copy(X_empty), SolverStatus{Float64}[], prob_bad, m_newt_ldlt, ps_empty)
+    end
+
     # the datum keyword `b` of `solve!` is for a `StationarityProblem` only
     solver_nl = init(NonlinearProblem((x, p) -> x), SVector(1.0), Newton())
     @test_throws ArgumentError solve!(solver_nl; b = 1.0)
