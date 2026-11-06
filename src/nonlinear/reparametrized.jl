@@ -5,10 +5,10 @@
 Coordinate-chart wrapper `x = g(y, p)` around an [`AbstractNonlinearProblem`](@ref) `prob`
 ([`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref)).
 
-Solving a `Reparametrized` problem with [`solve`](@ref), [`init`](@ref) / [`solve!`](@ref), or
-[`solve!!`](@ref) iterates in the chart coordinates `y` and returns `(x*, status)` where
-`x* = g(y*, p)` is evaluated at the returned chart iterate `y*`; [`solve_batch!`](@ref) writes
-each system's `x*` into the batch.
+Solving a `Reparametrized` problem iterates in the chart coordinates `y`. [`solve`](@ref) and
+[`init`](@ref) / [`solve!`](@ref) return `(x*, status)` and [`solve!!`](@ref) returns
+`(x*, status, state)`, where `x* = g(y*, p)` is evaluated at the returned chart iterate `y*`;
+[`solve_batch!`](@ref) writes each system's `x*` into the batch.
 
 # Arguments and keywords
 

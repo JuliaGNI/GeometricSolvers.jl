@@ -874,9 +874,9 @@ so that a compat-only bump can be told apart from an interface change.
 - `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
   curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or
   `StationarityProblem` in chart coordinates `x = g(y, p)` and return `(x* = g(y*, p), status)`
-  in the original coordinates from `solve`, `init` / `solve!` and `solve!!`, with `solve_batch!`
-  writing each system's `x*` into the batch, and leave `update_iterate!!` untouched. In R1
-  (`StaticVector` or `Number`), `g(y, p)` returns
+  in the original coordinates from `solve` and `init` / `solve!` (`solve!!` returns
+  `(x*, status, state)`), with `solve_batch!` writing each system's `x*` into the batch, and
+  leave `update_iterate!!` untouched. In R1 (`StaticVector` or `Number`), `g(y, p)` returns
   `x` and `∂g(y, p)` returns `G = ∂g/∂y`; in R3 (`AbstractVector`), `g!(x, y, p)` writes into
   `x` and `∂g!(G, y, p)` writes into `G`, and when `∂g === nothing`, `G(y, p) = ∂g/∂y` is
   computed by tagged ForwardDiff in R1 and chunked forward-mode AD in R3. With
