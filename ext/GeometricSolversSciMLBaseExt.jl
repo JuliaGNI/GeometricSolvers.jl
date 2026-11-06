@@ -1,25 +1,36 @@
 module GeometricSolversSciMLBaseExt
 
 import CommonSolve: init, solve
-using GeometricSolvers: GeometricSolvers, MAXITERS, NONFINITE, Newton, NonlinearProblem,
-                        Picard, ReturnCode, SINGULAR, STALLED, SUCCESS
+using GeometricSolvers: GeometricSolvers, Newton, NonlinearProblem, Picard, ReturnCode
 using SciMLBase: SciMLBase
 using StaticArrays: StaticArray
 
 const SCIML_KEYWORDS = (:abstol, :reltol, :maxiters, :options)
 
-function GeometricSolvers.sciml_retcode(code::ReturnCode)
-    code === SUCCESS && return SciMLBase.ReturnCode.Success
-    code === STALLED && return SciMLBase.ReturnCode.Stalled
-    code === MAXITERS && return SciMLBase.ReturnCode.MaxIters
-    code === SINGULAR && return SciMLBase.ReturnCode.InternalLinearSolveFailed
-    code === NONFINITE && return SciMLBase.ReturnCode.Unstable
-    return SciMLBase.ReturnCode.InternalLineSearchFailed
+# The SciML code of each `ReturnCode`, in the order of the `@enum` declaration. A code with no
+# entry raises a `BoundsError`.
+const SCIML_RETCODES = (
+    SciMLBase.ReturnCode.Success,
+    SciMLBase.ReturnCode.Stalled,
+    SciMLBase.ReturnCode.MaxIters,
+    SciMLBase.ReturnCode.InternalLinearSolveFailed,
+    SciMLBase.ReturnCode.Unstable,
+    SciMLBase.ReturnCode.InternalLineSearchFailed
+)
+
+GeometricSolvers.sciml_retcode(code::ReturnCode) = SCIML_RETCODES[Integer(code) + 1]
+
+function refuse_set(value, name)
+    value === nothing || throw(
+        ArgumentError(
+        "GeometricSolvers does not support a SciML `NonlinearProblem` with `$name` set"
+    )
+    )
 end
 
 function translate(prob::SciMLBase.NonlinearProblem, kwargs)
     kws = merge(values(prob.kwargs), values(kwargs))
-    bad = [k for k in keys(kws) if k ∉ SCIML_KEYWORDS]
+    bad = filter(∉(SCIML_KEYWORDS), keys(kws))
     if !isempty(bad)
         list = join(("`$k`" for k in bad), ", ")
         throw(
@@ -30,26 +41,10 @@ function translate(prob::SciMLBase.NonlinearProblem, kwargs)
     end
 
     f = prob.f
-    f.jac_prototype === nothing || throw(
-        ArgumentError(
-        "GeometricSolvers does not support a SciML `NonlinearProblem` with `jac_prototype` set"
-    )
-    )
-    f.sparsity === nothing || throw(
-        ArgumentError(
-        "GeometricSolvers does not support a SciML `NonlinearProblem` with `sparsity` set"
-    )
-    )
-    prob.lb === nothing || throw(
-        ArgumentError(
-        "GeometricSolvers does not support a SciML `NonlinearProblem` with `lb` set"
-    )
-    )
-    prob.ub === nothing || throw(
-        ArgumentError(
-        "GeometricSolvers does not support a SciML `NonlinearProblem` with `ub` set"
-    )
-    )
+    refuse_set(f.jac_prototype, "jac_prototype")
+    refuse_set(f.sparsity, "sparsity")
+    refuse_set(prob.lb, "lb")
+    refuse_set(prob.ub, "ub")
 
     u0 = prob.u0
     isval = u0 isa Union{StaticArray, Number}
