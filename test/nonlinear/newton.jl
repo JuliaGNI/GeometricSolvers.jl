@@ -1,6 +1,7 @@
-# `Newton` in R1: `SVector`, `MVector` and `Number` iterates, LU and QR linear solvers,
-# analytic and AD Jacobians, diagonal regularisation, factor reuse, stall refresh,
-# `ToReal` adaptation, and quadratic convergence.
+# `Newton` in R1 — `SVector`, `MVector` and `Number` iterates — and its step on `Array` and
+# `JLArray`: LU and QR linear solvers, analytic and AD Jacobians, diagonal regularisation, factor
+# reuse, stall refresh, the residual norm a step carries into the state, `ToReal` adaptation, and
+# quadratic convergence.
 
 using Adapt: Adapt
 using ADTypes: AutoForwardDiff
@@ -147,18 +148,42 @@ end
         5.0).rule === GS.TrustRadius(2.0, 2.0)
 end
 
-@testset "a DogLeg step carries the norm of the residual it returns" begin
-    GS = GeometricSolvers
+# The residual `y .* y .- q` of the norm test with its start, on one backend: the value iterate
+# takes the out-of-place residual, and an array backend the in-place one that AD differentiates.
+newton_norm_label(::Type{Nothing}) = "SVector"
+newton_norm_label(::Type{B}) where {B} = string(nameof(B))
+function newton_norm_case(::Type{Nothing})
     prob = NonlinearProblem((y, q) -> y .* y .- q)
-    x₀ = SVector(3.0, 5.0)
-    p = SVector(4.0, 9.0)
-    for lin in (LUFactorization(), LUFactorization(Float32))
-        m = Newton(; linsolve = lin, globalization = DogLeg())
-        x, F = x₀, prob.F(x₀, p)
-        st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, rnorm(F))
-        for _ in 1:3
-            x, F, st, _ = GS.step!!(st, m, prob, x, F, p)
-            @test st.fnorm == rnorm(F)
+    x₀, p = SVector(3.0, 5.0), SVector(4.0, 9.0)
+    return prob, x₀, p, prob.F(x₀, p)
+end
+function newton_norm_case(::Type{B}) where {B}
+    prob = NonlinearProblem((Fx, y, q) -> (Fx .= y .* y .- q; Fx))
+    x₀, p = B([3.0, 5.0]), B([4.0, 9.0])
+    return prob, x₀, p, prob.F(B(similar(x₀)), x₀, p)
+end
+
+# A step hands the state the norm of the residual it returns, and the next step reads it back:
+# `grad_ratio` scales the gradient by it, and a mixed step takes it as `fnorm_old`, the scale of the
+# linear-model error. The five rules cover the three step paths — no reuse, `DogLeg`, and a reused
+# factor — at the working precision and mixed (`TF ≠ T`), because each path writes that norm into
+# the state on its own.
+@testset "every Newton step carries the norm of the residual it returns, $(newton_norm_label(AT))" for AT in (
+    Nothing, ARRAY_BACKENDS...)
+    GS = GeometricSolvers
+    prob, x₀, p, F₀ = newton_norm_case(AT)
+    for kw in ((;), (; globalization = Backtracking()), (; globalization = DogLeg()),
+        (; reuse = 3), (; reuse = 3, refinement = Refinement()))
+        for lin in (LUFactorization(), LUFactorization(Float32))
+            m = Newton(; linsolve = lin, kw...)
+            # An array backend writes the iterate and the residual in place, so each rule takes
+            # its own copy of the start.
+            x, F = copy(x₀), copy(F₀)
+            st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, rnorm(F))
+            for _ in 1:3
+                x, F, st, _ = GS.step!!(st, m, prob, x, F, p)
+                @test st.fnorm == rnorm(F)
+            end
         end
     end
 end
