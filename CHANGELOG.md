@@ -18,19 +18,21 @@ so that a compat-only bump can be told apart from an interface change.
   and validates `0 < μ_min <= μ₀ <= μ_max < Inf`, `0 < μ_decrease < 1 < μ_increase` and `0 <=
   ρ_accept < 1`. `Newton` with `globalization = LevenbergMarquardt(...)` requires `reuse ===
   nothing` and tracks its damping parameter in `state.rule::DampingParameter{R}` (`NaN` from
-  `init_state` and `finish!!`, and `R(lm.μ₀)` from `start!!`). `μ` is measured in the power-of-two
-  scale `s = 2^e` that the factorisation of `J(x)` divides it by, `e` the exponent of the largest
-  entry of `J(x)`, so the damped model `(Jᴴ J + μ s² D²) δ = -Jᴴ F(x)` gives the same step for
-  `J(x)` and for `2^k J(x)`, as the undamped truncated step of decision 44 already is. With
-  `scaling = :diagonal`, `D` is the diagonal of the column norms of `J(x)` floored at `√eps` of
-  the largest of them. A `μ` below `4 eps(R)` — which only the initial `μ₀` can be, since the
-  schedule floors at `max(μ_min, 4 eps(R))` — is taken as no damping, the truncated step of
-  decision 44. On `SVDFactorization()` with `scaling = :none`, each step factorises `J(x)` once and
-  each trial `μ` computes `δ = -V diag(2^-e σ̂_j / (σ̂_j² + μ)) Uᴴ F(x)` from the stored `σ̂_j` via
-  the scale-safe coordinate weight `lm_svd_coord` across static (`StaticSVD`), host (`DenseSVD`)
-  and device (`DeviceSVD`) factors. On `QRFactorization()` or `LUFactorization()`, or when
-  `scaling = :diagonal`, each trial step solves the damped model via Givens QR elimination of the
-  stacked system `[J; √μ s D]` without forming `Jᴴ J`. Steps are accepted when the gain ratio
+  `init_state` and `finish!!`, and `R(lm.μ₀)` from `start!!`). `μ` is absolute, in the units of
+  `J(x)ᴴ J(x)`: the damped model `(Jᴴ J + μ D²) δ = -Jᴴ F(x)` measures it there, so a residual
+  scaled by `k` sees the damping of the unscaled one divided by `k²`, and the `μ → 0` limit is the
+  truncated step of decision 44 at every scale. With `scaling = :diagonal`, `D` is the diagonal of
+  the column norms of `J(x)` floored at `√eps` of the largest of them. A `μ` below `4 eps(R)` —
+  which only the initial `μ₀` can be, since the schedule floors at `max(μ_min, 4 eps(R))` — is
+  taken as no damping, the truncated step of decision 44. On `SVDFactorization()` with
+  `scaling = :none`, each step factorises `J(x)` once and each trial `μ` computes
+  `δ = -V diag(2^-e σ̂_j / (σ̂_j² + 2^{-2e} μ)) Uᴴ F(x)` from the stored `σ̂_j` of the scaled matrix
+  `J(x)/2^e` via the scale-safe coordinate weight `lm_svd_coord` across static (`StaticSVD`), host
+  (`DenseSVD`) and device (`DeviceSVD`) factors; where `2^{-e} √μ` overflows, at the bottom of the
+  factor's scale range, the weight is taken as zero and never as a `NaN`. On `QRFactorization()` or
+  `LUFactorization()`, or when `scaling = :diagonal`, each trial step solves the damped model via
+  Givens QR elimination of the stacked system `[J; √μ D]` without forming `Jᴴ J`. Steps are
+  accepted when the gain ratio
   `ρ = (‖F(x)‖² - ‖F(x + δ)‖²) / (‖F(x)‖² - ‖F(x) + J δ‖²)` satisfies `ρ > ρ_accept`, decreasing
   `μ` to `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`, and rejected steps multiply `μ` by
   `μ_increase` inside the step until a trial step is accepted or `μ > μ_max` returns `STALLED`.

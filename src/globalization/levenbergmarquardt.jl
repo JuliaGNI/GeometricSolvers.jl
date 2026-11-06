@@ -2,25 +2,26 @@
     LevenbergMarquardt{R, S}
 
 Adaptive Levenberg–Marquardt damping for [`Newton`](@ref), computing the trial step from the
-damped linear model `(J(x)ᴴ J(x) + μ s² Dᵀ D) δ = -J(x)ᴴ F(x)` with damping parameter `μ > 0`
+damped linear model `(J(x)ᴴ J(x) + μ Dᵀ D) δ = -J(x)ᴴ F(x)` with damping parameter `μ > 0`
 adapted from the gain ratio
 
 ```math
 \\rho = \\frac{\\|F(x)\\|_2^2 - \\|F(x + \\delta)\\|_2^2}{\\|F(x)\\|_2^2 - \\|F(x) + J(x)\\,\\delta\\|_2^2}.
 ```
 
-`μ` is measured in the power-of-two scale `s = 2^e` that the factorisation of `J(x)` divides it
-by, `e` the exponent of the largest entry of `J(x)`, so a step is the same for `J(x)` and for
-`2^k J(x)`: the undamped truncated step of decision 44 is scale-free, and a damping of `μ` is
-too. With `scaling = :diagonal`, `D` is instead the diagonal of the column norms of `J(x)`,
-floored at `√eps` of the largest of them.
+`μ` is absolute, in the units of `J(x)ᴴ J(x)`: scaling the residual by `k` scales `J(x)ᴴ J(x)`
+by `k²` and leaves `μ` as it is, so a damping of `μ` on `k J(x)` acts as `μ / k²` does on
+`J(x)`, and the `μ → 0` limit is decision 44's truncated step whatever the scale. With
+`scaling = :diagonal`, `D` is instead the diagonal of the column norms of `J(x)`, floored at
+`√eps` of the largest of them.
 
 With [`SVDFactorization`](@ref) and `scaling = :none`, `J(x) = U Σ Vᴴ` is factorised once per
 outer step and each trial `μ` evaluates the damped pseudoinverse step from `(U, Σ, V)` without
 refactoring `J(x)`. With [`QRFactorization`](@ref) or [`LUFactorization`](@ref) (or when
 `scaling = :diagonal`), the damped step is solved by Givens QR elimination of the stacked matrix
-`[J(x); √μ s D]` without forming `J(x)ᴴ J(x)`; that path indexes scalars and runs on a host
-array.
+`[J(x); √μ D]` without forming `J(x)ᴴ J(x)`; that path indexes scalars and runs on a host
+array. A `μ` below `4 eps` of the working type, which only an initial `μ₀` below the schedule's
+floor can be, is taken as no damping: the truncated step of decision 44.
 """
 struct LevenbergMarquardt{R <: AbstractFloat, S}
     μ₀::R
@@ -99,21 +100,26 @@ end
 end
 
 # The damped coefficient of the SVD step: the coordinate `y = u_jᴴ F(x)` is multiplied by
-# `2^-e σ̂_j / (σ̂_j² + μ)` from the stored singular value `σ̂_j` of the scaled matrix `J / 2^e`.
-# That coefficient is `σ_j / (σ_j² + 2^{2e} μ)` in the units of `J`: the damping is measured in the
-# factor's own power-of-two scale, which is what makes the step the same for `J` and for `2^k J`,
-# as the undamped truncated step of decision 44 already is.
+# `2^-e σ̂_j / (σ̂_j² + 2^{-2e} μ)` from the stored singular value `σ̂_j` of the scaled matrix
+# `J / 2^e`. That coefficient is `σ_j / (σ_j² + μ)` with `σ_j = 2^e σ̂_j`: the damping is absolute,
+# in the units of `Jᴴ J`, so it is one number whatever the scale of `J`, and the `2^{-e}` and
+# `2^{-2e}` only keep it inside the float range.
 #
-# `s = max(σ̂, √μ)` evaluates the ratio without forming `σ̂² + μ`: `σ̂` and `√μ` are rescaled by
-# their larger one first, so neither a tiny `σ̂` nor a `μ` far above `σ̂²` can underflow or
-# overflow the weight, and the `2^-e` is applied to the weight alone rather than to `σ̂`, which
-# would overflow.
+# `s = max(σ̂, 2^{-e} √μ)` evaluates the ratio without forming `σ̂² + 2^{-2e} μ`: `σ̂` and the
+# rescaled `√μ` are divided by their larger one first, so neither a tiny `σ̂` nor a `μ` far above
+# `σ̂²` can underflow or overflow the weight, and the `2^-e` is applied to the weight alone rather
+# than to `σ̂`, which would overflow.
 @inline function lm_svd_coord(σ̂::R, e::Int, y::T, μ::R) where {
         R <: AbstractFloat, T <: Number}
     damping = lm_step_damping(μ)
-    s = max(σ̂, sqrt(damping))
+    sqrt_damping = ldexp2(sqrt(damping), -e)
+    # `2^{-e} √μ` overflows at the bottom of the factor's scale range, where `e = -1023` and a
+    # `μ` near `μ_max` put it above `floatmax`; the weight is then below the rounding of `x`, so
+    # the coordinate is dropped rather than formed as a `NaN`.
+    isfinite(sqrt_damping) || return zero(T)
+    s = max(σ̂, sqrt_damping)
     σ_s = σ̂ / s
-    μ_s = sqrt(damping) / s
+    μ_s = sqrt_damping / s
     w = (σ_s / (σ_s * σ_s + μ_s * μ_s)) / s
     return T(ldexp2(w, -e)) * y
 end
@@ -240,15 +246,14 @@ end
     return cs, sn, phase * r_val
 end
 
-# The diagonal `D^{1/2}` of the damping term and the scalar `√μ` it is multiplied by, for the
-# stacked solve of `[J; √μ s D] δ = [-Fx; 0]`. `scaling = :none` takes `D = I` and measures `μ` in
-# the factor's power-of-two scale `2^e`, the scale the SVD path divides `J` by, so that both paths
-# solve the same damped system and neither changes with the units of `J`. `scaling = :diagonal`
-# takes Marquardt's column norms, floored at `√eps(R)` of the largest of them, so that a zero or
-# near-zero column still receives positive damping; it is scale-invariant on its own.
+# The diagonal `D` of the damping term for the stacked solve of `[J; √μ D] δ = [-Fx; 0]`.
+# `scaling = :none` takes `D = I`, so the damping is `√μ` in the units of `Jᴴ J`, the same number
+# the SVD weight `σ̂_j/(σ̂_j² + 2^{-2e} μ)` divides by. `scaling = :diagonal` takes Marquardt's
+# column norms, floored at `√eps(R)` of the largest of them, so that a zero or near-zero column
+# still receives positive damping; it is scale-invariant on its own.
 #
-# Returns the diagonal and `√μ` folded with that scale; the caller treats a damping entry that is
-# not representable as a failed trial.
+# Returns the diagonal, which the caller folds into `√μ`; a damping entry that is not
+# representable is a failed trial.
 function lm_damping_diagonal(
         J::StaticMatrix{N, N, T}, scaling::Val{:diagonal}) where {N, T}
     R = real(T)
@@ -266,21 +271,21 @@ function lm_damping_diagonal(
     @inbounds for j in 1:N
         d_diag[j] = max(d_diag[j], floor)
     end
-    return SVector{N, R}(d_diag), one(R)
+    return SVector{N, R}(d_diag)
 end
 
-function lm_damping_diagonal(J::StaticMatrix{N, N, T}, ::Val{:none}) where {N, T}
+function lm_damping_diagonal(::StaticMatrix{N, N, T}, ::Val{:none}) where {N, T}
     R = real(T)
-    return SVector{N, R}(ntuple(_ -> one(R), Val(N))), ldexp2(one(R), matrix_exponent(J))
+    return SVector{N, R}(ntuple(_ -> one(R), Val(N)))
 end
 
-# Stacked QR solve of [J; √μ s D] δ = [-Fx; 0] via Householder QR of J followed by Givens
-# elimination of √μ s D, without forming Jᴴ J.
+# Stacked QR solve of [J; √μ D] δ = [-Fx; 0] via Householder QR of J followed by Givens
+# elimination of √μ D, without forming Jᴴ J.
 function lm_stacked_qr_step(
         ::Nothing, J::StaticMatrix{N, N, T}, Fx::StaticVector{N, T},
         μ::R, scaling::Union{Val{:none}, Val{:diagonal}}) where {N, T, R}
-    d_diag, d_scale = lm_damping_diagonal(J, scaling)
-    sqrt_μ = sqrt(lm_step_damping(μ)) * d_scale
+    d_diag = lm_damping_diagonal(J, scaling)
+    sqrt_μ = sqrt(lm_step_damping(μ))
     damping_ok = isfinite(sqrt_μ) && all(d -> isfinite(sqrt_μ * d), d_diag)
     damping_ok || return zero(SVector{N, T}), false
     Rmat = local_array(SMatrix{N, N, T}(J))
@@ -384,16 +389,13 @@ function lm_stacked_qr_step(
             d_diag[j] = one(R)
         end
     end
-    d_scale = one(R)
     if scaling === Val(:diagonal)
         floor = iszero(dmax) ? one(R) : sqrt(eps(R)) * dmax
         @inbounds for j in 1:n
             d_diag[j] = max(d_diag[j], floor)
         end
-    else
-        d_scale = ldexp2(one(R), matrix_exponent(J))
     end
-    sqrt_μ = sqrt(lm_step_damping(μ)) * d_scale
+    sqrt_μ = sqrt(lm_step_damping(μ))
     damping_ok = isfinite(sqrt_μ)
     @inbounds for j in 1:n
         damping_ok &= isfinite(sqrt_μ * d_diag[j])

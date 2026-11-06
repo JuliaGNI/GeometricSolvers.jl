@@ -2,13 +2,15 @@
 # validation, the adapted damping, the rule state and its fail-closed initialisation, the damped
 # step against the damped normal equations in every element type and on both array ranks, the one
 # factorisation per Jacobian across rejected trials, the truncation of the ranks the factor drops,
-# the scale invariance of the step, the `STALLED` return at `μ_max`, the rejection of a non-finite
-# trial residual, the standard reference column, and the storage of the state.
+# the damping in the units of `Jᴴ J` at both ends of the scale, the `STALLED` return at `μ_max`,
+# the rejection of a non-finite trial residual, the standard reference column, and the storage of
+# the state.
 #
 # The cases that need the step in closed form take a linear problem with an analytic `J` and one
-# `step!!`, so that the expected `δ` is the solution of `(Jᴴ J + μ s² D²) δ = -Jᴴ F` computed
-# directly, with `s = 2^e` the factor's power-of-two scale of `J` and `D` the identity or, under
-# `scaling = :diagonal`, the diagonal of the floored column norms.
+# `step!!`, so that the expected `δ` is the solution of `(Jᴴ J + μ D²) δ = -Jᴴ F` computed
+# directly, with `D` the identity or, under `scaling = :diagonal`, the diagonal of the floored
+# column norms. `μ` is absolute, measured in the units of `Jᴴ J`, so the reference takes it as it
+# is and a factor's power-of-two scale reaches the step only through `Jᴴ J`.
 
 using Adapt: Adapt
 using GPUArraysCore: allowscalar
@@ -19,22 +21,18 @@ using StaticArrays: @SMatrix, @SVector, SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: finish!!, init_state, matrix_exponent, rnorm, start!!, step!!
+using GeometricSolvers: finish!!, init_state, lm_damping_diagonal, lm_svd_coord, rnorm,
+                        start!!, step!!
 
 include("../helpers/matrix.jl")
 include("../helpers/standard_cells.jl")
 
 allowscalar(false)
 
-# The power-of-two scale `2^e` the factorisations divide a matrix by, from its largest entry: the
-# unit in which `LevenbergMarquardt` measures `μ`.
-scale_of(J) = ldexp(one(real(eltype(J))), matrix_exponent(J))
-
-# The damped step `(Jᴴ J + μ s² I) δ = -Jᴴ F` solved directly, for a linear problem `F = J x - b`
-# from `x₀ = 0` at the start of a solve, with the scale `s = scale_of(J)`.
+# The damped step `(Jᴴ J + μ I) δ = -Jᴴ F` solved directly, for a linear problem `F = J x - b`
+# from `x₀ = 0` at the start of a solve. `μ` is in the units of `Jᴴ J`.
 function damped_reference(A, b, μ)
-    s2 = scale_of(A)^2
-    return -((transpose(A) * A + μ * s2 * SMatrix{2, 2, eltype(A)}(I)) \
+    return -((transpose(A) * A + μ * SMatrix{2, 2, eltype(A)}(I)) \
              (transpose(A) * (-b)))
 end
 
@@ -130,6 +128,28 @@ end
                 max_iterations = 1))
         @test all(isfinite, x)
         @test isapprox(x, damped_reference_diagonal(A, b, 1e-2); rtol = 1e-10)
+
+        # The same zero column on R3, where the stacked QR reads an `Array` Jacobian: without the
+        # floor its damping row is zero, the back-substitution meets a zero pivot and the trial is
+        # a failure.
+        prob_d = NonlinearProblem(
+            (F, x, _) -> (F .= A * x .- b; nothing),
+            (J, _, _) -> (J .= A; nothing))
+        x_d, _ = solve(
+            prob_d, zeros(2),
+            Newton(;
+                linsolve = QRFactorization(),
+                globalization = LevenbergMarquardt(; μ₀ = 1e-2, μ_min = 1e-2,
+                    scaling = :diagonal)),
+            nothing; options = Options(Float64; f_abstol = 1e-30, f_reltol = 0.0,
+                max_iterations = 1))
+        @test all(isfinite, x_d)
+        @test isapprox(Vector(x_d), Vector(damped_reference_diagonal(A, b, 1e-2));
+            rtol = 1e-10)
+
+        # D2: a zero Jacobian floors every column norm at `one(R)`.
+        @test lm_damping_diagonal(zero(SMatrix{2, 2, Float64}), Val(:diagonal)) ==
+              SVector(1.0, 1.0)
     end
 
     @testset "Check 1: quadratic tail at μ_min in REAL_ELTYPES (MU1)" begin
@@ -294,36 +314,119 @@ end
         end
     end
 
-    @testset "Check 6b: the factor's scale exponent (MU7)" begin
+    @testset "Check 6b: the damping is absolute in the units of Jᴴ J (MU7)" begin
+        x_star = SVector(1.0, -2.0)
+        # One damped step from `x₀ = (3, 3)` solves `(Jᴴ J + μ) δ = -Jᴴ F`. At `2^400 (x - x*)`
+        # the damping `μ = 1e-6` is below the rounding of `σ² = 2^800`, so the step is the undamped
+        # one; at `2^-400 (x - x*)` it is far above `σ² = 2^-800`, so the iterate does not move and
+        # every trial is rejected. A weight or a stacked damping that carries the factor's `2^e`,
+        # in either direction, fails one of the two.
         for exponent_shift in (400, -400)
             s = ldexp(1.0, exponent_shift)
             J_ext = @SMatrix [s 0.0; 0.0 s]
-            b_ext = J_ext * @SVector [1.0, -2.0]
+            b_ext = J_ext * x_star
             prob = NonlinearProblem((x, _) -> J_ext * x - b_ext, (_, _) -> J_ext)
-            # MU7: dropping the factor's `2^-e` in the weight makes the step `2^400` too large at
-            # the low end and `2^-400` too small at the high one.
-            x, st = solve(
-                prob, SVector(0.0, 0.0),
-                Newton(;
-                    linsolve = SVDFactorization(),
-                    globalization = LevenbergMarquardt()),
-                nothing;
-                options = Options(Float64; f_abstol = s * 1e-12, f_reltol = 1e-12))
-            @test st.code == SUCCESS
-            @test norm(x - SVector(1.0, -2.0)) < 1e-6
-            # One damped step of the same problem is `1/(1 + μ)` of the undamped one, whatever
-            # `2^e` is: the step is scale-invariant.
-            prob_r1 = NonlinearProblem((x, _) -> J_ext * x - b_ext, (_, _) -> J_ext)
-            m = Newton(;
-                linsolve = SVDFactorization(),
-                globalization = LevenbergMarquardt(; μ₀ = 1e-6, μ_min = 1e-6))
-            x0 = SVector(0.0, 0.0)
-            Fx0 = prob_r1.F(x0, nothing)
-            state = init_state(m, prob_r1, x0, nothing)
-            state = start!!(state, m, prob_r1, x0, Fx0, nothing, rnorm(Fx0))
-            x1, _, _, _ = step!!(state, m, prob_r1, x0, Fx0, nothing)
-            @test isapprox(x1, SVector(1.0, -2.0) ./ (1 + 1e-6); rtol = 1e-8)
+            x0 = SVector(3.0, 3.0)
+            Fx0 = prob.F(x0, nothing)
+            for ls in (SVDFactorization(), QRFactorization(), LUFactorization())
+                m = Newton(;
+                    linsolve = ls,
+                    globalization = LevenbergMarquardt(; μ₀ = 1e-6, μ_min = 1e-6))
+                state = init_state(m, prob, x0, nothing)
+                state = start!!(state, m, prob, x0, Fx0, nothing, rnorm(Fx0))
+                x1, _, _, info = step!!(state, m, prob, x0, Fx0, nothing)
+                if exponent_shift > 0
+                    @test info.code == SUCCESS
+                    @test isapprox(x1, x_star; rtol = 1e-12)
+                else
+                    @test info.code == STALLED
+                    @test x1 == x0
+                end
+            end
         end
+
+        # The dense path damps the same way: the stacked QR of an `Array` Jacobian carries `√μ`
+        # and not the factor's `2^e` either.
+        for exponent_shift in (400, -400)
+            s = ldexp(1.0, exponent_shift)
+            J_d = [s 0.0; 0.0 s]
+            b_d = J_d * [1.0, -2.0]
+            prob_d = NonlinearProblem(
+                (F, x, _) -> (F .= J_d * x .- b_d; nothing),
+                (Jm, _, _) -> (Jm .= J_d; nothing))
+            m_d = Newton(;
+                linsolve = QRFactorization(),
+                globalization = LevenbergMarquardt(; μ₀ = 1e-6, μ_min = 1e-6))
+            solver = init(prob_d, [3.0, 3.0], m_d)
+            prob_d.F(solver.state.Fx, solver.x, nothing)
+            state = start!!(
+                solver.state, solver.method, solver.prob, solver.x, solver.state.Fx, nothing,
+                rnorm(solver.state.Fx))
+            x1, _, _, info = step!!(
+                state, solver.method, solver.prob, solver.x, solver.state.Fx, nothing)
+            if exponent_shift > 0
+                @test info.code == SUCCESS
+                @test isapprox(Array(x1), [1.0, -2.0]; rtol = 1e-12)
+            else
+                @test info.code == STALLED
+                @test Array(x1) == [3.0, 3.0]
+            end
+        end
+
+        # `2^{-e} √μ` overflows at the bottom of the factor's scale range: `matrix_exponent`
+        # clamps `e` at `-1023`, and `2^1023 √(1e12)` is above `floatmax`. The weight is then
+        # below the rounding of `x`, so the coordinate is dropped and never formed as a `NaN`.
+        @test lm_svd_coord(1.0, 0, 1.0, 1e-6) > 0
+        @test iszero(lm_svd_coord(1.0, -1023, 1.0, 1e12))
+        # The rescaled form squares neither `σ̂` nor `2^{-e} √μ`: at `e = -561` with `μ = 4 eps`
+        # the product `2^{-2e} μ` is above `floatmax`, while the weight
+        # `2^{-e} σ̂/(σ̂² + 2^{-2e} μ)` is `2^-511`, which a form that squares either one loses to
+        # zero.
+        @test lm_svd_coord(1.0, -561, 1.0, 4 * eps(Float64)) == ldexp(1.0, -511)
+
+        # The two assertions of the specification's Check 6b. The default `μ₀` cannot move an
+        # iterate of the `2^-400` scale; `μ₀ = 1e-16`, below `4 eps(Float64)`, is no damping at
+        # all, which is decision 44's truncated step and converges at once.
+        s_low = ldexp(1.0, -400)
+        J_low = @SMatrix [s_low 0.0; 0.0 s_low]
+        b_low = J_low * x_star
+        prob_low = NonlinearProblem((x, _) -> J_low * x - b_low, (_, _) -> J_low)
+        # The residual of this scale is `√2 · 2^-400`, so the absolute tolerance has to go below
+        # it: a fixed `1e-12` would make the stopping test hold before the first step.
+        opts_low = Options(Float64; f_abstol = s_low * 1e-12, f_reltol = 1e-12)
+        x0_low = zero(SVector{2, Float64})
+        Fx0_low = prob_low.F(x0_low, nothing)
+        x_default, st_default = solve(
+            prob_low, x0_low,
+            Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
+            nothing; options = opts_low)
+        @test st_default.code == STALLED
+        @test x_default == x0_low
+
+        m_tiny = Newton(;
+            linsolve = SVDFactorization(),
+            globalization = LevenbergMarquardt(; μ₀ = 1e-16, μ_min = 1e-16))
+        state_tiny = start!!(
+            init_state(m_tiny, prob_low, x0_low, nothing), m_tiny, prob_low, x0_low, Fx0_low,
+            nothing, rnorm(Fx0_low))
+        # `start!!` stores `μ₀` as it is; the trial step, not the schedule, takes it as no damping.
+        @test state_tiny.rule.μ === 1e-16
+        x_tiny, st_tiny = solve(prob_low, x0_low, m_tiny, nothing; options = opts_low)
+        @test st_tiny.code == SUCCESS
+        @test norm(x_tiny - x_star) < 1e-6
+
+        # The top of the range converges with `SVDFactorization()`.
+        s_high = ldexp(1.0, 400)
+        J_high = @SMatrix [s_high 0.0; 0.0 s_high]
+        b_high = J_high * x_star
+        prob_high = NonlinearProblem((x, _) -> J_high * x - b_high, (_, _) -> J_high)
+        x_high, st_high = solve(
+            prob_high, x0_low,
+            Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
+            nothing;
+            options = Options(Float64; f_abstol = s_high * 1e-12, f_reltol = 1e-12))
+        @test st_high.code == SUCCESS
+        @test norm(x_high - x_star) < 1e-6
     end
 
     @testset "Check 6c: fail-closed rule state (MU8)" begin
