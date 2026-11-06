@@ -891,10 +891,11 @@ so that a compat-only bump can be told apart from an interface change.
   kwargs...)` forwarding to `Val(Int(m))`) accelerates an inner fixed-point or nonlinear step map
   $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1 (`m
   \le 4`, `isbits` state on `StaticVector` and `Number`), R2 (`solve_batch!` kernel), and R3 (no
-  upper bound on `m`, zero heap allocations in `step!!` and `solve!` after warm-up on `Array` and
-  GPU arrays under `allowscalar(false)`). Implements Pollock and Rebholz's length filter and
-  Gram–Schmidt angle filter (`c_s`, `κ_bar`, defaulting to `1 / sqrt(eps(R))` per iterate element
-  type via `effective_kappa_bar`), trace-scaled Tikhonov regularisation on the Gram normal equations
+  upper bound on `m`, zero heap allocations in `step!!` and `solve!` after warm-up on `Array`, and
+  a `JLArray` step with no scalar indexing under `allowscalar(false)`). Implements Pollock and
+  Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`, defaulting to
+  `1 / sqrt(eps(R))` per iterate element type via `effective_kappa_bar`), trace-scaled Tikhonov
+  regularisation on the Gram normal equations
   $\Delta W^H \Delta W \gamma = \Delta W^H w_k$, extrapolation weight and model-decrease safeguards
   ($\sum_{j=0}^{p} |\alpha_j| \le M_\alpha$, optional `safeguard_cos` and `grow_depth`), automatic
   history clears on residual growth ($\|F\| > \text{restart\_factor} \cdot \text{fnorm\_best}$) or

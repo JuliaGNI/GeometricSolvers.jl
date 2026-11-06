@@ -267,7 +267,8 @@ end
                     end
                 end
 
-                # Picard(; damping = 0.7) and Anderson(Picard(; damping = 0.7), Val(2)) on R1Scaled with Options{R} / keyword tolerances
+                # Picard(; damping = 0.7) and Anderson(Picard(; damping = 0.7), Val(2)) on
+                # R1Scaled with Options{R} / keyword tolerances
                 prob_pic = NonlinearProblem(R1Scaled())
                 ps_pic_host = [SVector{N_METAL_NL, T}([T(1) / T(2) for _ in 1:N_METAL_NL])
                                for _ in 1:B_METAL_NL]
