@@ -14,6 +14,12 @@ KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
+[weakdeps]
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+
+[extensions]
+GeometricSolversSciMLBaseExt = "SciMLBase"
+
 [compat]
 ADTypes = "1.23"
 Adapt = "4.6.1"
@@ -23,5 +29,6 @@ ForwardDiff = "1.4"
 GPUArraysCore = "0.2"
 KernelAbstractions = "0.9.38"
 LinearAlgebra = "1"
+SciMLBase = "3.55"
 StaticArrays = "1.9.8"
 julia = "1.13"
