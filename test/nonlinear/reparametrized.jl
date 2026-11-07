@@ -1,3 +1,4 @@
+using ADTypes: AutoSparse, KnownJacobianSparsityDetector
 using Adapt: Adapt
 using CommonSolve: CommonSolve
 using ForwardDiff: ForwardDiff
@@ -6,6 +7,7 @@ using JET: JET, @test_opt
 using JLArrays: JLArray
 using LinearAlgebra: Diagonal, I, norm, transpose
 using SparseArrays: nonzeros, sparse
+using SparseMatrixColorings: GreedyColoringAlgorithm
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -824,6 +826,38 @@ end
         Jy_ad = jacobian!!(zeros(2, 2), prep_ad, rep_ad, y0, nothing)
         @test isapprox(Jy_sparse, Jy_ad; rtol = 8 * eps(Float64))
         x, st = solve(rep_sparse, y0, Newton())
+        @test st.code == SUCCESS
+        @test norm(x - Vector(X_QUAD)) <= 1e-8
+    end
+end
+
+@testset "R3 chart around a NonlinearProblem with a sparse jacobian_prototype and AutoSparse" begin
+    # Without a user J, the inner Jacobian comes from AutoSparse, prepared from the prototype, and
+    # is decompressed into the dense buffer of the chart. The buffer is filled with NaN before the
+    # call, so an entry that the decompression does not write shows in the chart Jacobian. The
+    # reference is the chart around the same residual with a dense AD inner Jacobian.
+    P = sparse([1, 2], [1, 2], [1.0, 1.0], 2, 2)
+    backend = AutoSparse(
+        AutoForwardDiff();
+        sparsity_detector = KnownJacobianSparsityDetector(P),
+        coloring_algorithm = GreedyColoringAlgorithm()
+    )
+    prob_sparse = NonlinearProblem(f_quad_grad!; jacobian_prototype = P)
+    prob_ad = NonlinearProblem(f_quad_grad!)
+    y0 = [1.5, 0.5]
+    for (cov, curv) in ((false, true), (true, false), (true, true))
+        rep_sparse = Reparametrized(
+            prob_sparse, g_polar!, dg_polar!; covariant = cov, curvature = curv)
+        rep_ad = Reparametrized(
+            prob_ad, g_polar!, dg_polar!; covariant = cov, curvature = curv)
+        prep_sparse = prepare_ad(backend, rep_sparse, zeros(2), y0, nothing)
+        prep_ad = prepare_ad(AutoForwardDiff(), rep_ad, zeros(2), y0, nothing)
+        @test prep_sparse.inner_prep.backend isa AutoSparse
+        fill!(prep_sparse.Jx_buf, NaN)
+        Jy_sparse = jacobian!!(zeros(2, 2), prep_sparse, rep_sparse, y0, nothing)
+        Jy_ad = jacobian!!(zeros(2, 2), prep_ad, rep_ad, y0, nothing)
+        @test isapprox(Jy_sparse, Jy_ad; rtol = 8 * eps(Float64))
+        x, st = solve(rep_sparse, y0, Newton(; jacobian = backend))
         @test st.code == SUCCESS
         @test norm(x - Vector(X_QUAD)) <= 1e-8
     end
