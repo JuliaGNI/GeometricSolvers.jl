@@ -970,6 +970,23 @@ end
     @test status.step_failures >= 1
 end
 
+# The mixed-precision step takes a `StationarityProblem` as the working-precision step does: the
+# stationary point `x + x³ = 1` of `S` in each component, `x = 0.6823278038280193…`.
+@testset "a StationarityProblem takes the mixed-precision step ($(typeof(x₀).name.name))" for x₀ in (
+    SVector(0.3, 0.6), [0.3, 0.6])
+    prob = StationarityProblem((x, p) -> sum(abs2, x) / 2 + sum(x .^ 4) / 4 - sum(x))
+    x_ref, st_ref = solve(prob, copy(x₀), Newton())
+    @test st_ref.code == SUCCESS
+    for m in (Newton(; linsolve = LUFactorization(Float32)),
+        Newton(; linsolve = LUFactorization(Float32), refinement = Refinement()),
+        Newton(; linsolve = LDLTFactorization(Float32), refinement = Refinement(), reuse = 2))
+        x, st = solve(prob, copy(x₀), m)
+        @test st.code == SUCCESS
+        @test !st.promoted
+        @test isapprox(Array(x), Array(x_ref); rtol = 1e-10)
+    end
+end
+
 @testset "Complex mixed-precision refinement, KA @kernel, two-size @allocated, and JET" begin
     x_star = SVector{2, Float64}(1.0, 2.0)
     opts = Options(Float64; f_abstol = 1e-12, f_reltol = 0.0)

@@ -959,14 +959,14 @@ so that a compat-only bump can be told apart from an interface change.
   against it.
 
 - Mixed-precision iterative refinement (`Refinement(T = Float64; η = √eps(real(T)), maxiter = 5)`,
-  `Refinement(maxiter; η = √eps(Float64))`, `Refinement(η, maxiter = 5)`, and
-  `GeometricSolvers.refine!!`), factorisation promotion to working precision `T`
-  (`GeometricSolvers.promote_linsolve`), and the `QuasiNewton(k; kwargs...)` convenience
-  constructor for `Newton(; reuse = k, kwargs...)`.
+  `Refinement(η, maxiter = 5)`, and `GeometricSolvers.refine!!`), factorisation promotion to
+  working precision `T` (`GeometricSolvers.promote_linsolve`), and the `QuasiNewton(k; kwargs...)`
+  convenience constructor for `Newton(; reuse = k, kwargs...)`.
   `Refinement{R <: Real}` (`η::R`, `maxiter::Int32 ≥ 1`, `0 < η < 1`, `isbits`, adapted by
-  `ToReal{R}`, with `.eta` and `.max_iterations` property and keyword aliases) performs up to
-  `maxiter` defect-correction passes in working precision `T` using the existing factor `fac` and
-  matrix-free Jacobian-vector products `jvp!!`: each pass forms `r = -F(x) - J(x) d` in `T`, solves
+  `ToReal{R}`) performs up to `maxiter` defect-correction passes in working precision `T` using
+  the existing factor `fac`: a step that factorised at `x` multiplies by the regularised Jacobian
+  it holds, and a step along a reused factor takes the Jacobian-vector product `jvp!!` at `x`. Each
+  pass forms `r = -F(x) - J(x) d` in `T`, solves
   `fac \ r` in `TF` for `δd`, updates `d ← d + δd`, and stops once
   `‖F(x) + J(x) d‖ ≤ max(η, √eps(R)) ‖F(x)‖`. With `regularization = μ > 0`, `J(x)` throughout
   this paragraph stands for `J(x) + μI`, the matrix that the factor solves: `Refinement` refines the
@@ -976,16 +976,18 @@ so that a compat-only bump can be told apart from an interface change.
   finite-difference directional derivatives corrupt the defect correction near the
   finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
   (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold, `refine!!` returns the best
-  direction reached with `failed = true`. In `Newton` with a mixed-precision linear solver
-  (`TF ≠ T`), a failed refinement on a reused factor (`reuse = k`, `age > 0`) first triggers an
-  early refactorisation at the current iterate in `TF` (`age` reset) and retries refinement; if
-  refinement fails on a fresh `TF` factor, `Newton` promotes the factorisation to working precision
-  `T` via `promote_linsolve(m.linsolve, T)` (`LUFactorization(real(T))` /
-  `QRFactorization(real(T))` / `SVDFactorization(real(T))`), recomputes `d = -J \ F(x)` in `T`,
+  direction reached with `failed = true`. In `Newton`, a failed refinement on a reused factor
+  (`reuse = k`, `age > 0`) first triggers an early refactorisation at the current iterate in the
+  factor precision (`age` reset) within the same step, which counts one in `StepInfo.failures`.
+  With `TF ≠ T`, the refactored step is refined again, and if that refinement fails, or the
+  factorisation fails in `TF`, `Newton` promotes the factorisation to working precision `T` via
+  `promote_linsolve(m.linsolve, T)` (`LUFactorization(real(T))` / `QRFactorization(real(T))` /
+  `SVDFactorization(real(T))` / `LDLTFactorization(real(T))`), recomputes `d = -J \ F(x)` in `T`,
   increments `StepInfo.failures`, and sets `StepInfo.promoted = true` (sticky in
   `SolverStatus.promoted`). In R1 (`Fx === nothing`), `NewtonState.fac_T` is `nothing` even when
-  `reuse` is set, and in R3 with `LUFactorization` and a line search, `NewtonState.J` aliases
-  `NewtonState.fac_T.factors` so promotion allocates no extra `n × n` `T` buffer. When `Newton`
+  `reuse` is set. With `NoRefinement` and any globalization but `DogLeg`, `NewtonState.J` aliases
+  the factor's matrix (`fac.factors` when `TF = T`, and `fac_T.factors` with `LUFactorization` when
+  `TF ≠ T`), so promotion allocates no extra `n × n` `T` buffer. When `Newton`
   with `TF ≠ T` makes slow progress (`‖F(x₊)‖ > 0.5 ‖F(x)‖`) on two consecutive steps that
   measured their relative linear-model residual `‖F(x) + J(x) d‖ / ‖F(x)‖` and found it above
   `max(√eps(R), 1e-4)`, it promotes the factorisation to `T` with `promoted = true`; every other
