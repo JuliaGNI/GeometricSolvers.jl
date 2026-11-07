@@ -33,6 +33,55 @@ so that a compat-only bump can be told apart from an interface change.
   `ka_svd_backsolve!`, falling back to `ka_factorize_svd!` when `gesvdj!` does not converge),
   while `Float16` and `BFloat16` remain on `KernelAbstractions`.
 
+- **`LevenbergMarquardt{R, S}` damped trust-region globalization for `Newton`** (decision 57 of the
+  design). `LevenbergMarquardt{R <: AbstractFloat, S}` (`R = Float64` by default, adapted to
+  `real(eltype(x₀))` by `ToReal{R}()`) carries the damping parameters `(μ₀, μ_min, μ_max,
+  μ_decrease, μ_increase, ρ_accept, scaling)` with `scaling = Val(s)` for `s ∈ (:none, :diagonal)`
+  and validates `0 < μ_min <= μ₀ <= μ_max < Inf`, `0 < μ_decrease < 1 < μ_increase` and `0 <=
+  ρ_accept < 1`. `Newton` with `globalization = LevenbergMarquardt(...)` requires `reuse ===
+  nothing` and tracks its damping parameter in `state.rule::DampingParameter{R}` (`NaN` from
+  `init_state` and `finish!!`, and `R(lm.μ₀)` from `start!!`). Such a `Newton` takes no
+  `Refinement`: `Newton(; globalization = LevenbergMarquardt(), refinement = Refinement())` and
+  `refinement = true` raise an `ArgumentError` at construction, because a `Refinement` corrects the
+  solve of `J d = -F` from the factor and the damped step does not take that solve (K57). `μ` is
+  absolute, in the units of
+  `J(x)ᴴ J(x)`: the damped model `(Jᴴ J + μ D²) δ = -Jᴴ F(x)` measures it there, so a residual
+  scaled by `k` sees the damping of the unscaled one divided by `k²`, and the `μ → 0` limit is the
+  truncated Newton step at every scale. With `scaling = :diagonal`, `D` is the diagonal of
+  the column norms of `J(x)` floored at `√eps` of the largest of them. A `μ` below `4 eps(R)` —
+  which only the initial `μ₀` can be, since the schedule floors at `max(μ_min, 4 eps(R))` — is
+  taken as no damping, the truncated Newton step. On `SVDFactorization()` with
+  `scaling = :none`, each step factorises `J(x)` once and each trial `μ` computes
+  `δ = -V diag(2^-e σ̂_j / (σ̂_j² + 2^{-2e} μ)) Uᴴ F(x)` from the stored `σ̂_j` of the scaled matrix
+  `J(x)/2^e` via the scale-safe coordinate weight `lm_svd_coord` across static (`StaticSVD`), host
+  (`DenseSVD`) and device (`DeviceSVD`) factors; where `2^{-e} √μ` overflows, at the bottom of the
+  factor's scale range, the weight is taken as zero and never as a `NaN`. On `QRFactorization()`,
+  `LUFactorization()` or `LDLTFactorization()`, or when `scaling = :diagonal`, the step reduces
+  `[J | -F]` once per outer step to an upper-triangular `(R₀, c₀)` and each trial `μ` copies that
+  pair and eliminates only its own damping rows `√μ D` by Givens rotations, without forming `Jᴴ J`,
+  so a rejected trial costs no factorisation of `J(x)`; that path indexes scalars, and an `init` on
+  a device array iterate raises an `ArgumentError` that names `SVDFactorization()` with
+  `scaling = :none` as the device step. An `init` on a non-static array iterate whose
+  `jacobian_prototype` is sparse raises an `ArgumentError` for every linear method and both
+  scalings. The message names the dense alternatives, a dense Jacobian with `LUFactorization()` or
+  `QRFactorization()` (the stacked step) or `SVDFactorization()` (the SVD step), or another
+  globalization for the sparse LU solve. A `StaticArray` iterate ignores the prototype and solves.
+  This closes K55, whose dense stacked solve ran beside a sparse factor that it never read. A
+  `StationarityProblem` solves with `Newton(; globalization = LevenbergMarquardt())` on R1 and R3
+  iterates for every linear method, with the merit `‖F(x)‖²` that the problem prescribes; the
+  stacked reduction reads no symmetry. Steps are accepted when the gain ratio
+  `ρ = (‖F(x)‖² - ‖F(x + δ)‖²) / (‖F(x)‖² - ‖F(x) + J δ‖²)` satisfies `ρ > ρ_accept`, decreasing
+  `μ` to `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`, and rejected steps set `μ` to
+  `max(μ · μ_increase, max(μ_min, 4 eps(R)))` inside the step until a trial step is accepted or
+  `μ > μ_max` returns `STALLED` with a finite `μ` in the rule state, so that a solve confined
+  to a stationary point ends `STALLED` and not `NONFINITE`. With a linear method whose factor type
+  `TF` differs from the working type `T`, such as `LUFactorization(Float32)` on a `Float64` iterate,
+  the stacked step reduces `J(x)` in `T` and reads no factor, and the SVD step takes its damped
+  direction from the `TF` factor. No LM step promotes, so `StepInfo.promoted` stays `false`, and
+  `init` reserves no working-precision factor (`NewtonState.fac_T === nothing`).
+  `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 10th column
+  `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
+
 - **The documentation build allows HTML pages up to 400 KiB** (`size_threshold` in
   `docs/make.jl`). The API page renders to about 200 KiB, Documenter's default hard limit, and the
   open pull requests add docstrings to it; the warning limit stays at 100 KiB.
@@ -1007,19 +1056,21 @@ so that a compat-only bump can be told apart from an interface change.
   (`reuse = k`, `age > 0`) first triggers an early refactorisation at the current iterate in the
   factor precision (`age` reset) within the same step, which counts one in `StepInfo.failures`.
   With `TF ≠ T`, the refactored step is refined again, and if that refinement fails, or the
-  factorisation fails in `TF`, `Newton` promotes the factorisation to working precision `T` via
-  `promote_linsolve(m.linsolve, T)` (`LUFactorization(real(T))` / `QRFactorization(real(T))` /
-  `SVDFactorization(real(T))` / `LDLTFactorization(real(T))`), recomputes `d = -J \ F(x)` in `T`,
-  increments `StepInfo.failures`, and sets `StepInfo.promoted = true` (sticky in
-  `SolverStatus.promoted`). In R1 (`Fx === nothing`), `NewtonState.fac_T` is `nothing` even when
-  `reuse` is set. With `NoRefinement` and any globalization but `DogLeg`, `NewtonState.J` aliases
-  the factor's matrix (`fac.factors` when `TF = T`, and `fac_T.factors` with `LUFactorization` when
-  `TF ≠ T`), so promotion allocates no extra `n × n` `T` buffer. When `Newton`
-  with `TF ≠ T` makes slow progress (`‖F(x₊)‖ > 0.5 ‖F(x)‖`) on two consecutive steps that
-  measured their relative linear-model residual `‖F(x) + J(x) d‖ / ‖F(x)‖` and found it above
-  `max(√eps(R), 1e-4)`, it promotes the factorisation to `T` with `promoted = true`; every other
-  step returns unchanged, as a step in `T` does, so a mixed step keeps going wherever its
-  all-`T` control does, and the precision floor of `F` itself is never read.
+  factorisation fails in `TF`, `Newton` (not with `LevenbergMarquardt`, K57) promotes the
+  factorisation to working precision `T` via `promote_linsolve(m.linsolve, T)`
+  (`LUFactorization(real(T))` / `QRFactorization(real(T))` / `SVDFactorization(real(T))` /
+  `LDLTFactorization(real(T))`), recomputes `d = -J \ F(x)` in `T`, increments `StepInfo.failures`,
+  and sets `StepInfo.promoted = true` (sticky in `SolverStatus.promoted`). In R1 (`Fx === nothing`),
+  `NewtonState.fac_T` is `nothing` even when `reuse` is set. With `NoRefinement` and any
+  globalization but `DogLeg` and `LevenbergMarquardt`, `NewtonState.J` aliases the factor's matrix
+  (`fac.factors` when `TF = T`, and `fac_T.factors` with `LUFactorization` when `TF ≠ T`), so
+  promotion allocates no extra `n × n` `T` buffer. When `Newton` with `TF ≠ T`
+  (not with `LevenbergMarquardt`, K57) makes slow progress (`‖F(x₊)‖ > 0.5 ‖F(x)‖`) on two
+  consecutive steps that measured their relative linear-model residual
+  `‖F(x) + J(x) d‖ / ‖F(x)‖` and found it above `max(√eps(R), 1e-4)`, it promotes the
+  factorisation to `T` with `promoted = true`; every other step returns unchanged, as a step in
+  `T` does, so a mixed step keeps going wherever its all-`T` control does, and the precision floor
+  of `F` itself is never read.
   `scripts/mixed_refinement_eta.jl` compares pure-`Float64` Newton, `η_J = √eps(Float64)`,
   Kelley's `1e-6`, and Eisenstat–Walker Choice 2 with a `√eps(Float64)` floor on
   `F(x) = A * x .+ 0.5 .* (x .^ 2)` at `N = 16`, `f_abstol = 1e-12`, and

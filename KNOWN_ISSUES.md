@@ -205,6 +205,34 @@
 - **kind:** docs
 - **found:** PR #61
 
+### K56 · The stacked `LevenbergMarquardt` step allocates a linear factor that it never reads
+
+- **location:** `src/nonlinear/newton.jl` (`init_state`, `lm_newton_factor`)
+- **evidence:** `init_state` calls `init_factor(m.linsolve, prob, x, p, jacprep)` for every
+  `Newton` without reuse, and `init_newton_J` gives `LevenbergMarquardt` a Jacobian buffer of its
+  own. On the stacked path (`QRFactorization`, `LUFactorization`, `LDLTFactorization`, or
+  `scaling = :diagonal`) `lm_newton_factor` returns `state.fac` without a `factorize!!`, and the
+  trial loop reads only the stacked buffers of `init_globalization`. The factor is one `n × n`
+  array of state that no step reads.
+- **kind:** dead code
+- **found:** PR #65
+
+### K57 · `Newton` with `LevenbergMarquardt` takes no `Refinement`, and its mixed-precision step never promotes
+
+- **location:** `src/nonlinear/newton.jl` (`Newton` inner constructor, the `LevenbergMarquardt`
+  `step!!`)
+- **evidence:** `Newton(; globalization = LevenbergMarquardt(), refinement = Refinement())` and
+  `refinement = true` raise an `ArgumentError`, tested in `test/globalization/levenbergmarquardt.jl`
+  (testset "A factor in Float32 on a Float64 iterate, and no Refinement (K57)"). A `Refinement`
+  corrects the solve of `J d = -F` from the factor, while the damped step solves
+  `(Jᴴ J + μ D²) δ = -Jᴴ F`: the stacked step reads no factor, and the SVD step weights the
+  singular triplets by `σ / (σ² + μ)`. With a linear method in `TF ≠ T`, the stacked step is the
+  working-precision step, and the SVD step takes its direction from the `TF` factor with no
+  promotion to `T`, so `StepInfo.promoted` stays `false`. A defect correction of the damped system
+  in `T`, and a promotion of the SVD factor when its direction stalls, are for a later pull request.
+- **kind:** defect
+- **found:** PR #65
+
 ### K60 · `solve` with a combinator method has no implicit differentiation
 
 - **location:** `src/composition/implicit.jl` (`solve_implicit`)

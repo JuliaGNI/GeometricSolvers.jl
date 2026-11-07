@@ -167,12 +167,15 @@ Bisection
 StrongWolfe
 ```
 
-A trust region is the other globalization of [`Newton`](@ref). [`DogLeg`](@ref) is no line search:
-it needs the Jacobian, its factor and a radius that lives across iterations, so `Newton` keeps the
-radius in its state and runs the trial loop on the dogleg curve itself.
+[`DogLeg`](@ref) and [`LevenbergMarquardt`](@ref) are the trust-region and damped-step
+globalizations of [`Newton`](@ref). Neither is a line search: each needs the Jacobian, its
+factor and a parameter that lives across iterations (the trust-region radius or the damping
+parameter `μ`), so `Newton` keeps that parameter in its state and runs the trial loop against
+the factor itself.
 
 ```@docs
 DogLeg
+LevenbergMarquardt
 ```
 
 ## Nonlinear solvers

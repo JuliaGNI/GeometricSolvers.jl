@@ -897,6 +897,8 @@ end
     @test prob_late.F(x0, p0) isa SVector{2, Float64}
     for m in (Newton(), Newton(; globalization = Backtracking()),
         Newton(; globalization = StrongWolfe()), Newton(; globalization = DogLeg()),
+        Newton(; globalization = LevenbergMarquardt()),
+        Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
         Picard(), Picard(; globalization = Backtracking()))
         @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
             prob_late, x0, m, p0)
