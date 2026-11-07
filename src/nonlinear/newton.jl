@@ -97,6 +97,21 @@ Adapt.@adapt_structure Newton
     return J !== nothing && !(J isa Union{AbstractVector, Number})
 end
 
+# The JVP preparation from the analytic Jacobian of `prob`: an `n × n` buffer, or one like the
+# Jacobian prototype of `prob`, which a line search, a `Refinement` and a mixed-precision step read.
+@inline function prototype_jvp(x, prob)
+    P = jacobian_prototype(prob)
+    return JacobianMatrixJVP(
+        P === nothing ? buffer(x, eltype(x), length(x), length(x)) : similar(P, eltype(x))
+    )
+end
+
+@inline function jacobian_matrix_jvp(g, x, prob)
+    return jacobian_matrix_jvp(g, x)
+end
+@inline jacobian_matrix_jvp(::LineSearch, x, prob) = prototype_jvp(x, prob)
+@inline jacobian_matrix_jvp(::Static, x, prob) = nothing
+
 @inline function newton_ad_preps(m::Newton, prob::NonlinearProblem, Fx, x, p)
     if m.refinement isa Refinement && m.jacobian isa AutoFiniteDiff
         throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
@@ -121,9 +136,9 @@ end
                 nothing
             elseif m.refinement isa Refinement ||
                    factor_eltype(m.linsolve, eltype(x)) !== eltype(x)
-                JacobianMatrixJVP(buffer(x, eltype(x), length(x), length(x)))
+                prototype_jvp(x, prob)
             else
-                jacobian_matrix_jvp(m.globalization, x)
+                jacobian_matrix_jvp(m.globalization, x, prob)
             end
         elseif m.jacobian isa AbstractADType
             prepare_ad(m.jacobian, prob, Fx, x, p)
@@ -179,14 +194,22 @@ end
     return StaticSVD{1, TF, real(TF), 1}(z, z, σ, Int32(0), Int32(0), Int32(0))
 end
 
+"""
+    jacobian_pattern(prob, jacprep)
+
+Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_prototype` for a
+[`NonlinearProblem`](@ref) and `nothing` for `nothing`.
+"""
+@inline jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype
+@inline jacobian_pattern(::Nothing, jacprep) = nothing
+
 @inline function init_factor(
-        ls::Union{LUFactorization, QRFactorization, SVDFactorization},
-        prob, x::Union{StaticVector, Number}, p)
+        ls::LinearMethod, prob, x::Union{StaticVector, Number}, p, jacprep)
     return empty_static_factor(ls, x)
 end
 
-@inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p)
-    return dense_factor(ls, prob, x, p)
+@inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p, jacprep)
+    return init_linear(ls, jacobian_pattern(prob, jacprep), x)
 end
 
 @inline function init_newton_J(m::Newton, fac, fac_T, x)
@@ -196,6 +219,9 @@ end
         elseif fac_T !== nothing && m.linsolve isa LUFactorization
             return fac_T.factors
         end
+    end
+    if fac.factors isa SparseArrays.SparseMatrixCSC
+        return similar(fac.factors, eltype(x))
     end
     n = length(x)
     return buffer(x, eltype(x), n, n)
@@ -323,14 +349,14 @@ end
     diag = NewtonDiagnostics(R)
     mixed = factor_eltype(m.linsolve, eltype(x)) !== eltype(x)
     if Fx === nothing
-        fac = m.reuse === nothing ? nothing : init_factor(m.linsolve, prob, x, p)
+        fac = m.reuse === nothing ? nothing : init_factor(m.linsolve, prob, x, p, jacprep)
         return NewtonState(
             jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule, merit, R(NaN),
             diag, nothing, nothing, false, Int32(-1))
     else
-        fac = init_factor(m.linsolve, prob, x, p)
+        fac = init_factor(m.linsolve, prob, x, p, jacprep)
         fac_T = mixed ?
-                init_factor(promote_linsolve(m.linsolve, eltype(x)), prob, x, p) :
+                init_factor(promote_linsolve(m.linsolve, eltype(x)), prob, x, p, jacprep) :
                 nothing
         refbuf = init_refinement(m.refinement, x)
         return NewtonState(

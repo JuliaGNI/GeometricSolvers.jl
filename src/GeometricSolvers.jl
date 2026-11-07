@@ -4,7 +4,8 @@ solvers run on the CPU and on CUDA, ROCm and Metal devices through KernelAbstrac
 """
 module GeometricSolvers
 
-using ADTypes: AbstractADType, AutoFiniteDiff, AutoForwardDiff
+using ADTypes: AbstractADType, AutoFiniteDiff, AutoForwardDiff, AutoSparse,
+               KnownJacobianSparsityDetector, coloring_algorithm, dense_ad
 using Adapt: Adapt
 import CommonSolve: init, solve, solve!
 using DifferentiationInterface: DifferentiationInterface as DI
@@ -14,6 +15,7 @@ using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
                           get_backend, isgpu, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, ldiv!,
                      lu!, mul!, qr!
+using SparseArrays: SparseArrays
 using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
                     StaticMatrix, StaticVector, SVector,
                     setindex
@@ -28,7 +30,7 @@ export Newton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard, Nonline
        init, solve, solve!
 export solve_batch!
 
-public solve!!
+public solve!!, sciml_retcode
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -68,6 +70,7 @@ include("nonlinear/solver.jl")
 include("nonlinear/refinement.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
+include("nonlinear/implicit.jl")
 include("nonlinear/batched.jl")
 
 end
