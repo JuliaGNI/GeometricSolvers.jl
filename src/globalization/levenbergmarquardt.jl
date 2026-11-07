@@ -24,13 +24,15 @@ outer step and each trial `μ` evaluates the damped pseudoinverse step from `(U,
 refactoring `J(x)`. With [`QRFactorization`](@ref), [`LUFactorization`](@ref) or
 [`LDLTFactorization`](@ref) (or when `scaling = :diagonal`), `[J(x) | -F(x)]` is reduced once per
 outer step to an upper-triangular `(R₀, c₀)` and each trial `μ` copies that pair and eliminates
-only its own damping rows `√μ D` by Givens rotations, without forming `J(x)ᴴ J(x)`; this reduction
-reads no symmetry, so it serves the Hessian of a [`StationarityProblem`](@ref) as any other `J(x)`.
-That path indexes scalars and runs on a host array: an `init` on a device array iterate raises an
-`ArgumentError` for it. Neither path reads a sparse factor, so an `init` on a non-static array
-iterate whose problem carries a sparse `jacobian_prototype` raises an `ArgumentError` too. A `μ`
-below `4 eps` of the working type, which only an initial `μ₀` below the schedule's floor can be,
-is taken as no damping: the truncated Newton step, the `μ → 0` limit.
+only its own damping rows `√μ D` by Givens rotations, without forming `J(x)ᴴ J(x)`; for a
+[`LeastSquaresProblem`](@ref) the rows of `J(x)` past its `n` columns are eliminated into the same
+`n × n` pair. This reduction reads no symmetry, so it serves the Hessian of a
+[`StationarityProblem`](@ref) as any other `J(x)`. That path indexes scalars and runs on a host
+array: an `init` on a device array iterate raises an `ArgumentError` for it. Neither path reads a
+sparse factor, so an `init` on a non-static array iterate whose problem carries a sparse
+`jacobian_prototype` raises an `ArgumentError` too. A `μ` below `4 eps` of the working type, which
+only an initial `μ₀` below the schedule's floor can be, is taken as no damping: the truncated
+Newton step, the `μ → 0` limit.
 
 A solve starts at `μ₀`. A trial is accepted when `ρ > ρ_accept`, and an accepted step sets `μ` to
 `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`. A rejected trial, or one whose step is not finite,
@@ -126,17 +128,18 @@ end
     return nothing
 end
 
-# The workspace of `LevenbergMarquardt` at an iterate `x`: the trial buffers that every path uses,
-# and the buffers of the stacked solve, which only the QR, LU and LDLᵀ paths and Marquardt's
-# scaling read. The SVD step reads none of them, so the stacked slots are allocated only where they
-# are used; a device iterate never asks for them, because `init_state` refuses the stacked step
-# before this function runs (see `check_lm_iterate`).
-@inline function init_globalization(lm::LevenbergMarquardt, linsolve::LinearMethod, x)
+# The workspace of `LevenbergMarquardt` at an iterate `x` with residual `Fx`: the trial buffers
+# that every path uses, `Jδ` and `Ft` of the residual's length, and the buffers of the stacked
+# solve, which only the QR, LU and LDLᵀ paths and Marquardt's scaling read. The SVD step reads none
+# of them, so the stacked slots are allocated only where they are used; a device iterate never asks
+# for them, because `init_state` refuses the stacked step before this function runs (see
+# `check_lm_iterate`). The stacked factor is `n × n` whatever the residual's length.
+@inline function init_globalization(lm::LevenbergMarquardt, linsolve::LinearMethod, x, Fx = x)
     T = eltype(x)
     R = real(T)
     n = x isa Number ? 1 : length(x)
     stacked = !lm_svd_path(linsolve, lm.scaling)
-    return (; Jδ = buffer(x), xt = buffer(x), Ft = buffer(x),
+    return (; Jδ = buffer(Fx), xt = buffer(x), Ft = buffer(Fx),
         R₀ = stacked ? buffer(x, T, n, n) : nothing,
         c₀ = stacked ? buffer(x, T, n) : nothing,
         R = stacked ? buffer(x, T, n, n) : nothing,
@@ -185,21 +188,32 @@ end
     return T(ldexp2(w, -e)) * y
 end
 
-# Evaluate δ = -∑_{j=1}^{rank} w_j (u_jᴴ Fx) v_j from a StaticSVD factorisation.
+# Evaluate δ = -∑_{j=1}^{rank} w_j (u_jᴴ Fx) v_j from a StaticSVD or StaticRectSVD factorisation.
+# One method per factor type: over their `Union` the fields of `fac` are read at run time.
+@inline function lm_svd_step(
+        ::Nothing, fac::StaticSVD{N, TF}, Fx::StaticVector{M, T},
+        μ::R) where {M, N, TF, T, R <: AbstractFloat}
+    return lm_svd_step(fac.factors, fac.V, fac.σ̂, Int(fac.rank),
+        Int(fac.scale_exponent), Fx, μ)
+end
+
+@inline function lm_svd_step(
+        ::Nothing, fac::StaticRectSVD{<:Any, N, TF}, Fx::StaticVector{M, T},
+        μ::R) where {M, N, TF, T, R <: AbstractFloat}
+    return lm_svd_step(getfield(fac, :U), getfield(fac, :V), getfield(fac, :σ̂),
+        Int(getfield(fac, :rank)), Int(getfield(fac, :scale_exponent)), Fx, μ)
+end
+
 function lm_svd_step(
-        ::Nothing, fac::StaticSVD{N, TF}, Fx::StaticVector{N, T},
-        μ::R) where {N, TF, T, R <: AbstractFloat}
-    U = fac.factors
-    V = fac.V
-    rk = Int(fac.rank)
-    e = Int(fac.scale_exponent)
+        U::StaticMatrix, V::StaticMatrix{<:Any, N}, σ̂::StaticVector,
+        rk::Int, e::Int, Fx::StaticVector{M, T}, μ::R) where {M, N, T, R <: AbstractFloat}
     δ = local_array(zero(SVector{N, T}))
     @inbounds for j in 1:rk
         y_j = zero(T)
-        for i in 1:N
+        for i in 1:M
             y_j += T(conj(U[i, j])) * Fx[i]
         end
-        c_j = -lm_svd_coord(R(fac.σ̂[j]), e, y_j, μ)
+        c_j = -lm_svd_coord(R(σ̂[j]), e, y_j, μ)
         for i in 1:N
             δ[i] += T(V[i, j]) * c_j
         end
@@ -208,8 +222,9 @@ function lm_svd_step(
 end
 
 function lm_svd_step(
-        δ_buf::StaticVector{N, T}, fac::StaticSVD{N, TF},
-        Fx::StaticVector{N, T}, μ::R) where {N, TF, T, R <: AbstractFloat}
+        δ_buf::StaticVector{N, T},
+        fac::Union{StaticSVD{N, TF}, StaticRectSVD{<:Any, N, TF}},
+        Fx::StaticVector{M, T}, μ::R) where {M, N, TF, T, R <: AbstractFloat}
     s = lm_svd_step(nothing, fac, Fx, μ)
     copyto!(δ_buf, s)
     return δ_buf
@@ -226,7 +241,8 @@ end
 function lm_svd_step(
         δ::AbstractVector{T}, fac::DenseSVD, Fx::AbstractVector{T},
         μ::R) where {T <: Number, R <: AbstractFloat}
-    n = length(Fx)
+    m = length(Fx)
+    n = length(δ)
     rk = Int(fac.rank)
     e = Int(fac.scale_exponent)
     fill!(δ, zero(T))
@@ -234,7 +250,7 @@ function lm_svd_step(
     VT = fac.VT
     @inbounds for j in 1:rk
         y_j = zero(T)
-        for i in 1:n
+        for i in 1:m
             y_j += T(conj(U[i, j])) * Fx[i]
         end
         c_j = -lm_svd_coord(R(fac.rwork[j]), e, y_j, μ)
@@ -245,13 +261,13 @@ function lm_svd_step(
     return δ
 end
 
-@kernel function ka_lm_svd_ut_kernel!(tmp, @Const(U), @Const(Fx), n::Int, rk::Int)
+@kernel function ka_lm_svd_ut_kernel!(tmp, @Const(U), @Const(Fx), m::Int, n::Int, rk::Int)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(tmp)
         if j <= rk
             acc = zero(F)
-            for i in 1:n
+            for i in 1:m
                 acc += conj(U[i, j]) * F(Fx[i])
             end
             tmp[j] = acc
@@ -273,14 +289,15 @@ end
 function lm_svd_step(
         δ::AbstractVector{T}, fac::DeviceSVD, Fx::AbstractVector{T},
         μ::R) where {T <: Number, R <: AbstractFloat}
-    n = length(Fx)
+    m = length(Fx)
+    n = length(δ)
     rk = Int(fac.rank)
     if rk == 0 || n == 0
         fill!(δ, zero(T))
         return δ
     end
     backend = get_backend(fac.U)
-    ka_lm_svd_ut_kernel!(backend)(fac.tmp, fac.U, Fx, n, rk; ndrange = n)
+    ka_lm_svd_ut_kernel!(backend)(fac.tmp, fac.U, Fx, m, n, rk; ndrange = n)
     ka_lm_svd_weight_kernel!(backend)(
         fac.tmp, fac.σ̂, rk, Int(fac.scale_exponent), μ; ndrange = rk)
     ka_svd_v_mul_kernel!(backend)(δ, fac.VT, fac.tmp, n; ndrange = n)
@@ -320,7 +337,7 @@ end
 # The same diagonal of a static matrix, as a value: the damping of the R1 stacked solve. Inlined,
 # as the stacked routines are, so that the `MVector` it fills stays in the caller's frame.
 @inline function lm_damping_diagonal(
-        J::StaticMatrix{N, N, T}, scaling::Val{SC}) where {N, T, SC}
+        J::StaticMatrix{M, N, T}, scaling::Val{SC}) where {M, N, T, SC}
     R = real(T)
     d = local_array(zero(SVector{N, R}))
     lm_damping_diagonal!(d, J, scaling)
@@ -333,10 +350,13 @@ end
 # trial costs no factorisation of `J`.
 
 # Reduce `[J | -F]`, written into `R0` and `c0`, to the upper-triangular pair `(R0, c0)` by
-# Givens rotations on its rows. Inlined because the caller's `MMatrix` buffers must not escape a
-# call for the R1 step to stay off the heap.
+# Givens rotations on its rows: the first `n` rows of the `m × n` matrix `J` in place, then each
+# further row of a `LeastSquaresProblem` eliminated into that triangle through the scratch row `w`,
+# or a new one like `c0` where `w` is `nothing`. Inlined because the caller's `MMatrix` buffers
+# must not escape a call for the R1 step to stay off the heap.
 @inline function lm_qr_factor!(
-        R0::AbstractMatrix, c0::AbstractVector, J::AbstractMatrix, Fx::AbstractVector)
+        R0::AbstractMatrix, c0::AbstractVector, J::AbstractMatrix, Fx::AbstractVector,
+        w = nothing)
     n = length(c0)
     @inbounds for j in 1:n
         c0[j] = -Fx[j]
@@ -364,6 +384,35 @@ end
             v_r = c0[i]
             c0[j] = cs * u_r + sn * v_r
             c0[i] = -conj(sn) * u_r + cs * v_r
+        end
+    end
+    m = size(J, 1)
+    m > n || return R0, c0
+    T = eltype(c0)
+    w = w === nothing ? similar(c0) : w
+    @inbounds for i in (n + 1):m
+        for k in 1:n
+            w[k] = J[i, k]
+        end
+        w_rhs = T(-Fx[i])
+        for k in 1:n
+            b = w[k]
+            iszero(b) && continue
+            a = R0[k, k]
+            G, r_val = givens(a, b, 1, 2)
+            cs = G.c
+            sn = G.s
+            R0[k, k] = r_val
+            w[k] = zero(T)
+            for l in (k + 1):n
+                u = R0[k, l]
+                v = w[l]
+                R0[k, l] = cs * u + sn * v
+                w[l] = -conj(sn) * u + cs * v
+            end
+            u_r = c0[k]
+            c0[k] = cs * u_r + sn * w_rhs
+            w_rhs = -conj(sn) * u_r + cs * w_rhs
         end
     end
     return R0, c0
@@ -436,6 +485,14 @@ end
 # `factorize!!`.
 @inline lm_stacked_factor!(::LinearMethod, R₀, c₀, J, Fx) = lm_qr_factor!(R₀, c₀, J, Fx)
 
+# The same reduction with the scratch row `w` of an array workspace, which the rows of a
+# `LeastSquaresProblem` past its `n` columns are eliminated through; a square `J` takes the
+# reduction above.
+@inline function lm_stacked_factor!(m::LinearMethod, R₀, c₀, J, Fx, w)
+    size(J, 1) == length(c₀) && return lm_stacked_factor!(m, R₀, c₀, J, Fx)
+    return lm_qr_factor!(R₀, c₀, J, Fx, w)
+end
+
 # The workspace of the stacked solve for a vector iterate: the factor `(R₀, c₀)` of `[J | -F]` and
 # the damping diagonal, as values. It is immutable, so it crosses a call and a loop iteration
 # without a heap array, and each trial builds the copies it eliminates in the call that reads them.
@@ -459,10 +516,10 @@ struct LMScalar{T, D}
 end
 
 # The workspace of the stacked solve for a static vector iterate, factored at the start of an outer
-# step.
+# step: an `N × N` factor of the `M × N` Jacobian, `M > N` for a `LeastSquaresProblem` alone.
 @inline function lm_qr_prepare(
-        linsolve, ::Nothing, g, J::StaticMatrix{N, N, T}, Fx::StaticVector{N, T},
-        scaling::Union{Val{:none}, Val{:diagonal}}) where {N, T}
+        linsolve, ::Nothing, g, J::StaticMatrix{M, N, T}, Fx::StaticVector{M, T},
+        scaling::Union{Val{:none}, Val{:diagonal}}) where {M, N, T}
     R₀ = local_array(zero(SMatrix{N, N, T}))
     c₀ = local_array(zero(SVector{N, T}))
     lm_stacked_factor!(linsolve, R₀, c₀, J, Fx)
@@ -490,7 +547,7 @@ end
         linsolve, δ::AbstractVector, g, J::AbstractMatrix, Fx::AbstractVector,
         scaling::Union{Val{:none}, Val{:diagonal}})
     lm_damping_diagonal!(g.d_diag, J, scaling)
-    lm_stacked_factor!(linsolve, g.R₀, g.c₀, J, Fx)
+    lm_stacked_factor!(linsolve, g.R₀, g.c₀, J, Fx, g.w)
     return (; R₀ = g.R₀, c₀ = g.c₀, R = g.R, c = g.c, w = g.w, δ, d_diag = g.d_diag)
 end
 

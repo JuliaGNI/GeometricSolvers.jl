@@ -58,16 +58,37 @@ and for an array iterate it writes that iterate into `x` and returns `x`. [`Newt
 """
 @inline finish!!(state, method, prob, x, Fx, status) = (x, status, state)
 
+@inline state_gradratio(state) = NaN
+@inline state_jnorm(state) = 0
+
 @inline function ok_status(status::SolverStatus{R}) where {R}
     return SolverStatus{R}(
         SUCCESS, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted)
+        status.step_failures, status.promoted, false)
+end
+
+@inline function stationary_status(status::SolverStatus{R}) where {R}
+    return SolverStatus{R}(
+        SUCCESS, status.iterations, status.fnorm, status.stepnorm,
+        status.step_failures, status.promoted, true)
 end
 
 @inline function end_status(status::SolverStatus{R}, code::ReturnCode) where {R}
     return SolverStatus{R}(
         code, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted)
+        status.step_failures, status.promoted, false)
+end
+
+@inline function stationary_converged(
+        ::AbstractNonlinearProblem, ::Options{R}, state, ::SolverStatus{R}) where {R}
+    return false
+end
+@inline function stationary_converged(
+        ::LeastSquaresProblem, options::Options{R}, state, status::SolverStatus{R}) where {R}
+    status.iterations >= options.min_iterations || return false
+    jnorm = state_jnorm(state)
+    grad = state_gradratio(state)
+    return jnorm > zero(R) && status.fnorm > zero(R) && grad <= options.g_tol
 end
 
 # `residual!!` at a primal iterate of a solve, refused when the residual contains a
@@ -105,15 +126,25 @@ evaluation inside a step: [`solve`](@ref) takes dual inputs.
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
 `SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
 (meaning the failed line-search trial did not decrease the merit) stops immediately with
-`LINESEARCH_FAILED`; one that decreased the merit keeps its new iterate, increments
-`status.step_failures`, and continues. Only the residual test returns `SUCCESS`. When it fails
+`LINESEARCH_FAILED`, unless the stationarity test below holds, which a nonzero-residual
+least-squares minimum reaches with every step a line search can try; one that decreased the merit
+keeps its new iterate, increments
+`status.step_failures`, and continues. The residual test returns `SUCCESS` with
+`status.stationary == false`; on a [`LeastSquaresProblem`](@ref) where the residual test does not
+hold, the stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ options.g_tol` (with `‖J‖_F > 0` and
+`‖F‖ > 0`) returns `SUCCESS` with `status.stationary == true`. The state's diagnostics are those
+of its last fresh factorisation, at the start of the step, so the ratio is re-measured at the
+iterate the solve returns before it ends on this test. When neither test holds
 after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
 at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
-would start; `min_iterations` bounds both. After a `STALLED` step only the residual test applies,
+would start — unless the stationarity test, re-measured at that iterate, holds, which a
+nonzero-residual least-squares minimum reaches with a step of any length, a zero one included;
+`min_iterations` bounds both. After a `STALLED` step only the residual and
+stationarity tests apply,
 and `options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose
-`limited` is set only the residual test applies too, because a radius or a damping, not the
-distance to a root, sets its norm; such a step is not a stall. Reaching `options.max_iterations` without
-convergence returns `MAXITERS`.
+`limited` is set only the residual and stationarity tests apply too, because a radius or a
+damping, not the distance to a root, sets its norm; such a step is not a stall. Reaching
+`options.max_iterations` without convergence returns `MAXITERS`.
 """
 function solve!!(
         state, prob::AbstractNonlinearProblem, x₀, method, p = nothing,
@@ -123,7 +154,7 @@ function solve!!(
     Fx = primal_residual!!(residual_buffer(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
-    status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false)
+    status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false, false)
     if !isfinite(fnorm₀)
         return finish!!(state, method, prob, x, Fx, end_status(status, NONFINITE))
     end
@@ -140,21 +171,33 @@ function solve!!(
         if info.code == SINGULAR || info.code == NONFINITE
             return finish!!(state, method, prob, x, Fx, status)
         end
-        if info.code == LINESEARCH_FAILED && iszero(info.stepnorm)
+        if info.code == LINESEARCH_FAILED && iszero(info.stepnorm) &&
+           !stationary_converged(prob, options, state, status)
             return finish!!(state, method, prob, x, Fx, status)
         end
         if residual_converged(options, status, fnorm₀)
             return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
-        if !(info.code == STALLED || info.limited)
-            # the residual test fails: the step test, or a zero step, ends the solve unconverged
-            if step_converged(options, status, rnorm(x))
-                return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
+        # the diagnostics are re-measured at `x` at most once per step
+        refreshed = false
+        if stationary_converged(prob, options, state, status)
+            state = refresh_diagnostics!!(state, method, prob, x, Fx, p)
+            refreshed = true
+            if stationary_converged(prob, options, state, status)
+                return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
-            if info.code == SUCCESS && iszero(info.stepnorm) &&
-               status.iterations >= options.min_iterations
-                return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
+        end
+        # the residual test fails: the step test, or a zero step, ends the solve unconverged,
+        # unless the iterate it returns is stationary, which a step of zero length cannot show
+        if !(info.code == STALLED || info.limited) &&
+           (step_converged(options, status, rnorm(x)) ||
+            (info.code == SUCCESS && iszero(info.stepnorm) &&
+             status.iterations >= options.min_iterations))
+            refreshed || (state = refresh_diagnostics!!(state, method, prob, x, Fx, p))
+            if stationary_converged(prob, options, state, status)
+                return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
+            return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
         end
         if info.code == STALLED
             stalls += one(Int32)
@@ -168,6 +211,15 @@ function solve!!(
             return finish!!(state, method, prob, x, Fx, end_status(status, MAXITERS))
         end
     end
+end
+
+# A one-variable least-squares problem iterates on the one-entry vector path, and its result goes
+# back to the caller as the `Number` it is: the state is the lifted state that `init_state` built.
+function solve!!(state, prob::LeastSquaresProblem, x₀::Number, method, p = nothing,
+        options::Options{R} = Options(eltype(x₀))) where {R <: Real}
+    prob, method, x₀ = lift_scalar_iterate(prob, method, x₀)
+    x, status, state₊ = solve!!(state, prob, x₀, method, p, options)
+    return first(x), status, state₊
 end
 
 # The options of a solve whose iterate has element type `T`: the keywords, or an `Options{real(T)}`,
@@ -194,11 +246,11 @@ end
 """
     NonlinearSolver(prob, x, method, options, state, p)
 
-A preallocated nonlinear solver for [`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref)
-`prob` with `method` and [`Options`](@ref) `options`, holding the workspace and AD preparation in
-`state`, the iterate `x` and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the
-element type `T` and the length `n` of `x` and the types `X` of `x` and `Q` of `p`, which
-[`solve!`](@ref) checks.
+A preallocated nonlinear solver for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) or
+[`LeastSquaresProblem`](@ref) `prob` with `method` and [`Options`](@ref) `options`, holding the
+workspace and AD preparation in `state`, the iterate `x` and the parameters `p`, in the fields
+`x::X` and `p::Q`. It keeps the element type `T` and the length `n` of `x` and the types `X` of `x`
+and `Q` of `p`, which [`solve!`](@ref) checks.
 Build it with [`init(prob, x₀, method, p; options = nothing, kwargs...)`](@ref init) and solve
 with [`solve!(solver)`](@ref solve!) or [`solve!(solver, x, p)`](@ref solve!).
 """
@@ -219,7 +271,7 @@ mutable struct NonlinearSolver{T, P <: AbstractNonlinearProblem, M, O <: Options
 end
 
 """
-    init(prob::NonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
+    init(prob::AbstractNonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
 
 Allocate and prepare a [`NonlinearSolver`](@ref) for `prob` and `method` from the initial iterate
 `x₀` and the parameters `p`, with the arguments of [`solve`](@ref), so that
@@ -233,7 +285,7 @@ object whose type holds a `ForwardDiff.Dual`; a residual that contains a `Forwar
 primal `x` and `p` raises an `ArgumentError` in [`solve!`](@ref), from [`solve!!`](@ref).
 """
 function init(
-        prob::NonlinearProblem, x₀, method, p = nothing;
+        prob::AbstractNonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
     if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p))
         throw(ArgumentError(
@@ -278,25 +330,22 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
     p isa Q || throw(ArgumentError(
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
-    if P <: NonlinearProblem
-        b === nothing ||
-            throw(ArgumentError("keyword `b` is only supported for `StationarityProblem`"))
-        solver.x = x
-        solver.p = p
-        x₊, status, state = solve!!(
-            solver.state, solver.prob, x, solver.method, p, solver.options)
-        solver.x = x₊
-        solver.state === state || (solver.state = state)
-        return solver.x, status
-    else
-        return _solve_stationarity_solver!(solver, x, p, b)
-    end
+    P <: StationarityProblem && return _solve_stationarity_solver!(solver, x, p, b)
+    b === nothing ||
+        throw(ArgumentError("keyword `b` is only supported for `StationarityProblem`"))
+    solver.x = x
+    solver.p = p
+    x₊, status, state = solve!!(
+        solver.state, solver.prob, x, solver.method, p, solver.options)
+    solver.x = x₊
+    solver.state === state || (solver.state = state)
+    return solver.x, status
 end
 
 """
-    solve(prob::NonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
+    solve(prob::AbstractNonlinearProblem, x₀, method, p = nothing; options = nothing, kwargs...)
 
-Solve [`NonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters `p`, and return
+Solve [`AbstractNonlinearProblem`](@ref) `prob` from `x₀` with `method` and parameters `p`, and return
 `(x, status)` where `status` is a [`SolverStatus`](@ref). For an R3 array iterate `x₀`, `solve`
 copies `x₀` so the caller's initial guess is not mutated. On primal inputs,
 `solve(args...; kwargs...)` returns what `solve!(init(args...; kwargs...))` returns, without
@@ -324,9 +373,9 @@ to `Float32`. A non-`SUCCESS` primal solve returns primal values at
 performs no back-substitution and returns primal values at `x*` with `NaN` partials and
 `status.code === SINGULAR`. Nested duals, distinct dual tags or partial counts across `x₀` and `p`,
 and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`. A
-combinator method, [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) or
-[`Switch`](@ref), has no implicit differentiation: with a `ForwardDiff.Dual` in `x₀` or `p`,
-`solve` raises an `ArgumentError` before the primal solve.
+combinator method, [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref),
+[`Switch`](@ref) or [`Anderson`](@ref), has no implicit differentiation: with a
+`ForwardDiff.Dual` in `x₀` or `p`, `solve` raises an `ArgumentError` before the primal solve.
 
 `prob` may capture an object whose type holds a `ForwardDiff.Dual`, such as a
 `ForwardDiff.GradientConfig` or a dual work buffer, and `solve` does not check it. A residual
@@ -335,7 +384,7 @@ that contains a `ForwardDiff.Dual` on the primal `x` and `p` of the solve raises
 its primal buffer raises the `MethodError` of that conversion instead.
 """
 function solve(
-        prob::NonlinearProblem, x₀, method, p = nothing;
+        prob::AbstractNonlinearProblem, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
     if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p))
         return solve_implicit(prob, x₀, method, p, options, kwargs)

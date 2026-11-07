@@ -11,6 +11,7 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 - `x_abstol::R`, `x_reltol::R`: the step test ``\\|Δx\\| ≤ \\max(x_{abstol}, x_{reltol} \\|x\\|)``.
 - `min_iterations::Int32`, `max_iterations::Int32`: the bounds on the number of steps.
 - `max_stalls::Int32`: the number of consecutive stalled steps after which the solve stops.
+- `g_tol::R`: the stationarity tolerance ``\\|J^\\top F\\|_2 / (\\|J\\|_F \\|F\\|_2) \\le g_{\\text{tol}}`` on a [`LeastSquaresProblem`](@ref).
 
 [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
 type `T` of the iterate, so the caller never names `R`. A solve takes only an `Options{R}` for
@@ -26,6 +27,14 @@ struct Options{R <: Real}
     min_iterations::Int32
     max_iterations::Int32
     max_stalls::Int32
+    g_tol::R
+end
+
+function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
+        min_iterations::Integer, max_iterations::Integer, max_stalls::Integer) where {R <:
+                                                                                      Real}
+    return Options{R}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
+        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), sqrt(eps(R)))
 end
 
 @inline function nonnegative(name::Symbol, tol::Real)
@@ -34,10 +43,10 @@ end
 end
 
 """
-    Options(T; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls)
+    Options(T = Float64; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls, g_tol)
 
 Build the [`Options`](@ref) of a solve whose iterate has element type `T`, as `Options{real(T)}`.
-The two relative tolerances scale with `eps(R)`:
+The relative tolerances scale with `eps(R)`:
 
 | keyword | default |
 |:--|:--|
@@ -48,6 +57,7 @@ The two relative tolerances scale with `eps(R)`:
 | `min_iterations` | `0` |
 | `max_iterations` | `100` |
 | `max_stalls` | `2` |
+| `g_tol` | `√eps(R)` |
 
 **The default residual test is relative.** The residual cannot fall below about
 ``\\mathrm{eps}(T) \\|J\\| \\|x\\|``, whatever the precision of the residual (Tisseur 2001,
@@ -74,20 +84,22 @@ julia> opt.f_reltol
 0.0001f0
 ```
 """
-function Options(::Type{T};
+function Options(::Type{T} = Float64;
         f_abstol::Real = 0,
         f_reltol::Real = sqrt(eps(real(T))),
         x_abstol::Real = 0,
         x_reltol::Real = 2 * eps(real(T)),
         min_iterations::Integer = 0,
         max_iterations::Integer = 100,
-        max_stalls::Integer = 2) where {T <: Number}
+        max_stalls::Integer = 2,
+        g_tol::Real = sqrt(eps(real(T)))) where {T <: Number}
     R = real(T)
     # one call per tolerance, because a loop over their mixed types allocates
     nonnegative(:f_abstol, f_abstol)
     nonnegative(:f_reltol, f_reltol)
     nonnegative(:x_abstol, x_abstol)
     nonnegative(:x_reltol, x_reltol)
+    nonnegative(:g_tol, g_tol)
     min_iterations >= 0 ||
         throw(ArgumentError("min_iterations must be non-negative, got $min_iterations"))
     max_iterations >= min_iterations ||
@@ -95,7 +107,7 @@ function Options(::Type{T};
     max_stalls >= 1 ||
         throw(ArgumentError("max_stalls must be at least 1, got $max_stalls"))
     Options{R}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
-        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls))
+        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol))
 end
 
 # `nothing` when `options` is an `Options{real(T)}`, the options of an iterate of element type

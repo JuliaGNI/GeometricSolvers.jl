@@ -83,3 +83,9 @@ function extreme_rhs_systems(::Type{T}) where {T <: Real}
             big.(mixed), true, mixed_atol)
     ]
 end
+
+# The bytes one call of `f(args...)` allocates, through a function barrier whose arguments have
+# concrete types: it calls `f` once to compile the call and to fill any cache it keeps, and
+# measures the second call. A test asserts `allocations(f, args...) == 0`, and a control on a
+# function that must allocate, `allocations(collect, A) > 0`, shows that the helper sees one.
+allocations(f::F, xs::Vararg{Any, N}) where {F, N} = (f(xs...); @allocated f(xs...))

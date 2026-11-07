@@ -14,6 +14,7 @@ is in `R = real(T)` for the element type `T` of the iterate.
   one count.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
+- `stationary::Bool`: the solve converged by the stationarity test rather than the residual test.
 - `rank::Int32`: the numerical rank of the last fresh factorisation where it is an SVD factor
   with `info == 0`, else `Int32(-1)`: no factorisation, an LU or QR factor, or a failed SVD
   factor.
@@ -25,7 +26,8 @@ is in `R = real(T)` for the element type `T` of the iterate.
   ``\\|F(x_k)\\| = 0``, or `R(NaN)` when no Jacobian was factorised.
 
 The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
-``x`` at return. With `regularization = μ ≠ 0`, `rank` and `nullnorm` are those of the
+``x`` at return; a solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has
+factorised afresh at the iterate it returns, so its numbers are that iterate's. With `regularization = μ ≠ 0`, `rank` and `nullnorm` are those of the
 factored matrix ``J(x_k) + μ I`` and `gradratio` is that of ``J(x_k)``, so the classification
 below holds for `μ = 0` only. For a [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any
 nonzero scalar Jacobian has `gradratio == 1`, and `rank == 1` with an SVD factor), they
@@ -50,6 +52,7 @@ struct SolverStatus{R <: Real}
     stepnorm::R
     step_failures::Int32
     promoted::Bool
+    stationary::Bool
     rank::Int32
     nullnorm::R
     gradratio::R
@@ -57,10 +60,39 @@ end
 
 @inline function SolverStatus{R}(
         code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool,
+        rank::Int32, nullnorm::R, gradratio::R) where {R <: Real}
+    return SolverStatus{R}(
+        code, iterations, fnorm, stepnorm, step_failures, promoted, false,
+        rank, nullnorm, gradratio)
+end
+
+@inline function SolverStatus{R}(
+        code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool, stationary::Bool) where {R <: Real}
+    return SolverStatus{R}(
+        code, iterations, fnorm, stepnorm, step_failures, promoted, stationary,
+        Int32(-1), R(NaN), R(NaN))
+end
+
+@inline function SolverStatus{R}(
+        code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
         step_failures::Int32, promoted::Bool) where {R <: Real}
     return SolverStatus{R}(
-        code, iterations, fnorm, stepnorm, step_failures, promoted,
+        code, iterations, fnorm, stepnorm, step_failures, promoted, false,
         Int32(-1), R(NaN), R(NaN))
+end
+
+"""
+    stopping_test(status::SolverStatus)
+
+Name the stopping test that ended a converged solve: `:stationarity` when `status.stationary`
+is set, `:residual` when the solve converged by the residual test, and `:none` when the solve
+did not converge.
+"""
+@inline function stopping_test(status::SolverStatus)
+    isconverged(status) || return :none
+    return status.stationary ? :stationarity : :residual
 end
 
 """
@@ -93,8 +125,8 @@ end
     record(status::SolverStatus{R}, info::StepInfo{R})
 
 Fold the result of one step into the status: count the iteration, take the code and the norms of
-the step, add its failures, keep `promoted` once it is set, and preserve `rank`, `nullnorm` and
-`gradratio`.
+the step, add its failures, keep `promoted` once it is set, and preserve `stationary`, `rank`,
+`nullnorm` and `gradratio`.
 """
 function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
     SolverStatus{R}(info.code,
@@ -103,6 +135,7 @@ function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
         info.stepnorm,
         status.step_failures + info.failures,
         status.promoted | info.promoted,
+        status.stationary,
         status.rank,
         status.nullnorm,
         status.gradratio)

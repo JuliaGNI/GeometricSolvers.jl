@@ -6,8 +6,8 @@ using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Additive, Multiplicative, Newton, NonlinearProblem, Picard, Repeat,
-                        Switch
+using GeometricSolvers: Additive, Anderson, Multiplicative, Newton, NonlinearProblem,
+                        Picard, Repeat, Switch
 using GeometricSolvers: init, solve, solve!, solve_batch!
 
 struct CombinatorDualTag end
@@ -16,7 +16,8 @@ const COMBINATORS = (
     Additive(Newton(), Picard(; damping = 0.5)),
     Multiplicative(Picard(; damping = 0.5), Newton()),
     Repeat(Newton(), 2),
-    Switch(Picard(; damping = 0.5), Newton(); threshold = 0.5))
+    Switch(Picard(; damping = 0.5), Newton(); threshold = 0.5),
+    Anderson(Picard(; damping = 0.5), 2))
 
 @testset "solve with $(nameof(typeof(m))) refuses ForwardDiff.Dual inputs before the primal solve" for m in COMBINATORS
     calls = Ref(0)

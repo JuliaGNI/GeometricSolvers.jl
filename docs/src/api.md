@@ -8,15 +8,21 @@ CurrentModule = GeometricSolvers
 
 A problem holds functions and, for a [`NonlinearProblem`](@ref), an optional Jacobian prototype:
 the residual, optionally its derivative, and optionally `jacobian_prototype` for a sparse R3
-Jacobian in [`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets,
-and an optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call
-form of the functions, so one problem serves every regime. `NonlinearProblem` and
-`StationarityProblem` are exported; `GeometricSolvers.jacobian_prototype` and
-`GeometricSolvers.jacobian_pattern` are internal accessors.
+Jacobian in [`NonlinearProblem`](@ref); the residual, optionally its derivative, and its length in
+[`LeastSquaresProblem`](@ref); or the scalar action, its equation and unknown index sets, and an
+optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps a
+`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`. The storage of
+the iterate selects the call form of the functions, so one problem serves every regime.
+`NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem` and `Reparametrized` are exported;
+`GeometricSolvers.jacobian_prototype` and `GeometricSolvers.jacobian_pattern` are internal
+accessors.
 
 ```@docs
+AbstractNonlinearProblem
 NonlinearProblem
 StationarityProblem
+LeastSquaresProblem
+Reparametrized
 jacobian_prototype
 jacobian_pattern
 ```
@@ -47,7 +53,9 @@ regularize!!
 Every type on this page is `isbits`, so a kernel can hold it, and every real field is in
 `R = real(T)` for the element type `T` of the iterate. [`SolverStatus`](@ref) also carries the
 range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
-``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return.
+``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return; a
+solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has factorised afresh
+at the iterate it returns.
 With `regularization = μ ≠ 0`, `rank` and `nullnorm` describe ``J(x_k) + μ I`` and `gradratio`
 describes ``J(x_k)``, so the classification below holds for `μ = 0` only.
 For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1`, and `rank = 1`
@@ -64,6 +72,7 @@ with `nullnorm ≈ 0`.
 ReturnCode
 sciml_retcode
 SolverStatus
+stopping_test
 StepInfo
 Options
 Options(::Type{T}) where {T <: Number}
@@ -91,27 +100,47 @@ A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense
 [`factorize!!`](@ref) and [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and
 [`ldiv!!`](@ref) return new `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU
 with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufman `L D Lᵀ` /
-`L D Lᴴ` with `1×1` and `2×2` diagonal blocks, [`StaticQR`](@ref) Householder QR without column
-pivoting, and [`StaticSVD`](@ref) a one-sided Jacobi singular value decomposition whose solve
-truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve
-finite. For a vector state (R3) with no prototype (`jacobian_prototype === nothing`),
+`L D Lᴴ` with `1×1` and `2×2` diagonal blocks, [`StaticQR`](@ref) and [`StaticRectQR`](@ref) are
+Householder QR without column pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a
+one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
+`√n · eps(TF) · σ₁` for a square matrix and `√m · eps(TF) · σ₁` for a rectangular one, `m` its row
+count, which is what makes a rank-revealing solve finite. For a vector state (R3) with no sparse
+pattern (`jacobian_pattern(prob, jacprep) === nothing`),
 [`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
 [`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref),
 [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an `AbstractGPUArray`, and [`factorize!!`](@ref) and
-[`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host, and through `KernelAbstractions` on a device. When `Sparspak` is loaded
-and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
-AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+[`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host, and on a device through
+the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on `MtlMatrix{Float32}` and
+`MtlVector{Float32}`, with every MPS failure status reported as a singular factor) and
+`GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS
+`trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
+LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge)
+package extensions where available and through `KernelAbstractions` otherwise. When `Sparspak` is
+loaded and [`jacobian_pattern`](@ref) is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
+AbstractFloat`) — from an explicit `jacobian_prototype`, or detected automatically by
+`GeometricSolversSparseADExt` when `SparseMatrixColorings` is loaded — the
+`GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
 workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for an `LUFactorization` whose
 factor element type is `T` (`LUFactorization()` or `LUFactorization(T)`); the first `factorize!!`
 call runs symbolic ordering and symbolic factorisation, and subsequent `factorize!!` and `ldiv!!`
-calls reuse them across Newton steps.
+calls reuse them across Newton steps. That configuration is the only one with a sparse factor, and
+[`has_sparse_factor`](@ref) names it. A detected pattern is used only where `has_sparse_factor`
+holds and, under a `Newton` `regularization ≠ 0`, only where the pattern holds the whole structural
+diagonal. Everywhere else — `QRFactorization`, `SVDFactorization`, mixed precision such as
+`LUFactorization(Float64)` on a `Float32` iterate, a complex iterate, or no `Sparspak` — a
+detected pattern gives the dense factor and a dense Jacobian buffer, as a solve with no pattern
+does. An explicit `jacobian_prototype` outside that configuration raises an error in `init_linear`
+or at the first `factorize!!`. A [`LeastSquaresProblem`](@ref) takes no detected pattern, because
+`SparspakLU` is square: its `m × n` factor is dense.
 [`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
 in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is
-exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref).
-These names are not exported and are reached as `GeometricSolvers.name`.
+exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref)
+or [`StaticRectSVD`](@ref). These names are not exported and are reached as
+`GeometricSolvers.name`.
 
 ```@docs
 init_linear
+has_sparse_factor
 dense_factor
 factorize!!
 ldiv!!
@@ -119,7 +148,9 @@ factor_eltype
 StaticLU
 StaticLDLT
 StaticQR
+StaticRectQR
 StaticSVD
+StaticRectSVD
 DenseLU
 DeviceLU
 DenseLDLT
@@ -176,14 +207,17 @@ LevenbergMarquardt
 
 A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,
 `refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
-[`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
+[`Picard`](@ref)) and nothing about the problem or the iterate. [`GaussNewton`](@ref) constructs a
+[`Newton`](@ref) configured for [`LeastSquaresProblem`](@ref) (`linsolve = QRFactorization()`,
+`globalization = Static()`). [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
 `x₀` is an array, and returns `(x, status)`; when `x₀` or `p` carries a `ForwardDiff.Dual` leaf,
 [`solve`](@ref) on a [`NonlinearProblem`](@ref) strips duals via [`StripDual`](@ref), runs the
 primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while on a
 [`StationarityProblem`](@ref) it raises an `ArgumentError`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
-[`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
+[`NonlinearSolver`](@ref) (or a [`ReparametrizedSolver`](@ref) for a [`Reparametrized`](@ref)
+problem) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
 with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
@@ -195,6 +229,7 @@ per-system parameters so system `i` receives `p.data[i]`.
 
 ```@docs
 NonlinearSolver
+ReparametrizedSolver
 init
 solve
 solve!
@@ -202,6 +237,7 @@ solve_batch!
 solve!!
 PerSystem
 Newton
+GaussNewton
 QuasiNewton
 Picard
 NoRefinement
@@ -210,16 +246,18 @@ Refinement
 
 ### Combinators
 
-[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) and [`Switch`](@ref) compose
-nonlinear methods through the same [`init_state`](@ref), [`start!!`](@ref), [`step!!`](@ref) and
-[`finish!!`](@ref) interface as [`Newton`](@ref) and [`Picard`](@ref), so a combinator runs in R1,
-R2 and R3 alike. [`Additive`](@ref) combines member steps from the same iterate with
-[`OptimalWeights`](@ref) or [`FixedWeights`](@ref), [`Multiplicative`](@ref) and [`Repeat`](@ref)
-thread `(x, F(x))` sequentially across sub-steps while [`sync_merit`](@ref) updates any active
-line-search baseline merit, and [`Switch`](@ref) transitions permanently from `first` to `second`
-once ``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``. A combinator has no implicit
-differentiation: [`solve`](@ref) with a combinator method raises an `ArgumentError` for a
-`ForwardDiff.Dual` in `x₀` or `p`.
+[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref) and
+[`Anderson`](@ref) compose nonlinear methods through the same [`init_state`](@ref),
+[`start!!`](@ref), [`step!!`](@ref) and [`finish!!`](@ref) interface as [`Newton`](@ref) and
+[`Picard`](@ref), so a combinator runs in R1, R2 and R3 alike. [`Additive`](@ref) combines member
+steps from the same iterate with [`OptimalWeights`](@ref) or [`FixedWeights`](@ref),
+[`Multiplicative`](@ref) and [`Repeat`](@ref) thread `(x, F(x))` sequentially across sub-steps
+while [`sync_merit`](@ref) updates any active line-search baseline merit, [`Switch`](@ref)
+transitions permanently from `first` to `second` once
+``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``, and [`Anderson`](@ref) accelerates its member
+with filtered Anderson mixing, Tikhonov regularisation, restarts and best-iterate restoration. A
+combinator has no implicit differentiation: [`solve`](@ref) with a combinator method raises an
+`ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`.
 
 ```@docs
 Additive
@@ -228,6 +266,7 @@ FixedWeights
 Multiplicative
 Repeat
 Switch
+Anderson
 ```
 
 ### SciMLBase extension
@@ -279,12 +318,24 @@ error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies a
 3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
 matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@ref) other than
 [`Static`](@ref) and a [`Refinement`](@ref) along a reused factor take a JVP, so under any other
-configuration the analytic `J` gets no JVP preparation and no `n × n` JVP buffer. A
+configuration the analytic `J` gets no JVP preparation and no second `m × n` buffer. A
 `Refinement` on a step that factorises at `x` multiplies by the regularised Jacobian that the step
 holds, in a buffer of its own beside the factor, which the factorisation overwrites.
 [`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and [`jvp!!`](@ref) then dispatch on the
 object the preparation returned, so the solver makes no runtime choice and carries no `ad`
 keyword.
+
+For a sparse R3 Jacobian on a host `Array` iterate, an `AutoSparse` back end takes either an
+explicit `jacobian_prototype` on the [`NonlinearProblem`](@ref) (which [`prepare_ad`](@ref) wraps in
+`KnownJacobianSparsityDetector`) or, when `SparseMatrixColorings` is loaded and
+`jacobian_prototype === nothing`, a sparsity detector such as `TracerSparsityDetector()` of
+`SparseConnectivityTracer` alongside a colouring algorithm such as `GreedyColoringAlgorithm()`. The
+`GeometricSolversSparseADExt` package extension then extracts the detected pattern from the prepared
+[`DIJacobian`](@ref) via [`jacobian_pattern`](@ref) as a `SparseMatrixCSC{<:Any, Int}` — a
+`SparseMatrixCSC{Bool, Int}` for `TracerSparsityDetector` — so
+[`init_linear`](@ref) allocates the sparse factor and Jacobian buffer without a user-supplied
+prototype where [`has_sparse_factor`](@ref) holds, and the dense factor elsewhere; when an explicit
+`jacobian_prototype` is also given, the explicit prototype takes precedence.
 
 In R3 the iterate is a vector; another shape raises `ArgumentError` where the preparation is
 built. The parameters may be replaced on every call, which is what lets one preparation serve a
@@ -322,7 +373,6 @@ state that holds `F(x₀)`, and [`refine!!`](@ref) refines the linear direction 
 precision before globalization.
 
 ```@docs
-AbstractNonlinearProblem
 init_state
 residual_buffer
 step!!

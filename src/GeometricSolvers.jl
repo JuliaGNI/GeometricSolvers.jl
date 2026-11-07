@@ -21,15 +21,15 @@ using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticA
                     setindex, similar_type
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
-export SolverStatus, StepInfo, Options
-export NonlinearProblem, StationarityProblem
+export SolverStatus, StepInfo, Options, stopping_test
+export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized
 export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
-export Newton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard, NonlinearSolver,
-       init, solve, solve!
-export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch
+export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard,
+       NonlinearSolver, ReparametrizedSolver, init, solve, solve!
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
 export solve_batch!
 
 public solve!!, sciml_retcode
@@ -46,7 +46,9 @@ include("linear/factors.jl")
 include("linear/static/lu.jl")
 include("linear/static/ldlt.jl")
 include("linear/static/qr.jl")
+include("linear/static/qr_rect.jl")
 include("linear/static/svd.jl")
+include("linear/static/svd_rect.jl")
 include("linear/static/eigen.jl")
 include("linear/dense.jl")
 include("linear/ka/lu.jl")
@@ -62,6 +64,7 @@ include("globalization/bisection.jl")
 include("globalization/strongwolfe.jl")
 
 include("nonlinear/problem.jl")
+include("nonlinear/leastsquares.jl")
 
 include("ad/forwarddiff_static.jl")
 include("ad/di.jl")
@@ -79,12 +82,14 @@ include("nonlinear/implicit.jl")
 include("nonlinear/batched.jl")
 include("nonlinear/stationarity.jl")
 include("ad/hessian.jl")
+include("nonlinear/reparametrized.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")
 include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
+include("composition/anderson.jl")
 include("composition/implicit.jl")
 
 end

@@ -5,7 +5,15 @@
 """
     AbstractNonlinearProblem
 
-The supertype of [`NonlinearProblem`](@ref) and [`StationarityProblem`](@ref).
+The supertype of the problems a [`NonlinearSolver`](@ref) solves: [`NonlinearProblem`](@ref), whose
+residual has as many entries as the iterate has variables, [`StationarityProblem`](@ref), whose
+residual is a part of the gradient of a scalar action, and [`LeastSquaresProblem`](@ref), whose
+residual may have more entries than the iterate has variables. [`init`](@ref), [`solve`](@ref),
+[`solve!`](@ref) and [`solve!!`](@ref) take it, and so does [`Newton`](@ref) with each of its
+globalizations, so one solver loop serves every problem type; [`Picard`](@ref), the combinators
+[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) and [`Switch`](@ref), and
+[`solve_batch!`](@ref) take a [`NonlinearProblem`](@ref) or a [`StationarityProblem`](@ref), and
+a combinator raises an `ArgumentError` for a [`LeastSquaresProblem`](@ref).
 """
 abstract type AbstractNonlinearProblem end
 
@@ -27,9 +35,11 @@ differentiates `F`. A method's own operator is a separate Jacobian source. When
 factorisation from that pattern and `AutoSparse` uses its sparsity pattern directly. A linear
 solver exists only for a real host `Vector` iterate with a `SparseMatrixCSC{<:Any, Int}`
 prototype, with `Sparspak` loaded and an `LUFactorization` in the iterate's element type; a
-`QRFactorization`, an `SVDFactorization`, a dense prototype and a device iterate raise
-`MethodError` when `Newton` initialises. `Picard` and a static or batched iterate ignore the
-prototype.
+`QRFactorization`, an `SVDFactorization` and a dense prototype raise `MethodError` when `Newton`
+initialises. On a device iterate, `Newton(; jacobian = nothing)` raises `MethodError` from the
+factor, with an analytic `J` or without, and an `AutoSparse` `jacobian` raises `ArgumentError` in
+[`prepare_ad`](@ref) first, as any back end other than `AutoForwardDiff()` does. `Picard` and a
+static or batched iterate ignore the prototype.
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x .* x .- 4);
@@ -56,7 +66,8 @@ end
     jacobian_prototype(prob)
 
 Return the Jacobian prototype matrix stored on `prob`, or `nothing` when none is supplied. A
-[`StationarityProblem`](@ref) holds no prototype, so its Jacobian is dense.
+[`StationarityProblem`](@ref) and a [`LeastSquaresProblem`](@ref) hold no prototype, so their
+Jacobians are dense.
 """
 jacobian_prototype(prob::NonlinearProblem) = prob.jacobian_prototype
 jacobian_prototype(::AbstractNonlinearProblem) = nothing

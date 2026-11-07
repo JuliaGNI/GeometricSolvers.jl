@@ -132,6 +132,20 @@
 - **kind:** defect
 - **found:** PR #58
 
+### K29 · `solve!` and `solve_batch!` on a `Reparametrized` stationarity problem do not take the datum `b`
+
+- **location:** `src/nonlinear/reparametrized.jl` (`solve!(::ReparametrizedSolver)`, `solve_batch!`)
+- **evidence:** With `S(x, p) = sum(abs2, x) / 2 - sum(x)`, `g(y, p) = y` and
+  `r = Reparametrized(StationarityProblem(S), g)`, `solve(r, SVector(0.1, 0.2); b = 1.0)` returns
+  the root `[2.8e-17, 5.6e-17]` of `x - 1 + b`. `solve!(init(r, SVector(0.1, 0.2)); b = 1.0)`
+  raises `MethodError: no method matching solve!(::ReparametrizedSolver{…}; b::Float64)`, and
+  `solve_batch!([SVector(0.1, 0.2), SVector(0.3, 0.4)], r; b = 1.0)` raises
+  `MethodError: no method matching Options(::Type{Float64}; b::Float64)` (tree of `9807131`,
+  Julia 1.13.3). A plain `StationarityProblem` takes `b` on all four entry points. Support on
+  `solve!` and `solve_batch!`, with a `PerSystem` datum for a batch, is for a later pull request.
+- **kind:** defect
+- **found:** PR #57
+
 ### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
 
 - **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
@@ -159,11 +173,106 @@
 - **kind:** defect
 - **found:** PR #58 (CodeRabbit)
 
+### K40 · A line-search solve with an analytic `J` and a detected sparsity pattern gets a dense JVP buffer
+
+- **location:** `src/nonlinear/newton.jl` (`jacobian_matrix_jvp`)
+- **evidence:** `jacobian_matrix_jvp(::LineSearch, x, Fx, prob)` sizes its matrix from
+  `jacobian_prototype(prob)`, not from `jacobian_pattern(prob, jacprep)`. The path runs where
+  `prob.J` is given, `Newton` has an `AutoSparse` `jacobian` with a sparsity detector, and the
+  globalization is a line search. For a tridiagonal residual with `n = 2000`, `Backtracking()` and
+  `TracerSparsityDetector()`, the JVP buffer is a `Matrix{Float64}` of 32,000,048 bytes with no
+  prototype and a `SparseMatrixCSC{Float64, Int64}` of 112,136 bytes with the tridiagonal
+  prototype (`Base.summarysize`, Julia 1.13.3). Both solves use `SparspakLU` and return `SUCCESS`
+  in 9 iterations, and the iterate differs from the dense solve by `1.06e-17` relative. The cost
+  is memory and time, `O(n²)` per slope evaluation; the result is correct. A sparse buffer would
+  hand the analytic `J` a `SparseMatrixCSC` that the caller did not declare, so whether to use the
+  detected pattern there is open.
+- **kind:** defect
+- **found:** PR #59
+
+### K41 · `regularization > 0` with an explicit sparse prototype that has no structural diagonal fails at the first factorisation
+
+- **location:** `src/base/bang.jl` (`regularize!!`), `ext/GeometricSolversSparspakExt.jl`
+  (`factorize!!`)
+- **evidence:** With `Fperm!(r, x, p) = (r[1] = x[2]^2 - 1; r[2] = x[1]^2 - 1; r)`,
+  `P = sparse([1, 2], [2, 1], [1.0, 1.0], 2, 2)` and
+  `Newton(; jacobian = AutoSparse(AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm()), regularization = 1e-10)`,
+  `solve!(init(NonlinearProblem(Fperm!; jacobian_prototype = P), [1.5, 2.0], m))` raises
+  `ArgumentError: sparse Jacobian sparsity pattern differs from jacobian_prototype`; with
+  `regularization = 0` the same solve returns `SUCCESS` with `SparspakLU` (Julia 1.13.3). The
+  regularisation adds the diagonal to `J`, which inserts structural entries that the factor's
+  pattern does not hold. The same failure is on `main`.
+- **kind:** defect
+- **found:** PR #59
+
+### K42 · A device `solve_batch!` passes a problem with a sparse prototype to the kernel, which a CUDA kernel cannot take as an argument
+
+- **location:** `src/nonlinear/batched.jl` (`_launch!`)
+- **evidence:** `_launch!` passes `prob` to `_solve_kernel!` unchanged, and `NonlinearProblem`
+  has no `Adapt` rule, so the prototype goes into the kernel arguments. A batched iterate ignores
+  the prototype. With `F!(r, x, p) = (r .= x .* x .- 4; r)`, `isbits(NonlinearProblem(F!))` is
+  `true`, while
+  `isbits(NonlinearProblem(F!; jacobian_prototype = sparse(Diagonal(ones(2)))))` is `false`,
+  because `SparseMatrixCSC` holds `Vector` fields (`isbitstype(SparseMatrixCSC{Float64, Int64})`
+  is `false`; Julia 1.13.3). CUDA.jl refuses a kernel argument that is not `isbits` after
+  `cudaconvert`. The CPU batch with the same prototype returns `SUCCESS` for both systems
+  (`test/linear/sparspak.jl`, "R1, R2, and Picard ignore jacobian_prototype"). CUDA is not
+  available on this machine, so the failure is not reproduced on a device. A fix passes the kernel
+  a problem without the prototype, with a device batch test whose residual captures a field.
+- **kind:** defect
+- **found:** PR #56 (CodeRabbit, on #59)
+
+### K46 · The CUDA `backsolve!` method for `DeviceSVD` repeats the own-kernel method
+
+- **location:** `ext/GeometricSolversCUDAExt.jl` (`backsolve!` for `DeviceSVD`)
+- **evidence:** its body, `ka_svd_backsolve!(fac, d, d, false); return d`, is that of
+  `backsolve!(fac::DeviceSVD{<:AbstractMatrix{T}}, d::AbstractVector{T})` in
+  `src/linear/ka/svd.jl`, so the method runs the own kernel and calls no cuSOLVER or cuBLAS
+  routine. The same-type `ldiv!!` reaches `backsolve_shifted!` and not this method. The CUDA
+  census of `test/gpu/cuda/runtests.jl` asserts that `which(backsolve!, ...)` for `DeviceSVD`
+  names the extension, so removing the method changes that assertion too.
+- **kind:** defect
+- **found:** PR #61
+
+### K47 · The CUDA SVD writes `J` into `fac.factors`, which the own-kernel SVD does not, and no later step reads it
+
+- **location:** `ext/GeometricSolversCUDAExt.jl` (`factorize!!` for `DeviceSVD`)
+- **evidence:** the CUDA `factorize!!` copies `J` into `fac.factors` (converted to the factor
+  type in the mixed case, unscaled) before it factorises `J / 2^e` in `fac.U`; the fallback
+  receives `J` itself. `ka_factorize_svd!` (`src/linear/ka/svd.jl`) writes `fac.U` and leaves
+  `fac.factors` alone. The docstring of `factorize!!` says that `J` is written into
+  `fac.factors`, and `test/gpu/cuda/runtests.jl` asserts that `fac.factors` keeps `J`. The copy
+  costs one `n × n` device copy per call where `J` is not the factor buffer. Which of the two
+  backends sets the contract for `fac.factors` of a `DeviceSVD` is open.
+- **kind:** defect
+- **found:** PR #61
+
+### K48 · The CUDA extension calls the deprecated bindings `CUDA.CUSOLVER` and `CUDA.CUBLAS`
+
+- **location:** `ext/GeometricSolversCUDAExt.jl`
+- **evidence:** CUDA 6.4.2 declares `Base.@deprecate_binding CUBLAS cuBLAS true` and
+  `Base.@deprecate_binding CUSOLVER cuSOLVER true` (`src/CUDA.jl`), and `[compat]` admits CUDA 6
+  (`CUDA = "5.5, 6"`). Under `--depwarn=yes` each use prints `Use of CUDA.CUSOLVER is deprecated,
+  use cuSOLVER instead.` CUDA 5.x has no `cuSOLVER` binding, so the names that work on both
+  majors differ, and the choice between them depends on the CUDA bound.
+- **kind:** defect
+- **found:** PR #61
+
+### K49 · `test/gpu/README.md` does not describe the by-hand CUDA suite `test/gpu/cuda/runtests.jl`
+
+- **location:** `test/gpu/README.md`
+- **evidence:** a search for `cuda/runtests` in `test/gpu/README.md` and `test/gpu/runtests.jl`
+  finds nothing. The README describes the `test/gpu/cuda/` environment and the run of
+  `test/gpu/runtests.jl` with the backend `cuda`, and that runner includes only `ad.jl`, so no
+  file names the vendor suite or says how to run it on a CUDA machine.
+- **kind:** docs
+- **found:** PR #61
+
 ### K56 · The stacked `LevenbergMarquardt` step allocates a linear factor that it never reads
 
 - **location:** `src/nonlinear/newton.jl` (`init_state`, `lm_newton_factor`)
-- **evidence:** `init_state` calls `init_factor(m.linsolve, prob, x, p, jacprep)` for every
-  `Newton` without reuse, and `init_newton_J` gives `LevenbergMarquardt` a Jacobian buffer of its
+- **evidence:** `init_state` calls `init_newton_factor(m, m.linsolve, prob, x, p, jacprep)` for
+  every `Newton` without reuse, and `init_newton_J` gives `LevenbergMarquardt` a Jacobian buffer of its
   own. On the stacked path (`QRFactorization`, `LUFactorization`, `LDLTFactorization`, or
   `scaling = :diagonal`) `lm_newton_factor` returns `state.fac` without a `factorize!!`, and the
   trial loop reads only the stacked buffers of `init_globalization`. The factor is one `n × n`
@@ -194,10 +303,119 @@
   method runs the primal solve and then the implicit-function-theorem tangent solve
   (`solve_implicit` in `src/nonlinear/implicit.jl`). The tangent solve takes its Jacobian
   preparation from `_tangent_jacprep`, which has a method for a `NewtonState` and a `PicardState`
-  only. `solve` with an `Additive`, `Multiplicative`, `Repeat` or `Switch` method therefore raises
-  an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal solve; `init`,
-  `solve!` and `solve_batch!` refuse a dual input for every method. Implicit differentiation
-  through a combinator, which needs the Jacobian of `F` at `x*` and not the steps of the members,
-  is for a later pull request.
+  only. `solve` with an `Additive`, `Multiplicative`, `Repeat`, `Switch` or `Anderson` method
+  therefore raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal
+  solve; `init`, `solve!` and `solve_batch!` refuse a dual input for every method. Implicit
+  differentiation through a combinator, which needs the Jacobian of `F` at `x*` and not the steps
+  of the members, is for a later pull request.
 - **kind:** defect
 - **found:** PR #60
+
+### K65 · A `LeastSquaresProblem` has no implicit differentiation
+
+- **location:** `src/nonlinear/leastsquares.jl` (`solve_implicit`)
+- **evidence:** `solve(LeastSquaresProblem(f), x₀, GaussNewton(), p)` with a `ForwardDiff.Dual` in
+  `x₀` or `p` raises `ArgumentError: solve does not accept ForwardDiff.Dual inputs for a
+  LeastSquaresProblem; implicit differentiation of a LeastSquaresProblem is not implemented`
+  (`test/nonlinear/leastsquares.jl`, testset "LeastSquaresProblem, GaussNewton, Options.g_tol, and
+  stopping_test"). The implicit tangent of `solve` is that of a root, `J(x*) ẋ = -∂F/∂p` with a
+  square `J`. A least-squares solution is a stationary point of `½‖F‖²`, whose tangent equation
+  is `(Jᴴ J + Σᵢ Fᵢ ∇²Fᵢ) ẋ = -(Jᴴ ∂F/∂p + Σᵢ Fᵢ ∂(∇Fᵢ)/∂p)`; its Gauss–Newton form drops the
+  terms in `F` and is exact only at a zero residual. Which form `solve` should implement is open.
+- **kind:** defect
+- **found:** PR #62
+
+### K67 · The two-argument `factor_diagnostics` methods have no caller in `src/`
+
+- **location:** `src/linear/dense.jl` (`factor_diagnostics(fac, r)`, two methods),
+  `src/linear/static/qr_rect.jl`, `src/linear/static/svd_rect.jl`
+- **evidence:** `grep -rn "factor_diagnostics(" src` finds only four-argument calls
+  (`newton.jl`, `dense.jl`, `svd_rect.jl`); the two-argument methods are called from
+  `test/linear/static/qr_rect.jl`, `test/linear/static/svd_rect.jl` and
+  `test/nonlinear/leastsquares.jl`. Their meaning differs from the four-argument one that the
+  solver reads: `nullnorm` is relative, and the QR method takes a "rank" from `info`, which the
+  `factorize!!` docstring says QR does not reveal; the `DenseSVD` and `DeviceSVD` method allocates
+  `similar(r, n)` per call. Removing them needs the rectangular tests to assert the four-argument
+  diagnostics instead, and what replaces the QR rank assertions is open.
+- **kind:** dead code
+- **found:** PR #62
+
+### K68 · `test/nonlinear/leastsquares.jl` may exceed the 60 s budget of a `core` file
+
+- **location:** `test/runtests.jl` (`nonlinear/leastsquares.jl` in `core`)
+- **evidence:** Cold `run-tests.jl <repository> test/nonlinear/leastsquares.jl` on Julia 1.13.3:
+  `PASS in 121 s`, `Test Summary` 1m49.7s, at a load average of 15.3 at the start; the review of
+  PR #62 measured `PASS in 110 s` at a load average of 9.95. Both runs were on a loaded machine,
+  so whether the file stays above 60 s on a quiet one, and moves to `slow`, is open.
+- **kind:** not verified
+- **found:** PR #62
+
+### K69 · A static `LeastSquaresProblem` evaluates its residual at `x₀` twice in a cold `solve`
+
+- **location:** `src/nonlinear/newton.jl` (`init_state`)
+- **evidence:** For a `StaticArray` iterate, `init_state` evaluates `F(x₀)` to check the residual
+  length and the regularization of a rectangular Jacobian, with `reuse = nothing` too, and
+  `solve!!` evaluates it again at the start of the loop. The residual length of a static problem
+  is a type parameter of the value `F` returns, so it is known only from an evaluation.
+- **kind:** defect
+- **found:** PR #62
+
+### K72 · The R1 and R3 `Anderson` code duplicates the filter, the weight solve and the step skeleton
+
+- **location:** `src/composition/anderson.jl` (`filter_history_r1`, `filter_history_r3!`,
+  `solve_weights`, `solve_weights!`, both `step!!` methods)
+- **evidence:** The history storage and the Gram build differ for a reason (an `isbits` `NTuple`
+  in R1; device `n × m` matrices with a `col_idx` permutation and one `mul!!` in R3). The two
+  filters differ in 25 of 65 lines and the two Cholesky solves in 19 of 45, mostly `setindex`
+  against `setindex!`, and each `step!!` repeats the "take the member step" fallback 3 times and
+  the best-iterate update 4 times. `Multiplicative` and `Repeat` are one `step!!` each through
+  `copy!!` and `map!!`. A `!!` setter and `copy!!` on the state buffers would leave only the
+  history update and the Gram build per storage; the cost of that change was not measured.
+- **kind:** defect
+- **found:** PR #63
+
+### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
+
+- **location:** `src/nonlinear/stationarity.jl:410` (`_init_stationarity_state`),
+  `src/ad/hessian.jl:316-317` (`_build_pos_maps`)
+- **evidence:** With `prob = @allowscalar StationarityProblem(S, JLArray([1, 2]), JLArray([1, 2]))`
+  and `allowscalar(false)`, `solve(prob, JLArray([1.0, 1.0]), Newton())` raises "Scalar indexing
+  is disallowed" at `stationarity.jl:410` (`Int[Int(i) for i in prob.U]`), and
+  `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:316`,
+  where `prepare_ad` copies `E` and `U` to the host by iteration. The same problems with host
+  index sets `[1, 2]` and a `JLArray` iterate return `SUCCESS` (merge of `main` into `task/ay`,
+  Julia 1.13.3). The constructor also checks for duplicates by scalar indexing, so
+  `Adapt.adapt(JLArray, prob)` raises the same error. `_validate_stationarity_solve` and the index
+  check of `Reparametrized` compare a device index set on the device. A host copy of `E` and `U`
+  with `Array` before the iteration is for a later pull request.
+- **kind:** defect
+- **found:** PR #57 (CodeRabbit)
+
+### K80 · A `LeastSquaresProblem` takes no `Refinement`
+
+- **location:** `src/nonlinear/newton.jl` (`init_state`)
+- **evidence:** `solve(LeastSquaresProblem(f), x₀, GaussNewton(; refinement = Refinement()))` and
+  `init` with an array iterate raise `ArgumentError: LeastSquaresProblem does not support
+  Refinement` (`test/nonlinear/leastsquares.jl`, testset "LeastSquaresProblem, GaussNewton,
+  Options.g_tol, and stopping_test"). A `Refinement` corrects the direction until the linear
+  residual `J d + F` is below its tolerance, and the least-squares step with more residuals than
+  unknowns leaves `J d + F ≠ 0` at the least-squares point. A refinement of the least-squares step
+  would correct the normal-equation residual `Jᴴ (J d + F)` instead, from the rectangular factor;
+  whether to implement it is open.
+- **kind:** defect
+- **found:** PR #62
+
+### K81 · The CUDA QR and SVD paths are untested for a rectangular factor
+
+- **location:** `ext/GeometricSolversCUDAExt.jl` (`factorize!!` and `backsolve!` for `DeviceQR`
+  and `DeviceSVD`)
+- **evidence:** the CUDA extension was written and tested for square factors: the by-hand suite
+  `test/gpu/cuda/runtests.jl` passed 640 of 640 on an RTX 4090 for the square factors of PR #61.
+  A `LeastSquaresProblem` with more residuals than unknowns builds an `m × n` `DeviceQR` or
+  `DeviceSVD` on any `AbstractGPUArray`, so with CUDA loaded a rectangular `CuMatrix` factor
+  dispatches into the extension. The merge of the two branches adapted the SVD rank cutoff and the
+  zeroing of the columns of `U` to `m × n`; whether the QR solve (`ormqr!` and `trsv!`) is correct
+  for `m > n`, and the adapted SVD path, have not run on a CUDA device, and no test in
+  `test/gpu/cuda/runtests.jl` builds a rectangular factor.
+- **kind:** not verified
+- **found:** PR #62

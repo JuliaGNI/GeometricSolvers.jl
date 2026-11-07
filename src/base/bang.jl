@@ -108,17 +108,21 @@ end
 """
     regularize!!(J, μ)
 
-Add `μ * I` to the Jacobian `J` in its storage, and return it. When `iszero(μ)` holds, `J` is
-returned untouched. On a `Matrix` the diagonal is shifted in a loop so bounds-checked runs
+Add `μ * I` to the Jacobian `J` in its storage, and return it — on a rectangular `J`, to the
+`min(M, N)` entries of its leading diagonal. When `iszero(μ)` holds, `J` is returned untouched. On
+a `Matrix` the diagonal is shifted in a loop so bounds-checked runs
 allocate nothing; on any other `AbstractMatrix` the diagonal view `view(J, diagind(J))` is updated
-by broadcast so device arrays perform no scalar indexing.
+by broadcast so device arrays perform no scalar indexing. An `SMatrix` has immutable entries, so
+its shifted diagonal is a rebuilt tuple.
 """
-function regularize!!(J::SMatrix{N, N, T, L}, μ) where {N, T, L}
+function regularize!!(J::SMatrix{M, N, T, L}, μ) where {M, N, T, L}
     iszero(μ) && return J
     μT = T(μ)
-    return SMatrix{N, N, T, L}(ntuple(Val(L)) do k
-        i, j = divrem(k - 1, N)
-        @inbounds J[k] + ifelse(i == j, μT, zero(T))
+    # `k` runs over the column-major storage, so `divrem(k - 1, M)` gives the column and the row of
+    # entry `k`: the diagonal entry is the one whose two agree
+    return SMatrix{M, N, T, L}(ntuple(Val(L)) do k
+        col, row = divrem(k - 1, M)
+        @inbounds J[k] + ifelse(col == row, μT, zero(T))
     end)
 end
 
@@ -128,7 +132,7 @@ function regularize!!(J::AbstractMatrix{T}, μ) where {T}
     if !iszero(μ)
         μT = T(μ)
         if J isa Matrix
-            @inbounds for i in axes(J, 1)
+            @inbounds for i in 1:min(size(J, 1), size(J, 2))
                 J[i, i] += μT
             end
         else
@@ -157,8 +161,9 @@ of `J`, and return it.
 problem's `J(x, p)`, an `AutoForwardDiff` runs tagged ForwardDiff and returns an `SMatrix` in the
 element type of a vector iterate or a `Number` for a `Number` iterate, and a
 [`JacobianFunction`](@ref) calls the method's own function. [`factorize!!`](@ref) converts the
-result to the factorisation precision `TF`. In R3 `J` is an `n × n` buffer in the element type
-of `x`: `nothing` calls `prob.J(J, x, p)`, a [`JacobianFunction`](@ref) calls `s.f(J, x, p)`, a
+result to the factorisation precision `TF`. In R3 `J` is an `m × n` buffer in the element type
+of `x`, `m = n` unless the problem has more residuals than unknowns: `nothing` calls
+`prob.J(J, x, p)`, a [`JacobianFunction`](@ref) calls `s.f(J, x, p)`, a
 [`DIJacobian`](@ref) runs DifferentiationInterface's prepared `jacobian!`, and a
 [`ChunkedForwardDiff`](@ref) runs the own chunked forward mode. The preparation selects the code.
 """

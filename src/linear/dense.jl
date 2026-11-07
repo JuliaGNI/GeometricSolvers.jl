@@ -59,7 +59,7 @@ for (geqrf, ormqr, gesvd, elty, relty) in (
                         Ptr{$elty}, Ref{BlasInt}, Ptr{$relty}, Ptr{$elty},
                         Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{$elty},
                         Ref{BlasInt}, Ptr{$relty}, Ref{BlasInt}, Clong, Clong),
-                    'A', 'A', m, n, A, lda, S, U, ldu, VT, ldvt, work, lwork, rwork, info,
+                    'S', 'S', m, n, A, lda, S, U, ldu, VT, ldvt, work, lwork, rwork, info,
                     1, 1)
             else
                 ccall((BLAS.@blasfunc($gesvd), LAPACK.liblapack), Cvoid,
@@ -67,7 +67,7 @@ for (geqrf, ormqr, gesvd, elty, relty) in (
                         Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty},
                         Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{$elty},
                         Ref{BlasInt}, Ref{BlasInt}, Clong, Clong),
-                    'A', 'A', m, n, A, lda, S, U, ldu, VT, ldvt, work, lwork, info, 1, 1)
+                    'S', 'S', m, n, A, lda, S, U, ldu, VT, ldvt, work, lwork, info, 1, 1)
             end
             LAPACK.chkargsok(info[])
             return info[]
@@ -210,12 +210,22 @@ const DenseFactor{A} = Union{
 function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
         r::AbstractVector{T}) where {T <: Number}
     k = rhs_exponent(r)
-    if iszero(k)
-        d === r || copyto!(d, r)
+    t = if length(r) == length(d)
+        if iszero(k)
+            d === r || copyto!(d, r)
+        else
+            d .= ldexp2.(r, -k)
+        end
+        backsolve_shifted!(fac, d)
     else
-        d .= ldexp2.(r, -k)
+        rhs = fac.rhs::AbstractVector{T}
+        if iszero(k)
+            rhs === r || copyto!(rhs, r)
+        else
+            rhs .= ldexp2.(r, -k)
+        end
+        backsolve_shifted!(fac, d, rhs)
     end
-    t = backsolve_shifted!(fac, d)
     e = k + t - fac.scale_exponent
     iszero(e) || map!(a -> ldexp2(a, e), d, d)
     return d
@@ -224,6 +234,11 @@ end
 # `backsolve!` and the exponent `t` of the power of two its result is to be multiplied by: 0 for LU,
 # QR and LDLᵀ, and for the SVD the `divisor_exponent` of its coordinates.
 backsolve_shifted!(fac, d) = (backsolve!(fac, d); 0)
+function backsolve_shifted!(fac, d, rhs)
+    backsolve!(fac, rhs)
+    @views copyto!(d, rhs[1:length(d)])
+    return 0
+end
 
 # --- DenseLU ---
 
@@ -274,7 +289,14 @@ end
 function backsolve!(fac::DenseQR{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:
                                                                                    BlasFloat}
     ormqr_adj!(fac.factors, fac.τ, d, fac.work)
-    BLAS.trsv!('U', 'N', 'N', fac.factors, d)
+    m, n = size(fac.factors)
+    if m == n
+        BLAS.trsv!('U', 'N', 'N', fac.factors, d)
+    else
+        # the leading `n × n` triangle of the `m × n` factors, and the first `n` entries of the
+        # vector, whose remaining `m - n` entries are the tail of `Qᴴ r`
+        BLAS.trsv!('U', 'N', 'N', view(fac.factors, 1:n, 1:n), view(d, 1:n))
+    end
     return d
 end
 
@@ -303,7 +325,7 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
     # from them, a singular value that is not finite being a failure too
     ok = iszero(info) && all(isfinite, fac.S)
     status = ok ? 0 : (iszero(info) ? 1 : info)
-    rank = ok ? svd_rank(fac.S) : 0
+    rank = ok ? svd_rank(fac.S, size(fac.factors, 1)) : 0
     # `σ̂` into `rwork`, which `gesvd` no longer needs, for the solve, and the singular values
     # `σ̂ · 2^e` of `J` into `S`, which overflow to `Inf` where `σ̂ · 2^e` exceeds `floatmax`
     @inbounds for i in eachindex(fac.S)
@@ -316,31 +338,43 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
         status, rank, e)
 end
 
-# The number of the non-increasing singular values `S` above the rank cutoff `√n · eps(R) · S[1]`.
-function svd_rank(S::AbstractVector{R}) where {R <: Real}
+# The number of the non-increasing singular values `S` of an `m_rows × n` matrix above the rank
+# cutoff `√m_rows · eps(R) · S[1]`: the rows, not the columns, are what the residual of a truncated
+# direction accumulates over.
+function svd_rank(S::AbstractVector{R}, m_rows::Integer) where {R <: Real}
     isempty(S) && return 0
-    cutoff = jacobi_tolerance(length(S), R) * S[1]
+    cutoff = jacobi_tolerance(m_rows, R) * S[1]
     return count(>(cutoff), S)
 end
 
 function backsolve!(fac::DenseSVD{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <:
                                                                                     BlasFloat}
-    svd_solve!(fac, d, false)
+    n = size(fac.U, 2)
+    if length(d) == n
+        svd_solve!(fac, d, d, false)
+    else
+        svd_solve!(fac, view(d, 1:n), d, false)
+    end
     return d
 end
 
 function backsolve_shifted!(fac::DenseSVD{<:StridedMatrix{T}},
         d::AbstractVector{T}) where {T <: BlasFloat}
-    return svd_solve!(fac, d, true)
+    return svd_solve!(fac, d, d, true)
+end
+
+function backsolve_shifted!(fac::DenseSVD{<:StridedMatrix{T}},
+        d::AbstractVector{T}, rhs::AbstractVector{T}) where {T <: BlasFloat}
+    return svd_solve!(fac, d, rhs, true)
 end
 
 # The solve with the factors of `J / 2^e` divides by their singular values `σ̂` in `rwork`, the
-# same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ d`; returns `t`.
+# same-type solve by `σ̂ 2^t`, `t` the `divisor_exponent` of the coordinates `Uᴴ r`; returns `t`.
 function svd_solve!(fac::DenseSVD{<:StridedMatrix{T}}, d::AbstractVector{T},
-        shift::Bool) where {T <: BlasFloat}
+        r::AbstractVector{T}, shift::Bool) where {T <: BlasFloat}
     # a failed factor, whose vectors can hold `NaN`, and a zero matrix give the zero step
     iszero(fac.rank) && (fill!(d, zero(T)); return 0)
-    mul!(fac.tmp, adjoint(fac.U), d)
+    mul!(fac.tmp, adjoint(fac.U), r)
     t = shift ? divisor_exponent(fac.tmp, fac.rwork, fac.rank) : 0
     @inbounds for i in 1:length(fac.S)
         σ = iszero(t) ? fac.rwork[i] : ldexp2(fac.rwork[i], t)
@@ -374,7 +408,8 @@ function factor_diagnostics(
     rk = fac.rank
     rk == 0 && return Int32(0), fnorm
     if TF === T
-        return Int32(rk), R(dense_svd_nullnorm!(fac.tmp, fac.U, rk, r))
+        p_buf = length(fac.tmp) == length(r) ? fac.tmp : fac.rhs::AbstractVector{TF}
+        return Int32(rk), R(dense_svd_nullnorm!(p_buf, fac.U, rk, r))
     end
     s = maximum(abs, r)
     iszero(s) && return Int32(rk), zero(R)
@@ -382,7 +417,29 @@ function factor_diagnostics(
     @inbounds for i in eachindex(rhs, r)
         rhs[i] = TF(r[i] / s)
     end
-    return Int32(rk), R(dense_svd_nullnorm!(fac.tmp, fac.U, rk, rhs)) * R(s)
+    return Int32(rk), R(dense_svd_nullnorm!(rhs, fac.U, rk, rhs)) * R(s)
+end
+
+function factor_diagnostics(
+        fac::Union{DenseQR, DeviceQR}, r::AbstractVector{T}) where {T}
+    R = real(T)
+    n = size(fac.factors, 2)
+    rk = fac.info == 0 ? Int32(n) : Int32(fac.info - 1)
+    return rk, zero(R)
+end
+
+function factor_diagnostics(
+        fac::Union{DenseSVD, DeviceSVD}, r::AbstractVector{T}) where {T}
+    R = real(T)
+    fac.info == 0 || return Int32(-1), R(NaN)
+    n = size(fac.factors, 2)
+    rk = Int32(fac.rank)
+    rk == Int32(n) && return rk, zero(R)
+    fnorm = R(rnorm(r))
+    iszero(fnorm) && return rk, zero(R)
+    d_dummy = similar(r, n)
+    _, nn = factor_diagnostics(d_dummy, fac, r, fnorm)
+    return rk, nn / fnorm
 end
 
 # --- DenseLDLT ---
