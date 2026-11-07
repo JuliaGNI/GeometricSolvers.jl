@@ -55,11 +55,17 @@ end
 # as `∂F/∂x`, so a `StationarityProblem` needs `U = :` or `U = 1:n` in order; with the checks of
 # `_validate_stationarity_solve`, `E` is then `:` or a permutation of `1:n`.
 @inline _check_chart_indices(::AbstractNonlinearProblem, y) = nothing
+
+# Whether the index set `U` is `1:n` in order. A device index set is compared by a broadcast and a
+# reduction on the device, as scalar indexing of a device array is disallowed.
+@inline _in_order(U, n::Int) = length(U) == n && all(c -> U[c] == c, eachindex(U))
+@inline _in_order(U::AbstractGPUArray, n::Int) = length(U) == n && all(U .== (1:n))
+
 function _check_chart_indices(prob::StationarityProblem, y)
     _validate_stationarity_solve(prob, y, nothing)
     U = prob.U
     n = length(y)
-    U isa Colon || (length(U) == n && all(c -> U[c] == c, eachindex(U))) ||
+    U isa Colon || _in_order(U, n) ||
         throw(ArgumentError(
             "Reparametrized needs a StationarityProblem with U = : or U = 1:n in order, " *
             "where n = $n is the chart dimension; got U = $U"))
@@ -376,12 +382,12 @@ end
 
 # --- R3 workspace and AD preparation (`ReparametrizedPrep`) ---
 
-struct ReparametrizedPrep{N, VX, MG, VI, IP, YD, XD, GD, YN, XN}
+struct ReparametrizedPrep{N, VX, MG, MJ, VI, IP, YD, XD, GD, YN, XN}
     x_buf::VX
     Fx_buf::VX
     v_work::VX
     G_buf::MG
-    Jx_buf::MG
+    Jx_buf::MJ
     W_mat::MG
     J_jvp::MG
     idx::VI
@@ -434,6 +440,17 @@ end
     return Complex(D_out(re_in, p_out), D_out(im_in))
 end
 
+# The buffer of the inner Jacobian `∂F/∂x`. A user `J` writes the storage of the inner problem's
+# `jacobian_prototype`, such as the `nonzeros` of a `SparseMatrixCSC`, so the buffer takes that
+# storage where both are given. An automatic-differentiation Jacobian fills a dense buffer.
+@inline function _inner_jac_buffer(::AbstractNonlinearProblem, y, ::Type{T}, n::Int) where {T}
+    return similar(y, T, n, n)
+end
+@inline function _inner_jac_buffer(prob::NonlinearProblem, y, ::Type{T}, n::Int) where {T}
+    P = prob.jacobian_prototype
+    return P === nothing || prob.J === nothing ? similar(y, T, n, n) : similar(P, T)
+end
+
 @inline function _prepare_inner_r3(backend, prob::NonlinearProblem, Fx_buf, x_buf, p)
     prob.J !== nothing && return nothing
     return prepare_ad(backend, prob, Fx_buf, x_buf, p)
@@ -457,7 +474,7 @@ function _prepare_ad_reparam_r3(
     Fx_buf = similar(y, T, n)
     v_work = similar(y, T, n)
     G_buf = similar(y, T, n, n)
-    Jx_buf = similar(y, T, n, n)
+    Jx_buf = _inner_jac_buffer(reparam.prob, y, T, n)
     W_mat = similar(y, T, n, n)
     J_jvp = similar(y, T, n, n)
     idx = similar(y, Int, n)
@@ -480,7 +497,7 @@ function _prepare_ad_reparam_r3(
         x_nest1 = nothing
     end
     return ReparametrizedPrep{
-        N, typeof(x_buf), typeof(G_buf), typeof(idx), typeof(inner_prep),
+        N, typeof(x_buf), typeof(G_buf), typeof(Jx_buf), typeof(idx), typeof(inner_prep),
         typeof(y_dual), typeof(x_dual), typeof(G_dual), typeof(y_nest1), typeof(x_nest1)}(
         x_buf, Fx_buf, v_work, G_buf, Jx_buf, W_mat, J_jvp, idx, inner_prep,
         y_dual, x_dual, G_dual, y_nest1, x_nest1)

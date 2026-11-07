@@ -187,3 +187,20 @@
   is for a later pull request.
 - **kind:** defect
 - **found:** PR #60
+
+### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
+
+- **location:** `src/nonlinear/stationarity.jl:410` (`_init_stationarity_state`),
+  `src/ad/hessian.jl:316-317` (`_build_pos_maps`)
+- **evidence:** With `prob = @allowscalar StationarityProblem(S, JLArray([1, 2]), JLArray([1, 2]))`
+  and `allowscalar(false)`, `solve(prob, JLArray([1.0, 1.0]), Newton())` raises "Scalar indexing
+  is disallowed" at `stationarity.jl:410` (`Int[Int(i) for i in prob.U]`), and
+  `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:316`,
+  where `prepare_ad` copies `E` and `U` to the host by iteration. The same problems with host
+  index sets `[1, 2]` and a `JLArray` iterate return `SUCCESS` (merge of `main` into `task/ay`,
+  Julia 1.13.3). The constructor also checks for duplicates by scalar indexing, so
+  `Adapt.adapt(JLArray, prob)` raises the same error. `_validate_stationarity_solve` and the index
+  check of `Reparametrized` compare a device index set on the device. A host copy of `E` and `U`
+  with `Array` before the iteration is for a later pull request.
+- **kind:** defect
+- **found:** PR #57 (CodeRabbit)

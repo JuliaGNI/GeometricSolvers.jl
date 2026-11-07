@@ -1,10 +1,11 @@
 using Adapt: Adapt
 using CommonSolve: CommonSolve
 using ForwardDiff: ForwardDiff
-using GPUArraysCore: allowscalar
+using GPUArraysCore: @allowscalar, allowscalar
 using JET: JET, @test_opt
 using JLArrays: JLArray
 using LinearAlgebra: Diagonal, I, norm, transpose
+using SparseArrays: nonzeros, sparse
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -720,6 +721,19 @@ end
     # An R1 iterate takes E and U as :, a Tuple or an SVector, as a StationarityProblem does.
     rep_range = Reparametrized(StationarityProblem(action_quad, 1:2, 1:2), g_polar)
     @test_throws ArgumentError solve(rep_range, y0)
+
+    # A device index set is compared on the device, so a U out of order raises the ArgumentError
+    # of the chart, and not a scalar-indexing error, under allowscalar(false). The constructor
+    # checks for duplicates by scalar indexing, so the problem is built with it allowed.
+    y_dev = JLArray(Vector(y0))
+    prob_dev = @allowscalar StationarityProblem(
+        action_quad_r3, JLArray([1, 2]), JLArray([2, 1]))
+    rep_dev = Reparametrized(prob_dev, g_polar!)
+    @test_throws ArgumentError solve(rep_dev, y_dev)
+    @test_throws ArgumentError init(rep_dev, y_dev)
+    prob_dev_in_order = @allowscalar StationarityProblem(
+        action_quad_r3, JLArray([1, 2]), JLArray([1, 2]))
+    @test GS._check_chart_indices(prob_dev_in_order, y_dev) === nothing
 end
 
 # The critical point of the quadratic action with the datum b is X_QUAD - (b₁ / 2, b₂ / 4); a
@@ -774,6 +788,44 @@ end
         prep = prepare_ad(backend, reparam_chunk, Arr(zeros(n)), y_a, nothing)
         jacobian!!(Jy_a, prep, reparam_chunk, y_a, nothing)
         @test norm(Array(Jy_a) - G_ref, Inf) <= 64 * eps(Float64) * norm(G_ref, Inf)
+    end
+end
+
+# The gradient of `action_quad` as a residual, whose root is X_QUAD, and a Jacobian that writes
+# only the stored entries of a sparse `jacobian_prototype`.
+function f_quad_grad!(F, x, p)
+    F[1] = 2 * x[1] - 3
+    F[2] = 4 * x[2] - 3
+    return F
+end
+
+function j_quad_nonzeros!(J, x, p)
+    nz = nonzeros(J)
+    nz[1] = 2.0
+    nz[2] = 4.0
+    return J
+end
+
+@testset "R3 chart around a NonlinearProblem with a sparse jacobian_prototype" begin
+    # The chart Jacobian with the user J in the prototype's storage equals the one with the inner
+    # Jacobian by automatic differentiation, which is exact for this affine residual.
+    P = sparse([1, 2], [1, 2], [1.0, 1.0], 2, 2)
+    prob_sparse = NonlinearProblem(f_quad_grad!, j_quad_nonzeros!; jacobian_prototype = P)
+    prob_ad = NonlinearProblem(f_quad_grad!)
+    y0 = [1.5, 0.5]
+    for (cov, curv) in ((false, true), (true, false), (true, true))
+        rep_sparse = Reparametrized(
+            prob_sparse, g_polar!, dg_polar!; covariant = cov, curvature = curv)
+        rep_ad = Reparametrized(
+            prob_ad, g_polar!, dg_polar!; covariant = cov, curvature = curv)
+        prep_sparse = prepare_ad(AutoForwardDiff(), rep_sparse, zeros(2), y0, nothing)
+        prep_ad = prepare_ad(AutoForwardDiff(), rep_ad, zeros(2), y0, nothing)
+        Jy_sparse = jacobian!!(zeros(2, 2), prep_sparse, rep_sparse, y0, nothing)
+        Jy_ad = jacobian!!(zeros(2, 2), prep_ad, rep_ad, y0, nothing)
+        @test isapprox(Jy_sparse, Jy_ad; rtol = 8 * eps(Float64))
+        x, st = solve(rep_sparse, y0, Newton())
+        @test st.code == SUCCESS
+        @test norm(x - Vector(X_QUAD)) <= 1e-8
     end
 end
 
