@@ -23,9 +23,10 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The nine columns of the standard test set, each a name and a method: `Newton` with each
-globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with `reuse = 3`
-and `Backtracking` on LU, and `Picard` with `Backtracking`.
+The ten columns of the standard test set, each a name and a method: `Newton` with each
+globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
+`LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, and
+`Picard` with `Backtracking`.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),
@@ -37,6 +38,8 @@ const STANDARD_COLUMNS = (
         linsolve = QRFactorization(), globalization = Backtracking()),
     "Newton Backtracking SVD" => Newton(;
         linsolve = SVDFactorization(), globalization = Backtracking()),
+    "Newton LevenbergMarquardt SVD" => Newton(;
+        linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
     "Newton reuse 3 Backtracking LU" => Newton(; reuse = 3, globalization = Backtracking()),
     "Picard Backtracking" => Picard(; globalization = Backtracking())
 )
@@ -166,10 +169,14 @@ end
 
 PerturbedDirection(seed::Integer) = PerturbedDirection(Xoshiro(seed))
 
+# The refinement buffer of `Refinement` is an R3 workspace for the residual and the correction;
+# this refinement forms neither, so it reserves nothing.
+GeometricSolvers.init_refinement(::PerturbedDirection, x) = nothing
+
 function GeometricSolvers.refine!!(
-        d_slot, r::PerturbedDirection, prob, x, Fx, d, fac, p, jvpprep)
+        d, r::PerturbedDirection, fac, jvpprep, prob, x, Fx, fnorm, p, refbuf = nothing)
     map!(v -> rand(r.rng, Bool) ? nextfloat(v) : prevfloat(v), d, d)
-    return d
+    return d, false
 end
 
 function without_refinement(m::Newton)
