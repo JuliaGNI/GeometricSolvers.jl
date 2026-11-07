@@ -188,19 +188,36 @@ end
     end
 end
 
-@testset "the state a solve returns carries the unstarted sentinel, $(newton_norm_label(AT))" for AT in (
+# A step on a state that no `start!!` saw, or that `solve!!` returned, trusts nothing the state
+# carries: a line search, whose merit at `α = 0` is the state's, fails closed with `NONFINITE` and
+# keeps its iterate, and any other step takes `‖F‖` from the residual it is given and returns the
+# Newton step `x - (x² - p) / 2x = (13/6, 17/5)`. The mixed step does what the working-precision
+# step does.
+@testset "a step without start!! is the same at either precision, $(newton_norm_label(AT))" for AT in (
     Nothing, ARRAY_BACKENDS...)
     GS = GeometricSolvers
     prob, x₀, p, F₀ = newton_norm_case(AT)
-    for lin in (LUFactorization(), LUFactorization(Float32))
-        m = Newton(; linsolve = lin)
+    for lin in (LUFactorization(), LUFactorization(Float32)),
+        g in (Static(), Backtracking(), DogLeg())
+
+        m = Newton(; linsolve = lin, globalization = g)
         x, F = copy(x₀), copy(F₀)
         st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, rnorm(F))
         _, _, st_end = GS.solve!!(st, prob, x, m, p)
-        # The state that `solve!!` returns is the one `init_state` built again: the `NaN` norm and
-        # the `slow_steps = -1` sentinel that a mixed step reads before it reports `NONFINITE`.
+        # The state that `solve!!` returns carries the `NaN` norm of `init_state` again.
         @test isnan(st_end.fnorm)
-        @test st_end.slow_steps == Int32(-1)
+        for st₀ in (GS.init_state(m, prob, copy(x₀), p), st_end)
+            x, F = copy(x₀), copy(F₀)
+            x₁, F₁, _, info = GS.step!!(st₀, m, prob, x, F, p)
+            if g isa Backtracking
+                @test info.code == NONFINITE
+                @test Array(x₁) == Array(x₀)
+            else
+                @test info.code == SUCCESS
+                @test isapprox(Array(x₁), [13 / 6, 17 / 5]; rtol = 4 * eps(Float32))
+                @test info.fnorm ≈ rnorm(F₁)
+            end
+        end
     end
 end
 

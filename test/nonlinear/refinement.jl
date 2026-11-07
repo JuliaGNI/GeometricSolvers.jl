@@ -164,9 +164,7 @@ end
     @test fieldnames(Refinement) == (:η, :maxiter)
     @test ref.maxiter === Int32(5)
     @test ref.η === sqrt(eps(Float64))
-    @test ref.eta === ref.η
-    @test ref.max_iterations === ref.maxiter
-    @test propertynames(ref) == (:η, :maxiter, :eta, :max_iterations)
+    @test propertynames(ref) == (:η, :maxiter)
     @test isbits(ref)
 
     ref_f32 = Refinement(Float32)
@@ -174,13 +172,14 @@ end
     @test ref_f32.maxiter === Int32(5)
     @test ref_f32.η === sqrt(eps(Float32))
 
-    ref_kw = Refinement(; eta = 1e-3, max_iterations = 4)
+    ref_kw = Refinement(; η = 1e-3, maxiter = 4)
     @test ref_kw.maxiter === Int32(4)
     @test ref_kw.η === 1e-3
 
-    ref2 = Refinement(3; η = 1e-2)
+    ref2 = Refinement(Float32; η = 1e-2, maxiter = 3)
+    @test ref2 isa Refinement{Float32}
     @test ref2.maxiter === Int32(3)
-    @test ref2.η === 1e-2
+    @test ref2.η === 1.0f-2
 
     ref3 = Refinement(0.05f0, Int32(4))
     @test ref3 isa Refinement{Float32}
@@ -192,22 +191,28 @@ end
     @test ref_rat.η == 1 // 100
     @test ref_rat.maxiter === Int32(2)
 
-    @test_throws ArgumentError Refinement(0)
-    @test_throws ArgumentError Refinement(-2)
+    # The first positional argument is always `η`: an integer there is no `maxiter`, and the
+    # keywords are `η` and `maxiter` alone.
+    @test_throws ArgumentError Refinement(1)
+    @test_throws ArgumentError Refinement(3)
+    @test_throws MethodError Refinement(Float64, 3)
+    @test_throws MethodError Refinement(; eta = 1e-3)
+    @test_throws MethodError Refinement(; max_iterations = 4)
+
     @test_throws ArgumentError Refinement(; η = 0.0)
     @test_throws ArgumentError Refinement(; η = 1.0)
     @test_throws ArgumentError Refinement(; maxiter = 0)
-    @test_throws ArgumentError Refinement(; η = 1e-3, eta = 1e-3)
-    @test_throws ArgumentError Refinement(; maxiter = 2, max_iterations = 2)
-    @test_throws ArgumentError Refinement(2; η = 0.0)
-    @test_throws ArgumentError Refinement(2; η = -1e-3)
-    @test_throws ArgumentError Refinement(2; η = 1.0)
-    @test_throws ArgumentError Refinement(2; η = 1.5)
-    @test_throws ArgumentError Refinement(2; η = NaN)
-    @test_throws ArgumentError Refinement(2; η = Inf)
+    @test_throws ArgumentError Refinement(1e-3, 0)
+    @test_throws ArgumentError Refinement(1e-3, -2)
+    @test_throws ArgumentError Refinement(0.0)
+    @test_throws ArgumentError Refinement(-1e-3)
+    @test_throws ArgumentError Refinement(1.0)
+    @test_throws ArgumentError Refinement(1.5)
+    @test_throws ArgumentError Refinement(NaN)
+    @test_throws ArgumentError Refinement(Inf)
 
     for R in REAL_ELTYPES
-        adapted = adapt(GS.ToReal{R}(), Refinement(5; η = 1e-4))
+        adapted = adapt(GS.ToReal{R}(), Refinement(1e-4, 5))
         @test adapted isa Refinement{R}
         @test adapted.maxiter === Int32(5)
         @test adapted.η === R(1e-4)
@@ -285,18 +290,21 @@ end
     @test info.failures == 0
 end
 
-@testset "an analytic J takes a JVP buffer only for a line search or a Refinement" begin
+@testset "an analytic J takes a JVP buffer only for a line search or a Refinement along a reused factor" begin
     prob = NonlinearProblem(f_reg_r3!, j_reg_r3!)
     x, p = [0.5, 1.0], [0.0, 1.0]
-    for g in (Static(), DogLeg())
+    # A step that factorises at `x` refines with the Jacobian it holds, and needs no JVP.
+    for lin in (LUFactorization(), LUFactorization(Float32)), g in (Static(), DogLeg()),
+        ref in (NoRefinement(), Refinement())
         st = GS.init_state(
-            Newton(; linsolve = LUFactorization(Float32), globalization = g),
-            prob, x, p)
+            Newton(; linsolve = lin, globalization = g, refinement = ref), prob, x, p)
         @test st.jvpprep === nothing
     end
-    st_ref = GS.init_state(
-        Newton(; linsolve = LUFactorization(Float32), refinement = Refinement()), prob, x, p)
-    @test st_ref.jvpprep isa GS.JacobianMatrixJVP
+    for lin in (LUFactorization(), LUFactorization(Float32))
+        st_ref = GS.init_state(
+            Newton(; linsolve = lin, refinement = Refinement(), reuse = 2), prob, x, p)
+        @test st_ref.jvpprep isa GS.JacobianMatrixJVP
+    end
     # A `J` that is not callable is no Jacobian: `Newton` calls it, and does not differentiate `F`.
     @test_throws MethodError solve(NonlinearProblem(f_reg_r3!, [1.0, 1.0]), x, Newton(), p)
 end
@@ -346,7 +354,7 @@ end
     r_near_rel = GS.rnorm(Fx + J * d_near) / fnorm
     @test 1e-12 < r_near_rel <= sqrt(eps(Float64))
     d_floor_eta, failed_floor_eta = GS.refine!!(
-        d_near, Refinement(1; η = 1e-12), fac32, nothing,
+        d_near, Refinement(1e-12, 1), fac32, nothing,
         prob_r1, x0, Fx, fnorm, nothing, nothing)
     @test d_floor_eta === d_near
     @test !failed_floor_eta
@@ -354,7 +362,7 @@ end
     # Exhausting maxiter when residual decreases but stays above η_eff * fnorm returns
     # (d_improved, true).
     d_one, failed_one = GS.refine!!(
-        d0, Refinement(1; η = 1e-12), fac32, nothing,
+        d0, Refinement(1e-12, 1), fac32, nothing,
         prob_r1, x0, Fx, fnorm, nothing, nothing)
     @test failed_one
     @test GS.rnorm(Fx + J * d_one) < GS.rnorm(Fx + J * d0)
@@ -364,7 +372,7 @@ end
     bad_J = SMatrix{2, 2, Float32, 4}(-1.0f0, 0.0f0, 0.0f0, -1.0f0)
     bad_fac = GS.factorize!!(nothing, LUFactorization(), bad_J)
     d_bad, failed_bad = GS.refine!!(
-        d0, Refinement(3; η = sqrt(eps(Float64))), bad_fac, nothing,
+        d0, Refinement(sqrt(eps(Float64)), 3), bad_fac, nothing,
         prob_r1, x0, Fx, fnorm, nothing, nothing)
     @test failed_bad
     @test d_bad === d0
@@ -455,31 +463,19 @@ end
         options = opts)
     @test solver_lu_r3.state.fac_T.factors === solver_lu_r3.state.J
 
-    # step!! without start!! and after finish!! fails closed with NONFINITE and zero stepnorm.
+    # `start!!` clears the promotion and the slow-step count that an earlier solve left.
     m_stat = Newton(;
         linsolve = LUFactorization(Float32), refinement = Refinement(),
         globalization = Static())
     st_unstarted = GS.init_state(m_stat, prob_mod_r1, x0_r1, nothing)
+    @test !st_unstarted.promoted
+    @test st_unstarted.slow_steps == Int32(0)
     Fx0 = f_mod_r1(x0_r1, nothing)
-    x_u, _, _, info_u = GS.step!!(
-        st_unstarted, m_stat, prob_mod_r1, x0_r1, Fx0, nothing)
-    @test info_u.code == NONFINITE
-    @test info_u.stepnorm == 0.0
-    @test x_u == x0_r1
-
     st_dirty = GS.with_mixed(st_unstarted, true, Int32(2))
     st_started = GS.start!!(
         st_dirty, m_stat, prob_mod_r1, x0_r1, Fx0, nothing, GS.rnorm(Fx0))
     @test !st_started.promoted
     @test st_started.slow_steps == Int32(0)
-    _, st_status = solve(prob_mod_r1, x0_r1, m_stat; options = opts)
-    _, _, st_finished = GS.finish!!(
-        st_started, m_stat, prob_mod_r1, x0_r1, Fx0, st_status)
-    x_f, _, _, info_f = GS.step!!(
-        st_finished, m_stat, prob_mod_r1, x0_r1, Fx0, nothing)
-    @test info_f.code == NONFINITE
-    @test info_f.stepnorm == 0.0
-    @test x_f == x0_r1
 
     # The control solve: SUCCESS at f_abstol = 1e-12. cond(J) ≈ 1.8e5 amplifies the residual into
     # the iterate, so the bound on ‖x - x*‖ is cond(J) * atol ≈ 1.8e-7; the control is held to
@@ -773,7 +769,7 @@ end
     opts = Options(Float64; f_abstol = 1e-12, f_reltol = 0.0)
 
     # Nonlinear system with strong Jacobian rotation so that reusing the step-1 factor at step 2
-    # fails Refinement(1; η = 1e-2), while a fresh Float32 factor at step 2 succeeds without
+    # fails Refinement(1e-2, 1), while a fresh Float32 factor at step 2 succeeds without
     # promoting to Float64.
     function f_rot_r1(x, _)
         return SVector(
@@ -784,7 +780,7 @@ end
     x0_rot = SVector{2, Float64}(2.0, 0.5)
 
     m_qn = QuasiNewton(
-        5; linsolve = LUFactorization(Float32), refinement = Refinement(1; η = 1e-2))
+        5; linsolve = LUFactorization(Float32), refinement = Refinement(1e-2, 1))
     x_qn, st_qn = solve(prob_rot_r1, x0_rot, m_qn; options = opts)
     @test st_qn.code == SUCCESS
     @test !st_qn.promoted
@@ -793,8 +789,9 @@ end
 
     # Check 5: the refactorisation happens at the step the reused factor fails, in `TF` and not in
     # `T`. A host counter over the Jacobian of this problem reads one evaluation per
-    # factorisation and one per refinement pass, so a step reads 2 when its factor is fresh and 4
-    # when a reused factor fails refinement, is refactorised and refines again.
+    # factorisation and one per refinement pass along a reused factor: a fresh factor refines with
+    # the Jacobian it was factorised from. A step reads 1 when its factor is fresh, and 3 when a
+    # reused factor fails its one refinement pass and is refactorised.
     j_calls = Ref(0)
     function j_rot_r1_counted(x, _)
         j_calls[] += 1
@@ -816,7 +813,7 @@ end
         push!(counts, j_calls[] - before)
         @test info_count.code == SUCCESS
     end
-    @test counts == [2, 4]
+    @test counts == [1, 3]
     @test st_count.rule === GS.FactorAge(Int32(1), false)
     @test !st_count.promoted
     # each early refactorisation is one step-rule failure, and the solve counts them
@@ -884,6 +881,95 @@ end
     end
 end
 
+# `F(x) = x.^3 .- p` with an analytic Jacobian that counts its own evaluations.
+const J_CALLS = Ref(0)
+f_cube_r1(x, p) = x .^ 3 .- p
+function j_cube_r1(x, p)
+    J_CALLS[] += 1
+    return SMatrix{2, 2, eltype(x), 4}(3x[1]^2, 0, 0, 3x[2]^2)
+end
+f_cube_r3!(F, x, p) = (F .= x .^ 3 .- p; F)
+function j_cube_r3!(J, x, p)
+    J_CALLS[] += 1
+    fill!(J, 0)
+    for i in eachindex(x)
+        J[i, i] = 3x[i]^2
+    end
+    return J
+end
+
+const CUBE_CASES = (
+    ("SVector", NonlinearProblem(f_cube_r1, j_cube_r1),
+        SVector(10.0, 8.0), SVector(2.0, 3.0)),
+    ("Vector", NonlinearProblem(f_cube_r3!, j_cube_r3!), [10.0, 8.0], [2.0, 3.0]))
+
+# The evaluations of `J` in each of `n` steps from `x`, and the state and the `StepInfo` of each.
+function counted_steps(m, prob, x, p, n)
+    F = x isa SVector ? prob.F(x, p) : prob.F(similar(x), x, p)
+    st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, norm(F))
+    calls, steps = Int[], Any[]
+    for _ in 1:n
+        before = J_CALLS[]
+        x, F, st, info = GS.step!!(st, m, prob, x, F, p)
+        push!(calls, J_CALLS[] - before)
+        push!(steps, (st, info))
+    end
+    return calls, steps
+end
+
+# A step that factorises at `x` holds the regularised Jacobian it factorised, and a `Refinement`
+# multiplies by it: the step evaluates `J` once, for its factorisation. The buffer it multiplies by
+# is no factor's matrix, which the factorisation overwrites.
+@testset "a fresh step evaluates J once under Refinement ($(name), $(lin))" for (name, prob, x, p) in CUBE_CASES,
+    lin in (LUFactorization(), LUFactorization(Float32), QRFactorization(Float32))
+
+    for kw in ((;), (; regularization = 1), (; globalization = DogLeg()))
+        m = Newton(; linsolve = lin, refinement = Refinement(), kw...)
+        calls, steps = counted_steps(m, prob, copy(x), p, 4)
+        @test calls == [1, 1, 1, 1]
+        @test all(s -> s[2].code == SUCCESS && s[2].failures == 0, steps)
+        st = first(last(steps))
+        if x isa Vector
+            @test st.J !== st.fac.factors
+            st.fac_T === nothing || @test st.J !== st.fac_T.factors
+        end
+    end
+end
+
+@testset "a promoted step evaluates J once under Refinement ($(name))" for (name, prob, x) in (
+    ("SVector", NonlinearProblem(
+        f_ill_r1, (x, p) -> (J_CALLS[] += 1; j_ill_r1(x, p))),
+    SVector(2.0, 3.0)),
+    ("Vector",
+    NonlinearProblem(
+        f_ill_r3!, (J, x, p) -> (J_CALLS[] += 1; j_ill_r3!(J, x, p))),
+    [2.0, 3.0]))
+    m = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement())
+    calls, steps = counted_steps(m, prob, x, nothing, 3)
+    @test all(s -> s[1].promoted, steps)
+    @test calls == [1, 1, 1]
+end
+
+# A `Refinement` that fails on a reused factor refreshes it within the step, in the working
+# precision as in a mixed one: the step factorises at `x` again, counts one step-rule failure, and
+# restarts the age of the factor. With `η = 1e-12` and one pass, each refinement along the reused
+# factor fails here, and the refinement on the fresh factor does not.
+@testset "a failed Refinement on a reused factor refreshes it ($(name), $(lin))" for (name, prob, x, p) in CUBE_CASES,
+    lin in (LUFactorization(), LUFactorization(Float32))
+
+    m = Newton(; linsolve = lin, reuse = 3, refinement = Refinement(1e-12, 1))
+    calls, steps = counted_steps(m, prob, copy(x), p, 5)
+    # The first step factorises. Each later step takes two products along the reused factor and
+    # one evaluation for the factorisation that refreshes it.
+    @test calls == [1, 3, 3, 3, 3]
+    @test all(s -> s[1].rule === GS.FactorAge(Int32(1), false), steps)
+    @test [s[2].failures for s in steps] == [0, 1, 1, 1, 1]
+    @test !any(s -> s[2].promoted, steps)
+    _, status = solve(prob, copy(x), m, p)
+    @test status.code == SUCCESS
+    @test status.step_failures >= 1
+end
+
 @testset "Complex mixed-precision refinement, KA @kernel, two-size @allocated, and JET" begin
     x_star = SVector{2, Float64}(1.0, 2.0)
     opts = Options(Float64; f_abstol = 1e-12, f_reltol = 0.0)
@@ -909,9 +995,9 @@ end
         @test st_s.fnorm < 1e-11
         x_work = copy(x0_vec)
         alloc, steps = _measure_solve_alloc!(solver, x_work, x0_vec)
-        # `state.fac_T` is preallocated by `init_state` and `state.J` aliases its factors, so the
-        # step adds no `n × n` buffer and holds no value that could box either factor: a solve
-        # allocates nothing.
+        # `init_state` preallocates `state.fac_T` and the Jacobian buffer `state.J` that a
+        # `Refinement` multiplies by, so the step adds no `n × n` buffer and holds no value that
+        # could box either factor: a solve allocates nothing.
         @test steps > 0
         @test alloc == 0
     end

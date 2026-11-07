@@ -1,16 +1,13 @@
 """
     Refinement(T = Float64; η = √eps(float(real(T))), maxiter = 5)
-    Refinement(T, maxiter; η = √eps(float(real(T))))
-    Refinement(maxiter; η = √eps(Float64))
     Refinement(η, maxiter = 5)
 
 Iterative refinement of the linear direction `d` in [`Newton`](@ref) using the existing factor
-`fac` and matrix-free Jacobian-vector products [`jvp!!`](@ref) in the working precision `T` of the
-problem.
+`fac` and Jacobian-vector products in the working precision `T` of the problem: a step that
+factorised at `x` multiplies by the regularised Jacobian it holds, and a step along a reused
+factor takes [`jvp!!`](@ref) at `x`.
 
-The keyword constructor accepts `η` (or its ASCII alias `eta`) and `maxiter` (or `max_iterations`),
-defaulting to `η = √eps(float(real(T)))` and `maxiter = 5`, and the properties `.eta` and
-`.max_iterations` alias `.η` and `.maxiter`.
+The keyword constructor takes the real type `T` of `η`, and the positional one the type of `η`.
 
 At each inner pass (`1 ≤ iter ≤ maxiter`), `refine!!` forms the linear residual
 `r = -F(x) - J(x) d` in `T`, solves `fac \\ r` in the factor precision `TF` for the correction
@@ -41,43 +38,10 @@ end
 
 Refinement(η::R, maxiter::Integer = Int32(5)) where {R <: Real} = Refinement{R}(η, maxiter)
 
-function Refinement(maxiter::Integer; η = nothing, eta = nothing)
-    η !== nothing && eta !== nothing &&
-        throw(ArgumentError("Refinement: pass either η or eta, not both"))
-    return Refinement(something(η, eta, sqrt(eps(Float64))), maxiter)
-end
-
-function Refinement(::Type{T}, maxiter::Integer; η = nothing, eta = nothing) where {T}
-    η !== nothing && eta !== nothing &&
-        throw(ArgumentError("Refinement: pass either η or eta, not both"))
+function Refinement(::Type{T} = Float64; η = sqrt(eps(float(real(T)))),
+        maxiter::Integer = Int32(5)) where {T}
     R = float(real(T))
-    η_val = R(something(η, eta, sqrt(eps(R))))
-    return Refinement{R}(η_val, maxiter)
-end
-
-function Refinement(::Type{T} = Float64;
-        η = nothing,
-        eta = nothing,
-        maxiter = nothing,
-        max_iterations = nothing) where {T}
-    η !== nothing && eta !== nothing &&
-        throw(ArgumentError("Refinement: pass either η or eta, not both"))
-    maxiter !== nothing && max_iterations !== nothing &&
-        throw(ArgumentError("Refinement: pass either maxiter or max_iterations, not both"))
-    R = float(real(T))
-    η_val = R(something(η, eta, sqrt(eps(R))))
-    maxiter_val = something(maxiter, max_iterations, Int32(5))
-    return Refinement{R}(η_val, maxiter_val)
-end
-
-@inline function Base.getproperty(ref::Refinement, s::Symbol)
-    s === :eta && return getfield(ref, :η)
-    s === :max_iterations && return getfield(ref, :maxiter)
-    return getfield(ref, s)
-end
-
-function Base.propertynames(::Refinement, ::Bool = false)
-    return (:η, :maxiter, :eta, :max_iterations)
+    return Refinement{R}(R(η), maxiter)
 end
 
 Adapt.@adapt_structure Refinement
