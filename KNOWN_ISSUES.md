@@ -191,6 +191,23 @@
 - **kind:** defect
 - **found:** PR #59
 
+### K42 · A device `solve_batch!` passes a problem with a sparse prototype to the kernel, which a CUDA kernel cannot take as an argument
+
+- **location:** `src/nonlinear/batched.jl` (`_launch!`)
+- **evidence:** `_launch!` passes `prob` to `_solve_kernel!` unchanged, and `NonlinearProblem`
+  has no `Adapt` rule, so the prototype goes into the kernel arguments. A batched iterate ignores
+  the prototype. With `F!(r, x, p) = (r .= x .* x .- 4; r)`, `isbits(NonlinearProblem(F!))` is
+  `true`, while
+  `isbits(NonlinearProblem(F!; jacobian_prototype = sparse(Diagonal(ones(2)))))` is `false`,
+  because `SparseMatrixCSC` holds `Vector` fields (`isbitstype(SparseMatrixCSC{Float64, Int64})`
+  is `false`; Julia 1.13.3). CUDA.jl refuses a kernel argument that is not `isbits` after
+  `cudaconvert`. The CPU batch with the same prototype returns `SUCCESS` for both systems
+  (`test/linear/sparspak.jl`, "R1, R2, and Picard ignore jacobian_prototype"). CUDA is not
+  available on this machine, so the failure is not reproduced on a device. A fix passes the kernel
+  a problem without the prototype, with a device batch test whose residual captures a field.
+- **kind:** defect
+- **found:** PR #56 (CodeRabbit, on #59)
+
 ### K60 · `solve` with a combinator method has no implicit differentiation
 
 - **location:** `src/composition/implicit.jl` (`solve_implicit`)
