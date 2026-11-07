@@ -24,11 +24,14 @@ factor-reuse period `reuse`.
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
   `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
 - `refinement::RF`: the refinement setting ([`NoRefinement`](@ref) or [`Refinement`](@ref)).
+  A `Refinement` refines the direction of the system that the factor solves, the regularised
+  ``(J + μ I) d = -F`` when `μ > 0`.
 - `regularization::R`: non-negative finite diagonal shift ``μ ≥ 0`` added as ``J + μ I`` before
   factorisation when `μ > 0`.
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
-  reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step or a
-  failed [`Refinement`](@ref) on a reused factor). A line search along a reused factor that fails
+  reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step and,
+  where the factorisation runs in another precision than the iterate, after a failed
+  [`Refinement`](@ref) on a reused factor). A line search along a reused factor that fails
   without a step is retried once, in the same step, from a fresh factor. A [`DogLeg`](@ref)
   globalization takes no reuse: its model needs the Jacobian of the current iterate, and the
   constructor raises an `ArgumentError`.
@@ -92,13 +95,8 @@ end
 
 Adapt.@adapt_structure Newton
 
-@inline function has_analytic_jacobian(prob::NonlinearProblem)
-    J = getfield(prob, :J)
-    return J !== nothing && !(J isa Union{AbstractVector, Number})
-end
-
 # The JVP preparation from the analytic Jacobian of `prob`: an `n × n` buffer, or one like the
-# Jacobian prototype of `prob`, which a line search, a `Refinement` and a mixed-precision step read.
+# Jacobian prototype of `prob`, which a line search and a `Refinement` read.
 @inline function prototype_jvp(x, prob)
     P = jacobian_prototype(prob)
     return JacobianMatrixJVP(
@@ -116,7 +114,7 @@ end
     if m.refinement isa Refinement && m.jacobian isa AutoFiniteDiff
         throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
     end
-    has_J = has_analytic_jacobian(prob)
+    has_J = prob.J !== nothing
     if m.jacobian === nothing && !has_J
         prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
         return prep, prep
@@ -134,8 +132,7 @@ end
         jvpprep = if has_J
             if Fx === nothing
                 nothing
-            elseif m.refinement isa Refinement ||
-                   factor_eltype(m.linsolve, eltype(x)) !== eltype(x)
+            elseif m.refinement isa Refinement
                 prototype_jvp(x, prob)
             else
                 jacobian_matrix_jvp(m.globalization, x, prob)
@@ -375,9 +372,10 @@ end
     return with_diag(state, NewtonDiagnostics(real(eltype(x))))
 end
 
-# The state that `solve!!` returns carries the merit and unstarted sentinel of `init_state` again,
-# so that a `step!!` on it without `start!!` fails closed with `NONFINITE`, and `finish!!` copies
-# the diagnostics of the last factorisation into the returned `SolverStatus`.
+# The state that `solve!!` returns carries the merit, the norm and the unstarted sentinel of
+# `init_state` again, so that a line-search step and a mixed-precision step on it without `start!!`
+# fail closed with `NONFINITE`, and `finish!!` copies the diagnostics of the last factorisation
+# into the returned `SolverStatus`.
 @inline function finish!!(
         state::NewtonState, m::Newton, prob, x, Fx, status::SolverStatus{R}) where {R}
     d = state.diag
@@ -477,8 +475,26 @@ end
         m::Newton, state::NewtonState, prob, x, Fx, p, fac)
     d₀ = ldiv!!(state.d, fac, Fx)
     d₁ = map!!(-, state.d, d₀)
-    return refine!!(
+    μ = m.regularization
+    iszero(μ) && return refine!!(
         d₁, m.refinement, fac, state.jvpprep, prob, x, Fx, nothing, p, state.refbuf)
+    return refine!!(
+        d₁, m.refinement, fac, RegularizedJVP(state.jvpprep, μ), prob, x, Fx, nothing, p,
+        state.refbuf)
+end
+
+# The product with the regularised Jacobian `J + μ I` that `newton_factor` factorises: the JVP
+# that a `Refinement` reads where `μ > 0`, so that it refines the direction of the system the
+# factor solves.
+struct RegularizedJVP{P, R <: Real}
+    prep::P
+    μ::R
+end
+
+@inline function jvp!!(Jv, r::RegularizedJVP, prob, x, v, p)
+    T = eltype(x)
+    Jv₀ = jvp!!(Jv, r.prep, prob, x, v, p)
+    return axpby!!(Jv, one(T), Jv₀, T(r.μ), v)
 end
 
 # The step from the factor `fac`, fresh or reused: `SINGULAR` for a failed factor, else the

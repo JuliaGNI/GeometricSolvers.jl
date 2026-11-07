@@ -1,12 +1,13 @@
 # On F(x) = A * x .+ 0.5 .* (x .^ 2) at N = 16, f_abstol = 1e-12, f_reltol = 0.0,
 # κ(J) ∈ (1e2, 1e4, 1e5, 1e6), compare pure-Float64 Newton, constant η_J = √eps(Float64),
 # Kelley's η_J = 1e-6, and Eisenstat-Walker Choice 2 with √eps(Float64) floor across
-# outer Newton iterations, inner refinement passes, and final ‖F‖_∞.
+# outer Newton iterations, inner refinement passes, and final ‖F‖₂. The inner passes come from
+# a copy of the refinement loop of `refine!!`, with its 2-norm stop test, because a solve does not
+# report them.
 
 using GeometricSolvers
-using LinearAlgebra: Diagonal, lu, ldiv!, mul!, norm
+using LinearAlgebra: Diagonal, lu, mul!, norm
 using Printf: @printf
-using StaticArrays: SMatrix, SVector
 
 const GS = GeometricSolvers
 
@@ -40,7 +41,7 @@ function simulate_ew_choice2(A::Matrix{Float64}, x0::Vector{Float64}; atol::Floa
     N = length(x0)
     x = copy(x0)
     F = A * x .+ 0.5 .* (x .^ 2)
-    fnorm = maximum(abs, F)
+    fnorm = norm(F)
     fnorm_prev = fnorm
     eta_ew = 0.5
     eta_floor = sqrt(eps(Float64))
@@ -59,14 +60,14 @@ function simulate_ew_choice2(A::Matrix{Float64}, x0::Vector{Float64}; atol::Floa
         fac32 = lu(Float32.(J))
         d = -Float64.(fac32 \ Float32.(F))
         r = F .+ J * d
-        r_prev = maximum(abs, r)
+        r_prev = norm(r)
         for _ in 1:5
             r_prev <= eta_ew * fnorm && break
             inner_passes += 1
             δ = Float64.(fac32 \ Float32.(r))
             d_try = d .- δ
             r_try = F .+ J * d_try
-            r_curr = maximum(abs, r_try)
+            r_curr = norm(r_try)
             r_curr < r_prev || break
             d = d_try
             r = r_try
@@ -75,7 +76,7 @@ function simulate_ew_choice2(A::Matrix{Float64}, x0::Vector{Float64}; atol::Floa
         x .+= d
         fnorm_prev = fnorm
         F .= A * x .+ 0.5 .* (x .^ 2)
-        fnorm = maximum(abs, F)
+        fnorm = norm(F)
     end
     return outer_iters, inner_passes, fnorm
 end
@@ -85,7 +86,7 @@ function count_refinement_passes(A::Matrix{Float64}, x0::Vector{Float64}, eta::F
     N = length(x0)
     x = copy(x0)
     F = A * x .+ 0.5 .* (x .^ 2)
-    fnorm = maximum(abs, F)
+    fnorm = norm(F)
     eta_eff = max(eta, sqrt(eps(Float64)))
     outer_iters = 0
     inner_passes = 0
@@ -98,14 +99,14 @@ function count_refinement_passes(A::Matrix{Float64}, x0::Vector{Float64}, eta::F
         fac32 = lu(Float32.(J))
         d = -Float64.(fac32 \ Float32.(F))
         r = F .+ J * d
-        r_prev = maximum(abs, r)
+        r_prev = norm(r)
         for _ in 1:maxiter
             r_prev <= eta_eff * fnorm && break
             inner_passes += 1
             δ = Float64.(fac32 \ Float32.(r))
             d_try = d .- δ
             r_try = F .+ J * d_try
-            r_curr = maximum(abs, r_try)
+            r_curr = norm(r_try)
             r_curr < r_prev || break
             d = d_try
             r = r_try
@@ -113,7 +114,7 @@ function count_refinement_passes(A::Matrix{Float64}, x0::Vector{Float64}, eta::F
         end
         x .+= d
         F .= A * x .+ 0.5 .* (x .^ 2)
-        fnorm = maximum(abs, F)
+        fnorm = norm(F)
     end
     return outer_iters, inner_passes, fnorm
 end
@@ -128,7 +129,7 @@ function run_d2_sweep()
     println("Mixed-precision refinement η_J sweep: F(x) = A * x .+ 0.5 .* (x .^ 2), N = $N, atol = $atol")
     println("----------------------------------------------------------------------------------------")
     @printf("%-8s | %-22s | %-10s | %-12s | %-10s | %-12s\n",
-        "κ(J)", "strategy", "outer_iter", "inner_passes", "promoted", "final ‖F‖_∞")
+        "κ(J)", "strategy", "outer_iter", "inner_passes", "promoted", "final ‖F‖₂")
     println("----------------------------------------------------------------------------------------")
 
     m_f64 = Newton(; linsolve = LUFactorization(), refinement = NoRefinement())
@@ -161,7 +162,7 @@ function run_d2_sweep()
         println("----------------------------------------------------------------------------------------")
     end
     ref = Refinement()
-    println("Selected default: η_J = √eps(real(T)) = $(ref.η) (maxiter = $(ref.maxiter))")
+    println("Default of Refinement(): η_J = √eps(real(T)) = $(ref.η) (maxiter = $(ref.maxiter))")
 end
 
 run_d2_sweep()

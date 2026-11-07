@@ -70,5 +70,3 @@ for M in (:LUFactorization, :QRFactorization, :SVDFactorization)
         @inline promote_linsolve(::$M, ::Type{T}) where {T} = $M(real(T))
     end
 end
-
-@inline promote_linsolve(m::LinearMethod, ::Type{T}) where {T} = m

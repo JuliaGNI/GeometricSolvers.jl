@@ -250,6 +250,57 @@ end
     @test_throws ArgumentError QuasiNewton(-1)
 end
 
+f_reg_r1(x, p) = x .^ 2 .- p
+j_reg_r1(x, p) = SMatrix{2, 2, eltype(x), 4}(2x[1], 0, 0, 2x[2])
+f_reg_r3!(F, x, p) = (F .= x .^ 2 .- p; F)
+function j_reg_r3!(J, x, p)
+    fill!(J, 0)
+    for i in eachindex(x)
+        J[i, i] = 2x[i]
+    end
+    return J
+end
+
+# The factor of a regularised step is that of `J + μ I`, so a `Refinement` refines the direction
+# `-(J + μ I) \ F` of that system: it neither undoes the shift nor fails and promotes a
+# mixed-precision factorisation. At `x = (1/2, 1)`, `p = (0, 1)` and `μ = 1` the regularised
+# direction is `(-1/8, 0)`, and the unregularised one `(-1/4, 0)`.
+@testset "Refinement refines the regularised direction ($(lin), $(name))" for lin in (
+        LUFactorization(), LUFactorization(Float32)),
+    (name, prob, x, p) in (
+        ("analytic J, Vector", NonlinearProblem(f_reg_r3!, j_reg_r3!),
+        [0.5, 1.0], [0.0, 1.0]),
+        ("AD, Vector", NonlinearProblem(f_reg_r3!), [0.5, 1.0], [0.0, 1.0]),
+        ("analytic J, SVector", NonlinearProblem(f_reg_r1, j_reg_r1), SVector(0.5, 1.0),
+        SVector(0.0, 1.0)),
+        ("AD, SVector", NonlinearProblem(f_reg_r1), SVector(0.5, 1.0), SVector(0.0, 1.0)))
+
+    m = Newton(; linsolve = lin, regularization = 1, refinement = Refinement())
+    F = x isa SVector ? prob.F(x, p) : prob.F(similar(x), x, p)
+    st = GS.start!!(
+        GS.init_state(m, prob, copy(x), p), m, prob, copy(x), copy(F), p, norm(F))
+    x₁, _, _, info = GS.step!!(st, m, prob, copy(x), copy(F), p)
+    @test isapprox(x₁ - x, [-0.125, 0.0]; rtol = 8 * eps())
+    @test !info.promoted
+    @test info.failures == 0
+end
+
+@testset "an analytic J takes a JVP buffer only for a line search or a Refinement" begin
+    prob = NonlinearProblem(f_reg_r3!, j_reg_r3!)
+    x, p = [0.5, 1.0], [0.0, 1.0]
+    for g in (Static(), DogLeg())
+        st = GS.init_state(
+            Newton(; linsolve = LUFactorization(Float32), globalization = g),
+            prob, x, p)
+        @test st.jvpprep === nothing
+    end
+    st_ref = GS.init_state(
+        Newton(; linsolve = LUFactorization(Float32), refinement = Refinement()), prob, x, p)
+    @test st_ref.jvpprep isa GS.JacobianMatrixJVP
+    # A `J` that is not callable is no Jacobian: `Newton` calls it, and does not differentiate `F`.
+    @test_throws MethodError solve(NonlinearProblem(f_reg_r3!, [1.0, 1.0]), x, Newton(), p)
+end
+
 @testset "refine!! unit checks and stopping rules" begin
     prob_r1 = NonlinearProblem(f_mod_r1, j_mod_r1)
     x0 = SVector{2, Float64}(2.0, 3.0)
@@ -939,7 +990,6 @@ end
     @test b1 == 0
     @test b2 == 0
 
-    # JET.@test_opt target_modules = (GeometricSolvers,)
     JET.@test_opt target_modules=(GeometricSolvers,) solve(
         prob_mod_r1, x0_r1, m_ka; options = opts)
     copyto!(w_n1, x0_n1)

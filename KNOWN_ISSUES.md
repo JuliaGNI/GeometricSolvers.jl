@@ -99,3 +99,46 @@
   refuses the mix with an `ArgumentError` is open.
 - **kind:** defect
 - **found:** PR #53
+
+### K50 · With an analytic `J`, every `Refinement` pass evaluates the whole Jacobian again
+
+- **location:** `src/ad/jvp.jl` (`jvp!!` for `JacobianMatrixJVP`), `src/nonlinear/refinement.jl`
+  (`refine!!`)
+- **evidence:** `refine!!` takes one Jacobian-vector product per pass, and the product of a
+  `JacobianMatrixJVP` calls `prob.J(prep.J, x, p)` before it multiplies. With
+  `F(x) = x.^3 .- p`, a diagonal analytic `J` that counts its calls, `x₀ = [10, 8]`,
+  `p = [2, 3]`, `reuse = 3` and `Refinement(1e-12, 1)`, `LUFactorization()` makes 2 calls of `J`
+  in each of 5 steps, the reused steps included, and `LUFactorization(Float32)` makes 3 in the
+  first step and 5 in each of steps 2–5, where the refinement on the reused factor fails and the
+  step factorises again (Julia 1.13.3). A fresh step already holds `J(x)` as the matrix it
+  factorises; a step on a reused factor holds no Jacobian of the current iterate, and the
+  refinement needs one. Whether a fresh step refines with the matrix it holds is open.
+- **kind:** defect
+- **found:** PR #64
+
+### K51 · A step without `start!!` on the state that `solve!!` returns fails closed only where the factorisation runs in another precision than the iterate
+
+- **location:** `src/nonlinear/newton.jl` (`mixed_unstarted`)
+- **evidence:** With `F(x) = x .* x .- p`, a diagonal analytic `J`, `x₀ = [3, 5]`, `p = [4, 9]`
+  and the default `Static` globalization, a `step!!` on the state that `solve!!` returns, without
+  `start!!`, gives `SUCCESS` with `LUFactorization()` and `NONFINITE` with
+  `LUFactorization(Float32)` (Julia 1.13.3). `finish!!` sets `slow_steps = -1`, and only the
+  mixed-precision step reads it; the `NaN` norm of the same state makes `residual_norm` take
+  `rnorm(Fx)` again, which serves the step in the working precision. A line-search step fails
+  closed in both precisions. Whether the mixed-precision step keeps the sentinel or follows the
+  step in the working precision is open.
+- **kind:** defect
+- **found:** PR #64
+
+### K52 · A failed `Refinement` on a reused factor refreshes the factor only where the factorisation runs in another precision than the iterate
+
+- **location:** `src/nonlinear/newton.jl` (`newton_globalize`)
+- **evidence:** With the problem of K50, `reuse = 3` and `Refinement(1e-12, 1)`, the refinement
+  on the reused factor fails in steps 2 and 3. With `LUFactorization()` the factor age goes
+  `1 → 2 → 0` and `failures` stays `0`; with `LUFactorization(Float32)` the step factorises again,
+  sets `failures = 1` and keeps the age at `1` (Julia 1.13.3). `newton_globalize` discards the
+  `failed` flag that `newton_direction` returns; `mixed_newton!!` reads it. The `reuse` field of
+  the `Newton` docstring states the difference. Whether the step in the working precision also
+  refreshes is open.
+- **kind:** defect
+- **found:** PR #64

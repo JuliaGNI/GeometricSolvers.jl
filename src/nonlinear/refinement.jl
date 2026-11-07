@@ -1,5 +1,6 @@
 """
     Refinement(T = Float64; η = √eps(float(real(T))), maxiter = 5)
+    Refinement(T, maxiter; η = √eps(float(real(T))))
     Refinement(maxiter; η = √eps(Float64))
     Refinement(η, maxiter = 5)
 

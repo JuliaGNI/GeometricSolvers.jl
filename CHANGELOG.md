@@ -966,7 +966,10 @@ so that a compat-only bump can be told apart from an interface change.
   `maxiter` defect-correction passes in working precision `T` using the existing factor `fac` and
   matrix-free Jacobian-vector products `jvp!!`: each pass forms `r = -F(x) - J(x) d` in `T`, solves
   `fac \ r` in `TF` for `δd`, updates `d ← d + δd`, and stops once
-  `‖F(x) + J(x) d‖ ≤ max(η, √eps(R)) ‖F(x)‖`. Combining `Refinement` (or `refinement = true`)
+  `‖F(x) + J(x) d‖ ≤ max(η, √eps(R)) ‖F(x)‖`. With `regularization = μ > 0`, `J(x)` throughout
+  this paragraph stands for `J(x) + μI`, the matrix that the factor solves: `Refinement` refines the
+  direction of `(J(x) + μI) d = -F(x)`, and the linear-model residual that a promotion reads uses the
+  same matrix. Combining `Refinement` (or `refinement = true`)
   with `AutoFiniteDiff` raises an `ArgumentError` in `init` because
   finite-difference directional derivatives corrupt the defect correction near the
   finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
