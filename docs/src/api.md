@@ -101,12 +101,19 @@ finite. For a vector state (R3) with no sparse pattern (`jacobian_pattern(prob, 
 [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host, and through `KernelAbstractions` on a device. When `Sparspak` is loaded
 and [`jacobian_pattern`](@ref) is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
 AbstractFloat`) — from an explicit `jacobian_prototype`, or detected automatically by
-`GeometricSolversSparseADExt` when `SparseConnectivityTracer` and `SparseMatrixColorings` are
-loaded — the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+`GeometricSolversSparseADExt` when `SparseMatrixColorings` is loaded — the
+`GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
 workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for an `LUFactorization` whose
 factor element type is `T` (`LUFactorization()` or `LUFactorization(T)`); the first `factorize!!`
 call runs symbolic ordering and symbolic factorisation, and subsequent `factorize!!` and `ldiv!!`
-calls reuse them across Newton steps.
+calls reuse them across Newton steps. That configuration is the only one with a sparse factor, and
+[`has_sparse_factor`](@ref) names it. A detected pattern is used only where `has_sparse_factor`
+holds and, under a `Newton` `regularization ≠ 0`, only where the pattern holds the whole structural
+diagonal. Everywhere else — `QRFactorization`, `SVDFactorization`, mixed precision such as
+`LUFactorization(Float64)` on a `Float32` iterate, a complex iterate, or no `Sparspak` — a
+detected pattern gives the dense factor and a dense Jacobian buffer, as a solve with no pattern
+does. An explicit `jacobian_prototype` outside that configuration raises an error in `init_linear`
+or at the first `factorize!!`.
 [`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
 in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is
 exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref).
@@ -114,6 +121,7 @@ These names are not exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
 init_linear
+has_sparse_factor
 dense_factor
 factorize!!
 ldiv!!
@@ -260,15 +268,15 @@ choice and carries no `ad` keyword.
 
 For a sparse R3 Jacobian on a host `Array` iterate, an `AutoSparse` back end takes either an
 explicit `jacobian_prototype` on the [`NonlinearProblem`](@ref) (which [`prepare_ad`](@ref) wraps in
-`KnownJacobianSparsityDetector`) or, when `SparseConnectivityTracer` and `SparseMatrixColorings` are
-loaded and `jacobian_prototype === nothing`, a sparsity detector such as `TracerSparsityDetector()`
-alongside a colouring algorithm such as `GreedyColoringAlgorithm()`. The
+`KnownJacobianSparsityDetector`) or, when `SparseMatrixColorings` is loaded and
+`jacobian_prototype === nothing`, a sparsity detector such as `TracerSparsityDetector()` of
+`SparseConnectivityTracer` alongside a colouring algorithm such as `GreedyColoringAlgorithm()`. The
 `GeometricSolversSparseADExt` package extension then extracts the detected pattern from the prepared
 [`DIJacobian`](@ref) via [`jacobian_pattern`](@ref) as a `SparseMatrixCSC{<:Any, Int}` — a
 `SparseMatrixCSC{Bool, Int}` for `TracerSparsityDetector` — so
 [`init_linear`](@ref) allocates the sparse factor and Jacobian buffer without a user-supplied
-prototype; when an explicit `jacobian_prototype` is also given, the explicit prototype takes
-precedence.
+prototype where [`has_sparse_factor`](@ref) holds, and the dense factor elsewhere; when an explicit
+`jacobian_prototype` is also given, the explicit prototype takes precedence.
 
 In R3 the iterate is a vector; another shape raises `ArgumentError` where the preparation is
 built. The parameters may be replaced on every call, which is what lets one preparation serve a

@@ -200,8 +200,43 @@ everywhere, so that method returns `nothing` and the dense path runs.
     return empty_static_factor(ls, x)
 end
 
+"""
+    has_sparse_factor(method::LinearMethod, x)
+
+Whether a package extension builds a sparse factor of `method` on the iterate `x` from a detected
+Jacobian pattern: `false` by default. The `GeometricSolversSparspakExt` extension returns `true`
+for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
+`T <: AbstractFloat`. Where it is `false`, a detected pattern gives the dense factor, as a solve
+with no pattern does; an explicit `jacobian_prototype` does not consult it.
+"""
+@inline has_sparse_factor(::LinearMethod, x) = false
+
+# The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
+# detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor.
+@inline function factor_pattern(ls, prob, x, jacprep)
+    P = jacobian_pattern(prob, jacprep)
+    P === nothing || jacobian_prototype(prob) !== nothing || has_sparse_factor(ls, x) ||
+        return nothing
+    return P
+end
+
 @inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p, jacprep)
-    return init_linear(ls, jacobian_pattern(prob, jacprep), x)
+    return init_linear(ls, factor_pattern(ls, prob, x, jacprep), x)
+end
+
+@inline has_structural_diagonal(::Nothing) = true
+@inline function has_structural_diagonal(P::SparseArrays.SparseMatrixCSC)
+    rows = SparseArrays.rowvals(P)
+    return all(j -> j in view(rows, SparseArrays.nzrange(P, j)), axes(P, 2))
+end
+
+# The factor of a Newton solve. `regularize!!` writes `μ` onto the diagonal of `J`, so under
+# `μ ≠ 0` a detected pattern without the whole structural diagonal gives the dense factor.
+@inline function init_newton_factor(m::Newton, prob, x, p, jacprep)
+    iszero(m.regularization) || jacobian_prototype(prob) !== nothing ||
+        has_structural_diagonal(factor_pattern(m.linsolve, prob, x, jacprep)) ||
+        return init_linear(m.linsolve, nothing, x)
+    return init_factor(m.linsolve, prob, x, p, jacprep)
 end
 
 @inline function init_newton_J(m::Newton, fac, x)
@@ -308,7 +343,7 @@ end
         return NewtonState(jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule,
             merit, R(NaN), diag)
     else
-        fac = init_factor(m.linsolve, prob, x, p, jacprep)
+        fac = init_newton_factor(m, prob, x, p, jacprep)
         return NewtonState(jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, x),
             init_globalization(m.globalization, x), rule, merit, R(NaN), diag)
     end

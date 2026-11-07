@@ -17,13 +17,12 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [weakdeps]
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
-SparseConnectivityTracer = "9f842d2f-2579-4b1d-911e-f412cf18a3f5"
 SparseMatrixColorings = "0a514795-09f3-496d-8182-132a7b665d35"
 Sparspak = "e56a9233-b9d6-4f03-8d0f-1825330902ac"
 
 [extensions]
 GeometricSolversSciMLBaseExt = "SciMLBase"
-GeometricSolversSparseADExt = ["SparseConnectivityTracer", "SparseMatrixColorings"]
+GeometricSolversSparseADExt = "SparseMatrixColorings"
 GeometricSolversSparspakExt = "Sparspak"
 
 [compat]
@@ -37,7 +36,6 @@ KernelAbstractions = "0.9.38"
 LinearAlgebra = "1"
 SciMLBase = "3.55"
 SparseArrays = "1"
-SparseConnectivityTracer = "1"
 SparseMatrixColorings = "0.4.23"
 Sparspak = "=0.3.15"
 StaticArrays = "1.9.8"

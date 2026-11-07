@@ -246,6 +246,102 @@ end
         @test isapprox(x_sol, z_star; rtol = T === Float32 ? 1.0f-3 : 1.0e-7)
     end
 
+    # Only `GeometricSolversSparspakExt` builds a sparse factor from a detected pattern, for an
+    # `LUFactorization` of the iterate's own real element type on a `Vector`. Every other linear
+    # method takes the dense factor, as it does with no pattern, and solves to the same iterate as
+    # the dense `AutoForwardDiff` Jacobian: colouring changes no entry of the Jacobian.
+    @testset "Detected pattern without a sparse factor solves dense" begin
+        F_sq!(r, x, p) = (r .= x .^ 2 .- p; r)
+        prob = NonlinearProblem(F_sq!)
+
+        @test GS.has_sparse_factor(LUFactorization(), Float64[])
+        @test GS.has_sparse_factor(LUFactorization(Float32), Float32[])
+        @test !GS.has_sparse_factor(LUFactorization(Float64), Float32[])
+        @test !GS.has_sparse_factor(QRFactorization(), Float64[])
+        @test !GS.has_sparse_factor(SVDFactorization(), Float64[])
+        @test !GS.has_sparse_factor(LUFactorization(), ComplexF64[])
+
+        function check_dense(prob, x0, p, linsolve, backend, Fac)
+            prep = GS.prepare_ad(backend, prob, similar(x0), x0, p)
+            @test GS.jacobian_pattern(prob, prep) isa SparseMatrixCSC
+            solver = init(prob, copy(x0), Newton(; linsolve, jacobian = backend), p)
+            @test solver.state.fac isa Fac
+            @test solver.state.J isa Matrix
+            x, st = solve!(solver)
+            @test st.code === SUCCESS
+            dense = Newton(; linsolve, jacobian = AutoForwardDiff())
+            x_ref, st_ref = solve!(init(prob, copy(x0), dense, p))
+            @test st_ref.code === SUCCESS
+            @test isapprox(x, x_ref; rtol = 8 * eps(real(eltype(x0))))
+            @test x != x0
+        end
+
+        @testset "$(nameof(typeof(linsolve))) (T = $T)" for T in REAL_ELTYPES,
+            (linsolve, Fac) in ((QRFactorization(), GS.DenseQR), (
+                SVDFactorization(), GS.DenseSVD))
+
+            check_dense(
+                prob, T[1.5, 2.0, 0.7], T[2, 3, 0.5], linsolve, sparse_backend(), Fac)
+        end
+
+        @testset "Mixed precision LUFactorization(Float64) on Float32" begin
+            check_dense(prob, Float32[1.5, 2.0, 0.7], Float32[2, 3, 0.5],
+                LUFactorization(Float64), sparse_backend(), GS.DenseLU)
+        end
+
+        # `ForwardDiff` and the tracer take no complex number, so the complex iterate goes through
+        # `AutoFiniteDiff` with a known pattern on a problem that has no prototype: the pattern is
+        # still the detector's, read from the preparation.
+        @testset "ComplexF64 iterate" begin
+            backend_c = AutoSparse(AutoFiniteDiff();
+                sparsity_detector = KnownJacobianSparsityDetector(sparse(1.0I, 3, 3)),
+                coloring_algorithm = GreedyColoringAlgorithm())
+            x0 = ComplexF64[1.5, 2.0, 0.7]
+            p = ComplexF64[2, 3, 0.5]
+            solver = init(prob, copy(x0), Newton(; jacobian = backend_c), p)
+            @test solver.state.fac isa GS.DenseLU
+            x, st = solve!(solver)
+            @test st.code === SUCCESS
+            @test isapprox(x, sqrt.(p); rtol = 1.0e-8)
+        end
+
+        @testset "LUFactorization of the iterate's element type keeps SparspakLU (T = $T)" for T in REAL_ELTYPES
+            solver = init(prob, T[1.5, 2.0, 0.7],
+                Newton(; linsolve = LUFactorization(T), jacobian = sparse_backend()), T[2, 3, 0.5])
+            @test solver.state.fac isa ext_sparspak.SparspakLU{SparseMatrixCSC{T, Int}}
+            @test solver.state.J isa SparseMatrixCSC{T, Int}
+            @test solve!(solver)[2].code === SUCCESS
+        end
+    end
+
+    # `regularize!!` writes `μ` onto the diagonal of `J`, which a structural entry of the factor's
+    # pattern must hold. A detected pattern without the whole diagonal therefore takes the dense
+    # factor under `μ ≠ 0`, and keeps `SparspakLU` under `μ = 0` or with the diagonal present.
+    @testset "Regularization and a detected pattern without the diagonal" begin
+        F_perm!(r, x, p) = (r[1] = x[2]^3 + x[2] - 2; r[2] = x[1]^3 + x[1] - 2; r)
+        prob = NonlinearProblem(F_perm!)
+        x0 = [0.5, 0.5]
+        prep = GS.prepare_ad(sparse_backend(), prob, similar(x0), x0, nothing)
+        @test !GS.has_structural_diagonal(GS.jacobian_pattern(prob, prep))
+
+        solver = init(prob, copy(x0),
+            Newton(; jacobian = sparse_backend(), regularization = 1.0e-10))
+        @test solver.state.fac isa GS.DenseLU
+        x, st = solve!(solver)
+        @test st.code === SUCCESS
+        @test isapprox(x, ones(2); rtol = 1.0e-8)
+
+        solver_μ0 = init(prob, copy(x0), Newton(; jacobian = sparse_backend()))
+        @test solver_μ0.state.fac isa ext_sparspak.SparspakLU
+        @test solve!(solver_μ0)[2].code === SUCCESS
+
+        F_sq!(r, x, p) = (r .= x .^ 2 .- p; r)
+        solver_diag = init(NonlinearProblem(F_sq!), [1.5, 2.0],
+            Newton(; jacobian = sparse_backend(), regularization = 1.0e-10), [2.0, 3.0])
+        @test solver_diag.state.fac isa ext_sparspak.SparspakLU
+        @test solve!(solver_diag)[2].code === SUCCESS
+    end
+
     @testset "Guard rails: device array and invalid shapes" begin
         F_simple!(r, x, p) = (r .= x .^ 2 .- one(eltype(x)); r)
         prob = NonlinearProblem(F_simple!)
@@ -270,26 +366,69 @@ end
             backend, prob_badsz, similar(x_cpu), x_cpu, nothing)
     end
 
-    @testset "Subprocess with SparseMatrixColorings and no SparseConnectivityTracer" begin
-        # The extension takes both packages as triggers, so loading one of them must leave it
-        # unloaded: a trigger narrowed to `SparseMatrixColorings` alone would load it here.
-        sub_code = """
-        using GeometricSolvers
-        using SparseMatrixColorings
-        ext = Base.get_extension(GeometricSolvers, :GeometricSolversSparseADExt)
-        ext === nothing || error("expected nothing, got \$ext")
-        """
+    # A child process loads only the packages its code names, so it sees the extensions that
+    # those packages trigger and no others. `JULIA_DEPOT_PATH` stays, so that a child of a run in
+    # a custom depot finds its packages.
+    function run_child(code)
         julia_exe = joinpath(Sys.BINDIR, "julia")
-        # `JULIA_DEPOT_PATH` stays, so that a child of a run in a custom depot finds its packages.
         env_clean = filter(
             p -> (p.first == "JULIA_DEPOT_PATH" || !startswith(p.first, "JULIA_")) &&
                  !startswith(p.first, "GIT_"),
             copy(ENV)
         )
-        proc = run(ignorestatus(setenv(
-            `$julia_exe --startup-file=no --compiled-modules=existing --project=$(Base.active_project()) -e $sub_code`,
+        return run(ignorestatus(setenv(
+            `$julia_exe --startup-file=no --compiled-modules=existing --project=$(Base.active_project()) -e $code`,
             env_clean
         )))
-        @test proc.exitcode == 0
+    end
+
+    @testset "Subprocess with SparseMatrixColorings and no SparseConnectivityTracer" begin
+        # `SparseMatrixColorings` alone triggers the extension, which reads nothing else: a
+        # detector from any package, here a known pattern on a problem with no prototype, then
+        # gives the detected pattern.
+        sub_code = """
+        using GeometricSolvers, SparseMatrixColorings, SparseArrays
+        using LinearAlgebra: I
+        using ADTypes: AutoForwardDiff, AutoSparse, KnownJacobianSparsityDetector
+        ext = Base.get_extension(GeometricSolvers, :GeometricSolversSparseADExt)
+        ext === nothing && error("GeometricSolversSparseADExt is not loaded")
+        any(k -> k.name == "SparseConnectivityTracer", keys(Base.loaded_modules)) &&
+            error("SparseConnectivityTracer is loaded")
+        prob = NonlinearProblem((r, x, p) -> (r .= x .^ 2 .- 1; r))
+        backend = AutoSparse(AutoForwardDiff();
+            sparsity_detector = KnownJacobianSparsityDetector(sparse(1.0I, 2, 2)),
+            coloring_algorithm = GreedyColoringAlgorithm())
+        x0 = [1.5, 2.0]
+        prep = GeometricSolvers.prepare_ad(backend, prob, similar(x0), x0, nothing)
+        GeometricSolvers.jacobian_pattern(prob, prep) isa SparseMatrixCSC ||
+            error("no detected pattern")
+        """
+        @test run_child(sub_code).exitcode == 0
+    end
+
+    @testset "Subprocess with a detected pattern and no Sparspak" begin
+        # With no extension that builds a sparse factor, a detected pattern gives the dense
+        # factor and solves to the iterate of the dense `AutoForwardDiff` Jacobian.
+        sub_code = """
+        using GeometricSolvers, SparseConnectivityTracer, SparseMatrixColorings, SparseArrays
+        using ADTypes: AutoForwardDiff, AutoSparse
+        Base.get_extension(GeometricSolvers, :GeometricSolversSparspakExt) === nothing ||
+            error("GeometricSolversSparspakExt is loaded")
+        prob = NonlinearProblem((r, x, p) -> (r .= x .^ 2 .- p; r))
+        backend = AutoSparse(AutoForwardDiff(); sparsity_detector = TracerSparsityDetector(),
+            coloring_algorithm = GreedyColoringAlgorithm())
+        x0 = [1.5, 2.0, 0.7]
+        p = [2.0, 3.0, 0.5]
+        prep = GeometricSolvers.prepare_ad(backend, prob, similar(x0), x0, p)
+        GeometricSolvers.jacobian_pattern(prob, prep) isa SparseMatrixCSC ||
+            error("no detected pattern")
+        solver = init(prob, copy(x0), Newton(; jacobian = backend), p)
+        solver.state.fac isa GeometricSolvers.DenseLU || error("factor \$(typeof(solver.state.fac))")
+        x, st = solve!(solver)
+        st.code === SUCCESS || error("return code \$(st.code)")
+        x_ref, _ = solve!(init(prob, copy(x0), Newton(; jacobian = AutoForwardDiff()), p))
+        isapprox(x, x_ref; rtol = 8 * eps()) || error("\$x differs from \$x_ref")
+        """
+        @test run_child(sub_code).exitcode == 0
     end
 end
