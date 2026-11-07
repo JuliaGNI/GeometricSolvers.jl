@@ -1,6 +1,7 @@
-# `Newton` in R1: `SVector`, `MVector` and `Number` iterates, LU and QR linear solvers,
-# analytic and AD Jacobians, diagonal regularisation, factor reuse, stall refresh,
-# `ToReal` adaptation, and quadratic convergence.
+# `Newton` in R1 — `SVector`, `MVector` and `Number` iterates — and its step on `Array` and
+# `JLArray`: LU and QR linear solvers, analytic and AD Jacobians, diagonal regularisation, factor
+# reuse, stall refresh, the residual norm a step carries into the state, `ToReal` adaptation, and
+# quadratic convergence.
 
 using Adapt: Adapt
 using ADTypes: AutoForwardDiff
@@ -134,15 +135,90 @@ end
     GS = GeometricSolvers
     st = GS.init_state(Newton(; reuse = 3), prob, 3.0, nothing)
     aged = GS.NewtonState(st.jacprep, st.jvpprep, st.Fx, st.d, st.fac, st.J, st.g,
-        GS.FactorAge(Int32(2), true), st.merit, st.fnorm, st.diag)
+        GS.FactorAge(Int32(2), true), st.merit, st.fnorm, st.diag,
+        st.refbuf, st.fac_T, st.promoted, st.slow_steps)
     @test GS.start!!(aged, Newton(; reuse = 3), prob, 3.0, 5.0, nothing, 5.0).rule ===
           GS.FactorAge(Int32(0), false)
     st_dl = GS.init_state(Newton(; globalization = DogLeg(; radius = 2.0)), prob, 3.0, nothing)
     @test st_dl.rule === GS.TrustRadius(2.0, 2.0)
     moved = GS.NewtonState(st_dl.jacprep, st_dl.jvpprep, st_dl.Fx, st_dl.d, st_dl.fac,
-        st_dl.J, st_dl.g, GS.TrustRadius(8.0, 2.0), st_dl.merit, st_dl.fnorm, st_dl.diag)
+        st_dl.J, st_dl.g, GS.TrustRadius(8.0, 2.0), st_dl.merit, st_dl.fnorm, st_dl.diag,
+        st_dl.refbuf, st_dl.fac_T, st_dl.promoted, st_dl.slow_steps)
     @test GS.start!!(moved, Newton(; globalization = DogLeg()), prob, 3.0, 5.0, nothing,
         5.0).rule === GS.TrustRadius(2.0, 2.0)
+end
+
+# The residual `y .* y .- q` of the norm test with its start, on one backend: the value iterate
+# takes the out-of-place residual, and an array backend the in-place one that AD differentiates.
+newton_norm_label(::Type{Nothing}) = "SVector"
+newton_norm_label(::Type{B}) where {B} = string(nameof(B))
+function newton_norm_case(::Type{Nothing})
+    prob = NonlinearProblem((y, q) -> y .* y .- q)
+    x₀, p = SVector(3.0, 5.0), SVector(4.0, 9.0)
+    return prob, x₀, p, prob.F(x₀, p)
+end
+function newton_norm_case(::Type{B}) where {B}
+    prob = NonlinearProblem((Fx, y, q) -> (Fx .= y .* y .- q; Fx))
+    x₀, p = B([3.0, 5.0]), B([4.0, 9.0])
+    return prob, x₀, p, prob.F(B(similar(x₀)), x₀, p)
+end
+
+# A step hands the state the norm of the residual it returns, and the next step reads it back:
+# `grad_ratio` scales the gradient by it, and a mixed step takes it as `fnorm_old`, the scale of the
+# linear-model error. The five rules cover the three step paths — no reuse, `DogLeg`, and a reused
+# factor — at the working precision and mixed (`TF ≠ T`), because each path writes that norm into
+# the state on its own.
+@testset "every Newton step carries the norm of the residual it returns, $(newton_norm_label(AT))" for AT in (
+    Nothing, ARRAY_BACKENDS...)
+    GS = GeometricSolvers
+    prob, x₀, p, F₀ = newton_norm_case(AT)
+    for kw in ((;), (; globalization = Backtracking()), (; globalization = DogLeg()),
+        (; reuse = 3), (; reuse = 3, refinement = Refinement()))
+        for lin in (LUFactorization(), LUFactorization(Float32))
+            m = Newton(; linsolve = lin, kw...)
+            # An array backend writes the iterate and the residual in place, so each rule takes
+            # its own copy of the start.
+            x, F = copy(x₀), copy(F₀)
+            st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, rnorm(F))
+            for _ in 1:3
+                x, F, st, _ = GS.step!!(st, m, prob, x, F, p)
+                @test st.fnorm == rnorm(F)
+            end
+        end
+    end
+end
+
+# A step on a state that no `start!!` saw, or that `solve!!` returned, trusts nothing the state
+# carries: a line search, whose merit at `α = 0` is the state's, fails closed with `NONFINITE` and
+# keeps its iterate, and any other step takes `‖F‖` from the residual it is given and returns the
+# Newton step `x - (x² - p) / 2x = (13/6, 17/5)`. The mixed step does what the working-precision
+# step does.
+@testset "a step without start!! is the same at either precision, $(newton_norm_label(AT))" for AT in (
+    Nothing, ARRAY_BACKENDS...)
+    GS = GeometricSolvers
+    prob, x₀, p, F₀ = newton_norm_case(AT)
+    for lin in (LUFactorization(), LUFactorization(Float32)),
+        g in (Static(), Backtracking(), DogLeg())
+
+        m = Newton(; linsolve = lin, globalization = g)
+        x, F = copy(x₀), copy(F₀)
+        st = GS.start!!(GS.init_state(m, prob, x, p), m, prob, x, F, p, rnorm(F))
+        _, _, st_end = GS.solve!!(st, prob, x, m, p)
+        # The state that `solve!!` returns carries the `NaN` norm of `init_state` again.
+        @test isnan(st_end.fnorm)
+        for st₀ in (GS.init_state(m, prob, copy(x₀), p), st_end)
+            x, F = copy(x₀), copy(F₀)
+            x₁, F₁, _, info = GS.step!!(st₀, m, prob, x, F, p)
+            if g isa Backtracking
+                @test info.code == NONFINITE
+                @test Array(x₁) == Array(x₀)
+            else
+                @test info.code == SUCCESS
+                @test isapprox(Array(x₁), [13 / 6, 17 / 5]; rtol = 4 * eps(Float32))
+                @test info.fnorm ≈ rnorm(F₁)
+            end
+        end
+    end
 end
 
 @testset "a singular step with reuse resets the age" begin
