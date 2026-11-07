@@ -777,7 +777,7 @@ function step!!(
         d_acc = d_acc + γ[c] * (ΔX_kept[c] + ΔW_kept[c])
     end
     x₊ = x_m - d_acc
-    F₊ = residual!!(nothing, prob, x₊, p)
+    F₊ = primal_residual!!(nothing, prob, x₊, p)
     fnorm₊ = rnorm(F₊)
 
     # Post-step residual-growth safeguard against `fnorm_best`.
@@ -1064,7 +1064,7 @@ function step!!(
     end
 
     _combine_anderson_r3!(work, state.ΔX, state.ΔW, p_kept)
-    F₊ = residual!!(work.F_trial, prob, work.x_trial, p)
+    F₊ = primal_residual!!(work.F_trial, prob, work.x_trial, p)
     copy!!(work.F_trial, F₊)
     fnorm₊ = rnorm(work.F_trial)
 

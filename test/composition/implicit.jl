@@ -6,8 +6,8 @@ using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Additive, Multiplicative, Newton, NonlinearProblem, Picard, Repeat,
-                        Switch
+using GeometricSolvers: Additive, Anderson, Multiplicative, Newton, NonlinearProblem,
+                        Picard, Repeat, Switch
 using GeometricSolvers: init, solve, solve!, solve_batch!
 
 struct CombinatorDualTag end
@@ -16,7 +16,8 @@ const COMBINATORS = (
     Additive(Newton(), Picard(; damping = 0.5)),
     Multiplicative(Picard(; damping = 0.5), Newton()),
     Repeat(Newton(), 2),
-    Switch(Picard(; damping = 0.5), Newton(); threshold = 0.5))
+    Switch(Picard(; damping = 0.5), Newton(); threshold = 0.5),
+    Anderson(Picard(; damping = 0.5), 2))
 
 @testset "solve with $(nameof(typeof(m))) refuses ForwardDiff.Dual inputs before the primal solve" for m in COMBINATORS
     calls = Ref(0)
@@ -50,4 +51,13 @@ const COMBINATORS = (
     # the primal solve with the same method still converges
     x, _ = solve(prob_s, SVector(0.0, 0.0), m, SVector(1.0, 2.0))
     @test x ≈ SVector(1.0, 2.0)
+end
+
+@testset "the method-first solve with Anderson refuses ForwardDiff.Dual inputs" begin
+    calls = Ref(0)
+    prob = NonlinearProblem((x, p) -> (calls[] += 1; x .- p))
+    d(v) = ForwardDiff.Dual{CombinatorDualTag}(v, 1.0)
+    @test_throws "does not accept ForwardDiff.Dual inputs for the combinator Anderson" solve(
+        prob, Anderson(Newton(), 2), SVector(0.0, 0.0), SVector(d(1.0), d(2.0)))
+    @test calls[] == 0
 end

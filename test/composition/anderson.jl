@@ -3,6 +3,7 @@ using GeometricSolvers: AndersonState, ToReal, effective_kappa_bar, finish!!, in
                         residual_buffer, rnorm, solve!!, solve_weights, start!!, step!!,
                         sync_merit
 using Adapt
+using ForwardDiff: ForwardDiff
 using GPUArraysCore
 using JET
 using JLArrays
@@ -1001,5 +1002,18 @@ end
                 @test st_t_r3.code == SUCCESS
             end
         end
+    end
+
+    @testset "the R1 trial residual is refused when it contains a ForwardDiff.Dual" begin
+        # The residual is primal for its first three calls (x₀, the member steps of steps 1
+        # and 2) and contains a captured Dual from the fourth on, which is the trial residual
+        # F(x₊) of the first accelerated step.
+        dA = ForwardDiff.Dual{Nothing}(0.0, 1.0)
+        calls = Ref(0)
+        F_late = (x, p) -> (calls[] += 1;
+            Fx = x - SVector(cos(x[1]), sin(x[2])); calls[] <= 3 ? Fx : Fx .+ dA)
+        @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
+            NonlinearProblem(F_late), SVector(0.5, 0.5), Anderson(Picard(), Val(2)))
+        @test calls[] == 4
     end
 end
