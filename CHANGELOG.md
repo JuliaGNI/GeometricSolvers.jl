@@ -1026,7 +1026,7 @@ so that a compat-only bump can be told apart from an interface change.
   this paragraph stands for `J(x) + μI`, the matrix that the factor solves: `Refinement` refines the
   direction of `(J(x) + μI) d = -F(x)`, and the linear-model residual that a promotion reads uses the
   same matrix. Combining `Refinement` (or `refinement = true`)
-  with `AutoFiniteDiff` raises an `ArgumentError` in `init` because
+  with `AutoFiniteDiff`, bare or inside `AutoSparse`, raises an `ArgumentError` in `init` because
   finite-difference directional derivatives corrupt the defect correction near the
   finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
   (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold, `refine!!` returns the best
@@ -1178,3 +1178,23 @@ so that a compat-only bump can be told apart from an interface change.
   raises the same `ArgumentError` as the other combinators, before the primal solve, since implicit
   differentiation through a combinator is not implemented (K60). The method-first
   `solve(prob, method::Anderson, x₀, p, options)` is not provided (K73).
+
+- `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
+  curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or
+  `StationarityProblem` in chart coordinates `x = g(y, p)` and return `(x* = g(y*, p), status)`
+  in the original coordinates from `solve` and `init` / `solve!` (`solve!!` returns
+  `(x*, status, state)`), with `solve_batch!` writing each system's `x*` into the batch, and
+  leave `update_iterate!!` untouched. In R1 (`StaticVector` or `Number`), `g(y, p)` returns
+  `x` and `∂g(y, p)` returns `G = ∂g/∂y`; in R3 (`AbstractVector`), `g!(x, y, p)` writes into
+  `x` and `∂g!(G, y, p)` writes into `G`, and when `∂g === nothing`, `G(y, p) = ∂g/∂y` is
+  computed by tagged ForwardDiff in R1 and chunked forward-mode AD in R3. With
+  `covariant = false` (default for `NonlinearProblem`), the transformed residual and Jacobian
+  are `F̃(y, p) = F(g(y, p), p)` and `J̃(y, p) = J(g(y, p), p) G(y, p)`. With `covariant = true`
+  (default for `StationarityProblem`), the residual is pulled back as
+  `F̃(y, p) = transpose(G(y, p)) F(g(y, p), p)`, and the Jacobian is
+  `J̃(y, p) = transpose(G) J G + (∂Gᵀ/∂y) F(g(y, p), p)` when `curvature = true` or
+  `transpose(G) J G` when `curvature = false`. A `StationarityProblem` needs `U = :` or `U = 1:n`
+  in order, where `n` is the chart dimension, and `E = :` or a permutation of `1:n`; `init`,
+  `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set. For
+  an R1 iterate the index sets are `:`, a tuple or an `SVector`, as for a `StationarityProblem`
+  without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.

@@ -9,14 +9,16 @@ CurrentModule = GeometricSolvers
 A problem holds functions and, for a [`NonlinearProblem`](@ref), an optional Jacobian prototype:
 the residual, optionally its derivative, and optionally `jacobian_prototype` for a sparse R3
 Jacobian in [`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets,
-and an optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call
-form of the functions, so one problem serves every regime. `NonlinearProblem` and
-`StationarityProblem` are exported; `GeometricSolvers.jacobian_prototype` and
+and an optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps either
+problem in a coordinate chart `x = g(y, p)`. The storage of the iterate selects the call form of
+the functions, so one problem serves every regime. `NonlinearProblem`, `StationarityProblem` and
+`Reparametrized` are exported; `GeometricSolvers.jacobian_prototype` and
 `GeometricSolvers.jacobian_pattern` are internal accessors.
 
 ```@docs
 NonlinearProblem
 StationarityProblem
+Reparametrized
 jacobian_prototype
 jacobian_pattern
 ```
@@ -183,7 +185,8 @@ to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on
 primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while on a
 [`StationarityProblem`](@ref) it raises an `ArgumentError`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
-[`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
+[`NonlinearSolver`](@ref) (or a [`ReparametrizedSolver`](@ref) for a [`Reparametrized`](@ref)
+problem) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
 with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
@@ -195,6 +198,7 @@ per-system parameters so system `i` receives `p.data[i]`.
 
 ```@docs
 NonlinearSolver
+ReparametrizedSolver
 init
 solve
 solve!
