@@ -33,6 +33,7 @@ if "core" in GROUPS
     @safetestset "Stationarity problem" include("nonlinear/stationarity.jl")
     @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
     @safetestset "Newton" include("nonlinear/newton.jl")
+    @safetestset "Iterative refinement" include("nonlinear/refinement.jl")
     @safetestset "Picard" include("nonlinear/picard.jl")
     @safetestset "Solver loop hooks" include("nonlinear/hooks.jl")
     @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")

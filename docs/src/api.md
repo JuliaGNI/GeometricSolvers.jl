@@ -209,8 +209,10 @@ solve_batch!
 solve!!
 PerSystem
 Newton
+QuasiNewton
 Picard
 NoRefinement
+Refinement
 ```
 
 ### Combinators
@@ -283,10 +285,13 @@ with no line of source here. A device array iterate takes
 error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies an analytic
 3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
 matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@ref) other than
-[`Static`](@ref) takes a JVP, so under any other globalization the analytic `J` gets no JVP
-preparation and no second `n × n` buffer. [`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and
-[`jvp!!`](@ref) then dispatch on the object the preparation returned, so the solver makes no runtime
-choice and carries no `ad` keyword.
+[`Static`](@ref) and a [`Refinement`](@ref) along a reused factor take a JVP, so under any other
+configuration the analytic `J` gets no JVP preparation and no `n × n` JVP buffer. A
+`Refinement` on a step that factorises at `x` multiplies by the regularised Jacobian that the step
+holds, in a buffer of its own beside the factor, which the factorisation overwrites.
+[`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and [`jvp!!`](@ref) then dispatch on the
+object the preparation returned, so the solver makes no runtime choice and carries no `ad`
+keyword.
 
 For a sparse R3 Jacobian on a host `Array` iterate, an `AutoSparse` back end takes either an
 explicit `jacobian_prototype` on the [`NonlinearProblem`](@ref) (which [`prepare_ad`](@ref) wraps in
@@ -332,7 +337,8 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 A nonlinear method enters the loop of [`solve!!`](@ref) through [`init_state`](@ref), which builds
 its state, [`step!!`](@ref), and the two hooks [`start!!`](@ref) and [`finish!!`](@ref), which run
 once before the first step and at every return. [`residual_buffer`](@ref) names the slot of the
-state that holds `F(x₀)`.
+state that holds `F(x₀)`, and [`refine!!`](@ref) refines the linear direction `d` in working
+precision before globalization.
 
 ```@docs
 AbstractNonlinearProblem
@@ -341,6 +347,7 @@ residual_buffer
 step!!
 start!!
 finish!!
+refine!!
 sync_merit
 init_globalization
 LineFunction

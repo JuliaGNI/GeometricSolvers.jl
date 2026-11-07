@@ -47,6 +47,10 @@ so that a compat-only bump can be told apart from an interface change.
   `MethodError` and `ArgumentError` for unsupported configurations, and the pattern-mismatch
   `ArgumentError` under regularization when `P` has no structural diagonal (K41).
 
+- **The documentation build allows HTML pages up to 400 KiB** (`size_threshold` in
+  `docs/make.jl`). The API page renders to about 200 KiB, Documenter's default hard limit, and the
+  open pull requests add docstrings to it; the warning limit stays at 100 KiB.
+
 - **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
   `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
   extension `GeometricSolversSparspakExt`** (decision 53 of the design). `NonlinearProblem{F, J, P
@@ -994,6 +998,46 @@ so that a compat-only bump can be told apart from an interface change.
   fix shows its effect as a list of changed cells. The library is no dependency:
   `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
   against it.
+
+- Mixed-precision iterative refinement (`Refinement(T = Float64; η = √eps(real(T)), maxiter = 5)`,
+  `Refinement(η, maxiter = 5)`, and `GeometricSolvers.refine!!`), factorisation promotion to
+  working precision `T` (`GeometricSolvers.promote_linsolve`), and the `QuasiNewton(k; kwargs...)`
+  convenience constructor for `Newton(; reuse = k, kwargs...)`.
+  `Refinement{R <: Real}` (`η::R`, `maxiter::Int32 ≥ 1`, `0 < η < 1`, `isbits`, adapted by
+  `ToReal{R}`) performs up to `maxiter` defect-correction passes in working precision `T` using
+  the existing factor `fac`: a step that factorised at `x` multiplies by the regularised Jacobian
+  it holds, and a step along a reused factor takes the Jacobian-vector product `jvp!!` at `x`. Each
+  pass forms `r = -F(x) - J(x) d` in `T`, solves
+  `fac \ r` in `TF` for `δd`, updates `d ← d + δd`, and stops once
+  `‖F(x) + J(x) d‖ ≤ max(η, √eps(R)) ‖F(x)‖`. With `regularization = μ > 0`, `J(x)` throughout
+  this paragraph stands for `J(x) + μI`, the matrix that the factor solves: `Refinement` refines the
+  direction of `(J(x) + μI) d = -F(x)`, and the linear-model residual that a promotion reads uses the
+  same matrix. Combining `Refinement` (or `refinement = true`)
+  with `AutoFiniteDiff` raises an `ArgumentError` in `init` because
+  finite-difference directional derivatives corrupt the defect correction near the
+  finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
+  (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold, `refine!!` returns the best
+  direction reached with `failed = true`. In `Newton`, a failed refinement on a reused factor
+  (`reuse = k`, `age > 0`) first triggers an early refactorisation at the current iterate in the
+  factor precision (`age` reset) within the same step, which counts one in `StepInfo.failures`.
+  With `TF ≠ T`, the refactored step is refined again, and if that refinement fails, or the
+  factorisation fails in `TF`, `Newton` promotes the factorisation to working precision `T` via
+  `promote_linsolve(m.linsolve, T)` (`LUFactorization(real(T))` / `QRFactorization(real(T))` /
+  `SVDFactorization(real(T))` / `LDLTFactorization(real(T))`), recomputes `d = -J \ F(x)` in `T`,
+  increments `StepInfo.failures`, and sets `StepInfo.promoted = true` (sticky in
+  `SolverStatus.promoted`). In R1 (`Fx === nothing`), `NewtonState.fac_T` is `nothing` even when
+  `reuse` is set. With `NoRefinement` and any globalization but `DogLeg`, `NewtonState.J` aliases
+  the factor's matrix (`fac.factors` when `TF = T`, and `fac_T.factors` with `LUFactorization` when
+  `TF ≠ T`), so promotion allocates no extra `n × n` `T` buffer. When `Newton`
+  with `TF ≠ T` makes slow progress (`‖F(x₊)‖ > 0.5 ‖F(x)‖`) on two consecutive steps that
+  measured their relative linear-model residual `‖F(x) + J(x) d‖ / ‖F(x)‖` and found it above
+  `max(√eps(R), 1e-4)`, it promotes the factorisation to `T` with `promoted = true`; every other
+  step returns unchanged, as a step in `T` does, so a mixed step keeps going wherever its
+  all-`T` control does, and the precision floor of `F` itself is never read.
+  `scripts/mixed_refinement_eta.jl` compares pure-`Float64` Newton, `η_J = √eps(Float64)`,
+  Kelley's `1e-6`, and Eisenstat–Walker Choice 2 with a `√eps(Float64)` floor on
+  `F(x) = A * x .+ 0.5 .* (x .^ 2)` at `N = 16`, `f_abstol = 1e-12`, and
+  `κ(J) ∈ (1e2, 1e4, 1e5, 1e6)`.
 
 - `StationarityProblem(S; E = :, U = :, b = nothing)` (and positional `StationarityProblem(S, E, U, b = nothing)`)
   and `LDLTFactorization()`, with `LDLTFactorization(TF)` for a factorisation precision `TF`: solve

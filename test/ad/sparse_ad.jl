@@ -289,6 +289,31 @@ end
                 LUFactorization(Float64), sparse_backend(), GS.DenseLU)
         end
 
+        # The factor in the working precision that a mixed-precision solve promotes to takes the
+        # pattern of the factor in `TF`, so it is dense too, as is the Jacobian buffer, with and
+        # without a `Refinement`.
+        @testset "Mixed precision $(nameof(typeof(refinement))): LUFactorization($TF) on $T" for T in REAL_ELTYPES,
+            TF in filter(!=(T), REAL_ELTYPES),
+            refinement in (NoRefinement(), Refinement(T))
+
+            x0 = T[1.5, 2.0, 0.7]
+            p = T[2, 3, 0.5]
+            linsolve = LUFactorization(TF)
+            solver = init(prob, copy(x0),
+                Newton(; linsolve, jacobian = sparse_backend(), refinement), p)
+            @test solver.state.fac isa GS.DenseLU
+            @test solver.state.fac_T isa GS.DenseLU
+            @test solver.state.fac_T.factors isa Matrix{T}
+            @test solver.state.J isa Matrix{T}
+            x, st = solve!(solver)
+            @test st.code === SUCCESS
+            dense = Newton(; linsolve, jacobian = AutoForwardDiff(), refinement)
+            x_ref, st_ref = solve!(init(prob, copy(x0), dense, p))
+            @test st_ref.code === SUCCESS
+            @test isapprox(x, x_ref; rtol = 8 * eps(T))
+            @test x != x0
+        end
+
         # `ForwardDiff` and the tracer take no complex number, so the complex iterate goes through
         # `AutoFiniteDiff` with a known pattern on a problem that has no prototype: the pattern is
         # still the detector's, read from the preparation.
