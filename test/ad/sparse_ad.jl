@@ -337,6 +337,29 @@ end
             @test solver.state.J isa SparseMatrixCSC{T, Int}
             @test solve!(solver)[2].code === SUCCESS
         end
+
+        # A `LevenbergMarquardt` step reads no sparse factor, so a detected pattern gives it the
+        # dense factor and Jacobian buffer even where `has_sparse_factor` holds, and it solves to
+        # the iterate of the dense `AutoForwardDiff` Jacobian.
+        @testset "LevenbergMarquardt with $(nameof(typeof(linsolve))) (T = $T)" for T in REAL_ELTYPES,
+            (linsolve, Fac) in ((LUFactorization(), GS.DenseLU), (
+                SVDFactorization(), GS.DenseSVD))
+
+            x0 = T[1.5, 2.0, 0.7]
+            p = T[2, 3, 0.5]
+            lm = LevenbergMarquardt(T)
+            solver = init(prob, copy(x0),
+                Newton(; linsolve, jacobian = sparse_backend(), globalization = lm), p)
+            @test solver.state.fac isa Fac
+            @test solver.state.J isa Matrix{T}
+            x, st = solve!(solver)
+            @test st.code === SUCCESS
+            dense = Newton(; linsolve, jacobian = AutoForwardDiff(), globalization = lm)
+            x_ref, st_ref = solve!(init(prob, copy(x0), dense, p))
+            @test st_ref.code === SUCCESS
+            @test isapprox(x, x_ref; rtol = 8 * eps(T))
+            @test x != x0
+        end
     end
 
     # `regularize!!` writes `μ` onto the diagonal of `J`, which a structural entry of the factor's

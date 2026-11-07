@@ -52,15 +52,25 @@ end
 
 """
     init_globalization(g, x)
+    init_globalization(g, linsolve, x)
 
 Allocate the workspace named tuple for globalization method `g` at iterate `x` through
 [`buffer(x)`](@ref buffer): `(; xt, Ft)` for [`Static`](@ref), `(; xt, Ft, Jv)` for a
-[`LineSearch`](@ref), and `(; g̃, ĝ, Jg, s, xt, Ft)` for [`DogLeg`](@ref). In R1 every slot is
-`nothing`; in R3 each slot is a preallocated vector like `x`.
+[`LineSearch`](@ref), `(; g̃, ĝ, Jg, s, xt, Ft)` for [`DogLeg`](@ref), and
+`(; Jδ, xt, Ft, R₀, c₀, R, c, d_diag, w)` for [`LevenbergMarquardt`](@ref), whose stacked slots
+`R₀` to `w` are `nothing` where the step reads the SVD factor and not the stacked solve. In R1
+every slot is `nothing`; in R3 each slot is a preallocated array like `x`. The method with
+`linsolve` is the one `Newton` calls; it takes the linear method of the solve into account, and
+for any `g` but `LevenbergMarquardt` it is the method without it.
 """
 @inline init_globalization(::Static, x) = (; xt = buffer(x), Ft = buffer(x))
 @inline init_globalization(::LineSearch, x) = (;
     xt = buffer(x), Ft = buffer(x), Jv = buffer(x))
+
+# A globalization whose workspace depends on the linear method of the solve — `LevenbergMarquardt`
+# allocates the stacked buffers only for the paths that read them — takes the method; any other
+# globalization has the workspace above.
+@inline init_globalization(g, ::LinearMethod, x) = init_globalization(g, x)
 
 # The merit `norm2(F)` of the current residual, which a solver carries in its state for a line
 # search, the one globalization that reads it: the anchor merit of the next step. Any other
