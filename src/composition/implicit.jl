@@ -5,7 +5,8 @@
 # combinator state is neither, so `solve` refuses a dual input for a combinator method before the
 # primal solve, as `init` and `solve!` refuse one for every method.
 function solve_implicit(
-        ::NonlinearProblem, x₀, method::Union{Additive, Multiplicative, Repeat, Switch}, p,
+        ::NonlinearProblem, x₀,
+        method::Union{Additive, Multiplicative, Repeat, Switch, Anderson}, p,
         options::Union{Nothing, Options}, kwargs)
     throw(ArgumentError(
         "solve does not accept ForwardDiff.Dual inputs for the combinator $(nameof(typeof(method))); implicit differentiation through a combinator is not implemented"))

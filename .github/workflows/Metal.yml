@@ -61,12 +61,12 @@ jobs:
             - uses: julia-actions/cache@v3
             - uses: julia-actions/julia-buildpkg@v1
             # The test environment is not instantiated here, so the check adds Metal, at the bound
-            # of test/Project.toml, to a temporary environment.
+            # of Project.toml, where Metal is a weak dependency, to a temporary environment.
             - name: Check that Metal is functional
               shell: julia --color=yes {0}
               run: |
                   import Pkg, TOML
-                  bound = TOML.parsefile("test/Project.toml")["compat"]["Metal"]
+                  bound = TOML.parsefile("Project.toml")["compat"]["Metal"]
                   Pkg.activate(; temp = true)
                   Pkg.add(Pkg.PackageSpec(name = "Metal", version = Pkg.Types.semver_spec(bound)))
                   using Metal

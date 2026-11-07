@@ -8,11 +8,11 @@ using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Additive, Backtracking, DogLeg, FixedWeights, LUFactorization,
-                        Multiplicative, Newton, NonlinearProblem, OptimalWeights, Options,
-                        PerSystem, Picard, QRFactorization, Repeat, SINGULAR, SUCCESS,
-                        SolverStatus, Static, Switch, ToReal, init_state, isconverged,
-                        solve, solve_batch!, solve!!
+using GeometricSolvers: Additive, Anderson, Backtracking, DogLeg, FixedWeights,
+                        LUFactorization, Multiplicative, Newton, NonlinearProblem,
+                        OptimalWeights, Options, PerSystem, Picard, QRFactorization, Repeat,
+                        SINGULAR, SUCCESS, SolverStatus, Static, Switch, ToReal, init_state,
+                        isconverged, solve, solve_batch!, solve!!
 
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
@@ -168,6 +168,26 @@ end
                         xs_got[k], x_ref; rtol = 10 * eps(R), atol = 10 * eps(R))
                 end
             end
+
+            # Anderson R1 batch kernel on Metal
+            m_and = Adapt.adapt(
+                ToReal{R}(), Anderson(Picard(; damping = 0.5f0), Val(2)))
+            state_and = init_state(m_and, prob_pic, x₀, ps_pic_host[1])
+            @test isbits(m_and)
+            @test isbits(state_and)
+            solve_nonlinear_kernel!(backend)(
+                xs_out, codes_out, iters_out, xs_dev, ps_pic_dev,
+                prob_pic, m_and, state_and, opt; ndrange = B_METAL_NL)
+            synchronize(backend)
+            xs_and_got = Array(xs_out)
+            codes_and_got = Array(codes_out)
+            for k in 1:B_METAL_NL
+                x_ref, _, _ = solve!!(
+                    state_and, prob_pic, xs_host[k], m_and, ps_pic_host[k], opt)
+                @test codes_and_got[k] == Int32(SUCCESS)
+                @test isapprox(
+                    xs_and_got[k], x_ref; rtol = 10 * eps(R), atol = 10 * eps(R))
+            end
         end
 
         # 4. Picard solve inside a kernel with Adapt.adapt(ToReal{Float32}(), Picard(; damping = 0.7))
@@ -248,47 +268,51 @@ end
                     end
                 end
 
-                # Picard(; damping = 0.7) on R1Scaled with Options{R} / keyword tolerances
+                # Picard(; damping = 0.7) and Anderson(Picard(; damping = 0.7), Val(2)) on
+                # R1Scaled with Options{R} / keyword tolerances
                 prob_pic = NonlinearProblem(R1Scaled())
                 ps_pic_host = [SVector{N_METAL_NL, T}([T(1) / T(2) for _ in 1:N_METAL_NL])
                                for _ in 1:B_METAL_NL]
-                m_pic = Picard(; damping = 0.7)
-                m_pic_dev = Adapt.adapt(ToReal{R}(), m_pic)
                 opt_pic = Options(R; f_abstol = 1e-5, f_reltol = 1e-5)
-                state_pic = init_state(m_pic_dev, prob_pic, x₀, ps_pic_host[1])
-
-                X_pic = Metal.MtlArray(xs_host)
-                S_pic = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
                 P_pic = PerSystem(Metal.MtlArray(ps_pic_host))
-                solve_batch!(X_pic, S_pic, prob_pic, m_pic, P_pic; options = opt_pic)
-                xs_pic_got = Array(X_pic)
-                st_pic_got = Array(S_pic)
-                for k in 1:B_METAL_NL
-                    x_ref, st_ref, _ = solve!!(
-                        state_pic, prob_pic, xs_host[k], m_pic_dev, ps_pic_host[k], opt_pic)
-                    @test st_pic_got[k].code == SUCCESS
-                    @test st_pic_got[k].iterations == st_ref.iterations
-                    @test isapprox(
-                        xs_pic_got[k], x_ref; rtol = 8 * eps(R), atol = 8 * eps(R))
-                end
+                for m_pic in (Picard(; damping = 0.7),
+                    Anderson(Picard(; damping = 0.7), Val(2)))
+                    m_pic_dev = Adapt.adapt(ToReal{R}(), m_pic)
+                    state_pic = init_state(m_pic_dev, prob_pic, x₀, ps_pic_host[1])
 
-                X_pic2 = Metal.MtlArray(xs_host)
-                counts_pic = solve_batch!(
-                    X_pic2, prob_pic, m_pic, P_pic; f_abstol = 1e-5, f_reltol = 1e-5)
-                @test isconverged(counts_pic)
-                @test counts_pic.SUCCESS == B_METAL_NL
-
-                # AbstractRange order (B_METAL_NL:-1:1 and 1:B_METAL_NL) on MtlArray
-                for rng in (1:B_METAL_NL, B_METAL_NL:-1:1)
-                    X_ord = Metal.MtlArray(xs_host)
-                    S_ord = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
-                    solve_batch!(X_ord, S_ord, prob_pic, m_pic, P_pic;
-                        order = rng, options = opt_pic)
-                    xs_ord_got = Array(X_ord)
+                    X_pic = Metal.MtlArray(xs_host)
+                    S_pic = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
+                    solve_batch!(X_pic, S_pic, prob_pic, m_pic, P_pic; options = opt_pic)
+                    xs_pic_got = Array(X_pic)
+                    st_pic_got = Array(S_pic)
                     for k in 1:B_METAL_NL
+                        x_ref, st_ref, _ = solve!!(
+                            state_pic, prob_pic, xs_host[k], m_pic_dev, ps_pic_host[k],
+                            opt_pic)
+                        @test st_pic_got[k].code == SUCCESS
+                        @test st_pic_got[k].iterations == st_ref.iterations
                         @test isapprox(
-                            xs_ord_got[k], xs_pic_got[k]; rtol = 8 * eps(R), atol = 8 *
-                                                                                    eps(R))
+                            xs_pic_got[k], x_ref; rtol = 8 * eps(R), atol = 8 * eps(R))
+                    end
+
+                    X_pic2 = Metal.MtlArray(xs_host)
+                    counts_pic = solve_batch!(
+                        X_pic2, prob_pic, m_pic, P_pic; f_abstol = 1e-5, f_reltol = 1e-5)
+                    @test isconverged(counts_pic)
+                    @test counts_pic.SUCCESS == B_METAL_NL
+
+                    # AbstractRange order (B_METAL_NL:-1:1 and 1:B_METAL_NL) on MtlArray
+                    for rng in (1:B_METAL_NL, B_METAL_NL:-1:1)
+                        X_ord = Metal.MtlArray(xs_host)
+                        S_ord = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
+                        solve_batch!(X_ord, S_ord, prob_pic, m_pic, P_pic;
+                            order = rng, options = opt_pic)
+                        xs_ord_got = Array(X_ord)
+                        for k in 1:B_METAL_NL
+                            @test isapprox(
+                                xs_ord_got[k], xs_pic_got[k]; rtol = 8 * eps(R),
+                                atol = 8 * eps(R))
+                        end
                     end
                 end
             end

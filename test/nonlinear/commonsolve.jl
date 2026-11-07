@@ -59,9 +59,9 @@ end
     # the first positional argument of every method that the package adds is one of the package's
     # own problem or solver types
     for (f, owned) in (
-        (CommonSolve.init, (NonlinearProblem, StationarityProblem)),
-        (CommonSolve.solve, (NonlinearProblem, StationarityProblem)),
-        (CommonSolve.solve!, (NonlinearSolver,)))
+        (CommonSolve.init, (NonlinearProblem, StationarityProblem, Reparametrized)),
+        (CommonSolve.solve, (NonlinearProblem, StationarityProblem, Reparametrized)),
+        (CommonSolve.solve!, (NonlinearSolver, ReparametrizedSolver)))
         ours = filter(m -> m.module === GS, collect(methods(f)))
         @test !isempty(ours)
         owned_names = map(t -> Base.unwrap_unionall(t).name, owned)
