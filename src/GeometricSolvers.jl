@@ -29,6 +29,7 @@ export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg
 export Newton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard, NonlinearSolver,
        init, solve, solve!
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch
 export solve_batch!
 
 public solve!!, sciml_retcode
@@ -77,5 +78,12 @@ include("nonlinear/implicit.jl")
 include("nonlinear/batched.jl")
 include("nonlinear/stationarity.jl")
 include("ad/hessian.jl")
+
+include("composition/weights.jl")
+include("composition/additive.jl")
+include("composition/multiplicative.jl")
+include("composition/repeat.jl")
+include("composition/switch.jl")
+include("composition/implicit.jl")
 
 end

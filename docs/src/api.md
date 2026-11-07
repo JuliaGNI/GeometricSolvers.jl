@@ -205,6 +205,28 @@ NoRefinement
 Refinement
 ```
 
+### Combinators
+
+[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) and [`Switch`](@ref) compose
+nonlinear methods through the same [`init_state`](@ref), [`start!!`](@ref), [`step!!`](@ref) and
+[`finish!!`](@ref) interface as [`Newton`](@ref) and [`Picard`](@ref), so a combinator runs in R1,
+R2 and R3 alike. [`Additive`](@ref) combines member steps from the same iterate with
+[`OptimalWeights`](@ref) or [`FixedWeights`](@ref), [`Multiplicative`](@ref) and [`Repeat`](@ref)
+thread `(x, F(x))` sequentially across sub-steps while [`sync_merit`](@ref) updates any active
+line-search baseline merit, and [`Switch`](@ref) transitions permanently from `first` to `second`
+once ``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``. A combinator has no implicit
+differentiation: [`solve`](@ref) with a combinator method raises an `ArgumentError` for a
+`ForwardDiff.Dual` in `x₀` or `p`.
+
+```@docs
+Additive
+OptimalWeights
+FixedWeights
+Multiplicative
+Repeat
+Switch
+```
+
 ### SciMLBase extension
 
 When [SciMLBase](https://github.com/SciML/SciMLBase.jl) is loaded, the package extension
@@ -304,6 +326,7 @@ step!!
 start!!
 finish!!
 refine!!
+sync_merit
 init_globalization
 LineFunction
 globalize!!
