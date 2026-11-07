@@ -51,8 +51,8 @@ function GeometricSolvers.factorize!!(fac, m::CountingFactorization, J)
     m.count[] += 1
     return GeometricSolvers.factorize!!(fac, m.method, J)
 end
-function GeometricSolvers.init_factor(m::CountingFactorization, prob, x, p)
-    GeometricSolvers.init_factor(m.method, prob, x, p)
+function GeometricSolvers.init_linear(m::CountingFactorization, pattern, x::AbstractVector)
+    GeometricSolvers.init_linear(m.method, pattern, x)
 end
 
 # A linear method that counts the triangularisation of `[J | -F]`, the `O(n³)` reduction that an
@@ -67,11 +67,8 @@ function GeometricSolvers.lm_stacked_factor!(m::CountingStacked, R₀, c₀, J, 
     m.count[] += 1
     return GeometricSolvers.lm_qr_factor!(R₀, c₀, J, Fx)
 end
-function GeometricSolvers.init_factor(m::CountingStacked, prob, x::AbstractVector, p)
-    GeometricSolvers.init_factor(m.method, prob, x, p)
-end
-function GeometricSolvers.init_factor(m::CountingStacked, prob, x, p)
-    GeometricSolvers.init_factor(m.method, prob, x, p)
+function GeometricSolvers.init_linear(m::CountingStacked, pattern, x::AbstractVector)
+    GeometricSolvers.init_linear(m.method, pattern, x)
 end
 
 # A dense Jacobian with no zero entry: the imaginary part is separated from the real one per entry.

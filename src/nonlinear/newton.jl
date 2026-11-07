@@ -493,7 +493,7 @@ end
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G <: LevenbergMarquardt, J, RF, Reg}
     R = real(eltype(x))
-    fnorm = R(rnorm(Fx))
+    fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
     μ = state.rule.μ
     if !isfinite(μ)
         info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
@@ -534,7 +534,7 @@ end
                 pred = (fnorm - flin_norm) * (fnorm + flin_norm)
             end
             x₊ = update_iterate!!(lm_xt(state.g), x, one(R), δ)
-            F₊ = residual!!(lm_Ft(state.g), prob, x₊, p)
+            F₊ = primal_residual!!(lm_Ft(state.g), prob, x₊, p)
             fnorm₊ = R(rnorm(F₊))
             if isfinite(fnorm₊) && pred > zero(R)
                 ared = (fnorm - fnorm₊) * (fnorm + fnorm₊)
@@ -545,7 +545,8 @@ end
                     stepnorm = R(rnorm(δ))
                     x = copy!!(x, x₊)
                     Fx = copy!!(Fx, F₊)
-                    state₊ = with_rule(state_d, DampingParameter(μ_next))
+                    state₊ = with_merit(state_d, state_d.merit, fnorm₊)
+                    state₊ = with_rule(state₊, DampingParameter(μ_next))
                     info = StepInfo{R}(SUCCESS, fnorm₊, stepnorm, failures, false, limited)
                     return x, Fx, state₊, info
                 end
