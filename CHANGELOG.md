@@ -45,13 +45,21 @@ so that a compat-only bump can be told apart from an interface change.
   `Float32` iterate, is taken. A square problem (`m == n`) and the stacked `LevenbergMarquardt`
   step (`QRFactorization()`, `LUFactorization()`, `LDLTFactorization()`, or `scaling = :diagonal`,
   which reads no factor) are exempt; `LevenbergMarquardt` with `SVDFactorization()` and
-  `scaling = :none` is refused. An
+  `scaling = :none` is refused. A factor in a higher precision on more residuals than unknowns is
+  not promoted to the working precision after a stall (`StepInfo.promoted` and
+  `SolverStatus.promoted` stay `false`, and no step-rule failure is counted), because at a
+  nonzero-residual least-squares point the relative linear residual `‖F + J d‖/‖F‖ ≈ 1`, which
+  the mixed-precision stall test of a square solve reads as a stall. A square
+  `LeastSquaresProblem` (`m == n`) keeps the stall promotion, and a failed factorisation still
+  promotes. A `LeastSquaresProblem` with more residuals than unknowns takes no `regularization`
+  under any globalization, the stacked `LevenbergMarquardt` step included: `regularization > 0`
+  raises an `ArgumentError` where the state is built, on static and array iterates. An
   `LDLTFactorization` is refused outside `LevenbergMarquardt`, as `LUFactorization` is, and a
   combinator (`Additive`, `Multiplicative`, `Repeat`, `Switch`) refuses a `LeastSquaresProblem` with
   an `ArgumentError`. A `LeastSquaresProblem` refuses a `Refinement` in `Newton` on static and
   array iterates and for every `m`, with an `ArgumentError`, because a `Refinement` drives the
   linear residual `J d + F` to zero, which a least-squares step with more residuals than unknowns
-  does not reach (known issue K70). An analytic `J` on the problem is the Jacobian used, not
+  does not reach (known issue K80). An analytic `J` on the problem is the Jacobian used, not
   automatic differentiation.
 
 - **`LevenbergMarquardt{R, S}` damped trust-region globalization for `Newton`** (decision 57 of the
