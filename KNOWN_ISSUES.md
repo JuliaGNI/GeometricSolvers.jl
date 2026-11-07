@@ -251,7 +251,7 @@
 - **kind:** defect
 - **found:** PR #62
 
-### K70 · A `LeastSquaresProblem` takes no `Refinement`
+### K80 · A `LeastSquaresProblem` takes no `Refinement`
 
 - **location:** `src/nonlinear/newton.jl` (`init_state`)
 - **evidence:** `solve(LeastSquaresProblem(f), x₀, GaussNewton(; refinement = Refinement()))` and
@@ -262,20 +262,5 @@
   unknowns leaves `J d + F ≠ 0` at the least-squares point. A refinement of the least-squares step
   would correct the normal-equation residual `Jᴴ (J d + F)` instead, from the rectangular factor;
   whether to implement it is open.
-- **kind:** defect
-- **found:** PR #62
-
-### K71 · A factor in a higher precision on a `LeastSquaresProblem` with `m > n` promotes to the working precision after two steps
-
-- **location:** `src/nonlinear/newton.jl` (`read_mixed_stall`, `linear_residual_ratio`)
-- **evidence:** For `r(x) = (x₁ - 1, x₂ - 2, x₁ + x₂)` from `Float32[0, 0]`,
-  `GaussNewton(; linsolve = QRFactorization(Float64))` returns `SUCCESS` after 2 iterations at
-  `x ≈ (0, 1)`, with `promoted = true` and `step_failures = 1`, on an `SVector` and on a `Vector`
-  iterate, with `Static` and `Backtracking`; `QRFactorization()` returns `promoted = false` and
-  `step_failures = 0`. The mixed-precision step counts a step as slow when the relative linear
-  residual `‖F + J d‖ / ‖F‖` exceeds `max(√eps, 1e-4)` and `‖F‖` falls by less than half, and two
-  slow steps promote. At a nonzero-residual least-squares point `‖F + J d‖ ≈ ‖F‖`, so every step
-  near it reads as slow. Whether a `LeastSquaresProblem` measures the normal-equation residual
-  `‖Jᴴ (F + J d)‖` instead, or takes no stall promotion, is open.
 - **kind:** defect
 - **found:** PR #62

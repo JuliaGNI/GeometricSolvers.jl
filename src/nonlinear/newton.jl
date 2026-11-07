@@ -19,7 +19,10 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   lower precision than the element type of the iterate, because a Gauss–Newton step with such a
   factor stops off the least-squares point; a factor in the same or a higher precision is taken,
   and the stacked `LevenbergMarquardt` step, which reads no factor, takes any. Each refusal raises
-  an `ArgumentError` where the state is built.
+  an `ArgumentError` where the state is built. A factor in a higher precision on more residuals
+  than unknowns is not promoted to the working precision after a stall: at a nonzero-residual
+  least-squares point ``\\|F + J d\\| \\approx \\|F\\|``, which on a square problem reads as a stall.
+  It is promoted where the factorisation fails.
 - `globalization::G`: the globalization method. A line search takes its merit at `α = 0` from
   the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))` and each [`step!!`](@ref) to the
   merit of the residual it returns. A `step!!` with a line search therefore takes only the
@@ -582,7 +585,7 @@ end
             "LeastSquaresProblem does not support $(nameof(typeof(m.linsolve))); use QRFactorization() or SVDFactorization()"))
     end
     # A `Refinement` drives the linear residual `J d + F` to zero, which a least-squares step with
-    # more residuals than unknowns does not reach (known issue K70)
+    # more residuals than unknowns does not reach (known issue K80)
     if prob isa LeastSquaresProblem && m.refinement isa Refinement
         throw(ArgumentError("LeastSquaresProblem does not support Refinement"))
     end
@@ -873,8 +876,9 @@ end
 # flag, the relative linear-model residual of the direction, and the flags of the step. No factor
 # crosses this boundary: `state.fac` holds the one in `TF` and `state.fac_T` the one in `T`, so no
 # call site holds a value of either type. `lin_rel` is `0` on a step that reads no linear residual:
-# one in `T` already, one that promoted, and one along a reused factor, whose Jacobian is the
-# state's own buffer.
+# one in `T` already, one that promoted, one along a reused factor, whose Jacobian is the state's
+# own buffer, and one on a `LeastSquaresProblem` with more residuals than unknowns, where
+# `‖F + J d‖ ≈ ‖F‖` at a nonzero-residual least-squares point and no step there is a stall.
 struct MixedNewton{J, D, S, R <: Real}
     d::D
     J::J
@@ -949,7 +953,8 @@ end
         return MixedNewton(
             map!!(-, state.d, d₀), Jreg, st, zero(R), true, exact_solve(fac_T), true, failures)
     end
-    lin_rel = linear_residual_ratio(state, Jreg, Fx, d, fnorm_old)
+    lin_rel = prob isa LeastSquaresProblem && length(Fx) > length(x) ? zero(R) :
+              linear_residual_ratio(state, Jreg, Fx, d, fnorm_old)
     return MixedNewton(
         d, Jreg, with_diag(stored_factor(state, fac, false, store), diag), lin_rel,
         true, exact_solve(fac), true, failures)

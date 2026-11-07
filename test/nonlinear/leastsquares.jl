@@ -243,7 +243,7 @@ end
         GaussNewton(; linsolve = QRFactorization(TF_hi)), 3, ones(complex(T), 2)) ===
           nothing
 
-    # A Refinement drives J d + F to zero, which a least-squares step does not reach (K70)
+    # A Refinement drives J d + F to zero, which a least-squares step does not reach (K80)
     gn_ref = GaussNewton(; refinement = Refinement(T))
     @test_throws ArgumentError solve(p1, x0_s, gn_ref)
     @test_throws ArgumentError init(p3, ones(T, 2), gn_ref)
@@ -295,6 +295,27 @@ end
     @test_throws DimensionMismatch solve(p_under_s, SVector{3, T}(1, 2, 3), GaussNewton())
     p_under_d = LeastSquaresProblem(f_ip, 2)
     @test_throws DimensionMismatch init(p_under_d, ones(T, 3), GaussNewton())
+end
+
+# `r(x) = (x₁ - 1, x₂ - 2, x₁ + x₂)` has its least-squares point at `x* = (0, 1)`, with
+# `‖F(x*)‖² = 3`. There `‖F + J d‖ ≈ ‖F‖`, a relative linear residual that reads as a stall on a
+# square problem; a factor in a higher precision on `m > n` residuals takes no stall promotion.
+@testset "a higher-precision factor on m > n residuals does not promote" begin
+    r_lsq_s = (x, p) -> SVector{3}(x[1] - 1, x[2] - 2, x[1] + x[2])
+    r_lsq_d! = (r, x, p) -> (r[1] = x[1] - 1; r[2] = x[2] - 2; r[3] = x[1] + x[2]; r)
+    for glob in (Static(), Backtracking()),
+        (prob, x₀) in ((LeastSquaresProblem(r_lsq_s), SVector{2, Float32}(0, 0)),
+            (LeastSquaresProblem(r_lsq_d!, 3), Float32[0, 0]))
+
+        x, st = solve(prob, x₀, GaussNewton(; linsolve = QRFactorization(Float64),
+            globalization = glob))
+        @test st.code === SUCCESS
+        @test st.promoted === false
+        @test st.step_failures == 0
+        @test eltype(x) === Float32
+        @test isapprox(st.fnorm^2, 3.0f0; rtol = 64 * eps(Float32))
+        @test isapprox(Vector(x), Float32[0, 1]; atol = sqrt(eps(Float32)))
+    end
 end
 
 # ─── D1: a `Number` iterate, solved on the one-entry vector path ─────────────
