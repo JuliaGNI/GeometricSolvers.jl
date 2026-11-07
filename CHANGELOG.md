@@ -11,6 +11,13 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
+  scaled path summed through a closure that carried the accumulation type as a field, and a device
+  kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
+  on an `MtlArray` of such entries — an entry near `floatmax` or near `floatmin` — while the host
+  path returned the right value. The summand is now `ScaledSquares{S}`, whose type parameter holds
+  the accumulation type and whose only field is the exponent `Int`.
+
 - **`LeastSquaresProblem`, `GaussNewton`, rectangular static, host and device QR and SVD, and the
   stationarity stopping test** (decisions 44 and 57 of the design). `AbstractNonlinearProblem` is
   the common supertype of `NonlinearProblem`, `StationarityProblem` and

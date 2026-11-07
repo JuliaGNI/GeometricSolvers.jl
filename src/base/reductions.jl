@@ -13,6 +13,15 @@ function norm2(a)
     return isempty(a) ? zero(R) : R(sum(abs2, a))
 end
 
+# The summand of `rnorm`'s scaled path. A functor rather than a closure: a closure that captures
+# `S` carries `Type{Float32}` as a field, a device kernel rejects a non-isbits argument, and so the
+# scaled path threw on every accelerator. A type parameter of a functor is not a field.
+struct ScaledSquares{S}
+    e::Int
+end
+
+(m::ScaledSquares{S})(x) where {S} = S(abs2(ldexp2(x, m.e)))
+
 """
     rnorm(a)
 
@@ -43,7 +52,7 @@ function rnorm(a)
     # Every scaled square is below 8, below 4 for a real entry, so a `Float16` sum of them can
     # overflow from 8200 entries on: it accumulates in `Float32`.
     S = promote_type(R, Float32)
-    return R(ldexp2(sqrt(sum(x -> S(abs2(ldexp2(x, -e))), a)), e))
+    return R(ldexp2(sqrt(sum(ScaledSquares{S}(-e), a)), e))
 end
 
 """
