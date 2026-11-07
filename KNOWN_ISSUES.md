@@ -99,3 +99,66 @@
   refuses the mix with an `ArgumentError` is open.
 - **kind:** defect
 - **found:** PR #53
+
+### K45 · On the default `Newton` path the Metal `Float32` LU copies the `n × n` Jacobian on every step
+
+- **location:** `ext/GeometricSolversMetalExt.jl` (`factorize!!`)
+- **evidence:** `factorize!!` takes `A = J === fac.factors ? copy(fac.factors) : J`, so that a
+  fallback to `ka_factorize_lu!` after a non-singular MPS failure still has the matrix that `lu!`
+  writes the factors over. `init_newton_J` returns `fac.factors` when the globalization is not
+  `DogLeg` and the factor element type is the working one (`src/nonlinear/newton.jl`), and
+  `regularize!!` returns `J` itself for `μ = 0`, the default (`src/base/bang.jl`), so
+  `newton_factor` passes `fac.factors` as `J`, and every step allocates and fills one more
+  `n × n` device matrix. `_implicit_tangent` passes `fac_slot.factors` the same way
+  (`src/nonlinear/implicit.jl`). Metal.jl 1.11.1's `lu!` allocates an `n × n` transpose buffer on
+  every call as well (`src/linalg.jl`). The copy is needed only for the fallback, and MPS status
+  `-1` can reach it. Whether a non-singular MPS failure maps to `info = 1` (`SINGULAR`) with no
+  copy, or keeps the fallback at the cost of the copy, is open.
+- **kind:** defect
+- **found:** PR #61
+
+### K46 · The CUDA `backsolve!` method for `DeviceSVD` repeats the own-kernel method
+
+- **location:** `ext/GeometricSolversCUDAExt.jl` (`backsolve!` for `DeviceSVD`)
+- **evidence:** its body, `ka_svd_backsolve!(fac, d, false); return d`, is that of
+  `backsolve!(fac::DeviceSVD{<:AbstractMatrix{T}}, d::AbstractVector{T})` in
+  `src/linear/ka/svd.jl`, so the method runs the own kernel and calls no cuSOLVER or cuBLAS
+  routine. The same-type `ldiv!!` reaches `backsolve_shifted!` and not this method. The CUDA
+  census of `test/gpu/cuda/runtests.jl` asserts that `which(backsolve!, ...)` for `DeviceSVD`
+  names the extension, so removing the method changes that assertion too.
+- **kind:** defect
+- **found:** PR #61
+
+### K47 · The CUDA SVD writes `J` into `fac.factors`, which the own-kernel SVD does not, and no later step reads it
+
+- **location:** `ext/GeometricSolversCUDAExt.jl` (`factorize!!` for `DeviceSVD`)
+- **evidence:** the CUDA `factorize!!` copies `J` into `fac.factors` (converted to the factor
+  type in the mixed case, unscaled) before it factorises `J / 2^e` in `fac.U`; the fallback
+  receives `J` itself. `ka_factorize_svd!` (`src/linear/ka/svd.jl`) writes `fac.U` and leaves
+  `fac.factors` alone. The docstring of `factorize!!` says that `J` is written into
+  `fac.factors`, and `test/gpu/cuda/runtests.jl` asserts that `fac.factors` keeps `J`. The copy
+  costs one `n × n` device copy per call where `J` is not the factor buffer. Which of the two
+  backends sets the contract for `fac.factors` of a `DeviceSVD` is open.
+- **kind:** defect
+- **found:** PR #61
+
+### K48 · The CUDA extension calls the deprecated bindings `CUDA.CUSOLVER` and `CUDA.CUBLAS`
+
+- **location:** `ext/GeometricSolversCUDAExt.jl`
+- **evidence:** CUDA 6.4.2 declares `Base.@deprecate_binding CUBLAS cuBLAS true` and
+  `Base.@deprecate_binding CUSOLVER cuSOLVER true` (`src/CUDA.jl`), and `[compat]` admits CUDA 6
+  (`CUDA = "5.5, 6"`). Under `--depwarn=yes` each use prints `Use of CUDA.CUSOLVER is deprecated,
+  use cuSOLVER instead.` CUDA 5.x has no `cuSOLVER` binding, so the names that work on both
+  majors differ, and the choice between them depends on the CUDA bound.
+- **kind:** defect
+- **found:** PR #61
+
+### K49 · `test/gpu/README.md` does not describe the by-hand CUDA suite `test/gpu/cuda/runtests.jl`
+
+- **location:** `test/gpu/README.md`
+- **evidence:** a search for `cuda/runtests` in `test/gpu/README.md` and `test/gpu/runtests.jl`
+  finds nothing. The README describes the `test/gpu/cuda/` environment and the run of
+  `test/gpu/runtests.jl` with the backend `cuda`, and that runner includes only `ad.jl`, so no
+  file names the vendor suite or says how to run it on a CUDA machine.
+- **kind:** docs
+- **found:** PR #61

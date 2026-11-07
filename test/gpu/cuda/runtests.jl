@@ -364,23 +364,13 @@ if CUDA.functional()
         A_qr_nf[3, 3] = T(RT(NaN))
         @test ext_cuda._cusolver_qr_info(CuArray(A_qr_nf)) == 3
 
-        # Fallback to ka_factorize_lu! when getrf! info_c < 0 and to ka_factorize_svd! when
-        # gesvdj! info_c != 0
         A_ok = T[4 1; 1 3]
         dA_ok = CuArray(A_ok)
         dx_ok = CuArray(zeros(T, 2))
         prob2 = NonlinearProblem(dx_ok, cuda_noop)
 
-        fac_lu_fb = dense_factor(LUFactorization(), prob2, dx_ok, nothing)
-        fac_lu_fb = ext_cuda._cusolver_lu_finish!(fac_lu_fb, dA_ok, -1, 0)
-        @test fac_lu_fb.info == 0
-        @test returncode(fac_lu_fb) === SUCCESS
-        ldiv!!(dx_ok, fac_lu_fb, CuArray(T[5, 4]))
-        @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
-
-        # The factor buffer passed back as `J`: `getrf!` writes the factors over it, so
-        # `factorize!!` keeps a copy of the matrix for a fallback, and the aliased call
-        # factorises and solves with the matrix it is given.
+        # The factor buffer passed back as `J`: `getrf!` writes the factors over it, and the
+        # aliased call factorises and solves with the matrix it is given.
         fac_al = dense_factor(LUFactorization(), prob2, dx_ok, nothing)
         copyto!(fac_al.factors, dA_ok)
         fac_al = factorize!!(fac_al, LUFactorization(), fac_al.factors)
@@ -389,6 +379,7 @@ if CUDA.functional()
         ldiv!!(dx_ok, fac_al, CuArray(T[5, 4]))
         @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
 
+        # Fallback to ka_factorize_svd! when gesvdj! info_c != 0
         fac_svd_fb = dense_factor(SVDFactorization(), prob2, dx_ok, nothing)
         fill!(fac_svd_fb.U, zero(T))
         fill!(fac_svd_fb.σ̂, zero(RT))

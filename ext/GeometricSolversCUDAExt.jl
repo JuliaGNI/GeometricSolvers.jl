@@ -10,19 +10,6 @@ using GeometricSolvers: GeometricSolvers, DeviceLU, DeviceQR, DeviceSVD,
                         LUFactorization, QRFactorization, SVDFactorization
 using LinearAlgebra: LinearAlgebra, BlasFloat, adjoint!, diagind
 
-function _cusolver_lu_finish!(
-        fac::DeviceLU{<:CuMatrix{T}},
-        A::AbstractMatrix,
-        info_c::Integer,
-        e::Int = 0
-) where {T <: BlasFloat}
-    if info_c >= 0
-        return DeviceLU(fac.factors, fac.ipiv, fac.rhs, Int(info_c), e, fac.status)
-    else
-        return GeometricSolvers.ka_factorize_lu!(fac, A)
-    end
-end
-
 function GeometricSolvers.factorize!!(
         fac::DeviceLU{<:CuMatrix{T}},
         ::LUFactorization,
@@ -31,12 +18,10 @@ function GeometricSolvers.factorize!!(
     e = GeometricSolvers.load_factors!(fac.factors, J)
     isempty(fac.factors) &&
         return DeviceLU(fac.factors, fac.ipiv, fac.rhs, 0, e, fac.status)
-    # `getrf!` writes the factors over the matrix in `fac.factors`. A fallback to the own kernel
-    # reads the matrix again, so it keeps a copy of the matrix where the caller passed that
-    # buffer back as `J`.
-    A = J === fac.factors ? copy(fac.factors) : J
+    # `getrf!` throws an `ArgumentError` for a negative status, so `info_c` is the first zero
+    # pivot, or 0.
     _, _, info_c = CUDA.CUSOLVER.getrf!(fac.factors, fac.ipiv)
-    return _cusolver_lu_finish!(fac, A, info_c, e)
+    return DeviceLU(fac.factors, fac.ipiv, fac.rhs, Int(info_c), e, fac.status)
 end
 
 function GeometricSolvers.backsolve!(

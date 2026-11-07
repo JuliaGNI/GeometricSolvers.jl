@@ -98,10 +98,10 @@ through LAPACK on the host, and on a device through the `GeometricSolversMetalEx
 `ka_factorize_lu!` on negative MPS status codes other than `-2`) and `GeometricSolversCUDAExt`
 (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS `trsv!`, and `gesvdj!` on
 `CuMatrix{T}` and `CuVector{T}` for `T <: LinearAlgebra.BlasFloat`, falling back to
-`ka_factorize_lu!` and `ka_factorize_svd!` on negative or non-convergent status codes) package
-extensions where available and through `KernelAbstractions` otherwise. When `Sparspak` is loaded
-and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
-AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+`ka_factorize_svd!` where `gesvdj!` does not converge) package extensions where available and
+through `KernelAbstractions` otherwise. When `Sparspak` is loaded and `jacobian_prototype` is a
+`SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <: AbstractFloat`), the
+`GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
 workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for an `LUFactorization` whose
 factor element type is `T` (`LUFactorization()` or `LUFactorization(T)`); the first `factorize!!`
 call runs symbolic ordering and symbolic factorisation, and subsequent `factorize!!` and `ldiv!!`
