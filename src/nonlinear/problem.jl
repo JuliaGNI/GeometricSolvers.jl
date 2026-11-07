@@ -3,6 +3,13 @@
 # shares one object.
 
 """
+    AbstractNonlinearProblem
+
+The supertype of [`NonlinearProblem`](@ref) and [`StationarityProblem`](@ref).
+"""
+abstract type AbstractNonlinearProblem end
+
+"""
     NonlinearProblem(F; jacobian_prototype = nothing)
     NonlinearProblem(F, J; jacobian_prototype = nothing)
 
@@ -34,7 +41,8 @@ julia> prob.J === nothing && prob.jacobian_prototype === nothing
 true
 ```
 """
-struct NonlinearProblem{F, J, P <: Union{Nothing, AbstractMatrix}}
+struct NonlinearProblem{F, J, P <: Union{Nothing, AbstractMatrix}} <:
+       AbstractNonlinearProblem
     F::F
     J::J
     jacobian_prototype::P
@@ -47,7 +55,9 @@ end
 """
     jacobian_prototype(prob)
 
-Return the Jacobian prototype matrix stored on `prob`, or `nothing` when none is supplied.
+Return the Jacobian prototype matrix stored on `prob`, or `nothing` when none is supplied. A
+[`StationarityProblem`](@ref) holds no prototype, so its Jacobian is dense.
 """
 jacobian_prototype(prob::NonlinearProblem) = prob.jacobian_prototype
+jacobian_prototype(::AbstractNonlinearProblem) = nothing
 jacobian_prototype(::Nothing) = nothing

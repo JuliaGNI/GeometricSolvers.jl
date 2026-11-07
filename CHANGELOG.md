@@ -88,11 +88,14 @@ so that a compat-only bump can be told apart from an interface change.
   with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
   element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
 
-- **`solve(prob, x₀, method, p)` differentiates implicitly through a converged solve when `x₀` or
-  `p` contains `ForwardDiff.Dual` values** (decision 50 of the design). `GeometricSolvers.StripDual`
-  (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from `ForwardDiff.Dual`,
-  `Complex{<:ForwardDiff.Dual}`, and arrays of either through `Adapt.adapt(StripDual(), p)` while
-  leaving tuples, named tuples, numbers and other arrays unchanged. When `x₀` or `p` carries
+- **`solve(prob, x₀, method, p)` on a `NonlinearProblem` with a `Newton` or `Picard` method
+  differentiates implicitly through a converged solve when `x₀` or `p` contains
+  `ForwardDiff.Dual` values** (decision 50 of the design); on a `StationarityProblem` it raises
+  an `ArgumentError` (K31).
+  `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from
+  `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
+  `Adapt.adapt(StripDual(), p)` while leaving tuples, named tuples, numbers and other arrays
+  unchanged. When `x₀` or `p` carries
   `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted value type of the dual leaves of
   `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`, runs the primal solve via `solve!!`
   at the precision of the stripped `x₀` (`status::SolverStatus{R}` with `R = real(eltype(x₀))`),
@@ -988,3 +991,101 @@ so that a compat-only bump can be told apart from an interface change.
   fix shows its effect as a list of changed cells. The library is no dependency:
   `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
   against it.
+
+- `StationarityProblem(S; E = :, U = :, b = nothing)` (and positional `StationarityProblem(S, E, U, b = nothing)`)
+  and `LDLTFactorization()`, with `LDLTFactorization(TF)` for a factorisation precision `TF`: solve
+  the stationarity condition
+  $(\nabla S(x, p))_E + b = 0$ over $u = x_U$ of a scalar action $S$, alongside Bunch–Kaufman
+  $\mathrm{LDL}^\top$ / $\mathrm{LDL}^\dagger$ factorisation (`StaticLDLT` in R1, zero-allocation
+  LAPACK `sytrf!`/`sytrs!` and `hetrf!`/`hetrs!` with generic fallback `DenseLDLT` in R3 host, and
+  `KernelAbstractions` `DeviceLDLT` in R3 device). For an array iterate `StationarityProblem`
+  accepts `E` and `U` as `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
+  `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, and for an R1 iterate as `:`, a `Tuple` or an
+  `SVector`; it keeps inactive components $x_{\notin U}$ fixed, and solves through `solve`, `init`,
+  `solve!` (with keyword `b = nothing`) and `solve_batch!`, which refuse a `ForwardDiff.Dual` in
+  the iterate or in `p` with an `ArgumentError`: a `StationarityProblem` has no implicit
+  differentiation in this release (K31). `StationarityProblem` and
+  `NonlinearProblem` share the supertype `AbstractNonlinearProblem`: `solve!`, `solve!!` and
+  `NonlinearSolver` take either, and `init` and `solve` have a method for each problem type. In R1,
+  `gradient_hessian!!` evaluates both $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested
+  `ForwardDiff.Dual` call, and `jvp!!` evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional
+  partial. In R3, `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and
+  on an `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
+  `Array`.
+
+- `OptimalWeights`, `FixedWeights`, `Additive`, `Multiplicative`, `Repeat` and `Switch` (exported),
+  together with the internal `GeometricSolvers.sync_merit`, compose nonlinear step rules (`Newton`,
+  `Picard` and any combinator) across R1 (`StaticVector`, `MVector` and `Number`), R2
+  (`solve_batch!` on host and device arrays) and R3 (`Array` and `AbstractGPUArray`), with
+  `Adapt.@adapt_structure` on every combinator and weight rule. `solve`, `init` and `solve_batch!`
+  on a `StationarityProblem` take a combinator method, as they take `Newton` and `Picard`.
+  `OptimalWeights(ρ = 1.0)` (`OptimalWeights(; ρ = 1.0)`, requiring finite `ρ > 0`, else
+  `ArgumentError`) solves the real-weight (`R = real(T)`) secant least-squares problem
+  $\min_{w \in \mathbb{R}^m} \|F(x) + \sum_{i=1}^m w_i (F(x_i) - F(x))\|_2$ from the Gram matrix
+  $G_{ij} = \operatorname{Re}\langle \delta F_i, \delta F_j \rangle$ and right-hand side
+  $b_i = -\operatorname{Re}\langle \delta F_i, F(x) \rangle$ ($\delta F_i = F(x_i) - F(x)$), up to
+  $m = 4$ members (`m > 4` raises `ArgumentError` in `init_state`). In R1, $G$ (`SMatrix{m, m, R}`)
+  and $b$ (`SVector{m, R}`) are formed by `rdot` with zero allocations; in R3, $\delta F_i$ are
+  stored in `work.ΔF` ($n \times m$), $G = \operatorname{Re}(\Delta F^{\mathrm{H}} \Delta F)$ and
+  $b = -\operatorname{Re}(\Delta F^{\mathrm{H}} F(x))$ are formed by `mul!!`, and on a device array
+  the small $m \times m$ and $m$ buffers are copied to the host once per step. Under the
+  $\sin^2\theta$ rank rule ($\tau_{\sin^2} = 10^{-3}$), for $m = 2$,
+  $\sin^2\theta = 1 - (G_{12} / G_{11})(G_{12} / G_{22})$ (and for $m \ge 3$, incremental Cholesky
+  ordered by non-decreasing $\|F(x_i)\|$, with ties keeping the lowest member index) drops
+  collinear or zero directions ($\sin^2\theta < 10^{-3}$ for $p \ge 1$, or $r_{jj}^2 \le 0$),
+  sets `rank_fallback = true` (incrementing `step_failures` by 1), and either solves the 1-weight
+  secant step $w_k = b_k / (G_{kk}(1 + \operatorname{eps}(R)))$ along the kept smallest-residual
+  candidate ($w_k = 1$ if $G_{kk} = 0$) or solves the kept $p \times p$ system ($p \ge 2$) with
+  Tikhonov regularisation $\lambda = \operatorname{eps}(R) \cdot (\operatorname{tr}(G_{\text{kept}})
+  / p)$. `FixedWeights(w₁, w₂, ...)` (`FixedWeights((w₁, w₂, ...))`, requiring at least one weight
+  and all finite real values, else `ArgumentError`) combines member corrections with fixed real
+  weights without a Gram solve or safeguard check.
+  `Additive(m₁, m₂, ...; weights = OptimalWeights())` (`fieldcount(M) >= 1` and matching
+  `FixedWeights` length, else `ArgumentError`) runs one step of each member from the same
+  $(x, F(x))$ (stepping in preallocated per-member copies `(xs[i], Fxs[i])` in R3 so `x` is not
+  mutated while members run), and leaves out a member that hard-fails (`SINGULAR`, `NONFINITE`, or
+  `LINESEARCH_FAILED` with zero `stepnorm`); its candidate is $(x, F(x))$ at residual norm $\infty$
+  and takes weight zero. `OptimalWeights` solves for the weights of the members kept.
+  `FixedWeights` rescales the kept weights by $\sum_{i=1}^m w_i / \sum_{i \text{ kept}} w_i$, so
+  that they sum to the total of all the weights, and leaves them unchanged when no member fails.
+  The step fails, with `stepnorm = 0` and the code of the first member that failed, when every
+  member fails or when that rescale factor is not finite or zero (the kept fixed weights sum to
+  zero, or the weights sum to zero in total); otherwise it forms $d = \sum_{i=1}^m w_i (x_i - x)$,
+  $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$ and $F_+ = F(x_+, p)$. Under
+  `OptimalWeights`, the PETSc safeguard checks whether `!isfinite(‖F(x₊)‖)`,
+  $\sum_i |w_i| < 0.1$, or $\|F(x_+)\| > \rho \min_i \|F(x_i)\|$; when triggered, it replaces
+  $(x_+, F_+)$ with the candidate $(x_{\text{best}}, F(x_{\text{best}}))$ of smallest residual norm
+  (ties to lowest index) and increments `step_failures` by 1, superseding a `rank_fallback` that
+  fired on the same step so that one composite fallback is counted once. Under `FixedWeights`, which
+  has no safeguard, a non-finite $\|F(x_+)\|$ reports `NONFINITE` instead of `SUCCESS`; the
+  `OptimalWeights` safeguard replaces such a trial before it is reported, so only `FixedWeights`
+  reaches this.
+  `Multiplicative(m₁, m₂, ...)` (`fieldcount(M) >= 1`, else `ArgumentError`) threads $(x, F(x))$
+  sequentially through its members in one outer step, calling `sync_merit` before each member step
+  so a started line-search member updates its stored baseline merit $\phi(x) = \|F(x)\|_2^2$ to the
+  incoming residual without resetting `Newton`'s `FactorAge` (`reuse`) or `DogLeg`'s `TrustRadius`
+  (while preserving `NaN` on an un-started state so calling `step!!` without `start!!` fails closed
+  with `NONFINITE`), and a hard failure of a member (`SINGULAR`, `NONFINITE`, or
+  `LINESEARCH_FAILED` with zero `stepnorm`) ends the outer step with that member's code, keeps the
+  iterate that the members before it reached, and reports the outer step norm
+  $\|x^{(m)} - x^{(0)}\|$, so a `LINESEARCH_FAILED` after an earlier member moved the iterate is not
+  a zero step. `Repeat(method, count)` (`count >= 1`, else `ArgumentError`) runs `count` sub-steps
+  of `method` per outer iteration with `sync_merit` between sub-steps, and a hard failure of a
+  sub-step ends the outer step with its code, keeps the iterate that the earlier sub-steps reached,
+  and reports the outer step norm.
+  `Switch(first, second; threshold = 1e-2)` (finite `threshold > 0`, else `ArgumentError`) stores
+  `fnorm₀ = NaN` in `init_state` and after `finish!!` (so an un-started `step!!` returns `NONFINITE`
+  with `stepnorm = 0`), records `fnorm₀` and `switched = false` in `start!!`, steps `first` while
+  $\|F(x)\| > \text{threshold} \cdot \|F(x_0)\|$, and latches `switched = true` permanently to
+  `second` once $\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|$. In `finish!!`, `Additive` resets
+  the spectrum diagnostics (`rank = -1`, `nullnorm = NaN`, `gradratio = NaN`), `Multiplicative`
+  forwards the diagnostics of the last member in sequence that populated them, `Repeat` forwards
+  its inner member's diagnostics, and `Switch` forwards those of the active branch.
+  `Additive`, `Multiplicative` and `Repeat` report `STALLED` when every member step (every
+  sub-step, for `Repeat`) is `STALLED`, and `SUCCESS` otherwise; a hard failure keeps its own
+  code. So `Repeat(m, 1)` and `Multiplicative(m)` stall where `m` does and count toward
+  `max_stalls`, and `Switch` passes the code of its active member through unchanged. `solve` with
+  a combinator method (`Additive`, `Multiplicative`, `Repeat`, `Switch`) and a `ForwardDiff.Dual` in
+  `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
+  through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
+  input for every method.
