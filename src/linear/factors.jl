@@ -3,8 +3,8 @@
 # `factorize!!` and `ldiv!!` follow the `!!` convention of `bang.jl`: the first argument is a
 # buffer where the storage has one and `nothing` where it does not, and the caller always uses
 # the returned value. R1 has no buffer: its factors are `isbits` values, returned new. R3 holds
-# its Jacobian and workspace buffers in `DenseLU`, `DenseQR` and `DenseSVD` on the host and in
-# `DeviceLU`, `DeviceQR` and `DeviceSVD` on a device.
+# its Jacobian and workspace buffers in `DenseLU`, `DenseQR`, `DenseSVD` and `DenseLDLT` on the
+# host and in `DeviceLU`, `DeviceQR`, `DeviceSVD` and `DeviceLDLT` on a device.
 
 """
     factorize!!(fac, method, J)
@@ -12,14 +12,15 @@
 Factorise the matrix `J` with the linear-solver method `method` and return the factors.
 
 For a static matrix (R1), `fac` is `nothing` or an earlier factor of the same type, whose value
-is not used, and the result is a new [`StaticLU`](@ref), [`StaticQR`](@ref) or
-[`StaticSVD`](@ref). `J` is converted to the element type of the factors,
+is not used, and the result is a new [`StaticLU`](@ref), [`StaticQR`](@ref),
+[`StaticSVD`](@ref) or [`StaticLDLT`](@ref). `J` is converted to the element type of the factors,
 [`factor_eltype`](@ref). Where that is not the element type of `J`, `J` is first divided by the
 power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
 exponent range allows, and `e` is kept in the factor, so that the overall scale of `J` neither
 overflows nor underflows in the factor type. A zero or non-finite `J` gives `e = 0`. A singular
 `J` does not throw. LU
-records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, and
+records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, LDLᵀ the first
+zero pivot block (or `1` for a non-finite entry), and
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 The SVD records its numerical rank in `rank`, the number of singular values above the cutoff
@@ -28,7 +29,8 @@ only where the sweep did not converge or a singular value is not finite, and `ra
 SVD is prescaled at the working precision too, because the sweep squares the entries.
 
 For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref),
-[`DenseSVD`](@ref), [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref)
+[`DenseSVD`](@ref), [`DenseLDLT`](@ref), [`DeviceLU`](@ref), [`DeviceQR`](@ref),
+[`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref)
 built by [`init_linear`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
 place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
@@ -38,8 +40,8 @@ divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors
 leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
 singular value of `J / 2^e` is not finite; for [`DeviceSVD`](@ref) it is `1` where the Jacobi
 sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
-numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD then
-reports `SINGULAR`, and the step that the LU or QR factors give is not specified.
+numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD and LDLᵀ
+then report `SINGULAR`, and the step that the LU or QR factors give is not specified.
 
 For a sparse factor (R3), which an extension builds in [`init_linear`](@ref) from a
 `SparseMatrixCSC` `jacobian_prototype`, `J` must have the sparsity pattern of that prototype, or
@@ -297,6 +299,75 @@ struct DeviceSVD{A <: AbstractMatrix, S <: AbstractVector, F <: AbstractVector{I
 end
 
 """
+    StaticLDLT{N, TF, L}
+
+The Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` factors of an `N × N` static matrix, in element type `TF`:
+`factors` holds the `1 × 1` and `2 × 2` diagonal blocks of `D` on the diagonal and first
+subdiagonal and the unit lower-triangular multipliers of `L` below them, `ipiv` encodes the
+symmetric row/column swaps (`ipiv[k] = p > 0` for a `1 × 1` pivot swapping `k ↔ p`, and
+`ipiv[k] = ipiv[k + 1] = -p < 0` for a `2 × 2` pivot swapping `k + 1 ↔ p`), `info` is the index
+of the first zero pivot block or `1` for a non-finite matrix, or `0`, `scale_exponent` is the
+exponent `e` of the power of two `2^e` that the matrix was divided by, and `hermitian` is `true`
+for a real symmetric or complex Hermitian factorisation (`L D Lᴴ`) and `false` for a complex
+symmetric factorisation (`L D Lᵀ`). `L = N * N` makes the `SMatrix` field concrete, so the factor
+is `isbits`.
+"""
+struct StaticLDLT{N, TF, L}
+    factors::SMatrix{N, N, TF, L}
+    ipiv::SVector{N, Int32}
+    info::Int32
+    scale_exponent::Int32
+    hermitian::Bool
+end
+
+"""
+    DenseLDLT{A, P, W, V}
+
+The Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` factors of a dense `n × n` host matrix, with `factors` the
+`n × n` buffer in the factor element type, `ipiv` the `BlasInt` pivot vector of length `n`,
+`work` the LAPACK workspace buffer, `rhs` the right-hand-side buffer of the factor element type
+when that differs from the working element type and `nothing` otherwise, `info` the index of the
+first zero pivot block or `1` for a non-finite entry, or `0`, `scale_exponent` the exponent `e`
+of the power of two `2^e` that the matrix was divided by, and `hermitian` `true` for a real
+symmetric or complex Hermitian factorisation (`L D Lᴴ`) and `false` for a complex symmetric
+factorisation (`L D Lᵀ`). A `BlasFloat` matrix is factorised by `hetrf!` where `hermitian` and the
+element type is complex, and by `sytrf!` otherwise; another element type by `generic_ldlt!`.
+"""
+struct DenseLDLT{A <: AbstractMatrix, P <: AbstractVector, W <: AbstractVector,
+    V <: Union{Nothing, AbstractVector}}
+    factors::A
+    ipiv::P
+    work::W
+    rhs::V
+    info::Int
+    scale_exponent::Int
+    hermitian::Bool
+end
+
+"""
+    DeviceLDLT{A, P, V, S}
+
+The Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` factors of a dense `n × n` device matrix, with `factors`
+the `n × n` device buffer in the factor element type, `ipiv` the `Int32` pivot vector of length
+`n`, `rhs` the right-hand-side buffer of the factor element type when that differs from the
+working element type and `nothing` otherwise, `info` the index of the first zero pivot block or
+`1` for a non-finite entry, or `0`, `scale_exponent` the exponent `e` of the power of two `2^e`
+that the matrix was divided by, `status` the 1-element `Int32` device status buffer, and
+`hermitian` `true` for a real symmetric or complex Hermitian (`L D Lᴴ`) factorisation and `false`
+for a complex symmetric (`L D Lᵀ`) factorisation.
+"""
+struct DeviceLDLT{A <: AbstractMatrix, P <: AbstractVector{Int32},
+    V <: Union{Nothing, AbstractVector}, S <: AbstractVector{Int32}}
+    factors::A
+    ipiv::P
+    rhs::V
+    info::Int
+    scale_exponent::Int
+    status::S
+    hermitian::Bool
+end
+
+"""
     dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
 Build the linear factor for `method` on `x` using `jacobian_prototype(prob)`.
@@ -309,9 +380,9 @@ end
     init_linear(method::LinearMethod, pattern, x::AbstractVector)
 
 Build the linear factor for `method` on `x`: the dense host factor [`DenseLU`](@ref),
-[`DenseQR`](@ref) or [`DenseSVD`](@ref) or device factor [`DeviceLU`](@ref), [`DeviceQR`](@ref) or
-[`DeviceSVD`](@ref) when `pattern === nothing`, or an extension's sparse factor when `pattern` is
-a sparse matrix prototype.
+[`DenseQR`](@ref), [`DenseSVD`](@ref) or [`DenseLDLT`](@ref) or device factor [`DeviceLU`](@ref),
+[`DeviceQR`](@ref), [`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref) when `pattern === nothing`, or an
+extension's sparse factor when `pattern` is a sparse matrix prototype.
 """
 function init_linear(m::LUFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
                                                                                  Number}
@@ -389,16 +460,44 @@ function init_linear(
     return DeviceSVD(factors, U, S, VT, V, σ̂, flag, tmp, rhs, 0, 0, 0)
 end
 
+function init_linear(
+        m::LDLTFactorization, ::Nothing, x::AbstractVector{T}) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    ipiv = Vector{BlasInt}(undef, n)
+    work = similar(x, F, ldlt_work_length(factors, ipiv))
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DenseLDLT(factors, ipiv, work, rhs, 0, 0, true)
+end
+
+function init_linear(
+        m::LDLTFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    ipiv = similar(x, Int32, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    status = similar(x, Int32, 1)
+    return DeviceLDLT(factors, ipiv, rhs, 0, 0, status, true)
+end
+
+const AnyStaticFactor = Union{StaticLU, StaticQR, StaticSVD, StaticLDLT}
+const AnyDenseFactor = Union{DenseLU, DenseQR, DenseSVD, DenseLDLT}
+const AnyDeviceFactor = Union{DeviceLU, DeviceQR, DeviceSVD, DeviceLDLT}
+const AnyFactor = Union{AnyStaticFactor, AnyDenseFactor, AnyDeviceFactor}
+
+const ExactStaticFactor = Union{StaticLU, StaticQR, StaticLDLT}
+const ExactDenseFactor = Union{DenseLU, DenseQR, DenseLDLT}
+const ExactDeviceFactor = Union{DeviceLU, DeviceQR, DeviceLDLT}
+const ExactFactor = Union{ExactStaticFactor, ExactDenseFactor, ExactDeviceFactor}
+
 """
     returncode(fac)
 
 `SUCCESS` for a factor with `info == 0`, and `SINGULAR` otherwise.
 """
-function returncode(
-        fac::Union{StaticLU, StaticQR, StaticSVD, DenseLU, DenseQR, DenseSVD,
-        DeviceLU, DeviceQR, DeviceSVD})
-    return iszero(fac.info) ? SUCCESS : SINGULAR
-end
+returncode(fac::AnyFactor) = iszero(fac.info) ? SUCCESS : SINGULAR
 
 """
     exact_solve(fac)
@@ -412,9 +511,7 @@ exact_solve(fac) = true
 exact_solve(fac::StaticSVD{N}) where {N} = fac.rank == N
 exact_solve(fac::Union{DenseSVD, DeviceSVD}) = fac.rank == length(fac.S)
 
-@inline function factor_diagnostics(
-        d, ::Union{StaticLU, StaticQR, DenseLU, DenseQR, DeviceLU, DeviceQR},
-        r, fnorm::R) where {R <: Real}
+@inline function factor_diagnostics(d, ::ExactFactor, r, fnorm::R) where {R <: Real}
     return Int32(-1), R(NaN)
 end
 
@@ -565,8 +662,11 @@ end
 # `divisor_exponent` of its coordinates.
 backsolve_shifted(fac, r) = (backsolve(fac, r), 0)
 
-function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSVD{N, TF}},
-        r::StaticVector{N, TF}) where {N, TF}
+const StaticLUQR{N, TF} = Union{StaticLU{N, TF}, StaticQR{N, TF}}
+const StaticSVDLDLT{N, TF} = Union{StaticSVD{N, TF}, StaticLDLT{N, TF}}
+const StaticFac{N, TF} = Union{StaticLUQR{N, TF}, StaticSVDLDLT{N, TF}}
+
+function ldiv!!(::Nothing, fac::StaticFac{N, TF}, r::StaticVector{N, TF}) where {N, TF}
     k = rhs_exponent(r)
     r̂ = iszero(k) ? SVector{N, TF}(r) : map(a -> ldexp2(a, -k), SVector{N, TF}(r))
     d, t = backsolve_shifted(fac, r̂)
@@ -578,8 +678,7 @@ end
 # `2^(ex - e)` in one step, with `e` the scale exponent of the factors, both in the wider of `TF`
 # and `T`, and only then converted to `T`, so that it overflows or underflows only where the
 # solution itself does.
-function ldiv!!(::Nothing, fac::Union{StaticLU{N, TF}, StaticQR{N, TF}, StaticSVD{N, TF}},
-        r::StaticVector{N, T}) where {N, TF, T}
+function ldiv!!(::Nothing, fac::StaticFac{N, TF}, r::StaticVector{N, T}) where {N, TF, T}
     s = maximum(abs, r)
     iszero(s) && return zero(SVector{N, T})
     d = backsolve(fac, SVector{N, TF}(SVector{N, T}(r) / s))

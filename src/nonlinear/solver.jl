@@ -7,10 +7,10 @@ step unchanged.
 struct NoRefinement end
 
 """
-    init_state(method, prob::NonlinearProblem, x, p)
+    init_state(method, prob::AbstractNonlinearProblem, x, p)
 
-Build the state of `method` for [`NonlinearProblem`](@ref) `prob` at the initial iterate `x` and
-parameters `p`: its workspace, its AD preparation and its rule state, in one concrete type per
+Build the state of `method` for [`AbstractNonlinearProblem`](@ref) `prob` at the initial iterate `x`
+and parameters `p`: its workspace, its AD preparation and its rule state, in one concrete type per
 method. In R1 (`SVector`, `MVector` or `Number`), `init_state` is allocation-free and returns an
 `isbits` state when `prob` and `method` are `isbits`.
 """
@@ -26,7 +26,7 @@ array iterate, and `nothing` for a value iterate. The default is `nothing`, whic
 @inline residual_buffer(state) = nothing
 
 """
-    step!!(state, method, prob::NonlinearProblem, x, Fx, p)
+    step!!(state, method, prob::AbstractNonlinearProblem, x, Fx, p)
 
 Compute one nonlinear solver step from `(x, Fx)` and return `(x₊, F₊, state₊, info)` where `info`
 is a [`StepInfo`](@ref). A line-search step of [`Newton`](@ref) or [`Picard`](@ref) reads the
@@ -37,7 +37,7 @@ returned, it returns `NONFINITE` and keeps `x` and `Fx`.
 function step!! end
 
 """
-    start!!(state, method, prob::NonlinearProblem, x, Fx, p, fnorm₀) -> state
+    start!!(state, method, prob::AbstractNonlinearProblem, x, Fx, p, fnorm₀) -> state
 
 Prepare `state` for a solve from `x`, with residual `Fx` and its norm `fnorm₀`, and return the
 state that the first step reads. [`solve!!`](@ref) calls it once, before its stopping test at 0
@@ -48,7 +48,7 @@ the anchor merit `norm2(Fx)` of a line search, which `init_state` leaves at `NaN
 @inline start!!(state, method, prob, x, Fx, p, fnorm₀) = state
 
 """
-    finish!!(state, method, prob::NonlinearProblem, x, Fx, status) -> (x, status, state)
+    finish!!(state, method, prob::AbstractNonlinearProblem, x, Fx, status) -> (x, status, state)
 
 Close a solve that ends at `x`, with residual `Fx` and `status`, and return the triple that
 [`solve!!`](@ref) returns. [`solve!!`](@ref) calls it at every return. The default returns
@@ -81,7 +81,7 @@ end
 end
 
 """
-    solve!!(state, prob::NonlinearProblem, x₀, method, p = nothing, options = Options(eltype(x₀)))
+    solve!!(state, prob::AbstractNonlinearProblem, x₀, method, p = nothing, options = Options(eltype(x₀)))
 
 Run the nonlinear solver loop from `x₀` using `state = init_state(method, prob, x₀, p)` and return
 `(x, status, state)`. `solve!!` is the in-place and kernel entry point: inside a
@@ -115,7 +115,7 @@ root, sets its norm; such a step is not a stall. Reaching `options.max_iteration
 convergence returns `MAXITERS`.
 """
 function solve!!(
-        state, prob::NonlinearProblem, x₀, method, p = nothing,
+        state, prob::AbstractNonlinearProblem, x₀, method, p = nothing,
         options::Options{R} = Options(eltype(x₀))) where {R <: Real}
     check_options(eltype(x₀), options)
     x = x₀
@@ -193,14 +193,15 @@ end
 """
     NonlinearSolver(prob, x, method, options, state, p)
 
-A preallocated nonlinear solver for [`NonlinearProblem`](@ref) `prob` with `method` and
-[`Options`](@ref) `options`, holding the workspace and AD preparation in `state`, the iterate `x`
-and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the element type `T` and the
-length `n` of `x` and the types `X` of `x` and `Q` of `p`, which [`solve!`](@ref) checks.
+A preallocated nonlinear solver for [`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref)
+`prob` with `method` and [`Options`](@ref) `options`, holding the workspace and AD preparation in
+`state`, the iterate `x` and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the
+element type `T` and the length `n` of `x` and the types `X` of `x` and `Q` of `p`, which
+[`solve!`](@ref) checks.
 Build it with [`init(prob, x₀, method, p; options = nothing, kwargs...)`](@ref init) and solve
 with [`solve!(solver)`](@ref solve!) or [`solve!(solver, x, p)`](@ref solve!).
 """
-mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
+mutable struct NonlinearSolver{T, P <: AbstractNonlinearProblem, M, O <: Options, S,
     X <: Union{AbstractVector{T}, T}, Q}
     const prob::P
     const method::M
@@ -210,7 +211,7 @@ mutable struct NonlinearSolver{T, P <: NonlinearProblem, M, O <: Options, S,
     x::X
     p::Q
     function NonlinearSolver(prob::P, x::X, method::M, options::O, state::S,
-            p::Q) where {P <: NonlinearProblem, M, O <: Options, S,
+            p::Q) where {P <: AbstractNonlinearProblem, M, O <: Options, S,
             X <: Union{AbstractVector, Number}, Q}
         new{eltype(X), P, M, O, S, X, Q}(prob, method, options, length(x), state, x, p)
     end
@@ -242,8 +243,8 @@ function init(
 end
 
 """
-    solve!(solver::NonlinearSolver)
-    solve!(solver::NonlinearSolver, x, p = solver.p)
+    solve!(solver::NonlinearSolver; b = nothing)
+    solve!(solver::NonlinearSolver, x, p = solver.p; b = nothing)
 
 Solve `solver.prob`, using the preallocated workspace and AD preparation in `solver`, store the
 solution in `solver.x`, and return `(solver.x, status)` where `status` is a
@@ -252,15 +253,16 @@ the parameters that [`init`](@ref) or the last `solve!(solver, x, p)` stored, an
 solution into `solver.x` when it is an array.
 `solve!(solver, x, p)` stores `x` in `solver.x` and `p` in `solver.p`, then solves from `x` with
 `p`; an array `x` receives the solution in place and stays in `solver.x`. Without `p`, it solves
-with the parameters that the solver holds. An `x` whose element type or length differs from the
-iterate of `init` raises an `ArgumentError`, and so do an `x` of another type, a `p` of
+with the parameters that the solver holds. For a [`StationarityProblem`](@ref), the keyword `b`
+overrides the datum of the solve without reallocating. An `x` whose element type or length differs
+from the iterate of `init` raises an `ArgumentError`, and so do an `x` of another type, a `p` of
 another type than those of `init`, and any `ForwardDiff.Dual` in `x` or `p`. A refused call
 changes neither `solver` nor `x`.
 """
-solve!(solver::NonlinearSolver) = solve!(solver, solver.x, solver.p)
+solve!(solver::NonlinearSolver; b = nothing) = solve!(solver, solver.x, solver.p; b = b)
 
 function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
-        p = solver.p) where {T, P, M, O, S, X, Q}
+        p = solver.p; b = nothing) where {T, P, M, O, S, X, Q}
     if has_dual_type(typeof(x)) || has_dual_type(typeof(p))
         throw(ArgumentError(
             "solve! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
@@ -275,13 +277,19 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
     p isa Q || throw(ArgumentError(
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
-    solver.x = x
-    solver.p = p
-    x₊, status, state = solve!!(
-        solver.state, solver.prob, x, solver.method, p, solver.options)
-    solver.x = x₊
-    solver.state === state || (solver.state = state)
-    return solver.x, status
+    if P <: NonlinearProblem
+        b === nothing ||
+            throw(ArgumentError("keyword `b` is only supported for `StationarityProblem`"))
+        solver.x = x
+        solver.p = p
+        x₊, status, state = solve!!(
+            solver.state, solver.prob, x, solver.method, p, solver.options)
+        solver.x = x₊
+        solver.state === state || (solver.state = state)
+        return solver.x, status
+    else
+        return _solve_stationarity_solver!(solver, x, p, b)
+    end
 end
 
 """

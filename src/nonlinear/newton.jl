@@ -2,9 +2,9 @@
     Newton(; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
              refinement = NoRefinement(), regularization = 0, reuse = nothing)
 
-Newton's method for [`NonlinearProblem`](@ref), with linear solver `linsolve`
-([`LUFactorization`](@ref), [`QRFactorization`](@ref) or [`SVDFactorization`](@ref)),
-globalization `globalization`
+Newton's method for [`NonlinearProblem`](@ref) and [`StationarityProblem`](@ref), with linear
+solver `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
+[`QRFactorization`](@ref) or [`SVDFactorization`](@ref)), globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
 trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refinement `refinement`
 ([`NoRefinement`](@ref) or [`Refinement`](@ref)), diagonal regularisation `regularization`, and
@@ -95,6 +95,9 @@ end
 
 Adapt.@adapt_structure Newton
 
+@inline _has_analytic_jacobian(prob::NonlinearProblem) = prob.J !== nothing
+@inline _has_analytic_jacobian(::AbstractNonlinearProblem) = false
+
 # The JVP preparation from the analytic Jacobian of `prob`: an `n × n` buffer, or one like the
 # Jacobian prototype of `prob`, which a line search and a `Refinement` along a reused factor read.
 @inline function prototype_jvp(x, prob)
@@ -110,11 +113,11 @@ end
 @inline jacobian_matrix_jvp(::LineSearch, x, prob) = prototype_jvp(x, prob)
 @inline jacobian_matrix_jvp(::Static, x, prob) = nothing
 
-@inline function newton_ad_preps(m::Newton, prob::NonlinearProblem, Fx, x, p)
+@inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
     if m.refinement isa Refinement && m.jacobian isa AutoFiniteDiff
         throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
     end
-    has_J = prob.J !== nothing
+    has_J = _has_analytic_jacobian(prob)
     if m.jacobian === nothing && !has_J
         prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
         return prep, prep
@@ -161,6 +164,21 @@ end
     return StaticLU{1, TF, 1}(z, piv, Int32(0), Int32(0))
 end
 
+@inline function empty_static_factor(ls::LDLTFactorization{P}, ::StaticVector{
+        N, T}) where {P, N, T}
+    TF = factor_eltype(ls, T)
+    z = zeros(SMatrix{N, N, TF})
+    piv = SVector{N, Int32}(ntuple(i -> Int32(i), Val(N)))
+    return StaticLDLT{N, TF, N * N}(z, piv, Int32(0), Int32(0), true)
+end
+
+@inline function empty_static_factor(ls::LDLTFactorization{P}, ::T) where {P, T <: Number}
+    TF = factor_eltype(ls, T)
+    z = SMatrix{1, 1, TF, 1}((zero(TF),))
+    piv = SVector{1, Int32}((Int32(1),))
+    return StaticLDLT{1, TF, 1}(z, piv, Int32(0), Int32(0), true)
+end
+
 @inline function empty_static_factor(ls::QRFactorization{P}, ::StaticVector{
         N, T}) where {P, N, T}
     TF = factor_eltype(ls, T)
@@ -195,9 +213,10 @@ end
     jacobian_pattern(prob, jacprep)
 
 Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_prototype` for a
-[`NonlinearProblem`](@ref) and `nothing` for `nothing`.
+[`NonlinearProblem`](@ref), and `nothing` for any other problem and for `nothing`.
 """
 @inline jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype
+@inline jacobian_pattern(::AbstractNonlinearProblem, jacprep) = nothing
 @inline jacobian_pattern(::Nothing, jacprep) = nothing
 
 @inline function init_factor(
@@ -339,7 +358,7 @@ end
         s.refbuf, s.fac_T, promoted, slow_steps)
 end
 
-@inline function init_state(m::Newton, prob::NonlinearProblem, x, p)
+@inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     Fx = buffer(x)
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
@@ -674,7 +693,7 @@ end
 # refined direction and one globalized step, with no mixed-precision state read.
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     is_mixed(m, eltype(x)) && return mixed_step!!(state, m, prob, x, Fx, p)
     Jreg, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, Jreg)
@@ -685,7 +704,7 @@ end
 # globalized direction it returns, and the reading of the linear-model residual it measured.
 @inline function mixed_step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     T = eltype(x)
     R = real(T)
     fnorm_old = R(residual_norm(Fx, state.merit, state.fnorm))
@@ -717,7 +736,7 @@ end
 # whose norm is zero or not finite leaves the Cauchy step.
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
     is_mixed(m, eltype(x)) && return mixed_step!!(state, m, prob, x, Fx, p)
     Jreg, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     d, newton = dogleg_direction(m, state, prob, x, Fx, p, fac, Jreg)
@@ -745,7 +764,7 @@ end
 # The `DogLeg` step of a solve whose factorisation runs in `TF ≠ T`.
 @inline function mixed_step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
     R = real(eltype(x))
     fnorm_old = R(residual_norm(Fx, state.merit, state.fnorm))
     md = mixed_newton!!(state, m, prob, x, Fx, fnorm_old, p, true, false)
@@ -770,7 +789,7 @@ end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Int32},
-        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     is_mixed(m, eltype(x)) && return mixed_step!!(state, m, prob, x, Fx, p)
     rule = state.rule
     age_fresh = m.reuse == Int32(1) ? Int32(0) : Int32(1)
@@ -809,7 +828,7 @@ end
 # one retry of a line search along a reused factor that its own failure asks for.
 @inline function mixed_step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Int32},
-        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     T = eltype(x)
     R = real(T)
     fnorm_old = R(residual_norm(Fx, state.merit, state.fnorm))
