@@ -12,28 +12,40 @@ so that a compat-only bump can be told apart from an interface change.
 ### Changed
 
 - **Automatic Jacobian sparsity detection and colouring for R3 nonlinear solves via the
-  `GeometricSolversSparseADExt` package extension (`SparseConnectivityTracer` and
-  `SparseMatrixColorings`)** (decision 53 of the design). `Project.toml` adds
-  `SparseConnectivityTracer` (`"1"`) and `SparseMatrixColorings` (`"0.4.23"`) as weak dependencies
-  triggering `GeometricSolversSparseADExt`. When both packages are loaded and a `NonlinearProblem`
-  has `jacobian_prototype === nothing`, `GeometricSolvers.jacobian_pattern(::NonlinearProblem{<:Any,
-  <:Any, Nothing}, prep::DIJacobian{<:AutoSparse})` returns
-  `SparseMatrixCSC(SparseMatrixColorings.sparsity_pattern(prep.jacprep))` (a `SparseMatrixCSC`
-  whose entries the detector supplies — `Bool` from `TracerSparsityDetector`, the prototype's
-  element type from a `KnownJacobianSparsityDetector(P)`; `init_linear` needs only the integer
-  indices) whenever the `AutoSparse` back end carries a sparsity detector (a back end left at
-  ADTypes' `NoSparsityDetector` default finds only a pattern that is true everywhere, so the
-  method returns `nothing` and the solve keeps the dense factor and Jacobian), so `Newton(;
-  jacobian = AutoSparse(AutoForwardDiff(); sparsity_detector = TracerSparsityDetector(),
-  coloring_algorithm = GreedyColoringAlgorithm()))` detects the sparsity pattern once in
-  `prepare_ad`, colours the columns, and feeds the detected `SparseMatrixCSC` prototype into
-  `init_linear` (allocating `SparspakLU` when `Sparspak` is loaded) and compressed `jacobian!!`
-  evaluations without a user-supplied `jacobian_prototype`. When a `NonlinearProblem`
-  carries an explicit `jacobian_prototype = P` alongside `AutoSparse`, `prepare_ad` wraps `P` in
+  `GeometricSolversSparseADExt` package extension (`SparseMatrixColorings`)** (decision 53 of the
+  design). `Project.toml` lists `SparseMatrixColorings` (`"0.4.23"`) as the weak dependency that
+  triggers the extension, through its `[extensions]` entry `GeometricSolversSparseADExt =
+  "SparseMatrixColorings"`. `SparseConnectivityTracer` is a test dependency, not a dependency of the
+  package. The extension uses nothing from it, so any sparsity detector works once
+  `SparseMatrixColorings` is loaded: `TracerSparsityDetector()` (which needs `SparseConnectivityTracer`
+  loaded), `DenseSparsityDetector`, or `KnownJacobianSparsityDetector(P)`. When `SparseMatrixColorings`
+  is loaded and a `NonlinearProblem` has `jacobian_prototype === nothing`,
+  `GeometricSolvers.jacobian_pattern(::NonlinearProblem{<:Any, <:Any, Nothing},
+  prep::DIJacobian{<:AutoSparse})` returns `SparseMatrixCSC(SparseMatrixColorings.sparsity_pattern(
+  prep.jacprep))` whenever the `AutoSparse` back end carries a sparsity detector, and `nothing`
+  otherwise. The matrix holds the entries the detector supplies, `Bool` from `TracerSparsityDetector`
+  and the prototype's element type from `KnownJacobianSparsityDetector(P)`, and `init_linear` needs
+  only its integer indices. A back end left at ADTypes' `NoSparsityDetector` default finds only a
+  pattern that is true everywhere, which has no sparsity to exploit, so the solve keeps the dense
+  factor and Jacobian. `Newton(; jacobian = AutoSparse(AutoForwardDiff(); sparsity_detector =
+  TracerSparsityDetector(), coloring_algorithm = GreedyColoringAlgorithm()))` detects the sparsity
+  pattern once in `prepare_ad` and colours the columns, so `jacobian!!` evaluates the Jacobian in
+  compressed form without a user-supplied `jacobian_prototype`. The detected pattern builds the sparse
+  factor only where `GeometricSolvers.has_sparse_factor` holds: an `LUFactorization` on a `Vector`
+  iterate of a real `AbstractFloat` type, with the factor in that same precision, and with `Sparspak`
+  loaded, which defines `SparspakLU`. Where it does not hold, the solve takes the dense factor and a
+  dense Jacobian buffer, as it does with no pattern. That covers `QRFactorization`,
+  `SVDFactorization`, mixed precision such as `LUFactorization(Float64)` on a `Float32` iterate, a
+  complex iterate, and `Sparspak` not loaded. Under `Newton(; regularization = μ)` with `μ ≠ 0`, a
+  detected pattern that does not hold the whole structural diagonal also gives the dense factor,
+  because `regularize!!` writes `μ` onto the diagonal. When a `NonlinearProblem` carries an explicit
+  `jacobian_prototype = P` alongside `AutoSparse`, `prepare_ad` wraps `P` in
   `KnownJacobianSparsityDetector(P)` and the extension method (restricted to
   `NonlinearProblem{<:Any, <:Any, Nothing}`) does not match, so
-  `jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype` returns `P`
-  directly.
+  `jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype` returns `P` directly.
+  An explicit prototype is subject to neither rule above: it keeps its errors, namely `init_linear`'s
+  `MethodError` and `ArgumentError` for unsupported configurations, and the pattern-mismatch
+  `ArgumentError` under regularization when `P` has no structural diagonal (K41).
 
 - **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
   `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
@@ -43,7 +55,7 @@ so that a compat-only bump can be told apart from an interface change.
   `NonlinearProblem(F)` and `NonlinearProblem(F, J)` remain `isbits` when `F` and `J` are `isbits`.
   `GeometricSolvers.init_linear(method, pattern, x)` dispatches on `(method, pattern, x)` (with
   `dense_factor` forwarding `jacobian_prototype(prob)` and `Newton`'s `init_factor` forwarding
-  `jacobian_pattern(prob, jacprep)`), building dense host and device factors when `pattern ===
+  `factor_pattern(ls, prob, x, jacprep)`), building dense host and device factors when `pattern ===
   nothing`. When `Sparspak` (`0.3.15`) is loaded, `GeometricSolversSparspakExt` defines `SparspakLU`
   and extends `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T}) where
   {T <: AbstractFloat}`, `factorize!!` and `ldiv!!`: `init_linear` allocates a `similar(P, T)`
