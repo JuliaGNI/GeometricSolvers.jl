@@ -57,7 +57,8 @@ end
 
 Allocate the workspace named tuple for globalization method `g` at iterate `x` through
 [`buffer(x)`](@ref buffer): `(; xt, Ft)` for [`Static`](@ref), `(; xt, Ft, Jv)` for a
-[`LineSearch`](@ref), `(; g̃, ĝ, Jg, s, xt, Ft)` for [`DogLeg`](@ref), and
+[`LineSearch`](@ref), `(; g̃, ĝ, Jg, s, xt, Ft, u, b)` for [`DogLeg`](@ref), whose `u` and `b`
+share the storage of `s` and `Jg` for a square problem, and
 `(; Jδ, xt, Ft, R₀, c₀, R, c, d_diag, w)` for [`LevenbergMarquardt`](@ref), whose stacked slots
 `R₀` to `w` are `nothing` where the step reads the SVD factor and not the stacked solve. In R1
 every slot is `nothing`; in R3 each slot is a preallocated array like `x`. The method with

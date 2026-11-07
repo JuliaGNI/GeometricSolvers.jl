@@ -324,7 +324,7 @@ end
     @test allocations(collect, SVector{3, T}(1, 2, 3)) > 0
 end
 
-# ─── Clause 1c: Dense and device rectangular QR and SVD ──────────────────────
+# ─── Dense and device rectangular QR and SVD ─────────────────────────────────
 
 # `factorize!!` of a mutable matrix writes its factors into that matrix, so a measured call needs
 # the matrix restored first: the barrier's warm-up call does that copy, and the measured one does
@@ -435,7 +435,7 @@ end
         @test norm(Float64.(Array(d32)) - x32_ref) <= 256 * eps(T) * norm(x32_ref)
     end
 
-    # Direct LM SVD step vs stacked QR step on rectangular LeastSquaresProblem (catches MU7)
+    # Direct LM SVD step vs stacked QR step on rectangular LeastSquaresProblem
     J_lm = copy(A_h)
     Fx_lm = copy(b_h)
     μ = T(0.7)
@@ -491,7 +491,7 @@ end
     @test isapprox(d_diag_ar, d_ref_diag; rtol = 32 * sqrt(eps(T)))
 end
 
-# ─── Clause 2: Moré–Garbow–Hillstrom nonzero-residual problems ───────────────
+# ─── Moré–Garbow–Hillstrom nonzero-residual problems ─────────────────────────
 
 @testset "MGH nonzero-residual problems, $T" for T in REAL_ELTYPES
     opt = Options(T; max_iterations = 200)
@@ -523,6 +523,8 @@ end
     prob11_d = LeastSquaresProblem(mgh11_inplace!, 10)
     for (AT, alg) in ((Array, GaussNewton()),
         (Array, Newton(; globalization = LevenbergMarquardt())),
+        (Array, GaussNewton(; globalization = DogLeg())),
+        (JLArray, GaussNewton(; globalization = DogLeg())),
         (JLArray, GaussNewton()),
         (JLArray,
         Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())))
@@ -630,7 +632,7 @@ end
     end
 end
 
-# ─── Clause 3: Zero-residual problem and stationarity guards (MU4, MU5, MU6) ─
+# ─── Zero-residual problem and stationarity guards ───────────────────────────
 
 @testset "Zero-residual and stationarity guards, $T" for T in REAL_ELTYPES
     # Check 3: a consistent overdetermined system, m = 6 > n = 3, with r(x*) = 0 at x* = (1, 2, -1)
@@ -672,7 +674,7 @@ end
         @test isapprox(x, T[1, 2, -1]; atol = 10 * sqrt(eps(T)))
     end
 
-    # MU6 guard: the residual test is tested before the stationarity test. The first step of
+    # The residual test is tested before the stationarity test. The first step of
     # MGH #11 leaves both holding — ‖r‖ = √5 < f_abstol = 2.3, and the ratio 0.4 < g_tol = 0.5 —
     # and the status must name the residual test.
     opt_both = Options(T; f_abstol = T(2.3), g_tol = T(0.5))
@@ -699,7 +701,7 @@ end
     @test st_nl_d.stationary === false
     @test stopping_test(st_nl_d) === :none
 
-    # MU5 guard: LeastSquaresProblem with ‖J(x₀)‖_F == 0 at nonzero residual must NOT pass stationarity
+    # A LeastSquaresProblem with ‖J(x₀)‖_F == 0 at nonzero residual must NOT pass stationarity
     prob_zj_s = LeastSquaresProblem((x, p) -> SVector{3}(
         x[1]^2 + one(T), x[2]^2 + one(T), x[1]^2 + x[2]^2 + one(T)))
     for alg in (GaussNewton(; linsolve = SVDFactorization()),
@@ -725,12 +727,10 @@ end
         @test stopping_test(st_zj) === :none
     end
 
-    # MU4 guard: `newton_stepkind` on a LeastSquaresProblem is MeasuredSlope(), so Backtracking()
-    # uses the measured slope φ′(0) = -2‖J d‖₂² of the merit φ = ‖F‖₂², not the exact-step slope
-    # -2 φ(0). With the orthogonal residual C = 100 below, φ(0) = (x₁ - 1)² + (x₂ - 2)² + C² >>
+    # `newton_stepkind` on a LeastSquaresProblem is MeasuredSlope(), so Backtracking() uses the
+    # measured slope φ′(0) = -2‖J d‖₂² of the merit φ = ‖F‖₂², not the exact-step slope -2 φ(0).
+    # With the orthogonal residual C = 100 below, φ(0) = (x₁ - 1)² + (x₂ - 2)² + C² >>
     # ‖J d‖₂² = (x₁ - 1)² + (x₂ - 2)², so ExactStep() would reject even α = 1.
-    @test newton_stepkind(prob_zj_s, GaussNewton()) === MeasuredSlope()
-    @test newton_stepkind(prob_zj_d, GaussNewton()) === MeasuredSlope()
     @test newton_stepkind(prob_zj_s, GaussNewton(), T, true) === MeasuredSlope()
     @test newton_stepkind(prob_zj_d, GaussNewton(), T, true) === MeasuredSlope()
     f_big_orth = (x, p) -> SVector{3}(x[1] - one(T), x[2] - T(2), T(100))
@@ -911,7 +911,7 @@ step_of(fac, x::AbstractVector, Fx) = ldiv!!(similar(x), fac, Fx)
     end
 end
 
-# ─── Clause 4: 8-unit tanh network fit of sin(πx) on 101 points ──────────────
+# ─── 8-unit tanh network fit of sin(πx) on 101 points ────────────────────────
 
 @testset "tanh network fit of sin(πx), $T" for T in REAL_ELTYPES
     m = 101
@@ -978,7 +978,7 @@ end
     @test norm(r_sol) / norm(r0) <= T(1e-4)
 end
 
-# ─── Clause 5: R1 inference/zero-alloc/JET and R3 Array/JLArray/AD ───────────
+# ─── R1 inference/zero-alloc/JET and R3 Array/JLArray/AD ─────────────────────
 
 @testset "R1 inference, zero allocation, and JET" begin
     @testset "$T, M = $M" for T in REAL_ELTYPES, (M, N) in ((4, 2), (10, 5), (32, 4))

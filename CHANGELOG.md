@@ -25,14 +25,20 @@ so that a compat-only bump can be told apart from an interface change.
   and throwing `DimensionMismatch` for `M < N` or `N == 0` and `ArgumentError` for `M > 32`), and
   solve the minimum-norm least-squares problem in `ldiv!!`; `DenseQR`, `DeviceQR`, `DenseSVD` and
   `DeviceSVD` support rectangular `m × n` dimensions (`m ≥ n`) on `Array` and `AbstractGPUArray`
-  alike, and `LevenbergMarquardt` supports rectangular `m × n` Jacobians in both its SVD and
-  stacked-QR paths across R1 and R3. `Options{R}` gains `g_tol::R = sqrt(eps(R))` (`≥ 0`), and
+  alike, and `LevenbergMarquardt` supports rectangular `m × n` Jacobians across R1 and R3 in both
+  its SVD and stacked-QR paths, except that a device array iterate takes the SVD path only
+  (`SVDFactorization()` with `scaling = :none`), and its stacked-QR path raises an `ArgumentError`.
+  A `LeastSquaresProblem` holds no Jacobian prototype, so its factors are dense, and it has no
+  implicit differentiation: `solve` with a `ForwardDiff.Dual` in `x₀` or `p` raises an
+  `ArgumentError` (known issue K65). `Options{R}` gains `g_tol::R = sqrt(eps(R))` (`≥ 0`), and
   `SolverStatus{R}` gains `stationary::Bool` (`sizeof(SolverStatus{Float32}) == 36`,
   `sizeof(SolverStatus{Float64}) == 56`) together with `stopping_test(status)` (exported), which
   returns `:stationarity`, `:residual` or `:none`. On a `LeastSquaresProblem`, `solve!!` tests the
   residual criterion first (`stationary = false`) and then the relative normal-equation gradient
   `‖J(x)ᴴ F(x)‖ / (‖J(x)‖_F ‖F(x)‖) ≤ options.g_tol` when `‖J(x)‖_F > 0` and `‖F(x)‖ > 0`
-  (`stationary = true`).
+  (`stationary = true`). A factor at a precision below the iterate's (`TF ≠ T`) can keep the default
+  `g_tol` out of reach on a nonzero-residual problem, so the solve ends `STALLED` or `MAXITERS`
+  instead (known issue K66).
 
 - **`LevenbergMarquardt{R, S}` damped trust-region globalization for `Newton`** (decision 57 of the
   design). `LevenbergMarquardt{R <: AbstractFloat, S}` (`R = Float64` by default, adapted to

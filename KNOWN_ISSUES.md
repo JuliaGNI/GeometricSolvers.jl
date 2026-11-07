@@ -128,3 +128,69 @@
   reads.
 - **kind:** dead code
 - **found:** PR #65
+
+### K65 · A `LeastSquaresProblem` has no implicit differentiation
+
+- **location:** `src/nonlinear/leastsquares.jl` (`solve_implicit`)
+- **evidence:** `solve(LeastSquaresProblem(f), x₀, GaussNewton(), p)` with a `ForwardDiff.Dual` in
+  `x₀` or `p` raises `ArgumentError: solve does not accept ForwardDiff.Dual inputs for a
+  LeastSquaresProblem; implicit differentiation of a LeastSquaresProblem is not implemented`
+  (`test/nonlinear/leastsquares.jl`, testset "LeastSquaresProblem, GaussNewton, Options.g_tol, and
+  stopping_test"). The implicit tangent of `solve` is that of a root, `J(x*) ẋ = -∂F/∂p` with a
+  square `J`. A least-squares solution is a stationary point of `½‖F‖²`, whose tangent equation
+  is `(Jᴴ J + Σᵢ Fᵢ ∇²Fᵢ) ẋ = -(Jᴴ ∂F/∂p + Σᵢ Fᵢ ∂(∇Fᵢ)/∂p)`; its Gauss–Newton form drops the
+  terms in `F` and is exact only at a zero residual. Which form `solve` should implement is open.
+- **kind:** defect
+- **found:** PR #62
+
+### K66 · A factor precision below the working one cannot reach the default stationarity test on a nonzero-residual `LeastSquaresProblem`
+
+- **location:** `src/linear/mixed.jl` (`ldiv!!`), `src/nonlinear/solver.jl` (`stationary_converged`)
+- **evidence:** For `r(x) = (x₁ - 1, x₂ - 2, x₁ + x₂)` from `[0, 0]`, `x* = (0, 1)`, on a `Float64`
+  iterate: array `QRFactorization(Float32)` gives `STALLED` after 6 iterations with
+  `gradratio = 7.9e-8` and `‖x - x*‖ = 2.7e-7`; array `SVDFactorization(Float32)` gives `MAXITERS`
+  after 100 with `gradratio = 5.0e-8`; static `QRFactorization(Float32)` gives `STALLED` after 3,
+  and static `SVDFactorization(Float32)` gives `SUCCESS` after 4. With `g_tol = 1e-6`, array
+  `QRFactorization(Float32)` gives `SUCCESS` after 2 (review of PR #62). The perturbed factor moves
+  the Gauss–Newton fixed point off the least-squares point by about `eps(Float32)`, and the
+  default `g_tol = √eps(Float64)` is below that; the square Newton solve recovers the working
+  precision through the residual, and nothing does so here. Whether the solve refuses the mixed
+  factor on a `LeastSquaresProblem` with `m > n` or documents it with a reachable tolerance is
+  open.
+- **kind:** defect
+- **found:** PR #62
+
+### K67 · The two-argument `factor_diagnostics` methods have no caller in `src/`
+
+- **location:** `src/linear/dense.jl` (`factor_diagnostics(fac, r)`, two methods),
+  `src/linear/static/qr_rect.jl`, `src/linear/static/svd_rect.jl`
+- **evidence:** `grep -rn "factor_diagnostics(" src` finds only four-argument calls
+  (`newton.jl`, `dense.jl`, `svd_rect.jl`); the two-argument methods are called from
+  `test/linear/static/qr_rect.jl`, `test/linear/static/svd_rect.jl` and
+  `test/nonlinear/leastsquares.jl`. Their meaning differs from the four-argument one that the
+  solver reads: `nullnorm` is relative, and the QR method takes a "rank" from `info`, which the
+  `factorize!!` docstring says QR does not reveal; the `DenseSVD` and `DeviceSVD` method allocates
+  `similar(r, n)` per call. Removing them needs the rectangular tests to assert the four-argument
+  diagnostics instead, and what replaces the QR rank assertions is open.
+- **kind:** dead code
+- **found:** PR #62
+
+### K68 · `test/nonlinear/leastsquares.jl` may exceed the 60 s budget of a `core` file
+
+- **location:** `test/runtests.jl` (`nonlinear/leastsquares.jl` in `core`)
+- **evidence:** Cold `run-tests.jl <repository> test/nonlinear/leastsquares.jl` on Julia 1.13.3:
+  `PASS in 121 s`, `Test Summary` 1m49.7s, at a load average of 15.3 at the start; the review of
+  PR #62 measured `PASS in 110 s` at a load average of 9.95. Both runs were on a loaded machine,
+  so whether the file stays above 60 s on a quiet one, and moves to `slow`, is open.
+- **kind:** not verified
+- **found:** PR #62
+
+### K69 · A static `LeastSquaresProblem` evaluates its residual at `x₀` twice in a cold `solve`
+
+- **location:** `src/nonlinear/newton.jl` (`init_state`)
+- **evidence:** For a `StaticArray` iterate, `init_state` evaluates `F(x₀)` to check the residual
+  length and the regularization of a rectangular Jacobian, with `reuse = nothing` too, and
+  `solve!!` evaluates it again at the start of the loop. The residual length of a static problem
+  is a type parameter of the value `F` returns, so it is known only from an evaluation.
+- **kind:** defect
+- **found:** PR #62

@@ -5,20 +5,20 @@
 
 using KernelAbstractions: @localmem, @synchronize
 
-@kernel function ka_qr_reflector_kernel!(A, τ, status, k::Int, n::Int)
+@kernel function ka_qr_reflector_kernel!(A, τ, status, k::Int, m::Int)
     idx = @index(Global, Linear)
     if idx == 1
         F = eltype(A)
         R = real(F)
         @inbounds begin
             amax = zero(R)
-            for i in k:n
+            for i in k:m
                 amax = max(amax, abs(A[i, k]))
             end
             σ = zero(R)
             if !iszero(amax)
                 s2 = zero(R)
-                for i in k:n
+                for i in k:m
                     s2 += abs2(A[i, k] / amax)
                 end
                 σ = amax * sqrt(s2)
@@ -31,7 +31,7 @@ using KernelAbstractions: @localmem, @synchronize
                 v₁ = phase * (s_norm + u₁)
                 τk = (s_norm + u₁) / s_norm
                 τ[k] = F(τk)
-                for i in (k + 1):n
+                for i in (k + 1):m
                     A[i, k] = (A[i, k] / amax) / v₁
                 end
                 A[k, k] = -phase * σ
@@ -45,7 +45,7 @@ using KernelAbstractions: @localmem, @synchronize
     end
 end
 
-@kernel function ka_qr_apply_kernel!(A, @Const(τ), k::Int, n::Int)
+@kernel function ka_qr_apply_kernel!(A, @Const(τ), k::Int, m::Int)
     dj = @index(Global, Linear)
     j = k + dj
     @inbounds begin
@@ -53,11 +53,11 @@ end
         if !iszero(τk)
             akj = A[k, j]
             s = zero(akj)
-            for i in (k + 1):n
+            for i in (k + 1):m
                 s += conj(A[i, k]) * A[i, j]
             end
             A[k, j] = (one(τk) - τk) * akj - τk * s
-            for i in (k + 1):n
+            for i in (k + 1):m
                 tik = A[i, k] * τk
                 A[i, j] -= tik * akj + tik * s
             end

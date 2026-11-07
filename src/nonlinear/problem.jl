@@ -57,8 +57,6 @@ function NonlinearProblem(F, J = nothing; jacobian_prototype = nothing)
     NonlinearProblem(F, J, jacobian_prototype)
 end
 
-@inline output_length(::NonlinearProblem, n::Int) = n
-
 """
     jacobian_prototype(prob)
 

@@ -240,8 +240,11 @@ end
     return (; xt = buffer(x), Ft = buffer(Fx), Jv = buffer(Fx))
 end
 @inline function init_globalization(::DogLeg, ::LinearMethod, x, Fx)
-    return (; g̃ = buffer(x), ĝ = buffer(x), Jg = buffer(Fx), s = buffer(x),
-        xt = buffer(x), Ft = buffer(Fx))
+    s = buffer(x)
+    Jg = buffer(Fx)
+    square = length(Fx) == length(x)
+    return (; g̃ = buffer(x), ĝ = buffer(x), Jg, s, xt = buffer(x), Ft = buffer(Fx),
+        u = square ? s : buffer(Fx), b = square ? Jg : buffer(x))
 end
 @inline init_globalization(g, linsolve::LinearMethod, x, Fx) = init_globalization(
     g, linsolve, x)
@@ -443,6 +446,16 @@ end
     return init_state(m, prob, x, p)
 end
 
+# The diagonal shift `J + μ I` of `regularization = μ > 0` needs a square Jacobian, so a
+# `LeastSquaresProblem` with `m_rows > n` residuals refuses it.
+@inline function check_regularization(m::Newton, m_rows::Int, n::Int)
+    if m_rows > n && m.regularization > zero(m.regularization)
+        throw(ArgumentError(
+            "Newton diagonal regularization requires a square Jacobian (m == n), got m = $m_rows, n = $n"))
+    end
+    return nothing
+end
+
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     if prob isa LeastSquaresProblem && m.linsolve isa LUFactorization &&
        !(m.globalization isa LevenbergMarquardt)
@@ -455,10 +468,7 @@ end
         nothing
     elseif prob isa LeastSquaresProblem
         m_rows = output_length(prob, length(x))
-        if m_rows > length(x) && m.regularization > zero(m.regularization)
-            throw(ArgumentError(
-                "Newton diagonal regularization requires a square Jacobian (m == n), got m = $m_rows, n = $(length(x))"))
-        end
+        check_regularization(m, m_rows, length(x))
         buffer(x, eltype(x), m_rows)
     else
         buffer(x)
@@ -472,10 +482,7 @@ end
         if prob isa LeastSquaresProblem
             Fx0 = primal_residual!!(nothing, prob, x, p)
             check_static_residual_length(prob, Fx0, x)
-            if length(Fx0) > length(x) && m.regularization > zero(m.regularization)
-                throw(ArgumentError(
-                    "Newton diagonal regularization requires a square Jacobian (m == n), got m = $(length(Fx0)), n = $(length(x))"))
-            end
+            check_regularization(m, length(Fx0), length(x))
             fac = m.reuse === nothing ? nothing : empty_static_factor(m.linsolve, x, Fx0)
         else
             fac = m.reuse === nothing ? nothing :
@@ -528,14 +535,13 @@ end
 end
 
 @inline function newton_stepkind(
-        ::NonlinearProblem, m::Newton, ::Type{T}, fresh::Bool) where {T}
+        ::AbstractNonlinearProblem, m::Newton, ::Type{T}, fresh::Bool) where {T}
     return newton_stepkind(m, T, fresh)
 end
 @inline function newton_stepkind(
         ::LeastSquaresProblem, m::Newton, ::Type{T}, fresh::Bool) where {T}
     return MeasuredSlope()
 end
-@inline newton_stepkind(::LeastSquaresProblem, m::Newton) = MeasuredSlope()
 
 # `‖Fx‖` with no extra host/device reduction over `Fx` where the state holds it: from the
 # line-search merit `norm2(Fx)` when it is finite and in the normal range, and for any other

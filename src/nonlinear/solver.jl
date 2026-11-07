@@ -81,7 +81,10 @@ end
         status.step_failures, status.promoted, false)
 end
 
-@inline stationary_converged(::NonlinearProblem, ::Options, state, ::SolverStatus) = false
+@inline function stationary_converged(
+        ::AbstractNonlinearProblem, ::Options{R}, state, ::SolverStatus{R}) where {R}
+    return false
+end
 @inline function stationary_converged(
         ::LeastSquaresProblem, options::Options{R}, state, status::SolverStatus{R}) where {R}
     status.iterations >= options.min_iterations || return false
@@ -177,8 +180,11 @@ function solve!!(
         if residual_converged(options, status, fnorm₀)
             return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
+        # the diagnostics are re-measured at `x` at most once per step
+        refreshed = false
         if stationary_converged(prob, options, state, status)
             state = refresh_diagnostics!!(state, method, prob, x, Fx, p)
+            refreshed = true
             if stationary_converged(prob, options, state, status)
                 return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
@@ -189,7 +195,7 @@ function solve!!(
            (step_converged(options, status, rnorm(x)) ||
             (info.code == SUCCESS && iszero(info.stepnorm) &&
              status.iterations >= options.min_iterations))
-            state = refresh_diagnostics!!(state, method, prob, x, Fx, p)
+            refreshed || (state = refresh_diagnostics!!(state, method, prob, x, Fx, p))
             if stationary_converged(prob, options, state, status)
                 return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end

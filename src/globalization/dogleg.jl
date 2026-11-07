@@ -70,9 +70,14 @@ Adapt.adapt_structure(::ToReal{R}, dl::DogLeg) where {R} = DogLeg{R}(dl.radius)
     return dl.radius === nothing ? zero(R) : R(dl.radius)
 end
 
+# `u = F / ‖F‖` has the length of the residual and the segment `b` that of the iterate. A square
+# problem keeps them in the storage of `s` and `Jg`, which `dogleg_step` writes only after it has
+# read `u` and `b`; a `LeastSquaresProblem` with more residuals than unknowns gives each its own.
 @inline function init_globalization(::DogLeg, x)
-    return (; g̃ = buffer(x), ĝ = buffer(x), Jg = buffer(x), s = buffer(x),
-        xt = buffer(x), Ft = buffer(x))
+    s = buffer(x)
+    Jg = buffer(x)
+    return (;
+        g̃ = buffer(x), ĝ = buffer(x), Jg, s, xt = buffer(x), Ft = buffer(x), u = s, b = Jg)
 end
 
 @inline g_g̃(::Nothing) = nothing
@@ -83,6 +88,10 @@ end
 @inline g_Jg(g) = g.Jg
 @inline g_s(::Nothing) = nothing
 @inline g_s(g) = g.s
+@inline g_u(::Nothing) = nothing
+@inline g_u(g) = g.u
+@inline g_b(::Nothing) = nothing
+@inline g_b(g) = g.b
 
 # The trial loop of `DogLeg` at `(x, Fx)`, with the model matrix `J`, the Newton step `sN` (read
 # only when `newton` is `true`) and the radius `δ` (`0` when unset). Returns `(x₊, F₊, δ₊, info)`.
@@ -103,7 +112,7 @@ end
     # `‖g‖ / ‖J ĝ‖² = ‖F‖ ‖g̃‖ / ‖J ĝ‖²`, so that no norm of the product `J' F` occurs. A `g̃`
     # that is zero or whose norm is not finite, or a `J ĝ` that is zero or whose norm is not finite,
     # gives no Cauchy point.
-    u = scale!!(g_s(g), inv(fnorm), Fx)
+    u = scale!!(g_u(g), inv(fnorm), Fx)
     g̃ = mul!!(g_g̃(g), J', u)
     gnorm = rnorm(g̃)
     ĝ = scale!!(g_ĝ(g), inv(gnorm), g̃)
@@ -133,8 +142,8 @@ end
             # `Re⟨a, b̂⟩ ≥ 0` (Nocedal and Wright, Lemma 4.2), and this form of the root does not
             # cancel. No norm of the Newton step in units of `δ` occurs.
             a = scale!!(g_g̃(g), -(nC / δ), ĝ)
-            b = axpby!!(g_Jg(g), one(R), sN, nC, ĝ)
-            b̂ = scale!!(g_Jg(g), inv(rnorm(b)), b)
+            b = axpby!!(g_b(g), one(R), sN, nC, ĝ)
+            b̂ = scale!!(g_b(g), inv(rnorm(b)), b)
             ab = rdot(a, b̂)
             c = 1 - norm2(a)
             ab2 = ab * ab
