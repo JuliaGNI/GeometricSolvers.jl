@@ -15,7 +15,7 @@ end
 
 # The summand of `rnorm`'s scaled path. A functor rather than a closure: a closure that captures
 # `S` carries `Type{Float32}` as a field, a device kernel rejects a non-isbits argument, and so the
-# scaled path threw on every accelerator. A type parameter of a functor is not a field.
+# scaled path threw a `KernelError` on Metal. A type parameter of a functor is not a field.
 struct ScaledSquares{S}
     e::Int
 end
