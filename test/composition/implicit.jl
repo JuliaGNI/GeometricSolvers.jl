@@ -48,6 +48,6 @@ const COMBINATORS = (
         [SVector(0.0, 0.0), SVector(0.0, 0.0)], prob_s, m, SVector(d(1.0), d(2.0)))
 
     # the primal solve with the same method still converges
-    x, status = solve(prob_s, SVector(0.0, 0.0), m, SVector(1.0, 2.0))
+    x, _ = solve(prob_s, SVector(0.0, 0.0), m, SVector(1.0, 2.0))
     @test x ≈ SVector(1.0, 2.0)
 end
