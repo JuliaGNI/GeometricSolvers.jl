@@ -1061,21 +1061,25 @@ so that a compat-only bump can be told apart from an interface change.
   safeguard_cos = nothing, grow_depth = false)` (plus the convenience `Anderson(member, m::Integer;
   kwargs...)` forwarding to `Val(Int(m))`) accelerates an inner fixed-point or nonlinear step map
   $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1
-  ($m \le 4$, `isbits` state on `SVector` and `Number`), R2 (`solve_batch!` kernel), and R3 (no
-  upper bound on `m`, zero heap allocations in `step!!` and `solve!` after warm-up on `Array`, and
-  a `JLArray` step with no scalar indexing under `allowscalar(false)`). Implements Pollock and
-  Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`, defaulting to
-  `1 / sqrt(eps(R))` per iterate element type via `effective_kappa_bar`), trace-scaled Tikhonov
-  regularisation on the Gram normal equations
-  $\Delta W^H \Delta W \gamma = \Delta W^H w_k$, extrapolation weight and model-decrease safeguards
-  ($\sum_{j=0}^{p} |\alpha_j| \le M_\alpha$, optional `safeguard_cos` and `grow_depth`), automatic
-  history clears on residual growth ($\|F\| > \text{restart\_factor} \cdot \text{fnorm\_best}$) or
-  stagnation, `StepInfo.failures` counting filter column drops, rejected weights and history
-  restarts, `state.current_depth` in `1:m` after every step except one that ends in a hard member
-  failure (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with no step taken), which leaves it
-  unchanged, and best-iterate restoration in `finish!!` when `solve!!` exits with
-  `status.code != SUCCESS` and a strictly smaller historical residual norm was recorded.
-  `solve(prob, method::Anderson, x₀, p, options)` forwards to
-  `solve(prob, x₀, method, p; options)`. `solve` with `Anderson` and a `ForwardDiff.Dual` in
-  `x₀` or `p` raises the same `ArgumentError` as the other combinators, before the primal solve, in
-  either form, since implicit differentiation through a combinator is not implemented (K60).
+  ($m \le 4$, `isbits` state on `SVector` and `Number`; the residual may have another type than the
+  iterate, so an `MVector` iterate with an `SVector` residual works (K70)), R2 (`solve_batch!`
+  kernel), and R3 (no upper bound on `m`, zero heap allocations in `step!!` and `solve!` after
+  warm-up on `Array`, and a `JLArray` step with no scalar indexing under `allowscalar(false)`).
+  Implements Pollock and Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`,
+  defaulting to `1 / sqrt(eps(R))` per iterate element type via `effective_kappa_bar`), trace-scaled
+  Tikhonov regularisation on the Gram normal equations $\Delta W^H \Delta W \gamma = \Delta W^H w_k$,
+  extrapolation weight and model-decrease safeguards ($\sum_j |\alpha_j| \le M_\alpha$ over the
+  affine weights of the member candidates, exact also after the angle filter drops an interior
+  history column (K71), optional `safeguard_cos` and `grow_depth`), automatic history clears on
+  residual growth ($\|F\| > \text{restart\_factor} \cdot \text{fnorm\_best}$) or stagnation,
+  `StepInfo.failures` counting filter column drops, rejected weights and history restarts,
+  `state.current_depth` in `1:m` after every step except one that ends in a hard member failure
+  (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with no step taken), which leaves it unchanged,
+  and best-iterate restoration in `finish!!` when `solve!!` exits with `status.code != SUCCESS` and
+  a strictly smaller historical residual norm was recorded. It solves a `NonlinearProblem` or a
+  `StationarityProblem`, with R1 tested on `SVector` and R3 on `Vector`. An accelerated step reports
+  `STALLED` when its member step does and `SUCCESS` otherwise; a fallback or restart step and a hard
+  failure keep the member's code. `solve` with `Anderson` and a `ForwardDiff.Dual` in `x₀` or `p`
+  raises the same `ArgumentError` as the other combinators, before the primal solve, since implicit
+  differentiation through a combinator is not implemented (K60). The method-first
+  `solve(prob, method::Anderson, x₀, p, options)` is not provided (K73).
