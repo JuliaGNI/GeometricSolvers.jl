@@ -24,7 +24,8 @@ In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4`, and the stat
 `m >= 1` is supported with preallocated `n × m` difference matrices, and `step!!` on an
 `Array` allocates nothing.
 When a solve ends with a code other than `SUCCESS`, [`finish!!`](@ref) restores the
-iterate with the smallest residual norm `‖F(x)‖` seen during the solve.
+iterate with the smallest residual norm `‖F(x)‖` seen during the solve. A step is `STALLED`
+when the step of `member` is.
 
 Keywords:
 
@@ -34,8 +35,9 @@ Keywords:
     real element type `R` of the iterate.
   - `restart_factor` (`≥ 3`): the history is cleared when `‖F‖` exceeds
     `restart_factor` times the smallest residual norm seen.
-  - `M_alpha` (`≥ 1`): bound on `∑_{j=0}^p |α_j|` for the extrapolation weights `α`; a
-    step whose weights exceed it, are not finite, or increase the residual of the
+  - `M_alpha` (`≥ 1`): bound on `∑_j |α_j|` for the affine weights `α_j` of the member
+    candidates `g_{k-j}` that `x₊` combines, also after a filter has dropped a history
+    column; a step whose weights exceed it, are not finite, or increase the residual of the
     linear model takes the step of `member` and counts one failure.
   - `safeguard_cos`: when set, the history is cleared if the cosine between consecutive
     corrections `w_k` exceeds it in modulus.
@@ -121,14 +123,6 @@ end
     return a.κ_bar === nothing ? inv(sqrt(eps(R))) : R(a.κ_bar)
 end
 
-# The method-first argument order `solve(prob, method, x₀, p, options)` forwards to the
-# generic `solve(prob, x₀, method, p; options)`.
-function solve(
-        prob::NonlinearProblem, method::Anderson, x₀, p = nothing,
-        options::Union{Nothing, Options} = nothing; kwargs...)
-    return solve(prob, x₀, method, p; options = options, kwargs...)
-end
-
 # Preallocated R3 buffers for `Anderson`: candidate and difference buffers on the iterate's
 # device, `m × m` and `m` Gram buffers on the device for `mul!!`, and host workspace arrays
 # for the `m × m` filters and regularised Cholesky solve.
@@ -181,17 +175,20 @@ function init_anderson_workspace(x::AbstractVector{T}, ::Val{m}) where {T, m}
         zeros(Int, m), collect(1:m), collect(1:m))
 end
 
-# State of `Anderson{m}`: `isbits` in R1 (`work === nothing`, `Fx === nothing`) and
-# preallocated in R3 (`work isa AndersonWorkspace`).
-struct AndersonState{m, MS, FX, X, DX, DW, W, R <: Real}
+# State of `Anderson{m}`: `isbits` in R1 (`work`, `Fx` and `Fx_best` are `nothing`, so the
+# residual may have another type than the iterate) and preallocated in R3
+# (`work isa AndersonWorkspace`). `ages[c]` is the age of the history column `c`: the column of
+# age `a` is the difference `g_{k-a+1} - g_{k-a}` of the member candidates `g`.
+struct AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R <: Real}
     member_state::MS
     Fx::FX
     x_prev::X
     w_prev::X
     x_best::X
-    Fx_best::X
+    Fx_best::FB
     ΔX::DX
     ΔW::DW
+    ages::A
     work::W
     fnorm₀::R
     fnorm_best::R
@@ -200,30 +197,28 @@ struct AndersonState{m, MS, FX, X, DX, DW, W, R <: Real}
     has_prev::Bool
 end
 
-function AndersonState(
-        member_state::MS, Fx::FX, x_prev::X, w_prev::X, x_best::X, Fx_best::X,
-        ΔX::NTuple{m, X}, ΔW::NTuple{m, X}, work::W,
+function AndersonState{m}(
+        member_state, Fx, x_prev::X, w_prev::X, x_best::X, Fx_best, ΔX, ΔW, ages, work,
         fnorm₀::R, fnorm_best::R, depth::Int32, current_depth::Int32,
-        has_prev::Bool) where {m, MS, FX, X, W, R <: Real}
-    return AndersonState{m, MS, FX, X, typeof(ΔX), typeof(ΔW), W, R}(
-        member_state, Fx, x_prev, w_prev, x_best, Fx_best,
-        ΔX, ΔW, work, fnorm₀, fnorm_best, depth, current_depth, has_prev)
+        has_prev::Bool) where {m, X, R <: Real}
+    return AndersonState{m, typeof(member_state), typeof(Fx), X, typeof(Fx_best),
+        typeof(ΔX), typeof(ΔW), typeof(ages), typeof(work), R}(
+        member_state, Fx, x_prev, w_prev, x_best, Fx_best, ΔX, ΔW, ages, work,
+        fnorm₀, fnorm_best, depth, current_depth, has_prev)
 end
 
 @inline residual_buffer(state::AndersonState) = state.Fx
 
 @inline function sync_merit(state::AndersonState{m}, a::Anderson{m}, merit::Real) where {m}
     ms = sync_merit(state.member_state, a.member, merit)
-    return AndersonState{
-        m, typeof(ms), typeof(state.Fx), typeof(state.x_prev),
-        typeof(state.ΔX), typeof(state.ΔW), typeof(state.work), typeof(state.fnorm₀)}(
+    return AndersonState{m}(
         ms, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-        state.ΔX, state.ΔW, state.work, state.fnorm₀, state.fnorm_best,
+        state.ΔX, state.ΔW, state.ages, state.work, state.fnorm₀, state.fnorm_best,
         state.depth, state.current_depth, state.has_prev)
 end
 
 function init_state(
-        a::Anderson{m}, prob::NonlinearProblem,
+        a::Anderson{m}, prob::CombinatorProblem,
         x::Union{StaticVector, Number}, p) where {m}
     m <= 4 ||
         throw(ArgumentError("R1 Anderson history depth m must be <= 4, got $m"))
@@ -232,13 +227,14 @@ function init_state(
     z = zero(x)
     ΔX = ntuple(_ -> z, Val(m))
     ΔW = ntuple(_ -> z, Val(m))
-    return AndersonState(
-        ms, nothing, z, z, z, z, ΔX, ΔW, nothing,
+    ages = ntuple(_ -> Int32(0), Val(m))
+    return AndersonState{m}(
+        ms, nothing, z, z, z, nothing, ΔX, ΔW, ages, nothing,
         R(NaN), R(NaN), Int32(0), Int32(0), false)
 end
 
 function init_state(
-        a::Anderson{m}, prob::NonlinearProblem,
+        a::Anderson{m}, prob::CombinatorProblem,
         x::AbstractVector{T}, p) where {m, T}
     R = real(T)
     n = length(x)
@@ -252,43 +248,43 @@ function init_state(
     ΔW = similar(x, T, n, m)
     fill!(ΔX, zero(T))
     fill!(ΔW, zero(T))
+    ages = zeros(Int32, m)
     work = init_anderson_workspace(x, Val(m))
-    return AndersonState{
-        m, typeof(ms), typeof(Fx), typeof(x_prev),
-        typeof(ΔX), typeof(ΔW), typeof(work), R}(
-        ms, Fx, x_prev, w_prev, x_best, Fx_best, ΔX, ΔW, work,
+    return AndersonState{m}(
+        ms, Fx, x_prev, w_prev, x_best, Fx_best, ΔX, ΔW, ages, work,
         R(NaN), R(NaN), Int32(0), Int32(0), false)
 end
 
 @inline function start!!(
-        state::AndersonState{m, MS, Nothing, X, DX, DW, Nothing, R},
-        a::Anderson{m}, prob, x, Fx, p, fnorm₀) where {m, MS, X, DX, DW, R <: Real}
+        state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
+        a::Anderson{m}, prob, x, Fx, p, fnorm₀) where {m, MS, X, DX, DW, A, R <: Real}
     ms = start!!(state.member_state, a.member, prob, x, Fx, p, fnorm₀)
     z = zero(x)
     f0 = R(fnorm₀)
-    return AndersonState(
-        ms, nothing, z, z, x, Fx, state.ΔX, state.ΔW, nothing,
+    return AndersonState{m}(
+        ms, nothing, z, z, x, nothing, state.ΔX, state.ΔW, state.ages, nothing,
         f0, f0, Int32(0), Int32(0), false)
 end
 
 @inline function start!!(
-        state::AndersonState{m, MS, FX, X, DX, DW, W, R},
+        state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
         a::Anderson{m}, prob, x, Fx, p,
         fnorm₀) where {
-        m, MS, FX, X, DX, DW, W <: AndersonWorkspace, R <: Real}
+        m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real}
     ms = start!!(state.member_state, a.member, prob, x, Fx, p, fnorm₀)
     T = eltype(x)
     copyto!(state.x_best, x)
     copyto!(state.Fx_best, Fx)
     fill!(state.ΔX, zero(T))
     fill!(state.ΔW, zero(T))
+    fill!(state.ages, Int32(0))
     @inbounds for j in 1:m
         state.work.col_idx[j] = j
     end
     f0 = R(fnorm₀)
-    return AndersonState{m, typeof(ms), FX, X, DX, DW, W, R}(
+    return AndersonState{m}(
         ms, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-        state.ΔX, state.ΔW, state.work, f0, f0, Int32(0), Int32(0), false)
+        state.ΔX, state.ΔW, state.ages, state.work, f0, f0, Int32(0), Int32(0), false)
 end
 
 @inline function should_restore_best(status::SolverStatus{R}, fnorm_best::R) where {R}
@@ -302,9 +298,9 @@ end
 end
 
 @inline function finish!!(
-        state::AndersonState{m, MS, Nothing, X, DX, DW, Nothing, R},
+        state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
         a::Anderson{m}, prob, x, Fx, status::SolverStatus{R}) where {
-        m, MS, X, DX, DW, R <: Real}
+        m, MS, X, DX, DW, A, R <: Real}
     x_m, st_m, ms = finish!!(state.member_state, a.member, prob, x, Fx, status)
     if should_restore_best(st_m, state.fnorm_best)
         x_out = state.x_best
@@ -313,20 +309,20 @@ end
         x_out = x_m
         st_out = st_m
     end
-    state_out = AndersonState(
-        ms, nothing, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-        state.ΔX, state.ΔW, nothing,
+    state_out = AndersonState{m}(
+        ms, nothing, state.x_prev, state.w_prev, state.x_best, nothing,
+        state.ΔX, state.ΔW, state.ages, nothing,
         R(NaN), state.fnorm_best, state.depth, state.current_depth, state.has_prev)
     return x_out, st_out, state_out
 end
 
 @inline function finish!!(
-        state::AndersonState{m, MS, FX, X, DX, DW, W, R},
+        state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
         a::Anderson{m}, prob,
         x,
         Fx,
         status::SolverStatus{R}) where {
-        m, MS, FX, X, DX, DW, W <: AndersonWorkspace, R <: Real}
+        m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real}
     x_m, st_m, ms = finish!!(state.member_state, a.member, prob, x, Fx, status)
     if should_restore_best(st_m, state.fnorm_best)
         copyto!(x_m, state.x_best)
@@ -335,9 +331,9 @@ end
     else
         st_out = st_m
     end
-    state_out = AndersonState{m, typeof(ms), FX, X, DX, DW, W, R}(
+    state_out = AndersonState{m}(
         ms, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-        state.ΔX, state.ΔW, state.work,
+        state.ΔX, state.ΔW, state.ages, state.work,
         R(NaN), state.fnorm_best, state.depth, state.current_depth, state.has_prev)
     return x_m, st_out, state_out
 end
@@ -394,6 +390,10 @@ end
 @inline function accelerated_current_depth(p::Int, m::Int)
     return min(Int32(p + 1), Int32(m))
 end
+
+# The code of an accelerated step: `STALLED` when the member step is, as for the other
+# combinators, and `SUCCESS` else.
+@inline accelerated_code(info_m::StepInfo) = info_m.code == STALLED ? STALLED : SUCCESS
 
 # Regularised Cholesky solve of `(G_K + λI) γ = b_K` in R1 (`SMatrix` / `SVector`).
 @inline function solve_weights(
@@ -488,18 +488,34 @@ function solve_weights!(
     return γ
 end
 
-# Check `all(isfinite, γ)`, `∑_{j=0}^p |α_j| <= M_alpha`, and `Δmodel <= eps(R) * wnorm2`.
+# `∑_j |α_j|` for the affine weights `α_j` of the member candidates `g_{k-j}` in
+# `x₊ = g_k - ∑_c γ_c (g_{k-a_c+1} - g_{k-a_c})`, with `a_c = ages[kept[c]]` increasing in `c`.
+# Two kept columns of consecutive ages share a candidate, whose weight is then `γ_c - γ_{c+1}`.
+@inline function affine_weight_sum(γ, kept, ages, p::Int, ::Type{R}) where {R <: Real}
+    s = zero(R)
+    j = 0          # the index of the candidate whose weight `α_j` is still open
+    α_j = one(R)
+    @inbounds for c in 1:p
+        a = Int(ages[kept[c]])
+        γ_c = R(γ[c])
+        if a - 1 == j
+            s += abs(α_j - γ_c)
+        else
+            s += abs(α_j) + abs(γ_c)
+        end
+        j = a
+        α_j = γ_c
+    end
+    return s + abs(α_j)
+end
+
+# Check `all(isfinite, γ)`, `∑_j |α_j| <= M_alpha`, and `Δmodel <= eps(R) * wnorm2`.
 @inline function weights_acceptable(
-        G, b, γ, kept, p::Int, M_alpha::R, wnorm2::R) where {R <: Real}
+        G, b, γ, kept, ages, p::Int, M_alpha::R, wnorm2::R) where {R <: Real}
     @inbounds for c in 1:p
         isfinite(γ[c]) || return false
     end
-    sum_abs_α = abs(one(R) - γ[1])
-    @inbounds for c in 1:(p - 1)
-        sum_abs_α += abs(γ[c] - γ[c + 1])
-    end
-    sum_abs_α += abs(γ[p])
-    sum_abs_α <= M_alpha || return false
+    affine_weight_sum(γ, kept, ages, p, R) <= M_alpha || return false
 
     Δmodel = zero(R)
     @inbounds for c in 1:p
@@ -648,12 +664,13 @@ function filter_history_r3!(
     return p
 end
 
-# R1 `step!!` (`StaticVector` or `Number`).
+# R1 `step!!` (`StaticVector` or `Number`). The residual `Fx` may have another type than the
+# iterate `x`, such as an `SVector` residual of an `MVector` iterate.
 function step!!(
-        state::AndersonState{m, MS, Nothing, X, DX, DW, Nothing, R},
-        a::Anderson{m}, prob::NonlinearProblem, x::X, Fx::X,
+        state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
+        a::Anderson{m}, prob::AbstractNonlinearProblem, x::X, Fx,
         p) where {
-        m, MS, X <: Union{StaticVector, Number}, DX, DW, R <: Real}
+        m, MS, X <: Union{StaticVector, Number}, DX, DW, A, R <: Real}
     fnorm_in = rnorm(Fx)
     if is_unstarted(state)
         return x, Fx, state,
@@ -661,20 +678,18 @@ function step!!(
     end
 
     x_best = state.x_best
-    Fx_best = state.Fx_best
     fnorm_best = state.fnorm_best
     if isfinite(fnorm_in) && fnorm_in < fnorm_best
         x_best = x
-        Fx_best = Fx
         fnorm_best = fnorm_in
     end
 
     ms_sync = sync_merit(state.member_state, a.member, norm2(Fx))
     x_m, F_m, ms_new, info_m = step!!(ms_sync, a.member, prob, x, Fx, p)
     if is_hard_failure(info_m)
-        st_err = AndersonState(
-            ms_new, nothing, state.x_prev, state.w_prev, x_best, Fx_best,
-            state.ΔX, state.ΔW, nothing,
+        st_err = AndersonState{m}(
+            ms_new, nothing, state.x_prev, state.w_prev, x_best, nothing,
+            state.ΔX, state.ΔW, state.ages, nothing,
             state.fnorm₀, fnorm_best, state.depth, state.current_depth, state.has_prev)
         return x, Fx,
         st_err,
@@ -689,12 +704,11 @@ function step!!(
     if !state.has_prev
         if isfinite(fnorm_m) && fnorm_m < fnorm_best
             x_best = x_m
-            Fx_best = F_m
             fnorm_best = fnorm_m
         end
-        st_step1 = AndersonState(
-            ms_new, nothing, x, w_k, x_best, Fx_best,
-            state.ΔX, state.ΔW, nothing,
+        st_step1 = AndersonState{m}(
+            ms_new, nothing, x, w_k, x_best, nothing,
+            state.ΔX, state.ΔW, state.ages, nothing,
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         return x_m, F_m, st_step1, info_m
     end
@@ -714,14 +728,13 @@ function step!!(
        should_restart_angle(a, rdot(w_k, state.w_prev), wnorm, rnorm(state.w_prev))
         if isfinite(fnorm_m) && fnorm_m < fnorm_best
             x_best = x_m
-            Fx_best = F_m
             fnorm_best = fnorm_m
         end
         ΔX_zero = ntuple(_ -> zero(x), Val(m))
         ΔW_zero = ntuple(_ -> zero(x), Val(m))
-        st_rst = AndersonState(
-            ms_new, nothing, x, w_k, x_best, Fx_best,
-            ΔX_zero, ΔW_zero, nothing,
+        st_rst = AndersonState{m}(
+            ms_new, nothing, x, w_k, x_best, nothing,
+            ΔX_zero, ΔW_zero, ntuple(_ -> Int32(0), Val(m)), nothing,
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_rst = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
@@ -729,11 +742,12 @@ function step!!(
         return x_m, F_m, st_rst, info_rst
     end
 
-    # Prepend `(Δx_new, Δw_new)` at index 1 up to `m_cap`.
+    # Prepend `(Δx_new, Δw_new)` at index 1, of age 1, up to `m_cap`.
     m_cap = effective_depth_cap(a, wnorm)
     d = min(Int(state.depth) + 1, m_cap)
     ΔX_cand = ntuple(j -> j == 1 ? Δx_new : state.ΔX[j - 1], Val(m))
     ΔW_cand = ntuple(j -> j == 1 ? Δw_new : state.ΔW[j - 1], Val(m))
+    ages_cand = ntuple(j -> j == 1 ? Int32(1) : state.ages[j - 1] + Int32(1), Val(m))
 
     G = zero(SMatrix{m, m, R, m * m})
     b = zero(SVector{m, R})
@@ -753,18 +767,18 @@ function step!!(
     failures = filter_failures(info_m.failures, d, p_kept)
     ΔX_kept = ntuple(c -> c <= p_kept ? ΔX_cand[kept[c]] : zero(x), Val(m))
     ΔW_kept = ntuple(c -> c <= p_kept ? ΔW_cand[kept[c]] : zero(x), Val(m))
+    ages_kept = ntuple(c -> c <= p_kept ? ages_cand[kept[c]] : Int32(0), Val(m))
     cur_depth = accelerated_current_depth(p_kept, m)
 
     γ = solve_weights(G, b, kept, p_kept)
-    if !weights_acceptable(G, b, γ, kept, p_kept, R(a.M_alpha), norm2(w_k))
+    if !weights_acceptable(G, b, γ, kept, ages_cand, p_kept, R(a.M_alpha), norm2(w_k))
         if isfinite(fnorm_m) && fnorm_m < fnorm_best
             x_best = x_m
-            Fx_best = F_m
             fnorm_best = fnorm_m
         end
-        st_fb = AndersonState(
-            ms_new, nothing, x, w_k, x_best, Fx_best,
-            ΔX_kept, ΔW_kept, nothing,
+        st_fb = AndersonState{m}(
+            ms_new, nothing, x, w_k, x_best, nothing,
+            ΔX_kept, ΔW_kept, ages_kept, nothing,
             state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
         info_fb = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
@@ -785,14 +799,13 @@ function step!!(
     if should_restart_growth(fnorm₊, R(a.restart_factor), fnorm_best)
         if isfinite(fnorm_m) && fnorm_m < fnorm_best
             x_best = x_m
-            Fx_best = F_m
             fnorm_best = fnorm_m
         end
         ΔX_zero = ntuple(_ -> zero(x), Val(m))
         ΔW_zero = ntuple(_ -> zero(x), Val(m))
-        st_post = AndersonState(
-            ms_new, nothing, x, w_k, x_best, Fx_best,
-            ΔX_zero, ΔW_zero, nothing,
+        st_post = AndersonState{m}(
+            ms_new, nothing, x, w_k, x_best, nothing,
+            ΔX_zero, ΔW_zero, ntuple(_ -> Int32(0), Val(m)), nothing,
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_post = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
@@ -802,16 +815,16 @@ function step!!(
 
     if fnorm₊ < fnorm_best
         x_best = x₊
-        Fx_best = F₊
         fnorm_best = fnorm₊
     end
     stepnorm = rnorm(x₊ - x)
-    st_ok = AndersonState(
-        ms_new, nothing, x, w_k, x_best, Fx_best,
-        ΔX_kept, ΔW_kept, nothing,
+    st_ok = AndersonState{m}(
+        ms_new, nothing, x, w_k, x_best, nothing,
+        ΔX_kept, ΔW_kept, ages_kept, nothing,
         state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
     info_ok = StepInfo{R}(
-        SUCCESS, fnorm₊, stepnorm, failures, info_m.promoted, info_m.limited)
+        accelerated_code(info_m), fnorm₊, stepnorm, failures, info_m.promoted,
+        info_m.limited)
     return x₊, F₊, st_ok, info_ok
 end
 
@@ -878,6 +891,7 @@ end
     T = eltype(state.ΔX)
     fill!(state.ΔX, zero(T))
     fill!(state.ΔW, zero(T))
+    fill!(state.ages, Int32(0))
     @inbounds for j in 1:m
         work.col_idx[j] = j
     end
@@ -886,11 +900,11 @@ end
 
 # R3 `step!!` (`Array` or `AbstractGPUArray`).
 function step!!(
-        state::AndersonState{m, MS, FX, X, DX, DW, W, R},
-        a::Anderson{m}, prob::NonlinearProblem,
+        state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
+        a::Anderson{m}, prob::AbstractNonlinearProblem,
         x::AbstractVector{T}, Fx::AbstractVector{T},
         p) where {
-        m, MS, FX, X, DX, DW, W <: AndersonWorkspace, R <: Real, T}
+        m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real, T}
     fnorm_in = rnorm(Fx)
     if is_unstarted(state)
         return x, Fx, state,
@@ -910,9 +924,9 @@ function step!!(
     ms_sync = sync_merit(state.member_state, a.member, norm2(Fx))
     x_m, F_m, ms_new, info_m = step!!(ms_sync, a.member, prob, work.x_m, work.F_m, p)
     if is_hard_failure(info_m)
-        st_err = AndersonState{m, typeof(ms_new), FX, X, DX, DW, W, R}(
+        st_err = AndersonState{m}(
             ms_new, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-            state.ΔX, state.ΔW, work,
+            state.ΔX, state.ΔW, state.ages, work,
             state.fnorm₀, fnorm_best, state.depth, state.current_depth, state.has_prev)
         return x, Fx,
         st_err,
@@ -936,9 +950,9 @@ function step!!(
             copyto!(state.Fx_best, Fx)
             fnorm_best = fnorm_m
         end
-        st_step1 = AndersonState{m, typeof(ms_new), FX, X, DX, DW, W, R}(
+        st_step1 = AndersonState{m}(
             ms_new, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-            state.ΔX, state.ΔW, work,
+            state.ΔX, state.ΔW, state.ages, work,
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         return x, Fx, st_step1, info_m
     end
@@ -964,9 +978,9 @@ function step!!(
             fnorm_best = fnorm_m
         end
         _reset_r3_history!(state, work)
-        st_rst = AndersonState{m, typeof(ms_new), FX, X, DX, DW, W, R}(
+        st_rst = AndersonState{m}(
             ms_new, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-            state.ΔX, state.ΔW, work,
+            state.ΔX, state.ΔW, state.ages, work,
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_rst = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
@@ -974,14 +988,16 @@ function step!!(
         return x, Fx, st_rst, info_rst
     end
 
-    # Prepend `(Δx_new, Δw_new)` at logical column 1 using `work.col_idx`.
+    # Prepend `(Δx_new, Δw_new)` at logical column 1, of age 1, using `work.col_idx`.
     m_cap = effective_depth_cap(a, wnorm)
     d = min(Int(state.depth) + 1, m_cap)
     new_phys = @inbounds work.col_idx[d]
     @inbounds for j in d:-1:2
         work.col_idx[j] = work.col_idx[j - 1]
+        state.ages[j] = state.ages[j - 1] + Int32(1)
     end
     @inbounds work.col_idx[1] = new_phys
+    @inbounds state.ages[1] = Int32(1)
     @inbounds for j in (d + 1):m
         _zero_history_col!(state.ΔX, work.col_idx[j])
         _zero_history_col!(state.ΔW, work.col_idx[j])
@@ -1014,15 +1030,18 @@ function step!!(
 
     solve_weights!(work.γ, work.L, work.y, work.G, work.b, work.kept, p_kept)
     acceptable = weights_acceptable(
-        work.G, work.b, work.γ, work.kept, p_kept, R(a.M_alpha), norm2(work.w_k))
+        work.G, work.b, work.γ, work.kept, state.ages, p_kept, R(a.M_alpha),
+        norm2(work.w_k))
 
-    # Compact `work.col_idx` so logical columns `1:p_kept` hold the kept physical columns,
-    # and zero out any dropped physical columns in `ΔX, ΔW`.
+    # Compact `work.col_idx` and `state.ages` so logical columns `1:p_kept` hold the kept
+    # physical columns, and zero out any dropped physical columns in `ΔX, ΔW`. `kept` increases
+    # and `kept[c] >= c`, so the ages compact in place.
     @inbounds for j in 1:m
         work.col_tmp[j] = work.col_idx[j]
     end
     @inbounds for c in 1:p_kept
         work.col_idx[c] = work.col_tmp[work.kept[c]]
+        state.ages[c] = state.ages[work.kept[c]]
     end
     tail_pos = p_kept + 1
     @inbounds for j in 1:m
@@ -1054,9 +1073,9 @@ function step!!(
             copyto!(state.Fx_best, Fx)
             fnorm_best = fnorm_m
         end
-        st_fb = AndersonState{m, typeof(ms_new), FX, X, DX, DW, W, R}(
+        st_fb = AndersonState{m}(
             ms_new, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-            state.ΔX, state.ΔW, work,
+            state.ΔX, state.ΔW, state.ages, work,
             state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
         info_fb = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
@@ -1080,9 +1099,9 @@ function step!!(
             fnorm_best = fnorm_m
         end
         _reset_r3_history!(state, work)
-        st_post = AndersonState{m, typeof(ms_new), FX, X, DX, DW, W, R}(
+        st_post = AndersonState{m}(
             ms_new, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-            state.ΔX, state.ΔW, work,
+            state.ΔX, state.ΔW, state.ages, work,
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_post = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
@@ -1101,11 +1120,12 @@ function step!!(
         copyto!(state.Fx_best, Fx)
         fnorm_best = fnorm₊
     end
-    st_ok = AndersonState{m, typeof(ms_new), FX, X, DX, DW, W, R}(
+    st_ok = AndersonState{m}(
         ms_new, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
-        state.ΔX, state.ΔW, work,
+        state.ΔX, state.ΔW, state.ages, work,
         state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
     info_ok = StepInfo{R}(
-        SUCCESS, fnorm₊, stepnorm, failures, info_m.promoted, info_m.limited)
+        accelerated_code(info_m), fnorm₊, stepnorm, failures, info_m.promoted,
+        info_m.limited)
     return x, Fx, st_ok, info_ok
 end

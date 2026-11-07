@@ -52,12 +52,3 @@ const COMBINATORS = (
     x, _ = solve(prob_s, SVector(0.0, 0.0), m, SVector(1.0, 2.0))
     @test x ≈ SVector(1.0, 2.0)
 end
-
-@testset "the method-first solve with Anderson refuses ForwardDiff.Dual inputs" begin
-    calls = Ref(0)
-    prob = NonlinearProblem((x, p) -> (calls[] += 1; x .- p))
-    d(v) = ForwardDiff.Dual{CombinatorDualTag}(v, 1.0)
-    @test_throws "does not accept ForwardDiff.Dual inputs for the combinator Anderson" solve(
-        prob, Anderson(Newton(), 2), SVector(0.0, 0.0), SVector(d(1.0), d(2.0)))
-    @test calls[] == 0
-end

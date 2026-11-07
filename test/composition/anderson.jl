@@ -36,6 +36,21 @@ struct _AndersonR3LinearF{T, R}
     c1::T
 end
 
+# A member that takes the step of `Picard(; damping = 0.5)` and reports every step `STALLED`
+struct _StallingPicard end
+
+function GeometricSolvers.init_state(::_StallingPicard, prob::NonlinearProblem, x, p)
+    return init_state(Picard(; damping = 0.5), prob, x, p)
+end
+
+function GeometricSolvers.step!!(
+        s::GeometricSolvers.PicardState, ::_StallingPicard, prob::NonlinearProblem, x, Fx, p)
+    x₊, F₊, s₊, info = step!!(s, Picard(; damping = 0.5), prob, x, Fx, p)
+    info_stalled = StepInfo{typeof(info.fnorm)}(
+        STALLED, info.fnorm, info.stepnorm, info.failures, info.promoted, info.limited)
+    return x₊, F₊, s₊, info_stalled
+end
+
 function (f::_AndersonR3LinearF{T, R})(F, z, p) where {T, R}
     @. F = R(4 // 5) * z - f.c1
     return F
@@ -495,13 +510,6 @@ end
         @test x_best_r1 == recorded_r1[min_idx_r1][1]
         @test status_best_r1.fnorm == recorded_r1[min_idx_r1][2]
 
-        # The method-first argument order forwards to the generic `solve`
-        x_fwd_r1, status_fwd_r1 = solve(
-            prob_dip_r1, Anderson(Picard(; damping = 0.95), Val(2)), SVector(1.0, -0.5),
-            nothing, opts_div)
-        @test x_fwd_r1 == x_best_r1
-        @test status_fwd_r1.iterations == status_best_r1.iterations
-
         # Same check in R3
         recorded_r3 = Tuple{Vector{Float64}, Float64}[]
         function F_dip_then_grow_r3!(F, x, p)
@@ -537,15 +545,16 @@ end
         e3 = SVector(0.0, 0.0, 1.0, 0.0)
         e4 = SVector(0.0, 0.0, 0.0, 1.0)
 
-        st_orth = AndersonState(
+        st_orth = AndersonState{4}(
             init_state(a4.member, prob4_r1, e1, nothing),
             nothing,
             zero(e1),
             zero(e1),
             e1,
-            -e1,
+            nothing,
             (e2, e3, e4, zero(e1)),
             (e2, e3, e4, zero(e1)),
+            Int32.((1, 2, 3, 0)),
             nothing,
             1.0,
             1.0,
@@ -575,12 +584,11 @@ end
             st6_init.ΔX[j + 1, j] = 1.0
             st6_init.ΔW[j + 1, j] = 1.0
         end
-        st6 = AndersonState{
-            6, typeof(st6_init.member_state), typeof(st6_init.Fx), typeof(st6_init.x_prev),
-            typeof(st6_init.ΔX), typeof(st6_init.ΔW), typeof(st6_init.work), Float64}(
+        st6_init.ages[1:5] .= 1:5
+        st6 = AndersonState{6}(
             st6_init.member_state, st6_init.Fx, st6_init.x_prev, st6_init.w_prev,
-            st6_init.x_best, st6_init.Fx_best, st6_init.ΔX, st6_init.ΔW, st6_init.work,
-            st6_init.fnorm₀, st6_init.fnorm_best, Int32(5), Int32(5), true)
+            st6_init.x_best, st6_init.Fx_best, st6_init.ΔX, st6_init.ΔW, st6_init.ages,
+            st6_init.work, st6_init.fnorm₀, st6_init.fnorm_best, Int32(5), Int32(5), true)
         _, _, st6_next, info6 = step!!(
             st6, a6, prob6_r3, copy(x6_in), copy(Fx6_in), nothing)
         @test info6.failures == 0
@@ -589,15 +597,16 @@ end
 
         # 3b. Two almost parallel columns in the middle of the history:
         col3_par = normalize(e2 + 1e-6 * e3)
-        st_par = AndersonState(
+        st_par = AndersonState{4}(
             init_state(a4.member, prob4_r1, e1, nothing),
             nothing,
             zero(e1),
             zero(e1),
             e1,
-            -e1,
+            nothing,
             (e2, col3_par, e4, zero(e1)),
             (e2, col3_par, e4, zero(e1)),
+            Int32.((1, 2, 3, 0)),
             nothing,
             1.0,
             1.0,
@@ -614,20 +623,22 @@ end
         @test st_par_next.ΔW[1] == e1
         @test st_par_next.ΔW[2] == e2
         @test st_par_next.ΔW[3] == e4
+        @test st_par_next.ages == Int32.((1, 2, 4, 0))
         F_kept = hcat(Vector(st_par_next.ΔW[1]), Vector(st_par_next.ΔW[2]), Vector(st_par_next.ΔW[3]))
         @test cond(F_kept) < effective_kappa_bar(a4, Float64)
 
         # 3c. Out-of-scale older column dropped by length filter and counted in failures:
         a4_len = Anderson(Picard(; damping = 1.0), Val(4); c_s = 0.5, κ_bar = 50.0)
-        st_len = AndersonState(
+        st_len = AndersonState{4}(
             init_state(a4_len.member, prob4_r1, e1, nothing),
             nothing,
             zero(e1),
             zero(e1),
             e1,
-            -e1,
+            nothing,
             (e2, 1e5 * e3, zero(e1), zero(e1)),
             (e2, 1e5 * e3, zero(e1), zero(e1)),
+            Int32.((1, 2, 0, 0)),
             nothing,
             1.0,
             1.0,
@@ -644,15 +655,16 @@ end
         @test cond(F_len_kept) < a4_len.κ_bar
 
         # 3d. Zero newest column triggers a counted restart and produces no NaN:
-        st_zero_col = AndersonState(
+        st_zero_col = AndersonState{4}(
             init_state(a4.member, prob4_r1, e1, nothing),
             nothing,
             zero(e1),
             e1,
             e1,
-            -e1,
+            nothing,
             (e2, e3, zero(e1), zero(e1)),
             (e2, e3, zero(e1), zero(e1)),
+            Int32.((1, 2, 0, 0)),
             nothing,
             1.0,
             1.0,
@@ -674,15 +686,16 @@ end
         # when M_alpha = 50.0, ∑|α_j| = 39 <= 50.0 is accepted, taking x₊ ≈ -19.0 * e1 with failures == 0.
         a_malpha_low = Anderson(Picard(; damping = 1.0), Val(2); M_alpha = 3.0, restart_factor = 100.0)
         a_malpha_high = Anderson(Picard(; damping = 1.0), Val(2); M_alpha = 50.0, restart_factor = 100.0)
-        st_ma = AndersonState(
+        st_ma = AndersonState{2}(
             init_state(a_malpha_low.member, prob4_r1, e1, nothing),
             nothing,
             zero(e1),
             0.95 * e1,
             e1,
-            -e1,
+            nothing,
             (zero(e1), zero(e1)),
             (zero(e1), zero(e1)),
+            Int32.((0, 0)),
             nothing,
             1.0,
             1.0,
@@ -701,6 +714,54 @@ end
         @test info_ma_high.code == SUCCESS
         @test info_ma_high.failures == 0
         @test x_ma_high ≈ -19.0 * e1 atol = 1e-6
+
+        # 3g. M_alpha bounds the exact ∑|α_j| after an interior drop. The angle filter drops
+        # column 2, which is parallel to the newest column f1, so the kept columns have ages 1
+        # and 3, and γ = (1, 20/3) gives α = (1 - γ₁, γ₁, -γ₂, γ₂) = (0, 1, -20/3, 20/3) with
+        # ∑|α_j| = 43/3 ≈ 14.33; the sum for adjacent columns would be 37/3 ≈ 12.33.
+        f1 = SVector(1.0, 0.0, 0.0)
+        f2 = SVector(0.0, 1.0, 0.0)
+        f3 = SVector(0.0, 0.0, 1.0)
+        w_drop = f1 + (20 / 3) * f2
+        prob_drop_r1 = NonlinearProblem((x, p) -> -w_drop)
+        prob_drop_r3 = NonlinearProblem((F, x, p) -> (F .= -w_drop; F))
+        for (M_alpha, accepts) in ((13.0, false), (15.0, true))
+            a_drop = Anderson(Picard(; damping = 1.0), Val(3); M_alpha, restart_factor = 100.0)
+            st_drop = AndersonState{3}(
+                init_state(a_drop.member, prob_drop_r1, f1, nothing), nothing,
+                zero(f1), w_drop - f1, f1, nothing,
+                (f1, f1, zero(f1)), (f1 + 0.01 * f3, f2, zero(f1)), Int32.((1, 2, 0)),
+                nothing, 1.0, rnorm(w_drop), Int32(2), Int32(2), true)
+            x_drop, _, st_drop_next, info_drop = step!!(
+                st_drop, a_drop, prob_drop_r1, f1, -w_drop, nothing)
+            @test st_drop_next.depth == 2
+            @test st_drop_next.ages == Int32.((1, 3, 0))
+            # one dropped column, and one rejected step when 14.33 > M_alpha
+            @test info_drop.failures == (accepts ? 1 : 2)
+            # the step of the member is f1 + w_drop
+            @test x_drop ≈ (accepts ? -(20 / 3) * f1 : f1 + w_drop) atol = 1e-10
+
+            x_r3 = Vector(f1)
+            Fx_r3 = Vector(-w_drop)
+            st3 = start!!(init_state(a_drop, prob_drop_r3, x_r3, nothing), a_drop,
+                prob_drop_r3, x_r3, Fx_r3, nothing, rnorm(Fx_r3))
+            st3.x_prev .= 0.0
+            st3.w_prev .= w_drop .- f1
+            st3.ΔX[:, 1] .= f1
+            st3.ΔX[:, 2] .= f1
+            st3.ΔW[:, 1] .= f1 .+ 0.01 .* f3
+            st3.ΔW[:, 2] .= f2
+            st3.ages[1:2] .= (1, 2)
+            st3 = AndersonState{3}(
+                st3.member_state, st3.Fx, st3.x_prev, st3.w_prev, st3.x_best, st3.Fx_best,
+                st3.ΔX, st3.ΔW, st3.ages, st3.work, st3.fnorm₀, st3.fnorm_best,
+                Int32(2), Int32(2), true)
+            x3_out, _, st3_next, info3 = step!!(
+                st3, a_drop, prob_drop_r3, x_r3, Fx_r3, nothing)
+            @test st3_next.ages[1:2] == [1, 3]
+            @test info3.failures == info_drop.failures
+            @test x3_out ≈ Vector(x_drop) atol = 1e-10
+        end
 
         # 3f. Angle safeguard (safeguard_cos) and growing depth (grow_depth)
         a_sc = Anderson(Picard(; damping = 1.0), Val(2); safeguard_cos = 0.9, grow_depth = true)
@@ -728,15 +789,16 @@ end
             ToReal{Float32}(),
             Anderson(Picard(; damping = 1.0f0), Val(3); c_s = 1.0f-7, κ_bar = 1.0f12))
         e1_32 = SVector(1.0f0, 0.0f0, 0.0f0)
-        st32_r1 = AndersonState(
+        st32_r1 = AndersonState{3}(
             init_state(a32_r1.member, prob32_r1, e1_32, nothing),
             nothing,
             zero(e1_32),
             zero(e1_32),
             e1_32,
-            prob32_r1.F(e1_32, nothing),
+            nothing,
             (e1_32, e1_32, e1_32),
             (e1_32, e1_32, e1_32),
+            Int32.((1, 2, 3)),
             nothing,
             1.0f0,
             1.0f0,
@@ -1015,5 +1077,44 @@ end
         @test_throws "solve!! residual contains a ForwardDiff.Dual" solve(
             NonlinearProblem(F_late), SVector(0.5, 0.5), Anderson(Picard(), Val(2)))
         @test calls[] == 4
+    end
+
+    @testset "R1 with an MVector iterate and an SVector residual" begin
+        prob_mv = NonlinearProblem((x, p) -> SVector(x[1] - cos(x[1]), x[2] - sin(x[2]) -
+                                                                       0.1))
+        _, st_pic = solve(prob_mv, MVector(0.5, 0.5), Picard(; damping = 0.8))
+        x_mv, st_mv = solve(prob_mv, MVector(0.5, 0.5), Anderson(Picard(; damping = 0.8), 2))
+        @test st_pic.code === SUCCESS
+        @test st_mv.code === SUCCESS
+        @test x_mv isa MVector{2, Float64}
+        @test x_mv != MVector(0.5, 0.5)
+        @test rnorm(prob_mv.F(x_mv, nothing)) <=
+              sqrt(eps()) * rnorm(prob_mv.F(SVector(0.5, 0.5), nothing))
+    end
+
+    # Every step of `_StallingPicard` is `STALLED`, so with `max_stalls = 2` the solve ends
+    # `STALLED` after the second step, which `Anderson` accelerates
+    @testset "Anderson is STALLED when its member step is, $(nameof(typeof(x₀)))" for (prob, x₀) in (
+        (NonlinearProblem((x, p) -> x - 0.5 * cos.(x) - SVector(1.0, 2.0, 3.0)),
+        SVector(10.0, -10.0, 5.0)),
+        (NonlinearProblem((F, x, p) -> (F .= x .- 0.5 .* cos.(x) .- (1.0, 2.0, 3.0); F)),
+        [10.0, -10.0, 5.0]))
+        opt = Options(Float64; max_stalls = 2)
+        _, st_m = solve(prob, x₀, _StallingPicard(); options = opt)
+        x_a, st_a = solve(prob, x₀, Anderson(_StallingPicard(), 2); options = opt)
+        @test st_m.code === STALLED
+        @test st_a.code === STALLED
+        @test st_m.iterations == 2
+        @test st_a.iterations == 2
+        @test x_a != x₀
+    end
+
+    # ∇S(x) = x³ + x - 1 componentwise, whose real root is 0.6823278038280193
+    @testset "Anderson on a StationarityProblem, $(nameof(typeof(x₀)))" for x₀ in (
+        SVector(0.1, 0.2), [0.1, 0.2])
+        sp = StationarityProblem((x, p) -> sum(abs2, x) / 2 - sum(x) + sum(x .^ 4) / 4)
+        x, st = solve(sp, x₀, Anderson(Picard(; damping = 0.5), 2); f_reltol = 1e-14)
+        @test st.code === SUCCESS
+        @test isapprox(Array(x), fill(0.6823278038280193, 2); rtol = 1e-12)
     end
 end
