@@ -419,3 +419,18 @@
   `test/gpu/cuda/runtests.jl` builds a rectangular factor.
 - **kind:** not verified
 - **found:** PR #62
+
+### K82 · `Enzyme` 0.13 and `KernelAbstractions` 0.10 cannot share an environment, so the Enzyme suite does not resolve
+
+- **location:** `test/enzyme/Project.toml`, `.github/workflows/Enzyme.yml`
+- **evidence:** `KernelAbstractions 0.10.5` depends on `LLVM` and bounds it `LLVM = "10"`, while
+  `Enzyme 0.13` bounds `LLVM = "9.10"` (`< 10`). The Enzyme environment contains this package
+  through the path source `GeometricSolvers = {path = "../.."}`, so the two bounds meet in one
+  resolve, and `Pkg.resolve` in `test/enzyme` stops with "Unsatisfiable requirements detected for
+  package LLVM … restricted by compatibility requirements with Enzyme … to versions: 6.1.0 - 9.13.2
+  … restricted by compatibility requirements with KernelAbstractions … to versions: 10.0.0 -
+  10.4.3 — no versions left". The job is not a required status check, so it fails alone. Enzyme's
+  `main` still bounds `LLVM = "9.10"` and `GPUArrays = "10, 11"` (its `Project.toml` of
+  2026-11-07, version 0.13.219), so the remedy is upstream and no change here reaches it.
+- **kind:** upstream
+- **found:** 2026-11-07

@@ -11,14 +11,18 @@ import CommonSolve: init, solve, solve!
 using DifferentiationInterface: DifferentiationInterface as DI
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: AbstractGPUArray
-using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, allocate,
-                          get_backend, isgpu, synchronize
+using KernelAbstractions: CPU, KernelAbstractions, @Const, @index, @kernel, allocate,
+                          get_backend, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, givens,
                      ldiv!, lu!, mul!, qr!
 using SparseArrays: SparseArrays
 using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
                     StaticMatrix, StaticVector, SVector,
                     setindex, similar_type
+
+# KernelAbstractions 0.10 dropped `isgpu`: every backend subtypes `Backend`, and the CPU backend
+# is the alias of the host one, so a backend is a device exactly when it is not the CPU.
+isgpu(backend) = !(backend isa CPU)
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options, stopping_test

@@ -11,6 +11,13 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`KernelAbstractions` 0.10.5 replaces 0.9, and the `Metal` range widens to `1.10.3 - 1.12`.**
+  The floor rises from `0.9.38`, because JLArrays 0.5 needs `KernelAbstractions 0.10.5` and
+  `GPUArrays 12.1`, and Metal 1.12 is the first Metal that takes `GPUArrays` 12. `isgpu` is no
+  longer part of the KernelAbstractions API, so the package states it as
+  `!(backend isa CPU)`: the CPU backend answers `false`, and CUDA, ROCm, Metal and the `JLArray`
+  backend answer `true`, as before. Nothing else in the interface changes.
+
 - **`LeastSquaresProblem`, `GaussNewton`, rectangular static, host and device QR and SVD, and the
   stationarity stopping test** (decisions 44 and 57 of the design). `AbstractNonlinearProblem` is
   the common supertype of `NonlinearProblem`, `StationarityProblem` and
