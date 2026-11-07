@@ -359,7 +359,7 @@ end
         @test GeometricSolvers.is_mixed(nm, Float64)
         for m in (Additive(nm, pic), Multiplicative(pic, nm), Repeat(nm, 2),
             Switch(pic, nm; threshold = 0.5))
-            x₁, st₁ = solve(prob, copy(x₀), m; max_iterations = 1)
+            x₁, _ = solve(prob, copy(x₀), m; max_iterations = 1)
             @test Array(x₁) != Array(x₀)
             x, st = solve(prob, copy(x₀), m)
             @test st.code === SUCCESS
