@@ -1,7 +1,9 @@
-# Dense CPU linear factorisations (R3): LAPACK (`LAPACK.getrf!`, `geqrf!`, `lapack_gesvd`) for
-# `StridedMatrix{<:BlasFloat}` with held workspace buffers, and `LinearAlgebra`'s generic `lu!`
-# and `qr!` for any other `AbstractMatrix`. `geqrf!` and `lapack_gesvd` take `lwork = -1` for a
-# workspace query, which writes the optimal size into `work[1]` and factorises nothing.
+# Dense CPU linear factorisations (R3): LAPACK (`LAPACK.getrf!`, `geqrf!`, `lapack_gesvd`,
+# `sytrf!`, `sytrs!`, `hetrf!`, `hetrs!`) for `StridedMatrix{<:BlasFloat}` with held workspace
+# buffers, and `LinearAlgebra`'s generic `lu!` and `qr!` (or `generic_ldlt!` of `static/ldlt.jl`)
+# for any other `AbstractMatrix`. `geqrf!`, `lapack_gesvd`, `sytrf!` and `hetrf!` take
+# `lwork = -1` for a workspace query, which writes the optimal size into `work[1]` and factorises
+# nothing.
 
 for (geqrf, ormqr, gesvd, elty, relty) in (
     (:dgeqrf_, :dormqr_, :dgesvd_, :Float64, :Float64),
@@ -73,10 +75,82 @@ for (geqrf, ormqr, gesvd, elty, relty) in (
     end
 end
 
-# The lengths of the host QR and SVD workspaces of `dense_factor`: the optimal sizes that a
-# workspace query of `geqrf` and of `gesvd` returns, for the buffers that the factorisation then
-# takes. Another element type factorises through `qr!`, or has no SVD method, and does not use its
-# one-element workspace.
+for (sytrf, sytrs, hetrf, hetrs, elty) in (
+    (:dsytrf_, :dsytrs_, :dsytrf_, :dsytrs_, :Float64),
+    (:ssytrf_, :ssytrs_, :ssytrf_, :ssytrs_, :Float32),
+    (:zsytrf_, :zsytrs_, :zhetrf_, :zhetrs_, :ComplexF64),
+    (:csytrf_, :csytrs_, :chetrf_, :chetrs_, :ComplexF32))
+    @eval begin
+        function sytrf!(uplo::AbstractChar, A::StridedMatrix{$elty},
+                ipiv::AbstractVector{BlasInt}, work::AbstractVector{$elty},
+                lwork::BlasInt = BlasInt(length(work)))
+            n = size(A, 1)
+            lda = max(1, stride(A, 2))
+            info = Ref{BlasInt}()
+            ccall((BLAS.@blasfunc($sytrf), LAPACK.liblapack), Cvoid,
+                (Ref{UInt8}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
+                    Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt}, Clong),
+                uplo, n, A, lda, ipiv, work, lwork, info, 1)
+            LAPACK.chkargsok(info[])
+            return info[]
+        end
+
+        function sytrs!(uplo::AbstractChar, A::StridedMatrix{$elty},
+                ipiv::AbstractVector{BlasInt}, B::StridedVecOrMat{$elty})
+            stride(B, 1) == 1 ||
+                throw(ArgumentError("matrix does not have contiguous columns"))
+            n = size(A, 1)
+            nrhs = size(B, 2)
+            lda = max(1, stride(A, 2))
+            ldb = max(1, stride(B, 2))
+            info = Ref{BlasInt}()
+            ccall((BLAS.@blasfunc($sytrs), LAPACK.liblapack), Cvoid,
+                (Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty},
+                    Ref{BlasInt}, Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt},
+                    Ptr{BlasInt}, Clong),
+                uplo, n, nrhs, A, lda, ipiv, B, ldb, info, 1)
+            LAPACK.chkargsok(info[])
+            return B
+        end
+
+        function hetrf!(uplo::AbstractChar, A::StridedMatrix{$elty},
+                ipiv::AbstractVector{BlasInt}, work::AbstractVector{$elty},
+                lwork::BlasInt = BlasInt(length(work)))
+            n = size(A, 1)
+            lda = max(1, stride(A, 2))
+            info = Ref{BlasInt}()
+            ccall((BLAS.@blasfunc($hetrf), LAPACK.liblapack), Cvoid,
+                (Ref{UInt8}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
+                    Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt}, Clong),
+                uplo, n, A, lda, ipiv, work, lwork, info, 1)
+            LAPACK.chkargsok(info[])
+            return info[]
+        end
+
+        function hetrs!(uplo::AbstractChar, A::StridedMatrix{$elty},
+                ipiv::AbstractVector{BlasInt}, B::StridedVecOrMat{$elty})
+            stride(B, 1) == 1 ||
+                throw(ArgumentError("matrix does not have contiguous columns"))
+            n = size(A, 1)
+            nrhs = size(B, 2)
+            lda = max(1, stride(A, 2))
+            ldb = max(1, stride(B, 2))
+            info = Ref{BlasInt}()
+            ccall((BLAS.@blasfunc($hetrs), LAPACK.liblapack), Cvoid,
+                (Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty},
+                    Ref{BlasInt}, Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt},
+                    Ptr{BlasInt}, Clong),
+                uplo, n, nrhs, A, lda, ipiv, B, ldb, info, 1)
+            LAPACK.chkargsok(info[])
+            return B
+        end
+    end
+end
+
+# The lengths of the host QR, SVD and LDLᵀ workspaces of `dense_factor`: the optimal sizes that a
+# workspace query of `geqrf`, `gesvd`, `sytrf` and `hetrf` returns, for the buffers that the
+# factorisation then takes. Another element type factorises through `qr!` or `generic_ldlt!`, or
+# has no SVD method, and does not use its one-element workspace.
 function qr_work_length(A::StridedMatrix{F}, τ::AbstractVector{F}) where {F <: BlasFloat}
     work = Vector{F}(undef, 1)
     geqrf!(A, τ, work, BlasInt(-1))
@@ -90,6 +164,20 @@ function svd_work_length(A::StridedMatrix{F}, S, U, VT, rwork) where {F <: BlasF
     return Int(real(work[1]))
 end
 svd_work_length(A::AbstractMatrix, S, U, VT, rwork) = 1
+
+function ldlt_work_length(
+        A::StridedMatrix{F}, ipiv::AbstractVector{BlasInt}) where {F <: BlasFloat}
+    size(A, 1) == 0 && return 1
+    work = Vector{F}(undef, 1)
+    sytrf!('L', A, ipiv, work, BlasInt(-1))
+    len = max(1, Int(real(work[1])))
+    if F <: Complex
+        hetrf!('L', A, ipiv, work, BlasInt(-1))
+        len = max(len, Int(real(work[1])))
+    end
+    return len
+end
+ldlt_work_length(A::AbstractMatrix, ipiv::AbstractVector) = 1
 
 function qr_zero_diag(R::AbstractMatrix)
     n = min(size(R, 1), size(R, 2))
@@ -113,7 +201,8 @@ function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix) where {F}
 end
 
 const DenseFactor{A} = Union{
-    DenseLU{A}, DenseQR{A}, DenseSVD{A}, DeviceLU{A}, DeviceQR{A}, DeviceSVD{A}}
+    DenseLU{A}, DenseQR{A}, DenseSVD{A}, DenseLDLT{A},
+    DeviceLU{A}, DeviceQR{A}, DeviceSVD{A}, DeviceLDLT{A}}
 
 # The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve_shifted!`
 # solves with the factors of `J / 2^e` in place, an SVD dividing by `σ̂ 2^t`, and the step for `J` is
@@ -132,8 +221,8 @@ function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
     return d
 end
 
-# `backsolve!` and the exponent `t` of the power of two its result is to be multiplied by: 0 for LU
-# and QR, and for the SVD the `divisor_exponent` of its coordinates.
+# `backsolve!` and the exponent `t` of the power of two its result is to be multiplied by: 0 for LU,
+# QR and LDLᵀ, and for the SVD the `divisor_exponent` of its coordinates.
 backsolve_shifted!(fac, d) = (backsolve!(fac, d); 0)
 
 # --- DenseLU ---
@@ -294,4 +383,56 @@ function factor_diagnostics(
         rhs[i] = TF(r[i] / s)
     end
     return Int32(rk), R(dense_svd_nullnorm!(fac.tmp, fac.U, rk, rhs)) * R(s)
+end
+
+# --- DenseLDLT ---
+
+function factorize!!(fac::DenseLDLT{<:StridedMatrix{<:BlasFloat}}, ::LDLTFactorization,
+        J::AbstractMatrix)
+    e = load_factors!(fac.factors, J)
+    if !all(isfinite, fac.factors)
+        copyto!(fac.ipiv, eachindex(fac.ipiv))
+        return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, 1, e, true)
+    end
+    isempty(fac.factors) &&
+        return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, 0, e, true)
+    herm = is_hermitian_matrix(fac.factors)
+    info = if herm && eltype(fac.factors) <: Complex
+        Int(hetrf!('L', fac.factors, fac.ipiv, fac.work))
+    else
+        Int(sytrf!('L', fac.factors, fac.ipiv, fac.work))
+    end
+    return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, info, e, herm)
+end
+
+function factorize!!(
+        fac::DenseLDLT{<:AbstractMatrix}, ::LDLTFactorization, J::AbstractMatrix)
+    e = load_factors!(fac.factors, J)
+    if !all(isfinite, fac.factors)
+        copyto!(fac.ipiv, eachindex(fac.ipiv))
+        return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, 1, e, true)
+    end
+    isempty(fac.factors) &&
+        return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, 0, e, true)
+    herm = is_hermitian_matrix(fac.factors)
+    info = Int(generic_ldlt!(fac.factors, fac.ipiv, herm))
+    return DenseLDLT(fac.factors, fac.ipiv, fac.work, fac.rhs, info, e, herm)
+end
+
+function backsolve!(
+        fac::DenseLDLT{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <: BlasFloat}
+    isempty(d) && return d
+    if fac.hermitian && T <: Complex
+        hetrs!('L', fac.factors, fac.ipiv, d)
+    else
+        sytrs!('L', fac.factors, fac.ipiv, d)
+    end
+    return d
+end
+
+function backsolve!(
+        fac::DenseLDLT{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <: Number}
+    isempty(d) && return d
+    generic_ldlt_backsolve!(fac.factors, fac.ipiv, d, fac.hermitian)
+    return d
 end
