@@ -6,14 +6,17 @@ CurrentModule = GeometricSolvers
 
 ## The problem
 
-A problem holds functions and an optional Jacobian prototype: the residual, optionally its
-derivative, and optionally `jacobian_prototype` for a sparse R3 Jacobian. The storage of the
-iterate selects the call form of the functions, so one problem serves every regime.
-`NonlinearProblem` is exported; `GeometricSolvers.jacobian_prototype` and
+A problem holds functions and, for a [`NonlinearProblem`](@ref), an optional Jacobian prototype:
+the residual, optionally its derivative, and optionally `jacobian_prototype` for a sparse R3
+Jacobian in [`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets,
+and an optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call
+form of the functions, so one problem serves every regime. `NonlinearProblem` and
+`StationarityProblem` are exported; `GeometricSolvers.jacobian_prototype` and
 `GeometricSolvers.jacobian_pattern` are internal accessors.
 
 ```@docs
 NonlinearProblem
+StationarityProblem
 jacobian_prototype
 jacobian_pattern
 ```
@@ -70,10 +73,11 @@ Options(::Type{T}) where {T <: Number}
 
 The factorisation precision `TF` of a linear-solver method is a type parameter. `Nothing` selects
 the working type of the problem, a real float type a lower (or higher) precision, and a marker a
-vendor tensor-core path.
+vendor tensor-core path. These names are exported.
 
 ```@docs
 LUFactorization
+LDLTFactorization
 QRFactorization
 SVDFactorization
 TF32
@@ -86,22 +90,23 @@ BF16
 A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense_factor`](@ref)),
 [`factorize!!`](@ref) and [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and
 [`ldiv!!`](@ref) return new `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU
-with partial pivoting and `Int32` pivots, [`StaticQR`](@ref) Householder QR without column
+with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufman `L D Lᵀ` /
+`L D Lᴴ` with `1×1` and `2×2` diagonal blocks, [`StaticQR`](@ref) Householder QR without column
 pivoting, and [`StaticSVD`](@ref) a one-sided Jacobi singular value decomposition whose solve
 truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve
 finite. For a vector state (R3) with no prototype (`jacobian_prototype === nothing`),
-[`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a
-host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
-`AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
-through LAPACK on the host, and on a device through the `GeometricSolversMetalExt` (`Metal` MPS
-`lu!` and `ldiv!` on `MtlMatrix{Float32}` and `MtlVector{Float32}`, falling back to
-`ka_factorize_lu!` on negative MPS status codes other than `-2`) and `GeometricSolversCUDAExt`
-(`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS `trsv!`, and `gesvdj!` on
-`CuMatrix{T}` and `CuVector{T}` for `T <: LinearAlgebra.BlasFloat`, falling back to
-`ka_factorize_svd!` where `gesvdj!` does not converge) package extensions where available and
-through `KernelAbstractions` otherwise. When `Sparspak` is loaded and `jacobian_prototype` is a
-`SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <: AbstractFloat`), the
-`GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+[`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
+[`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref),
+[`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an `AbstractGPUArray`, and [`factorize!!`](@ref) and
+[`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host, and on a device through
+the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on `MtlMatrix{Float32}` and
+`MtlVector{Float32}`, falling back to `ka_factorize_lu!` on negative MPS status codes other than
+`-2`) and `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with
+cuBLAS `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
+LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge)
+package extensions where available and through `KernelAbstractions` otherwise. When `Sparspak` is
+loaded and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
+AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
 workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for an `LUFactorization` whose
 factor element type is `T` (`LUFactorization()` or `LUFactorization(T)`); the first `factorize!!`
 call runs symbolic ordering and symbolic factorisation, and subsequent `factorize!!` and `ldiv!!`
@@ -118,10 +123,13 @@ factorize!!
 ldiv!!
 factor_eltype
 StaticLU
+StaticLDLT
 StaticQR
 StaticSVD
 DenseLU
 DeviceLU
+DenseLDLT
+DeviceLDLT
 DenseQR
 DeviceQR
 DenseSVD
@@ -174,8 +182,9 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
 `x₀` is an array, and returns `(x, status)`; when `x₀` or `p` carries a `ForwardDiff.Dual` leaf,
-[`solve`](@ref) strips duals via [`StripDual`](@ref), runs the primal solve, and on `SUCCESS`
-differentiates the root implicitly at `x*`. With the same arguments,
+[`solve`](@ref) on a [`NonlinearProblem`](@ref) strips duals via [`StripDual`](@ref), runs the
+primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while on a
+[`StationarityProblem`](@ref) it raises an `ArgumentError`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
 [`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
@@ -232,24 +241,26 @@ together with another keyword, raises an `ArgumentError`.
 ## Automatic differentiation
 
 In R1, [`prepare_ad`](@ref) returns the `AutoForwardDiff()` back end itself for a `StaticVector`
-or a `Number` iterate. [`jacobian!!`](@ref) and [`jvp!!`](@ref) run tagged ForwardDiff directly
-with that source. The source `nothing` calls the problem's own `J`; a [`JacobianFunction`](@ref)
-calls a method's operator for `jacobian!!` only. A back end other than `AutoForwardDiff` has no
-R1 method, and the call is a host `MethodError`.
+or a `Number` iterate. [`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and [`jvp!!`](@ref) run
+tagged ForwardDiff directly with that source. The source `nothing` calls the problem's own `J`; a
+[`JacobianFunction`](@ref) calls a method's operator for `jacobian!!` only. A back end other than
+`AutoForwardDiff` has no R1 method, and the call is a host `MethodError`.
 
 In R3 the AD path is chosen once, by [`prepare_ad`](@ref), from the
 back end and the storage of the iterate: `AutoForwardDiff()` goes through an own chunked forward
-mode on every array type, and any other back end goes through
-[DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl) on a CPU
-iterate, so every ADTypes back end works with no line of source here. A device array iterate takes
+mode on every array type ([`ChunkedForwardDiff`](@ref) for [`NonlinearProblem`](@ref) and
+[`ChunkedHessianForwardDiff`](@ref) for [`StationarityProblem`](@ref)), and any other back end goes
+through [DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl) on a
+CPU iterate ([`DIJacobian`](@ref) and [`DIStationarity`](@ref)), so every ADTypes back end works
+with no line of source here. A device array iterate takes
 `AutoForwardDiff()` only, because DifferentiationInterface's `jacobian!` raises a scalar-indexing
 error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies an analytic
 3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
 matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@ref) other than
 [`Static`](@ref) takes a JVP, so under any other globalization the analytic `J` gets no JVP
-preparation and no second `n × n` buffer. [`jacobian!!`](@ref) and [`jvp!!`](@ref)
-then dispatch on the object the preparation returned, so the solver makes no runtime choice and
-carries no `ad` keyword.
+preparation and no second `n × n` buffer. [`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and
+[`jvp!!`](@ref) then dispatch on the object the preparation returned, so the solver makes no runtime
+choice and carries no `ad` keyword.
 
 In R3 the iterate is a vector; another shape raises `ArgumentError` where the preparation is
 built. The parameters may be replaced on every call, which is what lets one preparation serve a
@@ -266,10 +277,13 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 ```@docs
 prepare_ad
 DIJacobian
+DIStationarity
 ChunkedForwardDiff
+ChunkedHessianForwardDiff
 JacobianFunction
 JacobianMatrixJVP
 jacobian!!
+gradient_hessian!!
 jvp!!
 ```
 
@@ -283,6 +297,7 @@ once before the first step and at every return. [`residual_buffer`](@ref) names 
 state that holds `F(x₀)`.
 
 ```@docs
+AbstractNonlinearProblem
 init_state
 residual_buffer
 step!!
