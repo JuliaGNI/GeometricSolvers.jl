@@ -6,11 +6,14 @@
     AbstractNonlinearProblem
 
 The supertype of the problems a [`NonlinearSolver`](@ref) solves: [`NonlinearProblem`](@ref), whose
-residual has as many entries as the iterate has variables, and [`LeastSquaresProblem`](@ref), whose
-residual may have more. [`init`](@ref), [`solve`](@ref), [`solve!`](@ref) and [`solve!!`](@ref)
-take it, and so does [`Newton`](@ref) with each of its globalizations, so one solver loop serves
-both problem types; [`Picard`](@ref) and [`solve_batch!`](@ref) take the square
-[`NonlinearProblem`](@ref).
+residual has as many entries as the iterate has variables, [`StationarityProblem`](@ref), whose
+residual is a part of the gradient of a scalar action, and [`LeastSquaresProblem`](@ref), whose
+residual may have more entries than the iterate has variables. [`init`](@ref), [`solve`](@ref),
+[`solve!`](@ref) and [`solve!!`](@ref) take it, and so does [`Newton`](@ref) with each of its
+globalizations, so one solver loop serves every problem type; [`Picard`](@ref), the combinators
+[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) and [`Switch`](@ref), and
+[`solve_batch!`](@ref) take a [`NonlinearProblem`](@ref) or a [`StationarityProblem`](@ref), and
+a combinator raises an `ArgumentError` for a [`LeastSquaresProblem`](@ref).
 """
 abstract type AbstractNonlinearProblem end
 
@@ -61,7 +64,8 @@ end
     jacobian_prototype(prob)
 
 Return the Jacobian prototype matrix stored on `prob`, or `nothing` when none is supplied. A
-[`LeastSquaresProblem`](@ref) holds no prototype, so its Jacobian is dense.
+[`StationarityProblem`](@ref) and a [`LeastSquaresProblem`](@ref) hold no prototype, so their
+Jacobians are dense.
 """
 jacobian_prototype(prob::NonlinearProblem) = prob.jacobian_prototype
 jacobian_prototype(::AbstractNonlinearProblem) = nothing

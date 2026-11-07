@@ -11,8 +11,8 @@ struct NoRefinement end
 """
     init_state(method, prob::AbstractNonlinearProblem, x, p)
 
-Build the state of `method` for [`AbstractNonlinearProblem`](@ref) `prob` at the initial iterate `x` and
-parameters `p`: its workspace, its AD preparation and its rule state, in one concrete type per
+Build the state of `method` for [`AbstractNonlinearProblem`](@ref) `prob` at the initial iterate `x`
+and parameters `p`: its workspace, its AD preparation and its rule state, in one concrete type per
 method. In R1 (`SVector`, `MVector` or `Number`), `init_state` is allocation-free and returns an
 `isbits` state when `prob` and `method` are `isbits`.
 """
@@ -248,10 +248,11 @@ end
 """
     NonlinearSolver(prob, x, method, options, state, p)
 
-A preallocated nonlinear solver for [`AbstractNonlinearProblem`](@ref) `prob` with `method` and
-[`Options`](@ref) `options`, holding the workspace and AD preparation in `state`, the iterate `x`
-and the parameters `p`, in the fields `x::X` and `p::Q`. It keeps the element type `T` and the
-length `n` of `x` and the types `X` of `x` and `Q` of `p`, which [`solve!`](@ref) checks.
+A preallocated nonlinear solver for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) or
+[`LeastSquaresProblem`](@ref) `prob` with `method` and [`Options`](@ref) `options`, holding the
+workspace and AD preparation in `state`, the iterate `x` and the parameters `p`, in the fields
+`x::X` and `p::Q`. It keeps the element type `T` and the length `n` of `x` and the types `X` of `x`
+and `Q` of `p`, which [`solve!`](@ref) checks.
 Build it with [`init(prob, x₀, method, p; options = nothing, kwargs...)`](@ref init) and solve
 with [`solve!(solver)`](@ref solve!) or [`solve!(solver, x, p)`](@ref solve!).
 """
@@ -297,8 +298,8 @@ function init(
 end
 
 """
-    solve!(solver::NonlinearSolver)
-    solve!(solver::NonlinearSolver, x, p = solver.p)
+    solve!(solver::NonlinearSolver; b = nothing)
+    solve!(solver::NonlinearSolver, x, p = solver.p; b = nothing)
 
 Solve `solver.prob`, using the preallocated workspace and AD preparation in `solver`, store the
 solution in `solver.x`, and return `(solver.x, status)` where `status` is a
@@ -307,15 +308,16 @@ the parameters that [`init`](@ref) or the last `solve!(solver, x, p)` stored, an
 solution into `solver.x` when it is an array.
 `solve!(solver, x, p)` stores `x` in `solver.x` and `p` in `solver.p`, then solves from `x` with
 `p`; an array `x` receives the solution in place and stays in `solver.x`. Without `p`, it solves
-with the parameters that the solver holds. An `x` whose element type or length differs from the
-iterate of `init` raises an `ArgumentError`, and so do an `x` of another type, a `p` of
+with the parameters that the solver holds. For a [`StationarityProblem`](@ref), the keyword `b`
+overrides the datum of the solve without reallocating. An `x` whose element type or length differs
+from the iterate of `init` raises an `ArgumentError`, and so do an `x` of another type, a `p` of
 another type than those of `init`, and any `ForwardDiff.Dual` in `x` or `p`. A refused call
 changes neither `solver` nor `x`.
 """
-solve!(solver::NonlinearSolver) = solve!(solver, solver.x, solver.p)
+solve!(solver::NonlinearSolver; b = nothing) = solve!(solver, solver.x, solver.p; b = b)
 
 function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
-        p = solver.p) where {T, P, M, O, S, X, Q}
+        p = solver.p; b = nothing) where {T, P, M, O, S, X, Q}
     if has_dual_type(typeof(x)) || has_dual_type(typeof(p))
         throw(ArgumentError(
             "solve! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
@@ -330,6 +332,9 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
     p isa Q || throw(ArgumentError(
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
+    P <: StationarityProblem && return _solve_stationarity_solver!(solver, x, p, b)
+    b === nothing ||
+        throw(ArgumentError("keyword `b` is only supported for `StationarityProblem`"))
     solver.x = x
     solver.p = p
     x₊, status, state = solve!!(
@@ -369,7 +374,10 @@ to `Float32`. A non-`SUCCESS` primal solve returns primal values at
 `x*` with `NaN` partials and the primal `status`; a `SINGULAR` tangent factorisation at `x*`
 performs no back-substitution and returns primal values at `x*` with `NaN` partials and
 `status.code === SINGULAR`. Nested duals, distinct dual tags or partial counts across `x₀` and `p`,
-and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`.
+and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`. A
+combinator method, [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) or
+[`Switch`](@ref), has no implicit differentiation: with a `ForwardDiff.Dual` in `x₀` or `p`,
+`solve` raises an `ArgumentError` before the primal solve.
 
 `prob` may capture an object whose type holds a `ForwardDiff.Dual`, such as a
 `ForwardDiff.GradientConfig` or a dual work buffer, and `solve` does not check it. A residual

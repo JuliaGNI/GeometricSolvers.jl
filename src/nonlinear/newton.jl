@@ -2,10 +2,10 @@
     Newton(; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
              refinement = NoRefinement(), regularization = 0, reuse = nothing)
 
-Newton's method for [`NonlinearProblem`](@ref) and, as [`GaussNewton`](@ref) configures it, for
-[`LeastSquaresProblem`](@ref), with linear solver `linsolve`
-([`LUFactorization`](@ref), [`QRFactorization`](@ref) or [`SVDFactorization`](@ref)),
-globalization `globalization`
+Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) and, as
+[`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
+`linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref), [`QRFactorization`](@ref) or
+[`SVDFactorization`](@ref)), globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the
 trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector
 `jacobian`, iterative refinement `refinement`
@@ -14,7 +14,12 @@ trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), 
 
 # Fields
 
-- `linsolve::L`: the linear-solver method.
+- `linsolve::L`: the linear-solver method. A [`LeastSquaresProblem`](@ref) takes neither
+  [`LUFactorization`](@ref) nor [`LDLTFactorization`](@ref) outside the stacked
+  [`LevenbergMarquardt`](@ref) step. With more residuals than unknowns it takes a factor in the
+  element type of the iterate only, because a Gauss–Newton step with a factor in another
+  precision stops off the least-squares point; the stacked `LevenbergMarquardt` step, which reads
+  no factor, takes any. Each refusal raises an `ArgumentError` where the state is built.
 - `globalization::G`: the globalization method. A line search takes its merit at `α = 0` from
   the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))` and each [`step!!`](@ref) to the
   merit of the residual it returns. A `step!!` with a line search therefore takes only the
@@ -87,6 +92,10 @@ end
 
 Adapt.@adapt_structure Newton
 
+@inline _has_analytic_jacobian(prob::NonlinearProblem) = prob.J !== nothing
+@inline _has_analytic_jacobian(prob::LeastSquaresProblem) = prob.J !== nothing
+@inline _has_analytic_jacobian(::AbstractNonlinearProblem) = false
+
 # The JVP preparation of `Newton` from an analytic Jacobian: the `m × n` buffer of the residual
 # `Fx` for a line search, or a matrix like the problem's sparse prototype where it has one.
 @inline function jacobian_matrix_jvp(g, x, Fx, prob)
@@ -101,10 +110,11 @@ end
 @inline jacobian_matrix_jvp(::Static, x, Fx, prob) = nothing
 
 @inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
-    if m.jacobian === nothing && prob.J === nothing
+    has_J = _has_analytic_jacobian(prob)
+    if m.jacobian === nothing && !has_J
         prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
         return prep, prep
-    elseif m.jacobian isa AbstractADType && prob.J === nothing
+    elseif m.jacobian isa AbstractADType && !has_J
         prep = prepare_ad(m.jacobian, prob, Fx, x, p)
         return prep, prep
     else
@@ -115,7 +125,7 @@ end
         else
             JacobianFunction(m.jacobian)
         end
-        jvpprep = if prob.J !== nothing
+        jvpprep = if has_J
             Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x, Fx, prob)
         elseif m.jacobian isa AbstractADType
             prepare_ad(m.jacobian, prob, Fx, x, p)
@@ -139,6 +149,21 @@ end
     z = SMatrix{1, 1, TF, 1}((zero(TF),))
     piv = SVector{1, Int32}((Int32(1),))
     return StaticLU{1, TF, 1}(z, piv, Int32(0), Int32(0))
+end
+
+@inline function empty_static_factor(ls::LDLTFactorization{P}, ::StaticVector{
+        N, T}) where {P, N, T}
+    TF = factor_eltype(ls, T)
+    z = zeros(SMatrix{N, N, TF})
+    piv = SVector{N, Int32}(ntuple(i -> Int32(i), Val(N)))
+    return StaticLDLT{N, TF, N * N}(z, piv, Int32(0), Int32(0), true)
+end
+
+@inline function empty_static_factor(ls::LDLTFactorization{P}, ::T) where {P, T <: Number}
+    TF = factor_eltype(ls, T)
+    z = SMatrix{1, 1, TF, 1}((zero(TF),))
+    piv = SVector{1, Int32}((Int32(1),))
+    return StaticLDLT{1, TF, 1}(z, piv, Int32(0), Int32(0), true)
 end
 
 @inline function empty_static_factor(ls::QRFactorization{P}, ::StaticVector{
@@ -456,19 +481,36 @@ end
     return nothing
 end
 
+# A factor in another element type than the iterate perturbs the Jacobian that the step solves
+# with. A square Newton solve still reaches the root, because it reads the residual in the working
+# precision, but a Gauss–Newton step on `m_rows > n` residuals stops where the perturbed `Jᴴ F`
+# vanishes, which is not the least-squares point. Such a factor is refused wherever it computes
+# the step; the stacked `LevenbergMarquardt` step reduces `[J | -F]` in the working precision and
+# reads no factor.
+@inline function check_lsq_factor_eltype(m::Newton, m_rows::Int, x)
+    T = eltype(x)
+    (m_rows > length(x) && factor_eltype(m.linsolve, T) !== T) || return nothing
+    m.globalization isa LevenbergMarquardt &&
+        !lm_svd_path(m.linsolve, m.globalization.scaling) && return nothing
+    throw(ArgumentError(
+        "a LeastSquaresProblem with more residuals than unknowns (m = $m_rows, n = $(length(x))) takes a factor in the element type $T of the iterate; a factor in $(factor_eltype(m.linsolve, T)) moves the Gauss–Newton fixed point off the least-squares point"))
+end
+
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
-    if prob isa LeastSquaresProblem && m.linsolve isa LUFactorization &&
+    if prob isa LeastSquaresProblem &&
+       m.linsolve isa Union{LUFactorization, LDLTFactorization} &&
        !(m.globalization isa LevenbergMarquardt)
         throw(ArgumentError(
-            "LeastSquaresProblem does not support LUFactorization; use QRFactorization() or SVDFactorization()"))
+            "LeastSquaresProblem does not support $(nameof(typeof(m.linsolve))); use QRFactorization() or SVDFactorization()"))
     end
     m.globalization isa LevenbergMarquardt &&
-        check_lm_iterate(m.globalization, m.linsolve, x)
+        check_lm_iterate(m.globalization, m.linsolve, prob, x)
     Fx = if x isa Union{StaticArray, Number}
         nothing
     elseif prob isa LeastSquaresProblem
         m_rows = output_length(prob, length(x))
         check_regularization(m, m_rows, length(x))
+        check_lsq_factor_eltype(m, m_rows, x)
         buffer(x, eltype(x), m_rows)
     else
         buffer(x)
@@ -483,6 +525,7 @@ end
             Fx0 = primal_residual!!(nothing, prob, x, p)
             check_static_residual_length(prob, Fx0, x)
             check_regularization(m, length(Fx0), length(x))
+            check_lsq_factor_eltype(m, length(Fx0), x)
             fac = m.reuse === nothing ? nothing : empty_static_factor(m.linsolve, x, Fx0)
         else
             fac = m.reuse === nothing ? nothing :

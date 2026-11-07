@@ -186,6 +186,45 @@ end
     @test_throws ArgumentError init(
         p3, ones(T, 2), Newton(; linsolve = QRFactorization(), regularization = 1e-6))
 
+    # LDLTFactorization factorises no rectangular matrix and is rejected as LU is; the stacked
+    # LevenbergMarquardt step reads no factor and takes it
+    @test_throws ArgumentError solve(p1, x0_s, Newton(; linsolve = LDLTFactorization()))
+    @test_throws ArgumentError init(p3, ones(T, 2), Newton(;
+        linsolve = LDLTFactorization()))
+    lm_ldlt = Newton(; linsolve = LDLTFactorization(), globalization = LevenbergMarquardt(T))
+    x_ldlt, st_ldlt = solve(p1, x0_s, lm_ldlt)
+    @test isconverged(st_ldlt)
+    @test norm(x_ldlt) <= 10 * sqrt(eps(T))
+    @test init(p3, ones(T, 2), lm_ldlt) isa NonlinearSolver
+
+    # A factor in another element type than the iterate is rejected on m > n residuals, where the
+    # Gauss–Newton fixed point of the perturbed factor is not the least-squares point; a square
+    # problem and the stacked LevenbergMarquardt step, which reads no factor, take it
+    TF = T === Float64 ? Float32 : Float64
+    p_scalar = LeastSquaresProblem((x, p) -> SVector{2}(x - one(T), x + one(T)))
+    for ls in (QRFactorization(TF), SVDFactorization(TF))
+        @test_throws ArgumentError solve(p1, x0_s, GaussNewton(; linsolve = ls))
+        @test_throws ArgumentError solve(p_scalar, one(T), GaussNewton(; linsolve = ls))
+        @test_throws ArgumentError init(p3, ones(T, 2), GaussNewton(; linsolve = ls))
+        @test_throws ArgumentError init(p3, ones(T, 2),
+            GaussNewton(; linsolve = ls, globalization = Backtracking()))
+    end
+    @test_throws ArgumentError init(p3, ones(T, 2),
+        GaussNewton(; linsolve = SVDFactorization(TF), globalization = LevenbergMarquardt(T)))
+    @test init(p3, ones(T, 2),
+        GaussNewton(; linsolve = QRFactorization(TF), globalization = LevenbergMarquardt(T))) isa
+          NonlinearSolver
+    @test init(LeastSquaresProblem(f_ip, 2), ones(T, 2),
+        GaussNewton(; linsolve = QRFactorization(TF))) isa NonlinearSolver
+
+    # A combinator holds residual buffers of the iterate's length and refuses the problem
+    @test_throws ArgumentError init(p3, ones(T, 2), Additive(GaussNewton(), GaussNewton()))
+    @test_throws ArgumentError solve(p1, x0_s, Repeat(GaussNewton(), 2))
+
+    # An analytic Jacobian is the Jacobian source, not automatic differentiation
+    @test GeometricSolvers._has_analytic_jacobian(p2)
+    @test !GeometricSolvers._has_analytic_jacobian(p1)
+
     # A least-squares problem holds no Jacobian prototype, so its factors are dense
     @test GeometricSolvers.jacobian_prototype(p3) === nothing
     @test GeometricSolvers.jacobian_pattern(p3, nothing) === nothing

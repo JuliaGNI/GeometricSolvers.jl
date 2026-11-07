@@ -70,6 +70,28 @@
 - **kind:** defect
 - **found:** PR #48
 
+### K24 · `Bisection`, `StrongWolfe` and `DogLeg` fail on the saddle residual `(x₁ + 0.4x₁³ − 1, −x₂ + 0.4x₂³ + 2)` while `Static` and `Backtracking` reach its root
+
+- **location:** `src/globalization/bisection.jl`, `src/globalization/strongwolfe.jl`,
+  `src/globalization/dogleg.jl`
+- **evidence:** With `F(x, p) = SVector(x[1] + 0.4x[1]^3 - 1, -x[2] + 0.4x[2]^3 + 2)`,
+  `prob = NonlinearProblem(F)` and `solve(prob, SVector(0.8, 1.5), Newton(; linsolve =
+  LUFactorization(), globalization = g))`, the tree of `613c564` returns
+  `Bisection: [0.7985352209656604, 0.9128709291833161] LINESEARCH_FAILED it=3`,
+  `StrongWolfe: [0.7972843024431895, 0.912870914067057] STALLED it=9` and
+  `DogLeg: [0.7972810583101553, 0.9128713775004471] LINESEARCH_FAILED it=14`, while `Static` and
+  `Backtracking` return `SUCCESS` at the root `[0.7972810583155764, -2.1876029597039026]` (Julia
+  1.13.3). The same three fail on the stationarity problem of that action in
+  `test/nonlinear/stationarity.jl`, with `LDLTFactorization()` and with the same iterates, so the
+  outcome does not depend on the problem type. The three stop next to
+  `x̂ = [0.7972810583155764, 1/√1.2]`, where `F(x̂) = [0, 1.3914193805498154]`, the Jacobian is
+  singular (`−1 + 1.2x̂₂² = 0`), and `‖F‖₂²` has a strict local minimum: `‖F(x̂)‖₂² = 1.9360478926`,
+  its `ForwardDiff` gradient is `[0, 0]` and its Hessian has the eigenvalues `6.0969` and `6.2148`.
+  So the measurement shows the three searches stopping at a nonzero local minimum of their merit,
+  not a defect in them.
+- **kind:** found late
+- **found:** 2026-11-06
+
 ### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
 
 - **location:** `src/linear/factors.jl` (`init_linear`)
@@ -86,6 +108,30 @@
 - **kind:** defect
 - **found:** PR #55 (CodeRabbit, on #56)
 
+### K27 · `init` accepts `LDLTFactorization` for a `StationarityProblem` with `E ≠ U`, whose Jacobian is not symmetric
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring, `init`)
+- **evidence:** `LDLTFactorization` reads only the lower triangle of `J = (∇²S)_{E, U}`, and `J`
+  is symmetric only where `E == U`. The `StationarityProblem` docstring states this limit, but
+  `init`, `solve`, `solve!` and `solve_batch!` do not check it, so a solve with `E ≠ U` and
+  `LDLTFactorization` factorises the wrong matrix with no error. The check is for a later pull
+  request: `init` raises an `ArgumentError` for `LDLTFactorization` when `E ≠ U`.
+- **kind:** defect
+- **found:** PR #58
+
+### K28 · A `StationarityProblem` with a complex state fails in the default automatic differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring)
+- **evidence:** With `S(x, p) = sum(abs2, x) / 2 - sum(x)`, `solve(StationarityProblem(S), x0)`
+  returns `SUCCESS` at `[1.0, 1.0]` for `x0 = Float64[0.1, 0.2]`. For `ComplexF64[0.1, 0.2]` it
+  raises `ArgumentError: Cannot create a dual over scalar type ComplexF64`, and for an
+  `SVector{2, ComplexF64}` or a `ComplexF64` it raises `MethodError: no method matching
+  _stationarity_residual_r1(::ADTypes.AutoForwardDiff{nothing, Nothing}, …)` (tree of `989000e`,
+  Julia 1.13.3). The docstring states that the state must be real. Support for a complex state is
+  for a later pull request.
+- **kind:** defect
+- **found:** PR #58
+
 ### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
 
 - **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
@@ -100,34 +146,45 @@
 - **kind:** defect
 - **found:** PR #53
 
-### K55 · `LevenbergMarquardt` on a sparse `jacobian_prototype` runs the dense stacked solve
+### K31 · `solve` on a `StationarityProblem` has no implicit differentiation
 
-- **location:** `src/globalization/levenbergmarquardt.jl` (`init_globalization`, `lm_qr_factor!`)
-- **evidence:** `Newton(; linsolve = LUFactorization(), globalization = LevenbergMarquardt())` on
-  a `NonlinearProblem` with a `SparseMatrixCSC` `jacobian_prototype` takes the stacked path,
-  because `lm_svd_path` is `false` for every method but `SVDFactorization` with `scaling = :none`.
-  `init_globalization` then allocates the dense `n × n` buffers `R₀` and `R`, `lm_qr_factor!`
-  reads the sparse Jacobian one entry at a time in an `O(n³)` Givens reduction, and the
-  `SparspakLU` factor that `init_factor` builds is never factorised. The solve is correct, but its
-  cost and storage are those of a dense solve, not of the sparse one. With
-  `QRFactorization` or `SVDFactorization` a sparse prototype raises a `MethodError` in
-  `init_linear`, as for every other globalization. Whether this combination is refused with an
-  `ArgumentError`, as a device iterate is in `check_lm_iterate`, or gets a sparse damped solve is
-  open.
+- **location:** `src/nonlinear/stationarity.jl` (`init`, `solve`)
+- **evidence:** `solve` on a `NonlinearProblem` with a `ForwardDiff.Dual` in `x₀` or `p` runs
+  the primal solve and then the implicit-function-theorem tangent solve (`solve_implicit` in
+  `src/nonlinear/implicit.jl`). `solve` on a `StationarityProblem` has no such path. `init`,
+  `solve`, `solve!` and `solve_batch!` on a `StationarityProblem` therefore raise an
+  `ArgumentError` for a `ForwardDiff.Dual` in the iterate or in `p`. Implicit differentiation
+  through the stationarity equations `(∇S)_E + b = 0`, with the Jacobian `(∇²S)_{E, U}`, is for a
+  later pull request.
 - **kind:** defect
-- **found:** PR #65
+- **found:** PR #58 (CodeRabbit)
 
 ### K56 · The stacked `LevenbergMarquardt` step allocates a linear factor that it never reads
 
 - **location:** `src/nonlinear/newton.jl` (`init_state`, `lm_newton_factor`)
 - **evidence:** `init_state` calls `init_factor(m.linsolve, prob, x, p, jacprep)` for every
   `Newton` without reuse, and `init_newton_J` gives `LevenbergMarquardt` a Jacobian buffer of its
-  own. On the stacked path (`QRFactorization`, `LUFactorization`, or `scaling = :diagonal`)
-  `lm_newton_factor` returns `state.fac` without a `factorize!!`, and the trial loop reads only the
-  stacked buffers of `init_globalization`. The factor is one `n × n` array of state that no step
-  reads.
+  own. On the stacked path (`QRFactorization`, `LUFactorization`, `LDLTFactorization`, or
+  `scaling = :diagonal`) `lm_newton_factor` returns `state.fac` without a `factorize!!`, and the
+  trial loop reads only the stacked buffers of `init_globalization`. The factor is one `n × n`
+  array of state that no step reads.
 - **kind:** dead code
 - **found:** PR #65
+
+### K60 · `solve` with a combinator method has no implicit differentiation
+
+- **location:** `src/composition/implicit.jl` (`solve_implicit`)
+- **evidence:** `solve` with a `ForwardDiff.Dual` in `x₀` or `p` and a `Newton` or `Picard`
+  method runs the primal solve and then the implicit-function-theorem tangent solve
+  (`solve_implicit` in `src/nonlinear/implicit.jl`). The tangent solve takes its Jacobian
+  preparation from `_tangent_jacprep`, which has a method for a `NewtonState` and a `PicardState`
+  only. `solve` with an `Additive`, `Multiplicative`, `Repeat` or `Switch` method therefore raises
+  an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal solve; `init`,
+  `solve!` and `solve_batch!` refuse a dual input for every method. Implicit differentiation
+  through a combinator, which needs the Jacobian of `F` at `x*` and not the steps of the members,
+  is for a later pull request.
+- **kind:** defect
+- **found:** PR #60
 
 ### K65 · A `LeastSquaresProblem` has no implicit differentiation
 
@@ -140,23 +197,6 @@
   square `J`. A least-squares solution is a stationary point of `½‖F‖²`, whose tangent equation
   is `(Jᴴ J + Σᵢ Fᵢ ∇²Fᵢ) ẋ = -(Jᴴ ∂F/∂p + Σᵢ Fᵢ ∂(∇Fᵢ)/∂p)`; its Gauss–Newton form drops the
   terms in `F` and is exact only at a zero residual. Which form `solve` should implement is open.
-- **kind:** defect
-- **found:** PR #62
-
-### K66 · A factor precision below the working one cannot reach the default stationarity test on a nonzero-residual `LeastSquaresProblem`
-
-- **location:** `src/linear/mixed.jl` (`ldiv!!`), `src/nonlinear/solver.jl` (`stationary_converged`)
-- **evidence:** For `r(x) = (x₁ - 1, x₂ - 2, x₁ + x₂)` from `[0, 0]`, `x* = (0, 1)`, on a `Float64`
-  iterate: array `QRFactorization(Float32)` gives `STALLED` after 6 iterations with
-  `gradratio = 7.9e-8` and `‖x - x*‖ = 2.7e-7`; array `SVDFactorization(Float32)` gives `MAXITERS`
-  after 100 with `gradratio = 5.0e-8`; static `QRFactorization(Float32)` gives `STALLED` after 3,
-  and static `SVDFactorization(Float32)` gives `SUCCESS` after 4. With `g_tol = 1e-6`, array
-  `QRFactorization(Float32)` gives `SUCCESS` after 2 (review of PR #62). The perturbed factor moves
-  the Gauss–Newton fixed point off the least-squares point by about `eps(Float32)`, and the
-  default `g_tol = √eps(Float64)` is below that; the square Newton solve recovers the working
-  precision through the residual, and nothing does so here. Whether the solve refuses the mixed
-  factor on a `LeastSquaresProblem` with `m > n` or documents it with a reachable tolerance is
-  open.
 - **kind:** defect
 - **found:** PR #62
 
