@@ -16,10 +16,11 @@ trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), 
 
 - `linsolve::L`: the linear-solver method. A [`LeastSquaresProblem`](@ref) takes neither
   [`LUFactorization`](@ref) nor [`LDLTFactorization`](@ref) outside the stacked
-  [`LevenbergMarquardt`](@ref) step. With more residuals than unknowns it takes a factor in the
-  element type of the iterate only, because a Gauss–Newton step with a factor in another
-  precision stops off the least-squares point; the stacked `LevenbergMarquardt` step, which reads
-  no factor, takes any. Each refusal raises an `ArgumentError` where the state is built.
+  [`LevenbergMarquardt`](@ref) step. With more residuals than unknowns it takes no factor in a
+  lower precision than the element type of the iterate, because a Gauss–Newton step with such a
+  factor stops off the least-squares point; a factor in the same or a higher precision is taken,
+  and the stacked `LevenbergMarquardt` step, which reads no factor, takes any. Each refusal raises
+  an `ArgumentError` where the state is built.
 - `globalization::G`: the globalization method. A line search takes its merit at `α = 0` from
   the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))` and each [`step!!`](@ref) to the
   merit of the residual it returns. A `step!!` with a line search therefore takes only the
@@ -481,19 +482,21 @@ end
     return nothing
 end
 
-# A factor in another element type than the iterate perturbs the Jacobian that the step solves
-# with. A square Newton solve still reaches the root, because it reads the residual in the working
+# A factor in a lower precision than the iterate perturbs the Jacobian that the step solves with.
+# A square Newton solve still reaches the root, because it reads the residual in the working
 # precision, but a Gauss–Newton step on `m_rows > n` residuals stops where the perturbed `Jᴴ F`
 # vanishes, which is not the least-squares point. Such a factor is refused wherever it computes
 # the step; the stacked `LevenbergMarquardt` step reduces `[J | -F]` in the working precision and
-# reads no factor.
+# reads no factor. A factor in a higher precision perturbs the Jacobian below the working
+# precision, and is taken.
 @inline function check_lsq_factor_eltype(m::Newton, m_rows::Int, x)
     T = eltype(x)
-    (m_rows > length(x) && factor_eltype(m.linsolve, T) !== T) || return nothing
+    F = factor_eltype(m.linsolve, T)
+    (m_rows > length(x) && F !== T && eps(real(F)) > eps(real(T))) || return nothing
     m.globalization isa LevenbergMarquardt &&
         !lm_svd_path(m.linsolve, m.globalization.scaling) && return nothing
     throw(ArgumentError(
-        "a LeastSquaresProblem with more residuals than unknowns (m = $m_rows, n = $(length(x))) takes a factor in the element type $T of the iterate; a factor in $(factor_eltype(m.linsolve, T)) moves the Gauss–Newton fixed point off the least-squares point"))
+        "a LeastSquaresProblem with more residuals than unknowns (m = $m_rows, n = $(length(x))) takes no factor in a lower precision than the element type $T of the iterate; a factor in $F moves the Gauss–Newton fixed point off the least-squares point"))
 end
 
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)

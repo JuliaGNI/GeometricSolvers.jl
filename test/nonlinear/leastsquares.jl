@@ -197,10 +197,10 @@ end
     @test norm(x_ldlt) <= 10 * sqrt(eps(T))
     @test init(p3, ones(T, 2), lm_ldlt) isa NonlinearSolver
 
-    # A factor in another element type than the iterate is rejected on m > n residuals, where the
+    # A factor in a lower precision than the iterate is rejected on m > n residuals, where the
     # Gauss–Newton fixed point of the perturbed factor is not the least-squares point; a square
     # problem and the stacked LevenbergMarquardt step, which reads no factor, take it
-    TF = T === Float64 ? Float32 : Float64
+    TF = T === Float64 ? Float32 : Float16
     p_scalar = LeastSquaresProblem((x, p) -> SVector{2}(x - one(T), x + one(T)))
     for ls in (QRFactorization(TF), SVDFactorization(TF))
         @test_throws ArgumentError solve(p1, x0_s, GaussNewton(; linsolve = ls))
@@ -216,6 +216,32 @@ end
           NonlinearSolver
     @test init(LeastSquaresProblem(f_ip, 2), ones(T, 2),
         GaussNewton(; linsolve = QRFactorization(TF))) isa NonlinearSolver
+
+    # A factor in a higher precision than the iterate is taken on m > n residuals, and reaches the
+    # least-squares point of MGH #11 (f* = 5 at x* = -ones(5)): BigFloat for a Float64 iterate.
+    # The dense SVD factorises a BLAS element type only, so a dense BigFloat factor is a QR.
+    TF_hi = T === Float32 ? Float64 : BigFloat
+    for ls in (QRFactorization(TF_hi), SVDFactorization(TF_hi))
+        x_hi, st_hi = solve(LeastSquaresProblem(mgh11_static), ones(SVector{5, T}),
+            GaussNewton(; linsolve = ls))
+        @test st_hi.code === SUCCESS
+        @test eltype(x_hi) === T
+        @test isapprox(st_hi.fnorm^2, T(5); rtol = 64 * eps(T))
+        @test isapprox(Vector(x_hi), fill(T(-1), 5); atol = sqrt(eps(T)))
+        ls isa SVDFactorization{BigFloat} && continue
+        x_hi_d, st_hi_d = solve(LeastSquaresProblem(mgh11_inplace!, 10), ones(T, 5),
+            GaussNewton(; linsolve = ls))
+        @test st_hi_d.code === SUCCESS
+        @test eltype(x_hi_d) === T
+        @test isapprox(st_hi_d.fnorm^2, T(5); rtol = 64 * eps(T))
+        @test isapprox(x_hi_d, fill(T(-1), 5); atol = sqrt(eps(T)))
+    end
+    # the precision of a complex iterate is that of its real part
+    @test_throws ArgumentError GeometricSolvers.check_lsq_factor_eltype(
+        GaussNewton(; linsolve = QRFactorization(TF)), 3, ones(complex(T), 2))
+    @test GeometricSolvers.check_lsq_factor_eltype(
+        GaussNewton(; linsolve = QRFactorization(TF_hi)), 3, ones(complex(T), 2)) ===
+          nothing
 
     # A combinator holds residual buffers of the iterate's length and refuses the problem
     @test_throws ArgumentError init(p3, ones(T, 2), Additive(GaussNewton(), GaussNewton()))
