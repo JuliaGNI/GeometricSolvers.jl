@@ -70,6 +70,28 @@
 - **kind:** defect
 - **found:** PR #48
 
+### K24 · `Bisection`, `StrongWolfe` and `DogLeg` fail on the saddle residual `(x₁ + 0.4x₁³ − 1, −x₂ + 0.4x₂³ + 2)` while `Static` and `Backtracking` reach its root
+
+- **location:** `src/globalization/bisection.jl`, `src/globalization/strongwolfe.jl`,
+  `src/globalization/dogleg.jl`
+- **evidence:** With `F(x, p) = SVector(x[1] + 0.4x[1]^3 - 1, -x[2] + 0.4x[2]^3 + 2)`,
+  `prob = NonlinearProblem(F)` and `solve(prob, SVector(0.8, 1.5), Newton(; linsolve =
+  LUFactorization(), globalization = g))`, the tree of `613c564` returns
+  `Bisection: [0.7985352209656604, 0.9128709291833161] LINESEARCH_FAILED it=3`,
+  `StrongWolfe: [0.7972843024431895, 0.912870914067057] STALLED it=9` and
+  `DogLeg: [0.7972810583101553, 0.9128713775004471] LINESEARCH_FAILED it=14`, while `Static` and
+  `Backtracking` return `SUCCESS` at the root `[0.7972810583155764, -2.1876029597039026]` (Julia
+  1.13.3). The same three fail on the stationarity problem of that action in
+  `test/nonlinear/stationarity.jl`, with `LDLTFactorization()` and with the same iterates, so the
+  outcome does not depend on the problem type. The three stop next to
+  `x̂ = [0.7972810583155764, 1/√1.2]`, where `F(x̂) = [0, 1.3914193805498154]`, the Jacobian is
+  singular (`−1 + 1.2x̂₂² = 0`), and `‖F‖₂²` has a strict local minimum: `‖F(x̂)‖₂² = 1.9360478926`,
+  its `ForwardDiff` gradient is `[0, 0]` and its Hessian has the eigenvalues `6.0969` and `6.2148`.
+  So the measurement shows the three searches stopping at a nonzero local minimum of their merit,
+  not a defect in them.
+- **kind:** found late
+- **found:** 2026-11-06
+
 ### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
 
 - **location:** `src/linear/factors.jl` (`init_linear`)
@@ -86,6 +108,30 @@
 - **kind:** defect
 - **found:** PR #55 (CodeRabbit, on #56)
 
+### K27 · `init` accepts `LDLTFactorization` for a `StationarityProblem` with `E ≠ U`, whose Jacobian is not symmetric
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring, `init`)
+- **evidence:** `LDLTFactorization` reads only the lower triangle of `J = (∇²S)_{E, U}`, and `J`
+  is symmetric only where `E == U`. The `StationarityProblem` docstring states this limit, but
+  `init`, `solve`, `solve!` and `solve_batch!` do not check it, so a solve with `E ≠ U` and
+  `LDLTFactorization` factorises the wrong matrix with no error. The check is for a later pull
+  request: `init` raises an `ArgumentError` for `LDLTFactorization` when `E ≠ U`.
+- **kind:** defect
+- **found:** PR #58
+
+### K28 · A `StationarityProblem` with a complex state fails in the default automatic differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring)
+- **evidence:** With `S(x, p) = sum(abs2, x) / 2 - sum(x)`, `solve(StationarityProblem(S), x0)`
+  returns `SUCCESS` at `[1.0, 1.0]` for `x0 = Float64[0.1, 0.2]`. For `ComplexF64[0.1, 0.2]` it
+  raises `ArgumentError: Cannot create a dual over scalar type ComplexF64`, and for an
+  `SVector{2, ComplexF64}` or a `ComplexF64` it raises `MethodError: no method matching
+  _stationarity_residual_r1(::ADTypes.AutoForwardDiff{nothing, Nothing}, …)` (tree of `989000e`,
+  Julia 1.13.3). The docstring states that the state must be real. Support for a complex state is
+  for a later pull request.
+- **kind:** defect
+- **found:** PR #58
+
 ### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
 
 - **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
@@ -100,6 +146,19 @@
 - **kind:** defect
 - **found:** PR #53
 
+### K31 · `solve` on a `StationarityProblem` has no implicit differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`init`, `solve`)
+- **evidence:** `solve` on a `NonlinearProblem` with a `ForwardDiff.Dual` in `x₀` or `p` runs
+  the primal solve and then the implicit-function-theorem tangent solve (`solve_implicit` in
+  `src/nonlinear/implicit.jl`). `solve` on a `StationarityProblem` has no such path. `init`,
+  `solve`, `solve!` and `solve_batch!` on a `StationarityProblem` therefore raise an
+  `ArgumentError` for a `ForwardDiff.Dual` in the iterate or in `p`. Implicit differentiation
+  through the stationarity equations `(∇S)_E + b = 0`, with the Jacobian `(∇²S)_{E, U}`, is for a
+  later pull request.
+- **kind:** defect
+- **found:** PR #58 (CodeRabbit)
+
 ### K60 · `solve` with a combinator method has no implicit differentiation
 
 - **location:** `src/composition/implicit.jl` (`solve_implicit`)
@@ -112,34 +171,6 @@
   solve; `init`, `solve!` and `solve_batch!` refuse a dual input for every method. Implicit
   differentiation through a combinator, which needs the Jacobian of `F` at `x*` and not the steps
   of the members, is for a later pull request.
-- **kind:** defect
-- **found:** PR #60
-
-### K61 · A hard failure of one `Additive` member discards the whole step, also at weight zero
-
-- **location:** `src/composition/additive.jl` (`step!!`)
-- **evidence:** With `F(x) = -x - x³`, `x₀ = SVector(1.0, 0.5)` and
-  `pic = Picard(; damping = 1, globalization = Backtracking())`, whose line search fails at every
-  step, `solve(prob, x₀, Additive(Newton(), pic))` and
-  `solve(prob, x₀, Additive(Newton(), pic; weights = FixedWeights(1.0, 0.0)))` both return
-  `LINESEARCH_FAILED` after 1 iteration at `x₀`, while `Newton()` alone returns `SUCCESS` after 5.
-  A `SINGULAR`, `NONFINITE` or zero-norm `LINESEARCH_FAILED` member ends the `Additive` step at
-  `x` with `stepnorm = 0`, whatever its weight. Whether the step drops the failed candidates and
-  combines the others, and how it then sets the weights, is open.
-- **kind:** defect
-- **found:** PR #60
-
-### K62 · A combinator reports a `STALLED` member step as `SUCCESS`
-
-- **location:** `src/composition/repeat.jl`, `src/composition/multiplicative.jl`,
-  `src/composition/additive.jl` (`step!!`)
-- **evidence:** With `F(x) = x² - 2` from `1.0`, all four tolerances `0`, `max_stalls = 3` and
-  `nb = Newton(; globalization = Backtracking())`, `nb` returns `STALLED` after 8 iterations,
-  `Switch(nb, nb)` after 8, `Repeat(nb, 1)` and `Multiplicative(nb)` after 6, and `Additive(nb)`
-  after 4. `Repeat`, `Multiplicative` and `Additive` report `SUCCESS` for a step whose members
-  returned `STALLED`, so `solve!!` applies the step test after a stall and does not count
-  `max_stalls`; `Switch` passes the code of its active branch through. Whether the composite step
-  is `STALLED` when every member step is, or when the last one is, is open.
 - **kind:** defect
 - **found:** PR #60
 

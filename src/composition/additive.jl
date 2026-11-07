@@ -3,6 +3,10 @@
 
 const WeightRule = Union{OptimalWeights, FixedWeights}
 
+# The problems a combinator state is built for: a `NonlinearProblem`, and the reduced problem that
+# `init_state(m, ::StationarityProblem, x₀, p; b)` builds its method's state for.
+const CombinatorProblem = Union{NonlinearProblem, ReducedStatProb}
+
 """
     Additive(m₁, m₂, ...; weights = OptimalWeights())
     Additive((m₁, m₂, ...), weights::Union{OptimalWeights, FixedWeights} = OptimalWeights())
@@ -15,6 +19,12 @@ candidate directions and solves the weights over the ones kept, a one-weight sec
 survives; a trial iterate that violates the PETSc safeguard is replaced by the candidate with the
 smallest residual norm. Each rule counts one failure in `step_failures`, and a step on which both
 fire counts one.
+
+A member whose step fails hard (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with a zero
+step) is left out of the combination: `OptimalWeights` solves for the weights of the members
+kept, and `FixedWeights` rescales the weights of the members kept to the sum of all weights. The
+step fails, with the code of the first member that failed, when every member fails, or when the
+fixed weights of the members kept sum to zero. The step is `STALLED` when every member step is.
 
 The tuple form takes the weight rule as its second positional argument: a `weights` keyword
 after a tuple makes the tuple a single member.
@@ -79,7 +89,7 @@ end
     return (s1, s_tail...)
 end
 
-@inline function init_state(m::Additive, prob::NonlinearProblem, x, p)
+@inline function init_state(m::Additive, prob::CombinatorProblem, x, p)
     M = length(m.members)
     states = _init_member_states(m.members, prob, x, p)
     Fx = buffer(x)
@@ -140,6 +150,31 @@ end
         end
     end
     return k_best, f_best
+end
+
+# The weights of the candidates kept (`active`), the rank-fallback flag, and whether the kept
+# candidates make a step: none when no candidate is kept. `FixedWeights` rescales the kept
+# weights to the sum of all weights, which makes no step when the kept weights sum to zero.
+@inline function additive_weights(
+        rule::FixedWeights, work, Fx, Fxs, fnorms::Tuple{R, Vararg{R}}, active) where {R}
+    w = map(R, rule.weights)
+    all(active) && return w, false, true
+    w_kept = map((wi, a) -> ifelse(a, wi, zero(R)), w, active)
+    scale = sum(w) / sum(w_kept)
+    return map(wi -> wi * scale, w_kept), false, isfinite(scale) && !iszero(scale)
+end
+
+@inline function additive_weights(::OptimalWeights, work, Fx, Fxs, fnorms, active)
+    any(active) || return map(zero, fnorms), false, false
+    w, rank_fallback = optimal_weights(work, Fx, Fxs, fnorms, active)
+    return w, rank_fallback, true
+end
+
+# The code of a combined step: `NONFINITE` for a non-finite trial residual, which only
+# `FixedWeights` reaches because it has no safeguard; `STALLED` when every member step is.
+@inline function additive_code(infos::Tuple, fnorm₊)
+    isfinite(fnorm₊) || return NONFINITE
+    return all(info -> info.code == STALLED, infos) ? STALLED : SUCCESS
 end
 
 @inline _step_additive_r1(::Tuple{}, ::Tuple{}, prob, x, Fx, p, merit₀) = (), (), (), ()
@@ -226,26 +261,26 @@ end
 end
 
 function step!!(
-        state::AdditiveState{S, Nothing}, m::Additive, prob::NonlinearProblem,
+        state::AdditiveState{S, Nothing}, m::Additive, prob::AbstractNonlinearProblem,
         x, Fx, p) where {S <: Tuple}
     R = real(eltype(x))
     merit₀ = norm2(Fx)
-    xs_cand, Fxs_cand, states_new, infos = _step_additive_r1(
+    xs_step, Fxs_step, states_new, infos = _step_additive_r1(
         state.states, m.members, prob, x, Fx, p, merit₀)
     new_state = AdditiveState(
         states_new, state.Fx, state.xs, state.Fxs, state.d, state.xt, state.work)
-    if any(is_hard_failure, infos)
+    active = map(!is_hard_failure, infos)
+    # a failed member's candidate is `(x, Fx)` at residual norm `Inf`, and takes weight zero
+    xs_cand = map((xi, a) -> a ? xi : x, xs_step, active)
+    Fxs_cand = map((Fi, a) -> a ? Fi : Fx, Fxs_step, active)
+    fnorms = map((info, a) -> a ? info.fnorm : R(Inf), infos, active)
+    w, rank_fallback, combines = additive_weights(
+        m.weights, nothing, Fx, Fxs_cand, fnorms, active)
+    if !combines
         bad_code = first_failure_code(infos)
         info_err = StepInfo{R}(
             bad_code, rnorm(Fx), zero(R), sum_failures(infos), any_promoted(infos), false)
         return x, Fx, new_state, info_err
-    end
-    fnorms = map(info -> info.fnorm, infos)
-    if m.weights isa FixedWeights
-        w = map(R, m.weights.weights)
-        rank_fallback = false
-    else
-        w, rank_fallback = optimal_weights(nothing, Fx, Fxs_cand, fnorms)
     end
     d = _combine_r1_dir(x, xs_cand, w)
     x₊ = update_iterate!!(nothing, x, one(R), d)
@@ -266,33 +301,36 @@ function step!!(
     stepnorm = rnorm(x₊ - x)
     rank_fallback = rank_fallback & !safeguard_fallback
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
-    # `FixedWeights` has no safeguard, so its trial residual can be non-finite
-    code = isfinite(fnorm₊) ? SUCCESS : NONFINITE
+    code = additive_code(infos, fnorm₊)
     info_ok = StepInfo{R}(
         code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
     return x₊, F₊, new_state, info_ok
 end
 
 function step!!(
-        state::AdditiveState, m::Additive, prob::NonlinearProblem, x, Fx, p)
+        state::AdditiveState, m::Additive, prob::AbstractNonlinearProblem, x, Fx, p)
     R = real(eltype(x))
     merit₀ = norm2(Fx)
     states_new, infos = _step_additive_r3(
         state.states, m.members, state.xs, state.Fxs, prob, x, Fx, p, merit₀)
     new_state = AdditiveState(
         states_new, state.Fx, state.xs, state.Fxs, state.d, state.xt, state.work)
-    if any(is_hard_failure, infos)
+    active = map(!is_hard_failure, infos)
+    # a failed member's candidate is `(x, Fx)` at residual norm `Inf`, and takes weight zero
+    for i in eachindex(active)
+        if !active[i]
+            copy!!(state.xs[i], x)
+            copy!!(state.Fxs[i], Fx)
+        end
+    end
+    fnorms = map((info, a) -> a ? info.fnorm : R(Inf), infos, active)
+    w, rank_fallback, combines = additive_weights(
+        m.weights, state.work, Fx, state.Fxs, fnorms, active)
+    if !combines
         bad_code = first_failure_code(infos)
         info_err = StepInfo{R}(
             bad_code, rnorm(Fx), zero(R), sum_failures(infos), any_promoted(infos), false)
         return x, Fx, new_state, info_err
-    end
-    fnorms = map(info -> info.fnorm, infos)
-    if m.weights isa FixedWeights
-        w = map(R, m.weights.weights)
-        rank_fallback = false
-    else
-        w, rank_fallback = optimal_weights(state.work, Fx, state.Fxs, fnorms)
     end
     combine_directions!(state.d, x, state.xs, w)
     x₊ = update_iterate!!(state.xt, x, one(R), state.d)
@@ -316,8 +354,7 @@ function step!!(
     Fx_out = copy!!(Fx, F₊)
     rank_fallback = rank_fallback & !safeguard_fallback
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
-    # `FixedWeights` has no safeguard, so its trial residual can be non-finite
-    code = isfinite(fnorm₊) ? SUCCESS : NONFINITE
+    code = additive_code(infos, fnorm₊)
     info_ok = StepInfo{R}(
         code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
     return x_out, Fx_out, new_state, info_ok

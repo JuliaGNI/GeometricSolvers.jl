@@ -99,10 +99,12 @@ end
 end
 
 # Solve the small `M × M` real normal equations `G w = b` with the `sin²θ` rank rule
-# (`τ_sin2 = 1e-3`) and Tikhonov regularisation `λ = eps(R) * (tr(G_kept) / p)`.
+# (`τ_sin2 = 1e-3`) and Tikhonov regularisation `λ = eps(R) * (tr(G_kept) / p)`. Only the
+# candidates whose `active` entry is `true` enter; the others take weight zero, and leaving them
+# out is no rank fallback. At least one candidate is active.
 @inline function solve_optimal_weights(
         G::SMatrix{1, 1, R}, b::SVector{1, R},
-        fnorms::NTuple{1, R}) where {R <: AbstractFloat}
+        fnorms::NTuple{1, R}, active::NTuple{1, Bool} = (true,)) where {R <: AbstractFloat}
     g11 = G[1, 1]
     b1 = b[1]
     if isfinite(g11) && g11 > zero(R) && isfinite(b1)
@@ -113,8 +115,14 @@ end
 end
 
 @inline function solve_optimal_weights(
-        G::SMatrix{2, 2, R}, b::SVector{2, R},
-        fnorms::NTuple{2, R}) where {R <: AbstractFloat}
+        G::SMatrix{2, 2, R}, b::SVector{2, R}, fnorms::NTuple{2, R},
+        active::NTuple{2, Bool} = (true, true)) where {R <: AbstractFloat}
+    if !all(active)
+        k = active[1] ? 1 : 2
+        wk, fb = solve_optimal_weights(
+            SMatrix{1, 1, R}(G[k, k]), SVector{1, R}(b[k]), (fnorms[k],))
+        return single_weight(Val(2), k, wk[1]), fb
+    end
     τ_sin2 = R(1e-3)
     g11 = G[1, 1]
     g22 = G[2, 2]
@@ -153,8 +161,8 @@ end
 end
 
 @inline function solve_optimal_weights(
-        G::SMatrix{M, M, R}, b::SVector{M, R},
-        fnorms::NTuple{M, R}) where {M, R <: AbstractFloat}
+        G::SMatrix{M, M, R}, b::SVector{M, R}, fnorms::NTuple{M, R},
+        active::NTuple{M, Bool} = ntuple(_ -> true, Val(M))) where {M, R <: AbstractFloat}
     τ_sin2 = R(1e-3)
     order = SVector{M, Int}(ntuple(identity, Val(M)))
     @inbounds for i in 2:M
@@ -173,8 +181,12 @@ end
         end
         order = setindex(order, key, j + 1)
     end
+    first_active = order[1]
+    @inbounds for q in M:-1:1
+        active[order[q]] && (first_active = order[q])
+    end
     if !all(isfinite, G) || !all(isfinite, b)
-        k = order[1]
+        k = first_active
         gkk = G[k, k]
         bk = b[k]
         wk_nf_raw = (isfinite(gkk) && gkk > zero(R) && isfinite(bk)) ?
@@ -188,6 +200,7 @@ end
     rank_fallback = false
     @inbounds for q in 1:M
         idx = order[q]
+        active[idx] || continue
         gii = G[idx, idx]
         if !(gii > zero(R))
             rank_fallback = true
@@ -221,14 +234,13 @@ end
         end
     end
     if p == 0
-        k = order[1]
-        return single_weight(Val(M), k, one(R)), true
+        return single_weight(Val(M), first_active, one(R)), true
     elseif p == 1
         k = kept[1]
         gkk = G[k, k]
         wk_p1_raw = b[k] / (gkk * (one(R) + eps(R)))
         wk_p1 = isfinite(wk_p1_raw) ? wk_p1_raw : one(R)
-        return single_weight(Val(M), k, wk_p1), true
+        return single_weight(Val(M), k, wk_p1), rank_fallback
     end
     tr_kept = zero(R)
     @inbounds for c in 1:p
@@ -295,8 +307,9 @@ end
 end
 
 @inline function optimal_weights(
-        ::Nothing, Fx, Fxs::Tuple{Any, Vararg{Any, N}},
-        fnorms::Tuple{R, Vararg{R, N}}) where {N, R <: AbstractFloat}
+        ::Nothing, Fx, Fxs::Tuple{Any, Vararg{Any, N}}, fnorms::Tuple{R, Vararg{R, N}},
+        active::Tuple{Bool, Vararg{Bool, N}} = ntuple(_ -> true, Val(N + 1))) where {
+        N, R <: AbstractFloat}
     M = N + 1
     δFs = ntuple(i -> Fxs[i] - Fx, Val(M))
     G = SMatrix{M, M, R}(ntuple(Val(M * M)) do k
@@ -305,13 +318,14 @@ end
         i <= j ? rdot(δFs[i], δFs[j]) : rdot(δFs[j], δFs[i])
     end)
     b = SVector{M, R}(ntuple(i -> -rdot(δFs[i], Fx), Val(M)))
-    return solve_optimal_weights(G, b, fnorms)
+    return solve_optimal_weights(G, b, fnorms, active)
 end
 
 @inline function optimal_weights(
         work::AdditiveWeightWorkspace{M, T}, Fx::AbstractArray{T},
-        Fxs::NTuple{M, AbstractArray{T}},
-        fnorms::Tuple{R, Vararg{R, N}}) where {M, T, R <: AbstractFloat, N}
+        Fxs::NTuple{M, AbstractArray{T}}, fnorms::Tuple{R, Vararg{R, N}},
+        active::NTuple{M, Bool} = ntuple(_ -> true, Val(M))) where {
+        M, T, R <: AbstractFloat, N}
     fill_delta_columns!(work.ΔF, Fx, Fxs)
     mul!!(work.G_dev, work.ΔF', work.ΔF)
     mul!!(work.b_dev, work.ΔF', Fx)
@@ -321,5 +335,5 @@ end
     end
     G = SMatrix{M, M, R}(ntuple(k -> real(work.G_host[k]), Val(M * M)))
     b = SVector{M, R}(ntuple(i -> -real(work.b_host[i]), Val(M)))
-    return solve_optimal_weights(G, b, fnorms)
+    return solve_optimal_weights(G, b, fnorms, active)
 end

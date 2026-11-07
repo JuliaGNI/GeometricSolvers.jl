@@ -1,7 +1,8 @@
 # `Switch` combinator in R1, R2 and R3: constructor validation, relative threshold against
 # `‖F(x₀)‖ = 10³` (Check 5, MU7), permanent latch on forced residual rise (Check 5, MU8),
 # un-started `step!!` returning `NONFINITE` (Check 5, MU9), `sync_merit` on transition to a
-# line-search `second` member (D7), active-branch `finish!!` diagnostics (D8), and R1/R2/R3
+# line-search `second` member (D7), active-branch `finish!!` diagnostics (D8), a
+# `StationarityProblem`, and R1/R2/R3
 # `isbits`, `@inferred`, zero allocations, `JLArray` under `allowscalar(false)`, and
 # `solve_batch!` (Check 6).
 
@@ -15,8 +16,9 @@ using Test
 
 using GeometricSolvers
 using GeometricSolvers: Backtracking, LUFactorization, NONFINITE, Newton, NonlinearProblem,
-                        Picard, SVDFactorization, SUCCESS, SolverStatus, Static, Switch,
-                        ToReal, finish!!, init, init_state, residual!!, rnorm, solve,
+                        Picard, SVDFactorization, SUCCESS, SolverStatus, Static,
+                        StationarityProblem, Switch, ToReal, finish!!, init, init_state,
+                        residual!!, rnorm, solve,
                         solve!, solve_batch!, solve!!, start!!, step!!
 
 include("../helpers/matrix.jl")
@@ -185,6 +187,15 @@ end
     _, st_late = solve(prob_q, x_q, sw_late; max_iterations = 3)
     @test st_late.rank === Int32(2)
     @test isfinite(st_late.nullnorm)
+end
+
+# ∇S(x) = x³ + x - 1 componentwise, whose real root is 0.6823278038280193
+@testset "Switch on a StationarityProblem, $(nameof(typeof(x₀)))" for x₀ in (
+    SVector(0.1, 0.2), [0.1, 0.2])
+    sp = StationarityProblem((x, p) -> sum(abs2, x) / 2 - sum(x) + sum(x .^ 4) / 4)
+    x, st = solve(sp, x₀, Switch(Picard(; damping = 0.5), Newton()))
+    @test st.code === SUCCESS
+    @test isapprox(Array(x), fill(0.6823278038280193, 2); rtol = 1e-10)
 end
 
 @testset "Check 6: R1/R2/R3 parity, isbits, @inferred, 0 allocs, $T" for T in ELTYPES

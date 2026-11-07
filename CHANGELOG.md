@@ -55,24 +55,26 @@ so that a compat-only bump can be told apart from an interface change.
   with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
   element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
 
-- **`solve(prob, x₀, method, p)` with a `Newton` or `Picard` method differentiates implicitly
-  through a converged solve when `x₀` or `p` contains `ForwardDiff.Dual` values** (decision 50 of
-  the design). `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual`
-  layer from `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
+- **`solve(prob, x₀, method, p)` on a `NonlinearProblem` with a `Newton` or `Picard` method
+  differentiates implicitly through a converged solve when `x₀` or `p` contains
+  `ForwardDiff.Dual` values** (decision 50 of the design); on a `StationarityProblem` it raises
+  an `ArgumentError` (K31).
+  `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from
+  `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
   `Adapt.adapt(StripDual(), p)` while leaving tuples, named tuples, numbers and other arrays
-  unchanged. When `x₀` or `p` carries `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted
-  value type of the dual leaves of `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`,
-  runs the primal solve via `solve!!` at the precision of the stripped `x₀`
-  (`status::SolverStatus{R}` with `R = real(eltype(x₀))`), and on `status.code === SUCCESS`
-  computes the tangent `ẋ` of the solution `x*` from the implicit function theorem
-  `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3 (`Array`,
-  `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one factorisation
-  at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with `prob.J` or
-  `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*` with zero
-  partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single factor. The
-  tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS` path and on the
-  `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}` with
-  `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
+  unchanged. When `x₀` or `p` carries
+  `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted value type of the dual leaves of
+  `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`, runs the primal solve via `solve!!`
+  at the precision of the stripped `x₀` (`status::SolverStatus{R}` with `R = real(eltype(x₀))`),
+  and on `status.code === SUCCESS` computes the tangent `ẋ` of the solution `x*` from the implicit
+  function theorem `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3
+  (`Array`, `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one
+  factorisation at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with
+  `prob.J` or `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*`
+  with zero partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single
+  factor. The tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS`
+  path and on the `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}`
+  with `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
   `ForwardDiff.Dual{Tg, Float32, 1}`, `W` is `Float64`. When `status.code !== SUCCESS`, `solve`
   skips the tangent solve and returns `(x*, status)` with `NaN` partials. If the tangent
   factorisation at `(x*, p_val)` fails (`returncode(fac) === SINGULAR`), `solve` performs no
@@ -957,11 +959,33 @@ so that a compat-only bump can be told apart from an interface change.
   `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
   against it.
 
+- `StationarityProblem(S; E = :, U = :, b = nothing)` (and positional `StationarityProblem(S, E, U, b = nothing)`)
+  and `LDLTFactorization()`, with `LDLTFactorization(TF)` for a factorisation precision `TF`: solve
+  the stationarity condition
+  $(\nabla S(x, p))_E + b = 0$ over $u = x_U$ of a scalar action $S$, alongside Bunch–Kaufman
+  $\mathrm{LDL}^\top$ / $\mathrm{LDL}^\dagger$ factorisation (`StaticLDLT` in R1, zero-allocation
+  LAPACK `sytrf!`/`sytrs!` and `hetrf!`/`hetrs!` with generic fallback `DenseLDLT` in R3 host, and
+  `KernelAbstractions` `DeviceLDLT` in R3 device). For an array iterate `StationarityProblem`
+  accepts `E` and `U` as `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
+  `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, and for an R1 iterate as `:`, a `Tuple` or an
+  `SVector`; it keeps inactive components $x_{\notin U}$ fixed, and solves through `solve`, `init`,
+  `solve!` (with keyword `b = nothing`) and `solve_batch!`, which refuse a `ForwardDiff.Dual` in
+  the iterate or in `p` with an `ArgumentError`: a `StationarityProblem` has no implicit
+  differentiation in this release (K31). `StationarityProblem` and
+  `NonlinearProblem` share the supertype `AbstractNonlinearProblem`: `solve!`, `solve!!` and
+  `NonlinearSolver` take either, and `init` and `solve` have a method for each problem type. In R1,
+  `gradient_hessian!!` evaluates both $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested
+  `ForwardDiff.Dual` call, and `jvp!!` evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional
+  partial. In R3, `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and
+  on an `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
+  `Array`.
+
 - `OptimalWeights`, `FixedWeights`, `Additive`, `Multiplicative`, `Repeat` and `Switch` (exported),
   together with the internal `GeometricSolvers.sync_merit`, compose nonlinear step rules (`Newton`,
   `Picard` and any combinator) across R1 (`StaticVector`, `MVector` and `Number`), R2
   (`solve_batch!` on host and device arrays) and R3 (`Array` and `AbstractGPUArray`), with
-  `Adapt.@adapt_structure` on every combinator and weight rule.
+  `Adapt.@adapt_structure` on every combinator and weight rule. `solve`, `init` and `solve_batch!`
+  on a `StationarityProblem` take a combinator method, as they take `Newton` and `Picard`.
   `OptimalWeights(ρ = 1.0)` (`OptimalWeights(; ρ = 1.0)`, requiring finite `ρ > 0`, else
   `ArgumentError`) solves the real-weight (`R = real(T)`) secant least-squares problem
   $\min_{w \in \mathbb{R}^m} \|F(x) + \sum_{i=1}^m w_i (F(x_i) - F(x))\|_2$ from the Gram matrix
@@ -986,9 +1010,14 @@ so that a compat-only bump can be told apart from an interface change.
   `Additive(m₁, m₂, ...; weights = OptimalWeights())` (`fieldcount(M) >= 1` and matching
   `FixedWeights` length, else `ArgumentError`) runs one step of each member from the same
   $(x, F(x))$ (stepping in preallocated per-member copies `(xs[i], Fxs[i])` in R3 so `x` is not
-  mutated while members run), returns the first hard failure (`SINGULAR`, `NONFINITE`, or
-  `LINESEARCH_FAILED` with zero `stepnorm`) with `stepnorm = 0` when any member hard-fails, and
-  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$,
+  mutated while members run), and leaves out a member that hard-fails (`SINGULAR`, `NONFINITE`, or
+  `LINESEARCH_FAILED` with zero `stepnorm`); its candidate is $(x, F(x))$ at residual norm $\infty$
+  and takes weight zero. `OptimalWeights` solves for the weights of the members kept.
+  `FixedWeights` rescales the kept weights by $\sum_{i=1}^m w_i / \sum_{i \text{ kept}} w_i$, so
+  that they sum to the total of all the weights, and leaves them unchanged when no member fails.
+  The step fails, with `stepnorm = 0` and the code of the first member that failed, when every
+  member fails or when that rescale factor is not finite or zero (the kept fixed weights sum to
+  zero, or the weights sum to zero in total); otherwise it forms $d = \sum_{i=1}^m w_i (x_i - x)$,
   $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$ and $F_+ = F(x_+, p)$. Under
   `OptimalWeights`, the PETSc safeguard checks whether `!isfinite(‖F(x₊)‖)`,
   $\sum_i |w_i| < 0.1$, or $\|F(x_+)\| > \rho \min_i \|F(x_i)\|$; when triggered, it replaces
@@ -1018,8 +1047,12 @@ so that a compat-only bump can be told apart from an interface change.
   `second` once $\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|$. In `finish!!`, `Additive` resets
   the spectrum diagnostics (`rank = -1`, `nullnorm = NaN`, `gradratio = NaN`), `Multiplicative`
   forwards the diagnostics of the last member in sequence that populated them, `Repeat` forwards
-  its inner member's diagnostics, and `Switch` forwards those of the active branch. `solve` with a
-  combinator method (`Additive`, `Multiplicative`, `Repeat`, `Switch`) and a `ForwardDiff.Dual` in
+  its inner member's diagnostics, and `Switch` forwards those of the active branch.
+  `Additive`, `Multiplicative` and `Repeat` report `STALLED` when every member step (every
+  sub-step, for `Repeat`) is `STALLED`, and `SUCCESS` otherwise; a hard failure keeps its own
+  code. So `Repeat(m, 1)` and `Multiplicative(m)` stall where `m` does and count toward
+  `max_stalls`, and `Switch` passes the code of its active member through unchanged. `solve` with
+  a combinator method (`Additive`, `Multiplicative`, `Repeat`, `Switch`) and a `ForwardDiff.Dual` in
   `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
   through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
   input for every method.

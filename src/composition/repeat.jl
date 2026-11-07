@@ -5,7 +5,8 @@
 
 Sequential nonlinear combinator that runs `count` sub-steps of `method` (`count >= 1`) per
 outer solver iteration, synchronising any line-search baseline merit between sub-steps and
-reporting the combined outer step norm ``\\|x^{(\\text{count})} - x^{(0)}\\|``.
+reporting the combined outer step norm ``\\|x^{(\\text{count})} - x^{(0)}\\|``. The outer step is
+`STALLED` when every sub-step is.
 """
 struct Repeat{M}
     method::M
@@ -33,7 +34,7 @@ end
     return RepeatState(sync_merit(state.state, m.method, merit), state.Fx, state.x₀)
 end
 
-@inline function init_state(m::Repeat, prob::NonlinearProblem, x, p)
+@inline function init_state(m::Repeat, prob::CombinatorProblem, x, p)
     return RepeatState(init_state(m.method, prob, x, p), buffer(x), buffer(x))
 end
 
@@ -53,13 +54,16 @@ end
 
 # A hard failure of a sub-step ends the outer step with its code and keeps the iterate that the
 # sub-steps before it reached. The step norm is the outer one, also after such a failure: a
-# `LINESEARCH_FAILED` step that earlier sub-steps moved is not a zero step.
+# `LINESEARCH_FAILED` step that earlier sub-steps moved is not a zero step. Otherwise the outer
+# step is `STALLED` when every sub-step is, and `SUCCESS` else, so `Repeat(m, 1)` stalls where
+# `m` does.
 function step!!(
         state::RepeatState, m::Repeat,
-        prob::NonlinearProblem, x, Fx, p)
+        prob::AbstractNonlinearProblem, x, Fx, p)
     R = real(eltype(x))
     x_start = copy!!(state.x₀, x)
     s = state.state
+    stalled = true
     code = SUCCESS
     fnorm = zero(R)
     failures = Int32(0)
@@ -72,11 +76,13 @@ function step!!(
         failures += info.failures
         promoted |= info.promoted
         limited |= info.limited
+        stalled &= info.code == STALLED
         if is_hard_failure(info)
             code = info.code
             break
         end
     end
+    stalled && (code = STALLED)
     stepnorm = rnorm(map!!(-, state.x₀, x, x_start))
     info_out = StepInfo{R}(code, fnorm, stepnorm, failures, promoted, limited)
     return x, Fx, RepeatState(s, state.Fx, state.x₀), info_out
