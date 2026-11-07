@@ -14,7 +14,8 @@ adapted from the gain ratio
 
 `μ` is absolute, in the units of `J(x)ᴴ J(x)`: scaling the residual by `k` scales `J(x)ᴴ J(x)`
 by `k²` and leaves `μ` as it is, so a damping of `μ` on `k J(x)` acts as `μ / k²` does on
-`J(x)`, and the `μ → 0` limit is decision 44's truncated step whatever the scale. With
+`J(x)`, and the `μ → 0` limit is the Newton step, truncated to the numerical rank as the solve of
+[`SVDFactorization`](@ref) truncates it, whatever the scale. With
 `scaling = :diagonal`, `D` is instead the diagonal of the column norms of `J(x)`, floored at
 `√eps` of the largest of them.
 
@@ -26,12 +27,13 @@ refactoring `J(x)`. With [`QRFactorization`](@ref) or [`LUFactorization`](@ref) 
 Givens rotations, without forming `J(x)ᴴ J(x)`. That path indexes scalars and runs on a host
 array: an `init` on a device array iterate raises an `ArgumentError` for it. A `μ` below
 `4 eps` of the working type, which only an initial `μ₀` below the schedule's floor can be, is
-taken as no damping: the truncated step of decision 44.
+taken as no damping: the truncated Newton step, the `μ → 0` limit.
 
 A solve starts at `μ₀`. A trial is accepted when `ρ > ρ_accept`, and an accepted step sets `μ` to
 `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`. A rejected trial, or one whose step is not finite,
-multiplies `μ` by `μ_increase` and solves again within the same step, with no new Jacobian, until a
-trial is accepted or `μ > μ_max`, which returns `STALLED` with the iterate kept. A step accepted at
+sets `μ` to `max(μ · μ_increase, max(μ_min, 4 eps(R)))` and solves again within the same step,
+with no new Jacobian, until a trial is accepted or `μ > μ_max`, which returns `STALLED` with the
+iterate kept. A step accepted at
 a `μ` above `μ₀` sets `limited` in its [`StepInfo`](@ref). The parameters satisfy `0 < μ_min ≤ μ₀ ≤
 μ_max < Inf`, `0 < μ_decrease < 1 < μ_increase`, `0 ≤ ρ_accept < 1` and `scaling ∈ (:none,
 :diagonal)`, else the constructor raises an `ArgumentError`; [`ToReal`](@ref) converts them to the
@@ -136,9 +138,9 @@ end
 @inline lm_Ft(g) = g.Ft
 
 # The damping a trial step uses. The schedule floors `μ` at `max(μ_min, 4 eps(R))` after every
-# accepted step, so a `μ` below that floor arrives only as the initial `μ₀` that `start!!` stores,
-# and the schedule never returns to it. It is taken as no damping: the truncated step of decision
-# 44, which is the `μ → 0` limit of the damped one.
+# accepted and every rejected trial, so a `μ` below that floor arrives only as the initial `μ₀`
+# that `start!!` stores, and the schedule never returns to it. It is taken as no damping: the
+# truncated Newton step, which is the `μ → 0` limit of the damped one.
 @inline function lm_step_damping(μ::R) where {R <: AbstractFloat}
     return μ < 4 * eps(R) ? zero(R) : μ
 end

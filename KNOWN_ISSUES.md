@@ -99,3 +99,32 @@
   refuses the mix with an `ArgumentError` is open.
 - **kind:** defect
 - **found:** PR #53
+
+### K55 · `LevenbergMarquardt` on a sparse `jacobian_prototype` runs the dense stacked solve
+
+- **location:** `src/globalization/levenbergmarquardt.jl` (`init_globalization`, `lm_qr_factor!`)
+- **evidence:** `Newton(; linsolve = LUFactorization(), globalization = LevenbergMarquardt())` on
+  a `NonlinearProblem` with a `SparseMatrixCSC` `jacobian_prototype` takes the stacked path,
+  because `lm_svd_path` is `false` for every method but `SVDFactorization` with `scaling = :none`.
+  `init_globalization` then allocates the dense `n × n` buffers `R₀` and `R`, `lm_qr_factor!`
+  reads the sparse Jacobian one entry at a time in an `O(n³)` Givens reduction, and the
+  `SparspakLU` factor that `init_factor` builds is never factorised. The solve is correct, but its
+  cost and storage are those of a dense solve, not of the sparse one. With
+  `QRFactorization` or `SVDFactorization` a sparse prototype raises a `MethodError` in
+  `init_linear`, as for every other globalization. Whether this combination is refused with an
+  `ArgumentError`, as a device iterate is in `check_lm_iterate`, or gets a sparse damped solve is
+  open.
+- **kind:** defect
+- **found:** PR #65
+
+### K56 · The stacked `LevenbergMarquardt` step allocates a linear factor that it never reads
+
+- **location:** `src/nonlinear/newton.jl` (`init_state`, `lm_newton_factor`)
+- **evidence:** `init_state` calls `init_factor(m.linsolve, prob, x, p, jacprep)` for every
+  `Newton` without reuse, and `init_newton_J` gives `LevenbergMarquardt` a Jacobian buffer of its
+  own. On the stacked path (`QRFactorization`, `LUFactorization`, or `scaling = :diagonal`)
+  `lm_newton_factor` returns `state.fac` without a `factorize!!`, and the trial loop reads only the
+  stacked buffers of `init_globalization`. The factor is one `n × n` array of state that no step
+  reads.
+- **kind:** dead code
+- **found:** PR #65

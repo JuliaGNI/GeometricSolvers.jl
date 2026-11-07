@@ -761,7 +761,7 @@ end
 
         # The two assertions of the specification's Check 6b. The default `μ₀` cannot move an
         # iterate of the `2^-400` scale; `μ₀ = 1e-16`, below `4 eps(Float64)`, is no damping at
-        # all, which is decision 44's truncated step and converges at once.
+        # all, which is the truncated Newton step and converges at once.
         s_low = ldexp(1.0, -400)
         J_low = @SMatrix [s_low 0.0; 0.0 s_low]
         b_low = J_low * x_star
@@ -1107,7 +1107,7 @@ end
     @testset "The no-damping floor of 4 eps is bracketed" begin
         # `μ` is absolute, in the units of `Jᴴ J`: on the scale `2^-400` of `J` a `μ` above
         # `4 eps(Float64)` is far above `σ² = 2^-800` and the step stands still, while a `μ`
-        # below that floor is no damping at all and the step is the truncated one of decision 44.
+        # below that floor is no damping at all and the step is the truncated Newton step.
         # The two cases bracket the floor from each side.
         x_star = SVector(1.0, -2.0)
         s = ldexp(1.0, -400)
@@ -1124,6 +1124,37 @@ end
                 _, st = solve(prob, x0, m, nothing; options = opts)
                 @test st.code == code
             end
+        end
+    end
+
+    @testset "A rejected trial raises μ to the floor of 4 eps" begin
+        # `μ₀ = μ_min = 1e-300` is below the floor, so the first trial is the undamped step, which
+        # overshoots on `atan` from 3. The rejection lifts `μ` to `max(μ_min, 4 eps)` at once:
+        # the step needs at most one trial more than a start at that floor, and not the hundreds
+        # of identical undamped trials that `μ · μ_increase` takes to climb from `1e-300`.
+        evals = Ref(0)
+        prob = NonlinearProblem(
+            (x, _) -> (evals[] += 1; atan.(x)),
+            (x, _) -> @SMatrix [1 / (1 + x[1]^2) 0.0; 0.0 1 / (1 + x[2]^2)])
+        x = SVector(3.0, 3.0)
+        Fx = prob.F(x, nothing)
+        for ls in (SVDFactorization(), QRFactorization())
+            counts = map((1e-300, 4 * eps(Float64))) do μ₀
+                m = Newton(;
+                    linsolve = ls,
+                    globalization = LevenbergMarquardt(; μ₀ = μ₀, μ_min = μ₀))
+                st = start!!(
+                    init_state(m, prob, x, nothing), m, prob, x, Fx, nothing, rnorm(Fx))
+                evals[] = 0
+                x₊, _, _, info = step!!(st, m, prob, x, Fx, nothing)
+                @test info.code == SUCCESS
+                @test x₊ != x
+                (info.failures, evals[])
+            end
+            (failures_low, evals_low), (failures_floor, _) = counts
+            @test failures_floor >= 1
+            @test failures_low <= failures_floor + 1
+            @test evals_low == failures_low + 1
         end
     end
 

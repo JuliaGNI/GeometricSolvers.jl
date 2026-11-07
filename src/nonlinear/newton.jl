@@ -493,7 +493,7 @@ end
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
         prob::NonlinearProblem, x, Fx, p) where {L, G <: LevenbergMarquardt, J, RF, Reg}
     R = real(eltype(x))
-    fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
+    fnorm = R(rnorm(Fx))
     μ = state.rule.μ
     if !isfinite(μ)
         info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
@@ -553,7 +553,7 @@ end
             end
         end
         failures += Int32(1)
-        μ *= R(lm.μ_increase)
+        μ = max(μ * R(lm.μ_increase), μ_min_eff)
         if !isfinite(μ) || μ > R(lm.μ_max)
             # The state keeps a finite damping: a `μ` that overflows is at the bound, and a
             # non-finite one would read as the un-started state on the stall that follows.

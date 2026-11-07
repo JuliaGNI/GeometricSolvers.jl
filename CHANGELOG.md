@@ -21,10 +21,10 @@ so that a compat-only bump can be told apart from an interface change.
   `init_state` and `finish!!`, and `R(lm.μ₀)` from `start!!`). `μ` is absolute, in the units of
   `J(x)ᴴ J(x)`: the damped model `(Jᴴ J + μ D²) δ = -Jᴴ F(x)` measures it there, so a residual
   scaled by `k` sees the damping of the unscaled one divided by `k²`, and the `μ → 0` limit is the
-  truncated step of decision 44 at every scale. With `scaling = :diagonal`, `D` is the diagonal of
+  truncated Newton step at every scale. With `scaling = :diagonal`, `D` is the diagonal of
   the column norms of `J(x)` floored at `√eps` of the largest of them. A `μ` below `4 eps(R)` —
   which only the initial `μ₀` can be, since the schedule floors at `max(μ_min, 4 eps(R))` — is
-  taken as no damping, the truncated step of decision 44. On `SVDFactorization()` with
+  taken as no damping, the truncated Newton step. On `SVDFactorization()` with
   `scaling = :none`, each step factorises `J(x)` once and each trial `μ` computes
   `δ = -V diag(2^-e σ̂_j / (σ̂_j² + 2^{-2e} μ)) Uᴴ F(x)` from the stored `σ̂_j` of the scaled matrix
   `J(x)/2^e` via the scale-safe coordinate weight `lm_svd_coord` across static (`StaticSVD`), host
@@ -37,10 +37,10 @@ so that a compat-only bump can be told apart from an interface change.
   raises an `ArgumentError` that names `SVDFactorization()` with `scaling = :none` as the device
   step. Steps are accepted when the gain ratio
   `ρ = (‖F(x)‖² - ‖F(x + δ)‖²) / (‖F(x)‖² - ‖F(x) + J δ‖²)` satisfies `ρ > ρ_accept`, decreasing
-  `μ` to `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`, and rejected steps multiply `μ` by
-  `μ_increase` inside the step until a trial step is accepted or `μ > μ_max` returns `STALLED`
-  with a finite `μ` in the rule state, so that a solve confined to a stationary point ends
-  `STALLED` and not `NONFINITE`.
+  `μ` to `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`, and rejected steps set `μ` to
+  `max(μ · μ_increase, max(μ_min, 4 eps(R)))` inside the step until a trial step is accepted or
+  `μ > μ_max` returns `STALLED` with a finite `μ` in the rule state, so that a solve confined
+  to a stationary point ends `STALLED` and not `NONFINITE`.
   `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 10th column
   `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
 
@@ -132,8 +132,7 @@ so that a compat-only bump can be told apart from an interface change.
   info, scale_exponent, status)`), `DeviceQR` (`(factors, τ, rhs, info, scale_exponent, status)`)
   and `DeviceSVD` (`(factors, U, S, VT, V, σ̂, flag, tmp, rhs, info, rank, scale_exponent)`), and on
   `x::AbstractVector` to construct host `DenseLU` (which drops `status`), `DenseQR` and `DenseSVD`,
-  removing the `x isa AbstractGPUArray` branches, the `ka_factorize_lu!`, `ka_svd!` and
-  `ka_svd_backsolve!` entries in `test/quality/jet.jl`, the duplicate `BlasFloat` `backsolve!` and
+  removing the `x isa AbstractGPUArray` branches, the duplicate `BlasFloat` `backsolve!` and
   `backsolve_shifted!` methods, and the `unsafe_wrap` `JLArray` adapter in `src/linear/ka/svd.jl`.
   `ka_divisor_exponent` uses `zero(σ)` in place of `zero(R)` inside its `mapreduce` closure so the
   closure is `isbits` on Metal and CUDA. `ka_lu!` replaces its single-thread pivot/swap/scale kernel

@@ -93,7 +93,8 @@ and calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 At the start of each call, `solve!!` evaluates `Fx = residual!!(residual_buffer(state), prob, x₀,
 p)` and `fnorm₀ = rnorm(Fx)`, and calls [`start!!`](@ref) once, which resets the per-solve state
 of the method (the reuse age and the stalled flag under factor reuse, the radius under
-[`DogLeg`](@ref), and the anchor merit of a line search). Every return goes through
+[`DogLeg`](@ref), the damping parameter under [`LevenbergMarquardt`](@ref), and the anchor merit
+of a line search). Every return goes through
 [`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns.
 
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
@@ -112,8 +113,8 @@ after a step that is neither `STALLED` nor `limited`, a step test that holds ret
 at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
 would start; `min_iterations` bounds both. After a `STALLED` step only the residual test applies,
 and `options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose
-`limited` is set only the residual test applies too, because a radius, not the distance to a
-root, sets its norm; such a step is not a stall. Reaching `options.max_iterations` without
+`limited` is set only the residual test applies too, because a radius or a damping, not the
+distance to a root, sets its norm; such a step is not a stall. Reaching `options.max_iterations` without
 convergence returns `MAXITERS`.
 """
 function solve!!(
