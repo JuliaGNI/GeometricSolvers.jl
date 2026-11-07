@@ -19,6 +19,9 @@ raises an `ArgumentError`.
   A [`StationarityProblem`](@ref) needs `U = :` or `U = 1:n` in order, for the chart dimension
   `n`, and `E = :` or a permutation of `1:n`; [`init`](@ref), [`solve`](@ref),
   [`solve_batch!`](@ref) and [`prepare_ad`](@ref) raise an `ArgumentError` for any other index set.
+  For an R1 iterate the index sets are `:`, a tuple or an `SVector`, as for a
+  [`StationarityProblem`](@ref) without a chart, so a range such as `1:n` raises an
+  `ArgumentError` there.
 - `g`: the chart map `x = g(y, p)` in R1 (`StaticVector` or `Number`) or `g!(x, y, p)` in R3
   (`AbstractVector`).
 - `∂g = nothing`: optional chart Jacobian `G = ∂g(y, p)` in R1 or `∂g!(G, y, p)` in R3. When

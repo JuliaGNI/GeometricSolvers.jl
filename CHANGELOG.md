@@ -1117,4 +1117,6 @@ so that a compat-only bump can be told apart from an interface change.
   `J̃(y, p) = transpose(G) J G + (∂Gᵀ/∂y) F(g(y, p), p)` when `curvature = true` or
   `transpose(G) J G` when `curvature = false`. A `StationarityProblem` needs `U = :` or `U = 1:n`
   in order, where `n` is the chart dimension, and `E = :` or a permutation of `1:n`; `init`,
-  `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set.
+  `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set. For
+  an R1 iterate the index sets are `:`, a tuple or an `SVector`, as for a `StationarityProblem`
+  without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.
