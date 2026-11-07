@@ -1048,7 +1048,7 @@ so that a compat-only bump can be told apart from an interface change.
   this paragraph stands for `J(x) + μI`, the matrix that the factor solves: `Refinement` refines the
   direction of `(J(x) + μI) d = -F(x)`, and the linear-model residual that a promotion reads uses the
   same matrix. Combining `Refinement` (or `refinement = true`)
-  with `AutoFiniteDiff` raises an `ArgumentError` in `init` because
+  with `AutoFiniteDiff`, bare or inside `AutoSparse`, raises an `ArgumentError` in `init` because
   finite-difference directional derivatives corrupt the defect correction near the
   finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
   (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold, `refine!!` returns the best
@@ -1173,3 +1173,50 @@ so that a compat-only bump can be told apart from an interface change.
   `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
   through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
   input for every method.
+- `Anderson` (exported): `Anderson(member = Picard(),
+  Val(m) = Val(4); c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0,
+  safeguard_cos = nothing, grow_depth = false)` (plus the convenience `Anderson(member, m::Integer;
+  kwargs...)` forwarding to `Val(Int(m))`) accelerates an inner fixed-point or nonlinear step map
+  $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1
+  ($m \le 4$, `isbits` state on `SVector` and `Number`; the residual may have another type than the
+  iterate, so an `MVector` iterate with an `SVector` residual works (K70)), R2 (`solve_batch!`
+  kernel), and R3 (no upper bound on `m`, zero heap allocations in `step!!` and `solve!` after
+  warm-up on `Array`, and a `JLArray` step with no scalar indexing under `allowscalar(false)`).
+  Implements Pollock and Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`,
+  defaulting to `1 / sqrt(eps(R))` per iterate element type via `effective_kappa_bar`), trace-scaled
+  Tikhonov regularisation on the Gram normal equations $\Delta W^H \Delta W \gamma = \Delta W^H w_k$,
+  extrapolation weight and model-decrease safeguards ($\sum_j |\alpha_j| \le M_\alpha$ over the
+  affine weights of the member candidates, exact also after the angle filter drops an interior
+  history column (K71), optional `safeguard_cos` and `grow_depth`), automatic history clears on
+  residual growth ($\|F\| > \text{restart\_factor} \cdot \text{fnorm\_best}$) or stagnation,
+  `StepInfo.failures` counting filter column drops, rejected weights and history restarts,
+  `state.current_depth` in `1:m` after every step except one that ends in a hard member failure
+  (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with no step taken), which leaves it unchanged,
+  and best-iterate restoration in `finish!!` when `solve!!` exits with `status.code != SUCCESS` and
+  a strictly smaller historical residual norm was recorded. It solves a `NonlinearProblem` or a
+  `StationarityProblem`, with R1 tested on `SVector` and R3 on `Vector`. An accelerated step reports
+  `STALLED` when its member step does and `SUCCESS` otherwise; a fallback or restart step and a hard
+  failure keep the member's code. `solve` with `Anderson` and a `ForwardDiff.Dual` in `x₀` or `p`
+  raises the same `ArgumentError` as the other combinators, before the primal solve, since implicit
+  differentiation through a combinator is not implemented (K60). The method-first
+  `solve(prob, method::Anderson, x₀, p, options)` is not provided (K73).
+
+- `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
+  curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or
+  `StationarityProblem` in chart coordinates `x = g(y, p)` and return `(x* = g(y*, p), status)`
+  in the original coordinates from `solve` and `init` / `solve!` (`solve!!` returns
+  `(x*, status, state)`), with `solve_batch!` writing each system's `x*` into the batch, and
+  leave `update_iterate!!` untouched. In R1 (`StaticVector` or `Number`), `g(y, p)` returns
+  `x` and `∂g(y, p)` returns `G = ∂g/∂y`; in R3 (`AbstractVector`), `g!(x, y, p)` writes into
+  `x` and `∂g!(G, y, p)` writes into `G`, and when `∂g === nothing`, `G(y, p) = ∂g/∂y` is
+  computed by tagged ForwardDiff in R1 and chunked forward-mode AD in R3. With
+  `covariant = false` (default for `NonlinearProblem`), the transformed residual and Jacobian
+  are `F̃(y, p) = F(g(y, p), p)` and `J̃(y, p) = J(g(y, p), p) G(y, p)`. With `covariant = true`
+  (default for `StationarityProblem`), the residual is pulled back as
+  `F̃(y, p) = transpose(G(y, p)) F(g(y, p), p)`, and the Jacobian is
+  `J̃(y, p) = transpose(G) J G + (∂Gᵀ/∂y) F(g(y, p), p)` when `curvature = true` or
+  `transpose(G) J G` when `curvature = false`. A `StationarityProblem` needs `U = :` or `U = 1:n`
+  in order, where `n` is the chart dimension, and `E = :` or a permutation of `1:n`; `init`,
+  `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set. For
+  an R1 iterate the index sets are `:`, a tuple or an `SVector`, as for a `StationarityProblem`
+  without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.

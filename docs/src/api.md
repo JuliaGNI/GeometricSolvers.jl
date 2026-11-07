@@ -9,14 +9,16 @@ CurrentModule = GeometricSolvers
 A problem holds functions and, for a [`NonlinearProblem`](@ref), an optional Jacobian prototype:
 the residual, optionally its derivative, and optionally `jacobian_prototype` for a sparse R3
 Jacobian in [`NonlinearProblem`](@ref), or the scalar action, its equation and unknown index sets,
-and an optional datum in [`StationarityProblem`](@ref). The storage of the iterate selects the call
-form of the functions, so one problem serves every regime. `NonlinearProblem` and
-`StationarityProblem` are exported; `GeometricSolvers.jacobian_prototype` and
+and an optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps either
+problem in a coordinate chart `x = g(y, p)`. The storage of the iterate selects the call form of
+the functions, so one problem serves every regime. `NonlinearProblem`, `StationarityProblem` and
+`Reparametrized` are exported; `GeometricSolvers.jacobian_prototype` and
 `GeometricSolvers.jacobian_pattern` are internal accessors.
 
 ```@docs
 NonlinearProblem
 StationarityProblem
+Reparametrized
 jacobian_prototype
 jacobian_pattern
 ```
@@ -189,7 +191,8 @@ to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on
 primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while on a
 [`StationarityProblem`](@ref) it raises an `ArgumentError`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
-[`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
+[`NonlinearSolver`](@ref) (or a [`ReparametrizedSolver`](@ref) for a [`Reparametrized`](@ref)
+problem) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
 with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
@@ -201,6 +204,7 @@ per-system parameters so system `i` receives `p.data[i]`.
 
 ```@docs
 NonlinearSolver
+ReparametrizedSolver
 init
 solve
 solve!
@@ -216,16 +220,18 @@ Refinement
 
 ### Combinators
 
-[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) and [`Switch`](@ref) compose
-nonlinear methods through the same [`init_state`](@ref), [`start!!`](@ref), [`step!!`](@ref) and
-[`finish!!`](@ref) interface as [`Newton`](@ref) and [`Picard`](@ref), so a combinator runs in R1,
-R2 and R3 alike. [`Additive`](@ref) combines member steps from the same iterate with
-[`OptimalWeights`](@ref) or [`FixedWeights`](@ref), [`Multiplicative`](@ref) and [`Repeat`](@ref)
-thread `(x, F(x))` sequentially across sub-steps while [`sync_merit`](@ref) updates any active
-line-search baseline merit, and [`Switch`](@ref) transitions permanently from `first` to `second`
-once ``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``. A combinator has no implicit
-differentiation: [`solve`](@ref) with a combinator method raises an `ArgumentError` for a
-`ForwardDiff.Dual` in `x₀` or `p`.
+[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref) and
+[`Anderson`](@ref) compose nonlinear methods through the same [`init_state`](@ref),
+[`start!!`](@ref), [`step!!`](@ref) and [`finish!!`](@ref) interface as [`Newton`](@ref) and
+[`Picard`](@ref), so a combinator runs in R1, R2 and R3 alike. [`Additive`](@ref) combines member
+steps from the same iterate with [`OptimalWeights`](@ref) or [`FixedWeights`](@ref),
+[`Multiplicative`](@ref) and [`Repeat`](@ref) thread `(x, F(x))` sequentially across sub-steps
+while [`sync_merit`](@ref) updates any active line-search baseline merit, [`Switch`](@ref)
+transitions permanently from `first` to `second` once
+``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``, and [`Anderson`](@ref) accelerates its member
+with filtered Anderson mixing, Tikhonov regularisation, restarts and best-iterate restoration. A
+combinator has no implicit differentiation: [`solve`](@ref) with a combinator method raises an
+`ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`.
 
 ```@docs
 Additive
@@ -234,6 +240,7 @@ FixedWeights
 Multiplicative
 Repeat
 Switch
+Anderson
 ```
 
 ### SciMLBase extension
