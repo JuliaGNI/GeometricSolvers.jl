@@ -65,8 +65,8 @@ end
         @test GS.jacobian_pattern(prob, prep_fd) === nothing
 
         # An `AutoSparse` back end with no sparsity detector prepares a pattern that is true
-        # everywhere, which no dense `init_linear` accepts: the extension returns `nothing` there,
-        # so the solve keeps a dense factor and a dense Jacobian.
+        # everywhere, which has no sparsity to exploit: the extension returns `nothing` there, so
+        # the solve keeps a dense factor and a dense Jacobian.
         backend_nodet = AutoSparse(
             AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm())
         prep_nodet = GS.prepare_ad(backend_nodet, prob, similar(x0), x0, nothing)
@@ -280,8 +280,10 @@ end
         ext === nothing || error("expected nothing, got \$ext")
         """
         julia_exe = joinpath(Sys.BINDIR, "julia")
+        # `JULIA_DEPOT_PATH` stays, so that a child of a run in a custom depot finds its packages.
         env_clean = filter(
-            p -> !startswith(p.first, "JULIA_") && !startswith(p.first, "GIT_"),
+            p -> (p.first == "JULIA_DEPOT_PATH" || !startswith(p.first, "JULIA_")) &&
+                 !startswith(p.first, "GIT_"),
             copy(ENV)
         )
         proc = run(ignorestatus(setenv(

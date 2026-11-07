@@ -99,3 +99,35 @@
   refuses the mix with an `ArgumentError` is open.
 - **kind:** defect
 - **found:** PR #53
+
+### K40 · A line-search solve with an analytic `J` and a detected sparsity pattern gets a dense JVP buffer
+
+- **location:** `src/nonlinear/newton.jl` (`jacobian_matrix_jvp`)
+- **evidence:** `jacobian_matrix_jvp(::LineSearch, x, prob)` sizes its matrix from
+  `jacobian_prototype(prob)`, not from `jacobian_pattern(prob, jacprep)`. The path runs where
+  `prob.J` is given, `Newton` has an `AutoSparse` `jacobian` with a sparsity detector, and the
+  globalization is a line search. For a tridiagonal residual with `n = 2000`, `Backtracking()` and
+  `TracerSparsityDetector()`, the JVP buffer is a `Matrix{Float64}` of 32,000,048 bytes with no
+  prototype and a `SparseMatrixCSC{Float64, Int64}` of 112,136 bytes with the tridiagonal
+  prototype (`Base.summarysize`, Julia 1.13.3). Both solves use `SparspakLU` and return `SUCCESS`
+  in 9 iterations, and the iterate differs from the dense solve by `1.06e-17` relative. The cost
+  is memory and time, `O(n²)` per slope evaluation; the result is correct. A sparse buffer would
+  hand the analytic `J` a `SparseMatrixCSC` that the caller did not declare, so whether to use the
+  detected pattern there is open.
+- **kind:** defect
+- **found:** PR #59
+
+### K41 · `regularization > 0` with an explicit sparse prototype that has no structural diagonal fails at the first factorisation
+
+- **location:** `src/base/bang.jl` (`regularize!!`), `ext/GeometricSolversSparspakExt.jl`
+  (`factorize!!`)
+- **evidence:** With `Fperm!(r, x, p) = (r[1] = x[2]^2 - 1; r[2] = x[1]^2 - 1; r)`,
+  `P = sparse([1, 2], [2, 1], [1.0, 1.0], 2, 2)` and
+  `Newton(; jacobian = AutoSparse(AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm()), regularization = 1e-10)`,
+  `solve!(init(NonlinearProblem(Fperm!; jacobian_prototype = P), [1.5, 2.0], m))` raises
+  `ArgumentError: sparse Jacobian sparsity pattern differs from jacobian_prototype`; with
+  `regularization = 0` the same solve returns `SUCCESS` with `SparspakLU` (Julia 1.13.3). The
+  regularisation adds the diagonal to `J`, which inserts structural entries that the factor's
+  pattern does not hold. The same failure is on `main`.
+- **kind:** defect
+- **found:** PR #59
