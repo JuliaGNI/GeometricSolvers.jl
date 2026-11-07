@@ -94,7 +94,7 @@ end
     # pattern and is the matrix that `jacobian!!` fills
     solver = init(prob_analytic, copy(z0), Newton(), p_val)
     J_dl = GeometricSolvers.init_newton_J(
-        Newton(; globalization = DogLeg()), solver.state.fac, z0)
+        Newton(; globalization = DogLeg()), solver.state.fac, nothing, z0)
     @test J_dl isa SparseMatrixCSC{T, Int}
     @test J_dl !== solver.state.fac.factors
     @test getcolptr(J_dl) == getcolptr(P)

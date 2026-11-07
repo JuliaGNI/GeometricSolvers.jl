@@ -205,8 +205,32 @@ solve_batch!
 solve!!
 PerSystem
 Newton
+QuasiNewton
 Picard
 NoRefinement
+Refinement
+```
+
+### Combinators
+
+[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) and [`Switch`](@ref) compose
+nonlinear methods through the same [`init_state`](@ref), [`start!!`](@ref), [`step!!`](@ref) and
+[`finish!!`](@ref) interface as [`Newton`](@ref) and [`Picard`](@ref), so a combinator runs in R1,
+R2 and R3 alike. [`Additive`](@ref) combines member steps from the same iterate with
+[`OptimalWeights`](@ref) or [`FixedWeights`](@ref), [`Multiplicative`](@ref) and [`Repeat`](@ref)
+thread `(x, F(x))` sequentially across sub-steps while [`sync_merit`](@ref) updates any active
+line-search baseline merit, and [`Switch`](@ref) transitions permanently from `first` to `second`
+once ``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``. A combinator has no implicit
+differentiation: [`solve`](@ref) with a combinator method raises an `ArgumentError` for a
+`ForwardDiff.Dual` in `x₀` or `p`.
+
+```@docs
+Additive
+OptimalWeights
+FixedWeights
+Multiplicative
+Repeat
+Switch
 ```
 
 ### SciMLBase extension
@@ -257,10 +281,13 @@ with no line of source here. A device array iterate takes
 error on an `MtlArray`, a `CuArray` and a `JLArray`. When the problem supplies an analytic
 3-argument `J(Jbuf, x, p)`, [`JacobianMatrixJVP`](@ref) evaluates `prob.J` into its pre-allocated
 matrix buffer and multiplies by the direction in place. Only a [`LineSearch`](@ref) other than
-[`Static`](@ref) takes a JVP, so under any other globalization the analytic `J` gets no JVP
-preparation and no second `n × n` buffer. [`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and
-[`jvp!!`](@ref) then dispatch on the object the preparation returned, so the solver makes no runtime
-choice and carries no `ad` keyword.
+[`Static`](@ref) and a [`Refinement`](@ref) along a reused factor take a JVP, so under any other
+configuration the analytic `J` gets no JVP preparation and no `n × n` JVP buffer. A
+`Refinement` on a step that factorises at `x` multiplies by the regularised Jacobian that the step
+holds, in a buffer of its own beside the factor, which the factorisation overwrites.
+[`jacobian!!`](@ref), [`gradient_hessian!!`](@ref) and [`jvp!!`](@ref) then dispatch on the
+object the preparation returned, so the solver makes no runtime choice and carries no `ad`
+keyword.
 
 In R3 the iterate is a vector; another shape raises `ArgumentError` where the preparation is
 built. The parameters may be replaced on every call, which is what lets one preparation serve a
@@ -294,7 +321,8 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 A nonlinear method enters the loop of [`solve!!`](@ref) through [`init_state`](@ref), which builds
 its state, [`step!!`](@ref), and the two hooks [`start!!`](@ref) and [`finish!!`](@ref), which run
 once before the first step and at every return. [`residual_buffer`](@ref) names the slot of the
-state that holds `F(x₀)`.
+state that holds `F(x₀)`, and [`refine!!`](@ref) refines the linear direction `d` in working
+precision before globalization.
 
 ```@docs
 AbstractNonlinearProblem
@@ -303,6 +331,8 @@ residual_buffer
 step!!
 start!!
 finish!!
+refine!!
+sync_merit
 init_globalization
 LineFunction
 globalize!!

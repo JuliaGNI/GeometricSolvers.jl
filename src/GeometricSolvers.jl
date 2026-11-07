@@ -4,8 +4,8 @@ solvers run on the CPU and on CUDA, ROCm and Metal devices through KernelAbstrac
 """
 module GeometricSolvers
 
-using ADTypes: AbstractADType, AutoForwardDiff, AutoSparse, KnownJacobianSparsityDetector,
-               coloring_algorithm, dense_ad
+using ADTypes: AbstractADType, AutoFiniteDiff, AutoForwardDiff, AutoSparse,
+               KnownJacobianSparsityDetector, coloring_algorithm, dense_ad
 using Adapt: Adapt
 import CommonSolve: init, solve, solve!
 using DifferentiationInterface: DifferentiationInterface as DI
@@ -27,7 +27,9 @@ export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg
-export Newton, NoRefinement, PerSystem, Picard, NonlinearSolver, init, solve, solve!
+export Newton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard, NonlinearSolver,
+       init, solve, solve!
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch
 export solve_batch!
 
 public solve!!, sciml_retcode
@@ -69,11 +71,19 @@ include("ad/jvp.jl")
 include("globalization/linefunction.jl")
 include("globalization/dogleg.jl")
 include("nonlinear/solver.jl")
+include("nonlinear/refinement.jl")
 include("nonlinear/newton.jl")
 include("nonlinear/picard.jl")
 include("nonlinear/implicit.jl")
 include("nonlinear/batched.jl")
 include("nonlinear/stationarity.jl")
 include("ad/hessian.jl")
+
+include("composition/weights.jl")
+include("composition/additive.jl")
+include("composition/multiplicative.jl")
+include("composition/repeat.jl")
+include("composition/switch.jl")
+include("composition/implicit.jl")
 
 end
