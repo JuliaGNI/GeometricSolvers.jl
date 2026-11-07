@@ -39,14 +39,16 @@ end
 Update a started line-search member state's stored baseline merit
 ``\\phi(x) = \\|F(x)\\|_2^2`` to `merit` when another member has moved the iterate `(x, Fx)`
 since `state`'s last step. Preserves `NaN` on an un-started state so calling `step!!`
-without `start!!` still fails closed with `NONFINITE`, and is a no-op for `Static` and
-`DogLeg` states (`merit === nothing`).
+without `start!!` still fails closed with `NONFINITE`, and leaves the merit of a `Static` or
+`DogLeg` state (`merit === nothing`) as it is. A `Newton` state also sets the residual norm it
+carries to `NaN`, so that its next step measures ``\\|F(x)\\|`` of the residual it is given.
 """
 @inline sync_merit(state, method, merit::Real) = state
 
 @inline function sync_merit(state::NewtonState, ::Newton, merit::Real)
-    state.merit isa Real && isfinite(state.merit) || return state
-    return with_merit(state, oftype(state.merit, merit))
+    φ = state.merit isa Real && isfinite(state.merit) ? oftype(state.merit, merit) :
+        state.merit
+    return with_merit(state, φ, NaN)
 end
 
 @inline function sync_merit(state::PicardState, ::Picard, merit::Real)
@@ -120,9 +122,11 @@ end
         ::Tuple{}, ::Tuple{}, prob::NonlinearProblem, x, Fx, p,
         fnorm::R, failures::Int32, promoted::Bool, limited::Bool) where {R}
     info = StepInfo{R}(SUCCESS, fnorm, zero(R), failures, promoted, limited)
-    return x, Fx, (), info, false
+    return x, Fx, (), info
 end
 
+# The members from the first one in `states` on, in order. A hard failure of a member ends the
+# sequence with that member's code and keeps the iterate that the members before it reached.
 @inline function _step_multiplicative_tail(
         states::Tuple, members::Tuple, prob::NonlinearProblem, x, Fx, p,
         fnorm::R, failures::Int32, promoted::Bool, limited::Bool) where {R}
@@ -135,65 +139,25 @@ end
         states_sc = (s_i_new, Base.tail(states)...)
         info_sc = StepInfo{R}(
             info_i.code, info_i.fnorm, zero(R), failures_next, promoted_next, limited_next)
-        return x_next, Fx_next, states_sc, info_sc, true
+        return x_next, Fx_next, states_sc, info_sc
     end
-    x_out, Fx_out, ss_tail, info_out, sc = _step_multiplicative_tail(
+    x_out, Fx_out, ss_tail, info_out = _step_multiplicative_tail(
         Base.tail(states), Base.tail(members), prob, x_next, Fx_next, p,
         info_i.fnorm, failures_next, promoted_next, limited_next)
-    return x_out, Fx_out, (s_i_new, ss_tail...), info_out, sc
+    return x_out, Fx_out, (s_i_new, ss_tail...), info_out
 end
 
-function step!!(
-        state::MultiplicativeState{S, Nothing}, m::Multiplicative,
-        prob::NonlinearProblem, x, Fx, p) where {S <: Tuple}
-    R = real(eltype(x))
-    x_start = x
-    s1 = sync_merit(first(state.states), first(m.members), norm2(Fx))
-    x1, Fx1, s1_new, info1 = step!!(s1, first(m.members), prob, x, Fx, p)
-    if is_hard_failure(info1)
-        states_sc = (s1_new, Base.tail(state.states)...)
-        new_sc = MultiplicativeState(states_sc, state.Fx, state.x₀)
-        info_sc = StepInfo{R}(
-            info1.code, info1.fnorm, zero(R), info1.failures, info1.promoted, info1.limited)
-        return x1, Fx1, new_sc, info_sc
-    end
-    x_out, Fx_out, ss_tail, info_tail, sc = _step_multiplicative_tail(
-        Base.tail(state.states), Base.tail(m.members), prob, x1, Fx1, p,
-        info1.fnorm, info1.failures, info1.promoted, info1.limited)
-    states_new = (s1_new, ss_tail...)
-    new_state = MultiplicativeState(states_new, state.Fx, state.x₀)
-    sc && return x_out, Fx_out, new_state, info_tail
-    stepnorm = rnorm(x_out - x_start)
-    info_ok = StepInfo{R}(
-        SUCCESS, info_tail.fnorm, stepnorm, info_tail.failures,
-        info_tail.promoted, info_tail.limited)
-    return x_out, Fx_out, new_state, info_ok
-end
-
+# The step norm is the outer one, ``\|x^{(m)} - x^{(0)}\|``, also after a hard failure of a later
+# member: a `LINESEARCH_FAILED` step that the members before it moved is not a zero step.
 function step!!(
         state::MultiplicativeState, m::Multiplicative,
         prob::NonlinearProblem, x, Fx, p)
     R = real(eltype(x))
-    copy!!(state.x₀, x)
-    s1 = sync_merit(first(state.states), first(m.members), norm2(Fx))
-    x1, Fx1, s1_new, info1 = step!!(s1, first(m.members), prob, x, Fx, p)
-    if is_hard_failure(info1)
-        states_sc = (s1_new, Base.tail(state.states)...)
-        new_sc = MultiplicativeState(states_sc, state.Fx, state.x₀)
-        info_sc = StepInfo{R}(
-            info1.code, info1.fnorm, zero(R), info1.failures, info1.promoted, info1.limited)
-        return x1, Fx1, new_sc, info_sc
-    end
-    x_out, Fx_out, ss_tail, info_tail, sc = _step_multiplicative_tail(
-        Base.tail(state.states), Base.tail(m.members), prob, x1, Fx1, p,
-        info1.fnorm, info1.failures, info1.promoted, info1.limited)
-    states_new = (s1_new, ss_tail...)
-    new_state = MultiplicativeState(states_new, state.Fx, state.x₀)
-    sc && return x_out, Fx_out, new_state, info_tail
-    @. state.x₀ = x_out - state.x₀
-    stepnorm = rnorm(state.x₀)
-    info_ok = StepInfo{R}(
-        SUCCESS, info_tail.fnorm, stepnorm, info_tail.failures,
-        info_tail.promoted, info_tail.limited)
-    return x_out, Fx_out, new_state, info_ok
+    x_start = copy!!(state.x₀, x)
+    x_out, Fx_out, states, info = _step_multiplicative_tail(
+        state.states, m.members, prob, x, Fx, p, zero(R), Int32(0), false, false)
+    stepnorm = rnorm(map!!(-, state.x₀, x_out, x_start))
+    info_out = StepInfo{R}(
+        info.code, info.fnorm, stepnorm, info.failures, info.promoted, info.limited)
+    return x_out, Fx_out, MultiplicativeState(states, state.Fx, state.x₀), info_out
 end

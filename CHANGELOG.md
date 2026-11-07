@@ -11,6 +11,88 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
+  `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
+  extension `GeometricSolversSparspakExt`** (decision 53 of the design). `NonlinearProblem{F, J, P
+  <: Union{Nothing, AbstractMatrix}}` gains a third field `jacobian_prototype::P` defaulting to
+  `nothing` by keyword (`NonlinearProblem(F, J = nothing; jacobian_prototype = nothing)`), so
+  `NonlinearProblem(F)` and `NonlinearProblem(F, J)` remain `isbits` when `F` and `J` are `isbits`.
+  `GeometricSolvers.init_linear(method, pattern, x)` dispatches on `(method, pattern, x)` (with
+  `dense_factor` forwarding `jacobian_prototype(prob)` and `Newton`'s `init_factor` forwarding
+  `jacobian_pattern(prob, jacprep)`), building dense host and device factors when `pattern ===
+  nothing`. When `Sparspak` (`0.3.15`) is loaded, `GeometricSolversSparspakExt` defines `SparspakLU`
+  and extends `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T}) where
+  {T <: AbstractFloat}`, `factorize!!` and `ldiv!!`: `init_linear` allocates a `similar(P, T)`
+  buffer (never mutating `P`), records `colptr` and `rowval`, and builds the unfactorised
+  `Sparspak.SparseSolver` via `sparspaklu(factors; factorize = false)`; `factorize!!` checks that
+  the sparsity pattern matches `jacobian_prototype` and that `nonzeros(factors)` is finite before
+  calling `sparspaklu!(lu, factors; allow_pattern_change = false)` (which runs symbolic ordering
+  and factorisation on the first call and reuses them thereafter), catches an `ErrorException`
+  only when `lu.slvr.errflag` is set (a zero pivot) and rethrows any other error, and checks
+  `lu.slvr.errflag == 0` together with finiteness of `lu.slvr.lnz` and `lu.slvr.unz` so
+  singular and non-finite sparse Jacobians return `info = 1` and `SINGULAR`
+  without throwing. `init_newton_J` allocates `similar(fac.factors, eltype(x))` when `fac.factors`
+  is a `SparseMatrixCSC` and cannot be aliased directly (such as under `DogLeg`). `prepare_ad` on a
+  DifferentiationInterface back end validates `size(P) == (length(r), length(x))` whenever
+  `jacobian_prototype` is set, and an `AutoSparse` backend then takes `P` as its
+  `ADTypes.KnownJacobianSparsityDetector(P)` for column-coloured sparse AD, replacing any detector
+  it carries, while `ChunkedForwardDiff`'s `jacobian!!` is restricted to `J::DenseMatrix`.
+  `SparseArrays` joins `[deps]` and `Sparspak` joins `[weakdeps]` with the `[extensions]` entry
+  `GeometricSolversSparspakExt`.
+
+- **Numerical stability documentation (`docs/src/stability.md`) and backward-error test suite
+  (`test/linear/stability.jl`, `test/helpers/randsvd.jl`).** `docs/src/stability.md` states the
+  normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
+  `StaticSVD`, `jacobi_eigen`, `DenseLU`, `DenseQR`, `DenseSVD`, `DeviceLU`, `DeviceQR`,
+  `DeviceSVD`, rank-deficient SVD minimum-norm `ldiv!!`, and scaled mixed-precision `ldiv!!`
+  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
+  `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
+  `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
+  group by group: the full-rank LU, QR and SVD solves and their singular values over `ELTYPES`,
+  at condition numbers `κ₂ ∈ {10, 10⁴}` (`Float32`) and `{10, 10⁴, 10⁸}` (`Float64`), with
+  `n ∈ {4, 16, 64}` (dense and device) and `n ∈ {4, 16}` (static); `jacobi_eigen` over the same
+  condition numbers with `n ∈ {4, 16}`; the rank-deficient SVD minimum-norm solve at `κ₂ = 100`
+  with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
+  element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
+
+- **`solve(prob, x₀, method, p)` with a `Newton` or `Picard` method differentiates implicitly
+  through a converged solve when `x₀` or `p` contains `ForwardDiff.Dual` values** (decision 50 of
+  the design). `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual`
+  layer from `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
+  `Adapt.adapt(StripDual(), p)` while leaving tuples, named tuples, numbers and other arrays
+  unchanged. When `x₀` or `p` carries `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted
+  value type of the dual leaves of `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`,
+  runs the primal solve via `solve!!` at the precision of the stripped `x₀`
+  (`status::SolverStatus{R}` with `R = real(eltype(x₀))`), and on `status.code === SUCCESS`
+  computes the tangent `ẋ` of the solution `x*` from the implicit function theorem
+  `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3 (`Array`,
+  `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one factorisation
+  at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with `prob.J` or
+  `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*` with zero
+  partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single factor. The
+  tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS` path and on the
+  `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}` with
+  `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
+  `ForwardDiff.Dual{Tg, Float32, 1}`, `W` is `Float64`. When `status.code !== SUCCESS`, `solve`
+  skips the tangent solve and returns `(x*, status)` with `NaN` partials. If the tangent
+  factorisation at `(x*, p_val)` fails (`returncode(fac) === SINGULAR`), `solve` performs no
+  back-substitution and returns `(x*, status)` with `status.code === SINGULAR` and `NaN` partials on
+  `x*`; a rank-deficient `SVDFactorization` factor with `info == 0` produces the minimum-norm
+  pseudoinverse tangent `-J(x*)⁺ ∂_k F(x*, p)` with `status.code === SUCCESS`. Nested duals
+  (`V <: ForwardDiff.Dual`), distinct tags or partial counts across `x₀` and `p`, and a user
+  parameter type holding duals without an `Adapt.adapt_structure` method throw an `ArgumentError`.
+  `solve`, `init`, `solve!` and `solve_batch!` do not check the type of `prob`, so a `prob` whose
+  closure captures an object whose type holds a `ForwardDiff.Dual`, such as a
+  `ForwardDiff.GradientConfig` or a dual work buffer, solves on primal inputs. A residual that
+  contains a `ForwardDiff.Dual` on primal `x` and `p` throws an `ArgumentError` from the run-time
+  check in `solve!!`, which runs at `x₀` and at every residual a `Newton` or `Picard` step
+  evaluates, through one helper, and covers `solve` on both its primal and dual paths and `solve!`.
+  So a residual that is primal at `x₀` but contains a `ForwardDiff.Dual` only at a later iterate
+  throws the same `ArgumentError`. An in-place residual that writes a captured dual into its primal
+  buffer throws the `MethodError` of that conversion instead. `init` and `solve!` throw an
+  `ArgumentError` for a `ForwardDiff.Dual` in `x₀` (or `x`) or in `p`, and `solve_batch!` for one in
+  `X` or `p` only, so a `ForwardDiff.Dual` captured in `prob` is not detected in a batch.
+
 - **Device linear factors `DeviceLU`, `DeviceQR` and `DeviceSVD` separate device workspaces from
   host `DenseLU`, `DenseQR` and `DenseSVD`, and the `KernelAbstractions` LU, QR and SVD kernels use
   workgroup reductions and column-parallel triangular solves** (decision 48 of the design).
@@ -18,8 +100,7 @@ so that a compat-only bump can be told apart from an interface change.
   info, scale_exponent, status)`), `DeviceQR` (`(factors, τ, rhs, info, scale_exponent, status)`)
   and `DeviceSVD` (`(factors, U, S, VT, V, σ̂, flag, tmp, rhs, info, rank, scale_exponent)`), and on
   `x::AbstractVector` to construct host `DenseLU` (which drops `status`), `DenseQR` and `DenseSVD`,
-  removing the `x isa AbstractGPUArray` branches, the `ka_factorize_lu!`, `ka_svd!` and
-  `ka_svd_backsolve!` entries in `test/quality/jet.jl`, the duplicate `BlasFloat` `backsolve!` and
+  removing the `x isa AbstractGPUArray` branches, the duplicate `BlasFloat` `backsolve!` and
   `backsolve_shifted!` methods, and the `unsafe_wrap` `JLArray` adapter in `src/linear/ka/svd.jl`.
   `ka_divisor_exponent` uses `zero(σ)` in place of `zero(R)` inside its `mapreduce` closure so the
   closure is `isbits` on Metal and CUDA. `ka_lu!` replaces its single-thread pivot/swap/scale kernel
@@ -39,17 +120,40 @@ so that a compat-only bump can be told apart from an interface change.
   `sizeof(SolverStatus{Float64}) == 56`), with a 6-argument constructor that fills their sentinels
   `(Int32(-1), R(NaN), R(NaN))`, and `GeometricSolvers.record` preserves them across steps. At each
   fresh `Newton` factorisation, `gradratio` is `‖J(x)ᴴ F(x)‖ / (‖J(x)‖_F ‖F(x)‖)` at the
-  unregularised Jacobian `J(x)` (`zero(R)` when `‖J(x)‖_F == 0` or `‖F(x)‖ == 0`). When `linsolve`
+  unregularised Jacobian `J(x)` (`zero(R)` when `‖J(x)‖_F == 0` or `‖F(x)‖ == 0`). Where `J(x)ᴴ F(x)`
+  overflows although both norms are finite, the ratio is formed from a copy of `F(x)` scaled by a power
+  of two, so it stays finite; on an array iterate that copy allocates, and only then. When `linsolve`
   is `SVDFactorization{P}()` and the factor has `info == 0`, `rank` is `Int32(fac.rank)` and
   `nullnorm` is `‖(I - U_r U_rᴴ) F(x)‖` (`fnorm` when `fac.rank == 0`), computed in the factor
   precision after scaling a nonzero `F(x)` by `maximum(abs, F(x))` when `TF ≠ T`; for
   `LUFactorization`, `QRFactorization`, or a failed SVD factor (`info ≠ 0`), `rank == Int32(-1)`
-  and `nullnorm` is `NaN`. Reused steps keep the diagnostics of the last factorisation unless a
+  and `nullnorm` is `NaN`. Under `regularization = μ ≠ 0`, `rank` and `nullnorm` describe the factored
+  matrix `J(x) + μI`, and `gradratio` describes `J(x)`, so the outcome classification in the
+  `SolverStatus` documentation holds for `μ = 0` only. Every fresh `Newton` factorisation computes
+  these, for LU and QR as well as SVD: `‖J(x)‖_F` and the product `J(x)ᴴ F(x)` with its norm. It takes
+  `‖F(x)‖` from the line-search merit or from the norm that the solve already holds, and reads `F(x)`
+  again where a merit is non-finite or below its normal range, and on a state that no `start!!` saw,
+  or that a solve returned. That is a few matrix-vector passes, of order `n²` against the order `n³`
+  of a dense factorisation. Reused steps keep the diagnostics of the last factorisation unless a
   line-search failure triggers a fresh retry, `start!!` resets them to their sentinels at the start
   of each solve, and `finish!!` writes them into the returned `SolverStatus{R}` (while `Picard` and
   any solve that returns before a factorisation keep the sentinels). `NewtonState` pre-allocates an
   empty `StaticSVD` factor slot for `Newton(; linsolve = SVDFactorization(), reuse = k)` on a
   `StaticVector` or `Number` iterate, as it does for `LUFactorization` and `QRFactorization`.
+  Measured against `main` at 27ccb1d on Julia 1.13.3 (Apple silicon, `Float64`), with
+  `F(x) = A x + x.^3 - b`, a diagonally dominant `A` (`A_ii = 4`, `A_ij = 1/(i+j)`), an analytic
+  Jacobian, `x₀ = 0.5` in every entry, and `Newton` with `Static` and no reuse: 5 iterations, so 5
+  factorisations per solve. Each run is a fresh process with `--check-bounds=auto`; each timing sample
+  folds calls until it lasts at least 20 µs, with 300 samples per run. Each tree gives the minimum per
+  run, then the median over 6 cold runs. The load average was 18 to 25, and the run-to-run spread of
+  one tree was up to 25 %. A solve costs +27 % (LU) and +5 % (QR) at `SVector{3}`, from 287 to 366 ns
+  and from 582 to 612 ns, and +34 % (LU) and +16 % (QR) at `SVector{8}`, from 1110 to 1487 ns and from
+  2156 to 2495 ns. A factor step, one `newton_factor` call with its Jacobian evaluation, diagnostics
+  and factorisation, costs +5.9 ns (LU) and +17.6 ns (QR) at `SVector{3}`, from 9.1 to 15.0 ns and from
+  42.9 to 60.5 ns, and +64 ns (LU) and +67 ns (QR) at `SVector{8}`, from 97.2 to 161.1 ns and from
+  280.6 to 347.4 ns. `grad_ratio` by itself measured 6.5 ns at n = 3 and 59 ns at n = 8, in one run.
+  An earlier measurement on another problem gave a solve cost of +19 % and +25 % for LU and +9 % and
+  +15 % for QR, at `SVector{3}` and `SVector{8}`; the cost depends on the problem.
 
 - **`Newton` takes the truncated minimum-norm step of a rank-deficient SVD** (decision 44 of the
   design). The numerical rank of `StaticSVD` and `DenseSVD` is the new field `rank`, the number of
@@ -384,6 +488,29 @@ so that a compat-only bump can be told apart from an interface change.
   iterations. 138 cells are flagged `unstable`, 133 before.
 
 ### New Features
+
+- **A `SciMLBase` package extension (`GeometricSolversSciMLBaseExt`) accepts a
+  `SciMLBase.NonlinearProblem` in `solve` and `init`, and returns `(x, status)`** (decision 52 of
+  the design). `SciMLBase` is a weak dependency (`[compat] SciMLBase = "3.55"`), so the package and
+  its main test suite load without it. When `SciMLBase` is loaded,
+  `solve(prob::SciMLBase.NonlinearProblem, method::Union{Newton, Picard}; kwargs...)` translates
+  `prob` to a native `NonlinearProblem` and returns `(x, status)`, and `init` with the same
+  arguments translates `prob` by the same rules and returns a `NonlinearSolver`, so
+  `solve!(init(prob, method; kwargs...))` returns what `solve(prob, method; kwargs...)` returns and
+  the native `solve!` serves the solver. An out-of-place `f(u, p)` with a `StaticArray` or a
+  `Number` `u0` solves in R1; an in-place `f(du, u, p)` with an array `u0` that is not a
+  `StaticArray` solves in R3 on a copy of `u0`; an out-of-place `f(u, p)` with such an array `u0`
+  solves in R3 through `(y, x, p) -> (y .= f(x, p))` (and the same wrapper for `prob.f.jac`); and
+  an in-place `f` with a `StaticArray` or a `Number` `u0`, or a problem with `jac_prototype`,
+  `sparsity`, `lb` or `ub` set, raises an `ArgumentError`. `prob.p` reaches `f` and `jac`
+  unchanged, `SciMLBase.NullParameters()` included. `prob.kwargs` and the call's keywords merge
+  with the call's winning over the closed set `abstol` (`f_abstol`, with `f_reltol = 0` when
+  `reltol` is absent), `reltol` (`f_reltol`), `maxiters` (`max_iterations`) and `options`; any
+  other keyword raises an `ArgumentError`. `GeometricSolvers.sciml_retcode(code::ReturnCode)`
+  (`public`, not exported, with its method in the extension) maps the six `ReturnCode` values to
+  `SciMLBase.ReturnCode.Success`, `Stalled`, `MaxIters`, `InternalLinearSolveFailed`, `Unstable`
+  and `InternalLineSearchFailed` (`sciml_retcode(status.code)`). `test/sciml/` and
+  `.github/workflows/SciML.yml` test the extension in its own environment.
 
 - The empty package skeleton: `Project.toml`, the module and its
   docstring, a test harness with Aqua and a diagnostic JET check, and `test/backends.jl` — the
@@ -861,22 +988,29 @@ so that a compat-only bump can be told apart from an interface change.
   $(x, F(x))$ (stepping in preallocated per-member copies `(xs[i], Fxs[i])` in R3 so `x` is not
   mutated while members run), returns the first hard failure (`SINGULAR`, `NONFINITE`, or
   `LINESEARCH_FAILED` with zero `stepnorm`) with `stepnorm = 0` when any member hard-fails, and
-  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$, $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$
-  and $F_+ = F(x_+, p)$. Under
+  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$,
+  $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$ and $F_+ = F(x_+, p)$. Under
   `OptimalWeights`, the PETSc safeguard checks whether `!isfinite(‖F(x₊)‖)`,
   $\sum_i |w_i| < 0.1$, or $\|F(x_+)\| > \rho \min_i \|F(x_i)\|$; when triggered, it replaces
   $(x_+, F_+)$ with the candidate $(x_{\text{best}}, F(x_{\text{best}}))$ of smallest residual norm
   (ties to lowest index) and increments `step_failures` by 1, superseding a `rank_fallback` that
-  fired on the same step so that one composite fallback is counted once.
+  fired on the same step so that one composite fallback is counted once. Under `FixedWeights`, which
+  has no safeguard, a non-finite $\|F(x_+)\|$ reports `NONFINITE` instead of `SUCCESS`; the
+  `OptimalWeights` safeguard replaces such a trial before it is reported, so only `FixedWeights`
+  reaches this.
   `Multiplicative(m₁, m₂, ...)` (`fieldcount(M) >= 1`, else `ArgumentError`) threads $(x, F(x))$
   sequentially through its members in one outer step, calling `sync_merit` before each member step
   so a started line-search member updates its stored baseline merit $\phi(x) = \|F(x)\|_2^2$ to the
   incoming residual without resetting `Newton`'s `FactorAge` (`reuse`) or `DogLeg`'s `TrustRadius`
   (while preserving `NaN` on an un-started state so calling `step!!` without `start!!` fails closed
-  with `NONFINITE`), short-circuiting on the first hard failure with `stepnorm = 0`, and reporting
-  the outer step norm $\|x^{(m)} - x^{(0)}\|$. `Repeat(method, count)` (`count >= 1`, else
-  `ArgumentError`) runs `count` sub-steps of `method` per outer iteration with `sync_merit` between
-  sub-steps, short-circuiting on a hard failure with `stepnorm = 0`.
+  with `NONFINITE`), and a hard failure of a member (`SINGULAR`, `NONFINITE`, or
+  `LINESEARCH_FAILED` with zero `stepnorm`) ends the outer step with that member's code, keeps the
+  iterate that the members before it reached, and reports the outer step norm
+  $\|x^{(m)} - x^{(0)}\|$, so a `LINESEARCH_FAILED` after an earlier member moved the iterate is not
+  a zero step. `Repeat(method, count)` (`count >= 1`, else `ArgumentError`) runs `count` sub-steps
+  of `method` per outer iteration with `sync_merit` between sub-steps, and a hard failure of a
+  sub-step ends the outer step with its code, keeps the iterate that the earlier sub-steps reached,
+  and reports the outer step norm.
   `Switch(first, second; threshold = 1e-2)` (finite `threshold > 0`, else `ArgumentError`) stores
   `fnorm₀ = NaN` in `init_state` and after `finish!!` (so an un-started `step!!` returns `NONFINITE`
   with `stepnorm = 0`), records `fnorm₀` and `switched = false` in `start!!`, steps `first` while
@@ -884,7 +1018,11 @@ so that a compat-only bump can be told apart from an interface change.
   `second` once $\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|$. In `finish!!`, `Additive` resets
   the spectrum diagnostics (`rank = -1`, `nullnorm = NaN`, `gradratio = NaN`), `Multiplicative`
   forwards the diagnostics of the last member in sequence that populated them, `Repeat` forwards
-  its inner member's diagnostics, and `Switch` forwards those of the active branch.
+  its inner member's diagnostics, and `Switch` forwards those of the active branch. `solve` with a
+  combinator method (`Additive`, `Multiplicative`, `Repeat`, `Switch`) and a `ForwardDiff.Dual` in
+  `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
+  through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
+  input for every method.
 - `Anderson` (exported): `Anderson(member = Picard(),
   Val(m) = Val(4); c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0,
   safeguard_cos = nothing, grow_depth = false)` (plus the convenience `Anderson(member, m::Integer;

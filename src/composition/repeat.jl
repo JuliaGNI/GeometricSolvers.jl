@@ -51,39 +51,16 @@ end
     return x_out, st_out, RepeatState(s_inner, state.Fx, state.x₀)
 end
 
-function step!!(
-        state::RepeatState{S, Nothing}, m::Repeat,
-        prob::NonlinearProblem, x, Fx, p) where {S}
-    R = real(eltype(x))
-    x_start = x
-    s = state.state
-    fnorm = zero(R)
-    failures = Int32(0)
-    promoted = false
-    limited = false
-    for _ in Base.OneTo(m.count)
-        s = sync_merit(s, m.method, norm2(Fx))
-        x, Fx, s, info = step!!(s, m.method, prob, x, Fx, p)
-        fnorm = info.fnorm
-        failures += info.failures
-        promoted |= info.promoted
-        limited |= info.limited
-        if is_hard_failure(info)
-            info_err = StepInfo{R}(info.code, fnorm, zero(R), failures, promoted, limited)
-            return x, Fx, RepeatState(s, state.Fx, state.x₀), info_err
-        end
-    end
-    stepnorm = rnorm(x - x_start)
-    info_ok = StepInfo{R}(SUCCESS, fnorm, stepnorm, failures, promoted, limited)
-    return x, Fx, RepeatState(s, state.Fx, state.x₀), info_ok
-end
-
+# A hard failure of a sub-step ends the outer step with its code and keeps the iterate that the
+# sub-steps before it reached. The step norm is the outer one, also after such a failure: a
+# `LINESEARCH_FAILED` step that earlier sub-steps moved is not a zero step.
 function step!!(
         state::RepeatState, m::Repeat,
         prob::NonlinearProblem, x, Fx, p)
     R = real(eltype(x))
-    copy!!(state.x₀, x)
+    x_start = copy!!(state.x₀, x)
     s = state.state
+    code = SUCCESS
     fnorm = zero(R)
     failures = Int32(0)
     promoted = false
@@ -96,12 +73,11 @@ function step!!(
         promoted |= info.promoted
         limited |= info.limited
         if is_hard_failure(info)
-            info_err = StepInfo{R}(info.code, fnorm, zero(R), failures, promoted, limited)
-            return x, Fx, RepeatState(s, state.Fx, state.x₀), info_err
+            code = info.code
+            break
         end
     end
-    @. state.x₀ = x - state.x₀
-    stepnorm = rnorm(state.x₀)
-    info_ok = StepInfo{R}(SUCCESS, fnorm, stepnorm, failures, promoted, limited)
-    return x, Fx, RepeatState(s, state.Fx, state.x₀), info_ok
+    stepnorm = rnorm(map!!(-, state.x₀, x, x_start))
+    info_out = StepInfo{R}(code, fnorm, stepnorm, failures, promoted, limited)
+    return x, Fx, RepeatState(s, state.Fx, state.x₀), info_out
 end

@@ -91,7 +91,7 @@ end
     return complex(ForwardDiff.partials(real(d), k), ForwardDiff.partials(imag(d), k))
 end
 
-function jacobian!!(J, prep::ChunkedForwardDiff{N}, prob, x, p) where {N}
+function jacobian!!(J::DenseMatrix, prep::ChunkedForwardDiff{N}, prob, x, p) where {N}
     n = length(x)
     for j0 in 0:N:(n - 1)
         # lane `k` of entry `i` is one exactly where `i` is column `j0 + k`; the spare lanes of a

@@ -6,12 +6,16 @@ CurrentModule = GeometricSolvers
 
 ## The problem
 
-A problem holds functions and nothing else: the residual, and optionally its derivative. The
-storage of the iterate selects the call form of both, so one problem serves every regime. This
-name is exported.
+A problem holds functions and an optional Jacobian prototype: the residual, optionally its
+derivative, and optionally `jacobian_prototype` for a sparse R3 Jacobian. The storage of the
+iterate selects the call form of the functions, so one problem serves every regime.
+`NonlinearProblem` is exported; `GeometricSolvers.jacobian_prototype` and
+`GeometricSolvers.jacobian_pattern` are internal accessors.
 
 ```@docs
 NonlinearProblem
+jacobian_prototype
+jacobian_pattern
 ```
 
 ## The storage seam
@@ -41,9 +45,11 @@ Every type on this page is `isbits`, so a kernel can hold it, and every real fie
 `R = real(T)` for the element type `T` of the iterate. [`SolverStatus`](@ref) also carries the
 range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
 ``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return.
-For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1` and `rank = 1`),
-they classify the outcome and a `STALLED` or `MAXITERS` return: a consistent rank-deficient
-system that converged has a small residual (`fnorm` small) and nothing outside the range
+With `regularization = μ ≠ 0`, `rank` and `nullnorm` describe ``J(x_k) + μ I`` and `gradratio`
+describes ``J(x_k)``, so the classification below holds for `μ = 0` only.
+For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1`, and `rank = 1`
+with an SVD factor), they classify the outcome and a `STALLED` or `MAXITERS` return:
+a consistent rank-deficient system that converged has a small residual (`fnorm` small) and nothing outside the range
 (`rank < n`, `nullnorm ≈ 0`); a least-squares point with no root has `gradratio ≈ 0` (`fnorm > 0`)
 and the residual outside the range (`rank < n`, ``\text{nullnorm} \approx \|F(x_k)\| > 0``); a
 stall in nearly singular directions has the residual inside the range (`nullnorm ≈ 0`) at a fine
@@ -53,6 +59,7 @@ with `nullnorm ≈ 0`.
 
 ```@docs
 ReturnCode
+sciml_retcode
 SolverStatus
 StepInfo
 Options
@@ -76,22 +83,30 @@ BF16
 
 ### Factorisation and solve
 
-A linear-solver method enters a solve through [`dense_factor`](@ref), [`factorize!!`](@ref) and
-[`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and [`ldiv!!`](@ref) return new
-`isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU with partial pivoting and
-`Int32` pivots, [`StaticQR`](@ref) Householder QR without column pivoting, and [`StaticSVD`](@ref)
-a one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
-`√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve finite. For a vector state (R3)
-[`dense_factor`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref)
-on a host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
+A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense_factor`](@ref)),
+[`factorize!!`](@ref) and [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and
+[`ldiv!!`](@ref) return new `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU
+with partial pivoting and `Int32` pivots, [`StaticQR`](@ref) Householder QR without column
+pivoting, and [`StaticSVD`](@ref) a one-sided Jacobi singular value decomposition whose solve
+truncates at the rank cutoff `√n · eps(TF) · σ₁`, which is what makes a rank-revealing solve
+finite. For a vector state (R3) with no prototype (`jacobian_prototype === nothing`),
+[`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a
+host `Array` and [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
 `AbstractGPUArray`, and [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place:
-through LAPACK on the host, and through `KernelAbstractions` on a device. [`factorize!!`](@ref)
-states what a singular matrix gives: an SVD factor records its numerical rank in `rank` apart from
-its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is exact or truncated;
-[`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref). These names are not
-exported and are reached as `GeometricSolvers.name`.
+through LAPACK on the host, and through `KernelAbstractions` on a device. When `Sparspak` is loaded
+and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
+AbstractFloat`), the `GeometricSolversSparspakExt` package extension pre-allocates a `SparspakLU`
+workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for an `LUFactorization` whose
+factor element type is `T` (`LUFactorization()` or `LUFactorization(T)`); the first `factorize!!`
+call runs symbolic ordering and symbolic factorisation, and subsequent `factorize!!` and `ldiv!!`
+calls reuse them across Newton steps.
+[`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
+in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is
+exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref).
+These names are not exported and are reached as `GeometricSolvers.name`.
 
 ```@docs
+init_linear
 dense_factor
 factorize!!
 ldiv!!
@@ -152,13 +167,15 @@ A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalizati
 `refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
 [`Picard`](@ref)) and nothing about the problem or the iterate. [`solve`](@ref) adapts the method
 to `R = real(eltype(x₀))`, calls [`init_state`](@ref) and [`solve!!`](@ref) on a copy of `x₀` when
-`x₀` is an array, and returns `(x, status)`. With the same arguments,
+`x₀` is an array, and returns `(x, status)`; when `x₀` or `p` carries a `ForwardDiff.Dual` leaf,
+[`solve`](@ref) strips duals via [`StripDual`](@ref), runs the primal solve, and on `SUCCESS`
+differentiates the root implicitly at `x*`. With the same arguments,
 `solver = init(prob, x₀, method, p; options, kwargs...)` pre-allocates a
 [`NonlinearSolver`](@ref) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
 with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
-`solve!(init(args...))` returns what `solve(args...)` returns. [`solve!!`](@ref) takes a solver
+`solve!(init(args...))` returns what `solve(args...)` returns on primal inputs. [`solve!!`](@ref) takes a solver
 state from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch
 `X` of independent small systems, [`solve_batch!`](@ref) solves each in place on `get_backend(X)`
 with one work-item per system, and [`PerSystem`](@ref) wraps an indexable collection of
@@ -188,7 +205,9 @@ steps from the same iterate with [`OptimalWeights`](@ref) or [`FixedWeights`](@r
 while [`sync_merit`](@ref) updates any active line-search baseline merit, [`Switch`](@ref)
 transitions permanently from `first` to `second` once
 ``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``, and [`Anderson`](@ref) accelerates its member
-with filtered Anderson mixing, Tikhonov regularisation, restarts and best-iterate restoration.
+with filtered Anderson mixing, Tikhonov regularisation, restarts and best-iterate restoration. A
+combinator has no implicit differentiation: [`solve`](@ref) with a combinator method raises an
+`ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`.
 
 ```@docs
 Additive
@@ -199,6 +218,35 @@ Repeat
 Switch
 Anderson
 ```
+
+### SciMLBase extension
+
+When [SciMLBase](https://github.com/SciML/SciMLBase.jl) is loaded, the package extension
+`GeometricSolversSciMLBaseExt` adds methods of [`solve`](@ref) and [`init`](@ref) for a
+`SciMLBase.NonlinearProblem` and a method [`Newton`](@ref) or [`Picard`](@ref). Both translate the
+problem and call the native [`solve`](@ref) or [`init`](@ref), so `solve` returns `(x, status)`,
+`init` returns a [`NonlinearSolver`](@ref) that holds a copy of an array `u0`, and
+`solve!(init(prob, method; kwargs...))` returns what `solve(prob, method; kwargs...)` returns; the
+native [`solve!`](@ref) serves the solver. A SciML caller maps `status.code` to a
+`SciMLBase.ReturnCode.T` with [`sciml_retcode`](@ref)
+(`GeometricSolvers.sciml_retcode(status.code)`), which is `public` and not exported.
+
+The call form follows `SciMLBase.isinplace(prob)` and `u0 = prob.u0`: an out-of-place `f(u, p)`
+with a `StaticArray` or a `Number` `u0` solves in R1 and returns a value of the type of `u0` (with
+an `SVector` `u0`, an out-of-place `jac(u, p)` must return an `SMatrix`, as the native R1 `J`
+does); an in-place `f(du, u, p)` with an array `u0` that is not a `StaticArray` solves in R3 on a
+copy of `u0`; an out-of-place `f(u, p)` with such an array `u0` solves in R3 through a closure
+wrapper `(y, x, p) -> (y .= f(x, p))` (and `(A, x, p) -> (A .= jac(x, p))` for `prob.f.jac`),
+which allocates as `f` and `jac` do; and an in-place `f` with a `StaticArray` or a `Number` `u0`
+raises an `ArgumentError`. `prob.f.jac` becomes the `J` of the native problem (overridden by a
+method's own `jacobian` field), and `prob.p` is passed unchanged, `SciMLBase.NullParameters()`
+included. A problem with `jac_prototype`, `sparsity`, `lb` or `ub` set raises an `ArgumentError`.
+
+The extension merges `prob.kwargs` with the call's keywords (the call's winning) and accepts the
+closed set `abstol`, `reltol`, `maxiters` and `options`: `abstol` maps to `f_abstol` (and sets
+`f_reltol = 0` when `reltol` is not given), `reltol` maps to `f_reltol`, `maxiters` maps to
+`max_iterations`, and `options` passes an [`Options`](@ref) alone; any other keyword, or `options`
+together with another keyword, raises an `ArgumentError`.
 
 ## Automatic differentiation
 
@@ -280,6 +328,7 @@ zoom_step
 LinearMethod
 jacobi_rotation
 ToReal
+StripDual
 parameters
 record
 converged

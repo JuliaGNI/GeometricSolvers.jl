@@ -5,7 +5,7 @@ const WeightRule = Union{OptimalWeights, FixedWeights}
 
 """
     Additive(m₁, m₂, ...; weights = OptimalWeights())
-    Additive((m₁, m₂, ...), weights = OptimalWeights())
+    Additive((m₁, m₂, ...), weights::Union{OptimalWeights, FixedWeights} = OptimalWeights())
 
 Parallel nonlinear combinator that runs one step of each member from the same iterate
 `(x, F(x))` to obtain candidates ``(x_i, F(x_i))`` and forms
@@ -15,6 +15,9 @@ candidate directions and solves the weights over the ones kept, a one-weight sec
 survives; a trial iterate that violates the PETSc safeguard is replaced by the candidate with the
 smallest residual norm. Each rule counts one failure in `step_failures`, and a step on which both
 fire counts one.
+
+The tuple form takes the weight rule as its second positional argument: a `weights` keyword
+after a tuple makes the tuple a single member.
 """
 struct Additive{M <: Tuple, W <: WeightRule}
     members::M
@@ -121,30 +124,9 @@ end
     return SUCCESS
 end
 
-@inline function sum_failures(
-        infos::Tuple{StepInfo{R}, Vararg{StepInfo{R}, M}}) where {M, R}
-    s = Int32(0)
-    @inbounds for i in eachindex(infos)
-        s += infos[i].failures
-    end
-    return s
-end
-
-@inline function any_promoted(
-        infos::Tuple{StepInfo{R}, Vararg{StepInfo{R}, M}}) where {M, R}
-    @inbounds for i in eachindex(infos)
-        infos[i].promoted && return true
-    end
-    return false
-end
-
-@inline function any_limited(
-        infos::Tuple{StepInfo{R}, Vararg{StepInfo{R}, M}}) where {M, R}
-    @inbounds for i in eachindex(infos)
-        infos[i].limited && return true
-    end
-    return false
-end
+@inline sum_failures(infos::Tuple) = mapreduce(info -> info.failures, +, infos)
+@inline any_promoted(infos::Tuple) = any(info -> info.promoted, infos)
+@inline any_limited(infos::Tuple) = any(info -> info.limited, infos)
 
 @inline function best_candidate_index(
         fnorms::Tuple{R, Vararg{R, N}}) where {R <: Real, N}
@@ -187,7 +169,6 @@ end
     return (s1_new, ss_t...), (info1, infos_t...)
 end
 
-@inline _combine_r1_dir(x, ::Tuple{}, ::Tuple{}) = zero(x)
 @inline _combine_r1_dir(x, xs::Tuple{Any}, w::Tuple{Any}) = first(w) * (first(xs) - x)
 @inline function _combine_r1_dir(x, xs::Tuple, w::Tuple)
     return first(w) * (first(xs) - x) + _combine_r1_dir(x, Base.tail(xs), Base.tail(w))
@@ -268,7 +249,7 @@ function step!!(
     end
     d = _combine_r1_dir(x, xs_cand, w)
     x₊ = update_iterate!!(nothing, x, one(R), d)
-    F₊ = residual!!(nothing, prob, x₊, p)
+    F₊ = primal_residual!!(nothing, prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     safeguard_fallback = false
     if m.weights isa OptimalWeights
@@ -285,8 +266,10 @@ function step!!(
     stepnorm = rnorm(x₊ - x)
     rank_fallback = rank_fallback & !safeguard_fallback
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
+    # `FixedWeights` has no safeguard, so its trial residual can be non-finite
+    code = isfinite(fnorm₊) ? SUCCESS : NONFINITE
     info_ok = StepInfo{R}(
-        SUCCESS, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
+        code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
     return x₊, F₊, new_state, info_ok
 end
 
@@ -313,7 +296,7 @@ function step!!(
     end
     combine_directions!(state.d, x, state.xs, w)
     x₊ = update_iterate!!(state.xt, x, one(R), state.d)
-    F₊ = residual!!(state.Fx, prob, x₊, p)
+    F₊ = primal_residual!!(state.Fx, prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     safeguard_fallback = false
     if m.weights isa OptimalWeights
@@ -333,7 +316,9 @@ function step!!(
     Fx_out = copy!!(Fx, F₊)
     rank_fallback = rank_fallback & !safeguard_fallback
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
+    # `FixedWeights` has no safeguard, so its trial residual can be non-finite
+    code = isfinite(fnorm₊) ? SUCCESS : NONFINITE
     info_ok = StepInfo{R}(
-        SUCCESS, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
+        code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
     return x_out, Fx_out, new_state, info_ok
 end

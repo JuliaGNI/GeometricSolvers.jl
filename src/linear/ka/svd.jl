@@ -163,11 +163,7 @@ end
     end
 end
 
-Base.@assume_effects :foldable function ka_svd_workgroup(::B) where {B}
-    return nameof(B) === :JLBackend ? Val(2) : Val(32)
-end
-
-ka_unwrap_val(::Val{N}) where {N} = N
+const KA_SVD_WORKGROUP = 32
 
 function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
         VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
@@ -177,12 +173,10 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
     tol = jacobi_tolerance(n, R)
     m = n + Int(isodd(n))
     n_pairs = m ÷ 2
-    valG = ka_svd_workgroup(backend)
-    g = ka_unwrap_val(valG)
     converged = n <= 1
     col_norms2_kernel! = ka_jacobi_col_norms2_kernel!(backend)
     if n >= 2
-        round_kernel! = ka_jacobi_svd_round_kernel!(backend, g)
+        round_kernel! = ka_jacobi_svd_round_kernel!(backend, KA_SVD_WORKGROUP)
         for sweep in 1:JACOBI_MAX_SWEEPS
             col_norms2_kernel!(
                 σ̂, flag, U, V, n, neg_e, sweep == 1, false; ndrange = n)
@@ -192,7 +186,8 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
             negligible = max_norm2 * tol^2
             for r in 0:(m - 2)
                 round_kernel!(
-                    U, V, flag, n, r, tol, negligible, valG; ndrange = n_pairs * g)
+                    U, V, flag, n, r, tol, negligible, Val(KA_SVD_WORKGROUP);
+                    ndrange = n_pairs * KA_SVD_WORKGROUP)
             end
             if iszero(Array(flag)[1])
                 converged = true
