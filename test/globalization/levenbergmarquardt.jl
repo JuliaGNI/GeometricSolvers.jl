@@ -6,9 +6,10 @@
 # units of `Jᴴ J` at both ends of the scale and around the `4 eps` floor, the gain ratio at a
 # positive `ρ_accept` and at a trial that leaves the residual where it was, the `STALLED` return at
 # `μ_max` and the finite damping it keeps there, the rejection of a non-finite trial residual and
-# of a non-finite damped step, the refusal of the stacked solve on a device array, the stacked step
-# against the closed form in `Complex{BigFloat}`, the standard reference column and the eleven cells
-# that the standard set excepts, and the storage and allocations of the state and of every path.
+# of a non-finite damped step, the refusal of the stacked solve on a device array and of a sparse
+# `jacobian_prototype`, the stacked step against the closed form in `Complex{BigFloat}`, the
+# standard reference column and the eleven cells that the standard set excepts, the storage and
+# allocations of the state and of every path, and the solve of a `StationarityProblem`.
 #
 # The cases that need the step in closed form take a linear problem with an analytic `J` and one
 # `step!!`, so that the expected `δ` is the solution of `(Jᴴ J + μ D²) δ = -Jᴴ F` computed
@@ -22,6 +23,7 @@ using GPUArraysCore: allowscalar
 using JET: JET, @test_opt
 using JLArrays: JLArray
 using LinearAlgebra: I, cond, mul!, norm
+using SparseArrays: sparse
 using StaticArrays: @SMatrix, @SVector, SMatrix, SVector
 using Test
 
@@ -1223,6 +1225,61 @@ end
             @test st.code == SUCCESS
             @test st.fnorm <= 1e-9
             @test norm(x) < 1e-3
+        end
+    end
+
+    @testset "A sparse jacobian_prototype is refused at init" begin
+        # No damped step reads a sparse factor: the stacked step reduces a dense copy of `J(x)`
+        # and the SVD step factorises a dense matrix. An array iterate whose problem carries a
+        # sparse prototype is refused at `init` with every linear method and both scalings, and
+        # the message names the dense alternatives. A static iterate ignores the prototype.
+        P = sparse([1, 2], [1, 2], [1.0, 1.0], 2, 2)
+        prob = NonlinearProblem(
+            (F, x, _) -> (F .= x .^ 2 .- 4.0; nothing); jacobian_prototype = P)
+        for ls in (LUFactorization(), QRFactorization(), SVDFactorization(),
+                LDLTFactorization()),
+            sc in (:none, :diagonal)
+
+            m = Newton(; linsolve = ls, globalization = LevenbergMarquardt(; scaling = sc))
+            err = try
+                init(prob, [3.0, 3.0], m)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            msg = err isa ArgumentError ? err.msg : ""
+            @test occursin("does not use a sparse jacobian_prototype", msg)
+            @test occursin("SVDFactorization()", msg)
+        end
+        prob_r1 = NonlinearProblem((x, _) -> x .^ 2 .- 4.0; jacobian_prototype = P)
+        m = Newton(; linsolve = LUFactorization(), globalization = LevenbergMarquardt())
+        x, st = solve(prob_r1, SVector(3.0, 3.0), m)
+        @test st.code == SUCCESS
+        @test norm(x - SVector(2.0, 2.0)) <= sqrt(eps(Float64))
+    end
+
+    @testset "StationarityProblem on every linear method, R1 and R3" begin
+        # The residual of a `StationarityProblem` is the gradient of `S` and its Jacobian the
+        # Hessian, symmetric where `E == U`. The damped step reads no symmetry, so it solves the
+        # stationarity equations as any other system, with the merit `‖F‖²` that the problem
+        # prescribes. Both actions have their stationary point in closed form: a minimum
+        # `(√1.01, √1.01 / 10)` of a double well, and the saddle `(0, -1)` of `S₂`, whose Hessian
+        # `diag(1 + x₁², -1)` is indefinite there.
+        S₁(x, _) = (x[1]^2 - 1)^2 / 4 + x[2]^2 / 2 - x[1] * x[2] / 10
+        S₂(x, _) = x[1]^2 / 2 + x[1]^4 / 12 - x[2]^2 / 2 - x[2]
+        cases = ((S₁, (0.8, 0.3), (sqrt(1.01), sqrt(1.01) / 10)),
+            (S₂, (0.4, -0.7), (0.0, -1.0)))
+        for (S, start, root) in cases,
+            ls in (SVDFactorization(), QRFactorization(), LUFactorization(),
+                LDLTFactorization()),
+            sc in (:none, :diagonal),
+            x₀ in (collect(start), SVector(start))
+            m = Newton(; linsolve = ls, globalization = LevenbergMarquardt(; scaling = sc))
+            x, st = solve(StationarityProblem(S), x₀, m)
+            @test st.code == SUCCESS
+            @test st.iterations >= 1
+            @test norm(collect(x) .- collect(root)) <= sqrt(eps(Float64))
         end
     end
 end

@@ -29,13 +29,21 @@ so that a compat-only bump can be told apart from an interface change.
   `δ = -V diag(2^-e σ̂_j / (σ̂_j² + 2^{-2e} μ)) Uᴴ F(x)` from the stored `σ̂_j` of the scaled matrix
   `J(x)/2^e` via the scale-safe coordinate weight `lm_svd_coord` across static (`StaticSVD`), host
   (`DenseSVD`) and device (`DeviceSVD`) factors; where `2^{-e} √μ` overflows, at the bottom of the
-  factor's scale range, the weight is taken as zero and never as a `NaN`. On `QRFactorization()` or
-  `LUFactorization()`, or when `scaling = :diagonal`, the step reduces `[J | -F]` once per outer
-  step to an upper-triangular `(R₀, c₀)` and each trial `μ` copies that pair and eliminates only its
-  own damping rows `√μ D` by Givens rotations, without forming `Jᴴ J`, so a rejected trial costs no
-  factorisation of `J(x)`; that path indexes scalars, and an `init` on a device array iterate
-  raises an `ArgumentError` that names `SVDFactorization()` with `scaling = :none` as the device
-  step. Steps are accepted when the gain ratio
+  factor's scale range, the weight is taken as zero and never as a `NaN`. On `QRFactorization()`,
+  `LUFactorization()` or `LDLTFactorization()`, or when `scaling = :diagonal`, the step reduces
+  `[J | -F]` once per outer step to an upper-triangular `(R₀, c₀)` and each trial `μ` copies that
+  pair and eliminates only its own damping rows `√μ D` by Givens rotations, without forming `Jᴴ J`,
+  so a rejected trial costs no factorisation of `J(x)`; that path indexes scalars, and an `init` on
+  a device array iterate raises an `ArgumentError` that names `SVDFactorization()` with
+  `scaling = :none` as the device step. An `init` on a non-static array iterate whose
+  `jacobian_prototype` is sparse raises an `ArgumentError` for every linear method and both
+  scalings. The message names the dense alternatives, a dense Jacobian with `LUFactorization()` or
+  `QRFactorization()` (the stacked step) or `SVDFactorization()` (the SVD step), or another
+  globalization for the sparse LU solve. A `StaticArray` iterate ignores the prototype and solves.
+  This closes K55, whose dense stacked solve ran beside a sparse factor that it never read. A
+  `StationarityProblem` solves with `Newton(; globalization = LevenbergMarquardt())` on R1 and R3
+  iterates for every linear method, with the merit `‖F(x)‖²` that the problem prescribes; the
+  stacked reduction reads no symmetry. Steps are accepted when the gain ratio
   `ρ = (‖F(x)‖² - ‖F(x + δ)‖²) / (‖F(x)‖² - ‖F(x) + J δ‖²)` satisfies `ρ > ρ_accept`, decreasing
   `μ` to `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`, and rejected steps set `μ` to
   `max(μ · μ_increase, max(μ_min, 4 eps(R)))` inside the step until a trial step is accepted or

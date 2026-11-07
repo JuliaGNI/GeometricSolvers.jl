@@ -313,7 +313,7 @@ end
 
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     m.globalization isa LevenbergMarquardt &&
-        check_lm_iterate(m.globalization, m.linsolve, x)
+        check_lm_iterate(m.globalization, m.linsolve, prob, x)
     Fx = buffer(x)
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
@@ -511,7 +511,8 @@ end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::NonlinearProblem, x, Fx, p) where {L, G <: LevenbergMarquardt, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {
+        L, G <: LevenbergMarquardt, J, RF, Reg}
     R = real(eltype(x))
     fnorm = R(rnorm(Fx))
     μ = state.rule.μ
