@@ -18,9 +18,10 @@ so that a compat-only bump can be told apart from an interface change.
   `[extensions]`. When `Metal` is loaded, `factorize!!` and `backsolve!` on
   `DeviceLU{<:MtlMatrix{Float32}}` and `MtlVector{Float32}` dispatch to Metal Performance Shaders
   (`LinearAlgebra.lu!(fac.factors; check = false)` and `LinearAlgebra.ldiv!(LU(fac.factors,
-  fac.ipiv, BlasInt(fac.info)), d)`), mapping MPS status `-2` or `> 0` to `info > 0`
-  (`SINGULAR`) and falling back to `ka_factorize_lu!(fac, J)` on negative MPS status codes other
-  than `-2` (on a copy of `J` where the caller passes the factor buffer as `J`), while
+  fac.ipiv, BlasInt(fac.info)), d)`), mapping every MPS failure status to `info > 0`
+  (`SINGULAR`) with no fallback, and no copy of `J` where the caller passes the factor buffer
+  as `J`. MPS status `> 0` gives `info` = that status, `-2` gives the first index of the
+  smallest `|aᵢᵢ|` of the factors, and any other negative status gives `info = 1`, while
   `QRFactorization`, `SVDFactorization`, and `ComplexF32`, `Float16` and `BFloat16`
   `LUFactorization` remain on `KernelAbstractions`. When `CUDA` is loaded, `factorize!!` and
   `backsolve!` on `DeviceLU{<:CuMatrix{T}}`, `DeviceQR{<:CuMatrix{T}}` and

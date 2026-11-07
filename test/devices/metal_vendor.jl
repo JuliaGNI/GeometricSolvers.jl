@@ -156,7 +156,7 @@ if Metal.functional() && !on_virtual_gpu()
         @test relerr(Aref * ComplexF64.(Array(xd)), ComplexF64.(b)) <= tol
     end
 
-    @testset "Metal MPS LU edge cases, singular status mapping, and KA fallback" begin
+    @testset "Metal MPS LU edge cases and status mapping" begin
         ext_mtl = Base.get_extension(GeometricSolvers, :GeometricSolversMetalExt)
         m = LUFactorization()
 
@@ -218,7 +218,7 @@ if Metal.functional() && !on_virtual_gpu()
               ka_factorize_lu!(dense_factor(m, prob3, x3, nothing), MtlArray(A_neg)).info
         @test returncode(fac_neg) === SINGULAR
 
-        # Direct status mapping checks on _mps_lu_finish!: status 0, -2, >0, and <0 fallback
+        # Direct status mapping checks on _mps_lu_finish!: status 0, -2, >0, and any other < 0
         x2 = MtlArray(zeros(Float32, 2))
         prob2 = NonlinearProblem(x2, metal_vendor_noop)
         @test ext_mtl !== nothing
@@ -237,32 +237,27 @@ if Metal.functional() && !on_virtual_gpu()
         @test Array(fac_mps.status)[1] == Int32(7)
         @test_throws DimensionMismatch backsolve!(fac_mps, MtlArray(Float32[1.0f0]))
 
-        fac_st0 = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, 0)
+        fac_st0 = ext_mtl._mps_lu_finish!(fac_st, F_ok.ipiv, 0)
         @test fac_st0.info == 0
         @test returncode(fac_st0) === SUCCESS
 
         # the factors of `[4 1; 1 3]` have the diagonal `[4, 2.75]`, so the smallest `|aᵢᵢ|`
         # is the second
-        fac_stm2 = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, -2)
+        fac_stm2 = ext_mtl._mps_lu_finish!(fac_st, F_ok.ipiv, -2)
         @test fac_stm2.info == 2
         @test returncode(fac_stm2) === SINGULAR
 
-        fac_stpos = ext_mtl._mps_lu_finish!(fac_st, dA_ok, F_ok.ipiv, 2)
+        fac_stpos = ext_mtl._mps_lu_finish!(fac_st, F_ok.ipiv, 2)
         @test fac_stpos.info == 2
         @test returncode(fac_stpos) === SINGULAR
 
-        fac_fb = dense_factor(m, prob2, dx_ok, nothing)
-        fac_fb = ext_mtl._mps_lu_finish!(fac_fb, dA_ok, fac_fb.ipiv, -1)
-        @test fac_fb.info == 0
-        @test returncode(fac_fb) === SUCCESS
-        ldiv!!(dx_ok, fac_fb, MtlArray(Float32[5, 4]))
-        @test isapprox(Array(dx_ok), Float32[1, 1]; rtol = 1.0f-5)
-
-        fac_fb_sing = dense_factor(m, prob2, dx_ok, nothing)
-        fac_fb_sing = ext_mtl._mps_lu_finish!(
-            fac_fb_sing, MtlArray(zeros(Float32, 2, 2)), fac_fb_sing.ipiv, -3)
-        @test fac_fb_sing.info == 1
-        @test returncode(fac_fb_sing) === SINGULAR
+        # any other negative status gives `info = 1`, whatever the factors hold: here the
+        # factors of a regular matrix, whose `-2` mapping above names the pivot 2
+        for status_code in (-1, -3)
+            fac_neg_st = ext_mtl._mps_lu_finish!(fac_st, F_ok.ipiv, status_code)
+            @test fac_neg_st.info == 1
+            @test returncode(fac_neg_st) === SINGULAR
+        end
     end
 
     BLAS.set_num_threads(old_blas_threads)

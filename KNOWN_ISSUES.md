@@ -159,23 +159,6 @@
 - **kind:** defect
 - **found:** PR #58 (CodeRabbit)
 
-### K45 · On the default `Newton` path the Metal `Float32` LU copies the `n × n` Jacobian on every step
-
-- **location:** `ext/GeometricSolversMetalExt.jl` (`factorize!!`)
-- **evidence:** `factorize!!` takes `A = J === fac.factors ? copy(fac.factors) : J`, so that a
-  fallback to `ka_factorize_lu!` after a non-singular MPS failure still has the matrix that `lu!`
-  writes the factors over. `init_newton_J` returns `fac.factors` when the globalization is not
-  `DogLeg` and the factor element type is the working one (`src/nonlinear/newton.jl`), and
-  `regularize!!` returns `J` itself for `μ = 0`, the default (`src/base/bang.jl`), so
-  `newton_factor` passes `fac.factors` as `J`, and every step allocates and fills one more
-  `n × n` device matrix. `_implicit_tangent` passes `fac_slot.factors` the same way
-  (`src/nonlinear/implicit.jl`). Metal.jl 1.11.1's `lu!` allocates an `n × n` transpose buffer on
-  every call as well (`src/linalg.jl`). The copy is needed only for the fallback, and MPS status
-  `-1` can reach it. Whether a non-singular MPS failure maps to `info = 1` (`SINGULAR`) with no
-  copy, or keeps the fallback at the cost of the copy, is open.
-- **kind:** defect
-- **found:** PR #61
-
 ### K46 · The CUDA `backsolve!` method for `DeviceSVD` repeats the own-kernel method
 
 - **location:** `ext/GeometricSolversCUDAExt.jl` (`backsolve!` for `DeviceSVD`)

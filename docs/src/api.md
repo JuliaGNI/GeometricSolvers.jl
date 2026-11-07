@@ -100,9 +100,9 @@ finite. For a vector state (R3) with no prototype (`jacobian_prototype === nothi
 [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an `AbstractGPUArray`, and [`factorize!!`](@ref) and
 [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host, and on a device through
 the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on `MtlMatrix{Float32}` and
-`MtlVector{Float32}`, falling back to `ka_factorize_lu!` on negative MPS status codes other than
-`-2`) and `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with
-cuBLAS `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
+`MtlVector{Float32}`, with every MPS failure status reported as a singular factor) and
+`GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS
+`trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
 LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge)
 package extensions where available and through `KernelAbstractions` otherwise. When `Sparspak` is
 loaded and `jacobian_prototype` is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
