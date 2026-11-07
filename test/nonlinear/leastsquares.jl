@@ -243,6 +243,11 @@ end
         GaussNewton(; linsolve = QRFactorization(TF_hi)), 3, ones(complex(T), 2)) ===
           nothing
 
+    # A Refinement drives J d + F to zero, which a least-squares step does not reach (K70)
+    gn_ref = GaussNewton(; refinement = Refinement(T))
+    @test_throws ArgumentError solve(p1, x0_s, gn_ref)
+    @test_throws ArgumentError init(p3, ones(T, 2), gn_ref)
+
     # A combinator holds residual buffers of the iterate's length and refuses the problem
     @test_throws ArgumentError init(p3, ones(T, 2), Additive(GaussNewton(), GaussNewton()))
     @test_throws ArgumentError solve(p1, x0_s, Repeat(GaussNewton(), 2))

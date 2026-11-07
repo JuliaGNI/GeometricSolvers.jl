@@ -1282,4 +1282,43 @@ end
             @test norm(collect(x) .- collect(root)) <= sqrt(eps(Float64))
         end
     end
+
+    @testset "A factor in Float32 on a Float64 iterate, and no Refinement (K57)" begin
+        # The stacked step reduces `J(x)` in the working precision and reads no factor, so one
+        # step with a `Float32` linear method is the `Float64` damped step to its rounding; a
+        # solve in `Float32` would miss it by about `eps(Float32)`. The SVD step reads the
+        # `Float32` factor for its direction. No step promotes, and `init` reserves no factor in
+        # the working precision.
+        A = @SMatrix [3.0 1.0; 1.0 2.0]
+        b = @SVector [4.0, 3.0]
+        μ0 = 1e-2
+        δ_ref = damped_reference(A, b, μ0)
+        opts = Options(Float64; f_abstol = 1e-30, f_reltol = 0.0, max_iterations = 1)
+        prob_r1 = NonlinearProblem((x, _) -> A * x - b, (_, _) -> A)
+        prob_r3 = NonlinearProblem((F, x, _) -> (F .= A * x .- b; nothing))
+        lm = LevenbergMarquardt(; μ₀ = μ0, μ_min = μ0)
+        for (ls, rtol) in ((LUFactorization(Float32), 100 * eps(Float64)),
+                (QRFactorization(Float32), 100 * eps(Float64)),
+                (LDLTFactorization(Float32), 100 * eps(Float64)),
+                (SVDFactorization(Float32), 100 * eps(Float32))),
+            (prob, x₀) in ((prob_r1, zero(SVector{2, Float64})), (prob_r3, zeros(2)))
+
+            m = Newton(; linsolve = ls, globalization = lm)
+            x, st = solve(prob, x₀, m, nothing; options = opts)
+            @test st.iterations == 1
+            @test !st.promoted
+            @test isapprox(collect(x), collect(δ_ref); rtol)
+            x₀ isa Vector && @test init(prob, x₀, m).state.fac_T === nothing
+        end
+
+        # A `Refinement` corrects the solve of `J d = -F`, which the damped step does not take.
+        for ref in (Refinement(), true)
+            @test_throws ArgumentError Newton(; globalization = LevenbergMarquardt(),
+                refinement = ref)
+            @test_throws ArgumentError Newton(; linsolve = LUFactorization(Float32),
+                globalization = LevenbergMarquardt(), refinement = ref)
+        end
+        @test Newton(; globalization = LevenbergMarquardt(), refinement = false).refinement ===
+              NoRefinement()
+    end
 end

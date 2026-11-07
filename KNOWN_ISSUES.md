@@ -171,6 +171,22 @@
 - **kind:** dead code
 - **found:** PR #65
 
+### K57 · `Newton` with `LevenbergMarquardt` takes no `Refinement`, and its mixed-precision step never promotes
+
+- **location:** `src/nonlinear/newton.jl` (`Newton` inner constructor, the `LevenbergMarquardt`
+  `step!!`)
+- **evidence:** `Newton(; globalization = LevenbergMarquardt(), refinement = Refinement())` and
+  `refinement = true` raise an `ArgumentError`, tested in `test/globalization/levenbergmarquardt.jl`
+  (testset "A factor in Float32 on a Float64 iterate, and no Refinement (K57)"). A `Refinement`
+  corrects the solve of `J d = -F` from the factor, while the damped step solves
+  `(Jᴴ J + μ D²) δ = -Jᴴ F`: the stacked step reads no factor, and the SVD step weights the
+  singular triplets by `σ / (σ² + μ)`. With a linear method in `TF ≠ T`, the stacked step is the
+  working-precision step, and the SVD step takes its direction from the `TF` factor with no
+  promotion to `T`, so `StepInfo.promoted` stays `false`. A defect correction of the damped system
+  in `T`, and a promotion of the SVD factor when its direction stalls, are for a later pull request.
+- **kind:** defect
+- **found:** PR #65
+
 ### K60 · `solve` with a combinator method has no implicit differentiation
 
 - **location:** `src/composition/implicit.jl` (`solve_implicit`)
@@ -232,5 +248,34 @@
   length and the regularization of a rectangular Jacobian, with `reuse = nothing` too, and
   `solve!!` evaluates it again at the start of the loop. The residual length of a static problem
   is a type parameter of the value `F` returns, so it is known only from an evaluation.
+- **kind:** defect
+- **found:** PR #62
+
+### K70 · A `LeastSquaresProblem` takes no `Refinement`
+
+- **location:** `src/nonlinear/newton.jl` (`init_state`)
+- **evidence:** `solve(LeastSquaresProblem(f), x₀, GaussNewton(; refinement = Refinement()))` and
+  `init` with an array iterate raise `ArgumentError: LeastSquaresProblem does not support
+  Refinement` (`test/nonlinear/leastsquares.jl`, testset "LeastSquaresProblem, GaussNewton,
+  Options.g_tol, and stopping_test"). A `Refinement` corrects the direction until the linear
+  residual `J d + F` is below its tolerance, and the least-squares step with more residuals than
+  unknowns leaves `J d + F ≠ 0` at the least-squares point. A refinement of the least-squares step
+  would correct the normal-equation residual `Jᴴ (J d + F)` instead, from the rectangular factor;
+  whether to implement it is open.
+- **kind:** defect
+- **found:** PR #62
+
+### K71 · A factor in a higher precision on a `LeastSquaresProblem` with `m > n` promotes to the working precision after two steps
+
+- **location:** `src/nonlinear/newton.jl` (`read_mixed_stall`, `linear_residual_ratio`)
+- **evidence:** For `r(x) = (x₁ - 1, x₂ - 2, x₁ + x₂)` from `Float32[0, 0]`,
+  `GaussNewton(; linsolve = QRFactorization(Float64))` returns `SUCCESS` after 2 iterations at
+  `x ≈ (0, 1)`, with `promoted = true` and `step_failures = 1`, on an `SVector` and on a `Vector`
+  iterate, with `Static` and `Backtracking`; `QRFactorization()` returns `promoted = false` and
+  `step_failures = 0`. The mixed-precision step counts a step as slow when the relative linear
+  residual `‖F + J d‖ / ‖F‖` exceeds `max(√eps, 1e-4)` and `‖F‖` falls by less than half, and two
+  slow steps promote. At a nonzero-residual least-squares point `‖F + J d‖ ≈ ‖F‖`, so every step
+  near it reads as slow. Whether a `LeastSquaresProblem` measures the normal-equation residual
+  `‖Jᴴ (F + J d)‖` instead, or takes no stall promotion, is open.
 - **kind:** defect
 - **found:** PR #62

@@ -81,5 +81,6 @@ for M in (:LUFactorization, :QRFactorization, :SVDFactorization, :LDLTFactorizat
         $M() = $M{Nothing}()
         $M(::Type{TF}) where {TF <: AbstractFloat} = $M{TF}()
         $M(::TF) where {TF <: PrecisionMarker} = $M{TF}()
+        @inline promote_linsolve(::$M, ::Type{T}) where {T} = $M(real(T))
     end
 end

@@ -346,6 +346,28 @@ end
     @test isapprox(Array(x), fill(0.6823278038280193, 2); rtol = 1e-10)
 end
 
+# A member `Newton` that factorises in `Float32` on a `Float64` problem takes the mixed-precision
+# step inside every combinator, and `sync_merit` keeps its line search on the incoming residual
+@testset "Combinators with a mixed-precision Newton member, $(nameof(typeof(x₀)))" for x₀ in (
+    SVector(1.5, 1.5), [1.5, 1.5])
+    prob = x₀ isa SVector ? NonlinearProblem(R1QuadMultF(2.0, 3.0)) :
+           NonlinearProblem(R3QuadMultF(2.0, 3.0), R3QuadMultJ())
+    root = [sqrt(2.0), sqrt(3.0)]
+    pic = Picard(; damping = 0.2)
+    for nm in (Newton(; linsolve = LUFactorization(Float32)),
+        Newton(; linsolve = LUFactorization(Float32), globalization = Backtracking()))
+        @test GeometricSolvers.is_mixed(nm, Float64)
+        for m in (Additive(nm, pic), Multiplicative(pic, nm), Repeat(nm, 2),
+            Switch(pic, nm; threshold = 0.5))
+            x₁, _ = solve(prob, copy(x₀), m; max_iterations = 1)
+            @test Array(x₁) != Array(x₀)
+            x, st = solve(prob, copy(x₀), m)
+            @test st.code === SUCCESS
+            @test isapprox(Array(x), root; rtol = 1e-12)
+        end
+    end
+end
+
 @testset "Check 6: R1/R2/R3 parity, isbits, @inferred, 0 allocs, $T" for T in ELTYPES
     R = real(T)
     prob_s = NonlinearProblem(R1QuadMultF(T(2), T(3)))
