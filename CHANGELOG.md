@@ -11,11 +11,6 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
-- **`Newton` refuses a finite-difference back end inside `AutoSparse` with `Refinement`.** The
-  check tests `dense_ad(jacobian) isa AutoFiniteDiff`, so `AutoSparse(AutoFiniteDiff(); …)` raises
-  the same `ArgumentError` as a bare `AutoFiniteDiff()`. Before, it passed the check, and the
-  defect correction took its Jacobian-vector product from finite differences.
-
 - **The documentation build allows HTML pages up to 400 KiB** (`size_threshold` in
   `docs/make.jl`). The API page renders to about 200 KiB, Documenter's default hard limit, and the
   open pull requests add docstrings to it; the warning limit stays at 100 KiB.
@@ -982,7 +977,7 @@ so that a compat-only bump can be told apart from an interface change.
   this paragraph stands for `J(x) + μI`, the matrix that the factor solves: `Refinement` refines the
   direction of `(J(x) + μI) d = -F(x)`, and the linear-model residual that a promotion reads uses the
   same matrix. Combining `Refinement` (or `refinement = true`)
-  with `AutoFiniteDiff` raises an `ArgumentError` in `init` because
+  with `AutoFiniteDiff`, bare or inside `AutoSparse`, raises an `ArgumentError` in `init` because
   finite-difference directional derivatives corrupt the defect correction near the
   finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
   (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold, `refine!!` returns the best
