@@ -324,7 +324,10 @@ to `Float32`. A non-`SUCCESS` primal solve returns primal values at
 `x*` with `NaN` partials and the primal `status`; a `SINGULAR` tangent factorisation at `x*`
 performs no back-substitution and returns primal values at `x*` with `NaN` partials and
 `status.code === SINGULAR`. Nested duals, distinct dual tags or partial counts across `x₀` and `p`,
-and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`.
+and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`. A
+combinator method, [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref) or
+[`Switch`](@ref), has no implicit differentiation: with a `ForwardDiff.Dual` in `x₀` or `p`,
+`solve` raises an `ArgumentError` before the primal solve.
 
 `prob` may capture an object whose type holds a `ForwardDiff.Dual`, such as a
 `ForwardDiff.GradientConfig` or a dual work buffer, and `solve` does not check it. A residual
