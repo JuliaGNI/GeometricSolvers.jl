@@ -38,12 +38,14 @@ so that a compat-only bump can be told apart from an interface change.
   residual criterion first (`stationary = false`) and then the relative normal-equation gradient
   `‖J(x)ᴴ F(x)‖ / (‖J(x)‖_F ‖F(x)‖) ≤ options.g_tol` when `‖J(x)‖_F > 0` and `‖F(x)‖ > 0`
   (`stationary = true`). With more residuals than unknowns (`m > n`), a `LeastSquaresProblem`
-  refuses a factor whose element type differs from the iterate's (`TF ≠ T`, for example
-  `QRFactorization(Float32)` on a `Float64` iterate) with an `ArgumentError` where the state is
-  built, because the Gauss–Newton fixed point with a perturbed factor is not the least-squares
-  point. A square problem (`m == n`) and the stacked `LevenbergMarquardt` step (`QRFactorization()`,
-  `LUFactorization()`, `LDLTFactorization()`, or `scaling = :diagonal`, which reads no factor) are
-  exempt; `LevenbergMarquardt` with `SVDFactorization()` and `scaling = :none` is refused. An
+  refuses a factor in a lower precision than the iterate's (`eps(real(TF)) > eps(real(T))`, for
+  example `QRFactorization(Float32)` on a `Float64` iterate) with an `ArgumentError` where the
+  state is built, because the Gauss–Newton fixed point with a lower-precision factor is not the
+  least-squares point. A factor in a higher precision, such as `QRFactorization(Float64)` on a
+  `Float32` iterate, is taken. A square problem (`m == n`) and the stacked `LevenbergMarquardt`
+  step (`QRFactorization()`, `LUFactorization()`, `LDLTFactorization()`, or `scaling = :diagonal`,
+  which reads no factor) are exempt; `LevenbergMarquardt` with `SVDFactorization()` and
+  `scaling = :none` is refused. An
   `LDLTFactorization` is refused outside `LevenbergMarquardt`, as `LUFactorization` is, and a
   combinator (`Additive`, `Multiplicative`, `Repeat`, `Switch`) refuses a `LeastSquaresProblem` with
   an `ArgumentError`. An analytic `J` on the problem is the Jacobian used, not automatic
