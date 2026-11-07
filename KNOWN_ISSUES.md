@@ -70,6 +70,28 @@
 - **kind:** defect
 - **found:** PR #48
 
+### K24 · `Bisection`, `StrongWolfe` and `DogLeg` fail on the saddle residual `(x₁ + 0.4x₁³ − 1, −x₂ + 0.4x₂³ + 2)` while `Static` and `Backtracking` reach its root
+
+- **location:** `src/globalization/bisection.jl`, `src/globalization/strongwolfe.jl`,
+  `src/globalization/dogleg.jl`
+- **evidence:** With `F(x, p) = SVector(x[1] + 0.4x[1]^3 - 1, -x[2] + 0.4x[2]^3 + 2)`,
+  `prob = NonlinearProblem(F)` and `solve(prob, SVector(0.8, 1.5), Newton(; linsolve =
+  LUFactorization(), globalization = g))`, the tree of `613c564` returns
+  `Bisection: [0.7985352209656604, 0.9128709291833161] LINESEARCH_FAILED it=3`,
+  `StrongWolfe: [0.7972843024431895, 0.912870914067057] STALLED it=9` and
+  `DogLeg: [0.7972810583101553, 0.9128713775004471] LINESEARCH_FAILED it=14`, while `Static` and
+  `Backtracking` return `SUCCESS` at the root `[0.7972810583155764, -2.1876029597039026]` (Julia
+  1.13.3). The same three fail on the stationarity problem of that action in
+  `test/nonlinear/stationarity.jl`, with `LDLTFactorization()` and with the same iterates, so the
+  outcome does not depend on the problem type. The three stop next to
+  `x̂ = [0.7972810583155764, 1/√1.2]`, where `F(x̂) = [0, 1.3914193805498154]`, the Jacobian is
+  singular (`−1 + 1.2x̂₂² = 0`), and `‖F‖₂²` has a strict local minimum: `‖F(x̂)‖₂² = 1.9360478926`,
+  its `ForwardDiff` gradient is `[0, 0]` and its Hessian has the eigenvalues `6.0969` and `6.2148`.
+  So the measurement shows the three searches stopping at a nonzero local minimum of their merit,
+  not a defect in them.
+- **kind:** found late
+- **found:** 2026-11-06
+
 ### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
 
 - **location:** `src/linear/factors.jl` (`init_linear`)
@@ -86,6 +108,30 @@
 - **kind:** defect
 - **found:** PR #55 (CodeRabbit, on #56)
 
+### K27 · `init` accepts `LDLTFactorization` for a `StationarityProblem` with `E ≠ U`, whose Jacobian is not symmetric
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring, `init`)
+- **evidence:** `LDLTFactorization` reads only the lower triangle of `J = (∇²S)_{E, U}`, and `J`
+  is symmetric only where `E == U`. The `StationarityProblem` docstring states this limit, but
+  `init`, `solve`, `solve!` and `solve_batch!` do not check it, so a solve with `E ≠ U` and
+  `LDLTFactorization` factorises the wrong matrix with no error. The check is for a later pull
+  request: `init` raises an `ArgumentError` for `LDLTFactorization` when `E ≠ U`.
+- **kind:** defect
+- **found:** PR #58
+
+### K28 · A `StationarityProblem` with a complex state fails in the default automatic differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`StationarityProblem` docstring)
+- **evidence:** With `S(x, p) = sum(abs2, x) / 2 - sum(x)`, `solve(StationarityProblem(S), x0)`
+  returns `SUCCESS` at `[1.0, 1.0]` for `x0 = Float64[0.1, 0.2]`. For `ComplexF64[0.1, 0.2]` it
+  raises `ArgumentError: Cannot create a dual over scalar type ComplexF64`, and for an
+  `SVector{2, ComplexF64}` or a `ComplexF64` it raises `MethodError: no method matching
+  _stationarity_residual_r1(::ADTypes.AutoForwardDiff{nothing, Nothing}, …)` (tree of `989000e`,
+  Julia 1.13.3). The docstring states that the state must be real. Support for a complex state is
+  for a later pull request.
+- **kind:** defect
+- **found:** PR #58
+
 ### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
 
 - **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
@@ -99,6 +145,19 @@
   refuses the mix with an `ArgumentError` is open.
 - **kind:** defect
 - **found:** PR #53
+
+### K31 · `solve` on a `StationarityProblem` has no implicit differentiation
+
+- **location:** `src/nonlinear/stationarity.jl` (`init`, `solve`)
+- **evidence:** `solve` on a `NonlinearProblem` with a `ForwardDiff.Dual` in `x₀` or `p` runs
+  the primal solve and then the implicit-function-theorem tangent solve (`solve_implicit` in
+  `src/nonlinear/implicit.jl`). `solve` on a `StationarityProblem` has no such path. `init`,
+  `solve`, `solve!` and `solve_batch!` on a `StationarityProblem` therefore raise an
+  `ArgumentError` for a `ForwardDiff.Dual` in the iterate or in `p`. Implicit differentiation
+  through the stationarity equations `(∇S)_E + b = 0`, with the Jacobian `(∇²S)_{E, U}`, is for a
+  later pull request.
+- **kind:** defect
+- **found:** PR #58 (CodeRabbit)
 
 ### K40 · A line-search solve with an analytic `J` and a detected sparsity pattern gets a dense JVP buffer
 

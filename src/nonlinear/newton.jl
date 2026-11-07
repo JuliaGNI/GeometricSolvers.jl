@@ -2,9 +2,9 @@
     Newton(; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
              refinement = NoRefinement(), regularization = 0, reuse = nothing)
 
-Newton's method for [`NonlinearProblem`](@ref), with linear solver `linsolve`
-([`LUFactorization`](@ref), [`QRFactorization`](@ref) or [`SVDFactorization`](@ref)),
-globalization `globalization`
+Newton's method for [`NonlinearProblem`](@ref) and [`StationarityProblem`](@ref), with linear
+solver `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
+[`QRFactorization`](@ref) or [`SVDFactorization`](@ref)), globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
 trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refinement `refinement`
 ([`NoRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
@@ -80,6 +80,9 @@ end
 
 Adapt.@adapt_structure Newton
 
+@inline _has_analytic_jacobian(prob::NonlinearProblem) = prob.J !== nothing
+@inline _has_analytic_jacobian(::AbstractNonlinearProblem) = false
+
 @inline function jacobian_matrix_jvp(g, x, prob)
     return jacobian_matrix_jvp(g, x)
 end
@@ -91,11 +94,12 @@ end
 end
 @inline jacobian_matrix_jvp(::Static, x, prob) = nothing
 
-@inline function newton_ad_preps(m::Newton, prob::NonlinearProblem, Fx, x, p)
-    if m.jacobian === nothing && prob.J === nothing
+@inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
+    has_J = _has_analytic_jacobian(prob)
+    if m.jacobian === nothing && !has_J
         prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
         return prep, prep
-    elseif m.jacobian isa AbstractADType && prob.J === nothing
+    elseif m.jacobian isa AbstractADType && !has_J
         prep = prepare_ad(m.jacobian, prob, Fx, x, p)
         return prep, prep
     else
@@ -106,7 +110,7 @@ end
         else
             JacobianFunction(m.jacobian)
         end
-        jvpprep = if prob.J !== nothing
+        jvpprep = if has_J
             Fx === nothing ? nothing : jacobian_matrix_jvp(m.globalization, x, prob)
         elseif m.jacobian isa AbstractADType
             prepare_ad(m.jacobian, prob, Fx, x, p)
@@ -130,6 +134,21 @@ end
     z = SMatrix{1, 1, TF, 1}((zero(TF),))
     piv = SVector{1, Int32}((Int32(1),))
     return StaticLU{1, TF, 1}(z, piv, Int32(0), Int32(0))
+end
+
+@inline function empty_static_factor(ls::LDLTFactorization{P}, ::StaticVector{
+        N, T}) where {P, N, T}
+    TF = factor_eltype(ls, T)
+    z = zeros(SMatrix{N, N, TF})
+    piv = SVector{N, Int32}(ntuple(i -> Int32(i), Val(N)))
+    return StaticLDLT{N, TF, N * N}(z, piv, Int32(0), Int32(0), true)
+end
+
+@inline function empty_static_factor(ls::LDLTFactorization{P}, ::T) where {P, T <: Number}
+    TF = factor_eltype(ls, T)
+    z = SMatrix{1, 1, TF, 1}((zero(TF),))
+    piv = SVector{1, Int32}((Int32(1),))
+    return StaticLDLT{1, TF, 1}(z, piv, Int32(0), Int32(0), true)
 end
 
 @inline function empty_static_factor(ls::QRFactorization{P}, ::StaticVector{
@@ -166,13 +185,14 @@ end
     jacobian_pattern(prob, jacprep)
 
 Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_prototype` for a
-[`NonlinearProblem`](@ref) and `nothing` for `nothing`. The `GeometricSolversSparseADExt` extension
-adds a method for a problem with no prototype and a [`DIJacobian`](@ref) of an `AutoSparse` back
-end, which returns the pattern that back end's sparsity detector found; a back end with no detector
-finds only a pattern that is true everywhere, so that method returns `nothing` and the dense path
-runs.
+[`NonlinearProblem`](@ref), and `nothing` for any other problem and for `nothing`. The
+`GeometricSolversSparseADExt` extension adds a method for a [`NonlinearProblem`](@ref) with no
+prototype and a [`DIJacobian`](@ref) of an `AutoSparse` back end, which returns the pattern that
+back end's sparsity detector found; a back end with no detector finds only a pattern that is true
+everywhere, so that method returns `nothing` and the dense path runs.
 """
 @inline jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype
+@inline jacobian_pattern(::AbstractNonlinearProblem, jacprep) = nothing
 @inline jacobian_pattern(::Nothing, jacprep) = nothing
 
 @inline function init_factor(
@@ -276,7 +296,7 @@ end
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, diag)
 end
 
-@inline function init_state(m::Newton, prob::NonlinearProblem, x, p)
+@inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     Fx = buffer(x)
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
@@ -390,7 +410,7 @@ end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     _, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, true)
     return x₊, F₊, with_diag(with_merit(state, merit, info.fnorm), diag), info
@@ -401,7 +421,7 @@ end
 # whose norm is zero or not finite leaves the Cauchy step.
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
-        prob::NonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G <: DogLeg, J, RF, Reg}
     Jreg, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     if fac.info == Int32(0)
         d₀ = ldiv!!(state.d, fac, Fx)
@@ -422,7 +442,7 @@ end
 
 @inline function step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Int32},
-        prob::NonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
     rule = state.rule
     fresh = rule.age == Int32(0) || rule.stalled
     _, fac, diag = if fresh

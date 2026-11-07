@@ -12,8 +12,9 @@ using Test
 
 using GeometricSolvers
 using GeometricSolvers: DenseLU, LUFactorization, Newton, NonlinearProblem, NonlinearSolver,
-                        SUCCESS, SolverStatus, dense_factor, init, solve, solve!,
-                        solve_batch!
+                        SUCCESS, SolverStatus, StationarityProblem, dense_factor, init,
+                        solve,
+                        solve!, solve_batch!
 
 const GS = GeometricSolvers
 
@@ -55,15 +56,35 @@ end
 end
 
 @testset "CommonSolve's functions dispatch their first argument on the package's types" begin
-    # the first positional argument of every method that the package adds
-    for (f, owned) in ((CommonSolve.init, NonlinearProblem),
-        (CommonSolve.solve, NonlinearProblem), (CommonSolve.solve!, NonlinearSolver))
+    # the first positional argument of every method that the package adds is one of the package's
+    # own problem or solver types
+    for (f, owned) in (
+        (CommonSolve.init, (NonlinearProblem, StationarityProblem)),
+        (CommonSolve.solve, (NonlinearProblem, StationarityProblem)),
+        (CommonSolve.solve!, (NonlinearSolver,)))
         ours = filter(m -> m.module === GS, collect(methods(f)))
         @test !isempty(ours)
+        owned_names = map(t -> Base.unwrap_unionall(t).name, owned)
         for m in ours
             first_arg = Base.unwrap_unionall(Base.unwrap_unionall(m.sig).parameters[2])
-            @test first_arg.name === Base.unwrap_unionall(owned).name
+            @test first_arg.name in owned_names
         end
+    end
+end
+
+@testset "no CommonSolve method of the package is defined below its root module" begin
+    # `methods(f)` reports the module that defines a method, so a method defined in a submodule of
+    # the package would carry that submodule's name and escape the check above.
+    function in_package(m)
+        mod = m.module
+        while mod !== parentmodule(mod) && mod !== GS
+            mod = parentmodule(mod)
+        end
+        return mod === GS
+    end
+    for f in (CommonSolve.init, CommonSolve.solve, CommonSolve.solve!)
+        hidden = filter(m -> in_package(m) && m.module !== GS, collect(methods(f)))
+        @test isempty(hidden)
     end
 end
 
