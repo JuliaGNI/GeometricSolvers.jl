@@ -99,3 +99,46 @@
   refuses the mix with an `ArgumentError` is open.
 - **kind:** defect
 - **found:** PR #53
+
+### K60 · `solve` with a combinator method has no implicit differentiation
+
+- **location:** `src/composition/implicit.jl` (`solve_implicit`)
+- **evidence:** `solve` with a `ForwardDiff.Dual` in `x₀` or `p` and a `Newton` or `Picard`
+  method runs the primal solve and then the implicit-function-theorem tangent solve
+  (`solve_implicit` in `src/nonlinear/implicit.jl`). The tangent solve takes its Jacobian
+  preparation from `_tangent_jacprep`, which has a method for a `NewtonState` and a `PicardState`
+  only. `solve` with an `Additive`, `Multiplicative`, `Repeat` or `Switch` method therefore raises
+  an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal solve; `init`,
+  `solve!` and `solve_batch!` refuse a dual input for every method. Implicit differentiation
+  through a combinator, which needs the Jacobian of `F` at `x*` and not the steps of the members,
+  is for a later pull request.
+- **kind:** defect
+- **found:** PR #60
+
+### K61 · A hard failure of one `Additive` member discards the whole step, also at weight zero
+
+- **location:** `src/composition/additive.jl` (`step!!`)
+- **evidence:** With `F(x) = -x - x³`, `x₀ = SVector(1.0, 0.5)` and
+  `pic = Picard(; damping = 1, globalization = Backtracking())`, whose line search fails at every
+  step, `solve(prob, x₀, Additive(Newton(), pic))` and
+  `solve(prob, x₀, Additive(Newton(), pic; weights = FixedWeights(1.0, 0.0)))` both return
+  `LINESEARCH_FAILED` after 1 iteration at `x₀`, while `Newton()` alone returns `SUCCESS` after 5.
+  A `SINGULAR`, `NONFINITE` or zero-norm `LINESEARCH_FAILED` member ends the `Additive` step at
+  `x` with `stepnorm = 0`, whatever its weight. Whether the step drops the failed candidates and
+  combines the others, and how it then sets the weights, is open.
+- **kind:** defect
+- **found:** PR #60
+
+### K62 · A combinator reports a `STALLED` member step as `SUCCESS`
+
+- **location:** `src/composition/repeat.jl`, `src/composition/multiplicative.jl`,
+  `src/composition/additive.jl` (`step!!`)
+- **evidence:** With `F(x) = x² - 2` from `1.0`, all four tolerances `0`, `max_stalls = 3` and
+  `nb = Newton(; globalization = Backtracking())`, `nb` returns `STALLED` after 8 iterations,
+  `Switch(nb, nb)` after 8, `Repeat(nb, 1)` and `Multiplicative(nb)` after 6, and `Additive(nb)`
+  after 4. `Repeat`, `Multiplicative` and `Additive` report `SUCCESS` for a step whose members
+  returned `STALLED`, so `solve!!` applies the step test after a stall and does not count
+  `max_stalls`; `Switch` passes the code of its active branch through. Whether the composite step
+  is `STALLED` when every member step is, or when the last one is, is open.
+- **kind:** defect
+- **found:** PR #60

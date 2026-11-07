@@ -55,23 +55,24 @@ so that a compat-only bump can be told apart from an interface change.
   with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
   element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
 
-- **`solve(prob, x₀, method, p)` differentiates implicitly through a converged solve when `x₀` or
-  `p` contains `ForwardDiff.Dual` values** (decision 50 of the design). `GeometricSolvers.StripDual`
-  (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from `ForwardDiff.Dual`,
-  `Complex{<:ForwardDiff.Dual}`, and arrays of either through `Adapt.adapt(StripDual(), p)` while
-  leaving tuples, named tuples, numbers and other arrays unchanged. When `x₀` or `p` carries
-  `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted value type of the dual leaves of
-  `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`, runs the primal solve via `solve!!`
-  at the precision of the stripped `x₀` (`status::SolverStatus{R}` with `R = real(eltype(x₀))`),
-  and on `status.code === SUCCESS` computes the tangent `ẋ` of the solution `x*` from the implicit
-  function theorem `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3
-  (`Array`, `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one
-  factorisation at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with
-  `prob.J` or `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*`
-  with zero partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single
-  factor. The tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS`
-  path and on the `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}`
-  with `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
+- **`solve(prob, x₀, method, p)` with a `Newton` or `Picard` method differentiates implicitly
+  through a converged solve when `x₀` or `p` contains `ForwardDiff.Dual` values** (decision 50 of
+  the design). `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual`
+  layer from `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
+  `Adapt.adapt(StripDual(), p)` while leaving tuples, named tuples, numbers and other arrays
+  unchanged. When `x₀` or `p` carries `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted
+  value type of the dual leaves of `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`,
+  runs the primal solve via `solve!!` at the precision of the stripped `x₀`
+  (`status::SolverStatus{R}` with `R = real(eltype(x₀))`), and on `status.code === SUCCESS`
+  computes the tangent `ẋ` of the solution `x*` from the implicit function theorem
+  `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3 (`Array`,
+  `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one factorisation
+  at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with `prob.J` or
+  `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*` with zero
+  partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single factor. The
+  tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS` path and on the
+  `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}` with
+  `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
   `ForwardDiff.Dual{Tg, Float32, 1}`, `W` is `Float64`. When `status.code !== SUCCESS`, `solve`
   skips the tangent solve and returns `(x*, status)` with `NaN` partials. If the tangent
   factorisation at `(x*, p_val)` fails (`returncode(fac) === SINGULAR`), `solve` performs no
@@ -987,22 +988,29 @@ so that a compat-only bump can be told apart from an interface change.
   $(x, F(x))$ (stepping in preallocated per-member copies `(xs[i], Fxs[i])` in R3 so `x` is not
   mutated while members run), returns the first hard failure (`SINGULAR`, `NONFINITE`, or
   `LINESEARCH_FAILED` with zero `stepnorm`) with `stepnorm = 0` when any member hard-fails, and
-  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$, $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$
-  and $F_+ = F(x_+, p)$. Under
+  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$,
+  $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$ and $F_+ = F(x_+, p)$. Under
   `OptimalWeights`, the PETSc safeguard checks whether `!isfinite(‖F(x₊)‖)`,
   $\sum_i |w_i| < 0.1$, or $\|F(x_+)\| > \rho \min_i \|F(x_i)\|$; when triggered, it replaces
   $(x_+, F_+)$ with the candidate $(x_{\text{best}}, F(x_{\text{best}}))$ of smallest residual norm
   (ties to lowest index) and increments `step_failures` by 1, superseding a `rank_fallback` that
-  fired on the same step so that one composite fallback is counted once.
+  fired on the same step so that one composite fallback is counted once. Under `FixedWeights`, which
+  has no safeguard, a non-finite $\|F(x_+)\|$ reports `NONFINITE` instead of `SUCCESS`; the
+  `OptimalWeights` safeguard replaces such a trial before it is reported, so only `FixedWeights`
+  reaches this.
   `Multiplicative(m₁, m₂, ...)` (`fieldcount(M) >= 1`, else `ArgumentError`) threads $(x, F(x))$
   sequentially through its members in one outer step, calling `sync_merit` before each member step
   so a started line-search member updates its stored baseline merit $\phi(x) = \|F(x)\|_2^2$ to the
   incoming residual without resetting `Newton`'s `FactorAge` (`reuse`) or `DogLeg`'s `TrustRadius`
   (while preserving `NaN` on an un-started state so calling `step!!` without `start!!` fails closed
-  with `NONFINITE`), short-circuiting on the first hard failure with `stepnorm = 0`, and reporting
-  the outer step norm $\|x^{(m)} - x^{(0)}\|$. `Repeat(method, count)` (`count >= 1`, else
-  `ArgumentError`) runs `count` sub-steps of `method` per outer iteration with `sync_merit` between
-  sub-steps, short-circuiting on a hard failure with `stepnorm = 0`.
+  with `NONFINITE`), and a hard failure of a member (`SINGULAR`, `NONFINITE`, or
+  `LINESEARCH_FAILED` with zero `stepnorm`) ends the outer step with that member's code, keeps the
+  iterate that the members before it reached, and reports the outer step norm
+  $\|x^{(m)} - x^{(0)}\|$, so a `LINESEARCH_FAILED` after an earlier member moved the iterate is not
+  a zero step. `Repeat(method, count)` (`count >= 1`, else `ArgumentError`) runs `count` sub-steps
+  of `method` per outer iteration with `sync_merit` between sub-steps, and a hard failure of a
+  sub-step ends the outer step with its code, keeps the iterate that the earlier sub-steps reached,
+  and reports the outer step norm.
   `Switch(first, second; threshold = 1e-2)` (finite `threshold > 0`, else `ArgumentError`) stores
   `fnorm₀ = NaN` in `init_state` and after `finish!!` (so an un-started `step!!` returns `NONFINITE`
   with `stepnorm = 0`), records `fnorm₀` and `switched = false` in `start!!`, steps `first` while
@@ -1010,5 +1018,8 @@ so that a compat-only bump can be told apart from an interface change.
   `second` once $\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|$. In `finish!!`, `Additive` resets
   the spectrum diagnostics (`rank = -1`, `nullnorm = NaN`, `gradratio = NaN`), `Multiplicative`
   forwards the diagnostics of the last member in sequence that populated them, `Repeat` forwards
-  its inner member's diagnostics, and `Switch` forwards those of the active branch.
-
+  its inner member's diagnostics, and `Switch` forwards those of the active branch. `solve` with a
+  combinator method (`Additive`, `Multiplicative`, `Repeat`, `Switch`) and a `ForwardDiff.Dual` in
+  `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
+  through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
+  input for every method.

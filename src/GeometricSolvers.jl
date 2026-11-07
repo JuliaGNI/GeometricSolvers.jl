@@ -77,5 +77,6 @@ include("composition/additive.jl")
 include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
+include("composition/implicit.jl")
 
 end

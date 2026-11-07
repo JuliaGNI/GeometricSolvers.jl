@@ -423,6 +423,26 @@ end
     @test info_fw.failures == Int32(0)
 end
 
+@testset "FixedWeights step with a non-finite trial residual returns NONFINITE" begin
+    # F = exp(x) - 1 from x = 1: the weight -2000 on the Newton step puts the trial near
+    # x = 1265, where exp overflows. The step reports NONFINITE, and the solve stops there.
+    m_inf = Additive(Newton(), Picard(); weights = FixedWeights(-2000.0, 0.0))
+    prob_s = NonlinearProblem((x, p) -> exp.(x) .- 1)
+    prob_a = NonlinearProblem((r, x, p) -> (r .= exp.(x) .- 1; nothing))
+    for (prob, x₀) in ((prob_s, SVector(1.0)), (prob_a, [1.0]))
+        Fx₀ = residual!!(x₀ isa SVector ? nothing : similar(x₀), prob, x₀, nothing)
+        s = init_state(m_inf, prob, copy(x₀), nothing)
+        s = start!!(s, m_inf, prob, copy(x₀), Fx₀, nothing, rnorm(Fx₀))
+        x₊, _, _, info = step!!(s, m_inf, prob, copy(x₀), Fx₀, nothing)
+        @test info.code === NONFINITE
+        @test !isfinite(info.fnorm)
+        @test isfinite(only(x₊))
+        _, st = solve(prob, x₀, m_inf)
+        @test st.code === NONFINITE
+        @test st.iterations == 1
+    end
+end
+
 @testset "Check 3 in R3: five FixedWeights members, $T, $(nameof(AT))" for T in ELTYPES,
     AT in ARRAY_BACKENDS
 

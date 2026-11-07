@@ -170,7 +170,7 @@ end
             end
         end
 
-        # 4. Picard solve inside a kernel with Adapt.adapt(ToReal{Float32}(), Picard(...))
+        # 4. Picard solve inside a kernel with Adapt.adapt(ToReal{Float32}(), Picard(; damping = 0.7))
         x₀_p = SVector{2, Float32}(3.0f0, 5.0f0)
         p_p = SVector{2, Float32}(2.0f0, 4.0f0)
         prob_p = NonlinearProblem((y, q) -> y .- q)
@@ -201,6 +201,7 @@ end
                 for m in (
                         Newton(),
                         Newton(; globalization = DogLeg()),
+                        Newton(; reuse = 2),
                         Newton(; globalization = Backtracking(), reuse = 2),
                         Additive(Newton(), Picard(; damping = 0.1)),
                         Additive(

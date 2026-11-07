@@ -255,9 +255,30 @@ end
         ToReal{T}(),
         Multiplicative(Picard(; damping = 0.2), Newton(; globalization = Backtracking())))
     st_u = init_state(m_ls, prob, x₀, nothing)
-    _, _, _, info_u = step!!(st_u, m_ls, prob, x₀, Fx₀, nothing)
+    x_u, _, _, info_u = step!!(st_u, m_ls, prob, x₀, Fx₀, nothing)
     @test info_u.code === NONFINITE
-    @test iszero(info_u.stepnorm)
+    # the step norm is that of the iterate that member 1 reached before member 2 failed
+    @test x_u != x₀
+    @test info_u.stepnorm == rnorm(x_u - x₀)
+
+    # A member that fails its line search after member 1 made progress does not end the solve:
+    # the outer step keeps its nonzero norm, counts the failure, and the solve converges
+    # like `Newton` alone. F = -x - x³ from (1, 1/2); Picard with Backtracking fails every step.
+    prob_cubic = NonlinearProblem((x, p) -> -x .- x .^ 3)
+    x_c = SVector{2, T}(T(1), T(1) / 2)
+    pic_bt = Picard(; damping = 1, globalization = Backtracking())
+    _, st_n = solve(prob_cubic, x_c, Newton())
+    for m_c in (Multiplicative(Newton(), pic_bt), Repeat(Multiplicative(Newton(), pic_bt), 1))
+        _, st_c = solve(prob_cubic, x_c, m_c)
+        @test st_c.code === SUCCESS
+        @test st_c.iterations == st_n.iterations
+        @test st_c.step_failures == st_n.iterations
+    end
+    # with no progress before the failure, the step norm is zero and the solve stops
+    _, st_p = solve(prob_cubic, x_c, Multiplicative(pic_bt, Newton()))
+    @test st_p.code === GeometricSolvers.LINESEARCH_FAILED
+    @test st_p.iterations == 1
+    @test iszero(st_p.stepnorm)
 
     # Diagnostics: Multiplicative(Newton(SVD), Picard()) preserves Newton(SVD) diagnostics
     m_np = Multiplicative(Newton(; linsolve = SVDFactorization()), Picard(; damping = 0.1))
