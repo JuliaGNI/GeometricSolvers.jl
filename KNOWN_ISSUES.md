@@ -404,3 +404,18 @@
   whether to implement it is open.
 - **kind:** defect
 - **found:** PR #62
+
+### K81 · The CUDA QR and SVD paths are untested for a rectangular factor
+
+- **location:** `ext/GeometricSolversCUDAExt.jl` (`factorize!!` and `backsolve!` for `DeviceQR`
+  and `DeviceSVD`)
+- **evidence:** the CUDA extension was written and tested for square factors: the by-hand suite
+  `test/gpu/cuda/runtests.jl` passed 640 of 640 on an RTX 4090 for the square factors of PR #61.
+  A `LeastSquaresProblem` with more residuals than unknowns builds an `m × n` `DeviceQR` or
+  `DeviceSVD` on any `AbstractGPUArray`, so with CUDA loaded a rectangular `CuMatrix` factor
+  dispatches into the extension. The merge of the two branches adapted the SVD rank cutoff and the
+  zeroing of the columns of `U` to `m × n`; whether the QR solve (`ormqr!` and `trsv!`) is correct
+  for `m > n`, and the adapted SVD path, have not run on a CUDA device, and no test in
+  `test/gpu/cuda/runtests.jl` builds a rectangular factor.
+- **kind:** not verified
+- **found:** PR #62
