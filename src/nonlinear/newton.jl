@@ -114,7 +114,8 @@ end
 @inline jacobian_matrix_jvp(::Static, x, prob) = nothing
 
 @inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
-    if m.refinement isa Refinement && m.jacobian isa AutoFiniteDiff
+    if m.refinement isa Refinement && m.jacobian isa AbstractADType &&
+       dense_ad(m.jacobian) isa AutoFiniteDiff
         throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
     end
     has_J = _has_analytic_jacobian(prob)

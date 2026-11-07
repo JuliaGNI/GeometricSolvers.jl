@@ -11,6 +11,11 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`Newton` refuses a finite-difference back end inside `AutoSparse` with `Refinement`.** The
+  check tests `dense_ad(jacobian) isa AutoFiniteDiff`, so `AutoSparse(AutoFiniteDiff(); …)` raises
+  the same `ArgumentError` as a bare `AutoFiniteDiff()`. Before, it passed the check, and the
+  defect correction took its Jacobian-vector product from finite differences.
+
 - **The documentation build allows HTML pages up to 400 KiB** (`size_threshold` in
   `docs/make.jl`). The API page renders to about 200 KiB, Documenter's default hard limit, and the
   open pull requests add docstrings to it; the warning limit stays at 100 KiB.
