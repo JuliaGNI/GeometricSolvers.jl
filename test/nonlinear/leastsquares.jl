@@ -1,9 +1,10 @@
 using ADTypes: AutoFiniteDiff, AutoForwardDiff
 using Adapt: Adapt
+using ForwardDiff: ForwardDiff
 using GeometricSolvers
 using GeometricSolvers: DenseQR, DenseSVD, DeviceQR, DeviceSVD, MeasuredSlope, StepInfo,
                         dense_factor, factor_diagnostics, factorize!!, isconverged, ldiv!!,
-                        lm_stacked_qr_step, lm_svd_step, newton_stepkind,
+                        lm_qr_prepare, lm_svd_step, lm_trial, newton_stepkind,
                         record, returncode
 using GPUArraysCore: allowscalar
 using JET: JET
@@ -184,6 +185,18 @@ end
     @test_throws ArgumentError solve(p1, x0_s, Newton(; linsolve = QRFactorization(), regularization = 1e-6))
     @test_throws ArgumentError init(
         p3, ones(T, 2), Newton(; linsolve = QRFactorization(), regularization = 1e-6))
+
+    # A least-squares problem holds no Jacobian prototype, so its factors are dense
+    @test GeometricSolvers.jacobian_prototype(p3) === nothing
+    @test GeometricSolvers.jacobian_pattern(p3, nothing) === nothing
+    # It has no implicit differentiation: a dual `x₀` or `p` is refused before any solve runs
+    d1 = ForwardDiff.Dual{:lsq}(one(T), one(T))
+    d2 = ForwardDiff.Dual{:lsq}(T(2), zero(T))
+    @test_throws ArgumentError solve(p1, SVector{2}(d1, d2), GaussNewton())
+    @test_throws ArgumentError solve(p1, x0_s, GaussNewton(), d1)
+    # A device iterate takes the SVD step of `LevenbergMarquardt` alone
+    @test_throws ArgumentError init(
+        p3, JLArray(ones(T, 2)), Newton(; globalization = LevenbergMarquardt()))
 
     # A rectangular static Jacobian takes `μ` on its leading diagonal and nowhere else
     J_rect = SMatrix{3, 2, T}(one(T), T(2), T(3), T(4), T(5), T(6))
@@ -426,61 +439,56 @@ end
     J_lm = copy(A_h)
     Fx_lm = copy(b_h)
     μ = T(0.7)
-    # `LevenbergMarquardt` measures `μ` in the factor's power-of-two scale `s = 2^e`, `e` the
-    # exponent of the largest entry of `J`, so the damped system is `(Jᴴ J + μ s² D²) δ = -Jᴴ F`.
-    s_damp = ldexp(one(T), GeometricSolvers.matrix_exponent(J_lm))
-    d_ref = -((J_lm' * J_lm + μ * s_damp^2 * I) \ (J_lm' * Fx_lm))
-    # R1 LM SVD vs stacked QR
+    # `LevenbergMarquardt`'s `μ` is absolute, in the units of `Jᴴ J`, so with `scaling = :none`
+    # the damped system is `(Jᴴ J + μ I) δ = -Jᴴ F`.
+    d_ref = -((J_lm' * J_lm + μ * I) \ (J_lm' * Fx_lm))
+    # R1: the stacked QR trial, whose reduction eliminates the rows past `n` into the `n × n`
+    # factor, and the SVD step of the rectangular factor
     J_s = SMatrix{m, n, T}(A_h)
     Fx_s = SVector{m, T}(b_h)
-    d_qr_s, ok_qr_s = lm_stacked_qr_step(nothing, J_s, Fx_s, μ, Val(:none))
+    d_qr_s, ok_qr_s = lm_trial(
+        lm_qr_prepare(QRFactorization(), nothing, nothing, J_s, Fx_s, Val(:none)), μ)
     d_svd_s = lm_svd_step(nothing, factorize!!(nothing, SVDFactorization(), J_s), Fx_s, μ)
     @test ok_qr_s
     @test isapprox(Vector(d_qr_s), d_ref; rtol = 32 * sqrt(eps(T)))
     @test isapprox(Vector(d_svd_s), d_ref; rtol = 32 * sqrt(eps(T)))
-    # R3 LM SVD vs stacked QR on Array and JLArray
-    glob_qr = GeometricSolvers.init_globalization(LevenbergMarquardt(), zeros(T, n), Fx_lm)
+    # R3: the stacked QR trial on an Array, and the SVD step on an Array and a JLArray; a device
+    # iterate takes the SVD step alone, because the stacked solve indexes scalars
+    glob_qr = GeometricSolvers.init_globalization(
+        LevenbergMarquardt(), QRFactorization(), zeros(T, n), Fx_lm)
     d_r3_qr = zeros(T, n)
-    d_r3_svd = zeros(T, n)
-    fac_r3_svd = dense_factor(SVDFactorization(), prob, d_r3_svd, nothing)
-    fac_r3_svd = factorize!!(fac_r3_svd, SVDFactorization(), copy(J_lm))
-    _, ok_r3_qr = lm_stacked_qr_step(d_r3_qr, copy(J_lm), Fx_lm, μ, Val(:none), glob_qr)
-    lm_svd_step(d_r3_svd, fac_r3_svd, Fx_lm, μ)
+    _, ok_r3_qr = lm_trial(
+        lm_qr_prepare(QRFactorization(), d_r3_qr, glob_qr, copy(J_lm), Fx_lm, Val(:none)), μ)
     @test ok_r3_qr
     @test isapprox(d_r3_qr, d_ref; rtol = 32 * sqrt(eps(T)))
-    @test isapprox(d_r3_svd, d_ref; rtol = 32 * sqrt(eps(T)))
-    glob_qr_jl = GeometricSolvers.init_globalization(
-        LevenbergMarquardt(), JLArray(zeros(T, n)), JLArray(Fx_lm))
-    d_jl_qr = JLArray(zeros(T, n))
-    _, ok_jl_qr = lm_stacked_qr_step(
-        d_jl_qr, JLArray(J_lm), JLArray(Fx_lm), μ, Val(:none), glob_qr_jl)
-    @test ok_jl_qr
-    @test isapprox(Array(d_jl_qr), d_ref; rtol = 64 * sqrt(eps(T)))
+    for AT in ARRAY_BACKENDS
+        d_r3_svd = AT(zeros(T, n))
+        fac_r3_svd = dense_factor(SVDFactorization(), prob, d_r3_svd, nothing)
+        fac_r3_svd = factorize!!(fac_r3_svd, SVDFactorization(), AT(copy(J_lm)))
+        lm_svd_step(d_r3_svd, fac_r3_svd, AT(Fx_lm), μ)
+        @test isapprox(Array(d_r3_svd), d_ref; rtol = 64 * sqrt(eps(T)))
+    end
 
-    # `scaling = :diagonal`: `D = diag(dᵢ)`, `dᵢ = max(‖J[:, i]‖, √eps(R) maxⱼ ‖J[:, j]‖)`, and no
-    # scale factor of `J`. A near-zero column exercises the floor, in the host path and in the
-    # device kernel alike.
+    # `scaling = :diagonal`: `D = diag(dᵢ)`, `dᵢ = max(‖J[:, i]‖, √eps(R) maxⱼ ‖J[:, j]‖)`, the
+    # column norms over all `m` rows. A near-zero column exercises the floor.
     A_floor = copy(A_h)
     A_floor[:, n] .= T(1e-9)
     colnorm = [norm(A_floor[:, i]) for i in 1:n]
     dfloor = iszero(maximum(colnorm)) ? one(T) : sqrt(eps(T)) * maximum(colnorm)
     D2 = Diagonal(collect(max(d, dfloor)^2 for d in colnorm))
     d_ref_diag = -((A_floor' * A_floor + μ * D2) \ (A_floor' * b_h))
-    d_diag_s, ok_diag_s = lm_stacked_qr_step(
-        nothing, SMatrix{m, n, T}(A_floor), SVector{m, T}(b_h), μ, Val(:diagonal))
-    glob_diag = GeometricSolvers.init_globalization(LevenbergMarquardt(), zeros(T, n), b_h)
+    d_diag_s, ok_diag_s = lm_trial(
+        lm_qr_prepare(QRFactorization(), nothing, nothing, SMatrix{m, n, T}(A_floor),
+            SVector{m, T}(b_h), Val(:diagonal)), μ)
+    glob_diag = GeometricSolvers.init_globalization(
+        LevenbergMarquardt(; scaling = :diagonal), QRFactorization(), zeros(T, n), b_h)
     d_diag_ar = zeros(T, n)
-    _, ok_diag_ar = lm_stacked_qr_step(
-        d_diag_ar, copy(A_floor), copy(b_h), μ, Val(:diagonal), glob_diag)
-    glob_diag_jl = GeometricSolvers.init_globalization(
-        LevenbergMarquardt(), JLArray(zeros(T, n)), JLArray(b_h))
-    d_diag_jl = JLArray(zeros(T, n))
-    _, ok_diag_jl = lm_stacked_qr_step(
-        d_diag_jl, JLArray(A_floor), JLArray(b_h), μ, Val(:diagonal), glob_diag_jl)
-    @test ok_diag_s && ok_diag_ar && ok_diag_jl
+    _, ok_diag_ar = lm_trial(
+        lm_qr_prepare(QRFactorization(), d_diag_ar, glob_diag, copy(A_floor), copy(b_h),
+            Val(:diagonal)), μ)
+    @test ok_diag_s && ok_diag_ar
     @test isapprox(Vector(d_diag_s), d_ref_diag; rtol = 32 * sqrt(eps(T)))
     @test isapprox(d_diag_ar, d_ref_diag; rtol = 32 * sqrt(eps(T)))
-    @test isapprox(Array(d_diag_jl), d_ref_diag; rtol = 64 * sqrt(eps(T)))
 end
 
 # ─── Clause 2: Moré–Garbow–Hillstrom nonzero-residual problems ───────────────
@@ -511,10 +519,13 @@ end
         @test isapprox(Vector(x), fill(T(-1), 5); atol = sqrt(eps(T)))
     end
 
+    # a device iterate takes the SVD step of `LevenbergMarquardt` alone
     prob11_d = LeastSquaresProblem(mgh11_inplace!, 10)
-    for AT in (Array, JLArray),
-        alg in (GaussNewton(), Newton(; globalization = LevenbergMarquardt()))
-
+    for (AT, alg) in ((Array, GaussNewton()),
+        (Array, Newton(; globalization = LevenbergMarquardt())),
+        (JLArray, GaussNewton()),
+        (JLArray,
+        Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())))
         x0_d = AT(ones(T, 5))
         solver = init(prob11_d, x0_d, alg; options = opt)
         x, st = solve!(solver)
@@ -1060,11 +1071,11 @@ end
     # the control: `allocations` sees an allocation where there is one
     @test allocations(copy, zeros(T, 2)) > 0
 
-    # JLArray R3 under allowscalar(false) for GaussNewton (QR and SVD) and LM (QR and SVD)
+    # JLArray R3 under allowscalar(false) for GaussNewton (QR and SVD) and LM, whose device step is
+    # the SVD one
     prob11_d = LeastSquaresProblem(mgh11_inplace!, 10)
     for alg in (GaussNewton(),
         GaussNewton(; linsolve = SVDFactorization()),
-        Newton(; globalization = LevenbergMarquardt()),
         Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt()))
         x0_jl = JLArray(ones(T, 5))
         solver_jl = init(prob11_d, x0_jl, alg)

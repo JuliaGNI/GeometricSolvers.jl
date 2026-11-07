@@ -32,7 +32,7 @@ end
 
 @inline function merit_and_residual(lf::LineFunction, α)
     xα = update_iterate!!(lf.xt, lf.x, α, lf.d)
-    Fα = residual!!(lf.Ft, lf.prob, xα, lf.p)
+    Fα = primal_residual!!(lf.Ft, lf.prob, xα, lf.p)
     return norm2(Fα), Fα
 end
 
@@ -46,22 +46,32 @@ shared_trial_residual(lf::LineFunction) = !(lf.Ft === nothing)
 
 @inline function φ′(lf::LineFunction, α)
     xα = update_iterate!!(lf.xt, lf.x, α, lf.d)
-    Fα = residual!!(lf.Ft, lf.prob, xα, lf.p)
+    Fα = primal_residual!!(lf.Ft, lf.prob, xα, lf.p)
     Jv = jvp!!(lf.Jv, lf.jvpprep, lf.prob, xα, lf.d, lf.p)
     return 2 * rdot(Fα, Jv)
 end
 
 """
     init_globalization(g, x)
+    init_globalization(g, linsolve, x)
 
 Allocate the workspace named tuple for globalization method `g` at iterate `x` through
 [`buffer(x)`](@ref buffer): `(; xt, Ft)` for [`Static`](@ref), `(; xt, Ft, Jv)` for a
-[`LineSearch`](@ref), and `(; g̃, ĝ, Jg, s, xt, Ft)` for [`DogLeg`](@ref). In R1 every slot is
-`nothing`; in R3 each slot is a preallocated vector like `x`.
+[`LineSearch`](@ref), `(; g̃, ĝ, Jg, s, xt, Ft)` for [`DogLeg`](@ref), and
+`(; Jδ, xt, Ft, R₀, c₀, R, c, d_diag, w)` for [`LevenbergMarquardt`](@ref), whose stacked slots
+`R₀` to `w` are `nothing` where the step reads the SVD factor and not the stacked solve. In R1
+every slot is `nothing`; in R3 each slot is a preallocated array like `x`. The method with
+`linsolve` is the one `Newton` calls; it takes the linear method of the solve into account, and
+for any `g` but `LevenbergMarquardt` it is the method without it.
 """
 @inline init_globalization(::Static, x) = (; xt = buffer(x), Ft = buffer(x))
 @inline init_globalization(::LineSearch, x) = (;
     xt = buffer(x), Ft = buffer(x), Jv = buffer(x))
+
+# A globalization whose workspace depends on the linear method of the solve — `LevenbergMarquardt`
+# allocates the stacked buffers only for the paths that read them — takes the method; any other
+# globalization has the workspace above.
+@inline init_globalization(g, ::LinearMethod, x) = init_globalization(g, x)
 
 # The merit `norm2(F)` of the current residual, which a solver carries in its state for a line
 # search, the one globalization that reads it: the anchor merit of the next step. Any other
@@ -109,7 +119,7 @@ step `res.α` and reports `failures = 1`; otherwise the iterate stays at `x` wit
         return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false, false)
     end
     x₊ = update_iterate!!(g_xt(g), x, s, d)
-    F₊ = residual!!(g_Ft(g), prob, x₊, p)
+    F₊ = primal_residual!!(g_Ft(g), prob, x₊, p)
     fnorm₊ = rnorm(F₊)
     if !isfinite(fnorm₊)
         return x, Fx, g, StepInfo{R}(NONFINITE, rnorm(Fx), stepnorm, Int32(0), false, false)

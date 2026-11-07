@@ -11,6 +11,10 @@ length ``m`` in ``n`` variables (``m \\ge n``) and optional Jacobian `J`.
 For out-of-place problems (`SVector` or `Number`), ``m`` is inferred from `F(x, p)` and the field
 `output_length` may be `nothing`. For in-place problems (`F(r, x, p)` on mutable arrays),
 `output_length` is required and must satisfy `m >= 1` and `m >= length(x)`.
+
+A `LeastSquaresProblem` holds no Jacobian prototype, so its Jacobian is dense. It has no implicit
+differentiation: [`solve`](@ref) with a `ForwardDiff.Dual` in `x₀` or `p` raises an
+`ArgumentError`, as [`init`](@ref) and [`solve!`](@ref) do for every problem.
 """
 struct LeastSquaresProblem{F, J, M <: Union{Nothing, Int}} <: AbstractNonlinearProblem
     F::F
@@ -42,6 +46,8 @@ end
     return m
 end
 
+@inline factor_rows(prob::LeastSquaresProblem, x) = output_length(prob, length(x))
+
 @inline function check_static_residual_length(prob::LeastSquaresProblem, Fx, x)
     m = length(Fx)
     n = length(x)
@@ -51,6 +57,14 @@ end
     m < n &&
         throw(DimensionMismatch("LeastSquaresProblem: requires m >= n (overdetermined or square), got m = $m < n = $n"))
     return nothing
+end
+
+# Implicit differentiation solves the tangent equation `J(x*) ẋ = -∂F/∂p` of a root with the
+# square Jacobian at `x*`. A least-squares solution is a stationary point of `‖F‖²` instead, whose
+# tangent equation `solve` does not form, so a dual `x₀` or `p` is refused before any solve runs.
+function solve_implicit(::LeastSquaresProblem, x₀, method, p, options, kwargs)
+    throw(ArgumentError(
+        "solve does not accept ForwardDiff.Dual inputs for a LeastSquaresProblem; implicit differentiation of a LeastSquaresProblem is not implemented"))
 end
 
 """

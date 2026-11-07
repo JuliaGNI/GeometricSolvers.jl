@@ -171,26 +171,20 @@ end
     end
 end
 
-Base.@assume_effects :foldable function ka_svd_workgroup(::B) where {B}
-    return nameof(B) === :JLBackend ? Val(2) : Val(32)
-end
-
-ka_unwrap_val(::Val{N}) where {N} = N
+const KA_SVD_WORKGROUP = 32
 
 function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
         VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
         e::Int, neg_e::Int) where {F, R}
-    m_rows, n = size(U)
+    m_rows, n = size(U, 1), size(U, 2)
     backend = get_backend(U)
     tol = jacobi_tolerance(m_rows, R)
     m = n + Int(isodd(n))
     n_pairs = m ÷ 2
-    valG = ka_svd_workgroup(backend)
-    g = ka_unwrap_val(valG)
     converged = n <= 1
     col_norms2_kernel! = ka_jacobi_col_norms2_kernel!(backend)
     if n >= 2
-        round_kernel! = ka_jacobi_svd_round_kernel!(backend, g)
+        round_kernel! = ka_jacobi_svd_round_kernel!(backend, KA_SVD_WORKGROUP)
         for sweep in 1:JACOBI_MAX_SWEEPS
             col_norms2_kernel!(
                 σ̂, flag, U, V, m_rows, n, neg_e, sweep == 1, false; ndrange = n)
@@ -200,7 +194,8 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
             negligible = max_norm2 * tol^2
             for r in 0:(m - 2)
                 round_kernel!(
-                    U, V, flag, m_rows, n, r, tol, negligible, valG; ndrange = n_pairs * g)
+                    U, V, flag, m_rows, n, r, tol, negligible, Val(KA_SVD_WORKGROUP);
+                    ndrange = n_pairs * KA_SVD_WORKGROUP)
             end
             if iszero(Array(flag)[1])
                 converged = true
@@ -306,7 +301,7 @@ end
 function ka_svd_backsolve!(
         fac::DeviceSVD{<:AbstractGPUArray}, d::AbstractVector{T},
         r::AbstractVector{T}, shift::Bool) where {T <: Number}
-    m_rows, n = size(fac.U)
+    m_rows, n = size(fac.U, 1), size(fac.U, 2)
     n == 0 && return 0
     # a failed factor, whose `σ̂` can hold a finite leading value beside a `NaN`, and a zero
     # matrix give the zero step; `rank` is a host field, so this reads no device array
@@ -351,7 +346,7 @@ end
 function ka_svd_nullnorm!(
         out::AbstractVector{TF}, fac::DeviceSVD{<:AbstractGPUArray{TF, 2}},
         r::AbstractVector{TF}, rk::Int) where {TF}
-    m_rows, n = size(fac.U)
+    m_rows, n = size(fac.U, 1), size(fac.U, 2)
     m_rows == 0 && return zero(real(TF))
     backend = get_backend(fac.U)
     ka_svd_ut_mul_kernel!(backend)(fac.tmp, fac.U, r, m_rows, n, rk; ndrange = n)

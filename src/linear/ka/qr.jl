@@ -133,7 +133,7 @@ end
 end
 
 function ka_qr!(A::AbstractGPUArray, τ::AbstractVector, status::AbstractVector{Int32})
-    m, n = size(A)
+    m, n = size(A, 1), size(A, 2)
     n == 0 && return 0
     backend = get_backend(A)
     fill!(status, Int32(0))
@@ -162,7 +162,7 @@ end
 const KA_QR_WORKGROUP = 64
 
 function ka_qr_backsolve!(A::AbstractGPUArray, τ::AbstractVector, d::AbstractVector)
-    m, n = size(A)
+    m, n = size(A, 1), size(A, 2)
     n == 0 && return d
     backend = get_backend(A)
     ka_qr_qadj_kernel!(backend, KA_QR_WORKGROUP)(

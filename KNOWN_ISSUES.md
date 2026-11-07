@@ -69,3 +69,62 @@
   `test/helpers/matrix.jl` leave this system out for LU and QR.
 - **kind:** defect
 - **found:** PR #48
+
+### K26 · A device vector wrapped in a `ComponentArray` gets the host factor, and the host QR and SVD then fail
+
+- **location:** `src/linear/factors.jl` (`init_linear`)
+- **evidence:** With ComponentArrays 0.15.50 and JLArrays 0.3.3, `x = ComponentVector(JLArray(...))`
+  gives `x isa AbstractGPUArray == false`, `copy(x)` stays a `ComponentVector`, and
+  `similar(x, Float32, 4, 4)` is a `JLArray{Float32, 2}`. `init_linear` selects the device factor
+  by the type of `x`, not by the matrix it allocates, so all three builders return the host
+  factors `DenseLU`, `DenseQR` and `DenseSVD` around a device matrix, and `factorize!!` on
+  `DenseQR` and `DenseSVD` fails with "Scalar indexing is disallowed". The same predicate,
+  `x isa AbstractGPUArray`, is on `main`, in `src/linear/factors.jl` and in `prepare_ad` of
+  `src/ad/di.jl`. ComponentArrays is neither a dependency nor a test dependency of the package, so
+  a wrapped device vector is not a supported input. Support is its own pull request, which selects
+  the factor from the allocated matrix instead of from `x`.
+- **kind:** defect
+- **found:** PR #55 (CodeRabbit, on #56)
+
+### K30 · A solve whose residual is wider than the start iterate fails in the `SolverStatus` constructor
+
+- **location:** `src/nonlinear/solver.jl` (`SolverStatus`)
+- **evidence:** With `F(x, p) = x^2 - p` and `prob = NonlinearProblem(F)`,
+  `solve(prob, 1.5, Newton(), 4.0)` and `solve(prob, 1.5f0, Newton(), 4.0f0)` return `SUCCESS`,
+  while `solve(prob, 1.5f0, Newton(), 4.0)` raises `MethodError: no method matching
+  SolverStatus{Float32}(::ReturnCode, ::Int32, ::Float64, ::Float32, ::Int32, ::Bool)` (merge of
+  `main` into `task/z`, Julia 1.13.3). The status takes its real type from the start iterate, and
+  the residual norm of a `Float64` parameter is a `Float64`. The implicit-differentiation path of
+  `solve` inherits the same failure. Whether the solve promotes the iterate, converts the norm or
+  refuses the mix with an `ArgumentError` is open.
+- **kind:** defect
+- **found:** PR #53
+
+### K55 · `LevenbergMarquardt` on a sparse `jacobian_prototype` runs the dense stacked solve
+
+- **location:** `src/globalization/levenbergmarquardt.jl` (`init_globalization`, `lm_qr_factor!`)
+- **evidence:** `Newton(; linsolve = LUFactorization(), globalization = LevenbergMarquardt())` on
+  a `NonlinearProblem` with a `SparseMatrixCSC` `jacobian_prototype` takes the stacked path,
+  because `lm_svd_path` is `false` for every method but `SVDFactorization` with `scaling = :none`.
+  `init_globalization` then allocates the dense `n × n` buffers `R₀` and `R`, `lm_qr_factor!`
+  reads the sparse Jacobian one entry at a time in an `O(n³)` Givens reduction, and the
+  `SparspakLU` factor that `init_factor` builds is never factorised. The solve is correct, but its
+  cost and storage are those of a dense solve, not of the sparse one. With
+  `QRFactorization` or `SVDFactorization` a sparse prototype raises a `MethodError` in
+  `init_linear`, as for every other globalization. Whether this combination is refused with an
+  `ArgumentError`, as a device iterate is in `check_lm_iterate`, or gets a sparse damped solve is
+  open.
+- **kind:** defect
+- **found:** PR #65
+
+### K56 · The stacked `LevenbergMarquardt` step allocates a linear factor that it never reads
+
+- **location:** `src/nonlinear/newton.jl` (`init_state`, `lm_newton_factor`)
+- **evidence:** `init_state` calls `init_factor(m.linsolve, prob, x, p, jacprep)` for every
+  `Newton` without reuse, and `init_newton_J` gives `LevenbergMarquardt` a Jacobian buffer of its
+  own. On the stacked path (`QRFactorization`, `LUFactorization`, or `scaling = :diagonal`)
+  `lm_newton_factor` returns `state.fac` without a `factorize!!`, and the trial loop reads only the
+  stacked buffers of `init_globalization`. The factor is one `n × n` array of state that no step
+  reads.
+- **kind:** dead code
+- **found:** PR #65

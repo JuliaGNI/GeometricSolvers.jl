@@ -32,7 +32,7 @@ SVD is prescaled at the working precision too, because the sweep squares the ent
 
 For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref),
 [`DenseSVD`](@ref), [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref)
-built by [`dense_factor`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
+built by [`init_linear`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
 matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
 place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
 divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors` on the host before
@@ -43,6 +43,11 @@ singular value of `J / 2^e` is not finite; for [`DeviceSVD`](@ref) it is `1` whe
 sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
 numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD then
 reports `SINGULAR`, and the step that the LU or QR factors give is not specified.
+
+For a sparse factor (R3), which an extension builds in [`init_linear`](@ref) from a
+`SparseMatrixCSC` `jacobian_prototype`, `J` must have the sparsity pattern of that prototype, or
+`ArgumentError` is raised. A zero pivot, a non-finite entry of `J` and a non-finite factor give
+`info = 1` and `SINGULAR` without throwing.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -164,7 +169,8 @@ right-hand-side buffer of the factor element type when that differs from the wor
 and `nothing` otherwise, `info` the index of the first zero pivot, or 0, and `scale_exponent`
 the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
-struct DenseLU{A <: AbstractMatrix, P <: AbstractVector, V}
+struct DenseLU{
+    A <: AbstractMatrix, P <: AbstractVector, V <: Union{Nothing, AbstractVector}}
     factors::A
     ipiv::P
     rhs::V
@@ -302,11 +308,29 @@ end
 """
     dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
-Build the dense factor [`DenseLU`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a host
-vector `x`, or the device factor [`DeviceLU`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on
-a device vector `x::AbstractGPUArray`, for `method`.
+Build the linear factor for `method` on `x` using `jacobian_prototype(prob)`, with the rows of
+the Jacobian of `prob`: `m × n` for a [`LeastSquaresProblem`](@ref) of residual length `m`, and
+`n × n` otherwise.
 """
-function dense_factor(m::LUFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function dense_factor(m::LinearMethod, prob, x::AbstractVector, p)
+    init_linear(m, jacobian_prototype(prob), x, factor_rows(prob, x))
+end
+
+# The row count of the Jacobian whose factor `init_linear` builds, where it is not the length of
+# the iterate `x`: the residual length of a `LeastSquaresProblem`, and `nothing` for every other
+# problem, whose Jacobian is square.
+@inline factor_rows(prob, x) = nothing
+
+"""
+    init_linear(method::LinearMethod, pattern, x::AbstractVector)
+
+Build the linear factor for `method` on `x`: the dense host factor [`DenseLU`](@ref),
+[`DenseQR`](@ref) or [`DenseSVD`](@ref) or device factor [`DeviceLU`](@ref), [`DeviceQR`](@ref) or
+[`DeviceSVD`](@ref) when `pattern === nothing`, or an extension's sparse factor when `pattern` is
+a sparse matrix prototype.
+"""
+function init_linear(m::LUFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
+                                                                                 Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -315,8 +339,8 @@ function dense_factor(m::LUFactorization, prob, x::AbstractVector{T}, p) where {
     return DenseLU(factors, ipiv, rhs, 0, 0)
 end
 
-function dense_factor(
-        m::LUFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+function init_linear(
+        m::LUFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
     factors = similar(x, F, n, n)
@@ -326,43 +350,108 @@ function dense_factor(
     return DeviceLU(factors, ipiv, rhs, 0, 0, status)
 end
 
-# The right-hand side buffer of a factor, or `nothing` where the solve writes the iterate itself.
-# A buffer is needed where the factor's element type is not the iterate's, and where the problem
-# has more residuals than unknowns, which only a `LeastSquaresProblem` can: both halves are
-# decided by types, so a factor's type is inferred from its call.
-@inline function factor_rhs(x, ::Type{F}, ::Type{T}, m_rows, prob) where {F, T}
-    return F === T && !(prob isa LeastSquaresProblem) ? nothing : similar(x, F, m_rows)
-end
-
-function dense_factor(m::QRFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function init_linear(m::QRFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
+                                                                                 Number}
     F = factor_eltype(m, T)
     n = length(x)
-    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
-    factors = similar(x, F, m_rows, n)
+    factors = similar(x, F, n, n)
     τ = similar(x, F, n)
     work = similar(x, F, qr_work_length(factors, τ))
-    rhs = factor_rhs(x, F, T, m_rows, prob)
+    rhs = F === T ? nothing : similar(x, F, n)
     return DenseQR(factors, τ, work, rhs, 0, 0)
 end
 
-function dense_factor(
-        m::QRFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+function init_linear(
+        m::QRFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
     F = factor_eltype(m, T)
     n = length(x)
-    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
-    factors = similar(x, F, m_rows, n)
+    factors = similar(x, F, n, n)
     τ = similar(x, F, n)
-    rhs = factor_rhs(x, F, T, m_rows, prob)
+    rhs = F === T ? nothing : similar(x, F, n)
     status = similar(x, Int32, 1)
     return DeviceQR(factors, τ, rhs, 0, 0, status)
 end
 
-function dense_factor(
-        m::SVDFactorization, prob, x::AbstractVector{T}, p) where {T <: Number}
+function init_linear(
+        m::SVDFactorization, ::Nothing, x::AbstractVector{T}) where {T <: Number}
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)
-    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
+    factors = similar(x, F, n, n)
+    U = similar(x, F, n, n)
+    S = similar(x, R, n)
+    VT = similar(x, F, n, n)
+    rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : n)
+    work = similar(x, F, svd_work_length(factors, S, U, VT, rwork))
+    tmp = similar(x, F, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0, 0)
+end
+
+function init_linear(
+        m::SVDFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
+    F = factor_eltype(m, T)
+    R = real(F)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    U = similar(x, F, n, n)
+    S = similar(x, R, n)
+    VT = similar(x, F, n, n)
+    V = similar(x, F, n, n)
+    σ̂ = similar(x, R, n)
+    flag = similar(x, Int32, 1)
+    tmp = similar(x, F, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DeviceSVD(factors, U, S, VT, V, σ̂, flag, tmp, rhs, 0, 0, 0)
+end
+
+"""
+    init_linear(method::LinearMethod, pattern, x::AbstractVector, m_rows)
+
+Build the linear factor for `method` on `x` for a Jacobian of `m_rows` rows: the square factor of
+the three-argument method for `m_rows === nothing`, and for an `Int` the rectangular
+`m_rows × length(x)` factor of a [`LeastSquaresProblem`](@ref), a [`DenseQR`](@ref),
+[`DenseSVD`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) with a right-hand side buffer of
+`m_rows` entries, because its solve reads `m_rows` residual entries and writes `length(x)` step
+entries. Whether `m_rows` is an `Int` decides the buffer, so a factor's type is inferred from its
+call. `LUFactorization` takes the square factor whatever `m_rows` is: it factorises no rectangular
+matrix, and `LevenbergMarquardt`, the one globalization that takes it on a least-squares problem,
+solves its own stacked system and never factorises that factor.
+"""
+function init_linear(m::LinearMethod, pattern, x::AbstractVector, ::Nothing)
+    init_linear(m, pattern, x)
+end
+function init_linear(m::LUFactorization, pattern, x::AbstractVector, ::Int)
+    init_linear(m, pattern, x)
+end
+
+function init_linear(
+        m::QRFactorization, ::Nothing, x::AbstractVector{T}, m_rows::Int) where {T <:
+                                                                                 Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, m_rows, n)
+    τ = similar(x, F, n)
+    work = similar(x, F, qr_work_length(factors, τ))
+    return DenseQR(factors, τ, work, similar(x, F, m_rows), 0, 0)
+end
+
+function init_linear(m::QRFactorization, ::Nothing, x::AbstractGPUArray{T, 1},
+        m_rows::Int) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, m_rows, n)
+    τ = similar(x, F, n)
+    status = similar(x, Int32, 1)
+    return DeviceQR(factors, τ, similar(x, F, m_rows), 0, 0, status)
+end
+
+function init_linear(
+        m::SVDFactorization, ::Nothing, x::AbstractVector{T}, m_rows::Int) where {T <:
+                                                                                  Number}
+    F = factor_eltype(m, T)
+    R = real(F)
+    n = length(x)
     factors = similar(x, F, m_rows, n)
     U = similar(x, F, m_rows, n)
     S = similar(x, R, n)
@@ -370,16 +459,14 @@ function dense_factor(
     rwork = similar(x, R, F <: Complex ? max(1, 5 * n) : n)
     work = similar(x, F, svd_work_length(factors, S, U, VT, rwork))
     tmp = similar(x, F, n)
-    rhs = factor_rhs(x, F, T, m_rows, prob)
-    return DenseSVD(factors, U, S, VT, work, rwork, tmp, rhs, 0, 0, 0)
+    return DenseSVD(factors, U, S, VT, work, rwork, tmp, similar(x, F, m_rows), 0, 0, 0)
 end
 
-function dense_factor(
-        m::SVDFactorization, prob, x::AbstractGPUArray{T, 1}, p) where {T <: Number}
+function init_linear(m::SVDFactorization, ::Nothing, x::AbstractGPUArray{T, 1},
+        m_rows::Int) where {T <: Number}
     F = factor_eltype(m, T)
     R = real(F)
     n = length(x)
-    m_rows = prob isa LeastSquaresProblem ? output_length(prob, n) : n
     factors = similar(x, F, m_rows, n)
     U = similar(x, F, m_rows, n)
     S = similar(x, R, n)
@@ -388,8 +475,7 @@ function dense_factor(
     σ̂ = similar(x, R, n)
     flag = similar(x, Int32, 1)
     tmp = similar(x, F, n)
-    rhs = factor_rhs(x, F, T, m_rows, prob)
-    return DeviceSVD(factors, U, S, VT, V, σ̂, flag, tmp, rhs, 0, 0, 0)
+    return DeviceSVD(factors, U, S, VT, V, σ̂, flag, tmp, similar(x, F, m_rows), 0, 0, 0)
 end
 
 """

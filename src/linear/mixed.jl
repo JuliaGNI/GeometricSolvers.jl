@@ -6,9 +6,7 @@
 # that it overflows or underflows only where the solution itself does.
 
 function ldiv!!(
-        d::AbstractVector{T},
-        fac::Union{DenseLU, DenseQR, DenseSVD, DeviceLU, DeviceQR, DeviceSVD},
-        r::AbstractVector{T}) where {T <: Number}
+        d::AbstractVector{T}, fac::DenseFactor, r::AbstractVector{T}) where {T <: Number}
     s = maximum(abs, r)
     iszero(s) && return fill!(d, zero(T))
     rhs = fac.rhs::AbstractVector

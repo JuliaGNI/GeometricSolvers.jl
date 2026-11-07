@@ -15,20 +15,23 @@ is in `R = real(T)` for the element type `T` of the iterate.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
 - `stationary::Bool`: the solve converged by the stationarity test rather than the residual test.
-- `rank::Int32`: the numerical rank from the last fresh SVD factorisation, or `Int32(-1)`
-  when no SVD factorisation completed.
+- `rank::Int32`: the numerical rank of the last fresh factorisation where it is an SVD factor
+  with `info == 0`, else `Int32(-1)`: no factorisation, an LU or QR factor, or a failed SVD
+  factor.
 - `nullnorm::R`: ``\\|(I - U_r U_r^H) F(x_k)\\|`` at the iterate ``x_k`` of the last fresh
-  SVD factorisation, with ``U_r`` the first `rank` columns of ``U``, or `R(NaN)` when no
-  SVD factorisation completed.
+  factorisation, with ``U_r`` the first `rank` columns of ``U``, where `rank` is not
+  `Int32(-1)`, else `R(NaN)`.
 - `gradratio::R`: ``\\|J(x_k)^H F(x_k)\\| / (\\|J(x_k)\\|_F \\|F(x_k)\\|)`` at the iterate
   ``x_k`` of the last fresh factorisation, `zero(R)` when ``\\|J(x_k)\\|_F = 0`` or
   ``\\|F(x_k)\\| = 0``, or `R(NaN)` when no Jacobian was factorised.
 
 The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
 ``x`` at return; a solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has
-factorised afresh at the iterate it returns, so its numbers are that iterate's. For a
-[`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any nonzero scalar
-Jacobian has `gradratio == 1` and `rank == 1`), they classify the outcome and a `STALLED` or
+factorised afresh at the iterate it returns, so its numbers are that iterate's. With `regularization = μ ≠ 0`, `rank` and `nullnorm` are those of the
+factored matrix ``J(x_k) + μ I`` and `gradratio` is that of ``J(x_k)``, so the classification
+below holds for `μ = 0` only. For a [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any
+nonzero scalar Jacobian has `gradratio == 1`, and `rank == 1` with an SVD factor), they
+classify the outcome and a `STALLED` or
 `MAXITERS` return: a consistent rank-deficient system that converged has a small residual
 (`fnorm` small) and nothing outside the range (`rank < n`, `nullnorm ≈ 0`); a least-squares
 point with no root has a ratio near zero (`gradratio ≈ 0`, `fnorm > 0`) and the residual
@@ -105,8 +108,9 @@ The result of one step, which [`record`](@ref) folds into a [`SolverStatus`](@re
 - `stepnorm::R`: ``\\|x₊ - x\\|``.
 - `failures::Int32`: the step-rule failures inside this step, those of its members included.
 - `promoted::Bool`: the step factorised in a higher precision than its method's.
-- `limited::Bool`: the step was accepted, but a trust-region radius truncated it, so its norm is
-  set by the radius and does not measure the distance to a root.
+- `limited::Bool`: the step was accepted, but a trust-region radius truncated it or a damping
+  above its initial value shortened it, so its norm is set by the radius or the damping and does
+  not measure the distance to a root.
 """
 struct StepInfo{R <: Real}
     code::ReturnCode
