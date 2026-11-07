@@ -29,6 +29,7 @@ if "core" in GROUPS
     @safetestset "Line function and globalization" include("globalization/linefunction.jl")
     @safetestset "Merit passes and search trips" include("globalization/passes.jl")
     @safetestset "DogLeg" include("globalization/dogleg.jl")
+    @safetestset "LevenbergMarquardt" include("globalization/levenbergmarquardt.jl")
     @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
     @safetestset "Stationarity problem" include("nonlinear/stationarity.jl")
     @safetestset "Reparametrized problem" include("nonlinear/reparametrized.jl")
