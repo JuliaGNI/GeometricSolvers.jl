@@ -55,24 +55,26 @@ so that a compat-only bump can be told apart from an interface change.
   with rank `n - 2` and `n ∈ {4, 16}`; and the mixed-precision solve (`TF = Float32`) on the 64-bit
   element types at `κ₂ ∈ {10, 10⁴}` with the dimensions of the full-rank solves.
 
-- **`solve(prob, x₀, method, p)` with a `Newton` or `Picard` method differentiates implicitly
-  through a converged solve when `x₀` or `p` contains `ForwardDiff.Dual` values** (decision 50 of
-  the design). `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual`
-  layer from `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
+- **`solve(prob, x₀, method, p)` on a `NonlinearProblem` with a `Newton` or `Picard` method
+  differentiates implicitly through a converged solve when `x₀` or `p` contains
+  `ForwardDiff.Dual` values** (decision 50 of the design); on a `StationarityProblem` it raises
+  an `ArgumentError` (K31).
+  `GeometricSolvers.StripDual` (`src/base/adapt.jl`) strips one `ForwardDiff.Dual` layer from
+  `ForwardDiff.Dual`, `Complex{<:ForwardDiff.Dual}`, and arrays of either through
   `Adapt.adapt(StripDual(), p)` while leaving tuples, named tuples, numbers and other arrays
-  unchanged. When `x₀` or `p` carries `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted
-  value type of the dual leaves of `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`,
-  runs the primal solve via `solve!!` at the precision of the stripped `x₀`
-  (`status::SolverStatus{R}` with `R = real(eltype(x₀))`), and on `status.code === SUCCESS`
-  computes the tangent `ẋ` of the solution `x*` from the implicit function theorem
-  `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3 (`Array`,
-  `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one factorisation
-  at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with `prob.J` or
-  `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*` with zero
-  partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single factor. The
-  tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS` path and on the
-  `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}` with
-  `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
+  unchanged. When `x₀` or `p` carries
+  `ForwardDiff.Dual{Tg, V, N}` values, where `V` is the promoted value type of the dual leaves of
+  `x₀` and `p`, `solve` strips the dual layer from `x₀` and `p`, runs the primal solve via `solve!!`
+  at the precision of the stripped `x₀` (`status::SolverStatus{R}` with `R = real(eltype(x₀))`),
+  and on `status.code === SUCCESS` computes the tangent `ẋ` of the solution `x*` from the implicit
+  function theorem `J(x*, p_val) ẋ_k = -∂_k F(x*, p)` across R1 (`Number`, `StaticVector`) and R3
+  (`Array`, `JLArray`) iterates: it evaluates one unregularised Jacobian `J(x*, p_val)` and one
+  factorisation at `(x*, p_val)` (via `method.linsolve` for `Newton` and `LUFactorization()` with
+  `prob.J` or `AutoForwardDiff()` for `Picard`), evaluates `F(x̂, p)` once with `x̂` seeded at `x*`
+  with zero partials, and solves the `N` right-hand sides `-∂_k F(x*, p)` against that single
+  factor. The tangent depends only on `(x*, p)`, never on the partials of `x₀`. On the `SUCCESS`
+  path and on the `NaN`-partials paths alike, the returned `x*` carries `ForwardDiff.Dual{Tg, W, N}`
+  with `W = promote_type(real(eltype(x*)), V)`. For `x₀::Float64` and `p` carrying
   `ForwardDiff.Dual{Tg, Float32, 1}`, `W` is `Float64`. When `status.code !== SUCCESS`, `solve`
   skips the tangent solve and returns `(x*, status)` with `NaN` partials. If the tangent
   factorisation at `(x*, p_val)` fails (`returncode(fac) === SINGULAR`), `solve` performs no
@@ -956,6 +958,27 @@ so that a compat-only bump can be told apart from an interface change.
   fix shows its effect as a list of changed cells. The library is no dependency:
   `scripts/standard/check_transcription.jl`, in an environment of its own, checks the copy
   against it.
+
+- `StationarityProblem(S; E = :, U = :, b = nothing)` (and positional `StationarityProblem(S, E, U, b = nothing)`)
+  and `LDLTFactorization()`, with `LDLTFactorization(TF)` for a factorisation precision `TF`: solve
+  the stationarity condition
+  $(\nabla S(x, p))_E + b = 0$ over $u = x_U$ of a scalar action $S$, alongside Bunch–Kaufman
+  $\mathrm{LDL}^\top$ / $\mathrm{LDL}^\dagger$ factorisation (`StaticLDLT` in R1, zero-allocation
+  LAPACK `sytrf!`/`sytrs!` and `hetrf!`/`hetrs!` with generic fallback `DenseLDLT` in R3 host, and
+  `KernelAbstractions` `DeviceLDLT` in R3 device). For an array iterate `StationarityProblem`
+  accepts `E` and `U` as `Colon()`, an `SVector{N, <:Integer}`, an `NTuple{N, <:Integer}`, an
+  `AbstractUnitRange{<:Integer}`, or a `Vector{Int}`, and for an R1 iterate as `:`, a `Tuple` or an
+  `SVector`; it keeps inactive components $x_{\notin U}$ fixed, and solves through `solve`, `init`,
+  `solve!` (with keyword `b = nothing`) and `solve_batch!`, which refuse a `ForwardDiff.Dual` in
+  the iterate or in `p` with an `ArgumentError`: a `StationarityProblem` has no implicit
+  differentiation in this release (K31). `StationarityProblem` and
+  `NonlinearProblem` share the supertype `AbstractNonlinearProblem`: `solve!`, `solve!!` and
+  `NonlinearSolver` take either, and `init` and `solve` have a method for each problem type. In R1,
+  `gradient_hessian!!` evaluates both $(\nabla S)_E + b$ and $(\nabla^2 S)_{E, U}$ in one nested
+  `ForwardDiff.Dual` call, and `jvp!!` evaluates $(\nabla^2 S)_{E, U} v$ with one outer directional
+  partial. In R3, `ChunkedHessianForwardDiff` provides the automatic differentiation on `Array` and
+  on an `AbstractGPUArray` without scalar indexing, and `DIStationarity` the other back ends on CPU
+  `Array`.
 
 - `OptimalWeights`, `FixedWeights`, `Additive`, `Multiplicative`, `Repeat` and `Switch` (exported),
   together with the internal `GeometricSolvers.sync_merit`, compose nonlinear step rules (`Newton`,
