@@ -5,10 +5,10 @@
 Newton's method for [`NonlinearProblem`](@ref) and [`StationarityProblem`](@ref), with linear
 solver `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
 [`QRFactorization`](@ref) or [`SVDFactorization`](@ref)), globalization `globalization`
-([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) or the
-trust region [`DogLeg`](@ref)), Jacobian selector `jacobian`, iterative refinement `refinement`
-([`NoRefinement`](@ref) or [`Refinement`](@ref)), diagonal regularisation `regularization`, and
-factor-reuse period `reuse`.
+([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the
+trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector
+`jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref) or [`Refinement`](@ref)),
+diagonal regularisation `regularization`, and factor-reuse period `reuse`.
 
 # Fields
 
@@ -18,23 +18,26 @@ factor-reuse period `reuse`.
   merit of the residual it returns. A `step!!` with a line search therefore takes only the
   `(x, Fx)` that the last `start!!` or `step!!` on its state returned, as in [`solve!!`](@ref).
   A line-search step on a state that no `start!!` saw, or that `solve!!` returned, returns
-  `NONFINITE` and keeps its iterate.
+  `NONFINITE` and keeps its iterate, and so does a [`LevenbergMarquardt`](@ref) step, whose
+  damping parameter that state holds as `NaN`.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
   `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
   `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
 - `refinement::RF`: the refinement setting ([`NoRefinement`](@ref) or [`Refinement`](@ref)).
   A `Refinement` refines the direction of the system that the factor solves, the regularised
-  ``(J + μ I) d = -F`` when `μ > 0`.
+  ``(J + μ I) d = -F`` when `μ > 0`. A [`LevenbergMarquardt`](@ref) globalization takes no
+  `Refinement`: a refinement corrects the solve of ``J d = -F``, which the damped step does not
+  take, and the constructor raises an `ArgumentError`.
 - `regularization::R`: non-negative finite diagonal shift ``μ ≥ 0`` added as ``J + μ I`` before
   factorisation when `μ > 0`.
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
   reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step and,
   within the step, after a failed [`Refinement`](@ref) on a reused factor, which counts one
   step-rule failure). A line search along a reused factor that fails without a step is retried
-  once, in the same step, from a fresh factor. A [`DogLeg`](@ref) globalization takes no reuse:
-  its model needs the Jacobian of the current iterate, and the constructor raises an
-  `ArgumentError`.
+  once, in the same step, from a fresh factor. A [`DogLeg`](@ref) or
+  [`LevenbergMarquardt`](@ref) globalization takes no reuse: its model needs the Jacobian of the
+  current iterate, and the constructor raises an `ArgumentError`.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     linsolve::L
@@ -55,7 +58,11 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
                 throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse"))
             globalization isa DogLeg &&
                 throw(ArgumentError("Newton with a DogLeg globalization takes no reuse, got reuse = $reuse"))
+            globalization isa LevenbergMarquardt &&
+                throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse, got reuse = $reuse"))
         end
+        globalization isa LevenbergMarquardt && refinement isa Refinement &&
+            throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
         new{L, G, J, RF, R, K}(
             linsolve, globalization, jacobian, refinement, regularization, reuse)
     end
@@ -230,10 +237,11 @@ end
 end
 
 # The Jacobian buffer of the step. It is the matrix of a factor, which the factorisation overwrites,
-# unless the step reads the Jacobian after it: a `DogLeg` trial loop and a `Refinement` multiply by
-# it.
+# unless the step reads the Jacobian after it: a `DogLeg` or `LevenbergMarquardt` trial loop and a
+# `Refinement` multiply by it.
 @inline function init_newton_J(m::Newton, fac, fac_T, x)
-    if !(m.globalization isa DogLeg) && m.refinement isa NoRefinement
+    if !(m.globalization isa Union{DogLeg, LevenbergMarquardt}) &&
+       m.refinement isa NoRefinement
         if factor_eltype(m.linsolve, eltype(x)) === eltype(x)
             return fac.factors
         elseif fac_T !== nothing && m.linsolve isa LUFactorization
@@ -261,6 +269,13 @@ struct TrustRadius{R}
     radius₀::R
 end
 
+# The rule state of `Newton` with `LevenbergMarquardt`: the current damping parameter `μ`,
+# initialised to `NaN` in `init_state` and after `finish!!` so that a raw `step!!` outside
+# `start!!` fails closed with `NONFINITE`, and set to `R(lm.μ₀)` by `start!!`.
+struct DampingParameter{R}
+    μ::R
+end
+
 @inline newton_rule(m::Newton, x) = newton_rule(m.globalization, m.reuse, real(eltype(x)))
 @inline newton_rule(globalization, ::Nothing, ::Type{R}) where {R} = nothing
 @inline newton_rule(globalization, ::Int32, ::Type{R}) where {R} = FactorAge(Int32(0), false)
@@ -268,10 +283,16 @@ end
     δ₀ = dogleg_initial_radius(dl, R)
     return TrustRadius(δ₀, δ₀)
 end
+@inline function newton_rule(::LevenbergMarquardt, ::Nothing, ::Type{R}) where {R}
+    return DampingParameter(R(NaN))
+end
 
-@inline reset_rule(::Nothing) = nothing
-@inline reset_rule(::FactorAge) = FactorAge(Int32(0), false)
-@inline reset_rule(r::TrustRadius) = TrustRadius(r.radius₀, r.radius₀)
+@inline reset_rule(::Nothing, _) = nothing
+@inline reset_rule(::FactorAge, _) = FactorAge(Int32(0), false)
+@inline reset_rule(r::TrustRadius, _) = TrustRadius(r.radius₀, r.radius₀)
+@inline function reset_rule(::DampingParameter{R}, lm::LevenbergMarquardt) where {R}
+    return DampingParameter(R(lm.μ₀))
+end
 
 # The range and spectrum diagnostics of the last `newton_factor` call of the solve, which
 # `finish!!` copies into `SolverStatus`.
@@ -286,12 +307,17 @@ end
 end
 
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
-# globalization workspace, the rule state of its reuse or its `DogLeg`, the merit `norm2(Fx)` of
-# the current residual for a line search (`nothing` for any other globalization), the diagnostics
-# of the last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the
-# working-precision factor slot for mixed-precision promotion, the promotion flag, and the count
-# of consecutive slow steps a promotion waits for. The norm `‖Fx‖` of the current residual is
-# `NaN` on a state that no `start!!` saw or that `solve!!` returned.
+# globalization workspace, the rule state of its reuse, its `DogLeg` or its `LevenbergMarquardt`,
+# the merit `norm2(Fx)` of the current residual for a line search (`nothing` for any other
+# globalization), the norm `‖Fx‖` of the current residual, the diagnostics of the last
+# factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the working-precision
+# factor slot for mixed-precision promotion (`nothing` where the factorisation runs in the working
+# precision, and for `LevenbergMarquardt`, which promotes nothing), the promotion flag, and the
+# count of consecutive slow steps a promotion waits for. For a value iterate the workspace slots
+# are `nothing`, and so is the factor slot unless the factor is reused. The factor slot is the
+# storage that each factorisation writes into; only a step with reuse stores the factor it
+# returns, because only such a step reads it again. The norm is `NaN` on a state that no `start!!`
+# saw or that `solve!!` returned.
 struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT}
     jacprep::JP
     jvpprep::VP
@@ -360,6 +386,8 @@ end
 end
 
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
+    m.globalization isa LevenbergMarquardt &&
+        check_lm_iterate(m.globalization, m.linsolve, prob, x)
     Fx = buffer(x)
     jacprep, jvpprep = newton_ad_preps(m, prob, Fx, x, p)
     rule = newton_rule(m, x)
@@ -374,13 +402,13 @@ end
             diag, nothing, nothing, false, Int32(0))
     else
         fac = init_factor(m.linsolve, prob, x, p, jacprep)
-        fac_T = mixed ?
+        fac_T = mixed && !(m.globalization isa LevenbergMarquardt) ?
                 init_factor(promote_linsolve(m.linsolve, eltype(x)), prob, x, p, jacprep) :
                 nothing
         refbuf = init_refinement(m.refinement, x)
         return NewtonState(
             jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, fac_T, x),
-            init_globalization(m.globalization, x), rule, merit, R(NaN), diag,
+            init_globalization(m.globalization, m.linsolve, x), rule, merit, R(NaN), diag,
             refbuf, fac_T, false, Int32(0))
     end
 end
@@ -388,7 +416,7 @@ end
 @inline residual_buffer(state::NewtonState) = state.Fx
 
 @inline function start!!(state::NewtonState, m::Newton, prob, x, Fx, p, fnorm₀)
-    state = with_rule(state, reset_rule(state.rule))
+    state = with_rule(state, reset_rule(state.rule, m.globalization))
     state = with_merit(state, start_merit(m.globalization, Fx), fnorm₀)
     state = with_mixed(state, false, Int32(0))
     return with_diag(state, NewtonDiagnostics(real(eltype(x))))
@@ -407,6 +435,9 @@ end
     state_end = with_mixed(
         with_merit(state, init_merit(m.globalization, x), NaN),
         state.promoted, Int32(0))
+    if state.rule isa DampingParameter
+        state_end = with_rule(state_end, DampingParameter(R(NaN)))
+    end
     return x, st, state_end
 end
 
@@ -876,5 +907,102 @@ end
             return x₊, F₊, with_rule(st, FactorAge(Int32(0), false)), info
         end
         return x₊, F₊, with_rule(st, FactorAge(age₊, info.code == STALLED)), info
+    end
+end
+
+@inline function lm_svd_factor(state, m, ::Number, Jreg)
+    return factorize!!(state.fac, m.linsolve, SMatrix{1, 1, typeof(Jreg)}((Jreg,)))
+end
+@inline lm_svd_factor(state, m, _, Jreg) = factorize!!(state.fac, m.linsolve, Jreg)
+
+@inline function lm_newton_factor(
+        m::Newton, state::NewtonState, prob, x, Fx, p, fnorm::R) where {R}
+    Jmat = jacobian!!(state.J, state.jacprep, prob, x, p)
+    gr = grad_ratio(state.d, Jmat, Fx, fnorm)
+    Jreg = regularize!!(Jmat, m.regularization)
+    if lm_svd_path(m.linsolve, m.globalization.scaling)
+        fac = lm_svd_factor(state, m, x, Jreg)
+        rk, nn = factor_diagnostics(state.d, fac, Fx, fnorm)
+        return Jreg, fac, NewtonDiagnostics{R}(rk, nn, gr)
+    end
+    return Jreg, state.fac, NewtonDiagnostics{R}(Int32(-1), R(NaN), gr)
+end
+
+# The `LevenbergMarquardt` step. It has no mixed-precision half: the stacked step reduces the
+# Jacobian in the working precision and reads no factor, and the SVD step reads a factor in `TF`
+# for the damped direction and measures the gain ratio in `T`, so no step of it promotes.
+@inline function step!!(
+        state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
+        prob::AbstractNonlinearProblem, x, Fx, p) where {
+        L, G <: LevenbergMarquardt, J, RF, Reg}
+    R = real(eltype(x))
+    fnorm = R(rnorm(Fx))
+    μ = state.rule.μ
+    if !isfinite(μ)
+        info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state, info
+    end
+    # A root is a step of zero: it is answered before the Jacobian is read, so that a non-finite
+    # `J` at a root is not what the step reports.
+    if iszero(fnorm)
+        info = StepInfo{R}(SUCCESS, zero(R), zero(R), Int32(0), false, false)
+        return x, Fx, state, info
+    end
+    lm = m.globalization
+    μ_min_eff = max(R(lm.μ_min), 4 * eps(R))
+    Jreg, fac, diag = lm_newton_factor(m, state, prob, x, Fx, p, fnorm)
+    state_d = with_diag(state, diag)
+    j_ok = Jreg isa Number ? isfinite(Jreg) : all(isfinite, Jreg)
+    if !j_ok
+        info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state_d, info
+    end
+    use_svd = lm_svd_path(m.linsolve, lm.scaling)
+    if use_svd && fac.info > 0
+        info = StepInfo{R}(SINGULAR, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state_d, info
+    end
+    # The trial loop's workspace: the stored SVD factor, which needs no reduction, or the reduction
+    # of `[J | -F]` that the stacked path does once per outer step.
+    trial = lm_trial_workspace(m.linsolve, lm.scaling, state.d, state.g, fac, Jreg, Fx)
+    failures = Int32(0)
+    while true
+        δ, step_ok = lm_trial(trial, μ)
+        if step_ok
+            Jδ = mul!!(lm_Jδ(state.g), Jreg, δ)
+            pred = -2 * rdot(Fx, Jδ) - norm2(Jδ)
+            if pred <= zero(R)
+                Flin = axpby!!(lm_Ft(state.g), one(R), Fx, one(R), Jδ)
+                flin_norm = rnorm(Flin)
+                pred = (fnorm - flin_norm) * (fnorm + flin_norm)
+            end
+            x₊ = update_iterate!!(lm_xt(state.g), x, one(R), δ)
+            F₊ = primal_residual!!(lm_Ft(state.g), prob, x₊, p)
+            fnorm₊ = R(rnorm(F₊))
+            if isfinite(fnorm₊) && pred > zero(R)
+                ared = (fnorm - fnorm₊) * (fnorm + fnorm₊)
+                ρ = ared / pred
+                if ρ > R(lm.ρ_accept)
+                    limited = μ > R(lm.μ₀)
+                    μ_next = max(μ * R(lm.μ_decrease), μ_min_eff)
+                    stepnorm = R(rnorm(δ))
+                    x = copy!!(x, x₊)
+                    Fx = copy!!(Fx, F₊)
+                    state₊ = with_merit(state_d, state_d.merit, fnorm₊)
+                    state₊ = with_rule(state₊, DampingParameter(μ_next))
+                    info = StepInfo{R}(SUCCESS, fnorm₊, stepnorm, failures, false, limited)
+                    return x, Fx, state₊, info
+                end
+            end
+        end
+        failures += Int32(1)
+        μ = max(μ * R(lm.μ_increase), μ_min_eff)
+        if !isfinite(μ) || μ > R(lm.μ_max)
+            # The state keeps a finite damping: a `μ` that overflows is at the bound, and a
+            # non-finite one would read as the un-started state on the stall that follows.
+            state_fail = with_rule(state_d, DampingParameter(min(μ, floatmax(R))))
+            info = StepInfo{R}(STALLED, fnorm, zero(R), failures, false, false)
+            return x, Fx, state_fail, info
+        end
     end
 end
