@@ -19,9 +19,10 @@ solves the `eps(R)`-regularised normal equations `(G_K + λI) γ = b_K` with
 `b_i = Re⟨Δw_i, w_k⟩`, and forms the accelerated iterate
 `x₊ = x_m - ∑_j γ_j (Δx_{K[j]} + Δw_{K[j]})`.
 
-In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4` and the state is
-`isbits`. In R3 (`Array` or `AbstractGPUArray`), any `m >= 1` is supported with
-preallocated `n × m` difference matrices, and `step!!` on an `Array` allocates nothing.
+In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4`, and the state is
+`isbits` for an `SVector` or `Number` iterate. In R3 (`Array` or `AbstractGPUArray`), any
+`m >= 1` is supported with preallocated `n × m` difference matrices, and `step!!` on an
+`Array` allocates nothing.
 When a solve ends with a code other than `SUCCESS`, [`finish!!`](@ref) restores the
 iterate with the smallest residual norm `‖F(x)‖` seen during the solve.
 
@@ -1064,8 +1065,7 @@ function step!!(
     end
 
     _combine_anderson_r3!(work, state.ΔX, state.ΔW, p_kept)
-    F₊ = primal_residual!!(work.F_trial, prob, work.x_trial, p)
-    copy!!(work.F_trial, F₊)
+    primal_residual!!(work.F_trial, prob, work.x_trial, p)
     fnorm₊ = rnorm(work.F_trial)
 
     # Post-step residual-growth safeguard against `fnorm_best`.

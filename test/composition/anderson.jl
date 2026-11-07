@@ -143,7 +143,7 @@ function _r3_solve_alloc_probe(solver, x_work, x0)
 end
 
 @testset "Anderson Acceleration" begin
-    @testset "Constructors, validation, effective_kappa_bar, and Adapt (D1, MU10)" begin
+    @testset "Constructors, validation, effective_kappa_bar, and Adapt" begin
         p = Picard(; damping = 0.7)
         a_val = Anderson(p, Val(3))
         a_int = Anderson(p, 3)
@@ -203,7 +203,7 @@ end
             @test_throws ArgumentError Anderson(p, 2; safeguard_cos = bad_sc)
         end
 
-        # Adapt (MU10)
+        # Adapt
         a32 = Adapt.adapt(ToReal{Float32}(), a_kb)
         @test a32 isa Anderson{2}
         @test a32.c_s === 0.2f0
@@ -221,7 +221,7 @@ end
         @test a32_noth.grow_depth === false
     end
 
-    @testset "R1 depth limit and lifecycle guards (D2, D3, MU9)" begin
+    @testset "R1 depth limit and lifecycle guards" begin
         prob_r1 = NonlinearProblem((x, p) -> x - SVector(cos(x[1]), sin(x[2])))
         x0_r1 = SVector(0.5, 0.5)
         @test_throws ArgumentError init_state(
@@ -234,13 +234,13 @@ end
         @test isbits(st_r1)
         @test residual_buffer(st_r1) === nothing
 
-        # Un-started step!! guard (MU9)
+        # Un-started step!! guard
         Fx0_r1 = prob_r1.F(x0_r1, nothing)
         _, _, _, info_unstarted = step!!(st_r1, a_r1, prob_r1, x0_r1, Fx0_r1, nothing)
         @test info_unstarted.code == NONFINITE
         @test iszero(info_unstarted.stepnorm)
 
-        # Start, step, finish, and verify post-finish step!! guard (MU9)
+        # Start, step, finish, and verify post-finish step!! guard
         st_started = start!!(st_r1, a_r1, prob_r1, x0_r1, Fx0_r1, nothing, rnorm(Fx0_r1))
         x1, F1, st_step1, info1 = step!!(
             st_started, a_r1, prob_r1, x0_r1, Fx0_r1, nothing)
@@ -275,7 +275,7 @@ end
         @test st_bt_synced.Fx_best == st_bt_step1.Fx_best
         @test st_bt_synced.fnorm₀ == st_bt_step1.fnorm₀
 
-        # R3 lifecycle guard (MU9) and sync_merit forwarding
+        # R3 lifecycle guard and sync_merit forwarding
         prob_r3 = NonlinearProblem((F, x, p) -> (F .= x .- cos.(x); F))
         x0_r3 = [0.5, 0.5]
         Fx0_r3 = similar(x0_r3)
@@ -334,7 +334,7 @@ end
         @test info_r3_stat_after_finish.code == NONFINITE
     end
 
-    @testset "Check 1: NLsolve parity on CollisionOperators settings (MU1)" begin
+    @testset "Check 1: parity with a reference Anderson iteration at β = 0.7" begin
         # Coupled nonlinear fixed-point problem x = g(x), residual F(x) = x - g(x)
         K = @SMatrix [0.20 0.05 -0.04 0.02;
                       -0.03 0.25 0.06 -0.02;
@@ -353,7 +353,7 @@ end
         x0_vec = [0.1, -0.2, 0.3, -0.1]
         x0_svec = SVector{4, Float64}(x0_vec)
 
-        # Reference NLsolve Anderson with CollisionOperators settings: m = 8, β = 0.7
+        # Reference Anderson iteration `_nlsolve_anderson_reference` at m = 8, β = 0.7
         x_ref8, iters_ref8, fnorm_ref8 = _nlsolve_anderson_reference(
             g_vec, x0_vec; m = 8, beta = 0.7, abstol = 1e-11)
         @test fnorm_ref8 <= 1e-11
@@ -368,7 +368,7 @@ end
         @test norm(x_gs_r3 - x_ref8) < 1e-10
         @test abs(Int(status_r3.iterations) - iters_ref8) <= 1
 
-        # R1 Anderson(Picard(; damping = 0.7), Val(4)) vs m = 4 NLsolve reference
+        # R1 Anderson(Picard(; damping = 0.7), Val(4)) vs the m = 4 reference
         x_ref4, iters_ref4, _ = _nlsolve_anderson_reference(
             g_vec, x0_vec; m = 4, beta = 0.7, abstol = 1e-11)
         prob_r1 = NonlinearProblem((x, p) -> x - g_svec(x))
@@ -378,7 +378,7 @@ end
         @test norm(x_gs_r1 - x_ref4) < 1e-10
         @test abs(Int(status_r1.iterations) - iters_ref4) <= 1
 
-        # 10D R3 fixed-point problem with CollisionOperators settings (m = 8 < n = 10, β = 0.7)
+        # 10D R3 fixed-point problem at m = 8 < n = 10, β = 0.7
         n10 = 10
         g_vec10(x) = [0.25 * cos(0.3 * x[i]) + 0.1 * sin(x[mod1(i + 1, n10)]) -
                       0.05 * x[mod1(i + 2, n10)] + 0.1 * i / n10 for i in 1:n10]
@@ -392,8 +392,8 @@ end
         @test abs(Int(status_r3_10.iterations) - iters_ref10) <= 1
     end
 
-    @testset "Check 2: Restart on residual growth, stagnation, step_failures, and best iterate (MU2, MU5, MU6)" begin
-        # 2a. Post-step residual growth restart (fnorm₊ > restart_factor * fnorm_best, MU2)
+    @testset "Check 2: Restart on residual growth, stagnation, step_failures, and best iterate" begin
+        # 2a. Post-step residual growth restart (fnorm₊ > restart_factor * fnorm_best)
         F_growth_r1(x, p) = x[1] > 4.0 ? SVector(100.0 * x[1], 0.0) :
                             SVector(-1.0 + 0.1 * x[1], x[2])
         prob_growth_r1 = NonlinearProblem(F_growth_r1)
@@ -426,7 +426,7 @@ end
         @test st_g3.depth == 0
         @test st_g3.current_depth == 1
 
-        # 2b. Stagnation restart when step returns x₊ ≈ x above tolerance (MU5)
+        # 2b. Stagnation restart when step returns x₊ ≈ x above tolerance
         prob_stag = NonlinearProblem((x, p) -> SVector(x[1] - 1.0, x[2] + 2.0))
         a_stag = Anderson(Picard(; damping = 1.0), Val(3))
         x0_s = SVector(2.0, -1.0)
@@ -475,7 +475,7 @@ end
         @test total_failures == total_clears
 
         # 2d. Stopped early by max_iterations: returned iterate == iterate with smallest ‖F‖
-        # recorded by a residual wrapper (in R1 and R3, catching MU6)
+        # recorded by a residual wrapper (in R1 and R3)
         recorded_r1 = Tuple{SVector{2, Float64}, Float64}[]
         opts_div = Options(Float64; f_abstol = 1e-14, f_reltol = 0.0,
             x_abstol = 0.0, x_reltol = 0.0, max_iterations = 5)
@@ -528,8 +528,8 @@ end
         @test status_best_r3.fnorm == recorded_r3[min_idx_r3][2]
     end
 
-    @testset "Check 3: Length filter, angle filter, zero column, and M_alpha safeguard (MU3, MU4, MU5, MU8)" begin
-        # 3a. Orthogonal history: 0 columns dropped (failures == 0) in R1 (m = 4) and R3 (m = 6, MU4)
+    @testset "Check 3: Length filter, angle filter, zero column, and M_alpha safeguard" begin
+        # 3a. Orthogonal history: 0 columns dropped (failures == 0) in R1 (m = 4) and R3 (m = 6)
         prob4_r1 = NonlinearProblem((x, p) -> 0.5 * x)
         a4 = Anderson(Picard(; damping = 1.0), Val(4); c_s = 0.2, κ_bar = 1e4)
         e1 = SVector(1.0, 0.0, 0.0, 0.0)
@@ -559,7 +559,7 @@ end
         @test st_orth_next.depth == 4
         @test st_orth_next.current_depth == 4
 
-        # R3 with m = 6 orthogonal columns in Float64 (default κ_bar = 1/sqrt(eps(Float64)), MU4)
+        # R3 with m = 6 orthogonal columns in Float64 (default κ_bar = 1/sqrt(eps(Float64)))
         prob6_r3 = NonlinearProblem((F, x, p) -> (F .= 0.5 .* x; F))
         a6 = Anderson(Picard(; damping = 1.0), Val(6); c_s = 0.2)
         x6_in = zeros(Float64, 6)
@@ -587,7 +587,7 @@ end
         @test st6_next.depth == 6
         @test st6_next.current_depth == 6
 
-        # 3b. Two almost parallel columns in the middle of the history (MU3):
+        # 3b. Two almost parallel columns in the middle of the history:
         col3_par = normalize(e2 + 1e-6 * e3)
         st_par = AndersonState(
             init_state(a4.member, prob4_r1, e1, nothing),
@@ -617,7 +617,7 @@ end
         F_kept = hcat(Vector(st_par_next.ΔW[1]), Vector(st_par_next.ΔW[2]), Vector(st_par_next.ΔW[3]))
         @test cond(F_kept) < effective_kappa_bar(a4, Float64)
 
-        # 3c. Out-of-scale older column dropped by length filter and counted in failures (MU4):
+        # 3c. Out-of-scale older column dropped by length filter and counted in failures:
         a4_len = Anderson(Picard(; damping = 1.0), Val(4); c_s = 0.5, κ_bar = 50.0)
         st_len = AndersonState(
             init_state(a4_len.member, prob4_r1, e1, nothing),
@@ -643,7 +643,7 @@ end
         F_len_kept = hcat(Vector(st_len_next.ΔW[1]), Vector(st_len_next.ΔW[2]))
         @test cond(F_len_kept) < a4_len.κ_bar
 
-        # 3d. Zero newest column triggers a counted restart and produces no NaN (MU5):
+        # 3d. Zero newest column triggers a counted restart and produces no NaN:
         st_zero_col = AndersonState(
             init_state(a4.member, prob4_r1, e1, nothing),
             nothing,
@@ -668,7 +668,7 @@ end
         @test all(isfinite, x_zc)
         @test all(isfinite, F_zc)
 
-        # 3e. Post-solve M_alpha safeguard rejects oversized weights ∑|α_j| > M_alpha (MU8):
+        # 3e. Post-solve M_alpha safeguard rejects oversized weights ∑|α_j| > M_alpha:
         # With Δw_new = 0.05 * e1 and w_k = 1.0 * e1, raw γ_1 ≈ 20.0, so α = (20, -19), ∑|α_j| = 39.
         # When M_alpha = 3.0, ∑|α_j| = 39 > 3.0 is rejected, falling back to x_m = 2.0 * e1 with failures == 1;
         # when M_alpha = 50.0, ∑|α_j| = 39 <= 50.0 is accepted, taking x₊ ≈ -19.0 * e1 with failures == 0.
@@ -761,7 +761,7 @@ end
         @test all(isfinite, x32_sol)
     end
 
-    @testset "Check 5: GMRES equivalence and affine contraction bound (MU1, MU7)" begin
+    @testset "Check 5: GMRES equivalence and affine contraction bound" begin
         # Non-normal asymmetric matrix A with κ(A) <= 10
         A = [1.2 0.25 -0.1 0.05;
              -0.15 0.9 0.2 -0.05;

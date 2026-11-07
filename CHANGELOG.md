@@ -1028,7 +1028,7 @@ so that a compat-only bump can be told apart from an interface change.
   safeguard_cos = nothing, grow_depth = false)` (plus the convenience `Anderson(member, m::Integer;
   kwargs...)` forwarding to `Val(Int(m))`) accelerates an inner fixed-point or nonlinear step map
   $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1
-  ($m \le 4$, `isbits` state on `StaticVector` and `Number`), R2 (`solve_batch!` kernel), and R3 (no
+  ($m \le 4$, `isbits` state on `SVector` and `Number`), R2 (`solve_batch!` kernel), and R3 (no
   upper bound on `m`, zero heap allocations in `step!!` and `solve!` after warm-up on `Array`, and
   a `JLArray` step with no scalar indexing under `allowscalar(false)`). Implements Pollock and
   Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`, defaulting to
@@ -1043,4 +1043,6 @@ so that a compat-only bump can be told apart from an interface change.
   unchanged, and best-iterate restoration in `finish!!` when `solve!!` exits with
   `status.code != SUCCESS` and a strictly smaller historical residual norm was recorded.
   `solve(prob, method::Anderson, x₀, p, options)` forwards to
-  `solve(prob, x₀, method, p; options)`.
+  `solve(prob, x₀, method, p; options)`. `solve` with `Anderson` and a `ForwardDiff.Dual` in
+  `x₀` or `p` raises the same `ArgumentError` as the other combinators, before the primal solve, in
+  either form, since implicit differentiation through a combinator is not implemented (K60).

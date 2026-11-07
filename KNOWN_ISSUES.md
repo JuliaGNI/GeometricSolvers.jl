@@ -107,11 +107,11 @@
   method runs the primal solve and then the implicit-function-theorem tangent solve
   (`solve_implicit` in `src/nonlinear/implicit.jl`). The tangent solve takes its Jacobian
   preparation from `_tangent_jacprep`, which has a method for a `NewtonState` and a `PicardState`
-  only. `solve` with an `Additive`, `Multiplicative`, `Repeat` or `Switch` method therefore raises
-  an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal solve; `init`,
-  `solve!` and `solve_batch!` refuse a dual input for every method. Implicit differentiation
-  through a combinator, which needs the Jacobian of `F` at `x*` and not the steps of the members,
-  is for a later pull request.
+  only. `solve` with an `Additive`, `Multiplicative`, `Repeat`, `Switch` or `Anderson` method
+  therefore raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal
+  solve; `init`, `solve!` and `solve_batch!` refuse a dual input for every method. Implicit
+  differentiation through a combinator, which needs the Jacobian of `F` at `x*` and not the steps
+  of the members, is for a later pull request.
 - **kind:** defect
 - **found:** PR #60
 
@@ -142,3 +142,56 @@
   is `STALLED` when every member step is, or when the last one is, is open.
 - **kind:** defect
 - **found:** PR #60
+
+### K70 · R1 `Anderson` fails on an `MVector` iterate whose residual returns an `SVector`
+
+- **location:** `src/composition/anderson.jl` (`AndersonState`, R1 `start!!` and `step!!`)
+- **evidence:** The R1 state gives `x_prev`, `w_prev`, `x_best` and `Fx_best` one type `X`, and
+  the R1 `step!!` takes `x::X, Fx::X`. With
+  `prob = NonlinearProblem((x, p) -> SVector(x[1] - cos(x[1]), x[2] - sin(x[2]) - 0.1))`,
+  `solve(prob, MVector(0.5, 0.5), Picard(; damping = 0.8))` returns `SUCCESS`, and the same call
+  with `Anderson(Picard(; damping = 0.8), 2)` raises
+  `MethodError: no method matching GeometricSolvers.AndersonState(::PicardState…, ::Nothing, ::MVector…`.
+  With a residual that returns an `MVector`, `Anderson` converges. Whether the residual gets its
+  own type parameter in the state or `init_state` refuses a mutable `StaticVector` iterate is open.
+- **kind:** defect
+- **found:** PR #63
+
+### K71 · `Anderson`'s `M_alpha` safeguard underestimates `∑|α_j|` once a filter drops an interior column
+
+- **location:** `src/composition/anderson.jl` (`weights_acceptable`)
+- **evidence:** `weights_acceptable` computes
+  ``|1 - γ_1| + \sum_c |γ_c - γ_{c+1}| + |γ_p|``, the sum of the affine weights when the kept
+  columns are consecutive differences ``g_{k-j+1} - g_{k-j}``. After the angle filter drops an
+  interior column, the kept columns are no longer adjacent, in that step and in every later one.
+  With kept columns 1 and 3 and `γ = (1.0, 20/3)`, the affine weights are
+  `α = (0, 1, -20/3, 20/3)` with ``\sum |α_j| = 14.33``, and the code computes `12.33`: with
+  `M_alpha = 13` the step passes a bound that its weights exceed. The exact sum needs the age of
+  each stored column in the state; whether to add it, or to document the quantity as the
+  telescoped sum, is open.
+- **kind:** defect
+- **found:** PR #63
+
+### K72 · The R1 and R3 `Anderson` code duplicates the filter, the weight solve and the step skeleton
+
+- **location:** `src/composition/anderson.jl` (`filter_history_r1`, `filter_history_r3!`,
+  `solve_weights`, `solve_weights!`, both `step!!` methods)
+- **evidence:** The history storage and the Gram build differ for a reason (an `isbits` `NTuple`
+  in R1; device `n × m` matrices with a `col_idx` permutation and one `mul!!` in R3). The two
+  filters differ in 25 of 65 lines and the two Cholesky solves in 19 of 45, mostly `setindex`
+  against `setindex!`, and each `step!!` repeats the "take the member step" fallback 3 times and
+  the best-iterate update 4 times. `Multiplicative` and `Repeat` are one `step!!` each through
+  `copy!!` and `map!!`. A `!!` setter and `copy!!` on the state buffers would leave only the
+  history update and the Gram build per storage; the cost of that change was not measured.
+- **kind:** defect
+- **found:** PR #63
+
+### K73 · The method-first `solve(prob, method, x₀, p, options)` exists for `Anderson` only
+
+- **location:** `src/composition/anderson.jl` (`solve`)
+- **evidence:** `solve(prob, Anderson(...), x₀)` forwards to `solve(prob, x₀, method)`, and no
+  docstring describes the method-first order. `solve(prob, Picard(), x₀)` raises
+  `MethodError: no method matching real(::Type{Any})`. Whether the method-first order is removed
+  or defined and documented once for every method is open.
+- **kind:** defect
+- **found:** PR #63
