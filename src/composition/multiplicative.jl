@@ -8,7 +8,8 @@
 Sequential nonlinear combinator (composite step ``G_m \\circ \\cdots \\circ G_1``) that
 threads `(x, F(x))` through `m₁, m₂, ...` in order within a single outer solver iteration.
 Before each member steps, [`sync_merit`](@ref) updates its line-search baseline merit to the
-incoming ``\\|F(x)\\|_2^2`` when the member state has been started.
+incoming ``\\|F(x)\\|_2^2`` when the member state has been started. The outer step is `STALLED`
+when every member step is.
 """
 struct Multiplicative{M <: Tuple}
     members::M
@@ -74,7 +75,7 @@ end
     return MultiplicativeState(states, state.Fx, state.x₀)
 end
 
-@inline function init_state(m::Multiplicative, prob::NonlinearProblem, x, p)
+@inline function init_state(m::Multiplicative, prob::CombinatorProblem, x, p)
     states = _init_member_states(m.members, prob, x, p)
     return MultiplicativeState(states, buffer(x), buffer(x))
 end
@@ -119,17 +120,19 @@ end
 end
 
 @inline function _step_multiplicative_tail(
-        ::Tuple{}, ::Tuple{}, prob::NonlinearProblem, x, Fx, p,
-        fnorm::R, failures::Int32, promoted::Bool, limited::Bool) where {R}
-    info = StepInfo{R}(SUCCESS, fnorm, zero(R), failures, promoted, limited)
+        ::Tuple{}, ::Tuple{}, prob::AbstractNonlinearProblem, x, Fx, p,
+        fnorm::R, failures::Int32, promoted::Bool, limited::Bool, stalled::Bool) where {R}
+    code = stalled ? STALLED : SUCCESS
+    info = StepInfo{R}(code, fnorm, zero(R), failures, promoted, limited)
     return x, Fx, (), info
 end
 
 # The members from the first one in `states` on, in order. A hard failure of a member ends the
 # sequence with that member's code and keeps the iterate that the members before it reached.
+# Otherwise the sequence is `STALLED` when every member step is, and `SUCCESS` else.
 @inline function _step_multiplicative_tail(
-        states::Tuple, members::Tuple, prob::NonlinearProblem, x, Fx, p,
-        fnorm::R, failures::Int32, promoted::Bool, limited::Bool) where {R}
+        states::Tuple, members::Tuple, prob::AbstractNonlinearProblem, x, Fx, p,
+        fnorm::R, failures::Int32, promoted::Bool, limited::Bool, stalled::Bool) where {R}
     s_i = sync_merit(first(states), first(members), norm2(Fx))
     x_next, Fx_next, s_i_new, info_i = step!!(s_i, first(members), prob, x, Fx, p)
     failures_next = failures + info_i.failures
@@ -143,7 +146,8 @@ end
     end
     x_out, Fx_out, ss_tail, info_out = _step_multiplicative_tail(
         Base.tail(states), Base.tail(members), prob, x_next, Fx_next, p,
-        info_i.fnorm, failures_next, promoted_next, limited_next)
+        info_i.fnorm, failures_next, promoted_next, limited_next,
+        stalled && info_i.code == STALLED)
     return x_out, Fx_out, (s_i_new, ss_tail...), info_out
 end
 
@@ -151,11 +155,11 @@ end
 # member: a `LINESEARCH_FAILED` step that the members before it moved is not a zero step.
 function step!!(
         state::MultiplicativeState, m::Multiplicative,
-        prob::NonlinearProblem, x, Fx, p)
+        prob::AbstractNonlinearProblem, x, Fx, p)
     R = real(eltype(x))
     x_start = copy!!(state.x₀, x)
     x_out, Fx_out, states, info = _step_multiplicative_tail(
-        state.states, m.members, prob, x, Fx, p, zero(R), Int32(0), false, false)
+        state.states, m.members, prob, x, Fx, p, zero(R), Int32(0), false, false, true)
     stepnorm = rnorm(map!!(-, state.x₀, x_out, x_start))
     info_out = StepInfo{R}(
         info.code, info.fnorm, stepnorm, info.failures, info.promoted, info.limited)

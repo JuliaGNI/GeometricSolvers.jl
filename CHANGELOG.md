@@ -984,7 +984,8 @@ so that a compat-only bump can be told apart from an interface change.
   together with the internal `GeometricSolvers.sync_merit`, compose nonlinear step rules (`Newton`,
   `Picard` and any combinator) across R1 (`StaticVector`, `MVector` and `Number`), R2
   (`solve_batch!` on host and device arrays) and R3 (`Array` and `AbstractGPUArray`), with
-  `Adapt.@adapt_structure` on every combinator and weight rule.
+  `Adapt.@adapt_structure` on every combinator and weight rule. `solve`, `init` and `solve_batch!`
+  on a `StationarityProblem` take a combinator method, as they take `Newton` and `Picard`.
   `OptimalWeights(ρ = 1.0)` (`OptimalWeights(; ρ = 1.0)`, requiring finite `ρ > 0`, else
   `ArgumentError`) solves the real-weight (`R = real(T)`) secant least-squares problem
   $\min_{w \in \mathbb{R}^m} \|F(x) + \sum_{i=1}^m w_i (F(x_i) - F(x))\|_2$ from the Gram matrix
@@ -1009,9 +1010,14 @@ so that a compat-only bump can be told apart from an interface change.
   `Additive(m₁, m₂, ...; weights = OptimalWeights())` (`fieldcount(M) >= 1` and matching
   `FixedWeights` length, else `ArgumentError`) runs one step of each member from the same
   $(x, F(x))$ (stepping in preallocated per-member copies `(xs[i], Fxs[i])` in R3 so `x` is not
-  mutated while members run), returns the first hard failure (`SINGULAR`, `NONFINITE`, or
-  `LINESEARCH_FAILED` with zero `stepnorm`) with `stepnorm = 0` when any member hard-fails, and
-  otherwise forms $d = \sum_{i=1}^m w_i (x_i - x)$,
+  mutated while members run), and leaves out a member that hard-fails (`SINGULAR`, `NONFINITE`, or
+  `LINESEARCH_FAILED` with zero `stepnorm`); its candidate is $(x, F(x))$ at residual norm $\infty$
+  and takes weight zero. `OptimalWeights` solves for the weights of the members kept.
+  `FixedWeights` rescales the kept weights by $\sum_{i=1}^m w_i / \sum_{i \text{ kept}} w_i$, so
+  that they sum to the total of all the weights, and leaves them unchanged when no member fails.
+  The step fails, with `stepnorm = 0` and the code of the first member that failed, when every
+  member fails or when that rescale factor is not finite or zero (the kept fixed weights sum to
+  zero, or the weights sum to zero in total); otherwise it forms $d = \sum_{i=1}^m w_i (x_i - x)$,
   $x_+ = \texttt{update\_iterate!!}(\cdot, x, 1, d)$ and $F_+ = F(x_+, p)$. Under
   `OptimalWeights`, the PETSc safeguard checks whether `!isfinite(‖F(x₊)‖)`,
   $\sum_i |w_i| < 0.1$, or $\|F(x_+)\| > \rho \min_i \|F(x_i)\|$; when triggered, it replaces
@@ -1041,8 +1047,12 @@ so that a compat-only bump can be told apart from an interface change.
   `second` once $\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|$. In `finish!!`, `Additive` resets
   the spectrum diagnostics (`rank = -1`, `nullnorm = NaN`, `gradratio = NaN`), `Multiplicative`
   forwards the diagnostics of the last member in sequence that populated them, `Repeat` forwards
-  its inner member's diagnostics, and `Switch` forwards those of the active branch. `solve` with a
-  combinator method (`Additive`, `Multiplicative`, `Repeat`, `Switch`) and a `ForwardDiff.Dual` in
+  its inner member's diagnostics, and `Switch` forwards those of the active branch.
+  `Additive`, `Multiplicative` and `Repeat` report `STALLED` when every member step (every
+  sub-step, for `Repeat`) is `STALLED`, and `SUCCESS` otherwise; a hard failure keeps its own
+  code. So `Repeat(m, 1)` and `Multiplicative(m)` stall where `m` does and count toward
+  `max_stalls`, and `Switch` passes the code of its active member through unchanged. `solve` with
+  a combinator method (`Additive`, `Multiplicative`, `Repeat`, `Switch`) and a `ForwardDiff.Dual` in
   `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
   through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
   input for every method.

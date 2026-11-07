@@ -1,7 +1,8 @@
 # `OptimalWeights`, `FixedWeights`, and the shared real-weight least-squares solver in
 # `src/composition/weights.jl`: constructor validation, `ToReal` adaptation, real weights on
 # complex problems (Check 3), `sin²θ` rank fallback and smaller-residual candidate selection
-# (Check 2, MU3, MU4), incremental Cholesky for `m = 3, 4`, and R1/R3 parity on `Array` and
+# (Check 2, MU3, MU4), incremental Cholesky for `m = 3, 4`, the solve over the active
+# candidates only, and R1/R3 parity on `Array` and
 # `JLArray` under `allowscalar(false)`.
 
 using Adapt: Adapt
@@ -171,6 +172,52 @@ end
     for i in 1:4
         @test isapprox(w4[i], R(i) / R(4); rtol = 16 * eps(R))
     end
+end
+
+@testset "solve_optimal_weights over the active candidates only, $R" for R in REAL_ELTYPES
+    # m = 3 as above with candidate 1 inactive: 2 and 3 are orthogonal, both survive, and
+    # leaving candidate 1 out is no rank fallback
+    v1 = SVector{3, R}(one(R), zero(R), zero(R))
+    v2 = SVector{3, R}(zero(R), R(2), zero(R))
+    v3 = SVector{3, R}(R(2), zero(R), zero(R))
+    vs = (v1, v2, v3)
+    Fx3 = SVector{3, R}(-one(R), -R(2), zero(R))
+    G3 = SMatrix{3, 3, R, 9}(ntuple(k -> rdot(vs[mod1(k, 3)], vs[cld(k, 3)]), Val(9)))
+    b3 = SVector{3, R}(ntuple(i -> -rdot(vs[i], Fx3), Val(3)))
+    fn3 = (R(0.3), R(0.6), R(0.9))
+    w3, fb3 = @inferred solve_optimal_weights(G3, b3, fn3, (false, true, true))
+    @test !fb3
+    @test iszero(w3[1])
+    @test isapprox(w3[2], one(R); rtol = 16 * eps(R))
+    @test isapprox(w3[3], R(0.5); rtol = 16 * eps(R))
+
+    # one active candidate: the one-weight secant step along it, no rank fallback
+    w3_1, fb3_1 = @inferred solve_optimal_weights(G3, b3, fn3, (false, false, true))
+    @test !fb3_1
+    @test w3_1 === (zero(R), zero(R), R(2) / (R(4) * (one(R) + eps(R))))
+
+    # m = 4 orthogonal with candidates 2 and 4 inactive
+    G4 = SMatrix{4, 4, R, 16}(
+        ntuple(k -> mod1(k, 4) == cld(k, 4) ? R(4) : zero(R), Val(16)))
+    b4 = SVector{4, R}(R(1), R(2), R(3), R(4))
+    fn4 = (R(0.4), R(0.3), R(0.2), R(0.1))
+    w4, fb4 = @inferred solve_optimal_weights(G4, b4, fn4, (true, false, true, false))
+    @test !fb4
+    @test iszero(w4[2]) && iszero(w4[4])
+    @test isapprox(w4[1], R(1) / R(4); rtol = 16 * eps(R))
+    @test isapprox(w4[3], R(3) / R(4); rtol = 16 * eps(R))
+
+    # m = 2: the kept candidate's secant weight, whatever the residual norms; a zero direction
+    # along it is a rank fallback to weight one
+    G2 = SMatrix{2, 2, R}(R(4), R(1), R(1), R(2))
+    b2 = SVector{2, R}(R(1), R(3))
+    w2, fb2 = @inferred solve_optimal_weights(G2, b2, (R(1), R(2)), (false, true))
+    @test !fb2
+    @test w2 === (zero(R), R(3) / (R(2) * (one(R) + eps(R))))
+    w2_z, fb2_z = @inferred solve_optimal_weights(
+        zero(SMatrix{2, 2, R}), zero(SVector{2, R}), (R(1), R(2)), (true, false))
+    @test fb2_z
+    @test w2_z === (one(R), zero(R))
 end
 
 @testset "Check 3 & 6: R1/R3 optimal_weights parity on Array/JLArray, $T" for T in ELTYPES

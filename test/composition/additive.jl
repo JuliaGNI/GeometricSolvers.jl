@@ -1,7 +1,8 @@
 # `Additive` combinator in R1, R2 and R3: constructor validation, affine exactness and PETSc
 # safeguard (Check 1, MU1, MU2) in R1 and in R3, singular Gram fallback (Check 2, MU3, MU4),
 # `FixedWeights` and complex real weights (Check 3), five `FixedWeights` members in R3, R3
-# member isolation (Check 4, MU5), un-started fail-closed guard (Check 5), `finish!!`
+# member isolation (Check 4, MU5), hard-failed members left out of the combination, the
+# `STALLED` rule, a `StationarityProblem`, un-started fail-closed guard (Check 5), `finish!!`
 # diagnostics (D8), and R1/R2/R3 `isbits`, `@inferred`, zero allocations, `JLArray` under
 # `allowscalar(false)`, and `solve_batch!` (Check 6).
 
@@ -443,6 +444,114 @@ end
     end
 end
 
+function additive_one_step(m, prob, x₀)
+    Fx₀ = residual!!(x₀ isa Union{SVector, Number} ? nothing : similar(x₀), prob, x₀, nothing)
+    s = start!!(init_state(m, prob, copy(x₀), nothing), m, prob, copy(x₀), copy(Fx₀),
+        nothing, rnorm(Fx₀))
+    x₊, _, _, info = step!!(s, m, prob, copy(x₀), copy(Fx₀), nothing)
+    return x₊ isa Number ? x₊ : Array(x₊), info
+end
+
+# For `F(x) = -x - x³` the direction `-F` of `pic` ascends `‖F‖²`, so its line search fails at
+# every step with a zero step, while `Newton()` converges. The failed member is left out.
+@testset "A hard-failed member is left out of the combination, $T, $(nameof(AT))" for T in REAL_ELTYPES,
+    AT in (SVector, ARRAY_BACKENDS...)
+
+    pic = Picard(; damping = 1, globalization = Backtracking())
+    if AT === SVector
+        prob = NonlinearProblem((x, p) -> -x .- x .^ 3)
+        x₀ = SVector{2, T}(1, 0.5)
+    else
+        prob = NonlinearProblem((r, x, p) -> (r .= .-x .- x .^ 3; nothing))
+        x₀ = AT(T[1, 0.5])
+    end
+    x_ref = Array(x₀)
+    F_ref = -x_ref .- x_ref .^ 3
+    x_n, info_n = additive_one_step(Adapt.adapt(ToReal{T}(), Newton()), prob, x₀)
+    _, info_p = additive_one_step(Adapt.adapt(ToReal{T}(), pic), prob, x₀)
+    @test info_n.code === SUCCESS
+    @test info_p.code === LINESEARCH_FAILED && iszero(info_p.stepnorm)
+
+    # OptimalWeights solves the one-weight secant step along the Newton candidate, in any
+    # member order, and counts no rank fallback for the members it leaves out
+    δF = (-x_n .- x_n .^ 3) .- F_ref
+    w = -sum(δF .* F_ref) / sum(abs2, δF)
+    x_sec = x_ref .+ w .* (x_n .- x_ref)
+    for m in (Additive(Newton(), pic), Additive(pic, Newton()), Additive(pic, Newton(), pic))
+        m_T = Adapt.adapt(ToReal{T}(), m)
+        x₊, info = additive_one_step(m_T, prob, x₀)
+        n_pic = count(mi -> mi isa Picard, m.members)
+        @test info.code === SUCCESS
+        @test isapprox(x₊, x_sec; rtol = 32 * eps(T))
+        @test info.stepnorm > 0
+        @test info.failures == n_pic * info_p.failures
+        _, st = solve(prob, x₀, m)
+        @test st.code === SUCCESS
+    end
+
+    # FixedWeights rescales the kept weights to the sum of all weights: here the Newton step
+    for m in (Additive(Newton(), pic; weights = FixedWeights(1.0, 0.0)),
+        Additive(pic, Newton(); weights = FixedWeights(0.5, 0.5)),
+        Additive(pic, Newton(), pic; weights = FixedWeights(0.25, 0.5, 0.25)))
+        m_T = Adapt.adapt(ToReal{T}(), m)
+        x₊, info = additive_one_step(m_T, prob, x₀)
+        @test info.code === SUCCESS
+        @test isapprox(x₊, x_n; rtol = 8 * eps(T))
+        @test info.stepnorm > 0
+        _, st = solve(prob, x₀, m)
+        @test st.code === SUCCESS
+    end
+
+    # The step fails when every member fails, or when the kept fixed weights sum to zero
+    for m in (Additive(pic, pic), Additive(Newton(), pic; weights = FixedWeights(0.0, 1.0)))
+        m_T = Adapt.adapt(ToReal{T}(), m)
+        x₊, info = additive_one_step(m_T, prob, x₀)
+        @test info.code === LINESEARCH_FAILED
+        @test iszero(info.stepnorm)
+        @test x₊ == x_ref
+    end
+end
+
+# x² - 2 from 1 with every tolerance zero: the Backtracking line search stalls at the root
+@testset "Additive is STALLED only when every member step is, $T, $(nameof(AT))" for T in REAL_ELTYPES,
+    AT in (Number, Array)
+
+    nb = Newton(; globalization = Backtracking())
+    opt = Options(T; f_abstol = 0, f_reltol = 0, x_abstol = 0, x_reltol = 0, max_stalls = 3)
+    if AT === Number
+        prob = NonlinearProblem((x, p) -> x^2 - 2)
+        x₀, x_root = one(T), sqrt(T(2))
+    else
+        prob = NonlinearProblem((r, x, p) -> (r .= x .^ 2 .- 2; nothing))
+        x₀, x_root = T[1], T[sqrt(T(2))]
+    end
+    step_code(m) = additive_one_step(Adapt.adapt(ToReal{T}(), m), prob, x_root)[2].code
+    @test step_code(nb) === STALLED
+    @test step_code(Newton()) === SUCCESS
+    @test step_code(Additive(nb)) === STALLED
+    @test step_code(Additive(nb, nb)) === STALLED
+    @test step_code(Additive(nb, Newton())) === SUCCESS
+
+    # with one member of weight one, the solve stalls where the member does
+    _, st_nb = solve(prob, x₀, nb; options = opt)
+    _, st_add = solve(prob, x₀, Additive(nb; weights = FixedWeights(1.0)); options = opt)
+    @test st_nb.code === STALLED
+    @test st_add.code === STALLED
+    @test st_add.iterations == st_nb.iterations
+end
+
+# ∇S(x) = x³ + x - 1 componentwise, whose real root is 0.6823278038280193
+@testset "Additive on a StationarityProblem, $(nameof(typeof(x₀)))" for x₀ in (
+    SVector(0.1, 0.2), [0.1, 0.2])
+    sp = StationarityProblem((x, p) -> sum(abs2, x) / 2 - sum(x) + sum(x .^ 4) / 4)
+    for weights in (OptimalWeights(), FixedWeights(0.5, 0.5))
+        m = Additive(Newton(), Picard(; damping = 0.5); weights = weights)
+        x, st = solve(sp, x₀, m)
+        @test st.code === SUCCESS
+        @test isapprox(Array(x), fill(0.6823278038280193, 2); rtol = 1e-8)
+    end
+end
+
 @testset "Check 3 in R3: five FixedWeights members, $T, $(nameof(AT))" for T in ELTYPES,
     AT in ARRAY_BACKENDS
 
@@ -536,9 +645,12 @@ end
     x₀ = SVector{2, T}(T(2), T(2))
     Fx₀ = residual!!(nothing, prob, x₀, nothing)
 
+    # every member fails closed, so the step does; a `Static` member, which has no state that
+    # `start!!` sets, would be combined alone
     n_bt = Newton(; globalization = Backtracking())
     p_02 = Picard(; damping = 0.2)
-    m_ls = Adapt.adapt(ToReal{T}(), Additive(n_bt, p_02))
+    p_bt = Picard(; damping = 0.2, globalization = Backtracking())
+    m_ls = Adapt.adapt(ToReal{T}(), Additive(n_bt, p_bt))
     st_unstarted = init_state(m_ls, prob, x₀, nothing)
     x_u, F_u, _, info_u = @inferred step!!(st_unstarted, m_ls, prob, x₀, Fx₀, nothing)
     @test info_u.code === NONFINITE

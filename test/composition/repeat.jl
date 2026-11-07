@@ -1,6 +1,7 @@
 # `Repeat` combinator in R1, R2 and R3: constructor validation, 3-step `Picard` bit-for-bit
 # parity and `sync_merit` between sub-steps (Check 4), short-circuiting on `SINGULAR` and
-# `NONFINITE` (D6), `finish!!` diagnostics forwarding (D8), and R1/R2/R3 `isbits`,
+# `NONFINITE` (D6), `finish!!` diagnostics forwarding (D8), the `STALLED` rule and
+# `Repeat(m, 1) ≡ m`, a `StationarityProblem`, and R1/R2/R3 `isbits`,
 # `@inferred`, zero allocations, `JLArray` under `allowscalar(false)`, and `solve_batch!`
 # (Check 6).
 
@@ -13,8 +14,9 @@ using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, NONFINITE, Newton, NonlinearProblem, Picard, Repeat,
-                        SINGULAR, SVDFactorization, SUCCESS, SolverStatus, Static, ToReal,
+using GeometricSolvers: Backtracking, NONFINITE, Newton, NonlinearProblem, Options, Picard,
+                        Repeat, SINGULAR, STALLED, SVDFactorization, SUCCESS, SolverStatus,
+                        Static, StationarityProblem, ToReal,
                         finish!!, init, init_state, residual!!, rnorm, solve, solve!,
                         solve_batch!, solve!!, start!!, step!!
 
@@ -152,6 +154,50 @@ end
     @test st_svd.rank === Int32(2)
     @test isfinite(st_svd.nullnorm)
     @test isfinite(st_svd.gradratio)
+end
+
+function repeat_one_step(m, prob, x₀)
+    Fx₀ = residual!!(x₀ isa Number ? nothing : similar(x₀), prob, x₀, nothing)
+    s = start!!(init_state(m, prob, copy(x₀), nothing), m, prob, copy(x₀), copy(Fx₀),
+        nothing, rnorm(Fx₀))
+    return step!!(s, m, prob, copy(x₀), copy(Fx₀), nothing)[4]
+end
+
+# x² - 2 with every tolerance zero: the Backtracking line search stalls at the root
+@testset "Repeat is STALLED only when every sub-step is, Repeat(m, 1) ≡ m, $T, $(nameof(AT))" for T in REAL_ELTYPES,
+    AT in (Number, Array)
+
+    nb = Newton(; globalization = Backtracking())
+    opt = Options(T; f_abstol = 0, f_reltol = 0, x_abstol = 0, x_reltol = 0, max_stalls = 3)
+    if AT === Number
+        prob = NonlinearProblem((x, p) -> x^2 - 2)
+        x₀, x_root, x_near = one(T), sqrt(T(2)), sqrt(T(2)) + 4 * eps(T)
+    else
+        prob = NonlinearProblem((r, x, p) -> (r .= x .^ 2 .- 2; nothing))
+        x₀, x_root, x_near = T[1], T[sqrt(T(2))], T[sqrt(T(2)) + 4 * eps(T)]
+    end
+    nb_T = Adapt.adapt(ToReal{T}(), nb)
+    @test repeat_one_step(nb_T, prob, x_root).code === STALLED
+    @test repeat_one_step(Repeat(nb_T, 1), prob, x_root).code === STALLED
+    @test repeat_one_step(Repeat(nb_T, 2), prob, x_root).code === STALLED
+    # the first sub-step moves to the root, the second stalls there
+    @test repeat_one_step(nb_T, prob, x_near).code === SUCCESS
+    @test repeat_one_step(Repeat(nb_T, 2), prob, x_near).code === SUCCESS
+
+    _, st_nb = solve(prob, x₀, nb; options = opt)
+    _, st_rep = solve(prob, x₀, Repeat(nb, 1); options = opt)
+    @test st_nb.code === STALLED
+    @test st_rep.code === STALLED
+    @test st_rep.iterations == st_nb.iterations
+end
+
+# ∇S(x) = x³ + x - 1 componentwise, whose real root is 0.6823278038280193
+@testset "Repeat on a StationarityProblem, $(nameof(typeof(x₀)))" for x₀ in (
+    SVector(0.1, 0.2), [0.1, 0.2])
+    sp = StationarityProblem((x, p) -> sum(abs2, x) / 2 - sum(x) + sum(x .^ 4) / 4)
+    x, st = solve(sp, x₀, Repeat(Newton(), 2))
+    @test st.code === SUCCESS
+    @test isapprox(Array(x), fill(0.6823278038280193, 2); rtol = 1e-10)
 end
 
 @testset "Check 6: R1/R2/R3 parity, isbits, @inferred, 0 allocs, $T" for T in ELTYPES

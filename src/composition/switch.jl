@@ -51,7 +51,7 @@ end
     return SwitchState(s1, s2, state.Fx, state.fnorm₀, state.switched)
 end
 
-@inline function init_state(m::Switch, prob::NonlinearProblem, x, p)
+@inline function init_state(m::Switch, prob::CombinatorProblem, x, p)
     R = real(eltype(x))
     s1 = init_state(m.first, prob, x, p)
     s2 = init_state(m.second, prob, x, p)
@@ -78,7 +78,7 @@ end
 
 function step!!(
         state::SwitchState{S1, S2, FX, R}, m::Switch,
-        prob::NonlinearProblem, x, Fx, p) where {S1, S2, FX, R <: Real}
+        prob::AbstractNonlinearProblem, x, Fx, p) where {S1, S2, FX, R <: Real}
     fnorm = rnorm(Fx)
     if !isfinite(state.fnorm₀)
         return x, Fx, state,
