@@ -13,7 +13,10 @@ makedocs(;
         prettyurls = get(ENV, "CI", "false") == "true",
         canonical = "https://JuliaGNI.github.io/GeometricSolvers.jl",
         edit_link = "main",
-        assets = String[]
+        assets = String[],
+        # The API page documents every solver on one page and renders to about 200 KiB, which is
+        # Documenter's default hard limit; the warning limit stays at its default of 100 KiB.
+        size_threshold = 400 * 2^10
     ),
     pages = [
         "Home" => "index.md",
