@@ -30,6 +30,13 @@ end
     return Int32(-1), R(NaN)
 end
 
+# The one configuration `init_linear` below builds a sparse factor for, which is the one where a
+# detected Jacobian pattern replaces the dense factor.
+@inline function GeometricSolvers.has_sparse_factor(
+        m::LUFactorization, ::Vector{T}) where {T <: AbstractFloat}
+    return GeometricSolvers.factor_eltype(m, T) === T
+end
+
 function GeometricSolvers.init_linear(
         m::LUFactorization,
         P::SparseMatrixCSC{<:Any, Int},

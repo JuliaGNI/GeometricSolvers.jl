@@ -251,6 +251,8 @@ end
     # A combinator holds residual buffers of the iterate's length and refuses the problem
     @test_throws ArgumentError init(p3, ones(T, 2), Additive(GaussNewton(), GaussNewton()))
     @test_throws ArgumentError solve(p1, x0_s, Repeat(GaussNewton(), 2))
+    @test_throws ArgumentError init(p3, ones(T, 2), Anderson(GaussNewton(), 2))
+    @test_throws ArgumentError solve(p1, x0_s, Anderson(GaussNewton(), 2))
 
     # An analytic Jacobian is the Jacobian source, not automatic differentiation
     @test GeometricSolvers._has_analytic_jacobian(p2)

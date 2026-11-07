@@ -24,6 +24,7 @@ if "core" in GROUPS
     @safetestset "LDLT factorisation" include("linear/ldlt.jl")
     @safetestset "Dense linear solvers" include("linear/dense.jl")
     @safetestset "KA dense linear solvers" include("linear/ka.jl")
+    @safetestset "Own-kernel reference solve" include("devices/own_kernel.jl")
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Factor status and rank" include("linear/status.jl")
     @safetestset "Linear and spectral stability" include("linear/stability.jl")
@@ -34,6 +35,7 @@ if "core" in GROUPS
     @safetestset "LevenbergMarquardt" include("globalization/levenbergmarquardt.jl")
     @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
     @safetestset "Stationarity problem" include("nonlinear/stationarity.jl")
+    @safetestset "Reparametrized problem" include("nonlinear/reparametrized.jl")
     @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
     @safetestset "Newton" include("nonlinear/newton.jl")
     @safetestset "Iterative refinement" include("nonlinear/refinement.jl")
@@ -51,11 +53,13 @@ if "core" in GROUPS
     @safetestset "Multiplicative combinator" include("composition/multiplicative.jl")
     @safetestset "Repeat combinator" include("composition/repeat.jl")
     @safetestset "Switch combinator" include("composition/switch.jl")
+    @safetestset "Anderson acceleration" include("composition/anderson.jl")
     @safetestset "Combinators refuse ForwardDiff.Dual inputs" include("composition/implicit.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
     @safetestset "Jacobian-vector product" include("ad/jvp.jl")
     @safetestset "Sparse LU and AutoSparse" include("linear/sparspak.jl")
+    @safetestset "Sparse AD sparsity detection" include("ad/sparse_ad.jl")
     @safetestset "Standard test set" include("verification/standard.jl")
 end
 if "slow" in GROUPS
@@ -70,6 +74,7 @@ if "metal" in GROUPS
     @safetestset "Metal" include("devices/metal.jl")
     @safetestset "Metal static LU and QR" include("devices/metal_linear.jl")
     @safetestset "Metal KA LU and QR" include("devices/metal_ka.jl")
+    @safetestset "Metal vendor fast paths" include("devices/metal_vendor.jl")
     @safetestset "Metal static SVD and Jacobi eigensolver" include("devices/metal_svd.jl")
     @safetestset "Metal R1 nonlinear" include("devices/metal_nonlinear.jl")
 end

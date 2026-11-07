@@ -29,7 +29,9 @@ so that a compat-only bump can be told apart from an interface change.
   alike, and `LevenbergMarquardt` supports rectangular `m × n` Jacobians across R1 and R3 in both
   its SVD and stacked-QR paths, except that a device array iterate takes the SVD path only
   (`SVDFactorization()` with `scaling = :none`), and its stacked-QR path raises an `ArgumentError`.
-  A `LeastSquaresProblem` holds no Jacobian prototype, so its factors are dense, and it has no
+  A `LeastSquaresProblem` holds no Jacobian prototype and takes no pattern that an `AutoSparse`
+  detector finds (the one sparse factor, `SparspakLU`, is square), so its factors are dense, and
+  it has no
   implicit differentiation: `solve` with a `ForwardDiff.Dual` in `x₀` or `p` raises an
   `ArgumentError` (known issue K65). `Options{R}` gains `g_tol::R = sqrt(eps(R))` (`≥ 0`), and
   `SolverStatus{R}` gains `stationary::Bool` (`sizeof(SolverStatus{Float32}) == 36`,
@@ -55,12 +57,73 @@ so that a compat-only bump can be told apart from an interface change.
   under any globalization, the stacked `LevenbergMarquardt` step included: `regularization > 0`
   raises an `ArgumentError` where the state is built, on static and array iterates. An
   `LDLTFactorization` is refused outside `LevenbergMarquardt`, as `LUFactorization` is, and a
-  combinator (`Additive`, `Multiplicative`, `Repeat`, `Switch`) refuses a `LeastSquaresProblem` with
+  combinator (`Additive`, `Multiplicative`, `Repeat`, `Switch`, `Anderson`) refuses a `LeastSquaresProblem` with
   an `ArgumentError`. A `LeastSquaresProblem` refuses a `Refinement` in `Newton` on static and
   array iterates and for every `m`, with an `ArgumentError`, because a `Refinement` drives the
   linear residual `J d + F` to zero, which a least-squares step with more residuals than unknowns
   does not reach (known issue K80). An analytic `J` on the problem is the Jacobian used, not
   automatic differentiation.
+
+- **Automatic Jacobian sparsity detection and colouring for R3 nonlinear solves via the
+  `GeometricSolversSparseADExt` package extension (`SparseMatrixColorings`)** (decision 53 of the
+  design). `Project.toml` lists `SparseMatrixColorings` (`"0.4.23"`) as the weak dependency that
+  triggers the extension, through its `[extensions]` entry `GeometricSolversSparseADExt =
+  "SparseMatrixColorings"`. `SparseConnectivityTracer` is a test dependency, not a dependency of the
+  package. The extension uses nothing from it, so any sparsity detector works once
+  `SparseMatrixColorings` is loaded: `TracerSparsityDetector()` (which needs `SparseConnectivityTracer`
+  loaded), `DenseSparsityDetector`, or `KnownJacobianSparsityDetector(P)`. When `SparseMatrixColorings`
+  is loaded and a `NonlinearProblem` has `jacobian_prototype === nothing`,
+  `GeometricSolvers.jacobian_pattern(::NonlinearProblem{<:Any, <:Any, Nothing},
+  prep::DIJacobian{<:AutoSparse})` returns `SparseMatrixCSC(SparseMatrixColorings.sparsity_pattern(
+  prep.jacprep))` whenever the `AutoSparse` back end carries a sparsity detector, and `nothing`
+  otherwise. The matrix holds the entries the detector supplies, `Bool` from `TracerSparsityDetector`
+  and the prototype's element type from `KnownJacobianSparsityDetector(P)`, and `init_linear` needs
+  only its integer indices. A back end left at ADTypes' `NoSparsityDetector` default finds only a
+  pattern that is true everywhere, which has no sparsity to exploit, so the solve keeps the dense
+  factor and Jacobian. `Newton(; jacobian = AutoSparse(AutoForwardDiff(); sparsity_detector =
+  TracerSparsityDetector(), coloring_algorithm = GreedyColoringAlgorithm()))` detects the sparsity
+  pattern once in `prepare_ad` and colours the columns, so `jacobian!!` evaluates the Jacobian in
+  compressed form without a user-supplied `jacobian_prototype`. The detected pattern builds the sparse
+  factor only where `GeometricSolvers.has_sparse_factor` holds: an `LUFactorization` on a `Vector`
+  iterate of a real `AbstractFloat` type, with the factor in that same precision, and with `Sparspak`
+  loaded, which defines `SparspakLU`. Where it does not hold, the solve takes the dense factor and a
+  dense Jacobian buffer, as it does with no pattern. That covers `QRFactorization`,
+  `SVDFactorization`, mixed precision such as `LUFactorization(Float64)` on a `Float32` iterate, a
+  complex iterate, `Sparspak` not loaded, and `Newton(; globalization = LevenbergMarquardt(...))`
+  without an explicit `jacobian_prototype`, where the damped step reads a dense `J` and no sparse
+  factor. Under `Newton(; regularization = μ)` with `μ ≠ 0`, a
+  detected pattern that does not hold the whole structural diagonal also gives the dense factor,
+  because `regularize!!` writes `μ` onto the diagonal. When a `NonlinearProblem` carries an explicit
+  `jacobian_prototype = P` alongside `AutoSparse`, `prepare_ad` wraps `P` in
+  `KnownJacobianSparsityDetector(P)` and the extension method (restricted to
+  `NonlinearProblem{<:Any, <:Any, Nothing}`) does not match, so
+  `jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype` returns `P` directly.
+  An explicit prototype is subject to neither rule above: it keeps its errors, namely `init_linear`'s
+  `MethodError` and `ArgumentError` for unsupported configurations, and the pattern-mismatch
+  `ArgumentError` under regularization when `P` has no structural diagonal (K41).
+
+- **Package extensions `GeometricSolversMetalExt` and `GeometricSolversCUDAExt` dispatch dense
+  device factorisations and solves to vendor libraries on supported GPU element types** (decision 48
+  of the design). `Project.toml` adds `CUDA` (`5.5, 6`) and `Metal` (`1.10.3 - 1.11`) under
+  `[weakdeps]` and `[compat]` with `GeometricSolversCUDAExt` and `GeometricSolversMetalExt` under
+  `[extensions]`. When `Metal` is loaded, `factorize!!` and `backsolve!` on
+  `DeviceLU{<:MtlMatrix{Float32}}` and `MtlVector{Float32}` dispatch to Metal Performance Shaders
+  (`LinearAlgebra.lu!(fac.factors; check = false)` and `LinearAlgebra.ldiv!(LU(fac.factors,
+  fac.ipiv, BlasInt(fac.info)), d)`), mapping every MPS failure status to `info > 0`
+  (`SINGULAR`) with no fallback, and no copy of `J` where the caller passes the factor buffer
+  as `J`. MPS status `> 0` gives `info` = that status, `-2` gives the first index of the
+  smallest `|aᵢᵢ|` of the factors, and any other negative status gives `info = 1`, while
+  `QRFactorization`, `SVDFactorization`, and `ComplexF32`, `Float16` and `BFloat16`
+  `LUFactorization` remain on `KernelAbstractions`. When `CUDA` is loaded, `factorize!!` and
+  `backsolve!` on `DeviceLU{<:CuMatrix{T}}`, `DeviceQR{<:CuMatrix{T}}` and
+  `DeviceSVD{<:CuMatrix{T}}` for `T <: LinearAlgebra.BlasFloat` dispatch to cuSOLVER and cuBLAS
+  (`CUDA.CUSOLVER.getrf!` with `info` the first zero pivot, `CUDA.CUSOLVER.getrs!`,
+  `CUDA.CUSOLVER.geqrf!` with diagonal zero and non-finite checks, `CUDA.CUSOLVER.ormqr!` and
+  `CUDA.CUBLAS.trsv!`, and `CUDA.CUSOLVER.gesvdj!` with power-of-two input prescaling by `2^-e`,
+  rank truncation at `jacobi_tolerance(m, real(T)) * σ̂₁` for an `m × n` matrix, zeroing of
+  `U[:, (r + 1):n]`, and
+  `ka_svd_backsolve!`, falling back to `ka_factorize_svd!` when `gesvdj!` does not converge),
+  while `Float16` and `BFloat16` remain on `KernelAbstractions`.
 
 - **`LevenbergMarquardt{R, S}` damped trust-region globalization for `Newton`** (decision 57 of the
   design). `LevenbergMarquardt{R <: AbstractFloat, S}` (`R = Float64` by default, adapted to
@@ -123,7 +186,7 @@ so that a compat-only bump can be told apart from an interface change.
   `NonlinearProblem(F)` and `NonlinearProblem(F, J)` remain `isbits` when `F` and `J` are `isbits`.
   `GeometricSolvers.init_linear(method, pattern, x)` dispatches on `(method, pattern, x)` (with
   `dense_factor` forwarding `jacobian_prototype(prob)` and `Newton`'s `init_factor` forwarding
-  `jacobian_pattern(prob, jacprep)`), building dense host and device factors when `pattern ===
+  `factor_pattern(ls, prob, x, jacprep)`), building dense host and device factors when `pattern ===
   nothing`. When `Sparspak` (`0.3.15`) is loaded, `GeometricSolversSparspakExt` defines `SparspakLU`
   and extends `init_linear(m::LUFactorization, P::SparseMatrixCSC{<:Any, Int}, x::Vector{T}) where
   {T <: AbstractFloat}`, `factorize!!` and `ldiv!!`: `init_linear` allocates a `similar(P, T)`
@@ -1077,7 +1140,7 @@ so that a compat-only bump can be told apart from an interface change.
   this paragraph stands for `J(x) + μI`, the matrix that the factor solves: `Refinement` refines the
   direction of `(J(x) + μI) d = -F(x)`, and the linear-model residual that a promotion reads uses the
   same matrix. Combining `Refinement` (or `refinement = true`)
-  with `AutoFiniteDiff` raises an `ArgumentError` in `init` because
+  with `AutoFiniteDiff`, bare or inside `AutoSparse`, raises an `ArgumentError` in `init` because
   finite-difference directional derivatives corrupt the defect correction near the
   finite-difference step floor. If a pass does not strictly decrease `‖F(x) + J(x) d‖`
   (`!(r_curr < r_prev)`) or `maxiter` passes finish above the threshold, `refine!!` returns the best
@@ -1202,3 +1265,50 @@ so that a compat-only bump can be told apart from an interface change.
   `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
   through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
   input for every method.
+- `Anderson` (exported): `Anderson(member = Picard(),
+  Val(m) = Val(4); c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0,
+  safeguard_cos = nothing, grow_depth = false)` (plus the convenience `Anderson(member, m::Integer;
+  kwargs...)` forwarding to `Val(Int(m))`) accelerates an inner fixed-point or nonlinear step map
+  $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1
+  ($m \le 4$, `isbits` state on `SVector` and `Number`; the residual may have another type than the
+  iterate, so an `MVector` iterate with an `SVector` residual works (K70)), R2 (`solve_batch!`
+  kernel), and R3 (no upper bound on `m`, zero heap allocations in `step!!` and `solve!` after
+  warm-up on `Array`, and a `JLArray` step with no scalar indexing under `allowscalar(false)`).
+  Implements Pollock and Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`,
+  defaulting to `1 / sqrt(eps(R))` per iterate element type via `effective_kappa_bar`), trace-scaled
+  Tikhonov regularisation on the Gram normal equations $\Delta W^H \Delta W \gamma = \Delta W^H w_k$,
+  extrapolation weight and model-decrease safeguards ($\sum_j |\alpha_j| \le M_\alpha$ over the
+  affine weights of the member candidates, exact also after the angle filter drops an interior
+  history column (K71), optional `safeguard_cos` and `grow_depth`), automatic history clears on
+  residual growth ($\|F\| > \text{restart\_factor} \cdot \text{fnorm\_best}$) or stagnation,
+  `StepInfo.failures` counting filter column drops, rejected weights and history restarts,
+  `state.current_depth` in `1:m` after every step except one that ends in a hard member failure
+  (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with no step taken), which leaves it unchanged,
+  and best-iterate restoration in `finish!!` when `solve!!` exits with `status.code != SUCCESS` and
+  a strictly smaller historical residual norm was recorded. It solves a `NonlinearProblem` or a
+  `StationarityProblem`, with R1 tested on `SVector` and R3 on `Vector`. An accelerated step reports
+  `STALLED` when its member step does and `SUCCESS` otherwise; a fallback or restart step and a hard
+  failure keep the member's code. `solve` with `Anderson` and a `ForwardDiff.Dual` in `x₀` or `p`
+  raises the same `ArgumentError` as the other combinators, before the primal solve, since implicit
+  differentiation through a combinator is not implemented (K60). The method-first
+  `solve(prob, method::Anderson, x₀, p, options)` is not provided (K73).
+
+- `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
+  curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or
+  `StationarityProblem` in chart coordinates `x = g(y, p)` and return `(x* = g(y*, p), status)`
+  in the original coordinates from `solve` and `init` / `solve!` (`solve!!` returns
+  `(x*, status, state)`), with `solve_batch!` writing each system's `x*` into the batch, and
+  leave `update_iterate!!` untouched. In R1 (`StaticVector` or `Number`), `g(y, p)` returns
+  `x` and `∂g(y, p)` returns `G = ∂g/∂y`; in R3 (`AbstractVector`), `g!(x, y, p)` writes into
+  `x` and `∂g!(G, y, p)` writes into `G`, and when `∂g === nothing`, `G(y, p) = ∂g/∂y` is
+  computed by tagged ForwardDiff in R1 and chunked forward-mode AD in R3. With
+  `covariant = false` (default for `NonlinearProblem`), the transformed residual and Jacobian
+  are `F̃(y, p) = F(g(y, p), p)` and `J̃(y, p) = J(g(y, p), p) G(y, p)`. With `covariant = true`
+  (default for `StationarityProblem`), the residual is pulled back as
+  `F̃(y, p) = transpose(G(y, p)) F(g(y, p), p)`, and the Jacobian is
+  `J̃(y, p) = transpose(G) J G + (∂Gᵀ/∂y) F(g(y, p), p)` when `curvature = true` or
+  `transpose(G) J G` when `curvature = false`. A `StationarityProblem` needs `U = :` or `U = 1:n`
+  in order, where `n` is the chart dimension, and `E = :` or a permutation of `1:n`; `init`,
+  `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set. For
+  an R1 iterate the index sets are `:`, a tuple or an `SVector`, as for a `StationarityProblem`
+  without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.

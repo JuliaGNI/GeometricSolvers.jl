@@ -1,11 +1,14 @@
-using ADTypes: AutoFiniteDiff
+using ADTypes: AutoFiniteDiff, AutoSparse, KnownJacobianSparsityDetector
 using Adapt: adapt
+using FiniteDiff: FiniteDiff
 using GeometricSolvers
 using GeometricSolvers: solve!!
 using JET: JET
 using KernelAbstractions: CPU, @index, @kernel, synchronize
 using LinearAlgebra: Diagonal, norm
 using Random: Xoshiro, randn
+using SparseArrays: sparse
+using SparseMatrixColorings: GreedyColoringAlgorithm
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -239,6 +242,19 @@ end
     @test_throws ArgumentError init(
         prob_fd, SVector{2, Float64}(1.5, 1.5),
         Newton(; linsolve = LUFactorization(Float32), jacobian = AutoFiniteDiff(),
+            refinement = Refinement()))
+
+    # A finite-difference back end inside `AutoSparse` takes its JVP from `dense_ad`, so it is
+    # refused too, with and without factor reuse.
+    sparse_fd = AutoSparse(AutoFiniteDiff();
+        sparsity_detector = KnownJacobianSparsityDetector(sparse([1.0 0.0; 0.0 1.0])),
+        coloring_algorithm = GreedyColoringAlgorithm())
+    @test init(prob_fd, [1.5, 1.5], Newton(; jacobian = sparse_fd)) !== nothing
+    @test_throws ArgumentError init(
+        prob_fd, [1.5, 1.5], Newton(; jacobian = sparse_fd, refinement = Refinement()))
+    @test_throws ArgumentError init(
+        prob_fd, [1.5, 1.5],
+        QuasiNewton(3; linsolve = LUFactorization(Float32), jacobian = sparse_fd,
             refinement = Refinement()))
 
     qn = QuasiNewton(3)

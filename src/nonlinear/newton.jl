@@ -137,7 +137,8 @@ end
 @inline jacobian_matrix_jvp(::Static, x, Fx, prob) = nothing
 
 @inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
-    if m.refinement isa Refinement && m.jacobian isa AutoFiniteDiff
+    if m.refinement isa Refinement && m.jacobian isa AbstractADType &&
+       dense_ad(m.jacobian) isa AutoFiniteDiff
         throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
     end
     has_J = _has_analytic_jacobian(prob)
@@ -264,7 +265,11 @@ end
     jacobian_pattern(prob, jacprep)
 
 Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_prototype` for a
-[`NonlinearProblem`](@ref), and `nothing` for any other problem and for `nothing`.
+[`NonlinearProblem`](@ref), and `nothing` for any other problem and for `nothing`. The
+`GeometricSolversSparseADExt` extension adds a method for a [`NonlinearProblem`](@ref) with no
+prototype and a [`DIJacobian`](@ref) of an `AutoSparse` back end, which returns the pattern that
+back end's sparsity detector found; a back end with no detector finds only a pattern that is true
+everywhere, so that method returns `nothing` and the dense path runs.
 """
 @inline jacobian_pattern(prob::NonlinearProblem, jacprep) = prob.jacobian_prototype
 @inline jacobian_pattern(::AbstractNonlinearProblem, jacprep) = nothing
@@ -275,8 +280,66 @@ Return the Jacobian sparsity prototype for `prob` and `jacprep`: `prob.jacobian_
     return empty_static_factor(ls, x)
 end
 
+"""
+    has_sparse_factor(method::LinearMethod, x)
+
+Whether a package extension builds a sparse factor of `method` on the iterate `x` from a detected
+Jacobian pattern: `false` by default. The `GeometricSolversSparspakExt` extension returns `true`
+for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
+`T <: AbstractFloat`. Where it is `false`, a detected pattern gives the dense factor, as a solve
+with no pattern does; an explicit `jacobian_prototype` does not consult it.
+"""
+@inline has_sparse_factor(::LinearMethod, x) = false
+
+# The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
+# detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor. A
+# `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the one sparse
+# factor, `SparspakLU`, is square, so the `m × n` factor of a least-squares problem is dense.
+@inline function factor_pattern(ls, prob, x, jacprep)
+    P = jacobian_pattern(prob, jacprep)
+    P === nothing || jacobian_prototype(prob) !== nothing || has_sparse_factor(ls, x) ||
+        return nothing
+    return P
+end
+
 @inline function init_factor(ls::LinearMethod, prob, x::AbstractVector, p, jacprep)
-    return init_linear(ls, jacobian_pattern(prob, jacprep), x, factor_rows(prob, x))
+    return init_linear(ls, factor_pattern(ls, prob, x, jacprep), x, factor_rows(prob, x))
+end
+
+@inline has_structural_diagonal(::Nothing) = true
+@inline function has_structural_diagonal(P::SparseArrays.SparseMatrixCSC)
+    rows = SparseArrays.rowvals(P)
+    return all(j -> j in view(rows, SparseArrays.nzrange(P, j)), axes(P, 2))
+end
+
+# The pattern of the factors of a Newton solve: the `factor_pattern` of `m.linsolve`, whose factor
+# element type decides it also for the factor in the working precision that a mixed-precision
+# solve promotes to, so that both factors and the Jacobian buffer share one layout. `regularize!!`
+# writes `μ` onto the diagonal of `J`, so under `μ ≠ 0` a detected pattern without the whole
+# structural diagonal gives the dense factor. A `LevenbergMarquardt` step reads no sparse factor
+# (see `check_lm_iterate`), so a detected pattern gives it the dense factor and Jacobian buffer.
+@inline function newton_pattern(m::Newton, prob, x, jacprep)
+    P = factor_pattern(m.linsolve, prob, x, jacprep)
+    m.globalization isa LevenbergMarquardt && jacobian_prototype(prob) === nothing &&
+        return nothing
+    iszero(m.regularization) || jacobian_prototype(prob) !== nothing ||
+        has_structural_diagonal(P) || return nothing
+    return P
+end
+
+# The factor of `ls` for a Newton solve with `m`: `m.linsolve`, or its promotion to the working
+# precision. A pattern that the `init_factor` of `ls` would take and `newton_pattern` rejects gives
+# the dense factor, and every other case the `init_factor` of `ls`.
+@inline function init_newton_factor(
+        m::Newton, ls, prob, x::Union{StaticVector, Number}, p, jacprep)
+    return init_factor(ls, prob, x, p, jacprep)
+end
+
+@inline function init_newton_factor(m::Newton, ls, prob, x::AbstractVector, p, jacprep)
+    newton_pattern(m, prob, x, jacprep) === nothing &&
+        factor_pattern(ls, prob, x, jacprep) !== nothing &&
+        return init_linear(ls, nothing, x, factor_rows(prob, x))
+    return init_factor(ls, prob, x, p, jacprep)
 end
 
 # The Jacobian buffer of the step, `m × n` for the residual `Fx`. It is the matrix of a factor,
@@ -622,9 +685,10 @@ end
             jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule, merit, R(NaN),
             diag, nothing, nothing, false, Int32(0))
     else
-        fac = init_factor(m.linsolve, prob, x, p, jacprep)
+        fac = init_newton_factor(m, m.linsolve, prob, x, p, jacprep)
         fac_T = mixed && !(m.globalization isa LevenbergMarquardt) ?
-                init_factor(promote_linsolve(m.linsolve, eltype(x)), prob, x, p, jacprep) :
+                init_newton_factor(
+            m, promote_linsolve(m.linsolve, eltype(x)), prob, x, p, jacprep) :
                 nothing
         refbuf = init_refinement(m.refinement, x)
         return NewtonState(

@@ -58,11 +58,14 @@ end
 @testset "CommonSolve's functions dispatch their first argument on the package's types" begin
     # the first positional argument of every method that the package adds is one of the package's
     # own problem or solver types: `init` and `solve` take any `AbstractNonlinearProblem`, so that
-    # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem` has its own
+    # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem` and a
+    # `Reparametrized` problem have their own
     for (f, owned) in (
-        (CommonSolve.init, (GS.AbstractNonlinearProblem, StationarityProblem)),
-        (CommonSolve.solve, (GS.AbstractNonlinearProblem, StationarityProblem)),
-        (CommonSolve.solve!, (NonlinearSolver,)))
+        (CommonSolve.init,
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized)),
+        (CommonSolve.solve,
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized)),
+        (CommonSolve.solve!, (NonlinearSolver, ReparametrizedSolver)))
         ours = filter(m -> m.module === GS, collect(methods(f)))
         @test !isempty(ours)
         owned_names = map(t -> Base.unwrap_unionall(t).name, owned)
