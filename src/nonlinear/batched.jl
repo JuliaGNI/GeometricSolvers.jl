@@ -65,13 +65,15 @@ function _validate_batch(
     return nothing
 end
 
-# A batch runs its solves in one kernel, which takes the problem by value, so the problem must be
-# `isbits`: a `jacobian_prototype` that is a `SparseMatrixCSC`, for one, is host memory that no
-# kernel reads.
+# A batch runs its solves in one kernel, which takes the problem by value, so every part of the
+# problem the kernel reads must be `isbits`: a `jacobian_prototype` that is a `SparseMatrixCSC`, for
+# one, is host memory that no kernel reads.
 function _validate_batch_problem(prob)
-    isbits(prob) || throw(ArgumentError(
-        "solve_batch! takes the problem by value into a kernel, so the problem must be `isbits`; " *
-        "got $(typeof(prob)). Run `solve(prob, x₀, method, p)` per system instead"))
+    P = jacobian_prototype(prob)
+    (P === nothing || isbits(P)) || throw(ArgumentError(
+        "solve_batch! takes the problem's Jacobian prototype by value into a kernel, so the " *
+        "prototype must be `isbits`; got $(typeof(P)) in $(typeof(prob)). Run " *
+        "`solve(prob, x₀, method, p)` per system instead"))
     return nothing
 end
 
