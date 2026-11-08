@@ -438,15 +438,21 @@
 ### K83 · The CPU backend emits invalid SPIR-V for the batch kernel when the method loops
 
 - **location:** `src/nonlinear/batched.jl` (`_solve_kernel!`), reached from
-  `test/composition/anderson.jl` (Check 6b, "1 step from the same state in R1 … and KA CPU()")
-- **evidence:** launching `_solve_kernel!` on `CPU()` with an `Anderson` method raises
+  `test/composition/anderson.jl` (the R2 `solve_batch!` leg of Check 6, which the file records as
+  `@test_broken`)
+- **evidence:**
+  `[JuliaGPU/KernelAbstractions.jl#959](https://github.com/JuliaGPU/KernelAbstractions.jl/issues/959)`
+  carries this, with the emitted module attached. Launching `_solve_kernel!` on `CPU()` with an
+  `Anderson` method raises
   `Failed to validate generated SPIR-V: LoopMerge must appear in a block` with
   `OpLoopMerge %L1090_i_i_loopexit %L1059_postloop_i_i DontUnroll`, out of
   `GPUCompiler.mcgen` (`spirv.jl:359`). The kernel body contains the outer `while` of `solve!!` and
   the inner loop of the step, and the emitter places one `OpLoopMerge` outside its block. Versions:
-  `KernelAbstractions 0.10.5`, `GPUCompiler 2.22.0`, `LLVM 10.4.3`, Julia 1.13.3. The message asks
-  for the emitted module, and GPUCompiler writes it to `$TMPDIR/jl_*.bc`. The same kernel compiles
-  on `Metal 1.12.0`, so this is the CPU backend's path.
+  `KernelAbstractions 0.10.5`, `GPUCompiler 2.22.0`, `LLVM 10.4.3`, Julia 1.13.3. The same kernel
+  compiles on `Metal 1.12.0`, so this is the CPU backend's path. Two smaller shapes behave
+  differently and are reported in the issue: two nested `while` loops directly in a kernel body
+  compile and run, and a loop inside a called `@inline` function fails with another message
+  (`OpTypeInt … SPV_ALTERA_arbitrary_precision_integers`).
 - **kind:** upstream
 - **found:** 2026-11-08
 
