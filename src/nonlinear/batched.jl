@@ -27,15 +27,17 @@ function _adapt_order(backend, ::Nothing)
     return nothing
 end
 
-# An `isbits` order, such as a range, goes to the kernel by value; another order is copied to the
-# backend of the batch unless it is there already. A plain `Array` is host memory even where its
-# backend is the CPU one, and the kernel that the CPU backend compiles cannot read it, so it is
-# copied too.
+# An `isbits` order, such as a range, goes to the kernel by value; another order is copied into an
+# array of the batch's backend unless it is one already. A kernel reads the backend's own array,
+# not the host's memory, and the CPU backend compiles its kernels, so a host order is copied there
+# as well.
 function _adapt_order(backend, order::AbstractVector{<:Integer})
     isbitstype(typeof(order)) && return order
-    order_backend = get_backend(order)
-    order_backend == backend && !(order isa Array) && return order
     order_dev = allocate(backend, eltype(order), length(order))
+    order isa typeof(order_dev) && return order
+    # An order that is not the backend's own array is read through its own backend, which raises
+    # where the container names none.
+    get_backend(order)
     copyto!(order_dev, order isa Array ? order : Array(order))
     return order_dev
 end
