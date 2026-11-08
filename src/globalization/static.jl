@@ -23,10 +23,11 @@ Static(α::Real = 1.0) = Static{float(typeof(α))}(float(α))
 Adapt.adapt_storage(::ToReal{R}, ls::Static) where {R <: Real} = Static{R}(ls.α, Val(:raw))
 
 # The check of a `Static` after `adapt`, which the raw constructor above cannot make: `ToReal` may
-# narrow a step to `Inf` or to zero.
-function check_adapted(ls::Static{R}) where {R}
-    ls.α > 0 && isfinite(ls.α) || throw(ArgumentError(
-        "the step of Static must be positive and finite after adaptation to $R, got $(ls.α)"))
+# narrow a step to `Inf` or to zero. The message carries no value or type name: this check sits on
+# the inference path that `@test_opt` analyses, and a formatted message is a report there.
+function check_adapted(ls::Static)
+    ls.α > 0 && isfinite(ls.α) ||
+        throw(ArgumentError("a Static step must stay positive and finite after adaptation"))
     return ls
 end
 
