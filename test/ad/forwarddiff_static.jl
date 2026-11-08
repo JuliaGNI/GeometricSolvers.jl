@@ -323,9 +323,14 @@ const R1KernelResult{T, N, L} = Tuple{
     p = P[i]
     J = jacobian!!(nothing, ad, prob, x, p)
     Jn = jacobian!!(nothing, noth, prob, x, p)
+    # `nested` carries its own `ForwardDiff.derivative`, and an explicitly tagged `AutoForwardDiff`
+    # over it throws inside a compiled kernel: the nested derivative's tag then is the outer one and
+    # `ForwardDiff.partials` sees a plain value (K84). The untagged back end over the same problem,
+    # and the tagged one over `tagged`, both run here.
     out[i] = (
         J, jvp!!(nothing, ad, prob, x, p, p), Jn, jvp!!(nothing, noth, prob, x, p, p),
-        jacobian!!(nothing, fun, prob, x, p), jacobian!!(nothing, caller, nested, x, p),
+        jacobian!!(nothing, fun, prob, x, p), jacobian!!(
+            nothing, AutoForwardDiff(), nested, x, p),
         jacobian!!(nothing, caller, tagged, x, p), mul!!(nothing, J, Jn))
 end
 
@@ -351,7 +356,12 @@ end
         @test Jf == r1_member_operator(X[i], P[i])
         @test Jg == r1_closing_jacobian(X[i], P[i])
         @test Jt == T(2) * identity_matrix(T, N_STATIC)
-        @test C == J * J
+        # a complex product rounds in a different order in the kernel, as the JVP below does
+        @test isapprox(C, J * J; rtol = 8 * eps(real(T)))
+        # the tagged back end over the nested problem, which a compiled kernel cannot run (K84),
+        # keeps its check on the host
+        @test jacobian!!(nothing, caller, nested, X[i], P[i]) ==
+              r1_closing_jacobian(X[i], P[i])
         # the Jacobians are exact in every element type; the product of a general direction is
         # not, in a complex one, so it carries the eight-ulp tolerance named above
         @test isapprox(Jv, J * P[i]; rtol = 8 * eps(real(T)))

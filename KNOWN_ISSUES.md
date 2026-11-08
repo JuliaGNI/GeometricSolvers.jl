@@ -449,3 +449,22 @@
   on `Metal 1.12.0`, so this is the CPU backend's path.
 - **kind:** upstream
 - **found:** 2026-11-08
+
+### K84 · An explicitly tagged `AutoForwardDiff` over a residual that calls `ForwardDiff.derivative` throws in a compiled kernel
+
+- **location:** `src/ad/forwarddiff_static.jl` (the own chunked path), reached by
+  `AUTOForwardDiff` with a caller tag in `test/ad/forwarddiff_static.jl`
+- **evidence:** in a kernel on `CPU()`,
+  `jacobian!!(nothing, AutoForwardDiff(; tag = ForwardDiff.Tag(CallerTag(), T)), nested, x, p)` with
+  `nested = NonlinearProblem(R1Closing(), r1_closing_jacobian)` raises
+  `KernelException: exception thrown during kernel execution`; the device stack of `julia -g2` ends
+  at `ForwardDiff.partials` (`dual.jl:114`) under
+  `extract_derivative` → `derivative` → `r1_closing_term` (`test/helpers/r1problems.jl:151`) →
+  `R1Closing`. The same call with the *untagged* `AutoForwardDiff()`, and the tagged call over a
+  residual without a nested derivative (`R1Tagged`), both return the right Jacobian in the same
+  kernel; all three work on the host. So the perturbation tag of the nested `derivative` is not
+  isolated from the caller's tag once the code is compiled, and `partials` receives a plain value.
+  The test keeps the untagged pair and the tagged-over-`R1Tagged` pair inside the kernel, and the
+  tagged-over-nested pair on the host.
+- **kind:** upstream
+- **found:** 2026-11-08
