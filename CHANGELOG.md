@@ -12,23 +12,33 @@ so that a compat-only bump can be told apart from an interface change.
 ### Changed
 
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
-  range starts at `6.5.1`.** The floor rises from `0.9.38`, because JLArrays 0.5 needs
-  `KernelAbstractions 0.10.5` and `GPUArrays 12.1`; Metal 1.12 is the first Metal that takes
-  `GPUArrays` 12, and CUDA 6.5.1 the first CUDA whose `CUDACore` takes KernelAbstractions 0.10.
-  `isgpu` is no longer part of the KernelAbstractions API, so the package states it as
-  `!(backend isa CPU)`: the CPU backend answers `false`, and CUDA, ROCm, Metal and the `JLArray`
-  backend answer `true`, as before. The `CPU()` backend now compiles its kernels, so a kernel
-  argument must be `isbits` and a kernel body may not format an error message. Five consequences
-  for a caller: a kernel that runs a whole `solve` no longer compiles there, because building its
-  options formats a message — the device tests build the state and the options on the host and call
-  `solve!!` in the kernel; a positional `Newton(...)` no longer validates, because `adapt` rebuilds
-  a method inside a kernel and the check formats a message, while `Newton(; ...)` keeps its checks
-  and `Static{R}(α)` keeps them too, its unchecked rebuild being reachable only through
-  `Val(:raw)`; the `order` of a batch goes as an array of the backend, because a kernel reads only
-  the backend's own memory; a callable `StationarityProblem` datum is checked for every system of a
-  batch on the host, so a length that differs between systems is an `ArgumentError` before the
-  launch instead of inside it; and `solve_batch!` refuses a `jacobian_prototype` that is not
-  `isbits` — a `SparseMatrixCSC`, for instance — because the kernel takes it by value.
+  range starts at `6.5.1`.** The three test environments that use `JLArrays` take 0.5 from an
+  unregistered commit of `GPUArrays.jl` through `[sources]`, because that 0.5 needs
+  `KernelAbstractions` 0.10.5 and `GPUArrays` 12.1; the `[sources]` entry is temporary.
+  Metal 1.12, and CUDA 6.5.1 through its `CUDACore`, are the first releases that take
+  `KernelAbstractions` 0.10. The `CPU()` backend is now `POCLBackend`, which compiles kernels to
+  SPIR-V, so a kernel argument must be `isbits` and a kernel body may not format an error
+  message. `isgpu` left the KernelAbstractions API, so the package states it as
+  `!(backend isa CPU)`: the CPU backend answers `false`, and every device backend answers `true`,
+  as before — CUDA, ROCm, Metal and the `JLBackend` of JLArrays. For a caller: `Newton(; ...)`
+  validates its arguments, while a positional `Newton(...)` no longer does, because `adapt`
+  rebuilds a method inside a kernel through the positional constructors and the check formats a
+  message; `Static{R}(α)` still validates, and only `Static{R}(α, Val(:raw))`, which the `adapt`
+  rule alone calls, is unchecked; `prepare_solve` re-runs those checks on the host after `adapt`,
+  through `check_adapted`, as does the batch preparation of a `NonlinearProblem`, so a `Static`
+  step that `ToReal` narrows to `Inf` or to zero, or a regularization that it makes non-finite,
+  is still refused there; a batch `order` that is not `isbits` goes to the kernel as an array of
+  the batch's backend — the order itself when it already is one and a copy otherwise, because a
+  kernel reads only its own backend's memory — while an `isbits` order, a range for instance,
+  still goes by value; a callable `StationarityProblem` datum `b(p)` is evaluated for every system
+  of a batch on the host before the launch, so a datum whose length differs between systems is an
+  `ArgumentError` there instead of inside the kernel; and `solve_batch!` refuses a
+  `jacobian_prototype` that is not `isbits` — a `SparseMatrixCSC`, for instance — because the
+  kernel takes the problem by value, the check reading through a `Reparametrized` to its inner
+  problem. Three issues are recorded as known: K82, the Enzyme test environment cannot resolve
+  against the `LLVM` bound of `KernelAbstractions` 0.10.5; K83, the CPU backend emits invalid
+  SPIR-V for a batch kernel whose method loops; and K84, an explicitly tagged `AutoForwardDiff`
+  over a residual that calls `ForwardDiff.derivative` throws in a kernel on the CPU backend.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
