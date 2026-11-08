@@ -11,12 +11,22 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
-- **`KernelAbstractions` 0.10.5 replaces 0.9, and the `Metal` range widens to `1.10.3 - 1.12`.**
-  The floor rises from `0.9.38`, because JLArrays 0.5 needs `KernelAbstractions 0.10.5` and
-  `GPUArrays 12.1`, and Metal 1.12 is the first Metal that takes `GPUArrays` 12. `isgpu` is no
-  longer part of the KernelAbstractions API, so the package states it as
+- **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
+  range starts at `6.5.1`.** The floor rises from `0.9.38`, because JLArrays 0.5 needs
+  `KernelAbstractions 0.10.5` and `GPUArrays 12.1`; Metal 1.12 is the first Metal that takes
+  `GPUArrays` 12, and CUDA 6.5.1 the first CUDA whose `CUDACore` takes KernelAbstractions 0.10.
+  `isgpu` is no longer part of the KernelAbstractions API, so the package states it as
   `!(backend isa CPU)`: the CPU backend answers `false`, and CUDA, ROCm, Metal and the `JLArray`
-  backend answer `true`, as before. Nothing else in the interface changes.
+  backend answer `true`, as before. The disabled `CPU()` backend is now an OpenCL backend, so a
+  kernel that runs a whole `solve` — which formats an error message when it builds its options —
+  no longer compiles there; the device tests build the state and the options on the host and call
+  `solve!!` in the kernel.
+- **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
+  scaled path summed through a closure that carried the accumulation type as a field, and a device
+  kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
+  on an `MtlArray` of such entries — an entry near `floatmax` or near `floatmin` — while the host
+  path returned the right value. The summand is now `ScaledSquares{S}`, whose type parameter holds
+  the accumulation type and whose only field is the exponent `Int`.
 
 - **`LeastSquaresProblem`, `GaussNewton`, rectangular static, host and device QR and SVD, and the
   stationarity stopping test** (decisions 44 and 57 of the design). `AbstractNonlinearProblem` is
