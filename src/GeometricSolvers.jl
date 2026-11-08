@@ -20,8 +20,10 @@ using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticA
                     StaticMatrix, StaticVector, SVector,
                     setindex, similar_type
 
-# KernelAbstractions 0.10 dropped `isgpu`: every backend subtypes `Backend`, and the CPU backend
-# is the alias of the host one, so a backend is a device exactly when it is not the CPU.
+# KernelAbstractions 0.10 has no `isgpu`. Every backend subtypes `Backend` and `CPU` aliases
+# `POCLBackend`, the host backend, so a backend is a device exactly when it is not a `CPU`.
+# A `CPU` launch completes before it returns and `synchronize(::CPU)` does nothing, so
+# `isgpu(backend) && synchronize(backend)` skips nothing.
 isgpu(backend) = !(backend isa CPU)
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED

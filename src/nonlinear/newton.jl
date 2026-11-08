@@ -60,35 +60,25 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     refinement::RF
     regularization::R
     reuse::K
-    function Newton{L, G, J, RF, R, K}(
-            linsolve::L, globalization::G, jacobian::J,
-            refinement::RF, regularization::R,
-            reuse::K) where {
-            L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
-        regularization >= zero(R) && isfinite(regularization) ||
-            throw(ArgumentError("Newton regularization must be finite and ≥ 0, got $regularization"))
-        if reuse !== nothing
-            reuse >= Int32(1) ||
-                throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse"))
-            globalization isa DogLeg &&
-                throw(ArgumentError("Newton with a DogLeg globalization takes no reuse, got reuse = $reuse"))
-            globalization isa LevenbergMarquardt &&
-                throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse, got reuse = $reuse"))
-        end
-        globalization isa LevenbergMarquardt && refinement isa Refinement &&
-            throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
-        new{L, G, J, RF, R, K}(
-            linsolve, globalization, jacobian, refinement, regularization, reuse)
-    end
 end
 
-function Newton(
-        linsolve::L, globalization::G, jacobian::J,
-        refinement::RF, regularization::R,
-        reuse::K) where {
-        L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
-    return Newton{L, G, J, RF, R, K}(
-        linsolve, globalization, jacobian, refinement, regularization, reuse)
+# The validation of a `Newton` method, run by the keyword constructor alone: `adapt` rebuilds a
+# method inside a device kernel through the positional constructors, and a message built with
+# `$regularization` does not compile there.
+function check_newton(regularization::R, reuse, globalization, refinement) where {R <: Real}
+    regularization >= zero(R) && isfinite(regularization) ||
+        throw(ArgumentError("Newton regularization must be finite and ≥ 0, got $regularization"))
+    if reuse !== nothing
+        reuse >= Int32(1) ||
+            throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse"))
+        globalization isa DogLeg &&
+            throw(ArgumentError("Newton with a DogLeg globalization takes no reuse, got reuse = $reuse"))
+        globalization isa LevenbergMarquardt &&
+            throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse, got reuse = $reuse"))
+    end
+    globalization isa LevenbergMarquardt && refinement isa Refinement &&
+        throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
+    return nothing
 end
 
 function Newton(;
@@ -101,6 +91,7 @@ function Newton(;
     reg = float(regularization)
     r = reuse === nothing ? nothing : Int32(reuse)
     ref = refinement isa Bool ? (refinement ? Refinement() : NoRefinement()) : refinement
+    check_newton(reg, r, globalization, ref)
     return Newton(linsolve, globalization, jacobian, ref, reg, r)
 end
 

@@ -28,19 +28,20 @@ caller_tag_scale(::Type{<:ForwardDiff.Dual{<:ForwardDiff.Tag{CallerTag}}}) = 2
 caller_tag_scale(::Type{<:Complex{<:ForwardDiff.Dual{<:ForwardDiff.Tag{CallerTag}}}}) = 2
 caller_tag_scale(::Type) = 1
 
-@kernel function newton_singular_kernel!(codes, xs, @Const(prob), @Const(x₀))
+@kernel function newton_singular_kernel!(codes, xs, prob, method, state₀, opt, @Const(x₀))
     i = @index(Global, Linear)
     @inbounds begin
-        x, st = solve(prob, x₀, Newton())
+        x, st, _ = solve!!(state₀, prob, x₀, method, nothing, opt)
         codes[i] = st.code
         xs[i] = x
     end
 end
 
-@kernel function newton_solve_kernel!(codes, xs, @Const(prob), @Const(x₀), @Const(p))
+@kernel function newton_solve_kernel!(codes, xs, prob, method, state₀, opt, @Const(x₀),
+        @Const(p))
     i = @index(Global, Linear)
     @inbounds begin
-        x, st = solve(prob, x₀, Newton(), p)
+        x, st, _ = solve!!(state₀, prob, x₀, method, p, opt)
         codes[i] = st.code
         xs[i] = x
     end
@@ -633,11 +634,15 @@ end
 @testset "Newton inside a KernelAbstractions kernel on CPU" begin
     for T in ELTYPES
         R = real(T)
+        m = Adapt.adapt(ToReal{R}(), Newton())
+        opt = Options(T)
         x₀_s = SVector{2, T}(zero(T), zero(T))
         prob_s = NonlinearProblem((y, _) -> y .* y .- one(eltype(y)))
         codes_s = Vector{GeometricSolvers.ReturnCode}(undef, 2)
         xs_s = Vector{SVector{2, T}}(undef, 2)
-        newton_singular_kernel!(KA_BACKEND)(codes_s, xs_s, prob_s, x₀_s; ndrange = 2)
+        state₀_s = init_state(m, prob_s, x₀_s, nothing)
+        newton_singular_kernel!(KA_BACKEND)(
+            codes_s, xs_s, prob_s, m, state₀_s, opt, x₀_s; ndrange = 2)
         synchronize(KA_BACKEND)
         @test all(==(SINGULAR), codes_s)
         @test all(x -> x === x₀_s, xs_s)
@@ -645,10 +650,12 @@ end
         x₀_c = SVector{2, T}(T(3), T(5))
         p_c = SVector{2, T}(T(4), T(9))
         prob_c = NonlinearProblem((y, q) -> y .* y .- q)
-        _, st_host = solve(prob_c, x₀_c, Newton(), p_c)
+        _, st_host = solve(prob_c, x₀_c, m, p_c)
         codes_c = Vector{GeometricSolvers.ReturnCode}(undef, 2)
         xs_c = Vector{SVector{2, T}}(undef, 2)
-        newton_solve_kernel!(KA_BACKEND)(codes_c, xs_c, prob_c, x₀_c, p_c; ndrange = 2)
+        state₀_c = init_state(m, prob_c, x₀_c, p_c)
+        newton_solve_kernel!(KA_BACKEND)(
+            codes_c, xs_c, prob_c, m, state₀_c, opt, x₀_c, p_c; ndrange = 2)
         synchronize(KA_BACKEND)
         @test all(==(st_host.code), codes_c)
         @test all(

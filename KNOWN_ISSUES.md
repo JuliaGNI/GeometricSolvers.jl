@@ -15,9 +15,9 @@
   `false` it passes, with the assertion passed and the device skip recorded (Julia 1.13.3). The
   fix is upstream: Metal.jl 1.12.0 runs its workload only where `!isempty(devices())`
   (JuliaGPU/Metal.jl#1000, which closed JuliaGPU/Metal.jl#996). Metal.jl 1.12.0 needs
-  KernelAbstractions 0.10, while this package bounds KernelAbstractions at 0.9, so the test
-  environment resolves Metal.jl 1.11.1, and the preference stays until the package moves to
-  KernelAbstractions 0.10.
+  KernelAbstractions 0.10, and this package bounds KernelAbstractions at 0.10.5, so the test
+  environment resolves Metal.jl 1.12.0, and the preference stays until a sandboxed
+  `run-tests.jl <repository> devices/metal.jl` passes without it.
 - **kind:** upstream
 - **found:** 2026-10-02
 

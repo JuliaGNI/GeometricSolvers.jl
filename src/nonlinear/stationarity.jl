@@ -512,9 +512,10 @@ end
 
 # The index sets of `prob` against the iterate type of the batch `X`, and the length of a shared
 # vector datum or of every vector of a `PerSystem` datum `b_src`, which the batch checks before it
-# initialises a state. A callable datum is checked when the state for the first system is
-# initialised, which an empty batch skips.
-function _validate_stationarity_batch(X, prob::StationarityProblem, b_src)
+# initialises a state. A callable datum is evaluated once per system here, on the host: a device
+# kernel cannot format the message of a rejected datum, and one system's datum may differ in
+# length from another's.
+function _validate_stationarity_batch(X, prob::StationarityProblem, b_src, p)
     x₀ = zero(eltype(X))
     b_shared = b_src isa AbstractVector ? b_src : nothing
     _validate_stationarity_solve(prob, x₀, b_shared)
@@ -522,8 +523,24 @@ function _validate_stationarity_batch(X, prob::StationarityProblem, b_src)
     for nb in _datum_lengths(b_src)
         nb == m || throw(ArgumentError("datum b must have length $m, got $nb"))
     end
+    if _is_callable_datum(b_src)
+        for i in eachindex(X)
+            bi = _eval_datum(b_src, parameters(p, i))
+            bi isa AbstractVector || continue
+            length(bi) == m ||
+                throw(ArgumentError("datum b must have length $m, got $(length(bi))"))
+        end
+    end
     return nothing
 end
+
+# Whether a datum source is a callable `b(p)`: a `Number`, a vector, a `PerSystem` of those and
+# `nothing` are not.
+_is_callable_datum(::Nothing) = false
+_is_callable_datum(::Number) = false
+_is_callable_datum(::AbstractArray) = false
+_is_callable_datum(::PerSystem) = false
+_is_callable_datum(::Any) = true
 
 # The lengths of the vectors of a `PerSystem` datum: one, from the type, for static vectors, which
 # a device array also holds, and one per system for a host array of other vectors.
@@ -544,7 +561,7 @@ function solve_batch!(
     R = real(T)
     opt = resolve_options(T, options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
-    _validate_stationarity_batch(X, prob, b_src)
+    _validate_stationarity_batch(X, prob, b_src, p)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     idx₀ = firstindex(X)
     p₀ = _sample_batch_item(p, idx₀)
@@ -572,7 +589,7 @@ function solve_batch!(
         "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
     opt = resolve_options(eltype(eltype(X)), options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
-    _validate_stationarity_batch(X, prob, b_src)
+    _validate_stationarity_batch(X, prob, b_src, p)
     isempty(X) && return S
     idx₀ = firstindex(X)
     p₀ = _sample_batch_item(p, idx₀)

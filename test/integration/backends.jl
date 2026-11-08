@@ -23,14 +23,6 @@ include("../helpers/matrix.jl")
     @test KA_BACKEND isa KernelAbstractions.CPU
 end
 
-# The named KA backend is exactly the plain, non-static `CPU()`: `CPU(; static = true)` is also a
-# `CPU`, and a kernel launched on it takes a different work-division path, so the backend is pinned
-# by its field rather than by its type alone. The field is read instead of comparing against a
-# freshly constructed `CPU()`, because `test/helpers/matrix.jl` is the one place that constructs it.
-@testset "the named KA backend is the plain CPU backend" begin
-    @test KA_BACKEND.static === false
-end
-
 # The sets themselves, so that a type silently dropped from one of them fails a test rather than
 # only shrinking the number of cases every other test runs. The names are not written as a tuple
 # here: `test/quality/matrix.jl` fails on a literal tuple of element types under `test/`.

@@ -18,9 +18,10 @@ using Test
 
 using GeometricSolvers
 using GeometricSolvers: DogLeg, LINESEARCH_FAILED, LUFactorization, LineSearch, NONFINITE,
-                        Newton, NonlinearProblem, QRFactorization, SINGULAR, STALLED,
+                        Newton, NonlinearProblem, Options, QRFactorization, SINGULAR,
+                        STALLED,
                         SUCCESS, ToReal, factorize!!, init_state, ldiv!!, rnorm, solve,
-                        step!!
+                        solve!!, step!!
 
 include("../helpers/matrix.jl")
 
@@ -654,10 +655,11 @@ end
     end
 end
 
-@kernel function dogleg_kernel!(codes, xs, @Const(prob), @Const(x₀s), @Const(m), @Const(s))
+@kernel function dogleg_kernel!(codes, xs, prob, method, state₀, opt, @Const(x₀s),
+        @Const(s))
     i = @index(Global, Linear)
     @inbounds begin
-        x, st = solve(prob, x₀s[i], m, s)
+        x, st, _ = solve!!(state₀, prob, x₀s[i], method, s, opt)
         codes[i] = st.code
         xs[i] = x
     end
@@ -671,14 +673,16 @@ allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
 
 @testset "the kernel path: host and kernel agree, inferred, allocation-free, $R" for R in REAL_ELTYPES
     prob = NonlinearProblem(rosen_F, rosen_J)
-    m = dogleg_newton()
+    m = Adapt.adapt(ToReal{R}(), dogleg_newton())
     s = one(R)
     x₀s = [SVector{2, R}(-1.2, 1), SVector{2, R}(2, 2), SVector{2, R}(0.5, -1),
         SVector{2, R}(-3, 4)]
     host = [solve(prob, x₀, m, s) for x₀ in x₀s]
     codes = Vector{GeometricSolvers.ReturnCode}(undef, 4)
     xs = Vector{SVector{2, R}}(undef, 4)
-    dogleg_kernel!(KA_BACKEND)(codes, xs, prob, x₀s, m, s; ndrange = 4)
+    state₀ = init_state(m, prob, x₀s[1], s)
+    dogleg_kernel!(
+        KA_BACKEND)(codes, xs, prob, m, state₀, Options(R), x₀s, s; ndrange = 4)
     synchronize(KA_BACKEND)
     @test codes == [h[2].code for h in host]
     @test xs == [h[1] for h in host]

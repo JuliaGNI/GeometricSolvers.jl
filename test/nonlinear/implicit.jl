@@ -981,11 +981,16 @@ end
     @test isapprox(x, x_base; rtol)
     X = [x0, x0]
     statuses = Vector{SolverStatus{Float64}}(undef, 2)
-    solve_batch!(X, statuses, prob_buf, Newton(), p0)
+    # The batch runs its solves inside a kernel, which cannot read a captured host array, so the
+    # same capture is taken as a static vector here.
+    buf_static = SVector{2}(buf)
+    prob_buf_static = NonlinearProblem(
+        (x, p) -> x .^ 2 .- p .+ ForwardDiff.value(buf_static[1]))
+    solve_batch!(X, statuses, prob_buf_static, Newton(), p0)
     @test all(s -> s.code === SUCCESS, statuses)
     @test all(xi -> isapprox(xi, x_base; rtol), X)
     X = [x0, x0]
-    @test solve_batch!(X, prob_buf, Newton(), p0).SUCCESS == 2
+    @test solve_batch!(X, prob_buf_static, Newton(), p0).SUCCESS == 2
     @test all(xi -> isapprox(xi, x_base; rtol), X)
 
     # an R3 F that calls ForwardDiff.gradient with a captured GradientConfig
