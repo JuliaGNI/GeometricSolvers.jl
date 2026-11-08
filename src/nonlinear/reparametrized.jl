@@ -987,6 +987,7 @@ function solve_batch!(
             "status vector backend $(get_backend(S)) does not match batch backend $(get_backend(Y))"))
     end
     _validate_batch(Y, p, order)
+    _validate_batch_problem(reparam)
     m, opt, state₀ = _prepare_batch(Y, reparam, method, options, kwargs)
     isempty(Y) && return S
     return _launch!(Y, S, reparam, m, p, opt, state₀, order)
@@ -1002,6 +1003,7 @@ function solve_batch!(
         kwargs...
 )
     _validate_batch(Y, p, order)
+    _validate_batch_problem(reparam)
     m, opt, state₀ = _prepare_batch(Y, reparam, method, options, kwargs)
     isempty(Y) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(Y), ReturnCode, length(Y))

@@ -65,6 +65,16 @@ function _validate_batch(
     return nothing
 end
 
+# A batch runs its solves in one kernel, which takes the problem by value, so the problem must be
+# `isbits`: a `jacobian_prototype` that is a `SparseMatrixCSC`, for one, is host memory that no
+# kernel reads.
+function _validate_batch_problem(prob)
+    isbits(prob) || throw(ArgumentError(
+        "solve_batch! takes the problem by value into a kernel, so the problem must be `isbits`; " *
+        "got $(typeof(prob)). Run `solve(prob, x₀, method, p)` per system instead"))
+    return nothing
+end
+
 function _prepare_batch(
         X::AbstractVector,
         prob::NonlinearProblem,
@@ -154,6 +164,7 @@ function solve_batch!(
         kwargs...
 ) where {R <: Real}
     _validate_batch(X, p, order)
+    _validate_batch_problem(prob)
     R_X = real(eltype(eltype(X)))
     if R !== R_X
         throw(ArgumentError(
@@ -182,6 +193,7 @@ function solve_batch!(
         kwargs...
 )
     _validate_batch(X, p, order)
+    _validate_batch_problem(prob)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))

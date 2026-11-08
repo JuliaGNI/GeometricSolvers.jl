@@ -26,7 +26,10 @@ so that a compat-only bump can be told apart from an interface change.
   (`Newton(; ...)` and `Static(α)` do, as before); and the `order` of a batch is copied into an
   array of the backend, because a kernel reads the backend's own memory. A callable
   `StationarityProblem` datum is now checked for every system of a batch on the host, so a length
-  that differs between systems is an `ArgumentError` before the launch instead of inside it.
+  that differs between systems is an `ArgumentError` before the launch instead of inside it. A
+  fourth: `solve_batch!` refuses a problem that is not `isbits` — one whose `jacobian_prototype` is
+  a `SparseMatrixCSC`, for instance — because the kernel takes the problem by value; call `solve`
+  per system instead.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`

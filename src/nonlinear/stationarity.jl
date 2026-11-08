@@ -556,6 +556,7 @@ function solve_batch!(
         options::Union{Nothing, Options} = nothing, b = nothing, kwargs...)
     b_src = b === nothing ? prob.b : b
     _validate_batch(X, p, order)
+    _validate_batch_problem(prob)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
     T = eltype(eltype(X))
     R = real(T)
@@ -579,6 +580,7 @@ function solve_batch!(
         kwargs...) where {R <: Real}
     b_src = b === nothing ? prob.b : b
     _validate_batch(X, p, order)
+    _validate_batch_problem(prob)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
     R_X = real(eltype(eltype(X)))
     R === R_X || throw(ArgumentError(
