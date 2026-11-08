@@ -1018,12 +1018,17 @@ end
         @test status_num.code == SUCCESS
         @test abs(prob_num.F(x_num, nothing)) <= 1e-11
 
-        # R2 solve_batch! on CPU()
+        # R2 solve_batch! on CPU(). issue #959: the CPU backend emits invalid SPIR-V
+        # (`LoopMerge must appear in a block`) for the batch kernel when the method's step loops,
+        # which `Anderson`'s does, so the leg is recorded as broken. An "Unexpected Pass" means the
+        # backend is fixed and the mark comes off.
         X_batch = [SVector{4, Float64}(x0_vec) for _ in 1:4]
         S_batch = Vector{SolverStatus{Float64}}(undef, 4)
-        solve_batch!(X_batch, S_batch, prob_par_r1, a_par; options = opts_r1)
-        @test all(s -> s.code == SUCCESS, S_batch)
-        @test all(x -> rnorm(prob_par_r1.F(x, nothing)) <= 1e-11, X_batch)
+        @test_broken begin  # issue #959
+            solve_batch!(X_batch, S_batch, prob_par_r1, a_par; options = opts_r1)
+            all(s -> s.code == SUCCESS, S_batch) &&
+                all(x -> rnorm(prob_par_r1.F(x, nothing)) <= 1e-11, X_batch)
+        end
 
         # 6d. R3 0 allocations for both step!! and solve! after warm-up
         old_threads = BLAS.get_num_threads()
