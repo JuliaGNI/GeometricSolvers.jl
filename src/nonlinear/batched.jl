@@ -27,10 +27,10 @@ function _adapt_order(backend, ::Nothing)
     return nothing
 end
 
-# An `isbits` order, such as a range, goes to the kernel by value; another order is copied into an
-# array of the batch's backend unless it is one already. A kernel reads the backend's own array,
-# not the host's memory, and the CPU backend compiles its kernels, so a host order is copied there
-# as well.
+# An `isbits` order, such as a range, goes to the kernel by value; another order goes as an array
+# of the batch's backend, which is the order itself when it is one and a copy otherwise. A kernel
+# reads only the backend's own arrays and the CPU backend compiles its kernels, so a host container
+# that is not an `Array`, such as a `view`, is copied there too.
 function _adapt_order(backend, order::AbstractVector{<:Integer})
     isbitstype(typeof(order)) && return order
     order_dev = allocate(backend, eltype(order), length(order))
@@ -87,7 +87,7 @@ function _prepare_batch(
     T = eltype(eltype(X))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
-    m = Adapt.adapt(ToReal{R}(), method)
+    m = check_adapted(Adapt.adapt(ToReal{R}(), method))
     state₀ = init_state(m, prob, zero(eltype(X)), nothing)
     return m, opt, state₀
 end
@@ -145,10 +145,12 @@ Each element `X[idx]` is the initial guess for system `idx` and is overwritten w
 iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref) so system `idx`
 receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is a
 permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any other `order`
-throws. An `order` that is not `isbits` needs a method of `get_backend`, and an `order` on another
-backend than `X` is copied to the backend of `X`. Any `ForwardDiff.Dual` in `X` or `p` raises an
-`ArgumentError`. `solve_batch!` does not check `prob`, so a `ForwardDiff.Dual` captured in `prob`
-is not detected in a batch.
+throws. An `order` that is not `isbits` needs a method of `get_backend`, and one that is not an
+array of the backend of `X`, such as an array of another backend or a host `view`, is copied into
+one. Any `ForwardDiff.Dual` in `X` or `p` raises an `ArgumentError`. The kernel takes `prob` by
+value, so a `jacobian_prototype` that is not `isbits`, such as a `SparseMatrixCSC`, raises an
+`ArgumentError`. `solve_batch!` does not look for a `ForwardDiff.Dual` captured in `prob`, so one is
+not detected in a batch.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)

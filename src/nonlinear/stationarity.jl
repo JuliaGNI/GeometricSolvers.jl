@@ -524,8 +524,9 @@ function _validate_stationarity_batch(X, prob::StationarityProblem, b_src, p)
         nb == m || throw(ArgumentError("datum b must have length $m, got $nb"))
     end
     if _is_callable_datum(b_src)
+        p_host = _host_parameters(p)
         for i in eachindex(X)
-            bi = _eval_datum(b_src, parameters(p, i))
+            bi = _eval_datum(b_src, parameters(p_host, i))
             bi isa AbstractVector || continue
             length(bi) == m ||
                 throw(ArgumentError("datum b must have length $m, got $(length(bi))"))
@@ -533,6 +534,12 @@ function _validate_stationarity_batch(X, prob::StationarityProblem, b_src, p)
     end
     return nothing
 end
+
+# The batch parameters `p` as the host reads them: the loop above reads one element per system, and
+# a device array refuses a scalar read, so a device array is copied to the host once.
+_host_parameters(p) = p
+_host_parameters(p::AbstractGPUArray) = Array(p)
+_host_parameters(p::PerSystem{<:AbstractGPUArray}) = PerSystem(Array(p.data))
 
 # Whether a datum source is a callable `b(p)`: a `Number`, a vector, a `PerSystem` of those and
 # `nothing` are not.

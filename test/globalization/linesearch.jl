@@ -1034,11 +1034,12 @@ end
         search_kernel!(backend)(αs, φs, codes, counts, lfs, α₀s, ls, stepr; ndrange = n)
         KernelAbstractions.synchronize(backend)
         host = [linesearch(ls, lf, stepr, φ(lf, zero(R)), α) for (lf, α) in zip(lfs, α₀s)]
-        # The compiled kernel and the host may evaluate one polynomial of the line function a last
+        # The compiled kernel and the host may evaluate a polynomial of the line function a last
         # bit apart — measured on the `MoreThuente` lines for `Float32`, 1 case in 24, by 1 eps —
         # and a search that sits on its acceptance boundary then follows another path: it lands
-        # within a few ULP of the same step with another evaluation count. So the outcome must
-        # agree, and each kernel result must keep the contract its method promises.
+        # elsewhere within the search's own accuracy, with another evaluation count. So the outcome
+        # must agree, and each kernel result must keep the contract its method promises; the step
+        # itself is not compared.
         @test codes == getfield.(host, :code)
         @test all(0 .<= counts .<= max_evaluations(ls))
         @test all(agrees(ls, LineSearchResult{R}(αs[i], φs[i], codes[i], counts[i]),

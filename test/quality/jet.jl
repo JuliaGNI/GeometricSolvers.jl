@@ -2,10 +2,9 @@
 #
 # `target_modules = (GeometricSolvers,)` keeps the reports whose innermost frame is in this
 # package; a report raised inside a dependency is not this file's concern. The file fails on any
-# report. It used to hold a table of known false positives about the launch of a kernel and
-# `synchronize` on a device backend: KernelAbstractions 0.9 left both to the backend package, so
-# the analysis reported them where Metal or JLArrays was not loaded. KernelAbstractions 0.10
-# defines them through KernelInterface, and the table is empty now.
+# report: KernelAbstractions 0.10 defines the launch of a kernel and `synchronize` for every
+# backend through KernelInterface, so the analysis finds neither missing where Metal or JLArrays
+# is not loaded.
 
 using GeometricSolvers
 using JET

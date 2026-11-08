@@ -54,6 +54,11 @@ end
 @inline is_stationarity_problem(::StationarityProblem) = true
 @inline is_stationarity_problem(::AbstractNonlinearProblem) = false
 
+# The prototype of the problem the chart wraps: a batch takes the problem by value into a kernel, so
+# a sparse prototype of the inner problem must be refused there as it is for the inner problem
+# itself.
+@inline jacobian_prototype(rep::Reparametrized) = jacobian_prototype(rep.prob)
+
 # The chart evaluates the inner problem at the full state `x = g(y, p)` and reads its Jacobian
 # as `∂F/∂x`, so a `StationarityProblem` needs `U = :` or `U = 1:n` in order; with the checks of
 # `_validate_stationarity_solve`, `E` is then `:` or a permutation of `1:n`.

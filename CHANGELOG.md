@@ -18,18 +18,17 @@ so that a compat-only bump can be told apart from an interface change.
   `isgpu` is no longer part of the KernelAbstractions API, so the package states it as
   `!(backend isa CPU)`: the CPU backend answers `false`, and CUDA, ROCm, Metal and the `JLArray`
   backend answer `true`, as before. The `CPU()` backend now compiles its kernels, so a kernel
-  argument must be `isbits` and a kernel body may not format an error message. Three consequences
+  argument must be `isbits` and a kernel body may not format an error message. Five consequences
   for a caller: a kernel that runs a whole `solve` no longer compiles there, because building its
   options formats a message — the device tests build the state and the options on the host and call
-  `solve!!` in the kernel; the validation of `Newton` and of `Static` moves to the constructor that
-  `adapt` does not rebuild, so a positional `Newton(...)` and `Static{R}(α)` no longer validate
-  (`Newton(; ...)` and `Static(α)` do, as before); and the `order` of a batch is copied into an
-  array of the backend, because a kernel reads the backend's own memory. A callable
-  `StationarityProblem` datum is now checked for every system of a batch on the host, so a length
-  that differs between systems is an `ArgumentError` before the launch instead of inside it. A
-  fourth: `solve_batch!` refuses a `jacobian_prototype` that is not `isbits` — a
-  `SparseMatrixCSC`, for instance — because the kernel takes it by value; call `solve` per system
-  instead.
+  `solve!!` in the kernel; a positional `Newton(...)` no longer validates, because `adapt` rebuilds
+  a method inside a kernel and the check formats a message, while `Newton(; ...)` keeps its checks
+  and `Static{R}(α)` keeps them too, its unchecked rebuild being reachable only through
+  `Val(:raw)`; the `order` of a batch goes as an array of the backend, because a kernel reads only
+  the backend's own memory; a callable `StationarityProblem` datum is checked for every system of a
+  batch on the host, so a length that differs between systems is an `ArgumentError` before the
+  launch instead of inside it; and `solve_batch!` refuses a `jacobian_prototype` that is not
+  `isbits` — a `SparseMatrixCSC`, for instance — because the kernel takes it by value.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`

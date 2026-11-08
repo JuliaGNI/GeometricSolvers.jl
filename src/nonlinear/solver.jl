@@ -238,7 +238,7 @@ end
 @inline function prepare_solve(prob, x₀, method, p, options, kwargs)
     R = real(eltype(x₀))
     opt = resolve_options(eltype(x₀), options, kwargs)
-    m = Adapt.adapt(ToReal{R}(), method)
+    m = check_adapted(Adapt.adapt(ToReal{R}(), method))
     x = x₀ isa Union{StaticArray, Number} ? x₀ : copy(x₀)
     return x, m, opt, init_state(m, prob, x, p)
 end
