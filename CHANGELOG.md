@@ -1335,6 +1335,13 @@ so that a compat-only bump can be told apart from an interface change.
   raises the same `ArgumentError` as the other combinators, before the primal solve, since implicit
   differentiation through a combinator is not implemented (K60). The method-first
   `solve(prob, method::Anderson, x₀, p, options)` is not provided (K73).
+- **`Broyden` multisecant combinator and `AndersonHistory` buffer.** `Broyden(inner = Picard();
+  m = 4, c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0)` accelerates an inner
+  iterator with the Type-I Broyden multisecant update (Fang & Saad, 2009) using the Δx-Gram weights
+  `solve_broyden_weights(ΔX, Δxₖ)` / `solve_broyden_weights!(α, G, ipiv, ΔX, Δxₖ)` and the shared
+  `AndersonHistory` ring buffer (`push_history!!`, `step_multisecant!!`). `Broyden` shares the
+  safeguard filter, residual-spike restart, and `Union{..., Broyden}` implicit-differentiation and
+  `LeastSquaresProblem` refusals with `Anderson`.
 
 - `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
   curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or

@@ -23,10 +23,10 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The ten columns of the standard test set, each a name and a method: `Newton` with each
+The eleven columns of the standard test set, each a name and a method: `Newton` with each
 globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
-`LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, and
-`Picard` with `Backtracking`.
+`LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, `Picard`
+with `Backtracking`, and `Broyden`.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),
@@ -41,7 +41,8 @@ const STANDARD_COLUMNS = (
     "Newton LevenbergMarquardt SVD" => Newton(;
         linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
     "Newton reuse 3 Backtracking LU" => Newton(; reuse = 3, globalization = Backtracking()),
-    "Picard Backtracking" => Picard(; globalization = Backtracking())
+    "Picard Backtracking" => Picard(; globalization = Backtracking()),
+    "Broyden" => Broyden()
 )
 
 """
@@ -193,7 +194,7 @@ end
     perturbed_direction(method, seed)
 
 `method` with [`PerturbedDirection`](@ref)`(seed)` as its refinement; `nothing` for a `Picard`
-method, which solves no linear system for its direction.
+or `Broyden` method, which solves no linear system for its direction.
 """
 function perturbed_direction(m::Newton, seed)
     Newton(
@@ -201,6 +202,7 @@ function perturbed_direction(m::Newton, seed)
         m.reuse)
 end
 perturbed_direction(::Picard, seed) = nothing
+perturbed_direction(::Broyden, seed) = nothing
 
 """
     perturbed_runs(sp, start, x₀, column, method)
@@ -209,7 +211,7 @@ The cells and iterates of the perturbed runs of one cell: `x₀` moved by `k` ul
 `k ∈ (1, 2, 4)` with the seeds 1 to 4 (see [`perturb_start`](@ref)), the residual moved by 1 ulp
 with the seeds 1 to 4 (see [`perturbed_residual`](@ref)), and the Newton direction moved by
 1 ulp with the seeds 1 to 4 (see [`PerturbedDirection`](@ref)): 20 runs, or 16 for a `Picard`
-column, which has no Newton direction.
+or `Broyden` column, which has no Newton direction.
 """
 function perturbed_runs(sp, start, x₀, column, method)
     runs = [run_cell(sp, start, perturb_start(x₀, k, seed), column, method)

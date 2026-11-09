@@ -54,6 +54,7 @@ if "core" in GROUPS
     @safetestset "Repeat combinator" include("composition/repeat.jl")
     @safetestset "Switch combinator" include("composition/switch.jl")
     @safetestset "Anderson acceleration" include("composition/anderson.jl")
+    @safetestset "Broyden multisecant" include("composition/broyden.jl")
     @safetestset "Combinators refuse ForwardDiff.Dual inputs" include("composition/implicit.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")

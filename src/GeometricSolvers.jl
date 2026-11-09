@@ -35,7 +35,8 @@ export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard,
        NonlinearSolver, ReparametrizedSolver, init, solve, solve!
-export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson,
+       Broyden, AndersonHistory
 export solve_batch!
 
 public solve!!, sciml_retcode

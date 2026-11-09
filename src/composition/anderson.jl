@@ -1,7 +1,7 @@
-# Type-II Anderson acceleration over an inner nonlinear method, with the length and angle
-# history filters of Pollock and Rebholz (2022), precision-scaled Tikhonov regularisation,
-# affine-weight and model-decrease safeguards, residual-growth and stagnation restarts,
-# optional growing depth, and best-iterate tracking.
+# Type-II Anderson acceleration and Type-II Broyden multisecant acceleration over an inner
+# nonlinear method, with the length and angle history filters of Pollock and Rebholz (2022),
+# precision-scaled Tikhonov regularisation, affine-weight and model-decrease safeguards,
+# residual-growth and stagnation restarts, optional growing depth, and best-iterate tracking.
 
 """
     Anderson(member = Picard(), ::Val{m} = Val(4);
@@ -119,13 +119,123 @@ function Adapt.adapt_structure(to, a::Anderson{m}) where {m}
         M_alpha = M_alpha, safeguard_cos = safeguard_cos, grow_depth = a.grow_depth)
 end
 
-@inline function effective_kappa_bar(a::Anderson, ::Type{R}) where {R <: Real}
+"""
+    Broyden(member = Picard(), ::Val{m} = Val(4);
+            c_s = 0.2, κ_bar = nothing, restart_factor = 10.0,
+            M_alpha = 25.0, safeguard_cos = nothing, grow_depth = false)
+    Broyden(::Val{m} = Val(4); damping = 1.0, kwargs...)
+    Broyden(member, m::Integer; kwargs...)
+    Broyden(m::Integer; damping = 1.0, kwargs...)
+
+Type-II Broyden (good Broyden) multisecant acceleration of history depth `m` wrapping an
+inner nonlinear method `member` ([`Picard`](@ref), [`Newton`](@ref), or a combinator).
+Shares the difference history, length and angle filters of Pollock and Rebholz (2022),
+extrapolation safeguards, restarts, and best-iterate restoration of [`Anderson`](@ref),
+differing in the weight solve: instead of the full Gram normal equations, `Broyden` solves
+the lower-triangular multisecant system `(L_G + λI) γ = b_K` by forward substitution, where
+`(L_G)_{c,r} = Re⟨Δw_{K[c]}, Δw_{K[r]}⟩` for `r <= c` and `λ = eps(R) * tr(G_K) / p`.
+
+In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4`, and the state is
+`isbits` for an `SVector` or `Number` iterate. In R3 (`Array` or `AbstractGPUArray`), any
+`m >= 1` is supported with preallocated `n × m` difference matrices, and `step!!` on an
+`Array` allocates nothing.
+
+Keywords are identical to [`Anderson`](@ref), with the convenience `damping` keyword on the
+default-member constructors forwarding to `Picard(; damping)`.
+"""
+struct Broyden{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
+    member::M
+    c_s::R
+    κ_bar::K
+    restart_factor::R
+    M_alpha::R
+    safeguard_cos::S
+    grow_depth::Bool
+
+    function Broyden{m, M, R, K, S}(
+            member::M, c_s::R, κ_bar::K, restart_factor::R,
+            M_alpha::R, safeguard_cos::S,
+            grow_depth::Bool) where {
+            m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
+        m isa Int ||
+            throw(ArgumentError("Broyden history depth m must be an Int"))
+        m >= 1 ||
+            throw(ArgumentError("Broyden history depth m must be >= 1"))
+        isfinite(c_s) && zero(R) < c_s < one(R) ||
+            throw(ArgumentError("Broyden c_s must be finite and in (0, 1)"))
+        if κ_bar !== nothing
+            isfinite(κ_bar) && κ_bar > one(R) ||
+                throw(ArgumentError("Broyden κ_bar must be nothing or finite and > 1"))
+        end
+        isfinite(restart_factor) && restart_factor >= R(3) ||
+            throw(ArgumentError("Broyden restart_factor must be finite and >= 3"))
+        isfinite(M_alpha) && M_alpha >= one(R) ||
+            throw(ArgumentError("Broyden M_alpha must be finite and >= 1"))
+        if safeguard_cos !== nothing
+            isfinite(safeguard_cos) && zero(R) < safeguard_cos < one(R) ||
+                throw(ArgumentError(
+                    "Broyden safeguard_cos must be nothing or finite and in (0, 1)"))
+        end
+        return new{m, M, R, K, S}(
+            member, c_s, κ_bar, restart_factor, M_alpha, safeguard_cos, grow_depth)
+    end
+end
+
+function Broyden(
+        member::M, ::Val{m};
+        c_s::Real = 0.2,
+        κ_bar::Union{Nothing, Real} = nothing,
+        restart_factor::Real = 10.0,
+        M_alpha::Real = 25.0,
+        safeguard_cos::Union{Nothing, Real} = nothing,
+        grow_depth::Bool = false) where {m, M}
+    m isa Int ||
+        throw(ArgumentError("Broyden history depth m must be an Int"))
+    R_base = promote_type(typeof(c_s), typeof(restart_factor), typeof(M_alpha))
+    R_kb = κ_bar === nothing ? R_base : promote_type(R_base, typeof(κ_bar))
+    R = float(safeguard_cos === nothing ? R_kb : promote_type(R_kb, typeof(safeguard_cos)))
+    kb = κ_bar === nothing ? nothing : R(κ_bar)
+    sc = safeguard_cos === nothing ? nothing : R(safeguard_cos)
+    return Broyden{m, M, R, typeof(kb), typeof(sc)}(
+        member, R(c_s), kb, R(restart_factor), R(M_alpha), sc, grow_depth)
+end
+
+function Broyden(member, m::Integer = 4; kwargs...)
+    m isa Bool && throw(ArgumentError("Broyden history depth m must be an Int"))
+    return Broyden(member, Val(Int(m)); kwargs...)
+end
+
+function Broyden(::Val{m}; damping::Real = 1.0, kwargs...) where {m}
+    return Broyden(Picard(; damping = damping), Val(m); kwargs...)
+end
+
+function Broyden(m::Integer = 4; damping::Real = 1.0, kwargs...)
+    m isa Bool && throw(ArgumentError("Broyden history depth m must be an Int"))
+    return Broyden(Picard(; damping = damping), Val(Int(m)); kwargs...)
+end
+
+function Adapt.adapt_structure(to, b::Broyden{m}) where {m}
+    member = Adapt.adapt(to, b.member)
+    c_s = Adapt.adapt(to, b.c_s)
+    κ_bar = Adapt.adapt(to, b.κ_bar)
+    restart_factor = Adapt.adapt(to, b.restart_factor)
+    M_alpha = Adapt.adapt(to, b.M_alpha)
+    safeguard_cos = Adapt.adapt(to, b.safeguard_cos)
+    return Broyden(
+        member, Val(m);
+        c_s = c_s, κ_bar = κ_bar, restart_factor = restart_factor,
+        M_alpha = M_alpha, safeguard_cos = safeguard_cos, grow_depth = b.grow_depth)
+end
+
+const MultisecantMethod{m} = Union{Anderson{m}, Broyden{m}}
+
+@inline function effective_kappa_bar(a::MultisecantMethod, ::Type{R}) where {R <: Real}
     return a.κ_bar === nothing ? inv(sqrt(eps(R))) : R(a.κ_bar)
 end
 
-# Preallocated R3 buffers for `Anderson`: candidate and difference buffers on the iterate's
-# device, `m × m` and `m` Gram buffers on the device for `mul!!`, and host workspace arrays
-# for the `m × m` filters and regularised Cholesky solve.
+# Preallocated R3 buffers for `Anderson` and `Broyden`: candidate and difference buffers on
+# the iterate's device, `m × m` and `m` Gram buffers on the device for `mul!!`, and host
+# workspace arrays for the `m × m` filters and regularised weight solve.
 struct AndersonWorkspace{V, M, T, R <: Real}
     x_m::V
     F_m::V
@@ -175,8 +285,59 @@ function init_anderson_workspace(x::AbstractVector{T}, ::Val{m}) where {T, m}
         zeros(Int, m), collect(1:m), collect(1:m))
 end
 
-# State of `Anderson{m}`: `isbits` in R1 (`work`, `Fx` and `Fx_best` are `nothing`, so the
-# residual may have another type than the iterate) and preallocated in R3
+"""
+    AndersonHistory{m, X, DX, DW, A}
+
+Immutable view of the difference history stored in an `AndersonState{m}` for
+[`Anderson`](@ref) and [`Broyden`](@ref), returned by `state.history`.
+
+Fields:
+
+  - `x_prev`: previous outer iterate `x_{k-1}`.
+  - `w_prev`: previous member correction `w_{k-1} = g(x_{k-1}) - x_{k-1}`.
+  - `ΔX`: stored iterate differences `Δx_j = x_{k-a_j+1} - x_{k-a_j}` (`NTuple{m}` in R1,
+    `n × m` matrix in R3), also accessible as `.Δx`.
+  - `ΔW`: stored correction differences `Δw_j = w_{k-a_j+1} - w_{k-a_j}` (`NTuple{m}` in R1,
+    `n × m` matrix in R3), also accessible as `.Δr`.
+  - `ages`: column ages (`NTuple{m, Int32}` in R1, `Vector{Int32}` in R3).
+  - `depth`: number of active columns currently stored in `ΔX` and `ΔW`.
+  - `current_depth`: active depth cap (`1:m`) after the most recent step.
+  - `has_prev`: `true` once `x_prev` and `w_prev` hold a previous step.
+"""
+struct AndersonHistory{m, X, DX, DW, A}
+    x_prev::X
+    w_prev::X
+    ΔX::DX
+    ΔW::DW
+    ages::A
+    depth::Int32
+    current_depth::Int32
+    has_prev::Bool
+end
+
+function AndersonHistory{m}(
+        x_prev::X, w_prev::X, ΔX::DX, ΔW::DW, ages::A,
+        depth::Int32, current_depth::Int32, has_prev::Bool) where {m, X, DX, DW, A}
+    return AndersonHistory{m, X, DX, DW, A}(
+        x_prev, w_prev, ΔX, ΔW, ages, depth, current_depth, has_prev)
+end
+
+@inline function Base.getproperty(h::AndersonHistory, sym::Symbol)
+    if sym === :Δx
+        return getfield(h, :ΔX)
+    elseif sym === :Δr
+        return getfield(h, :ΔW)
+    else
+        return getfield(h, sym)
+    end
+end
+
+@inline function Base.propertynames(::AndersonHistory)
+    return (fieldnames(AndersonHistory)..., :Δx, :Δr)
+end
+
+# State of `Anderson{m}` and `Broyden{m}`: `isbits` in R1 (`work`, `Fx` and `Fx_best` are
+# `nothing`, so the residual may have another type than the iterate) and preallocated in R3
 # (`work isa AndersonWorkspace`). `ages[c]` is the age of the history column `c`: the column of
 # age `a` is the difference `g_{k-a+1} - g_{k-a}` of the member candidates `g`.
 struct AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R <: Real}
@@ -207,9 +368,30 @@ function AndersonState{m}(
         fnorm₀, fnorm_best, depth, current_depth, has_prev)
 end
 
+@inline function Base.getproperty(state::AndersonState{m}, sym::Symbol) where {m}
+    if sym === :history
+        return AndersonHistory{m}(
+            getfield(state, :x_prev), getfield(state, :w_prev),
+            getfield(state, :ΔX), getfield(state, :ΔW), getfield(state, :ages),
+            getfield(state, :depth), getfield(state, :current_depth),
+            getfield(state, :has_prev))
+    elseif sym === :Δx
+        return getfield(state, :ΔX)
+    elseif sym === :Δr
+        return getfield(state, :ΔW)
+    else
+        return getfield(state, sym)
+    end
+end
+
+@inline function Base.propertynames(::AndersonState)
+    return (fieldnames(AndersonState)..., :history, :Δx, :Δr)
+end
+
 @inline residual_buffer(state::AndersonState) = state.Fx
 
-@inline function sync_merit(state::AndersonState{m}, a::Anderson{m}, merit::Real) where {m}
+@inline function sync_merit(
+        state::AndersonState{m}, a::MultisecantMethod{m}, merit::Real) where {m}
     ms = sync_merit(state.member_state, a.member, merit)
     return AndersonState{m}(
         ms, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
@@ -218,10 +400,13 @@ end
 end
 
 function init_state(
-        a::Anderson{m}, prob::CombinatorProblem,
+        a::MultisecantMethod{m}, prob::CombinatorProblem,
         x::Union{StaticVector, Number}, p) where {m}
-    m <= 4 ||
-        throw(ArgumentError("R1 Anderson history depth m must be <= 4, got $m"))
+    if m > 4
+        a isa Broyden &&
+            throw(ArgumentError("R1 Broyden history depth m must be <= 4"))
+        throw(ArgumentError("R1 Anderson history depth m must be <= 4"))
+    end
     R = real(eltype(x))
     ms = init_state(a.member, prob, x, p)
     z = zero(x)
@@ -234,7 +419,7 @@ function init_state(
 end
 
 function init_state(
-        a::Anderson{m}, prob::CombinatorProblem,
+        a::MultisecantMethod{m}, prob::CombinatorProblem,
         x::AbstractVector{T}, p) where {m, T}
     R = real(T)
     n = length(x)
@@ -257,7 +442,8 @@ end
 
 @inline function start!!(
         state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
-        a::Anderson{m}, prob, x, Fx, p, fnorm₀) where {m, MS, X, DX, DW, A, R <: Real}
+        a::MultisecantMethod{m}, prob, x, Fx, p,
+        fnorm₀) where {m, MS, X, DX, DW, A, R <: Real}
     ms = start!!(state.member_state, a.member, prob, x, Fx, p, fnorm₀)
     z = zero(x)
     f0 = R(fnorm₀)
@@ -268,7 +454,7 @@ end
 
 @inline function start!!(
         state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
-        a::Anderson{m}, prob, x, Fx, p,
+        a::MultisecantMethod{m}, prob, x, Fx, p,
         fnorm₀) where {
         m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real}
     ms = start!!(state.member_state, a.member, prob, x, Fx, p, fnorm₀)
@@ -299,7 +485,7 @@ end
 
 @inline function finish!!(
         state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
-        a::Anderson{m}, prob, x, Fx, status::SolverStatus{R}) where {
+        a::MultisecantMethod{m}, prob, x, Fx, status::SolverStatus{R}) where {
         m, MS, X, DX, DW, A, R <: Real}
     x_m, st_m, ms = finish!!(state.member_state, a.member, prob, x, Fx, status)
     if should_restore_best(st_m, state.fnorm_best)
@@ -318,7 +504,7 @@ end
 
 @inline function finish!!(
         state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
-        a::Anderson{m}, prob,
+        a::MultisecantMethod{m}, prob,
         x,
         Fx,
         status::SolverStatus{R}) where {
@@ -341,7 +527,7 @@ end
 # Shared scalar predicates for the restarts, filters, regularisation, and safeguards.
 @inline is_unstarted(state::AndersonState) = !isfinite(state.fnorm₀)
 
-@inline function effective_depth_cap(a::Anderson{m}, wnorm::R) where {m, R <: Real}
+@inline function effective_depth_cap(a::MultisecantMethod{m}, wnorm::R) where {m, R <: Real}
     a.grow_depth || return m
     (!isfinite(wnorm) || wnorm <= zero(R)) && return 1
     d_grow = ceil(Int, -log10(max(wnorm, floatmin(R))))
@@ -361,7 +547,7 @@ end
 end
 
 @inline function should_restart_angle(
-        a::Anderson, w_dot::R, wnorm::R, wprev_norm::R) where {R <: Real}
+        a::MultisecantMethod, w_dot::R, wnorm::R, wprev_norm::R) where {R <: Real}
     a.safeguard_cos === nothing && return false
     (wnorm > zero(R) && wprev_norm > zero(R)) || return false
     return abs(w_dot) / (wnorm * wprev_norm) > R(a.safeguard_cos)
@@ -488,6 +674,76 @@ function solve_weights!(
     return γ
 end
 
+# Regularised lower-triangular forward substitution of `(L_G + λI) γ = b_K` in R1
+# (`SMatrix` / `SVector`), where `(L_G)_{c,r} = G[kept[c], kept[r]]` for `r <= c`.
+@inline function solve_broyden_weights(
+        G::SMatrix{m, m, R}, b::SVector{m, R},
+        kept::SVector{m, Int}, p::Int) where {m, R <: Real}
+    γ = zero(SVector{m, R})
+    p <= 0 && return γ
+    tr_G = zero(R)
+    @inbounds for c in 1:p
+        kc = kept[c]
+        tr_G += G[kc, kc]
+    end
+    λ = tikhonov_lambda(tr_G, p)
+    @inbounds for c in 1:p
+        kc = kept[c]
+        s = b[kc]
+        for r in 1:(c - 1)
+            s -= G[kc, kept[r]] * γ[r]
+        end
+        γ = setindex(γ, s / (G[kc, kc] + λ), c)
+    end
+    return γ
+end
+
+# Regularised lower-triangular forward substitution of `(L_G + λI) γ = b_K` in R3
+# (preallocated host buffers).
+function solve_broyden_weights!(
+        γ::Vector{R}, G::AbstractMatrix{R}, b::AbstractVector{R},
+        kept::Vector{Int}, p::Int) where {R <: Real}
+    fill!(γ, zero(R))
+    p <= 0 && return γ
+    tr_G = zero(R)
+    @inbounds for c in 1:p
+        kc = kept[c]
+        tr_G += G[kc, kc]
+    end
+    λ = tikhonov_lambda(tr_G, p)
+    @inbounds for c in 1:p
+        kc = kept[c]
+        s = b[kc]
+        for r in 1:(c - 1)
+            s -= G[kc, kept[r]] * γ[r]
+        end
+        γ[c] = s / (G[kc, kc] + λ)
+    end
+    return γ
+end
+
+@inline function _solve_multisecant_weights(
+        ::Anderson{m}, G::SMatrix{m, m, R}, b::SVector{m, R},
+        kept::SVector{m, Int}, p::Int) where {m, R <: Real}
+    return solve_weights(G, b, kept, p)
+end
+
+@inline function _solve_multisecant_weights(
+        ::Broyden{m}, G::SMatrix{m, m, R}, b::SVector{m, R},
+        kept::SVector{m, Int}, p::Int) where {m, R <: Real}
+    return solve_broyden_weights(G, b, kept, p)
+end
+
+@inline function _solve_multisecant_weights!(
+        ::Anderson, work::AndersonWorkspace, p::Int)
+    return solve_weights!(work.γ, work.L, work.y, work.G, work.b, work.kept, p)
+end
+
+@inline function _solve_multisecant_weights!(
+        ::Broyden, work::AndersonWorkspace, p::Int)
+    return solve_broyden_weights!(work.γ, work.G, work.b, work.kept, p)
+end
+
 # `∑_j |α_j|` for the affine weights `α_j` of the member candidates `g_{k-j}` in
 # `x₊ = g_k - ∑_c γ_c (g_{k-a_c+1} - g_{k-a_c})`, with `a_c = ages[kept[c]]` increasing in `c`.
 # Two kept columns of consecutive ages share a candidate, whose weight is then `γ_c - γ_{c+1}`.
@@ -533,7 +789,7 @@ end
 # Pollock & Rebholz (2022) Algorithm 2.5 (length filter, Prop. 1.2 eqs. 1.6–1.8) followed by
 # Algorithm 2.4 (greedy Cholesky angle filter) in R1 (`SMatrix` / `SVector`).
 @inline function filter_history_r1(
-        a::Anderson{m}, G::SMatrix{m, m, R}, d::Int) where {m, R <: Real}
+        a::MultisecantMethod{m}, G::SMatrix{m, m, R}, d::Int) where {m, R <: Real}
     c_s = R(a.c_s)
     c_s2 = c_s^2
     c_t2 = one(R) - c_s2
@@ -601,7 +857,7 @@ end
 # Pollock & Rebholz (2022) length and angle filters in R3 (preallocated host buffers).
 function filter_history_r3!(
         kept::Vector{Int}, B::Vector{R}, L::Matrix{R},
-        a::Anderson{m}, G::Matrix{R}, d::Int) where {m, R <: Real}
+        a::MultisecantMethod{m}, G::Matrix{R}, d::Int) where {m, R <: Real}
     c_s = R(a.c_s)
     c_s2 = c_s^2
     c_t2 = one(R) - c_s2
@@ -664,11 +920,28 @@ function filter_history_r3!(
     return p
 end
 
-# R1 `step!!` (`StaticVector` or `Number`). The residual `Fx` may have another type than the
-# iterate `x`, such as an `SVector` residual of an `MVector` iterate.
-function step!!(
+# Prepend `(Δx_new, Δw_new) = (x - state.x_prev, w - state.w_prev)` at logical column 1, of
+# age 1, up to `m_cap`, in R1 (`StaticVector` or `Number`).
+@inline function push_history!!(
         state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
-        a::Anderson{m}, prob::AbstractNonlinearProblem, x::X, Fx,
+        x::X, w::X,
+        m_cap::Int = m) where {
+        m, MS, X <: Union{StaticVector, Number}, DX, DW, A, R <: Real}
+    Δx_new = x - state.x_prev
+    Δw_new = w - state.w_prev
+    d = min(Int(state.depth) + 1, m_cap)
+    ΔX_cand = ntuple(j -> j == 1 ? Δx_new : state.ΔX[j - 1], Val(m))
+    ΔW_cand = ntuple(j -> j == 1 ? Δw_new : state.ΔW[j - 1], Val(m))
+    ages_cand = ntuple(j -> j == 1 ? Int32(1) : state.ages[j - 1] + Int32(1), Val(m))
+    return ΔX_cand, ΔW_cand, ages_cand, d
+end
+
+# Shared R1 multisecant step (`StaticVector` or `Number`) for `Anderson` and `Broyden`.
+# The residual `Fx` may have another type than the iterate `x`, such as an `SVector`
+# residual of an `MVector` iterate.
+function step_multisecant!!(
+        state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
+        a::MultisecantMethod{m}, prob::AbstractNonlinearProblem, x::X, Fx,
         p) where {
         m, MS, X <: Union{StaticVector, Number}, DX, DW, A, R <: Real}
     fnorm_in = rnorm(Fx)
@@ -744,10 +1017,7 @@ function step!!(
 
     # Prepend `(Δx_new, Δw_new)` at index 1, of age 1, up to `m_cap`.
     m_cap = effective_depth_cap(a, wnorm)
-    d = min(Int(state.depth) + 1, m_cap)
-    ΔX_cand = ntuple(j -> j == 1 ? Δx_new : state.ΔX[j - 1], Val(m))
-    ΔW_cand = ntuple(j -> j == 1 ? Δw_new : state.ΔW[j - 1], Val(m))
-    ages_cand = ntuple(j -> j == 1 ? Int32(1) : state.ages[j - 1] + Int32(1), Val(m))
+    ΔX_cand, ΔW_cand, ages_cand, d = push_history!!(state, x, w_k, m_cap)
 
     G = zero(SMatrix{m, m, R, m * m})
     b = zero(SVector{m, R})
@@ -770,7 +1040,7 @@ function step!!(
     ages_kept = ntuple(c -> c <= p_kept ? ages_cand[kept[c]] : Int32(0), Val(m))
     cur_depth = accelerated_current_depth(p_kept, m)
 
-    γ = solve_weights(G, b, kept, p_kept)
+    γ = _solve_multisecant_weights(a, G, b, kept, p_kept)
     if !weights_acceptable(G, b, γ, kept, ages_cand, p_kept, R(a.M_alpha), norm2(w_k))
         if isfinite(fnorm_m) && fnorm_m < fnorm_best
             x_best = x_m
@@ -826,6 +1096,14 @@ function step!!(
         accelerated_code(info_m), fnorm₊, stepnorm, failures, info_m.promoted,
         info_m.limited)
     return x₊, F₊, st_ok, info_ok
+end
+
+@inline function step!!(
+        state::AndersonState{m, MS, Nothing, X, Nothing, DX, DW, A, Nothing, R},
+        a::MultisecantMethod{m}, prob::AbstractNonlinearProblem, x::X, Fx,
+        p) where {
+        m, MS, X <: Union{StaticVector, Number}, DX, DW, A, R <: Real}
+    return step_multisecant!!(state, a, prob, x, Fx, p)
 end
 
 # R3 helper methods to write/zero a column of `ΔX, ΔW` and combine columns without
@@ -898,10 +1176,45 @@ end
     return nothing
 end
 
-# R3 `step!!` (`Array` or `AbstractGPUArray`).
-function step!!(
+# Prepend `(work.Δx_new, work.Δw_new)` at logical column 1, of age 1, up to `m_cap`, in R3
+# (`Array` or `AbstractGPUArray`).
+@inline function push_history!!(
         state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
-        a::Anderson{m}, prob::AbstractNonlinearProblem,
+        m_cap::Int = m) where {
+        m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real}
+    work = state.work
+    d = min(Int(state.depth) + 1, m_cap)
+    new_phys = @inbounds work.col_idx[d]
+    @inbounds for j in d:-1:2
+        work.col_idx[j] = work.col_idx[j - 1]
+        state.ages[j] = state.ages[j - 1] + Int32(1)
+    end
+    @inbounds work.col_idx[1] = new_phys
+    @inbounds state.ages[1] = Int32(1)
+    @inbounds for j in (d + 1):m
+        _zero_history_col!(state.ΔX, work.col_idx[j])
+        _zero_history_col!(state.ΔW, work.col_idx[j])
+    end
+    _write_history_col!(state.ΔX, new_phys, work.Δx_new)
+    _write_history_col!(state.ΔW, new_phys, work.Δw_new)
+    return d
+end
+
+@inline function push_history!!(
+        state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
+        x::AbstractVector, w::AbstractVector,
+        m_cap::Int = m) where {
+        m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real}
+    work = state.work
+    @. work.Δx_new = x - state.x_prev
+    @. work.Δw_new = w - state.w_prev
+    return push_history!!(state, m_cap)
+end
+
+# Shared R3 multisecant step (`Array` or `AbstractGPUArray`) for `Anderson` and `Broyden`.
+function step_multisecant!!(
+        state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
+        a::MultisecantMethod{m}, prob::AbstractNonlinearProblem,
         x::AbstractVector{T}, Fx::AbstractVector{T},
         p) where {
         m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real, T}
@@ -990,20 +1303,7 @@ function step!!(
 
     # Prepend `(Δx_new, Δw_new)` at logical column 1, of age 1, using `work.col_idx`.
     m_cap = effective_depth_cap(a, wnorm)
-    d = min(Int(state.depth) + 1, m_cap)
-    new_phys = @inbounds work.col_idx[d]
-    @inbounds for j in d:-1:2
-        work.col_idx[j] = work.col_idx[j - 1]
-        state.ages[j] = state.ages[j - 1] + Int32(1)
-    end
-    @inbounds work.col_idx[1] = new_phys
-    @inbounds state.ages[1] = Int32(1)
-    @inbounds for j in (d + 1):m
-        _zero_history_col!(state.ΔX, work.col_idx[j])
-        _zero_history_col!(state.ΔW, work.col_idx[j])
-    end
-    _write_history_col!(state.ΔX, new_phys, work.Δx_new)
-    _write_history_col!(state.ΔW, new_phys, work.Δw_new)
+    d = push_history!!(state, m_cap)
 
     # Form Gram matrix `G` and right-hand side `b` in one `mul!!` each, then permute on host.
     mul!!(work.G_dev, state.ΔW', state.ΔW)
@@ -1028,7 +1328,7 @@ function step!!(
     failures = filter_failures(info_m.failures, d, p_kept)
     cur_depth = accelerated_current_depth(p_kept, m)
 
-    solve_weights!(work.γ, work.L, work.y, work.G, work.b, work.kept, p_kept)
+    _solve_multisecant_weights!(a, work, p_kept)
     acceptable = weights_acceptable(
         work.G, work.b, work.γ, work.kept, state.ages, p_kept, R(a.M_alpha),
         norm2(work.w_k))
@@ -1128,4 +1428,13 @@ function step!!(
         accelerated_code(info_m), fnorm₊, stepnorm, failures, info_m.promoted,
         info_m.limited)
     return x, Fx, st_ok, info_ok
+end
+
+@inline function step!!(
+        state::AndersonState{m, MS, FX, X, FB, DX, DW, A, W, R},
+        a::MultisecantMethod{m}, prob::AbstractNonlinearProblem,
+        x::AbstractVector{T}, Fx::AbstractVector{T},
+        p) where {
+        m, MS, FX, X, FB, DX, DW, A, W <: AndersonWorkspace, R <: Real, T}
+    return step_multisecant!!(state, a, prob, x, Fx, p)
 end
