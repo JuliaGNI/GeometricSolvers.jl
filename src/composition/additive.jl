@@ -32,12 +32,13 @@ after a tuple makes the tuple a single member.
 struct Additive{M <: Tuple, W <: WeightRule}
     members::M
     weights::W
+    # `adapt` rebuilds an `Additive` through this constructor, and a device kernel cannot format a
+    # message, so the messages are constant.
     function Additive{M, W}(members::M, weights::W) where {M <: Tuple, W <: WeightRule}
         K = fieldcount(M)
         K >= 1 || throw(ArgumentError("Additive requires at least one member"))
         if weights isa FixedWeights && length(weights.weights) != K
-            throw(ArgumentError(
-                "FixedWeights length $(length(weights.weights)) does not match $K members"))
+            throw(ArgumentError("FixedWeights length does not match the number of members"))
         end
         return new{M, W}(members, weights)
     end

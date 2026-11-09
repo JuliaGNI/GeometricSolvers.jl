@@ -16,10 +16,11 @@ struct Switch{M, N, R <: Real}
     first::M
     second::N
     threshold::R
+    # `adapt` rebuilds a `Switch` through this constructor, and a device kernel cannot format a
+    # message, so the message is constant.
     function Switch{M, N, R}(first::M, second::N, threshold::R) where {M, N, R <: Real}
         isfinite(threshold) && threshold > zero(R) ||
-            throw(ArgumentError(
-                "Switch threshold must be finite and positive, got $threshold"))
+            throw(ArgumentError("Switch threshold must be finite and positive"))
         return new{M, N, R}(first, second, threshold)
     end
 end

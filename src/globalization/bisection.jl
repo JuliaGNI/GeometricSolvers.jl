@@ -25,10 +25,12 @@ the merit there: one evaluation of ``φ`` after one ``φ′`` per trial.
 struct Bisection{R <: Real} <: LineSearch{R}
     αmax::R
     maxiter::Int32
+    # `adapt` rebuilds a `Bisection` through this constructor, inside a device kernel too. A
+    # kernel cannot format a message, so the messages are constant.
     function Bisection{R}(αmax::Real, maxiter::Integer) where {R <: Real}
-        αmax > 0 || throw(ArgumentError("Bisection needs αmax > 0, got αmax = $αmax"))
+        αmax > 0 || throw(ArgumentError("Bisection needs αmax > 0"))
         1 ≤ maxiter ≤ typemax(Int32) ||
-            throw(ArgumentError("Bisection needs 1 ≤ maxiter ≤ typemax(Int32), got $maxiter"))
+            throw(ArgumentError("Bisection needs 1 ≤ maxiter ≤ typemax(Int32)"))
         new{R}(αmax, maxiter)
     end
 end
