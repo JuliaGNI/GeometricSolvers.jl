@@ -10,17 +10,18 @@ using FiniteDiff: FiniteDiff
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
-using LinearAlgebra: I, mul!, norm
+using LinearAlgebra: Diagonal, I, mul!, norm
 using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, ChunkedForwardDiff, DIJacobian, DogLeg,
+using GeometricSolvers: Backtracking, Bisection, ChunkedForwardDiff, DIJacobian, DogLeg,
                         EisenstatWalkerChoice1, EisenstatWalkerChoice2, FixedForcing, GMRES,
                         InexactStep, JVPFunction, LineFunction, NONFINITE, NonlinearProblem,
-                        Newton, SUCCESS, SolverStatus, apply_preconditioner!, f_calls,
-                        gmres_solve!, init, init_state, jvp_calls, max_inner_iterations,
-                        refresh!, rnorm, solve, solve!, solve!!, start!!, step!!
+                        Newton, StrongWolfe, SUCCESS, SolverStatus, apply_preconditioner!,
+                        f_calls, gmres_solve!, init, init_gmres_workspace, init_state,
+                        jvp_calls, max_inner_iterations, refresh!, rnorm, solve, solve!,
+                        solve!!, start!!, step!!
 
 include("../helpers/matrix.jl")
 
@@ -101,6 +102,32 @@ const R5_EXACT_X = [0.5, -1.0, 0.25, 0.5]
 const R5_FAIL_START = 1.5
 r5_full_step_fails() = NonlinearProblem((r, x, q) -> (r[1] = atan(x[1]); r))
 
+# A coupled cubic residual of four unknowns. Its Jacobian is no multiple of the identity, so its
+# Newton solves take more than one step and a two-iteration GMRES stops short of the tolerance:
+# the linear residual of a step is then a visible fraction of its residual norm, which is what the
+# Choice 1 rule reads and what the inexact step kind reports.
+function r5_coupled(::Type{T}) where {T}
+    c = T(0.5)
+    return NonlinearProblem((r, x, q) -> begin
+        n = length(x)
+        for i in 1:n
+            next = i < n ? x[i + 1] : x[1]
+            r[i] = x[i]^3 + 2 * x[i] - 3 + c * (next - x[i])
+        end
+        r
+    end)
+end
+
+const R5_COUPLED_X = (0.3, 1.1, -0.7, 2.0)
+
+# `atan` from a start whose Newton step overshoots to a point where the residual is 0.94 of the
+# anchor one. A one-dimensional solve with one product is exact, so the attained tolerance is
+# zero: the bound of the inexact test is then `1 - c₁ = 0.5` at the full step, and the 0.94 ratio
+# fails it, while the bound of the forcing term's own tolerance, `1 - c₁ (1 - 0.9) = 0.95`,
+# accepts it.
+const R5_ATAN_START = 1.3
+r5_atan() = NonlinearProblem((r, x, q) -> (r[1] = atan(x[1]); r))
+
 # ─── The allocation row of the inner solve ──────────────────────────────────
 
 # An `@allocated` assertion measures through a function barrier whose arguments have concrete types
@@ -171,6 +198,66 @@ end
         @test isbitstype(SolverStatus{Float64})
         @test fieldoffset(SolverStatus{Float64}, :f_calls) == 2
         @test fieldoffset(SolverStatus{Float64}, :jvp_calls) == 30
+
+        # the counts saturate at `typemax(Int16)` and never wrap or go negative
+        st = SolverStatus{Float64}(SUCCESS, Int32(1), 0.0, 0.0, Int32(0), false)
+        big = GeometricSolvers.with_calls(st, 40000, 40000)
+        @test big.f_calls == typemax(Int16)
+        @test big.jvp_calls == typemax(Int16)
+        small = GeometricSolvers.with_calls(st, -1, -1)
+        @test small.f_calls == 0
+        @test small.jvp_calls == 0
+    end
+
+    @testset "Check 1: the counts of a DogLeg solve, $T" for T in REAL_ELTYPES
+        # the matrix-free trial loop of `DogLeg` evaluates one residual per trial, and the status
+        # counts it
+        counts = R5Counts(0, 0)
+        prob = r5_problem(counts)
+        x₀ = fill(T(2), 8)
+        m = Newton(;
+            linsolve = GMRES(; maxiter = 8, forcing = FixedForcing(1e-10)),
+            globalization = DogLeg(), jacobian = JVPFunction(R5DiagonalJVP(counts)))
+        solver = init(prob, x₀, m)
+        x, st = solve!(solver, copy(x₀))
+        @test st.code == SUCCESS
+        @test st.f_calls == counts.f
+        @test st.jvp_calls == counts.jvp
+        # a trial was evaluated, so the trial loop's own count is in the status
+        @test st.f_calls > st.iterations
+    end
+
+    @testset "Check 1: the counts of a line search that measures the slope, $T" for T in REAL_ELTYPES
+        # `Bisection` and `StrongWolfe` evaluate the slope of the merit at every trial. That
+        # product is a Jacobian–vector product, not an evaluation of `F`, and the problem the line
+        # search hands to the product is the one the preparation was built from
+        for g in (Bisection(), StrongWolfe())
+            counts = R5Counts(0, 0)
+            prob = r5_problem(counts)
+            x₀ = fill(T(2), 8)
+            solver = init(
+                prob, x₀, Newton(; linsolve = GMRES(; maxiter = 10), globalization = g))
+            x, st = solve!(solver, copy(x₀))
+            @test st.code == SUCCESS
+            @test st.f_calls == counts.f
+            @test st.jvp_calls == counts.jvp
+            @test st.jvp_calls > st.iterations
+        end
+    end
+
+    @testset "Check 1: a DI product under a line search, Float64" begin
+        # the preparation of a DifferentiationInterface back end is called on the function it
+        # prepared, which the counting wrapper of a line search is not
+        x₀ = Float64[0.3, 1.1, -0.7, 2.0]
+        for g in (Bisection(), StrongWolfe())
+            solver = init(r5_coupled(Float64), copy(x₀),
+                Newton(; linsolve = GMRES(; maxiter = 8), jacobian = AutoFiniteDiff(),
+                    globalization = g))
+            x, st = solve!(solver, copy(x₀))
+            @test st.code == SUCCESS
+            @test norm(x .^ 3 .+ 2 .* x .- 3 .+ Float64(0.5) .* (circshift(x, -1) .- x)) <=
+                  1e-8
+        end
     end
 end
 
@@ -202,6 +289,31 @@ function reference_choice1(::Type{R}, norms, linres, η_max, η₀ = R(0.5)) whe
         push!(out, η)
     end
     return out
+end
+
+# The values a solve records for the forcing term: the tolerance of every step, the residual norm
+# at the start of the next one, and the linear residual of the step. `norms[k + 1] = ‖F_k‖` and
+# `lins[k + 1]` is the linear residual of step `k`, which is what the rule of step `k + 1` reads;
+# `lins[1]` is the value a workspace holds before its first step.
+function record_forcing(prob, x₀, m, ::Type{R}) where {R}
+    solver = init(prob, x₀, m)
+    x = copy(solver.x)
+    Fx = similar(x)
+    prob.F(Fx, x, nothing)
+    state = start!!(solver.state, solver.method, prob, x, Fx, nothing, rnorm(Fx))
+    ηs = R[]
+    norms = R[rnorm(Fx)]
+    lins = R[zero(R)]
+    for _ in 1:40
+        x, Fx, state, info = step!!(state, solver.method, prob, x, Fx, nothing)
+        push!(ηs, R(state.ws.last_eta))
+        push!(norms, R(info.fnorm))
+        push!(lins, R(state.ws.linres))
+        # a step's `code` is the outcome of the globalization, not the solve's: the loop ends
+        # where the solve's residual test does
+        (info.code == SUCCESS && info.fnorm > sqrt(eps(R)) * norms[1]) || break
+    end
+    return ηs, norms, lins
 end
 
 @testset "Check 2: the forcing terms, $T" for T in REAL_ELTYPES
@@ -250,38 +362,34 @@ end
     # a nonlinear problem, whose Newton steps are more than one: an affine one is solved in a
     # single step, and a sequence of length one says nothing about the rule
     prob = NonlinearProblem((r, x, q) -> (@. r = x^3 + 2x - 3; r))
-    for forcing in (EisenstatWalkerChoice2(R), EisenstatWalkerChoice1(R))
-        solver = init(prob, zeros(T, 8),
-            Newton(; linsolve = GMRES(; maxiter = 20, forcing = forcing)))
-        m = solver.method
-        x = copy(solver.x)
-        Fx = similar(x)
-        prob.F(Fx, x, nothing)
-        state = start!!(solver.state, m, prob, x, Fx, nothing, rnorm(Fx))
-        ηs = R[]
-        norms = R[rnorm(Fx)]
-        lins = R[zero(R)]
-        for _ in 1:20
-            x, Fx, state, info = step!!(state, m, prob, x, Fx, nothing)
-            push!(norms, R(info.fnorm))
-            push!(ηs, R(state.ws.last_eta))
-            push!(lins, R(state.ws.linres))
-            # a step's `code` is the outcome of the globalization, not the solve's: the loop ends
-            # where the solve's residual test does
-            (info.code == SUCCESS && info.fnorm > sqrt(eps(R)) * norms[1]) || break
-        end
-        steps = length(ηs)
-        @test steps >= 2
-        # the recorded η_k of step k is the rule on the recorded norms of steps k and k − 1
-        if forcing isa EisenstatWalkerChoice2
-            reference = reference_choice2(R, norms[1:steps], forcing.η_max)
-        else
-            reference = reference_choice1(R, norms[1:steps], lins[1:steps], forcing.η_max)
-        end
-        for k in 1:steps
-            @test abs(ηs[k] - reference[k]) <= 4 * eps(R)
-        end
+    f2 = EisenstatWalkerChoice2(R)
+    ηs, norms, _ = record_forcing(prob, zeros(T, 8),
+        Newton(; linsolve = GMRES(; maxiter = 20, forcing = f2)), R)
+    steps = length(ηs)
+    @test steps >= 2
+    # the recorded η_k of step k is the rule on the recorded norms of steps k and k − 1
+    reference2 = reference_choice2(R, norms[1:steps], f2.η_max)
+    for k in 1:steps
+        @test abs(ηs[k] - reference2[k]) <= 4 * eps(R)
     end
+
+    # Choice 1 reads the linear residual of the last step, which only an inexact inner solve makes
+    # a visible fraction of the residual norm: two inner iterations on four unknowns stop short of
+    # the tolerance, so the raw term of the rule decides the sequence rather than its safeguard
+    f1 = EisenstatWalkerChoice1(R; η₀ = R(0.1))
+    ηs1, norms1, lins1 = record_forcing(r5_coupled(T), T.(collect(R5_COUPLED_X)),
+        Newton(; linsolve = GMRES(; maxiter = 2, forcing = f1)), R)
+    steps1 = length(ηs1)
+    @test steps1 >= 2
+    # `lins1[k + 1]` is the linear residual of step `k`, which is the value the rule of step
+    # `k + 1` reads: the recorded list starts with the value a solve has before its first step
+    reference1 = reference_choice1(R, norms1[1:steps1], lins1[2:end], f1.η_max, f1.η₀)
+    for k in 1:steps1
+        @test abs(ηs1[k] - reference1[k]) <= 4 * eps(R)
+    end
+    # the linear residuals decide the sequence: a solver that reads none gives another one
+    @test reference_choice1(R, norms1[1:steps1], zeros(R, steps1 + 1), f1.η_max,
+        f1.η₀) != reference1
 end
 
 # ─── The inexact backtracking test (Check 3) ─────────────────────────────────
@@ -372,6 +480,42 @@ end
     @test abs(R(rnorm(Fx₁)) - η_ach * fnorm₀) <= 4 * eps(R) * fnorm₀
 end
 
+@testset "Check 3: the attained tolerance bounds the step, $T" for T in REAL_ELTYPES
+    R = real(T)
+    prob = r5_atan()
+    x₀ = [T(R5_ATAN_START)]
+    m = Newton(;
+        linsolve = GMRES(; maxiter = 4, forcing = FixedForcing(R(0.9))),
+        globalization = Backtracking(; c₁ = R(0.5)))
+    solver = init(prob, x₀, m)
+    mm = solver.method
+    x = copy(x₀)
+    Fx = similar(x)
+    prob.F(Fx, x, nothing)
+    fnorm₀ = rnorm(Fx)
+    state = start!!(solver.state, mm, prob, x, Fx, nothing, fnorm₀)
+    _, Fx₁, state₁, info = step!!(state, mm, prob, x, Fx, nothing)
+    d = copy(state₁.ws.d)
+    c₁ = mm.globalization.c₁
+    η_ach = state₁.ws.linres / fnorm₀
+    α = info.stepnorm / rnorm(d)
+    @test info.code == SUCCESS
+    # a one-dimensional solve with one product is exact, so the attained tolerance is zero
+    @test η_ach <= 4 * eps(R)
+    # the full step decreases the residual, and not by enough for the attained tolerance: the
+    # ratio lies above `1 - c₁ (1 - η_ach) = 0.5` and below `1 - c₁ (1 - η_k) = 0.95`
+    x_full = x₀ .+ d
+    F_full = similar(x)
+    prob.F(F_full, x_full, nothing)
+    ratio = rnorm(F_full) / fnorm₀
+    @test ratio > 1 - c₁ * (1 - η_ach)
+    @test ratio <= 1 - c₁ * (1 - mm.linsolve.forcing.η)
+    # so the accepted step is a backtracked one, and it obeys the bound of the attained tolerance
+    @test zero(R) < α < one(R)
+    ηα = abs(1 - α) + α * η_ach
+    @test R(rnorm(Fx₁)) <= (1 - c₁ * (1 - ηα)) * fnorm₀ + 4 * eps(R) * fnorm₀
+end
+
 # ─── The inner cap (Check 4) ─────────────────────────────────────────────────
 
 @testset "Check 4: the inner cap and its recording, $T" for T in REAL_ELTYPES
@@ -396,6 +540,22 @@ end
     end
 end
 
+@testset "Check 4: a restarted cycle forms its own residual, $T" for T in REAL_ELTYPES
+    R = real(T)
+    # a spectrum of three tight pairs: three inner iterations do not meet the tolerance, so a
+    # second cycle starts from the residual the first one reached, and the solve converges only
+    # where that residual is the true one
+    A = T.(Matrix(Diagonal([1.0, 1.05, 2.0, 2.05, 3.0, 3.05])))
+    b = ones(T, 6)
+    tol = R(100) * eps(R)
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, restart = 3), zeros(T, 6))
+    op = (Jv, v) -> (mul!(Jv, A, v); Jv)
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(3))
+    @test info.converged
+    @test info.iterations > 3
+    @test rnorm(A * d - b) <= 10 * tol * rnorm(b)
+end
+
 # ─── The right preconditioner (Check 5) ──────────────────────────────────────
 
 # A counting right preconditioner for `M = scale · I`: `refresh!` counts its calls, and
@@ -417,23 +577,27 @@ end
 
 @testset "Check 5: the right preconditioner refreshes once per Newton step, $T" for T in REAL_ELTYPES
     R = real(T)
-    prob = r5_affine()
+    # a nonlinear problem of more than one Newton step: an affine one is solved in a single step,
+    # where a refresh at `init` and a refresh per step count the same
+    x₀ = T.(collect(R5_COUPLED_X))
+    prob = r5_coupled(T)
     count = Ref(Int32(0))
     P = ScaledRightPreconditioner(count, T(2))
     m = Newton(;
-        linsolve = GMRES(; maxiter = 8, forcing = FixedForcing(1e-12), preconditioner = P))
-    solver = init(prob, zeros(T, 4), m)
-    x, st = solve!(solver, zeros(T, 4))
+        linsolve = GMRES(; maxiter = 8, forcing = FixedForcing(R(1e-10)), preconditioner = P))
+    solver = init(prob, copy(x₀), m)
+    x, st = solve!(solver, copy(x₀))
+    @test st.code == SUCCESS
+    @test st.iterations >= 2
     # MU5: one refresh per Newton step, no more and no fewer
     @test count[] == st.iterations
     # MU6: `d = M⁻¹ u`, so the preconditioned solve reaches the same root as the plain one
-    @test st.code == SUCCESS
-    x_ref, st_ref = solve(prob, zeros(T, 4), Newton(; linsolve = GMRES(; maxiter = 8)))
+    x_ref, st_ref = solve(prob, copy(x₀), Newton(; linsolve = GMRES(; maxiter = 8)))
     @test st_ref.code == SUCCESS
     @test norm(x - x_ref) <= 100 * sqrt(eps(R)) * norm(x_ref)
     # and the preconditioner of a solve with no preconditioner is the identity
-    solver_id = init(prob, zeros(T, 4), Newton(; linsolve = GMRES(; maxiter = 8)))
-    x_id, _ = solve!(solver_id, zeros(T, 4))
+    solver_id = init(prob, copy(x₀), Newton(; linsolve = GMRES(; maxiter = 8)))
+    x_id, _ = solve!(solver_id, copy(x₀))
     @test norm(x_id - x_ref) == 0
 end
 
@@ -557,6 +721,15 @@ end
     x_h, st_h = solve(prob, fill(T(2), 8), Newton(; linsolve = GMRES(), jacobian = huge))
     @test st_h.code == NONFINITE
     @test all(isfinite, x_h)
+
+    # the same product under a `DogLeg`, whose Cauchy point reads the Arnoldi output of the inner
+    # solve: a non-finite direction ends the step with NONFINITE, not with a stalled trial loop
+    dog = Newton(;
+        linsolve = GMRES(; maxiter = 8, forcing = FixedForcing(1e-8)),
+        globalization = DogLeg(), jacobian = bad)
+    x_d, st_d = solve(prob, fill(T(2), 8), dog)
+    @test st_d.code == NONFINITE
+    @test all(isfinite, x_d)
 end
 
 @testset "E2: a zero residual at x₀, $T" for T in REAL_ELTYPES
@@ -588,6 +761,13 @@ end
     # the first step is η₀ and reads none of them
     @test GeometricSolvers.compute_forcing(
         EisenstatWalkerChoice2(R), 0, zero(R), zero(R), R(NaN), zero(R)) == R(0.5)
+    # the floor applies to the initial tolerance too: `η₀ = 0` would ask an inner solve for a zero
+    # residual, so it is `2 ε(R)` like every other value of the rule
+    for forcing in (EisenstatWalkerChoice2(R; η₀ = zero(R)),
+        EisenstatWalkerChoice1(R; η₀ = zero(R)))
+        @test GeometricSolvers.compute_forcing(forcing, 0, one(R), one(R), zero(R),
+            zero(R)) == 2 * eps(R)
+    end
 end
 
 @testset "E4: a happy breakdown, $T" for T in REAL_ELTYPES
@@ -653,6 +833,33 @@ end
     @test seen[] === Float32
     @test st32.code == SUCCESS
     @test norm(x32 .^ 3 .+ 2 .* x32 .- 3) <= 1e-6
+
+    # the default preparation runs `F` on duals of `jvp_eltype`, not of the iterate's element
+    # type: the preparation is built from a `TJ` iterate and a `TJ` residual buffer
+    duals = Ref{DataType}(Float64)
+    prob_dual = NonlinearProblem((r, x, q) -> begin
+        eltype(x) <: ForwardDiff.Dual && (duals[] = ForwardDiff.valtype(eltype(x)))
+        @. r = x^3 + 2x - 3
+        r
+    end)
+    solver_dual = init(prob_dual, fill(2.0, 8),
+        Newton(;
+            linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(1e-8),
+            jvp_eltype = Float32)))
+    @test solver_dual.state.jvpprep.prep isa ChunkedForwardDiff{1}
+    x_dual, st_dual = solve!(solver_dual, fill(2.0, 8))
+    @test duals[] === Float32
+    @test st_dual.code == SUCCESS
+    @test norm(x_dual .^ 3 .+ 2 .* x_dual .- 3) <= 1e-6
+
+    # and a DifferentiationInterface back end prepares the pushforward it is called on
+    solver_di = init(r5_coupled(Float64), Float64[0.3, 1.1, -0.7, 2.0],
+        Newton(; linsolve = GMRES(; maxiter = 10, jvp_eltype = Float32),
+            jacobian = AutoFiniteDiff()))
+    x_di, st_di = solve!(solver_di, Float64[0.3, 1.1, -0.7, 2.0])
+    @test st_di.code == SUCCESS
+    @test norm(x_di .^ 3 .+ 2 .* x_di .- 3 .+
+               0.5 .* (circshift(x_di, -1) .- x_di)) <= 1e-3
 end
 
 @testset "E8: a device-compatible array under allowscalar(false)" begin
@@ -707,7 +914,47 @@ end
     @test X == X₀
 end
 
+# ─── The values that `start!!` sets ─────────────────────────────────────────
+
+@testset "A step on a state that no start!! saw fails closed" begin
+    # the values that `start!!` sets for the steps to read are `NaN` at `init_state` and again on
+    # the state `solve!!` returns, so a step reads no state of an earlier solve
+    prob = r5_coupled(Float64)
+    x₀ = Float64[0.3, 1.1, -0.7, 2.0]
+    solver = init(prob, copy(x₀), Newton(; linsolve = GMRES(; maxiter = 8)))
+    @test !isfinite(solver.state.ws.prev_fnorm)
+    x, st = solve!(solver, copy(x₀))
+    @test st.code == SUCCESS
+    @test !isfinite(solver.state.ws.prev_fnorm)
+    @test !isfinite(solver.state.ws.last_eta)
+
+    Fx = similar(x)
+    prob.F(Fx, x, nothing)
+    _, _, _, info = step!!(solver.state, solver.method, prob, copy(x), Fx, nothing)
+    @test info.code == NONFINITE
+
+    # and the same on the state `init` returned, before any `start!!`
+    solver₀ = init(prob, copy(x₀), Newton(; linsolve = GMRES(; maxiter = 8)))
+    x1 = copy(solver₀.x)
+    Fx1 = similar(x1)
+    prob.F(Fx1, x1, nothing)
+    _, _, _, info₀ = step!!(solver₀.state, solver₀.method, prob, x1, Fx1, nothing)
+    @test info₀.code == NONFINITE
+end
+
 # ─── The allocations of the inner solve ──────────────────────────────────────
+
+# The bytes a whole `solve!` allocates, through a function barrier: the solve runs once before the
+# measurement, and the copy that resets the iterate is inside the measured block because `copyto!`
+# allocates nothing while `copy` would be measured too.
+function solve_allocations(solver, x₀, work)
+    copyto!(work, x₀)
+    solve!(solver, work)
+    return @allocated begin
+        copyto!(work, x₀)
+        solve!(solver, work)
+    end
+end
 
 @testset "The inner solve allocates nothing after init on Array, $T" for T in REAL_ELTYPES
     Base.JLOptions().check_bounds == 1 && continue
@@ -722,4 +969,18 @@ end
     @test gmres_allocations(ws, op, b, β, T(1e-10), Int32(4), Int32(4)) == 0
     # the control: the helper sees an allocation
     @test (@allocated similar(b)) > 0
+end
+
+@testset "The whole solve allocates nothing after init on Array, $T" for T in REAL_ELTYPES
+    Base.JLOptions().check_bounds == 1 && continue
+    R = real(T)
+    x₀ = T.(collect(R5_COUPLED_X))
+    for m in (Newton(; linsolve = GMRES(; maxiter = 8)),
+        Newton(; linsolve = GMRES(; maxiter = 8, forcing = FixedForcing(R(1e-10))),
+        globalization = Backtracking()),
+        Newton(; linsolve = GMRES(; maxiter = 8, forcing = FixedForcing(R(1e-10))),
+        globalization = DogLeg()))
+        solver = init(r5_coupled(T), copy(x₀), m)
+        @test solve_allocations(solver, x₀, similar(x₀)) == 0
+    end
 end

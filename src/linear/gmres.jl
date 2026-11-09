@@ -36,7 +36,8 @@ the safeguard of that choice and the floor ``2\\varepsilon(R)``:
 
 with ``\\eta_k^{\\mathrm{safe}} = \\max(\\eta_k^{\\mathrm{raw}}, \\gamma\\eta_{k-1}^{\\alpha})`` where
 ``\\gamma\\eta_{k-1}^{\\alpha} > 0.1`` and ``\\eta_k^{\\mathrm{raw}}`` elsewhere. The first step
-returns ``\\eta_0``. The defaults are those of the plan, ``\\gamma = 0.9``, ``\\alpha = 2``,
+returns ``\\eta_0``, floored at ``2\\varepsilon(R)`` like every other value of the rule. The
+defaults are those of the plan, ``\\gamma = 0.9``, ``\\alpha = 2``,
 ``\\eta_0 = 0.5`` and ``\\eta_{\\max} = 0.9``; ``\\eta_{\\max}`` is 0.8 in Chen et al. (2011) and
 0.2 in Chen et al. (2014).
 
@@ -98,7 +99,7 @@ linear residual of the last step:
 
 with ``\\eta_k^{\\mathrm{safe}} = \\max(\\eta_k^{\\mathrm{raw}}, \\eta_{k-1}^{\\phi})`` where
 ``\\eta_{k-1}^{\\phi} > 0.1`` and ``\\phi = (1 + \\sqrt{5})/2``, and ``\\eta_k^{\\mathrm{raw}}``
-elsewhere. The first step returns ``\\eta_0``.
+elsewhere. The first step returns ``\\eta_0``, floored at ``2\\varepsilon(R)``.
 
 `T` is the real type of the constants, and the constructor validates `0 ≤ η₀ < 1` and
 `0 < η_max < 1` as [`EisenstatWalkerChoice2`](@ref) does.
@@ -176,7 +177,7 @@ end
 @inline function compute_forcing(
         f::EisenstatWalkerChoice2{R}, k, fnorm, fnorm_prev, η_prev,
         linres_prev) where {R}
-    k > 0 || return f.η₀
+    k > 0 || return max(f.η₀, 2 * eps(R))
     (isfinite(fnorm_prev) && !iszero(fnorm_prev) && isfinite(fnorm)) || return f.η_max
     raw = f.γ * (R(fnorm) / R(fnorm_prev))^f.α
     safeguard = f.γ * R(η_prev)^f.α
@@ -187,7 +188,7 @@ end
 @inline function compute_forcing(
         f::EisenstatWalkerChoice1{R}, k, fnorm, fnorm_prev, η_prev,
         linres_prev) where {R}
-    k > 0 || return f.η₀
+    k > 0 || return max(f.η₀, 2 * eps(R))
     (isfinite(fnorm_prev) && !iszero(fnorm_prev) && isfinite(fnorm)) || return f.η_max
     raw = abs(R(fnorm) - R(linres_prev)) / R(fnorm_prev)
     safeguard = R(η_prev)^R((1 + sqrt(5)) / 2)
@@ -318,7 +319,9 @@ solve in `Int32`, `gmres_iterations` is the inner count of the last Newton step,
 largest inner count of the solve, `arnoldi` the number of Arnoldi steps of the last inner solve,
 which the matrix-free `DogLeg` reads, and `step` the zero-based index of the current Newton step,
 which the forcing term reads. `last_eta`, `prev_fnorm`, `linres` and `beta` are the ``\\eta_k``,
-``\\|F_{k-1}\\|``, linear residual and ``\\beta_0`` of the last step. The counters are mutable, so
+``\\|F_{k-1}\\|``, linear residual and ``\\beta_0`` of the last step; `start!!` sets them for the
+solve and `finish!!` returns them to `NaN`, so they are `NaN` on a state that no `start!!` saw and
+on the state that `solve!!` returned, and a step there fails closed. The counters are mutable, so
 that a step reports them without rebuilding the workspace.
 """
 mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D}
@@ -391,7 +394,7 @@ function init_gmres_workspace(g::GMRES{F, P, TJ}, x::AbstractVector{T}) where {F
         typeof(rr), typeof(xT)}(
         V, H, H0, cs, sn, gb, y, cg, yN, yb, sm, rr, z, wv, u, d, bb, xT, vT, wT,
         Int32(0), Int32(0), Int32(0), Int32(0), Int32(0), Int32(0),
-        zero(R), zero(R), zero(R), zero(R))
+        R(NaN), R(NaN), R(NaN), R(NaN))
 end
 
 """
@@ -600,9 +603,17 @@ end
     return c.F(x, p)
 end
 
-# The problem a globalization of an R5 step reads: its residual is counted, and `globalize!!` and
-# `LineFunction` read no other field of a problem.
-@inline counting_problem(prob, ws) = (F = CountingResidual(prob.F, ws),)
+# The problem a globalization of an R5 step reads: the residual of `prob` counted in `ws`, and
+# `prob` itself, which the Jacobian–vector product is formed on. `globalize!!` and `LineFunction`
+# read no other field of a problem, and a product is not an evaluation of `F`: a `jvp!!` that
+# `DIJacobian` prepared must be called on the function it prepared, which the counting wrapper is
+# not, and the chunked forward mode evaluates `F` on duals, which counts a product.
+struct R5CountingProblem{P, F}
+    prob::P
+    F::F
+end
+
+@inline counting_problem(prob, ws) = R5CountingProblem(prob, CountingResidual(prob.F, ws))
 
 """
     R5JVP(prep, ws[, TJ])
@@ -620,16 +631,23 @@ end
 
 R5JVP(prep, ws) = R5JVP{typeof(prep), typeof(ws), Nothing}(prep, ws)
 
+# The problem a product is formed on, from the problem a step's globalization hands it: a line
+# search reads a counting problem, whose `F` counts residual evaluations, and a product is not one
+# of them — a `DIJacobian` pushforward must be called on the function it prepared, and the chunked
+# forward mode evaluates `F` on duals.
+@inline raw_problem(prob) = prob
+@inline raw_problem(prob::R5CountingProblem) = prob.prob
+
 @inline function jvp!!(Jv, c::R5JVP{P, W, Nothing}, prob, x, v, p) where {P, W}
     c.ws.jvp_calls += Int32(1)
-    return jvp!!(Jv, c.prep, prob, x, v, p)
+    return jvp!!(Jv, c.prep, raw_problem(prob), x, v, p)
 end
 
 @inline function jvp!!(Jv, c::R5JVP{P, W, TJ}, prob, x, v, p) where {P, W, TJ}
     c.ws.jvp_calls += Int32(1)
     xT = copy!!(c.ws.xT, x)
     vT = copy!!(c.ws.vT, v)
-    wT = jvp!!(c.ws.wT, c.prep, prob, xT, vT, p)
+    wT = jvp!!(c.ws.wT, c.prep, raw_problem(prob), xT, vT, p)
     return copy!!(Jv, wT)
 end
 

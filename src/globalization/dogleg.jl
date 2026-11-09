@@ -184,6 +184,21 @@ end
     end
 end
 
+# The three elementwise updates of the trial loop. Each takes its scalars as arguments, and no
+# closure reads `δ`: the loop reassigns `δ`, so a closure that captured it would box the variable
+# and allocate on every trial.
+@inline function scaled_weights!(y, c, σ)
+    return map!!(c2 -> σ * c2, y, c)
+end
+
+@inline function offset_weights!(y, a, b, β)
+    return map!!((x, z) -> x + β * z, y, a, b)
+end
+
+@inline function segment_weights!(y, a, b, δ, κ)
+    return map!!((x, z) -> δ * (x + κ * z), y, a, b)
+end
+
 # The matrix-free trial loop of `DogLeg` on the Arnoldi relation of an R5 step (Pawlowski, Simonis,
 # Walker and Shadid 2008, Corollary 2.3, p. 2121). With `J V_k = V_{k+1} H̄_k` and `F = -β₀ V e₁`,
 # the model of a direction `s = V_k y` is `F + J s = V (-β₀ e₁ + H̄_k y)`, so its norm is that of a
@@ -237,15 +252,15 @@ end
         elseif !newton || nC >= δ
             # the Cauchy point, cut to the radius
             σ = -min(nC, δ) / cnorm
-            map!!(c -> σ * c, yk, cg)
+            scaled_weights!(yk, cg, σ)
             s = reduced_direction!(g_s(g), ws, ws.y, k)
             boundary = nC >= δ
             model = R(rnorm(reduced_model!(ws, ws.y, k, β₀)))
         else
             # the point of norm δ on the segment from the Cauchy point to the Newton step, in units
             # of δ: `a = -(nC/δ) ĝ` and `b = sN + nC ĝ`, with the root `t ≥ 0` of `‖a + t b̂‖ = 1`
-            map!!(c -> -(nC / δ) / cnorm * c, yk, cg)
-            map!!((n, c) -> n + (nC / cnorm) * c, ybk, yNk, cg)
+            scaled_weights!(yk, cg, -(nC / δ) / cnorm)
+            offset_weights!(ybk, yNk, cg, nC / cnorm)
             bnorm = R(rnorm(ybk))
             c₀ = 1 - (nC / δ)^2
             ab = iszero(bnorm) ? zero(R) : rdot(yk, ybk) / bnorm
@@ -253,9 +268,9 @@ end
             # the unit segment direction goes to the buffer of the Newton weights, which the curve
             # above has already read, so that no helper writes an array beside itself
             if iszero(bnorm)
-                map!!(y -> δ * y, yNk, yk)
+                scaled_weights!(yNk, yk, δ)
             else
-                map!!((y, b) -> δ * (y + (t / bnorm) * b), yNk, yk, ybk)
+                segment_weights!(yNk, yk, ybk, δ, t / bnorm)
             end
             copy!!(yk, yNk)
             s = reduced_direction!(g_s(g), ws, ws.y, k)

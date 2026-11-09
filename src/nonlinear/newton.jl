@@ -510,7 +510,7 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS}
 end
 
 # The state of a factorising method, whose linear solve keeps no workspace of its own: the fifteen
-# fields that every `Newton` state held before `GMRES`.
+# fields of a state whose linear method forms and factorises a Jacobian.
 @inline function NewtonState(jacprep::JP, jvpprep::VP, Fx::FX, d::D, fac::FAC, J::JM, g::G,
         rule::RS, merit::PH, fnorm::R, diag::DG, refbuf::RB, fac_T::FT, promoted::Bool,
         slow_steps::Int32) where {JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT}
@@ -797,7 +797,19 @@ end
     ws = gmres_workspace(state)
     ws === nothing && return x₊, st, state_end
     nf, nj = gmres_counts(ws)
+    close_gmres!(ws)
     return x₊, with_calls(st, nf, nj), state_end
+end
+
+# The close of the R5 workspace: the per-solve values that `start!!` sets for the steps to read go
+# back to `NaN`, so a step on the state that `solve!!` returned fails closed. The counters and the
+# recorded counts stay readable.
+@inline function close_gmres!(ws::GMRESWorkspace{T, R}) where {T, R}
+    ws.prev_fnorm = R(NaN)
+    ws.last_eta = R(NaN)
+    ws.linres = R(NaN)
+    ws.beta = R(NaN)
+    return nothing
 end
 
 @inline function newton_stepkind(
@@ -1449,7 +1461,10 @@ end
     R = real(T)
     Fx = buffer(x)
     ws = init_gmres_workspace(g, x)
-    prep = newton_jvp_prep(m, prob, Fx, x, p)
+    # a product in `jvp_eltype` is prepared on the iterate's own `TJ` slots, so the residual it
+    # differentiates and the function it was prepared for share one element type
+    prep = TJ === Nothing ? newton_jvp_prep(m, prob, Fx, x, p) :
+           newton_jvp_prep(m, prob, ws.wT, ws.xT, p)
     iszero(m.regularization) || (prep = RegularizedJVP(prep, m.regularization))
     return NewtonState(
         nothing, r5_jvp(prep, ws, g), Fx, ws.d, nothing, nothing,
@@ -1466,15 +1481,19 @@ end
 end
 
 # The direction of one R5 step: the forcing term of the step, the refresh of the right
-# preconditioner, and the inner solve. It returns whether the residual was finite, the attained
-# relative tolerance `η_ach`, the step-rule failures of the inner solve, and `‖F_k‖`.
+# preconditioner, and the inner solve. It returns whether the residual, the linear residual and the
+# direction were finite, the attained relative tolerance `η_ach`, the step-rule failures of the
+# inner solve, and `‖F_k‖`.
 @inline function gmres_direction!(
         state::NewtonState, g::GMRES{F, P, TJ}, ws::GMRESWorkspace,
         prob, x, Fx, p) where {F, P, TJ}
     T = eltype(x)
     R = real(T)
     fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
-    isfinite(fnorm) || return false, zero(R), Int32(0), fnorm
+    # a value that `start!!` sets is `NaN` on a state it did not see, so a step reads no state of
+    # an earlier solve
+    (isfinite(fnorm) && isfinite(ws.prev_fnorm) && isfinite(ws.last_eta)) ||
+        return false, zero(R), Int32(0), fnorm
     η = R(compute_forcing(g.forcing, ws.step, fnorm, ws.prev_fnorm, ws.last_eta, ws.linres))
     refresh!(g.preconditioner, prob, x, Fx, p)
     map!!(-, ws.bb, Fx)
@@ -1489,8 +1508,11 @@ end
     ws.beta = fnorm
     ws.step += one(Int32)
     failures = info.iterations >= g.maxiter && !info.converged ? Int32(1) : Int32(0)
+    # a non-finite product, Hessenberg entry or preconditioner leaves a non-finite linear residual
+    # or direction: the step ends with `NONFINITE` before a globalization reads either
+    ok = isfinite(info.resnorm) && all(isfinite, ws.d)
     η_ach = iszero(fnorm) ? zero(R) : min(info.resnorm / fnorm, η)
-    return true, R(η_ach), failures, fnorm
+    return ok, R(η_ach), failures, fnorm
 end
 
 # The step of a `Newton` with `GMRES`: the inner solve, the refined direction, and the globalization

@@ -2,9 +2,11 @@
 # the part's spec).
 #
 # The R5 state holds the mutable Krylov workspace, so it is not `isbits` and not a kernel
-# argument: the solve runs on the host and every array it touches is an `MtlArray`, so the
-# scalar-indexing check covers the whole path. Metal has no `Float64`, and no device `Float64` is
-# run.
+# argument: the solve runs on the host and every array it touches is an `MtlArray`. A shared
+# `MtlArray` — the storage this machine's Metal preference selects — answers a scalar index
+# whatever `allowscalar(false)` says, so this run is device evidence alone: the check that the
+# path indexes no entry is the `JLArray` one of `test/nonlinear/krylov.jl`, which raises on a
+# scalar index. Metal has no `Float64`, and no device `Float64` is run.
 
 using GPUArraysCore: allowscalar
 using Metal: Metal
