@@ -41,12 +41,10 @@ so that a compat-only bump can be told apart from an interface change.
   the launch, so a datum whose length differs between systems is an `ArgumentError` there instead
   of inside the kernel; and `solve_batch!` refuses a `jacobian_prototype` that is not `isbits` — a
   `SparseMatrixCSC`, for instance — because the kernel takes the problem by value, the check
-  reading through a `Reparametrized` to its inner problem. Three issues are recorded as known: K82,
+  reading through a `Reparametrized` to its inner problem. Two issues are recorded as known: K82,
   the Enzyme test environment cannot resolve against the `LLVM` bound of `KernelAbstractions`
-  0.10.5; K83, the CPU backend emits invalid SPIR-V for a batch kernel whose method loops,
-  reported as `JuliaGPU/KernelAbstractions.jl#959`; and K84, an explicitly tagged
-  `AutoForwardDiff` over a residual that calls `ForwardDiff.derivative` throws in a kernel on the
-  CPU backend.
+  0.10.5; and K84, an explicitly tagged `AutoForwardDiff` over a residual that calls
+  `ForwardDiff.derivative` throws in a kernel on the CPU backend.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
