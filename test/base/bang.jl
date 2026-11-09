@@ -190,6 +190,11 @@ end
 end
 
 @testset "the storage seam inside a KernelAbstractions kernel on CPU(), $T" for T in ELTYPES
+    # Under `--check-bounds=yes` a bounds check lets the local `MMatrix` of the static kernel and
+    # the local `MVector` of its backsolve escape to the heap — the guard and the reason above —
+    # and a kernel cannot allocate, so nothing runs here where a run forces `--check-bounds=yes`.
+    # CI's `julia-runtest` step passes `check_bounds: auto`, so the set runs there.
+    Base.JLOptions().check_bounds == 1 && continue
     backend = KA_BACKEND
     prob = r1_scaled_problem()
     X = [r1_inputs(T, N_BANG)[1] * T(i) for i in 1:3]

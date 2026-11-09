@@ -15,10 +15,10 @@ include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
 
 @kernel function picard_solve_kernel!(
-        codes, xs, @Const(prob), @Const(x₀), @Const(m), @Const(p))
+        codes, xs, prob, method, state₀, opt, @Const(x₀), @Const(p))
     i = @index(Global, Linear)
     @inbounds begin
-        x, st = solve(prob, x₀, m, p)
+        x, st, _ = solve!!(state₀, prob, x₀, method, p, opt)
         codes[i] = st.code
         xs[i] = x
     end
@@ -134,7 +134,9 @@ end
 
     codes = Vector{GeometricSolvers.ReturnCode}(undef, 2)
     xs = Vector{SVector{2, Float32}}(undef, 2)
-    picard_solve_kernel!(KA_BACKEND)(codes, xs, prob, x₀, m_pic, p; ndrange = 2)
+    state₀ = init_state(m_pic, prob, x₀, p)
+    picard_solve_kernel!(KA_BACKEND)(
+        codes, xs, prob, m_pic, state₀, Options(Float32), x₀, p; ndrange = 2)
     synchronize(KA_BACKEND)
     @test all(==(st.code), codes)
     @test eltype(xs[1]) === Float32

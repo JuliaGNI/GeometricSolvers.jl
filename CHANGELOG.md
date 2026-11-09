@@ -11,6 +11,59 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
+  range starts at `6.5.1`.** The `Adapt` floor rises from 4.6.1 to 4.7.3 and the `GPUArraysCore`
+  floor from 0.2 to 0.2.1, because Metal 1.12 needs `GPUArrays` 12.1, which needs both; with the
+  old floors the lowest versions the package admitted could not be installed together with the
+  Metal bound, so a resolve at those floors failed. The three test environments that use
+  `JLArrays` take the registered 0.5, which needs `KernelAbstractions` 0.10.5 and `GPUArrays`
+  12.1. Metal 1.12, and CUDA 6.5.1 through its `CUDACore`, are the first releases that take
+  `KernelAbstractions` 0.10. The `CPU()` backend is now `POCLBackend`, which compiles kernels to
+  SPIR-V, so a kernel argument must be `isbits` and a kernel body may not format an error
+  message. `isgpu` left the KernelAbstractions API, so the package states it as
+  `!(backend isa CPU)`: the CPU backend answers `false`, and every device backend answers `true`,
+  as before — CUDA, ROCm, Metal and the `JLBackend` of JLArrays. For a caller: every
+  constructor of `Newton`, `Static`, `Picard`, `Repeat`, `DogLeg`, `Backtracking`, `Bisection`,
+  `StrongWolfe`, `Refinement`, `OptimalWeights`, `FixedWeights`, `Switch`, `Anderson`, `Additive`
+  and `Reparametrized`, positional or keyword, validates its arguments, as before, but the
+  messages of these checks are constant strings and no longer carry the rejected value — "Newton
+  regularization must be finite and ≥ 0" instead of "..., got 1.0e300", "the step of Static must
+  be positive and finite" without ", got α", the reuse messages without ", got reuse = k", "Picard
+  damping must be positive and finite" without ", got damping", "Repeat requires count >= 1"
+  without ", got count", "the radius of DogLeg must be positive and finite" without ", got
+  radius", "Backtracking needs 0 < c₁ < 1" without ", got c₁ = …" (and likewise for its `p` and
+  `maxiter` checks), "StrongWolfe needs αmax > 0", "Refinement η must be finite and in (0, 1)",
+  "Reparametrized type parameter C must be a Bool", the parameter and history-depth messages of
+  `Anderson`, in its inner constructor and in the keyword constructor that its `adapt` calls, and
+  "FixedWeights length does not match the number of members" for `Additive`, which named both
+  counts — because `adapt` rebuilds a method through these constructors, also inside a device
+  kernel (a `Reparametrized` batch adapts its method there), and a formatted message does not
+  compile to SPIR-V (`InvalidIRError`) while a constant one does. A `Reparametrized`
+  `solve_batch!` with `Newton(; globalization = Backtracking())`, `Bisection()`, `StrongWolfe()`,
+  `Newton(; refinement = true)` or `Picard(; globalization = Backtracking())` failed with
+  `InvalidIRError` on `CPU()`, at `Float32` and at `Float64`, and now succeeds (`Repeat`,
+  `OptimalWeights`, `FixedWeights`, `Switch`, `Anderson`, `Additive` and `Reparametrized` are not
+  reached from a kernel today — the composites have no `init_state` for a `Reparametrized`
+  problem, and a `Reparametrized` is adapted only on the host — so their messages change for
+  consistency only); since `adapt` rebuilds through the checked constructors, every path that
+  adapts a method — `solve`, `init`, every `solve_batch!`, and composite methods such as `Picard`,
+  `Repeat` and `Anderson`, whose `adapt` rebuilds their members — refuses a method whose `Static`
+  step `ToReal` narrows to `Inf` or to zero, or whose regularization it makes non-finite, with an
+  `ArgumentError`; a batch
+  `order` that is not `isbits` goes to the kernel as an array of the batch's backend — the order
+  itself when it already is one and a copy otherwise, because a kernel reads only its own backend's
+  memory — while an `isbits` order, a range for instance, still goes by value; a callable
+  `StationarityProblem` datum `b(p)` is evaluated for every system of a batch on the host before
+  the launch, so a datum whose length differs between systems is an `ArgumentError` there instead
+  of inside the kernel; and `solve_batch!` refuses a `jacobian_prototype` that is not `isbits` — a
+  `SparseMatrixCSC`, for instance — because the kernel takes the problem by value, the check
+  reading through a `Reparametrized` to its inner problem. Three issues are recorded as known: K82,
+  the Enzyme test environment cannot resolve against the `LLVM` bound of `KernelAbstractions`
+  0.10.5; K84, an explicitly tagged `AutoForwardDiff` over a residual that calls
+  `ForwardDiff.derivative` throws in a kernel on the CPU backend; and K85, with
+  `--check-bounds=yes` a `solve_batch!` with `Newton` on `CPU()`, over a `Reparametrized` or a
+  plain `NonlinearProblem`, throws `KernelException` at run time, and no CI job runs the flag,
+  because CI runs with `check_bounds: auto`.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
@@ -829,9 +882,9 @@ so that a compat-only bump can be told apart from an interface change.
   loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and
   `1` Julia versions, and a step before the tests fails that job where Metal is not functional. The
   job is not a required check.
-- The `Adapt` floor is 4.6.1. Metal 1.10 and later, and the GPUArrays 11.5.6 and later that they
-  require, need Adapt 4.6.1, so a test environment with `Metal = "1.10"` does not resolve with
-  Adapt held below it.
+- The `Adapt` floor is 4.7.3. Metal 1.12, which the test environments take, needs `GPUArrays`
+  12.1, and that needs Adapt 4.7.3, so a test environment with `Metal = "1.12"` does not resolve
+  with Adapt held below it.
 - The element types and array backends a test loops over are named once, in the new
   `test/helpers/matrix.jl`: `REAL_ELTYPES`, `ELTYPES`, `ARRAY_BACKENDS` and `KA_BACKEND`. Every
   test file under `test/base/`, `test/linear/` and `test/globalization/`, and `test/backends.jl`,

@@ -18,9 +18,12 @@ Damped fixed-point (Picard) iteration for [`NonlinearProblem`](@ref), with searc
 struct Picard{D <: Real, G}
     damping::D
     globalization::G
+    # `adapt` rebuilds a `Picard` through this constructor, inside a device kernel too, so the
+    # check also refuses a damping that `ToReal` narrows to `Inf` or to zero. A kernel cannot
+    # format a message, so the message is constant.
     function Picard{D, G}(damping::D, globalization::G) where {D <: Real, G}
         damping > zero(D) && isfinite(damping) ||
-            throw(ArgumentError("Picard damping must be positive and finite, got $damping"))
+            throw(ArgumentError("Picard damping must be positive and finite"))
         new{D, G}(damping, globalization)
     end
 end

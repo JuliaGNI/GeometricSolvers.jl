@@ -60,20 +60,23 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     refinement::RF
     regularization::R
     reuse::K
+    # `adapt` rebuilds a method through this constructor, inside a device kernel too, so the check
+    # also refuses a value that `ToReal` narrows to `Inf` or to zero. A kernel cannot format a
+    # message, so each message is constant.
     function Newton{L, G, J, RF, R, K}(
             linsolve::L, globalization::G, jacobian::J,
             refinement::RF, regularization::R,
             reuse::K) where {
             L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
         regularization >= zero(R) && isfinite(regularization) ||
-            throw(ArgumentError("Newton regularization must be finite and ≥ 0, got $regularization"))
+            throw(ArgumentError("Newton regularization must be finite and ≥ 0"))
         if reuse !== nothing
             reuse >= Int32(1) ||
-                throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse"))
+                throw(ArgumentError("Newton reuse must be ≥ 1 or nothing"))
             globalization isa DogLeg &&
-                throw(ArgumentError("Newton with a DogLeg globalization takes no reuse, got reuse = $reuse"))
+                throw(ArgumentError("Newton with a DogLeg globalization takes no reuse"))
             globalization isa LevenbergMarquardt &&
-                throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse, got reuse = $reuse"))
+                throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse"))
         end
         globalization isa LevenbergMarquardt && refinement isa Refinement &&
             throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))

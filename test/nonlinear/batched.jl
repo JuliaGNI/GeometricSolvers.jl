@@ -39,6 +39,18 @@ Base.size(v::UnreadOrderVector) = size(v.perm)
 Base.IndexStyle(::Type{UnreadOrderVector}) = IndexLinear()
 Base.getindex(v::UnreadOrderVector, i::Int) = v.perm[i]
 
+# The batch runs its solves in a kernel and the single solve on the host, so a floating-point field
+# of a status may differ by a few ULPs; every other field is compared exactly.
+function _status_field_agrees(x::AbstractFloat, y::AbstractFloat)
+    isapprox(x, y; rtol = 8 * eps(typeof(x)), nans = true) || (isnan(x) && isnan(y))
+end
+_status_field_agrees(x, y) = x == y
+function status_agrees(a::SolverStatus{R}, b::SolverStatus{R}) where {R}
+    return all(_status_field_agrees(getfield(a, f), getfield(b, f))
+    for f in fieldnames(typeof(a)))
+end
+status_agrees(a, b) = false
+
 @inline function _r2_hetero_res(x::SVector{2, T}, code::Int) where {T}
     R = real(T)
     if code == 1 # SUCCESS: linear system converges in 1 step
@@ -153,7 +165,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
             for i in 1:3
                 xr, str = solve(prob, x0_host[i], Newton(), p_shared_svec)
                 @test X_sh_h[i] == xr
-                @test S_sh_h[i] == str
+                @test status_agrees(S_sh_h[i], str)
             end
 
             # Plain Vector parameter of length 2 != batch length 3 on CPU
@@ -165,7 +177,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                 for i in 1:3
                     xr, str = solve(prob, x0_host[i], Newton(), p_vec_shared)
                     @test X_v[i] == xr
-                    @test S_v[i] == str
+                    @test status_agrees(S_v[i], str)
                 end
             end
 
@@ -306,7 +318,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                         X_h = Array(X_dev)
                         S_h = Array(S_dev)
                         @test X_h == ref_x
-                        @test S_h == ref_st
+                        @test all(status_agrees.(S_h, ref_st))
 
                         # System 1 started at exact root: 0 iterations and bit-identical X[1] === x_exact
                         @test X_h[1] === x_exact
@@ -378,7 +390,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                     s_P = Adapt.adapt(B, PerSystem(copy(s_p_host)))
                     solve_batch!(s_X, s_S, scalar_prob, Newton(), s_P; max_iterations = 40)
                     @test Array(s_X) == s_ref_x
-                    @test Array(s_S) == s_ref_st
+                    @test all(status_agrees.(Array(s_S), s_ref_st))
                 end
             end
         end

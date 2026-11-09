@@ -41,18 +41,23 @@ struct Reparametrized{P <: AbstractNonlinearProblem, G, DG, C, K} <:
     prob::P
     g::G
     ∂g::DG
+    # `adapt` rebuilds a `Reparametrized` through this constructor, and a device kernel cannot
+    # format a message, so the messages are constant.
     function Reparametrized{P, G, DG, C, K}(
             prob::P, g::G, ∂g::DG) where {P <: AbstractNonlinearProblem, G, DG, C, K}
-        C isa Bool || throw(ArgumentError(
-            "Reparametrized type parameter C must be a Bool, got $(repr(C))"))
-        K isa Bool || throw(ArgumentError(
-            "Reparametrized type parameter K must be a Bool, got $(repr(K))"))
+        C isa Bool || throw(ArgumentError("Reparametrized type parameter C must be a Bool"))
+        K isa Bool || throw(ArgumentError("Reparametrized type parameter K must be a Bool"))
         return new{P, G, DG, C, K}(prob, g, ∂g)
     end
 end
 
 @inline is_stationarity_problem(::StationarityProblem) = true
 @inline is_stationarity_problem(::AbstractNonlinearProblem) = false
+
+# The prototype of the problem the chart wraps: a batch takes the problem by value into a kernel, so
+# a sparse prototype of the inner problem must be refused there as it is for the inner problem
+# itself.
+@inline jacobian_prototype(rep::Reparametrized) = jacobian_prototype(rep.prob)
 
 # The chart evaluates the inner problem at the full state `x = g(y, p)` and reads its Jacobian
 # as `∂F/∂x`, so a `StationarityProblem` needs `U = :` or `U = 1:n` in order; with the checks of
@@ -987,6 +992,7 @@ function solve_batch!(
             "status vector backend $(get_backend(S)) does not match batch backend $(get_backend(Y))"))
     end
     _validate_batch(Y, p, order)
+    _validate_batch_problem(reparam)
     m, opt, state₀ = _prepare_batch(Y, reparam, method, options, kwargs)
     isempty(Y) && return S
     return _launch!(Y, S, reparam, m, p, opt, state₀, order)
@@ -1002,6 +1008,7 @@ function solve_batch!(
         kwargs...
 )
     _validate_batch(Y, p, order)
+    _validate_batch_problem(reparam)
     m, opt, state₀ = _prepare_batch(Y, reparam, method, options, kwargs)
     isempty(Y) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(Y), ReturnCode, length(Y))

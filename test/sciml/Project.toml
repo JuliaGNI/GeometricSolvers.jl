@@ -13,8 +13,7 @@ GeometricSolvers = {path = "../.."}
 
 [compat]
 ADTypes = "1.23"
-JLArrays = "0.3"
-KernelAbstractions = "0.9.38"
+JLArrays = "0.5"
 LinearAlgebra = "1"
 StaticArrays = "1.9.8"
 Test = "1"

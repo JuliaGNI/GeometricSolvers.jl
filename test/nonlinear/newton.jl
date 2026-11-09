@@ -28,19 +28,20 @@ caller_tag_scale(::Type{<:ForwardDiff.Dual{<:ForwardDiff.Tag{CallerTag}}}) = 2
 caller_tag_scale(::Type{<:Complex{<:ForwardDiff.Dual{<:ForwardDiff.Tag{CallerTag}}}}) = 2
 caller_tag_scale(::Type) = 1
 
-@kernel function newton_singular_kernel!(codes, xs, @Const(prob), @Const(x₀))
+@kernel function newton_singular_kernel!(codes, xs, prob, method, state₀, opt, @Const(x₀))
     i = @index(Global, Linear)
     @inbounds begin
-        x, st = solve(prob, x₀, Newton())
+        x, st, _ = solve!!(state₀, prob, x₀, method, nothing, opt)
         codes[i] = st.code
         xs[i] = x
     end
 end
 
-@kernel function newton_solve_kernel!(codes, xs, @Const(prob), @Const(x₀), @Const(p))
+@kernel function newton_solve_kernel!(codes, xs, prob, method, state₀, opt, @Const(x₀),
+        @Const(p))
     i = @index(Global, Linear)
     @inbounds begin
-        x, st = solve(prob, x₀, Newton(), p)
+        x, st, _ = solve!!(state₀, prob, x₀, method, p, opt)
         codes[i] = st.code
         xs[i] = x
     end
@@ -95,6 +96,46 @@ end
         end
         @test err isa ArgumentError
         @test occursin("DogLeg", err.msg) && occursin("reuse", err.msg)
+    end
+end
+
+# `adapt` rebuilds a method through the checked constructors of `Newton` and `Static`, so each
+# host entry that adapts one rejects a value that `ToReal{Float32}` narrows out of range: a
+# regularization of 1e300 to `Inf`, a `Static` step of 1e-50 to zero. Each call raises before any
+# kernel launches.
+@testset "every host entry rejects a method that ToReal narrows out of range" begin
+    x₀ = SVector{2, Float32}(2, 2)
+    X = [x₀, x₀]
+    S = Vector{SolverStatus{Float32}}(undef, 2)
+    prob = NonlinearProblem((y, _) -> y .* y .- one(eltype(y)))
+    stat = StationarityProblem((x, _) -> (x[1]^2 + x[2]^2) / 2)
+    rep = Reparametrized(prob, (y, _) -> y)
+    for m in (Newton(; regularization = 1e300), Newton(; globalization = Static(1e-50)))
+        @test_throws ArgumentError solve(prob, x₀, m)
+        @test_throws ArgumentError solve_batch!(copy(X), prob, m)
+        @test_throws ArgumentError init(stat, x₀, m)
+        @test_throws ArgumentError solve(stat, x₀, m)
+        @test_throws ArgumentError solve_batch!(copy(X), stat, m)
+        @test_throws ArgumentError solve_batch!(copy(X), S, stat, m)
+        @test_throws ArgumentError solve_batch!(copy(X), rep, m)
+        @test_throws ArgumentError solve_batch!(copy(X), S, rep, m)
+    end
+end
+
+# A composite method adapts its members through the same constructors, so a `Newton` or `Static`
+# member that `ToReal{Float32}` narrows out of range is rejected inside `Picard`, `Repeat` and
+# `Anderson` too.
+@testset "a composite method rejects a member that ToReal narrows out of range" begin
+    x₀ = SVector{2, Float32}(2, 2)
+    prob = NonlinearProblem((y, _) -> y .* y .- one(eltype(y)))
+    for m in (Picard(; globalization = Static(1e300)),
+        Picard(; globalization = Static(1e-50)),
+        Repeat(Newton(; regularization = 1e300), 2),
+        Repeat(Newton(; globalization = Static(1e-50)), 2),
+        Anderson(Newton(; regularization = 1e300)),
+        Anderson(Newton(; globalization = Static(1e-50))))
+        @test_throws ArgumentError solve(prob, x₀, m)
+        @test_throws ArgumentError Adapt.adapt(ToReal{Float32}(), m)
     end
 end
 
@@ -633,11 +674,15 @@ end
 @testset "Newton inside a KernelAbstractions kernel on CPU" begin
     for T in ELTYPES
         R = real(T)
+        m = Adapt.adapt(ToReal{R}(), Newton())
+        opt = Options(T)
         x₀_s = SVector{2, T}(zero(T), zero(T))
         prob_s = NonlinearProblem((y, _) -> y .* y .- one(eltype(y)))
         codes_s = Vector{GeometricSolvers.ReturnCode}(undef, 2)
         xs_s = Vector{SVector{2, T}}(undef, 2)
-        newton_singular_kernel!(KA_BACKEND)(codes_s, xs_s, prob_s, x₀_s; ndrange = 2)
+        state₀_s = init_state(m, prob_s, x₀_s, nothing)
+        newton_singular_kernel!(KA_BACKEND)(
+            codes_s, xs_s, prob_s, m, state₀_s, opt, x₀_s; ndrange = 2)
         synchronize(KA_BACKEND)
         @test all(==(SINGULAR), codes_s)
         @test all(x -> x === x₀_s, xs_s)
@@ -645,10 +690,12 @@ end
         x₀_c = SVector{2, T}(T(3), T(5))
         p_c = SVector{2, T}(T(4), T(9))
         prob_c = NonlinearProblem((y, q) -> y .* y .- q)
-        _, st_host = solve(prob_c, x₀_c, Newton(), p_c)
+        _, st_host = solve(prob_c, x₀_c, m, p_c)
         codes_c = Vector{GeometricSolvers.ReturnCode}(undef, 2)
         xs_c = Vector{SVector{2, T}}(undef, 2)
-        newton_solve_kernel!(KA_BACKEND)(codes_c, xs_c, prob_c, x₀_c, p_c; ndrange = 2)
+        state₀_c = init_state(m, prob_c, x₀_c, p_c)
+        newton_solve_kernel!(KA_BACKEND)(
+            codes_c, xs_c, prob_c, m, state₀_c, opt, x₀_c, p_c; ndrange = 2)
         synchronize(KA_BACKEND)
         @test all(==(st_host.code), codes_c)
         @test all(

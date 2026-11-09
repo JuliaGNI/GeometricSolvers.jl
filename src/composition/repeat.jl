@@ -11,9 +11,11 @@ reporting the combined outer step norm ``\\|x^{(\\text{count})} - x^{(0)}\\|``. 
 struct Repeat{M}
     method::M
     count::Int32
+    # `adapt` rebuilds a `Repeat` through this constructor, and a device kernel cannot format a
+    # message, so the message is constant.
     function Repeat{M}(method::M, count::Integer) where {M}
         count >= 1 ||
-            throw(ArgumentError("Repeat requires count >= 1, got $count"))
+            throw(ArgumentError("Repeat requires count >= 1"))
         return new{M}(method, Int32(count))
     end
 end

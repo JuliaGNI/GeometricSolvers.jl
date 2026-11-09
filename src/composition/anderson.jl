@@ -53,29 +53,31 @@ struct Anderson{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
     safeguard_cos::S
     grow_depth::Bool
 
+    # `adapt` rebuilds an `Anderson` through the keyword constructor and this one, and a device
+    # kernel cannot format a message, so the messages of both are constant.
     function Anderson{m, M, R, K, S}(
             member::M, c_s::R, κ_bar::K, restart_factor::R,
             M_alpha::R, safeguard_cos::S,
             grow_depth::Bool) where {
             m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
         m isa Int ||
-            throw(ArgumentError("Anderson history depth m must be an Int, got $(typeof(m))"))
+            throw(ArgumentError("Anderson history depth m must be an Int"))
         m >= 1 ||
-            throw(ArgumentError("Anderson history depth m must be >= 1, got $m"))
+            throw(ArgumentError("Anderson history depth m must be >= 1"))
         isfinite(c_s) && zero(R) < c_s < one(R) ||
-            throw(ArgumentError("Anderson c_s must be finite and in (0, 1), got $c_s"))
+            throw(ArgumentError("Anderson c_s must be finite and in (0, 1)"))
         if κ_bar !== nothing
             isfinite(κ_bar) && κ_bar > one(R) ||
-                throw(ArgumentError("Anderson κ_bar must be nothing or finite and > 1, got $κ_bar"))
+                throw(ArgumentError("Anderson κ_bar must be nothing or finite and > 1"))
         end
         isfinite(restart_factor) && restart_factor >= R(3) ||
-            throw(ArgumentError("Anderson restart_factor must be finite and >= 3, got $restart_factor"))
+            throw(ArgumentError("Anderson restart_factor must be finite and >= 3"))
         isfinite(M_alpha) && M_alpha >= one(R) ||
-            throw(ArgumentError("Anderson M_alpha must be finite and >= 1, got $M_alpha"))
+            throw(ArgumentError("Anderson M_alpha must be finite and >= 1"))
         if safeguard_cos !== nothing
             isfinite(safeguard_cos) && zero(R) < safeguard_cos < one(R) ||
                 throw(ArgumentError(
-                    "Anderson safeguard_cos must be nothing or finite and in (0, 1), got $safeguard_cos"))
+                    "Anderson safeguard_cos must be nothing or finite and in (0, 1)"))
         end
         return new{m, M, R, K, S}(
             member, c_s, κ_bar, restart_factor, M_alpha, safeguard_cos, grow_depth)
@@ -91,7 +93,7 @@ function Anderson(
         safeguard_cos::Union{Nothing, Real} = nothing,
         grow_depth::Bool = false) where {m, M}
     m isa Int ||
-        throw(ArgumentError("Anderson history depth m must be an Int, got $(typeof(m))"))
+        throw(ArgumentError("Anderson history depth m must be an Int"))
     R_base = promote_type(typeof(c_s), typeof(restart_factor), typeof(M_alpha))
     R_kb = κ_bar === nothing ? R_base : promote_type(R_base, typeof(κ_bar))
     R = float(safeguard_cos === nothing ? R_kb : promote_type(R_kb, typeof(safeguard_cos)))

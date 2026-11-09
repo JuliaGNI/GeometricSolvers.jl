@@ -7,9 +7,12 @@ with `φ = NaN`.
 """
 struct Static{R <: Real} <: LineSearch{R}
     α::R
+    # `adapt` rebuilds a `Static` through this constructor, inside a device kernel too, so the
+    # check also refuses a step that `ToReal` narrows to `Inf` or to zero. A kernel cannot format a
+    # message, so the message is constant.
     function Static{R}(α::R) where {R <: Real}
         α > 0 && isfinite(α) ||
-            throw(ArgumentError("the step of Static must be positive and finite, got $α"))
+            throw(ArgumentError("the step of Static must be positive and finite"))
         new{R}(α)
     end
 end

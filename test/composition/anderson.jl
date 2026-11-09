@@ -1021,9 +1021,11 @@ end
         # R2 solve_batch! on CPU()
         X_batch = [SVector{4, Float64}(x0_vec) for _ in 1:4]
         S_batch = Vector{SolverStatus{Float64}}(undef, 4)
-        solve_batch!(X_batch, S_batch, prob_par_r1, a_par; options = opts_r1)
-        @test all(s -> s.code == SUCCESS, S_batch)
-        @test all(x -> rnorm(prob_par_r1.F(x, nothing)) <= 1e-11, X_batch)
+        @test begin
+            solve_batch!(X_batch, S_batch, prob_par_r1, a_par; options = opts_r1)
+            all(s -> s.code == SUCCESS, S_batch) &&
+                all(x -> rnorm(prob_par_r1.F(x, nothing)) <= 1e-11, X_batch)
+        end
 
         # 6d. R3 0 allocations for both step!! and solve! after warm-up
         old_threads = BLAS.get_num_threads()

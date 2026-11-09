@@ -27,15 +27,18 @@ function _adapt_order(backend, ::Nothing)
     return nothing
 end
 
-# An `isbits` order, such as a range, goes to the kernel by value; another order is copied to the
-# backend of the batch unless it is there already.
+# An `isbits` order, such as a range, goes to the kernel by value; another order goes as an array
+# of the batch's backend, which is the order itself when it is one and a copy otherwise. A kernel
+# reads only the backend's own arrays and the CPU backend compiles its kernels, so a host container
+# that is not an `Array`, such as a `view`, is copied there too.
 function _adapt_order(backend, order::AbstractVector{<:Integer})
     isbitstype(typeof(order)) && return order
-    order_backend = get_backend(order)
-    order_backend == backend && return order
     order_dev = allocate(backend, eltype(order), length(order))
-    copyto!(order_dev, order_backend isa KernelAbstractions.CPU && !(order isa Array) ?
-                       Array(order) : order)
+    order isa typeof(order_dev) && return order
+    # An order that is not the backend's own array is read through its own backend, which raises
+    # where the container names none.
+    get_backend(order)
+    copyto!(order_dev, order isa Array ? order : Array(order))
     return order_dev
 end
 
@@ -59,6 +62,18 @@ function _validate_batch(
     if order !== nothing && !isperm(Adapt.adapt(Array, order))
         throw(ArgumentError("order is not a permutation of 1:$(length(X))"))
     end
+    return nothing
+end
+
+# A batch runs its solves in one kernel, which takes the problem by value, so every part of the
+# problem the kernel reads must be `isbits`: a `jacobian_prototype` that is a `SparseMatrixCSC`, for
+# one, is host memory that no kernel reads.
+function _validate_batch_problem(prob)
+    P = jacobian_prototype(prob)
+    (P === nothing || isbits(P)) || throw(ArgumentError(
+        "solve_batch! takes the problem's Jacobian prototype by value into a kernel, so the " *
+        "prototype must be `isbits`; got $(typeof(P)) in $(typeof(prob)). Run " *
+        "`solve(prob, x₀, method, p)` per system instead"))
     return nothing
 end
 
@@ -130,10 +145,12 @@ Each element `X[idx]` is the initial guess for system `idx` and is overwritten w
 iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref) so system `idx`
 receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is a
 permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any other `order`
-throws. An `order` that is not `isbits` needs a method of `get_backend`, and an `order` on another
-backend than `X` is copied to the backend of `X`. Any `ForwardDiff.Dual` in `X` or `p` raises an
-`ArgumentError`. `solve_batch!` does not check `prob`, so a `ForwardDiff.Dual` captured in `prob`
-is not detected in a batch.
+throws. An `order` that is not `isbits` needs a method of `get_backend`, and one that is not an
+array of the backend of `X`, such as an array of another backend or a host `view`, is copied into
+one. Any `ForwardDiff.Dual` in `X` or `p` raises an `ArgumentError`. The kernel takes `prob` by
+value, so a `jacobian_prototype` that is not `isbits`, such as a `SparseMatrixCSC`, raises an
+`ArgumentError`. `solve_batch!` does not look for a `ForwardDiff.Dual` captured in `prob`, so one is
+not detected in a batch.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
@@ -151,6 +168,7 @@ function solve_batch!(
         kwargs...
 ) where {R <: Real}
     _validate_batch(X, p, order)
+    _validate_batch_problem(prob)
     R_X = real(eltype(eltype(X)))
     if R !== R_X
         throw(ArgumentError(
@@ -179,6 +197,7 @@ function solve_batch!(
         kwargs...
 )
     _validate_batch(X, p, order)
+    _validate_batch_problem(prob)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))

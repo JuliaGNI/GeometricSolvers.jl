@@ -27,11 +27,13 @@ Both `maxiter ≥ 1` (`Int32`) and `0 < η < 1` (`R <: Real`) are validated at c
 struct Refinement{R <: Real}
     η::R
     maxiter::Int32
+    # `adapt` rebuilds a `Refinement` through this constructor, inside a device kernel too. A
+    # kernel cannot format a message, so the messages are constant.
     function Refinement{R}(η::Real, maxiter::Integer) where {R <: Real}
         maxiter >= 1 ||
-            throw(ArgumentError("Refinement maxiter must be ≥ 1, got $maxiter"))
+            throw(ArgumentError("Refinement maxiter must be ≥ 1"))
         (isfinite(η) && zero(η) < η < one(η)) ||
-            throw(ArgumentError("Refinement η must be finite and in (0, 1), got $η"))
+            throw(ArgumentError("Refinement η must be finite and in (0, 1)"))
         return new{R}(R(η), Int32(maxiter))
     end
 end

@@ -558,6 +558,16 @@ end
     @test counts_jl.SUCCESS == 4
     @test isapprox(Array(X_jl_b), X_b_kw; rtol = 1e-12)
 
+    # a callable datum with a `PerSystem` of device parameters: the host check copies the parameters
+    # once instead of reading one element of a device array per system, which the device refuses
+    prob_b_fn = StationarityProblem(f_b1; b = p -> SVector(0.25 * p, -0.5 * p))
+    X_jl_fn = JLArray([SVector(0.0, 0.0) for _ in 1:4])
+    counts_fn = solve_batch!(X_jl_fn, prob_b_fn, m_newt_ldlt, ps_jl)
+    @test counts_fn.SUCCESS == 4
+    X_fn = [SVector(0.0, 0.0) for _ in 1:4]
+    solve_batch!(X_fn, prob_b_fn, m_newt_ldlt, ps)
+    @test isapprox(Array(X_jl_fn), X_fn; rtol = 1e-12)
+
     # solve_batch! with status vector S and subset U = (2, 3) preserving X[idx][1]
     f_b2(x, p) = 0.5 * ((x[2] - x[1])^2 + (x[3] - p)^2)
     prob_b2 = StationarityProblem(f_b2; E = (2, 3), U = (2, 3))

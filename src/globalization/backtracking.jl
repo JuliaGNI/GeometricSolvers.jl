@@ -29,11 +29,13 @@ struct Backtracking{R <: Real} <: LineSearch{R}
     c₁::R
     p::R
     maxiter::Int32
+    # `adapt` rebuilds a `Backtracking` through this constructor, inside a device kernel too. A
+    # kernel cannot format a message, so the messages are constant.
     function Backtracking{R}(c₁::Real, p::Real, maxiter::Integer) where {R <: Real}
-        0 < c₁ < 1 || throw(ArgumentError("Backtracking needs 0 < c₁ < 1, got c₁ = $c₁"))
-        0 < p < 1 || throw(ArgumentError("Backtracking needs 0 < p < 1, got p = $p"))
+        0 < c₁ < 1 || throw(ArgumentError("Backtracking needs 0 < c₁ < 1"))
+        0 < p < 1 || throw(ArgumentError("Backtracking needs 0 < p < 1"))
         1 ≤ maxiter ≤ typemax(Int32) ||
-            throw(ArgumentError("Backtracking needs 1 ≤ maxiter ≤ typemax(Int32), got $maxiter"))
+            throw(ArgumentError("Backtracking needs 1 ≤ maxiter ≤ typemax(Int32)"))
         new{R}(c₁, p, maxiter)
     end
 end

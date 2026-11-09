@@ -285,7 +285,7 @@ end
     @test J_z[1, 126] == 0.0
 end
 
-@testset "Globalization, chord reuse, and R1/R2 ignore prototype" begin
+@testset "Globalization, chord reuse, and the prototype R1 and Picard ignore" begin
     ad_b = AutoSparse(
         AutoForwardDiff(); coloring_algorithm = GreedyColoringAlgorithm())
     for T in REAL_ELTYPES, g in (Backtracking(), Bisection())
@@ -335,14 +335,14 @@ end
         @test 1 <= jcalls[] < st_ch.iterations
     end
 
-    # R1, R2, and Picard ignore jacobian_prototype
+    # R1 and Picard ignore jacobian_prototype; the batch refuses it, because it takes the problem
+    # by value into a kernel and a `SparseMatrixCSC` is not `isbits`
     P_small = sparse([1, 2], [1, 2], [1.0, 1.0], 2, 2)
     prob_r1 = NonlinearProblem((x, p) -> x .^ 2 .- 2.0; jacobian_prototype = P_small)
     _, st_r1 = solve(prob_r1, SVector(1.5, 1.5), Newton())
     @test st_r1.code === SUCCESS
     X_r2 = [SVector(1.5, 1.5), SVector(1.5, 1.5)]
-    counts_r2 = solve_batch!(X_r2, prob_r1, Newton())
-    @test counts_r2.SUCCESS == 2
+    @test_throws ArgumentError solve_batch!(X_r2, prob_r1, Newton())
 
     prob_pic = NonlinearProblem(
         (r, x, p) -> (r .= x .- 0.5 .* sin.(x) .- 1.0; r);

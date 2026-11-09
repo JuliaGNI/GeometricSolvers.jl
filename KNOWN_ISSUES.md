@@ -15,9 +15,9 @@
   `false` it passes, with the assertion passed and the device skip recorded (Julia 1.13.3). The
   fix is upstream: Metal.jl 1.12.0 runs its workload only where `!isempty(devices())`
   (JuliaGPU/Metal.jl#1000, which closed JuliaGPU/Metal.jl#996). Metal.jl 1.12.0 needs
-  KernelAbstractions 0.10, while this package bounds KernelAbstractions at 0.9, so the test
-  environment resolves Metal.jl 1.11.1, and the preference stays until the package moves to
-  KernelAbstractions 0.10.
+  KernelAbstractions 0.10, and this package bounds KernelAbstractions at 0.10.5, so the test
+  environment resolves Metal.jl 1.12.0, and the preference stays until a sandboxed
+  `run-tests.jl <repository> devices/metal.jl` passes without it.
 - **kind:** upstream
 - **found:** 2026-10-02
 
@@ -419,3 +419,56 @@
   `test/gpu/cuda/runtests.jl` builds a rectangular factor.
 - **kind:** not verified
 - **found:** PR #62
+
+### K82 · `Enzyme` 0.13 and `KernelAbstractions` 0.10 cannot share an environment, so the Enzyme suite does not resolve
+
+- **location:** `test/enzyme/Project.toml`, `.github/workflows/Enzyme.yml`
+- **evidence:** `KernelAbstractions 0.10.5` depends on `LLVM` and bounds it `LLVM = "10"`, while
+  `Enzyme 0.13` bounds `LLVM = "9.10"` (`< 10`). The Enzyme environment contains this package
+  through the path source `GeometricSolvers = {path = "../.."}`, so the two bounds meet in one
+  resolve, and `Pkg.resolve` in `test/enzyme` stops with "Unsatisfiable requirements detected for
+  package LLVM … restricted by compatibility requirements with Enzyme … to versions: 6.1.0 - 9.13.2
+  … restricted by compatibility requirements with KernelAbstractions … to versions: 10.0.0 -
+  10.4.3 — no versions left". The job is not a required status check, so it fails alone. Enzyme's
+  `main` still bounds `LLVM = "9.10"` and `GPUArrays = "10, 11"` (its `Project.toml` of
+  2026-11-07, version 0.13.219), so the remedy is upstream and no change here reaches it.
+- **kind:** upstream
+- **found:** 2026-11-07
+
+### K84 · An explicitly tagged `AutoForwardDiff` over a residual that calls `ForwardDiff.derivative` throws in a compiled kernel
+
+- **location:** `src/ad/forwarddiff_static.jl` (the own chunked path), reached by
+  `AUTOForwardDiff` with a caller tag in `test/ad/forwarddiff_static.jl`
+- **evidence:** in a kernel on `CPU()`,
+  `jacobian!!(nothing, AutoForwardDiff(; tag = ForwardDiff.Tag(CallerTag(), T)), nested, x, p)` with
+  `nested = NonlinearProblem(R1Closing(), r1_closing_jacobian)` raises
+  `KernelException: exception thrown during kernel execution`; the device stack of `julia -g2` ends
+  at `ForwardDiff.partials` (`dual.jl:114`) under
+  `extract_derivative` → `derivative` → `r1_closing_term` (`test/helpers/r1problems.jl:151`) →
+  `R1Closing`. The same call with the *untagged* `AutoForwardDiff()`, and the tagged call over a
+  residual without a nested derivative (`R1Tagged`), both return the right Jacobian in the same
+  kernel; all three work on the host. So the perturbation tag of the nested `derivative` is not
+  isolated from the caller's tag once the code is compiled, and `partials` receives a plain value.
+  The test keeps the untagged pair and the tagged-over-`R1Tagged` pair inside the kernel, and the
+  tagged-over-nested pair on the host.
+- **kind:** upstream
+- **found:** 2026-11-08
+
+### K85 · With `--check-bounds=yes`, a `solve_batch!` with `Newton` on `CPU()` throws `KernelException` at run time
+
+- **location:** `src/nonlinear/batched.jl`, `src/nonlinear/reparametrized.jl` (the batch kernels);
+  `.github/workflows/CI.yml` (`check_bounds: auto`)
+- **evidence:** in a fresh `julia --check-bounds=yes --project=test` (Julia 1.13.3,
+  KernelAbstractions 0.10.5), with `c = SVector{2, T}(1, 2)`,
+  `solve_batch!([SVector{2, T}(1, 1)], Reparametrized(NonlinearProblem((x, p) -> x - c), (y, p) -> 2 * y, nothing), Newton())`
+  and the same batch over the plain `NonlinearProblem((x, p) -> x - c)` both raise
+  `KernelException: exception thrown during kernel execution on device cpu`, at `Float32` and at
+  `Float64`; POCL prints `ERROR: exception during kernel execution on work-item (1, 1, 1).`
+  With `--check-bounds=auto` all four return `SUCCESS = 1`. `Picard()` on the plain problem
+  returns `SUCCESS = 1` under `yes` too. The default `Newton()` fails, so any testset that runs a
+  `Newton` batch on `CPU()` errors under the flag. The cause is not investigated; the general
+  mechanism is that a bounds check defeats `@inbounds`, a static kernel's local `MMatrix` or
+  `MVector` then escapes to the heap, and a compiled kernel cannot allocate. CI runs the suite
+  with `check_bounds: auto`, so no CI job runs it with `yes`.
+- **kind:** defect
+- **found:** PR #70
