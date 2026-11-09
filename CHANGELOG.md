@@ -48,7 +48,11 @@ so that a compat-only bump can be told apart from an interface change.
   and for a `BlockEliminated` of a `StationarityProblem`), and return `(x*, status)` with
   `x*[Y] = y*(z*)` and `x*[Z] = z*`;
   any inner solver failure or rank-deficient inner factor (`rank < |Y|`) increments
-  `status.step_failures`.
+  `status.step_failures`; with `linear_inner = true` the one linear solve solves (or minimises
+  over) the inner block only when the residual is affine in `y`, so an inner residual
+  ‖F_{E_y}(y*(z), z)‖₂ above √ε · max(1, ‖F_{E_y}(0, z)‖₂) for `BlockEliminated`, or an inner
+  gradient ‖Φ(y*)ᴴ r(y*, z)‖₂ above √ε · max(1, ‖r(0, z)‖₂) · max(1, ‖Φ(y*)‖_F) for
+  `VariableProjection`, also counts as an inner failure and the solve goes on.
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
   range starts at `6.5.1`.** The `Adapt` floor rises from 4.6.1 to 4.7.3 and the `GPUArraysCore`
   floor from 0.2 to 0.2.1, because Metal 1.12 needs `GPUArrays` 12.1, which needs both; with the
