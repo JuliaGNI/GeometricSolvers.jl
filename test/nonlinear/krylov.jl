@@ -219,7 +219,7 @@ end
             linsolve = GMRES(; maxiter = 8, forcing = FixedForcing(1e-10)),
             globalization = DogLeg(), jacobian = JVPFunction(R5DiagonalJVP(counts)))
         solver = init(prob, x₀, m)
-        x, st = solve!(solver, copy(x₀))
+        _, st = solve!(solver, copy(x₀))
         @test st.code == SUCCESS
         @test st.f_calls == counts.f
         @test st.jvp_calls == counts.jvp
@@ -237,7 +237,7 @@ end
             x₀ = fill(T(2), 8)
             solver = init(
                 prob, x₀, Newton(; linsolve = GMRES(; maxiter = 10), globalization = g))
-            x, st = solve!(solver, copy(x₀))
+            _, st = solve!(solver, copy(x₀))
             @test st.code == SUCCESS
             @test st.f_calls == counts.f
             @test st.jvp_calls == counts.jvp
