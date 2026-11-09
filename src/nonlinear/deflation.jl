@@ -52,7 +52,7 @@ solve steps on, so `∇M` has length `|U|` whatever the length of the state.
 # Evaluation
 
 At a deflated root (`x = rᵢ`) the factor `mᵢ` is `Inf`, so a solve from `x₀ = rᵢ` returns
-[`NONFINITE`](@ref) at `0` iterations, and a trial step onto `rᵢ` has a non-finite merit, which a
+`NONFINITE` at `0` iterations, and a trial step onto `rᵢ` has a non-finite merit, which a
 line search shrinks away from (`Backtracking` steps `0.1α` off a non-finite merit).
 A factor that overflows (`‖x - rᵢ‖^{-p} = Inf`, as at `10^{-200}` in `Float64`) does the same.
 Every coordinate of `∇mᵢ` is evaluated unit-scaled, `-(p ((uⱼ/d) ϕ)/d)` with `d = ‖u‖` and
