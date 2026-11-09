@@ -35,13 +35,15 @@ struct StrongWolfe{R <: Real} <: LineSearch{R}
     c₂::R
     αmax::R
     maxiter::Int32
+    # `adapt` rebuilds a `StrongWolfe` through this constructor, inside a device kernel too. A
+    # kernel cannot format a message, so the messages are constant.
     function StrongWolfe{R}(c₁::Real, c₂::Real, αmax::Real, maxiter::Integer) where {R <:
                                                                                      Real}
         0 < c₁ < c₂ < 1 ||
-            throw(ArgumentError("StrongWolfe needs 0 < c₁ < c₂ < 1, got c₁ = $c₁, c₂ = $c₂"))
-        αmax > 0 || throw(ArgumentError("StrongWolfe needs αmax > 0, got αmax = $αmax"))
+            throw(ArgumentError("StrongWolfe needs 0 < c₁ < c₂ < 1"))
+        αmax > 0 || throw(ArgumentError("StrongWolfe needs αmax > 0"))
         1 ≤ maxiter ≤ typemax(Int32) ||
-            throw(ArgumentError("StrongWolfe needs 1 ≤ maxiter ≤ typemax(Int32), got $maxiter"))
+            throw(ArgumentError("StrongWolfe needs 1 ≤ maxiter ≤ typemax(Int32)"))
         new{R}(c₁, c₂, αmax, maxiter)
     end
 end

@@ -382,6 +382,24 @@ end
     end
 end
 
+# The same kernel runs the inner constructors of each line search and of `Refinement`, which
+# check their arguments with constant messages.
+@testset "R1 batch with line searches and a Refinement ($T)" for T in REAL_ELTYPES
+    c = SVector{2, T}(1, 2)
+    rep = Reparametrized(NonlinearProblem((x, p) -> x - c), (y, p) -> 2 * y, nothing)
+    batch_methods = (
+        Newton(; globalization = Backtracking()), Newton(; globalization = Bisection()),
+        Newton(; globalization = StrongWolfe()), Newton(; refinement = true),
+        Picard(; damping = 1 // 2, globalization = Backtracking()))
+    for m in batch_methods
+        Y = [SVector{2, T}(1, 1), SVector{2, T}(0, 0)]
+        @test solve_batch!(Y, rep, m).SUCCESS == 2
+        for x in Y
+            @test isapprox(x, c; rtol = 8 * eps(T))
+        end
+    end
+end
+
 @testset "Holomorphic chart across ELTYPES ($T)" for T in ELTYPES
     allowscalar(false)
     R = real(T)

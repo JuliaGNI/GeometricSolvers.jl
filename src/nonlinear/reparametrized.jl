@@ -41,12 +41,12 @@ struct Reparametrized{P <: AbstractNonlinearProblem, G, DG, C, K} <:
     prob::P
     g::G
     ∂g::DG
+    # `adapt` rebuilds a `Reparametrized` through this constructor, and a device kernel cannot
+    # format a message, so the messages are constant.
     function Reparametrized{P, G, DG, C, K}(
             prob::P, g::G, ∂g::DG) where {P <: AbstractNonlinearProblem, G, DG, C, K}
-        C isa Bool || throw(ArgumentError(
-            "Reparametrized type parameter C must be a Bool, got $(repr(C))"))
-        K isa Bool || throw(ArgumentError(
-            "Reparametrized type parameter K must be a Bool, got $(repr(K))"))
+        C isa Bool || throw(ArgumentError("Reparametrized type parameter C must be a Bool"))
+        K isa Bool || throw(ArgumentError("Reparametrized type parameter K must be a Bool"))
         return new{P, G, DG, C, K}(prob, g, ∂g)
     end
 end
