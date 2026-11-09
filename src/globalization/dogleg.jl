@@ -183,3 +183,112 @@ end
         δ = dogleg_shrink(δ)
     end
 end
+
+# The matrix-free trial loop of `DogLeg` on the Arnoldi relation of an R5 step (Pawlowski, Simonis,
+# Walker and Shadid 2008, Corollary 2.3, p. 2121). With `J V_k = V_{k+1} H̄_k` and `F = -β₀ V e₁`,
+# the model of a direction `s = V_k y` is `F + J s = V (-β₀ e₁ + H̄_k y)`, so its norm is that of a
+# vector of length `k + 1` and costs no product; the Cauchy point is the one of `dogleg_step`,
+# `ĝ = V_k c_g` with `c_g = -β₀ (H̄_{1, 1:k})ᴴ`, whose norm is `‖c_g‖` and whose model norm
+# `‖J ĝ‖` is `‖H̄_k c_g‖`. The loop accepts, rejects and updates the radius as the factorised loop
+# does, on the same curve and with the same constants, and each trial costs one evaluation of `F`.
+@inline function dogleg_step_mf(
+        ws::GMRESWorkspace{T, R}, g, prob, x, Fx, p, sN, newton::Bool,
+        δ::R) where {T, R}
+    lo = dogleg_lo(R)
+    fnorm = R(rnorm(Fx))
+    # at an exact root there is nothing to reduce: the iterate stays, and so does the radius
+    if iszero(fnorm)
+        return x, Fx, δ, StepInfo{R}(SUCCESS, fnorm, zero(R), Int32(0), false, false)
+    end
+    k = Int(ws.arnoldi)
+    β₀ = ws.beta
+    k > Int32(0) || return x, Fx, δ,
+    StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
+    nN = newton ? R(rnorm(sN)) : R(Inf)
+    for j in 1:k
+        ws.cg[j] = -β₀ * conj(ws.H0[1, j])
+        ws.yN[j] = ws.y[j]
+    end
+    cnorm = R(rnorm(@view ws.cg[1:k]))
+    # ‖g̃‖ = ‖Jᴴ F‖/‖F‖ and ‖J ĝ‖, both from the projected Cauchy weights: the scale of `c_g` is
+    # β₀ times that of `g̃`, and both norms of the loop are ratios of it
+    gnorm = cnorm / fnorm
+    jnorm = iszero(cnorm) ? zero(R) : R(reduced_hessenberg_norm(ws, ws.cg, k) / cnorm)
+    cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm) && isfinite(jnorm)
+    nC = cauchy ? fnorm * ((gnorm / jnorm) / jnorm) : zero(R)
+    if iszero(δ) && (newton || cauchy)
+        n₀ = newton ? nN : nC
+        δ = n₀ < lo ? 2 * lo : dogleg_clamp(n₀)
+    end
+    while true
+        model = zero(R)
+        boundary = false
+        if newton && nN <= δ
+            s = sN
+            boundary = nN >= δ
+            model = ws.linres
+        elseif !cauchy
+            return x, Fx, δ, StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
+        elseif !newton || nC >= δ
+            # the Cauchy point, cut to the radius
+            σ = -min(nC, δ) / gnorm
+            for j in 1:k
+                ws.y[j] = σ * ws.cg[j]
+            end
+            s = reduced_direction!(g_s(g), ws, ws.y, k)
+            boundary = nC >= δ
+            model = R(rnorm(reduced_model!(ws, ws.y, k, β₀)))
+        else
+            # the point of norm δ on the segment from the Cauchy point to the Newton step, in units
+            # of δ: `a = -(nC/δ) ĝ` and `b = sN + nC ĝ`, with the root `t ≥ 0` of `‖a + t b̂‖ = 1`
+            for j in 1:k
+                ws.y[j] = -(nC / δ) / gnorm * ws.cg[j]
+                ws.yb[j] = ws.yN[j] + (nC / gnorm) * ws.cg[j]
+            end
+            bnorm = R(rnorm(@view ws.yb[1:k]))
+            c₀ = 1 - (nC / δ)^2
+            ab = zero(R)
+            if !iszero(bnorm)
+                for j in 1:k
+                    ws.yb[j] /= bnorm
+                end
+                for j in 1:k
+                    ab += real(conj(ws.y[j]) * ws.yb[j])
+                end
+            end
+            t = c₀ / (ab + sqrt(ab * ab + c₀))
+            for j in 1:k
+                ws.y[j] = δ * (ws.y[j] + t * ws.yb[j])
+            end
+            s = reduced_direction!(g_s(g), ws, ws.y, k)
+            boundary = true
+            model = R(rnorm(reduced_model!(ws, ws.y, k, β₀)))
+        end
+        pred = fnorm - model
+        x₊ = update_iterate!!(g_xt(g), x, one(R), s)
+        F₊ = primal_residual!!(g_Ft(g), prob, x₊, p)
+        ws.f_calls += Int32(1)
+        fnorm₊ = R(rnorm(F₊))
+        ared = fnorm - fnorm₊
+        # a non-finite `F₊` gives an `ared` of `-Inf` or `NaN`, which fails the test
+        if pred > 0 && ared >= R(1e-4) * pred
+            limited = !(newton && nN <= δ)
+            ρ = ared / pred
+            if ρ < R(0.1)
+                δ = nN < δ ? max(nN, lo) : dogleg_shrink(δ)
+            elseif ρ > R(0.75) && boundary
+                δ = dogleg_grow(δ)
+            end
+            stepnorm = R(rnorm(s))
+            x = copy!!(x, x₊)
+            Fx = copy!!(Fx, F₊)
+            return x, Fx, δ,
+            StepInfo{R}(SUCCESS, fnorm₊, stepnorm, Int32(0), false, limited)
+        end
+        if δ == lo
+            return x, Fx, δ,
+            StepInfo{R}(LINESEARCH_FAILED, fnorm, zero(R), Int32(1), false, false)
+        end
+        δ = dogleg_shrink(δ)
+    end
+end

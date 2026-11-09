@@ -33,6 +33,31 @@ struct JacobianMatrixJVP{M <: AbstractMatrix}
     J::M
 end
 
+"""
+    JVPFunction(jvp!)
+
+The Jacobian–vector product of a matrix-free problem, as the `jacobian` field of a
+[`Newton`](@ref) with [`GMRES`](@ref) takes it: `jvp!(Jv, x, v, p)` writes ``J v`` into `Jv`, output
+first, as [`jvp!!`](@ref) takes it. A problem that no array can hold the Jacobian of — an expensive
+residual whose every column costs a full evaluation, or a device array — solves through it:
+
+```julia
+jvp!(Jv, x, v, p) = (Jv .= (3 .* x .^ 2 .+ 2) .* v; Jv)
+method = Newton(; linsolve = GMRES(; maxiter = 10), jacobian = JVPFunction(jvp!))
+```
+
+A callback that returns `nothing` is accepted, as are the vectors of a device backend: the call is
+`jvp!(Jv, x, v, p)` on the storage of the iterate, and the product is counted by the solve.
+"""
+struct JVPFunction{F}
+    jvp!::F
+end
+
+@inline function jvp!!(Jv, prep::JVPFunction, prob, x, v, p)
+    prep.jvp!(Jv, x, v, p)
+    return Jv
+end
+
 # The R3 JVP preparation from an analytic Jacobian under globalization `g`. Only a line search
 # that searches takes the slope of the merit, so `Static`, `DogLeg` and every other
 # globalization get `nothing` and no `m × n` buffer.
