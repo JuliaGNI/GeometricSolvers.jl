@@ -11,9 +11,17 @@ the residual, optionally its derivative, and optionally `jacobian_prototype` for
 Jacobian in [`NonlinearProblem`](@ref); the residual, optionally its derivative, and its length in
 [`LeastSquaresProblem`](@ref); or the scalar action, its equation and unknown index sets, and an
 optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps a
-`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`. The storage of
+`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`.
+[`BlockEliminated`](@ref) partitions the unknowns of a `NonlinearProblem` or a
+`StationarityProblem` into inner unknowns `y = x[Y]` and outer unknowns `z = x[Z]`, eliminates `y`
+at each outer iterate by solving the inner equations, and steps on the outer equations with the
+Schur complement `J_zz - J_zy J_yy⁺ J_yz`; [`VariableProjection`](@ref) does the same for a
+`LeastSquaresProblem` across all `m` residual rows by Golub–Pereyra variable projection or
+Kaufman's reduced Jacobian (`BlockEliminated` on a `LeastSquaresProblem` forwards to
+`VariableProjection`). The storage of
 the iterate selects the call form of the functions, so one problem serves every regime.
-`NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem` and `Reparametrized` are exported;
+`NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem`, `Reparametrized`,
+`BlockEliminated` and `VariableProjection` are exported;
 `GeometricSolvers.jacobian_prototype` and `GeometricSolvers.jacobian_pattern` are internal
 accessors.
 
@@ -23,6 +31,8 @@ NonlinearProblem
 StationarityProblem
 LeastSquaresProblem
 Reparametrized
+BlockEliminated
+VariableProjection
 jacobian_prototype
 jacobian_pattern
 ```
