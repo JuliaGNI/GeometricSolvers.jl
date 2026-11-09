@@ -14,9 +14,11 @@ candidate with the smaller residual norm, and falls back to the best candidate w
 """
 struct OptimalWeights{R <: Real}
     ρ::R
+    # `adapt` rebuilds an `OptimalWeights` through this constructor, and a device kernel cannot
+    # format a message, so the message is constant.
     function OptimalWeights{R}(ρ::R) where {R <: Real}
         isfinite(ρ) && ρ > zero(R) ||
-            throw(ArgumentError("OptimalWeights ρ must be finite and positive, got $ρ"))
+            throw(ArgumentError("OptimalWeights ρ must be finite and positive"))
         return new{R}(ρ)
     end
 end
@@ -38,10 +40,12 @@ Fixed real combination weights for [`Additive`](@ref), forming
 """
 struct FixedWeights{M, R <: Real}
     weights::NTuple{M, R}
+    # `adapt` rebuilds a `FixedWeights` through this constructor, and a device kernel cannot
+    # format a message, so the messages are constant.
     function FixedWeights{M, R}(weights::NTuple{M, R}) where {M, R <: Real}
         M >= 1 || throw(ArgumentError("FixedWeights requires at least one weight"))
         all(isfinite, weights) ||
-            throw(ArgumentError("FixedWeights requires finite real weights, got $weights"))
+            throw(ArgumentError("FixedWeights requires finite real weights"))
         return new{M, R}(weights)
     end
 end

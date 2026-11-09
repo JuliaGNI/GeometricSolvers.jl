@@ -99,6 +99,46 @@ end
     end
 end
 
+# `adapt` rebuilds a method through the checked constructors of `Newton` and `Static`, so each
+# host entry that adapts one rejects a value that `ToReal{Float32}` narrows out of range: a
+# regularization of 1e300 to `Inf`, a `Static` step of 1e-50 to zero. Each call raises before any
+# kernel launches.
+@testset "every host entry rejects a method that ToReal narrows out of range" begin
+    x₀ = SVector{2, Float32}(2, 2)
+    X = [x₀, x₀]
+    S = Vector{SolverStatus{Float32}}(undef, 2)
+    prob = NonlinearProblem((y, _) -> y .* y .- one(eltype(y)))
+    stat = StationarityProblem((x, _) -> (x[1]^2 + x[2]^2) / 2)
+    rep = Reparametrized(prob, (y, _) -> y)
+    for m in (Newton(; regularization = 1e300), Newton(; globalization = Static(1e-50)))
+        @test_throws ArgumentError solve(prob, x₀, m)
+        @test_throws ArgumentError solve_batch!(copy(X), prob, m)
+        @test_throws ArgumentError init(stat, x₀, m)
+        @test_throws ArgumentError solve(stat, x₀, m)
+        @test_throws ArgumentError solve_batch!(copy(X), stat, m)
+        @test_throws ArgumentError solve_batch!(copy(X), S, stat, m)
+        @test_throws ArgumentError solve_batch!(copy(X), rep, m)
+        @test_throws ArgumentError solve_batch!(copy(X), S, rep, m)
+    end
+end
+
+# A composite method adapts its members through the same constructors, so a `Newton` or `Static`
+# member that `ToReal{Float32}` narrows out of range is rejected inside `Picard`, `Repeat` and
+# `Anderson` too.
+@testset "a composite method rejects a member that ToReal narrows out of range" begin
+    x₀ = SVector{2, Float32}(2, 2)
+    prob = NonlinearProblem((y, _) -> y .* y .- one(eltype(y)))
+    for m in (Picard(; globalization = Static(1e300)),
+        Picard(; globalization = Static(1e-50)),
+        Repeat(Newton(; regularization = 1e300), 2),
+        Repeat(Newton(; globalization = Static(1e-50)), 2),
+        Anderson(Newton(; regularization = 1e300)),
+        Anderson(Newton(; globalization = Static(1e-50))))
+        @test_throws ArgumentError solve(prob, x₀, m)
+        @test_throws ArgumentError Adapt.adapt(ToReal{Float32}(), m)
+    end
+end
+
 @testset "Newton state for each globalization and reuse" begin
     prob = NonlinearProblem((x, p) -> x * x - 4)
     st = init_state(Newton(), prob, 3.0, nothing)

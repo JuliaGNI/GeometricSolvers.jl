@@ -7,29 +7,19 @@ with `φ = NaN`.
 """
 struct Static{R <: Real} <: LineSearch{R}
     α::R
+    # `adapt` rebuilds a `Static` through this constructor, inside a device kernel too, so the
+    # check also refuses a step that `ToReal` narrows to `Inf` or to zero. A kernel cannot format a
+    # message, so the message is constant.
     function Static{R}(α::R) where {R <: Real}
         α > 0 && isfinite(α) ||
-            throw(ArgumentError("the step of Static must be positive and finite, got $α"))
-        return new{R}(α)
+            throw(ArgumentError("the step of Static must be positive and finite"))
+        new{R}(α)
     end
-    # The constructor of the `adapt` rule: it rebuilds a `Static` whose step the checked constructor
-    # validated and checks nothing, because a device kernel cannot format the message of the
-    # checked constructor.
-    Static{R}(α::Real, ::Val{:raw}) where {R <: Real} = new{R}(α)
 end
 
 Static(α::Real = 1.0) = Static{float(typeof(α))}(float(α))
 
-Adapt.adapt_storage(::ToReal{R}, ls::Static) where {R <: Real} = Static{R}(ls.α, Val(:raw))
-
-# The check of a `Static` after `adapt`, which the raw constructor above cannot make: `ToReal` may
-# narrow a step to `Inf` or to zero. The message carries no value or type name: this check sits on
-# the inference path that `@test_opt` analyses, and a formatted message is a report there.
-function check_adapted(ls::Static)
-    ls.α > 0 && isfinite(ls.α) ||
-        throw(ArgumentError("a Static step must stay positive and finite after adaptation"))
-    return ls
-end
+Adapt.@adapt_structure Static
 
 function linesearch(
         ls::Static{R}, lf, step::StepKind{R}, φ₀::R, α::R, αmax::R = R(Inf)) where {R}
