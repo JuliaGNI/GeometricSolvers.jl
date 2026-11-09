@@ -43,7 +43,10 @@ so that a compat-only bump can be told apart from an interface change.
   joint Levenberg–Marquardt, and the test requires strictly more than joint and at least 85 of 100.
   `solve`, `init`, `solve!` and `solve!!` accept a full initial guess `x₀` of length `n` in R1
   (`StaticVector`) and R3 (`Array` and `AbstractGPUArray`), support `StationarityProblem` datum `b`
-  and implicit differentiation, and return `(x*, status)` with `x*[Y] = y*(z*)` and `x*[Z] = z*`;
+  (implicit differentiation works through `solve` alone, for a `BlockEliminated` of a
+  `NonlinearProblem`; a `ForwardDiff.Dual` input raises an `ArgumentError` for `VariableProjection`
+  and for a `BlockEliminated` of a `StationarityProblem`), and return `(x*, status)` with
+  `x*[Y] = y*(z*)` and `x*[Z] = z*`;
   any inner solver failure or rank-deficient inner factor (`rank < |Y|`) increments
   `status.step_failures`.
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
