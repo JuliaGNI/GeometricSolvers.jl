@@ -42,10 +42,12 @@ iterate and the radius kept, and makes no trial.
 """
 struct DogLeg{R <: Real, D <: Union{Nothing, R}}
     radius::D
+    # `adapt` rebuilds a `DogLeg` through this constructor, inside a device kernel too. A kernel
+    # cannot format a message, so the message is constant.
     function DogLeg{R}(radius::Union{Nothing, Real}) where {R <: Real}
         if radius !== nothing
             radius > 0 && isfinite(radius) ||
-                throw(ArgumentError("the radius of DogLeg must be positive and finite, got $radius"))
+                throw(ArgumentError("the radius of DogLeg must be positive and finite"))
         end
         r = radius === nothing ? nothing : dogleg_clamp(R(radius))
         new{R, typeof(r)}(r)

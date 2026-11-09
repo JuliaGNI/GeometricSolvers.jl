@@ -23,13 +23,17 @@ so that a compat-only bump can be told apart from an interface change.
   message. `isgpu` left the KernelAbstractions API, so the package states it as
   `!(backend isa CPU)`: the CPU backend answers `false`, and every device backend answers `true`,
   as before — CUDA, ROCm, Metal and the `JLBackend` of JLArrays. For a caller: every
-  constructor of `Newton` and `Static`, positional or keyword, validates its arguments, as before,
-  but the messages of these checks are constant strings and no longer carry the rejected value —
-  "Newton regularization must be finite and ≥ 0" instead of "..., got 1.0e300", "the step of
-  Static must be positive and finite" without ", got α", and the reuse messages without
-  ", got reuse = k" — because `adapt` rebuilds a method through these constructors, also inside a
-  device kernel (a `Reparametrized` batch adapts its method there), and a formatted message does
-  not compile to SPIR-V (`InvalidIRError`) while a constant one does; since `adapt` rebuilds
+  constructor of `Newton`, `Static`, `Picard`, `Repeat` and `DogLeg`, positional or keyword,
+  validates its arguments, as before, but the messages of these checks are constant strings and no
+  longer carry the rejected value — "Newton regularization must be finite and ≥ 0" instead of
+  "..., got 1.0e300", "the step of Static must be positive and finite" without ", got α", the reuse
+  messages without ", got reuse = k", "Picard damping must be positive and finite" without
+  ", got damping", "Repeat requires count >= 1" without ", got count", and "the radius of DogLeg
+  must be positive and finite" without ", got radius" — because `adapt` rebuilds a method through
+  these constructors, also inside a device kernel (a `Reparametrized` batch adapts its method
+  there), and a formatted message does not compile to SPIR-V (`InvalidIRError`) while a constant
+  one does (`Repeat` is not reachable from a kernel today, so its message changes for consistency
+  only); since `adapt` rebuilds
   through the checked constructors, every path that adapts a method — `solve`, `init`, every
   `solve_batch!`, and composite methods such as `Picard`, `Repeat` and `Anderson`, whose `adapt`
   rebuilds their members — refuses a method whose `Static` step `ToReal` narrows to `Inf` or to

@@ -365,6 +365,23 @@ end
     end
 end
 
+# The R1 batch kernel adapts its method, so it runs the inner constructors of `Picard` and
+# `DogLeg`; a formatted message there does not compile to SPIR-V on `CPU()`. The chart
+# x = g(y) = 2y of F(x) = x - c has its root at y = c / 2.
+@testset "R1 batch with Picard and a DogLeg Newton ($T)" for T in REAL_ELTYPES
+    c = SVector{2, T}(1, 2)
+    rep = Reparametrized(NonlinearProblem((x, p) -> x - c), (y, p) -> 2 * y, nothing)
+    batch_methods = (
+        Picard(; damping = 1 // 2), Newton(; globalization = GS.DogLeg(; radius = 1.0)))
+    for m in batch_methods
+        Y = [SVector{2, T}(1, 1), SVector{2, T}(0, 0)]
+        @test solve_batch!(Y, rep, m).SUCCESS == 2
+        for x in Y
+            @test isapprox(x, c; rtol = 8 * eps(T))
+        end
+    end
+end
+
 @testset "Holomorphic chart across ELTYPES ($T)" for T in ELTYPES
     allowscalar(false)
     R = real(T)
