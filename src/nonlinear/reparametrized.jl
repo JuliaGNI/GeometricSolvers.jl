@@ -963,7 +963,7 @@ function _prepare_batch(
     T = eltype(eltype(Y))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
-    m = check_adapted(Adapt.adapt(ToReal{R}(), method))
+    m = Adapt.adapt(ToReal{R}(), method)
     state₀ = init_state(m, reparam, zero(eltype(Y)), nothing)
     return m, opt, state₀
 end

@@ -60,37 +60,39 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     refinement::RF
     regularization::R
     reuse::K
-end
-
-# The validation of a `Newton` method, run by the keyword constructor alone: `adapt` rebuilds a
-# method inside a device kernel through the positional constructors, and a message built with
-# `$regularization` does not compile there.
-function check_newton(regularization::R, reuse, globalization, refinement) where {R <: Real}
-    regularization >= zero(R) && isfinite(regularization) ||
-        throw(ArgumentError("Newton regularization must be finite and ≥ 0, got $regularization"))
-    if reuse !== nothing
-        reuse >= Int32(1) ||
-            throw(ArgumentError("Newton reuse must be ≥ 1 or nothing, got $reuse"))
-        globalization isa DogLeg &&
-            throw(ArgumentError("Newton with a DogLeg globalization takes no reuse, got reuse = $reuse"))
-        globalization isa LevenbergMarquardt &&
-            throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse, got reuse = $reuse"))
+    # `adapt` rebuilds a method through this constructor, inside a device kernel too, so the check
+    # also refuses a value that `ToReal` narrows to `Inf` or to zero. A kernel cannot format a
+    # message, so each message is constant.
+    function Newton{L, G, J, RF, R, K}(
+            linsolve::L, globalization::G, jacobian::J,
+            refinement::RF, regularization::R,
+            reuse::K) where {
+            L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
+        regularization >= zero(R) && isfinite(regularization) ||
+            throw(ArgumentError("Newton regularization must be finite and ≥ 0"))
+        if reuse !== nothing
+            reuse >= Int32(1) ||
+                throw(ArgumentError("Newton reuse must be ≥ 1 or nothing"))
+            globalization isa DogLeg &&
+                throw(ArgumentError("Newton with a DogLeg globalization takes no reuse"))
+            globalization isa LevenbergMarquardt &&
+                throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse"))
+        end
+        globalization isa LevenbergMarquardt && refinement isa Refinement &&
+            throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
+        new{L, G, J, RF, R, K}(
+            linsolve, globalization, jacobian, refinement, regularization, reuse)
     end
-    globalization isa LevenbergMarquardt && refinement isa Refinement &&
-        throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
-    return nothing
 end
 
-# The checks of a method after `adapt`: the rule cannot validate, because it also runs inside a
-# kernel, so each host entry that adapts a method — `prepare_solve`, every `_prepare_batch`, and
-# the `init`, `solve` and `solve_batch!` of a `StationarityProblem` — runs this, where `ToReal` may
-# have narrowed a value to `Inf` or to zero.
-@inline function check_adapted(m::Newton)
-    check_newton(m.regularization, m.reuse, m.globalization, m.refinement)
-    check_adapted(m.globalization)
-    return m
+function Newton(
+        linsolve::L, globalization::G, jacobian::J,
+        refinement::RF, regularization::R,
+        reuse::K) where {
+        L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
+    return Newton{L, G, J, RF, R, K}(
+        linsolve, globalization, jacobian, refinement, regularization, reuse)
 end
-@inline check_adapted(m) = m
 
 function Newton(;
         linsolve = LUFactorization(),
@@ -102,7 +104,6 @@ function Newton(;
     reg = float(regularization)
     r = reuse === nothing ? nothing : Int32(reuse)
     ref = refinement isa Bool ? (refinement ? Refinement() : NoRefinement()) : refinement
-    check_newton(reg, r, globalization, ref)
     return Newton(linsolve, globalization, jacobian, ref, reg, r)
 end
 
