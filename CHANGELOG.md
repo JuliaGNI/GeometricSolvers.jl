@@ -12,19 +12,20 @@ so that a compat-only bump can be told apart from an interface change.
 ### Changed
 
 - **`BlockEliminated` and `VariableProjection` for single-system block elimination and separable
-  least-squares variable projection** (decisions 26 and 57 of the design). Both problem wrappers
-  are exported and subtype `AbstractNonlinearProblem`.
-  `BlockEliminated(prob::Union{NonlinearProblem, StationarityProblem}, inner; outer = nothing,
-  inner_eqs = inner, outer_eqs = outer, inner_method = Newton(; linsolve = SVDFactorization()),
-  linear_inner = false, inner_options = nothing)` partitions the unknown vector `x` into inner
-  unknowns `y = x[Y]` and outer unknowns `z = x[Z]` (defaulting `Z = setdiff(1:n, Y)`) and the
-  equations into `E_y` and `E_z` (`|E_y| == |Y|`, `|E_z| == |Z|`). For each outer iterate `z`, it
-  solves `F_{E_y}(y, z) = 0` for `y*(z)` — in one linear solve `y*(z) = -J_yy(0, z)⁺ F_{E_y}(0, z)`
-  when `linear_inner = true`, or from the warm start `y_warm` (initialised to `NaN` in `init_state`
-  and set to `x₀[Y]` in `start!!`, taking 0 inner steps on a repeat evaluation at the same `z`)
-  with adaptive inner tolerance `τ_inner ≤ 0.5 ‖F_{E_z}(prev)‖₂²` when `linear_inner = false` — and
-  steps on the outer residual `F_{E_z}(y*(z), z)` with the Schur complement
-  `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`.
+  least-squares variable projection.** Both problem wrappers are exported and subtype
+  `AbstractNonlinearProblem`. `BlockEliminated(prob::Union{NonlinearProblem, StationarityProblem},
+  inner; outer = nothing, inner_eqs = inner, outer_eqs = outer,
+  inner_method = Newton(; linsolve = SVDFactorization()), linear_inner = false,
+  inner_options = nothing)` partitions the unknown vector `x` into inner unknowns `y = x[Y]` and
+  outer unknowns `z = x[Z]` (defaulting `Z = setdiff(1:n, Y)`) and the equations into `E_y` and
+  `E_z` (`|E_y| == |Y|`, `|E_z| == |Z|`). For each outer iterate `z`, it solves
+  `F_{E_y}(y, z) = 0` for `y*(z)` — in one linear solve `y*(z) = -J_yy(0, z)⁺ F_{E_y}(0, z)` when
+  `linear_inner = true`, or from the warm start `y_warm` (initialised to `NaN` in `init_state` and
+  set to `x₀[Y]` in `start!!`, taking 0 inner steps on a repeat evaluation at the same `z`) with
+  adaptive inner tolerance `τ_inner ≤ 0.5 ‖F_{E_z}(prev)‖₂²` and pseudoinverse null-space
+  projection on rank-deficient inner steps when `linear_inner = false` — and steps on the Schur-
+  corrected outer residual `F_{E_z}(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ F_{E_y}(y*(z), z)`
+  with the Schur complement `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`.
   `VariableProjection(prob::LeastSquaresProblem, inner; outer = nothing,
   linsolve = SVDFactorization(), jacobian_mode = :kaufman, linear_inner = true,
   inner_method = GaussNewton(; linsolve = SVDFactorization()), inner_options = nothing)`
@@ -32,10 +33,13 @@ so that a compat-only bump can be told apart from an interface change.
   inner least-squares subproblem across all `m` residual rows for `y*(z)` and forms the `m × |Z|`
   reduced Jacobian by Kaufman's projection `J_red(z) = (I - Φ(z) Φ(z)⁺) D(z)` (`jacobian_mode =
   :kaufman`) or the full Golub–Pereyra formula subtracting `(Φ(z)⁺)ᴴ (∂_z Φ(z))ᴴ r_red(z)`
-  (`jacobian_mode = :golub_pereyra`). `solve`, `init`, `solve!` and `solve!!` accept a full initial
-  guess `x₀` of length `n` in R1 (`StaticVector`) and R3 (`Array` and `AbstractGPUArray`) and
+  (`jacobian_mode = :golub_pereyra`); on the 5-parameter 2-exponential separable fit over 100 seeded
+  starts (`Xoshiro(42)`), both `:kaufman` and `:golub_pereyra` converge on `>= 85 / 100` starts
+  versus `64 / 100` for joint Levenberg–Marquardt. `solve`, `init`, `solve!` and `solve!!` accept a
+  full initial guess `x₀` of length `n` in R1 (`StaticVector`) and R3 (`Array` and
+  `AbstractGPUArray`), support `StationarityProblem` datum `b` and implicit differentiation, and
   return `(x*, status)` with `x*[Y] = y*(z*)` and `x*[Z] = z*`; any inner solver failure or rank-
-  deficient inner SVD factor (`rank < |Y|`) increments `status.step_failures`.
+  deficient inner factor (`rank < |Y|`) increments `status.step_failures`.
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
   range starts at `6.5.1`.** The three test environments that use `JLArrays` take 0.5 from an
   unregistered commit of `GPUArrays.jl` through `[sources]`, because that 0.5 needs

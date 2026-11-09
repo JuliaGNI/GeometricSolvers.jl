@@ -345,16 +345,20 @@ end
     return nothing
 end
 
-@inline function _validate_elim_x(elim::BlockEliminated, x)
+@inline function _validate_elim_x(elim::BlockEliminated, x, p = nothing)
     x isa AbstractVector || throw(ArgumentError(
         "BlockEliminated requires a vector iterate x₀"))
     n = length(x)
     _validate_x_partition(elim.inner, elim.outer, n)
     _validate_x_partition(elim.inner_eqs, elim.outer_eqs, n)
+    prob_in = getfield(elim, :prob)
+    if prob_in isa StationarityProblem
+        _validate_stationarity_solve(prob_in, x, _resolve_datum(prob_in, p, nothing))
+    end
     return nothing
 end
 
-@inline function _validate_elim_x(vp::VariableProjection, x)
+@inline function _validate_elim_x(vp::VariableProjection, x, _ = nothing)
     x isa AbstractVector || throw(ArgumentError(
         "VariableProjection requires a vector iterate x₀"))
     n = length(x)
@@ -398,9 +402,9 @@ end
 @inline _part_len(v::AbstractVector{Int}) = Val(length(v))
 
 @inline function _resolve_partition_r1(
-        elim::BlockEliminated, x::StaticVector{N},
+        elim::BlockEliminated, x::StaticVector{N}, p = nothing,
         ::Val{Ny} = _part_len(elim.inner)) where {N, Ny}
-    _validate_elim_x(elim, x)
+    _validate_elim_x(elim, x, p)
     Nz = N - Ny
     Y = _to_svec_r1(elim.inner, Val(Ny))
     Z = elim.outer === nothing ? _complement_r1(Y, Val(N), Val(Nz)) :
@@ -412,9 +416,9 @@ end
 end
 
 @inline function _resolve_partition_r1(
-        vp::VariableProjection, x::StaticVector{N},
+        vp::VariableProjection, x::StaticVector{N}, p = nothing,
         ::Val{Ny} = _part_len(vp.inner)) where {N, Ny}
-    _validate_elim_x(vp, x)
+    _validate_elim_x(vp, x, p)
     Nz = N - Ny
     Y = _to_svec_r1(vp.inner, Val(Ny))
     Z = vp.outer === nothing ? _complement_r1(Y, Val(N), Val(Nz)) :
@@ -438,8 +442,8 @@ function _complement_r3(Y_vec::Vector{Int}, n::Int)
     return Z_vec
 end
 
-function _resolve_partition_r3(elim::BlockEliminated, x::AbstractVector)
-    _validate_elim_x(elim, x)
+function _resolve_partition_r3(elim::BlockEliminated, x::AbstractVector, p = nothing)
+    _validate_elim_x(elim, x, p)
     n = length(x)
     Y_h = collect(Int, elim.inner)
     Z_h = elim.outer === nothing ? _complement_r3(Y_h, n) : collect(Int, elim.outer)
@@ -449,8 +453,8 @@ function _resolve_partition_r3(elim::BlockEliminated, x::AbstractVector)
     return Y_h, Z_h, Ey_h, Ez_h
 end
 
-function _resolve_partition_r3(vp::VariableProjection, x::AbstractVector)
-    _validate_elim_x(vp, x)
+function _resolve_partition_r3(vp::VariableProjection, x::AbstractVector, p = nothing)
+    _validate_elim_x(vp, x, p)
     n = length(x)
     Y_h = collect(Int, vp.inner)
     Z_h = vp.outer === nothing ? _complement_r3(Y_h, n) : collect(Int, vp.outer)
@@ -549,7 +553,7 @@ end
         if !isfinite(fnorm_z_prev)
             return τ_floor, max_it
         end
-        inner_atol_cap = sqrt(eps(R)) * max(one(R), fnorm_y0)
+        inner_atol_cap = typemax(R)
     else
         opt_r = _adapt_inner_options(ToReal{R}(), inner_options)
         max_it = opt_r.max_iterations
@@ -560,6 +564,22 @@ end
     end
     τ_cap = R(0.5) * fnorm_z_prev * fnorm_z_prev
     return max(τ_floor, min(inner_atol_cap, τ_cap)), max_it
+end
+
+@inline function _schur_res_corr_r1(
+        backend, ls_y, prob_in, x::SVector{N, T}, p,
+        Fy::SVector{Ny, T}, Fz::SVector{Nz, T},
+        Y::SVector{Ny, Int}, E_y::SVector{Ny, Int}, E_z::SVector{Nz, Int},
+        fnorm_y::R, τ_floor::R) where {N, Ny, Nz, T, R <: Real}
+    (fnorm_y <= τ_floor || !isfinite(fnorm_y)) && return Fz, false
+    J_full = _inner_jac_r1(backend, prob_in, x, p)
+    J_yy = J_full[E_y, Y]
+    J_zy = J_full[E_z, Y]
+    fac_yy = factorize!!(nothing, ls_y, J_yy)
+    fail_c = returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, Ny)
+    wy = ldiv!!(nothing, fac_yy, Fy)
+    all(isfinite, wy) || return Fz, true
+    return Fz - J_zy * wy, fail_c
 end
 
 @inline function _eliminate_r1(
@@ -604,9 +624,29 @@ end
     F_full = _inner_res_r1(prob_in, x, p)
     Fy = F_full[E_y]
     fnorm_y0 = R(rnorm(Fy))
+    τ_floor = R(10) * eps(R) * max(one(R), fnorm_y0)
     τ_in, max_it = _inner_tol_r1(getfield(elim, :inner_options), R, fnorm_y0, fnorm_z_prev)
     if fnorm_y0 <= τ_in
-        return y, F_full[E_z], x, !isfinite(fnorm_y0), 0
+        fail_0 = !isfinite(fnorm_y0)
+        if !isfinite(fnorm_z_prev) && isfinite(fnorm_y0)
+            J_full0 = _inner_jac_r1(backend, prob_in, x, p)
+            J_yy0 = J_full0[E_y, Y]
+            fac_yy0 = factorize!!(nothing, ls_y, J_yy0)
+            if returncode(fac_yy0) != SUCCESS || _is_rank_deficient(fac_yy0, Ny)
+                fail_0 = true
+                y = ldiv!!(nothing, fac_yy0, J_yy0 * y)
+                x = _scatter_yz_r1(y, z, Y, Z, Val(N))
+                F_full = _inner_res_r1(prob_in, x, p)
+                Fy = F_full[E_y]
+            end
+        end
+        if fnorm_y0 > τ_floor && isfinite(fnorm_y0)
+            Fz_c, fail_c = _schur_res_corr_r1(
+                backend, ls_y, prob_in, x, p, Fy, F_full[E_z],
+                Y, E_y, E_z, fnorm_y0, τ_floor)
+            return y, Fz_c, x, (fail_0 | fail_c), 0
+        end
+        return y, F_full[E_z], x, fail_0, 0
     end
     if z_prev !== nothing && all(isfinite, y_init) && z != z_prev && max_it >= 1
         x_prev = _scatter_yz_r1(y, z_prev, Y, Z, Val(N))
@@ -615,14 +655,19 @@ end
         J_yz_p = J_prev[E_y, Z]
         fac_p = factorize!!(nothing, ls_y, J_yy_p)
         fail_p = returncode(fac_p) != SUCCESS || _is_rank_deficient(fac_p, Ny)
+        y_base = fail_p ? ldiv!!(nothing, fac_p, J_yy_p * y) : y
         dy_p = ldiv!!(nothing, fac_p, F_prev[E_y] + J_yz_p * (z - z_prev))
         if all(isfinite, dy_p)
-            y_p = y - dy_p
+            y_p = y_base - dy_p
             x_p = _scatter_yz_r1(y_p, z, Y, Z, Val(N))
             F_p = _inner_res_r1(prob_in, x_p, p)
-            fnorm_p = R(rnorm(F_p[E_y]))
+            Fy_p = F_p[E_y]
+            fnorm_p = R(rnorm(Fy_p))
             if fnorm_p <= τ_in
-                return y_p, F_p[E_z], x_p, fail_p, 1
+                Fz_p, fail_c = _schur_res_corr_r1(
+                    backend, ls_y, prob_in, x_p, p, Fy_p, F_p[E_z],
+                    Y, E_y, E_z, fnorm_p, τ_floor)
+                return y_p, Fz_p, x_p, (fail_p | fail_c), 1
             end
         end
     end
@@ -636,6 +681,7 @@ end
         fac_yy = factorize!!(nothing, ls_y, J_yy)
         if returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, Ny)
             failed = true
+            y = ldiv!!(nothing, fac_yy, J_yy * y)
         end
         dy = ldiv!!(nothing, fac_yy, Fy)
         if !all(isfinite, dy)
@@ -669,7 +715,9 @@ end
     if !(fnorm_y <= τ_in)
         failed = true
     end
-    return y, F_full[E_z], x, failed, iters
+    Fz_out, fail_c = _schur_res_corr_r1(
+        backend, ls_y, prob_in, x, p, Fy, F_full[E_z], Y, E_y, E_z, fnorm_y, τ_floor)
+    return y, Fz_out, x, (failed | fail_c), iters
 end
 
 @inline function _schur_jacobian_r1(
@@ -728,27 +776,41 @@ end
         Z::SVector{Nz, Int}) where {
         P, YI, ZI, LS, JM, M, IO, Ny, Nz, T, R <: Real}
     N = Ny + Nz
-    ls_y = Adapt.adapt(ToReal{R}(), getfield(vp, :linsolve))
+    ls_y = Adapt.adapt(ToReal{R}(), _inner_linsolve(getfield(vp, :inner_method)))
     backend = AutoForwardDiff()
     prob_in = getfield(vp, :prob)
     y = all(isfinite, y_init) ? y_init : zero(SVector{Ny, T})
     x = _scatter_yz_r1(y, z, Y, Z, Val(N))
     r_curr = prob_in.F(x, p)
     fnorm_r0 = R(rnorm(r_curr))
-    τ_in, max_it = _inner_tol_r1(getfield(vp, :inner_options), R, fnorm_r0, R(NaN))
+    τ_in, max_it = _inner_tol_r1(getfield(vp, :inner_options), R, fnorm_r0, fnorm_z_prev)
     failed = false
+    converged = isfinite(fnorm_r0) && fnorm_r0 <= τ_in
     iters = 0
-    for _ in 1:max_it
+    for k in 1:(max_it + 1)
         J_full = _inner_jac_r1(backend, prob_in, x, p)
         Φ = J_full[:, Y]
         g_y = adjoint(Φ) * r_curr
         if R(rnorm(g_y)) <= τ_in * max(one(R), R(rnorm(Φ)))
+            if k == 1 && !isfinite(fnorm_z_prev)
+                fac_phi0 = factorize!!(nothing, ls_y, Φ)
+                if returncode(fac_phi0) != SUCCESS || _is_rank_deficient(fac_phi0, Ny)
+                    failed = true
+                    y = ldiv!!(nothing, fac_phi0, Φ * y)
+                    x = _scatter_yz_r1(y, z, Y, Z, Val(N))
+                    r_curr = prob_in.F(x, p)
+                    fnorm_r0 = R(rnorm(r_curr))
+                end
+            end
+            converged = isfinite(fnorm_r0)
             break
         end
+        k > max_it && break
         iters += 1
         fac_phi = factorize!!(nothing, ls_y, Φ)
         if returncode(fac_phi) != SUCCESS || _is_rank_deficient(fac_phi, Ny)
             failed = true
+            y = ldiv!!(nothing, fac_phi, Φ * y)
         end
         dy = ldiv!!(nothing, fac_phi, r_curr)
         if !all(isfinite, dy)
@@ -772,9 +834,21 @@ end
         x = x_next
         r_curr = r_next
         fnorm_r0 = fnorm_next
-        if R(rnorm(dy)) <= R(2) * eps(R) * max(one(R), R(rnorm(y)))
+        if isfinite(fnorm_r0) && fnorm_r0 <= τ_in
+            converged = true
             break
         end
+        if R(rnorm(dy)) <= R(2) * eps(R) * max(one(R), R(rnorm(y)))
+            J_end = _inner_jac_r1(backend, prob_in, x, p)
+            Φ_end = J_end[:, Y]
+            if R(rnorm(adjoint(Φ_end) * r_curr)) <= τ_in * max(one(R), R(rnorm(Φ_end)))
+                converged = isfinite(fnorm_r0)
+            end
+            break
+        end
+    end
+    if !converged || !all(isfinite, y)
+        failed = true
     end
     return y, r_curr, x, failed, iters
 end
@@ -785,7 +859,9 @@ struct VarProOuterTag{F, R} end
         vp::VariableProjection, x_star::SVector{N, T}, p,
         Y::SVector{Ny, Int}, Z::SVector{Nz, Int}, ::Val{M}) where {N, M, Ny, Nz, T}
     R = real(T)
-    ls_y = Adapt.adapt(ToReal{R}(), getfield(vp, :linsolve))
+    raw_ls = vp.linear_inner ? getfield(vp, :linsolve) :
+             _inner_linsolve(getfield(vp, :inner_method))
+    ls_y = Adapt.adapt(ToReal{R}(), raw_ls)
     J_full = _inner_jac_r1(AutoForwardDiff(), getfield(vp, :prob), x_star, p)
     Φ = J_full[:, Y]
     D = J_full[:, Z]
@@ -853,28 +929,28 @@ end
 @inline function prepare_ad(
         ::Nothing, prob::Union{BlockEliminated, VariableProjection},
         ::Nothing, x::StaticVector, p)
-    _validate_elim_x(prob, x)
+    _validate_elim_x(prob, x, p)
     return AutoForwardDiff()
 end
 
 @inline function prepare_ad(
         backend::AutoForwardDiff, prob::Union{BlockEliminated, VariableProjection},
         ::Nothing, x::StaticVector, p)
-    _validate_elim_x(prob, x)
+    _validate_elim_x(prob, x, p)
     return backend
 end
 
 @inline function prepare_ad(
         backend::AbstractADType, prob::Union{BlockEliminated, VariableProjection},
         ::Nothing, x::StaticVector, p)
-    _validate_elim_x(prob, x)
+    _validate_elim_x(prob, x, p)
     return backend
 end
 
 @inline function residual!!(
         ::Nothing, elim::BlockEliminated, x::StaticVector{N, T}, p) where {N, T}
     R = real(T)
-    Y, Z, E_y, E_z = _resolve_partition_r1(elim, x)
+    Y, Z, E_y, E_z = _resolve_partition_r1(elim, x, p)
     _, Fz, _, _, _ = _eliminate_r1(
         elim, nothing, x[Y], x[Z], p, R(NaN), Y, Z, E_y, E_z)
     return Fz
@@ -883,14 +959,14 @@ end
 @inline function residual!!(
         ::Nothing, vp::VariableProjection, x::StaticVector{N, T}, p) where {N, T}
     R = real(T)
-    Y, Z = _resolve_partition_r1(vp, x)
+    Y, Z = _resolve_partition_r1(vp, x, p)
     _, r_star, _, _, _ = _eliminate_vp_r1(vp, x[Y], x[Z], p, R(NaN), Y, Z)
     return r_star
 end
 
 @inline function _elim_jac_r1(elim::BlockEliminated, x::StaticVector{N, T}, p) where {N, T}
     R = real(T)
-    Y, Z, E_y, E_z = _resolve_partition_r1(elim, x)
+    Y, Z, E_y, E_z = _resolve_partition_r1(elim, x, p)
     _, _, x_star, _, _ = _eliminate_r1(
         elim, nothing, x[Y], x[Z], p, R(NaN), Y, Z, E_y, E_z)
     S, _ = _schur_jacobian_r1(elim, x_star, p, Y, Z, E_y, E_z)
@@ -899,7 +975,7 @@ end
 
 @inline function _elim_jac_r1(vp::VariableProjection, x::StaticVector{N, T}, p) where {N, T}
     R = real(T)
-    Y, Z = _resolve_partition_r1(vp, x)
+    Y, Z = _resolve_partition_r1(vp, x, p)
     _, r_star, x_star, _, _ = _eliminate_vp_r1(vp, x[Y], x[Z], p, R(NaN), Y, Z)
     J_red, _ = _varpro_jacobian_r1(vp, x_star, r_star, p, Y, Z)
     return J_red
@@ -929,32 +1005,37 @@ end
     return _elim_jac_r1(vp, x, p)
 end
 
-@inline function jvp!!(
-        ::Nothing, ::AutoForwardDiff,
-        prob::Union{BlockEliminated, VariableProjection},
-        x::StaticVector{N, T}, v::StaticVector{Nz, T}, p) where {N, Nz, T}
-    return _elim_jac_r1(prob, x, p) * v
+@inline function _jvp_vec_r1(
+        elim::BlockEliminated, x::StaticVector{N, T}, v::StaticVector{N, T}, p) where {N, T}
+    _, Z, _, _ = _resolve_partition_r1(elim, x, p)
+    return v[Z]
+end
+
+@inline function _jvp_vec_r1(
+        vp::VariableProjection, x::StaticVector{N, T},
+        v::StaticVector{N, T}, p) where {N, T}
+    _, Z = _resolve_partition_r1(vp, x, p)
+    return v[Z]
+end
+
+@inline function _jvp_vec_r1(
+        ::Union{BlockEliminated, VariableProjection},
+        ::StaticVector{N, T}, v::StaticVector{Nz, T}, _) where {N, Nz, T}
+    return v
 end
 
 @inline function jvp!!(
         ::Nothing, ::AutoForwardDiff,
         prob::Union{BlockEliminated, VariableProjection},
-        x::StaticVector{N, T}, v::StaticVector{N, T}, p) where {N, T}
-    return _elim_jac_r1(prob, x, p) * v
+        x::StaticVector{N, T}, v::StaticVector{Nv, T}, p) where {N, Nv, T}
+    return _elim_jac_r1(prob, x, p) * _jvp_vec_r1(prob, x, v, p)
 end
 
 @inline function jvp!!(
         ::Nothing, ::Nothing,
         prob::Union{BlockEliminated, VariableProjection},
-        x::StaticVector{N, T}, v::StaticVector{Nz, T}, p) where {N, Nz, T}
-    return _elim_jac_r1(prob, x, p) * v
-end
-
-@inline function jvp!!(
-        ::Nothing, ::Nothing,
-        prob::Union{BlockEliminated, VariableProjection},
-        x::StaticVector{N, T}, v::StaticVector{N, T}, p) where {N, T}
-    return _elim_jac_r1(prob, x, p) * v
+        x::StaticVector{N, T}, v::StaticVector{Nv, T}, p) where {N, Nv, T}
+    return _elim_jac_r1(prob, x, p) * _jvp_vec_r1(prob, x, v, p)
 end
 
 # --- R3 Kernels and Helpers (0-allocation on Array, 0 scalar indexing on GPU/JLArray) ---
@@ -1191,6 +1272,7 @@ mutable struct BlockElimPrep{
     const W_mat::M
     const Sz_jvp::M
     const z_curr::V
+    const z_prev::V
     const Y_h::Vector{Int}
     const Z_h::Vector{Int}
     const Ey_h::Vector{Int}
@@ -1304,7 +1386,7 @@ end
 function _build_block_elim_prep(
         backend::AbstractADType, elim::BlockEliminated, x::AbstractVector{T}, p) where {T}
     R = real(T)
-    Y_h, Z_h, Ey_h, Ez_h = _resolve_partition_r3(elim, x)
+    Y_h, Z_h, Ey_h, Ez_h = _resolve_partition_r3(elim, x, p)
     n = length(x)
     ny = length(Y_h)
     nz = length(Z_h)
@@ -1325,11 +1407,13 @@ function _build_block_elim_prep(
     W_mat = similar(x, T, ny, nz)
     Sz_jvp = similar(x, T, nz, nz)
     z_curr = similar(x, T, nz)
+    z_prev = similar(x, T, nz)
     Y_d = copyto!(similar(x, Int, ny), Y_h)
     Z_d = copyto!(similar(x, Int, nz), Z_h)
     Ey_d = copyto!(similar(x, Int, ny), Ey_h)
     Ez_d = copyto!(similar(x, Int, nz), Ez_h)
     _gather_vec!(z_curr, x, Z_h, Z_d)
+    copyto!(z_prev, z_curr)
     copyto!(x_buf, x)
     inner_prep = prepare_ad(backend, getfield(elim, :prob), F_buf, x_buf, p)
     ls_y = Adapt.adapt(ToReal{R}(), _inner_linsolve(getfield(elim, :inner_method)))
@@ -1338,7 +1422,7 @@ function _build_block_elim_prep(
         T, R, typeof(x_buf), typeof(J_buf), typeof(Y_d),
         typeof(inner_prep), typeof(fac_yy)}(
         x_buf, F_buf, J_buf, y_warm, y_trial, dy_buf, Fy_buf, Fz_buf, w_col,
-        J_yy, J_yz, J_zy, J_zz, W_mat, Sz_jvp, z_curr,
+        J_yy, J_yz, J_zy, J_zz, W_mat, Sz_jvp, z_curr, z_prev,
         Y_h, Z_h, Ey_h, Ez_h, Y_d, Z_d, Ey_d, Ez_d,
         inner_prep, fac_yy, R(NaN), 0, Int32(0), Int32(0))
 end
@@ -1346,7 +1430,7 @@ end
 function _build_varpro_prep(
         backend::AbstractADType, vp::VariableProjection, x::AbstractVector{T}, p) where {T}
     R = real(T)
-    Y_h, Z_h = _resolve_partition_r3(vp, x)
+    Y_h, Z_h = _resolve_partition_r3(vp, x, p)
     n = length(x)
     ny = length(Y_h)
     nz = length(Z_h)
@@ -1375,7 +1459,9 @@ function _build_varpro_prep(
     _gather_vec!(z_curr, x, Z_h, Z_d)
     copyto!(x_buf, x)
     inner_prep = prepare_ad(backend, prob_in, r_buf, x_buf, p)
-    ls_y = Adapt.adapt(ToReal{R}(), getfield(vp, :linsolve))
+    raw_ls = vp.linear_inner ? getfield(vp, :linsolve) :
+             _inner_linsolve(getfield(vp, :inner_method))
+    ls_y = Adapt.adapt(ToReal{R}(), raw_ls)
     fac_phi = init_linear(ls_y, nothing, y_warm, m)
     if vp.jacobian_mode === :golub_pereyra
         TgIn = VarProInnerTag{typeof(prob_in.F), R}
@@ -1397,39 +1483,49 @@ function _build_varpro_prep(
         R(NaN), 0, Int32(0), Int32(0))
 end
 
+@inline function _build_block_elim_prep(
+        ::AbstractADType, elim::BlockEliminated, x::AbstractArray, p)
+    return _validate_elim_x(elim, x, p)
+end
+
+@inline function _build_varpro_prep(
+        ::AbstractADType, vp::VariableProjection, x::AbstractArray, p)
+    return _validate_elim_x(vp, x, p)
+end
+
 @inline function prepare_ad(
         backend::AutoForwardDiff, elim::BlockEliminated,
-        ::AbstractArray, x::AbstractVector, p)
+        ::AbstractArray, x::AbstractArray, p)
     return _build_block_elim_prep(backend, elim, x, p)
 end
 
 @inline function prepare_ad(
         backend::AbstractADType, elim::BlockEliminated,
-        ::AbstractArray, x::AbstractVector, p)
+        ::AbstractArray, x::AbstractArray, p)
     return _build_block_elim_prep(backend, elim, x, p)
 end
 
 @inline function prepare_ad(
         ::Nothing, elim::BlockEliminated,
-        ::AbstractArray, x::AbstractVector, p)
+        ::AbstractArray, x::AbstractArray, p)
     return _build_block_elim_prep(AutoForwardDiff(), elim, x, p)
 end
 
 @inline function prepare_ad(
         backend::AutoForwardDiff, vp::VariableProjection,
-        ::AbstractArray, x::AbstractVector, p)
+        ::AbstractArray, x::AbstractArray, p)
     return _build_varpro_prep(backend, vp, x, p)
 end
 
 @inline function prepare_ad(
         backend::AbstractADType, vp::VariableProjection,
-        ::AbstractArray, x::AbstractVector, p)
+        ::AbstractArray, x::AbstractArray, p)
     return _build_varpro_prep(backend, vp, x, p)
 end
 
 @inline function prepare_ad(
         ::Nothing, vp::VariableProjection,
-        ::AbstractArray, x::AbstractVector, p)
+        ::AbstractArray, x::AbstractArray, p)
     return _build_varpro_prep(AutoForwardDiff(), vp, x, p)
 end
 
@@ -1461,6 +1557,26 @@ function _eliminate_r3!(
     return ws.Fz_buf
 end
 
+function _schur_res_corr_r3!(
+        ws::BlockElimPrep{T, R}, ls_y, prob_in, p, fnorm_y::R, τ_floor::R) where {T, R}
+    (fnorm_y <= τ_floor || !isfinite(fnorm_y)) && return ws.Fz_buf
+    ny = length(ws.Y_h)
+    _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
+    _extract_submat!(ws.J_yy, ws.J_buf, ws.Ey_h, ws.Y_h, ws.Ey_d, ws.Y_d)
+    _extract_submat!(ws.J_zy, ws.J_buf, ws.Ez_h, ws.Y_h, ws.Ez_d, ws.Y_d)
+    ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+    if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny)
+        ws.inner_failures += one(Int32)
+    end
+    ldiv!!(ws.w_col, ws.fac_yy, ws.Fy_buf)
+    if all(isfinite, ws.w_col)
+        mul!(ws.Fz_buf, ws.J_zy, ws.w_col, -one(T), one(T))
+    else
+        ws.inner_failures += one(Int32)
+    end
+    return ws.Fz_buf
+end
+
 function _eliminate_r3!(
         ws::BlockElimPrep{T, R}, elim::BlockEliminated{P, YI, ZI, EY, EZ, M, false, IO},
         z::AbstractVector{T}, p,
@@ -1476,18 +1592,38 @@ function _eliminate_r3!(
     _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
     _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
     fnorm_y0 = R(rnorm(ws.Fy_buf))
-    τ_in, max_it = _inner_tol_r1(getfield(elim, :inner_options), R, fnorm_y0, ws.fnorm_z_prev)
+    τ_floor = R(10) * eps(R) * max(one(R), fnorm_y0)
+    τ_in, max_it = _inner_tol_r1(
+        getfield(elim, :inner_options), R, fnorm_y0, ws.fnorm_z_prev)
     if fnorm_y0 <= τ_in
         ws.last_inner_iters = 0
         if !isfinite(fnorm_y0)
             ws.inner_failures += one(Int32)
+        elseif !isfinite(ws.fnorm_z_prev)
+            _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
+            _extract_submat!(ws.J_yy, ws.J_buf, ws.Ey_h, ws.Y_h, ws.Ey_d, ws.Y_d)
+            ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+            if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny)
+                ws.inner_failures += one(Int32)
+                mul!(ws.w_col, ws.J_yy, ws.y_warm)
+                ldiv!!(ws.y_warm, ws.fac_yy, ws.w_col)
+                _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
+                _inner_res_r3!(ws.F_buf, ws.inner_prep, prob_in, ws.x_buf, p)
+                _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
+                _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
+            end
         end
+        _schur_res_corr_r3!(ws, ls_y, prob_in, p, fnorm_y0, τ_floor)
         return ws.Fz_buf
     end
-    if has_schur_pred && max_it >= 1
-        ws.Fz_buf .= z .- view(ws.Sz_jvp, :, 1)
+    if has_schur_pred && max_it >= 1 && z != ws.z_prev
+        ws.Fz_buf .= z .- ws.z_prev
         mul!(ws.dy_buf, ws.W_mat, ws.Fz_buf)
         ws.dy_buf .+= ws.w_col
+        if _is_rank_deficient(ws.fac_yy, ny)
+            mul!(ws.Fy_buf, ws.J_yy, ws.y_warm)
+            ldiv!!(ws.y_warm, ws.fac_yy, ws.Fy_buf)
+        end
         ws.y_trial .= ws.y_warm .- ws.dy_buf
         if all(isfinite, ws.y_trial)
             _scatter_yz!(ws.x_buf, ws.y_trial, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
@@ -1497,6 +1633,7 @@ function _eliminate_r3!(
             if fnorm_p <= τ_in
                 copyto!(ws.y_warm, ws.y_trial)
                 _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
+                _schur_res_corr_r3!(ws, ls_y, prob_in, p, fnorm_p, τ_floor)
                 ws.last_inner_iters = 1
                 return ws.Fz_buf
             end
@@ -1515,6 +1652,8 @@ function _eliminate_r3!(
         ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
         if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny)
             failed = true
+            mul!(ws.w_col, ws.J_yy, ws.y_warm)
+            ldiv!!(ws.y_warm, ws.fac_yy, ws.w_col)
         end
         ldiv!!(ws.dy_buf, ws.fac_yy, ws.Fy_buf)
         if !all(isfinite, ws.dy_buf)
@@ -1547,6 +1686,7 @@ function _eliminate_r3!(
     if failed || !(fnorm_y <= τ_in)
         ws.inner_failures += one(Int32)
     end
+    _schur_res_corr_r3!(ws, ls_y, prob_in, p, fnorm_y, τ_floor)
     ws.last_inner_iters = iters
     return ws.Fz_buf
 end
@@ -1573,7 +1713,7 @@ function _schur_jacobian_r3!(
     end
     _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
     ldiv!!(ws.w_col, ws.fac_yy, ws.Fy_buf)
-    copyto!(Sz, ws.J_zz)
+    Sz === ws.J_zz || copyto!(Sz, ws.J_zz)
     mul!(Sz, ws.J_zy, ws.W_mat, -one(T), one(T))
     return Sz
 end
@@ -1606,7 +1746,7 @@ function _eliminate_vp_r3!(
         ws::VarProPrep{T, R}, vp::VariableProjection{P, YI, ZI, LS, JM, false, M, IO},
         z::AbstractVector{T}, p) where {T, R, P, YI, ZI, LS, JM, M, IO}
     ny = length(ws.Y_h)
-    ls_y = Adapt.adapt(ToReal{R}(), getfield(vp, :linsolve))
+    ls_y = Adapt.adapt(ToReal{R}(), _inner_linsolve(getfield(vp, :inner_method)))
     prob_in = getfield(vp, :prob)
     if !all(isfinite, ws.y_warm)
         fill!(ws.y_warm, zero(T))
@@ -1614,20 +1754,36 @@ function _eliminate_vp_r3!(
     _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     prob_in.F(ws.Fz_buf, ws.x_buf, p)
     fnorm_r0 = R(rnorm(ws.Fz_buf))
-    τ_in, max_it = _inner_tol_r1(getfield(vp, :inner_options), R, fnorm_r0, R(NaN))
+    τ_in, max_it = _inner_tol_r1(getfield(vp, :inner_options), R, fnorm_r0, ws.fnorm_z_prev)
     iters = 0
     failed = false
-    for _ in 1:max_it
+    converged = isfinite(fnorm_r0) && fnorm_r0 <= τ_in
+    for k in 1:(max_it + 1)
         _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
         _extract_submat!(ws.Φ_mat, ws.J_buf, ws.M_h, ws.Y_h, ws.M_d, ws.Y_d)
         mul!(ws.w_vec, adjoint(ws.Φ_mat), ws.Fz_buf)
         if R(rnorm(ws.w_vec)) <= τ_in * max(one(R), R(rnorm(ws.Φ_mat)))
+            if k == 1 && !isfinite(ws.fnorm_z_prev)
+                ws.fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
+                if returncode(ws.fac_phi) != SUCCESS || _is_rank_deficient(ws.fac_phi, ny)
+                    failed = true
+                    mul!(ws.col_m, ws.Φ_mat, ws.y_warm)
+                    ldiv!!(ws.y_warm, ws.fac_phi, ws.col_m)
+                    _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
+                    prob_in.F(ws.Fz_buf, ws.x_buf, p)
+                    fnorm_r0 = R(rnorm(ws.Fz_buf))
+                end
+            end
+            converged = isfinite(fnorm_r0)
             break
         end
+        k > max_it && break
         iters += 1
         ws.fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
         if returncode(ws.fac_phi) != SUCCESS || _is_rank_deficient(ws.fac_phi, ny)
             failed = true
+            mul!(ws.col_m, ws.Φ_mat, ws.y_warm)
+            ldiv!!(ws.y_warm, ws.fac_phi, ws.col_m)
         end
         ldiv!!(ws.dy_buf, ws.fac_phi, ws.Fz_buf)
         if !all(isfinite, ws.dy_buf)
@@ -1650,11 +1806,21 @@ function _eliminate_vp_r3!(
         copyto!(ws.y_warm, ws.y_trial)
         copyto!(ws.Fz_buf, ws.r_buf)
         fnorm_r0 = fnorm_next
+        if isfinite(fnorm_r0) && fnorm_r0 <= τ_in
+            converged = true
+            break
+        end
         if R(rnorm(ws.dy_buf)) <= R(2) * eps(R) * max(one(R), R(rnorm(ws.y_warm)))
+            _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
+            _extract_submat!(ws.Φ_mat, ws.J_buf, ws.M_h, ws.Y_h, ws.M_d, ws.Y_d)
+            mul!(ws.w_vec, adjoint(ws.Φ_mat), ws.Fz_buf)
+            if R(rnorm(ws.w_vec)) <= τ_in * max(one(R), R(rnorm(ws.Φ_mat)))
+                converged = isfinite(fnorm_r0)
+            end
             break
         end
     end
-    if failed
+    if failed || !converged || !all(isfinite, ws.y_warm)
         ws.inner_failures += one(Int32)
     end
     ws.last_inner_iters = iters
@@ -1666,7 +1832,9 @@ function _varpro_kaufman_r3!(
         vp::VariableProjection, p) where {T, R}
     ny = length(ws.Y_h)
     nz = length(ws.Z_h)
-    ls_y = Adapt.adapt(ToReal{R}(), getfield(vp, :linsolve))
+    raw_ls = vp.linear_inner ? getfield(vp, :linsolve) :
+             _inner_linsolve(getfield(vp, :inner_method))
+    ls_y = Adapt.adapt(ToReal{R}(), raw_ls)
     _inner_jac_r3!(ws.J_buf, ws.inner_prep, getfield(vp, :prob), ws.x_buf, p)
     _extract_submat!(ws.Φ_mat, ws.J_buf, ws.M_h, ws.Y_h, ws.M_d, ws.Y_d)
     _extract_submat!(ws.D_mat, ws.J_buf, ws.M_h, ws.Z_h, ws.M_d, ws.Z_d)
@@ -1718,7 +1886,7 @@ end
 
 # --- R3 `residual!!`, `jacobian!!`, `jvp!!` on `BlockEliminated` and `VariableProjection` ---
 
-struct _ElimResBuffer{WS}
+struct _ElimResBuffer{WS <: Union{BlockElimPrep, VarProPrep}}
     ws::WS
 end
 
@@ -1747,16 +1915,29 @@ function residual!!(
 end
 
 @inline function residual!!(
-        rb::_ElimResBuffer, prob::Union{BlockEliminated, VariableProjection},
+        rb::_ElimResBuffer{<:BlockElimPrep}, elim::BlockEliminated,
         x::AbstractVector, p)
-    return residual!!(rb.ws.Fz_buf, rb.ws, prob, x, p)
+    return residual!!(rb.ws.Fz_buf, rb.ws, elim, x, p)
+end
+
+@inline function residual!!(
+        rb::_ElimResBuffer{<:VarProPrep}, vp::VariableProjection,
+        x::AbstractVector, p)
+    return residual!!(rb.ws.Fz_buf, rb.ws, vp, x, p)
 end
 
 function residual!!(
-        Fz::AbstractVector, prob::Union{BlockEliminated, VariableProjection},
+        Fz::AbstractVector, elim::BlockEliminated,
         x::AbstractVector, p)
-    ws = prepare_ad(AutoForwardDiff(), prob, Fz, x, p)
-    return residual!!(Fz, ws, prob, x, p)
+    ws = prepare_ad(AutoForwardDiff(), elim, Fz, x, p)
+    return residual!!(Fz, ws, elim, x, p)
+end
+
+function residual!!(
+        Fz::AbstractVector, vp::VariableProjection,
+        x::AbstractVector, p)
+    ws = prepare_ad(AutoForwardDiff(), vp, Fz, x, p)
+    return residual!!(Fz, ws, vp, x, p)
 end
 
 function jacobian!!(
@@ -1782,11 +1963,30 @@ function jacobian!!(
 end
 
 function jvp!!(
-        Jv::AbstractVector, ws::Union{BlockElimPrep, VarProPrep},
-        prob::Union{BlockEliminated, VariableProjection},
+        Jv::AbstractVector, ws::BlockElimPrep,
+        elim::BlockEliminated,
         x::AbstractVector, v::AbstractVector, p)
-    jacobian!!(ws.Sz_jvp, ws, prob, x, p)
-    mul!(Jv, ws.Sz_jvp, v)
+    jacobian!!(ws.J_zz, ws, elim, x, p)
+    if length(v) == length(x)
+        _gather_vec!(ws.z_curr, v, ws.Z_h, ws.Z_d)
+        mul!(Jv, ws.J_zz, ws.z_curr)
+    else
+        mul!(Jv, ws.J_zz, v)
+    end
+    return Jv
+end
+
+function jvp!!(
+        Jv::AbstractVector, ws::VarProPrep,
+        vp::VariableProjection,
+        x::AbstractVector, v::AbstractVector, p)
+    jacobian!!(ws.Sz_jvp, ws, vp, x, p)
+    if length(v) == length(x)
+        _gather_vec!(ws.z_curr, v, ws.Z_h, ws.Z_d)
+        mul!(Jv, ws.Sz_jvp, ws.z_curr)
+    else
+        mul!(Jv, ws.Sz_jvp, v)
+    end
     return Jv
 end
 
@@ -1806,7 +2006,8 @@ end
 
 function residual!!(
         Fz::AbstractVector, oprob::_R3BlockOuterProb, z::AbstractVector, p)
-    _eliminate_r3!(oprob.ws, oprob.elim, z, p)
+    has_pred = !oprob.elim.linear_inner && isfinite(oprob.ws.fnorm_z_prev)
+    _eliminate_r3!(oprob.ws, oprob.elim, z, p, has_pred)
     Fz === oprob.ws.Fz_buf || copyto!(Fz, oprob.ws.Fz_buf)
     return Fz
 end
@@ -1828,8 +2029,8 @@ end
 function jvp!!(
         Jv::AbstractVector, ::Union{BlockElimPrep, Nothing}, oprob::_R3BlockOuterProb,
         z::AbstractVector, v::AbstractVector, p)
-    jacobian!!(oprob.ws.Sz_jvp, oprob.ws, oprob, z, p)
-    mul!(Jv, oprob.ws.Sz_jvp, v)
+    jacobian!!(oprob.ws.J_zz, oprob.ws, oprob, z, p)
+    mul!(Jv, oprob.ws.J_zz, v)
     return Jv
 end
 
@@ -1961,7 +2162,7 @@ struct StaticElimState{OST, IST, YW, ZC, R, YV, ZV, EYV, EZV}
     init_failures::Int32
 end
 
-struct DenseElimState{OST, WS, OP}
+struct DenseElimState{OST, WS <: Union{BlockElimPrep, VarProPrep}, OP}
     outer_state::OST
     ws::WS
     oprob::OP
@@ -2009,7 +2210,7 @@ end
 @inline function _init_elim_r1(
         m, elim::BlockEliminated, x₀::StaticVector{N, T}, p) where {N, T}
     R = real(T)
-    Y, Z, E_y, E_z = _resolve_partition_r1(elim, x₀)
+    Y, Z, E_y, E_z = _resolve_partition_r1(elim, x₀, p)
     Ny = length(Y)
     y_nan = SVector{Ny, T}(ntuple(_ -> T(NaN), Val(Ny)))
     z₀ = x₀[Z]
@@ -2023,7 +2224,7 @@ end
 @inline function _init_elim_r1(
         m, vp::VariableProjection, x₀::StaticVector{N, T}, p) where {N, T}
     R = real(T)
-    Y, Z = _resolve_partition_r1(vp, x₀)
+    Y, Z = _resolve_partition_r1(vp, x₀, p)
     Ny = length(Y)
     y_nan = SVector{Ny, T}(ntuple(_ -> T(NaN), Val(Ny)))
     z₀ = x₀[Z]
@@ -2035,12 +2236,26 @@ end
 end
 
 function _init_elim_r3(
-        m, prob::Union{BlockEliminated, VariableProjection},
-        x₀::AbstractVector{T}, p) where {T}
+        m, elim::BlockEliminated, x₀::AbstractVector{T}, p) where {T}
     R = real(T)
     m_r = Adapt.adapt(ToReal{R}(), m)
-    ws = prepare_ad(_ad_backend_of(m_r), prob, x₀, x₀, p)
-    oprob = _make_r3_outer_prob(prob, ws)
+    ws = _build_block_elim_prep(_ad_backend_of(m_r), elim, x₀, p)
+    oprob = _make_r3_outer_prob(elim, ws)
+    outer_state = init_state(m_r, oprob, ws.z_curr, p)
+    fill!(ws.y_warm, T(NaN))
+    ws.fnorm_z_prev = R(NaN)
+    ws.last_inner_iters = 0
+    ws.inner_failures = Int32(0)
+    ws.init_failures = Int32(0)
+    return DenseElimState(outer_state, ws, oprob)
+end
+
+function _init_elim_r3(
+        m, vp::VariableProjection, x₀::AbstractVector{T}, p) where {T}
+    R = real(T)
+    m_r = Adapt.adapt(ToReal{R}(), m)
+    ws = _build_varpro_prep(_ad_backend_of(m_r), vp, x₀, p)
+    oprob = _make_r3_outer_prob(vp, ws)
     outer_state = init_state(m_r, oprob, ws.z_curr, p)
     fill!(ws.y_warm, T(NaN))
     ws.fnorm_z_prev = R(NaN)
@@ -2051,28 +2266,52 @@ function _init_elim_r3(
 end
 
 @inline function init_state(
-        m::Newton, prob::Union{BlockEliminated, VariableProjection},
-        x₀::StaticOrNumber, p)
-    _validate_elim_x(prob, x₀)
+        m::Newton, prob::BlockEliminated, x₀::StaticVector, p)
     return _init_elim_r1(m, prob, x₀, p)
 end
 
 @inline function init_state(
-        m, prob::Union{BlockEliminated, VariableProjection},
-        x₀::StaticOrNumber, p)
-    _validate_elim_x(prob, x₀)
+        m::Newton, prob::VariableProjection, x₀::StaticVector, p)
     return _init_elim_r1(m, prob, x₀, p)
 end
 
+@inline function init_state(
+        m, prob::BlockEliminated, x₀::StaticVector, p)
+    return _init_elim_r1(m, prob, x₀, p)
+end
+
+@inline function init_state(
+        m, prob::VariableProjection, x₀::StaticVector, p)
+    return _init_elim_r1(m, prob, x₀, p)
+end
+
+@inline function init_state(
+        ::Newton, prob::Union{BlockEliminated, VariableProjection}, x₀::Number, p)
+    return _validate_elim_x(prob, x₀, p)
+end
+
+@inline function init_state(
+        _, prob::Union{BlockEliminated, VariableProjection}, x₀::Number, p)
+    return _validate_elim_x(prob, x₀, p)
+end
+
 function init_state(
-        m::Newton, prob::Union{BlockEliminated, VariableProjection},
-        x₀::AbstractVector, p)
+        m::Newton, prob::BlockEliminated, x₀::AbstractVector, p)
     return _init_elim_r3(m, prob, x₀, p)
 end
 
 function init_state(
-        m, prob::Union{BlockEliminated, VariableProjection},
-        x₀::AbstractVector, p)
+        m::Newton, prob::VariableProjection, x₀::AbstractVector, p)
+    return _init_elim_r3(m, prob, x₀, p)
+end
+
+function init_state(
+        m, prob::BlockEliminated, x₀::AbstractVector, p)
+    return _init_elim_r3(m, prob, x₀, p)
+end
+
+function init_state(
+        m, prob::VariableProjection, x₀::AbstractVector, p)
     return _init_elim_r3(m, prob, x₀, p)
 end
 
@@ -2109,18 +2348,33 @@ end
 end
 
 function start!!(
-        st::DenseElimState, m, prob::Union{BlockEliminated, VariableProjection},
-        x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {T, R <: Real}
+        st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {OST, T, R <: Real}
     ws = st.ws
     _gather_vec!(ws.y_warm, x, ws.Y_h, ws.Y_d)
     _gather_vec!(ws.z_curr, x, ws.Z_h, ws.Z_d)
     ws.fnorm_z_prev = R(NaN)
     ws.inner_failures = Int32(0)
-    if prob isa BlockEliminated
-        _eliminate_r3!(ws, prob, ws.z_curr, p)
-    else
-        _eliminate_vp_r3!(ws, prob, ws.z_curr, p)
-    end
+    _eliminate_r3!(ws, elim, ws.z_curr, p)
+    copyto!(ws.z_prev, ws.z_curr)
+    Fx === ws.Fz_buf || copyto!(Fx, ws.Fz_buf)
+    ws.fnorm_z_prev = fnorm₀
+    ws.init_failures = ws.inner_failures > Int32(0) ? Int32(1) : Int32(0)
+    m_r = Adapt.adapt(ToReal{R}(), m)
+    oprob = elim === st.oprob.elim ? st.oprob : _R3BlockOuterProb(elim, ws)
+    outer_state = start!!(st.outer_state, m_r, oprob, ws.z_curr, Fx, p, R(rnorm(Fx)))
+    return DenseElimState(outer_state, ws, st.oprob)
+end
+
+function start!!(
+        st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {OST, T, R <: Real}
+    ws = st.ws
+    _gather_vec!(ws.y_warm, x, ws.Y_h, ws.Y_d)
+    _gather_vec!(ws.z_curr, x, ws.Z_h, ws.Z_d)
+    ws.fnorm_z_prev = R(NaN)
+    ws.inner_failures = Int32(0)
+    _eliminate_vp_r3!(ws, vp, ws.z_curr, p)
     Fx === ws.Fz_buf || copyto!(Fx, ws.Fz_buf)
     ws.fnorm_z_prev = fnorm₀
     ws.init_failures = ws.inner_failures > Int32(0) ? Int32(1) : Int32(0)
@@ -2203,30 +2457,54 @@ end
 end
 
 function step!!(
-        st::DenseElimState, m, prob::Union{BlockEliminated, VariableProjection},
-        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {T}
+        st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
     R = real(T)
     ws = st.ws
     if !isfinite(ws.fnorm_z_prev)
         return x, Fx, st, StepInfo{R}(NONFINITE, R(NaN), zero(R), Int32(0), false, false)
     end
     ws.inner_failures = Int32(0)
-    if prob isa BlockEliminated && !prob.linear_inner
-        _eliminate_r3!(ws, prob, ws.z_curr, p)
+    if !elim.linear_inner
+        _eliminate_r3!(ws, elim, ws.z_curr, p)
         Fx === ws.Fz_buf || copyto!(Fx, ws.Fz_buf)
-        copyto!(view(ws.Sz_jvp, :, 1), ws.z_curr)
+        copyto!(ws.z_prev, ws.z_curr)
     end
+    m_r = Adapt.adapt(ToReal{R}(), m)
+    oprob = elim === st.oprob.elim ? st.oprob : _R3BlockOuterProb(elim, ws)
+    z₊, _, outer_state₊, info_outer = step!!(
+        st.outer_state, m_r, oprob, ws.z_curr, Fx, p)
+    z₊ === ws.z_curr || copyto!(ws.z_curr, z₊)
+    _eliminate_r3!(ws, elim, ws.z_curr, p, false)
+    copyto!(ws.z_prev, ws.z_curr)
+    fnorm₊ = R(rnorm(ws.Fz_buf))
+    Fx === ws.Fz_buf || copyto!(Fx, ws.Fz_buf)
+    _scatter_yz!(x, ws.y_warm, ws.z_curr, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
+    ws.fnorm_z_prev = fnorm₊
+    outer_state₊ = _sync_outer_merit(outer_state₊, Fx, fnorm₊)
+    extra_fail = ws.init_failures + (ws.inner_failures > Int32(0) ? Int32(1) : Int32(0))
+    ws.init_failures = Int32(0)
+    info = StepInfo{R}(
+        info_outer.code, fnorm₊, info_outer.stepnorm,
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+    return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
+end
+
+function step!!(
+        st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
+    R = real(T)
+    ws = st.ws
+    if !isfinite(ws.fnorm_z_prev)
+        return x, Fx, st, StepInfo{R}(NONFINITE, R(NaN), zero(R), Int32(0), false, false)
+    end
+    ws.inner_failures = Int32(0)
     m_r = Adapt.adapt(ToReal{R}(), m)
     z₊, _, outer_state₊, info_outer = step!!(
         st.outer_state, m_r, st.oprob, ws.z_curr, Fx, p)
     z₊ === ws.z_curr || copyto!(ws.z_curr, z₊)
-    if prob isa BlockEliminated
-        _eliminate_r3!(ws, prob, ws.z_curr, p, !prob.linear_inner)
-        fnorm₊ = R(rnorm(ws.Fz_buf))
-    else
-        _eliminate_vp_r3!(ws, prob, ws.z_curr, p)
-        fnorm₊ = R(rnorm(ws.Fz_buf))
-    end
+    _eliminate_vp_r3!(ws, vp, ws.z_curr, p)
+    fnorm₊ = R(rnorm(ws.Fz_buf))
     Fx === ws.Fz_buf || copyto!(Fx, ws.Fz_buf)
     _scatter_yz!(x, ws.y_warm, ws.z_curr, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     ws.fnorm_z_prev = fnorm₊
@@ -2285,19 +2563,119 @@ function finish!!(
     return x, status_out, DenseElimState(outer_end, ws, st.oprob)
 end
 
-# --- `init` and `solve` on `BlockEliminated` and `VariableProjection` ---
+# --- `init`, `solve!`, `solve_implicit`, and `solve` ---
 
 function init(
         prob::Union{BlockEliminated, VariableProjection}, x₀, m = Newton(), p = nothing;
         b = nothing, options = nothing, kwargs...)
+    if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p)) || has_dual_type(typeof(b))
+        throw(ArgumentError(
+            "init does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
+    end
     prob_b = _with_datum(prob, b)
     x, m_ad, opt, state = prepare_solve(prob_b, x₀, m, p, options, kwargs)
     return NonlinearSolver(prob_b, x, m_ad, opt, state, p)
 end
 
+function _solve_elim_stationarity_solver!(
+        solver::NonlinearSolver{T, P, M, O, S, X, Q}, x, p, b) where {T, P, M, O, S, X, Q}
+    if has_dual_type(typeof(b))
+        throw(ArgumentError(
+            "solve! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
+    end
+    prob_b = _with_datum(solver.prob, b)
+    _validate_elim_x(prob_b, x, p)
+    solver.x = x
+    solver.p = p
+    x₊, status, state = solve!!(
+        solver.state, prob_b, x, solver.method, p, solver.options)
+    solver.x = x₊
+    solver.state === state || (solver.state = state)
+    return solver.x, status
+end
+
+@inline function _elim_implicit_tangent_r1(
+        ::Type{D}, prob_in::AbstractNonlinearProblem,
+        x_star::StaticVector{S, T}, p, p_val,
+        status::SolverStatus) where {Tg, V, N, D <: ForwardDiff.Dual{Tg, V, N}, S, T}
+    Jmat = _inner_jac_r1(AutoForwardDiff(), prob_in, x_star, p_val)
+    ls = size(Jmat, 1) == size(Jmat, 2) ? LUFactorization() : QRFactorization()
+    fac = factorize!!(nothing, ls, Jmat)
+    if returncode(fac) === SINGULAR
+        return _make_nan_duals(D, x_star), _singular_status(status)
+    end
+    x_hat = _seed_zero_duals(D, x_star)
+    r_dual = _inner_res_r1(prob_in, x_hat, p)
+    tangents = _solve_static_tangents(Val(N), T, fac, r_dual)
+    return _assemble_static_duals(D, x_star, tangents), status
+end
+
+function _elim_implicit_tangent_r3(
+        ::Type{D}, ws::Union{BlockElimPrep, VarProPrep},
+        prob_in::AbstractNonlinearProblem,
+        x_star::AbstractVector{T}, p, p_val,
+        status::SolverStatus) where {Tg, V, N, D <: ForwardDiff.Dual{Tg, V, N}, T}
+    _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, x_star, p_val)
+    m_rows, n_cols = size(ws.J_buf)
+    ls = m_rows == n_cols ? LUFactorization() : QRFactorization()
+    fac_slot = m_rows == n_cols ? init_linear(ls, nothing, x_star) :
+               init_linear(ls, nothing, x_star, m_rows)
+    fac = factorize!!(fac_slot, ls, ws.J_buf)
+    if returncode(fac) === SINGULAR
+        return _make_nan_duals(D, x_star), _singular_status(status)
+    end
+    x_hat = _seed_zero_duals(D, x_star)
+    r_dual = similar(x_hat, m_rows)
+    prob_in.F(r_dual, x_hat, p)
+    b_buf = similar(x_star, m_rows)
+    d_buf = similar(x_star, n_cols)
+    x_out = similar(x_hat)
+    x_out .= ZeroDual{D}().(x_star)
+    for k in 1:N
+        b_buf .= ExtractPartial{T}(k).(r_dual)
+        d_k = ldiv!!(d_buf, fac, b_buf)
+        x_out .= SetPartial{D}(k).(x_out, d_k)
+    end
+    return x_out, status
+end
+
+function solve_implicit(
+        prob::Union{BlockEliminated, VariableProjection}, x₀, method, p,
+        options::Union{Nothing, Options}, kwargs)
+    prob_in = getfield(prob, :prob)
+    if prob_in isa StationarityProblem
+        _refuse_stationarity_duals(:solve, x₀, p)
+    end
+    D_in = validate_dual_types(typeof(x₀), typeof(p))
+    x_val = Adapt.adapt(StripDual(), x₀)
+    p_val = Adapt.adapt(StripDual(), p)
+    if has_dual_type(typeof(x_val)) || has_dual_type(typeof(p_val))
+        throw(ArgumentError(
+            "Adapt.adapt(StripDual(), ...) left a ForwardDiff.Dual in x₀ or p; mark custom parameter structs with Adapt.@adapt_structure"))
+    end
+    x, m, opt, state = prepare_solve(prob, x_val, method, p_val, options, kwargs)
+    x_star, status, state = solve!!(state, prob, x, m, p_val, opt)
+    D = _working_dual_type(D_in, eltype(x_star))
+    if status.code !== SUCCESS
+        return _make_nan_duals(D, x_star), status
+    end
+    if !has_dual_type(typeof(p))
+        return _seed_zero_duals(D, x_star), status
+    end
+    if x_star isa StaticVector
+        return _elim_implicit_tangent_r1(D, prob_in, x_star, p, p_val, status)
+    else
+        return _elim_implicit_tangent_r3(D, state.ws, prob_in, x_star, p, p_val, status)
+    end
+end
+
 function solve(
         prob::Union{BlockEliminated, VariableProjection}, x₀, m = Newton(), p = nothing;
         b = nothing, options = nothing, kwargs...)
+    if has_dual_type(typeof(b))
+        throw(ArgumentError(
+            "solve does not accept ForwardDiff.Dual in keyword `b`"))
+    end
     prob_b = _with_datum(prob, b)
     if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p))
         return solve_implicit(prob_b, x₀, m, p, options, kwargs)

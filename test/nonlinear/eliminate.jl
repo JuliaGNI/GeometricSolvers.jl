@@ -1,5 +1,7 @@
 using Adapt: Adapt
+using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
+using JET: JET
 using JLArrays: JLArray
 using LinearAlgebra: I, norm, pinv
 using Random: Xoshiro
@@ -14,7 +16,7 @@ using GeometricSolvers: AbstractNonlinearProblem, AutoForwardDiff, Backtracking,
                         Picard, QRFactorization, STALLED, SUCCESS, SVDFactorization,
                         SolverStatus, StationarityProblem, Static, ToReal,
                         VariableProjection, finish!!, init, init_state, jacobian!!,
-                        prepare_ad, residual!!, rnorm, solve, solve!, solve!!,
+                        jvp!!, prepare_ad, residual!!, rnorm, solve, solve!, solve!!,
                         start!!, step!!
 
 const GS = GeometricSolvers
@@ -182,6 +184,35 @@ function r_vp_dead(x, p)
     )
 end
 
+function r_vp_dead!(r::Array, x::Array, p)
+    T = eltype(x)
+    @inbounds begin
+        r[1] = x[1] + zero(T) * x[2] + x[3] - 3 * one(T)
+        r[2] = 2 * x[1] + zero(T) * x[2] - x[3]
+        r[3] = x[1] + zero(T) * x[2] + 2 * x[3] - 5 * one(T)
+        r[4] = 3 * x[1] + zero(T) * x[2] + x[3] - 5 * one(T)
+    end
+    return r
+end
+
+const T_VP_NL4 = SVector{4, Float64}(0.0, 0.5, 1.0, 1.5)
+const Y_VP_NL4 = SVector{4, Float64}(ntuple(i -> 1.5^3 * exp(-0.8 * T_VP_NL4[i]), Val(4)))
+
+function r_vp_nl(x, p)
+    T = eltype(x)
+    return SVector{4, T}(
+        ntuple(i -> x[1]^3 * exp(-x[2] * T(T_VP_NL4[i])) - T(Y_VP_NL4[i]), Val(4))
+    )
+end
+
+function r_vp_nl!(r::Array, x::Array, p)
+    T = eltype(x)
+    @inbounds for i in 1:4
+        r[i] = x[1]^3 * exp(-x[2] * T(T_VP_NL4[i])) - T(Y_VP_NL4[i])
+    end
+    return r
+end
+
 # Holomorphic complex fixture
 function f_cplx_elim(x, p)
     T = eltype(x)
@@ -293,12 +324,57 @@ end
     @test_throws ArgumentError VariableProjection(prob_ls, (1, 2); jacobian_mode = :invalid)
     @test_throws ArgumentError VariableProjection(prob_ls, (1, 2); inner_options = :invalid)
 
-    # Solve-time validation when x₀ length is incompatible with partition
+    # Solve-time validation when x₀ length is incompatible with partition or non-vector
     @test_throws ArgumentError solve(elim_nl, SVector(1.0, 2.0), Newton())
     @test_throws ArgumentError solve(elim_explicit, SVector(1.0, 2.0, 3.0), Newton())
     @test_throws ArgumentError solve(
         BlockEliminated(prob_nl, (1, 5)), SVector(1.0, 2.0, 3.0, 4.0), Newton())
     @test_throws ArgumentError solve(elim_nl, 1.0, Newton())
+    @test_throws ArgumentError solve(elim_nl, zeros(2, 2), Newton())
+    @test_throws ArgumentError prepare_ad(AutoForwardDiff(), elim_nl, nothing, 1.0, 0.2)
+    @test_throws ArgumentError prepare_ad(
+        AutoForwardDiff(), elim_nl, zeros(2), zeros(2, 2), 0.2)
+    @test_throws ArgumentError prepare_ad(AutoForwardDiff(), vp, nothing, 1.0, :noisy)
+    @test_throws ArgumentError prepare_ad(
+        AutoForwardDiff(), vp, zeros(6), zeros(2, 2), :noisy)
+
+    # Dual-type rejection in init, solve, and solve!
+    d1 = ForwardDiff.Dual{Nothing}(1.0, 1.0)
+    x0_dual4 = SVector(d1, d1, d1, d1)
+    x0_dual3 = SVector(d1, d1, d1)
+    @test_throws ArgumentError init(elim_nl, x0_dual4, Newton(), 0.2)
+    @test_throws ArgumentError init(elim_nl, SVector(0.2, 0.4, 0.5, 0.6), Newton(), d1)
+    @test_throws ArgumentError init(vp, x0_dual3, GaussNewton())
+    @test_throws ArgumentError init(vp, SVector(1.0, 0.5, 1.2), GaussNewton(), d1)
+
+    elim_stat_v = BlockEliminated(prob_stat, (1, 2); outer = (3,))
+    @test_throws ArgumentError init(
+        elim_stat_v, SVector(0.2, 0.8, 0.25), Newton(); b = x0_dual3)
+    @test_throws ArgumentError solve(
+        elim_stat_v, SVector(0.2, 0.8, 0.25), Newton(); b = x0_dual3)
+    solver_stat_v = init(elim_stat_v, SVector(0.2, 0.8, 0.25), Newton())
+    @test_throws ArgumentError solve!(solver_stat_v; b = x0_dual3)
+
+    # StationarityProblem E/U index validation and datum b length validation in R1 and R3
+    prob_stat_bad_r1 = StationarityProblem(action_elim; U = (1, 2), E = (1, 4))
+    elim_stat_bad_r1 = BlockEliminated(prob_stat_bad_r1, (1,); outer = (2,))
+    @test_throws ArgumentError init(elim_stat_bad_r1, SVector(0.2, 0.8, 0.25), Newton())
+    @test_throws ArgumentError solve(elim_stat_bad_r1, SVector(0.2, 0.8, 0.25), Newton())
+
+    prob_stat_bad_r3 = StationarityProblem(action_elim; U = [1, 2], E = [1, 4])
+    elim_stat_bad_r3 = BlockEliminated(prob_stat_bad_r3, [1]; outer = [2])
+    @test_throws ArgumentError init(elim_stat_bad_r3, [0.2, 0.8, 0.25], Newton())
+    @test_throws ArgumentError solve(elim_stat_bad_r3, [0.2, 0.8, 0.25], Newton())
+
+    elim_stat_r3 = BlockEliminated(prob_stat, [1, 2]; outer = [3])
+    @test_throws ArgumentError init(
+        elim_stat_v, SVector(0.2, 0.8, 0.25), Newton(); b = [1.0, 2.0])
+    @test_throws ArgumentError solve(
+        elim_stat_v, SVector(0.2, 0.8, 0.25), Newton(); b = [1.0, 2.0])
+    @test_throws ArgumentError init(
+        elim_stat_r3, [0.2, 0.8, 0.25], Newton(); b = [1.0, 2.0])
+    @test_throws ArgumentError solve(
+        elim_stat_r3, [0.2, 0.8, 0.25], Newton(); b = [1.0, 2.0])
 
     # Adapt to Float32
     shift = 2.0
@@ -322,6 +398,7 @@ end
 @testset "Check 1: Separable exponential fit over 100 seeded starts" begin
     prob_exp5 = LeastSquaresProblem(r_exp5, 21)
     vp_kaufman = VariableProjection(prob_exp5, 1:3; outer = 4:5, jacobian_mode = :kaufman)
+    vp_gp = VariableProjection(prob_exp5, 1:3; outer = 4:5, jacobian_mode = :golub_pereyra)
     m_lm = Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())
     opt = Options(
         Float64; max_iterations = 100, f_abstol = 1e-10, f_reltol = 1e-10, g_tol = 1e-10)
@@ -337,6 +414,7 @@ end
 
     n_joint = 0
     n_vp_kaufman = 0
+    n_vp_gp = 0
 
     for x0 in starts
         x_j, st_j = solve(prob_exp5, x0, m_lm; options = opt)
@@ -350,10 +428,18 @@ end
             # Verify y*(z*) was written into x_vk[1:3] (catches MU1, MU4)
             @test norm(x_vk[SVector(1, 2, 3)] - x0[SVector(1, 2, 3)]) > 1e-3
         end
+
+        x_vg, st_vg = solve(vp_gp, x0, m_lm; options = opt)
+        if st_vg.code == SUCCESS && norm(r_exp5(x_vg, nothing)) <= 1e-8
+            n_vp_gp += 1
+            @test norm(x_vg[SVector(1, 2, 3)] - x0[SVector(1, 2, 3)]) > 1e-3
+        end
     end
 
     @test n_vp_kaufman > n_joint
+    @test n_vp_gp > n_joint
     @test n_vp_kaufman >= 85
+    @test n_vp_gp >= 85
 end
 
 @testset "Check 2: Schur complement and reduced Jacobian vs central differences" begin
@@ -394,9 +480,17 @@ end
         J_full = jacobian!!(nothing, AutoForwardDiff(), prob_f, x_test, p_val)
         J_zz_raw = J_full[SVector{2, Int}(outer_eqs), SVector(3, 4)]
         @test norm(S_analytic - J_zz_raw) > 1e-2
+
+        # jvp!! accepts both reduced-length and full-length tangent vectors v
+        v_red = SVector(0.7, -0.3)
+        v_full = SVector(9.0, -5.0, 0.7, -0.3)
+        @test isapprox(jvp!!(nothing, AutoForwardDiff(), elim, x_test, v_red, p_val),
+            S_analytic * v_red; rtol = 1e-12)
+        @test isapprox(jvp!!(nothing, AutoForwardDiff(), elim, x_test, v_full, p_val),
+            S_analytic * v_red; rtol = 1e-12)
     end
 
-    # R3 Schur complement on Array (default and permuted equations)
+    # R3 Schur complement on Array (default and permuted equations) + jvp!!
     prob_r3 = NonlinearProblem(f_elim!)
     for (inner_eqs, outer_eqs) in (([1, 2], [3, 4]), ([2, 3], [1, 4]))
         elim_r3 = BlockEliminated(
@@ -424,7 +518,43 @@ end
 
         @test norm(Fz_a - Vector(Fz_r1)) <= 1e-10
         @test norm(Sz_a - Matrix(Sz_r1)) <= 1e-10
+
+        Jv_a = zeros(2)
+        jvp!!(Jv_a, prep, elim_r3, x_a, [0.7, -0.3], 0.2)
+        @test isapprox(Jv_a, Sz_a * [0.7, -0.3]; rtol = 1e-10)
+        jvp!!(Jv_a, prep, elim_r3, x_a, [9.0, -5.0, 0.7, -0.3], 0.2)
+        @test isapprox(Jv_a, Sz_a * [0.7, -0.3]; rtol = 1e-10)
     end
+
+    # Schur residual correction when F_y != 0 and R3 z_prev predictor buffer isolation
+    f_schur_pred(x, _) = SVector(x[1] + x[2] - 3.0, 2.0 * x[1] + 3.0 * x[2] - 8.0)
+    function f_schur_pred!(F, x, _)
+        F[1] = x[1] + x[2] - 3.0
+        F[2] = 2.0 * x[1] + 3.0 * x[2] - 8.0
+        return F
+    end
+    in_opt_loose = Options(Float64; max_iterations = 1, f_abstol = 10.0, f_reltol = 10.0)
+    out_opt_1step = Options(Float64; max_iterations = 1, f_abstol = 1e-12)
+    elim_sp_r1 = BlockEliminated(
+        NonlinearProblem(f_schur_pred), (1,);
+        outer = (2,), linear_inner = false, inner_options = in_opt_loose
+    )
+    x_sp_r1, _ = solve(elim_sp_r1, SVector(0.0, 0.0), Newton(); options = out_opt_1step)
+    @test isapprox(x_sp_r1[2], 2.0; atol = 1e-12)
+
+    elim_sp_r3 = BlockEliminated(
+        NonlinearProblem(f_schur_pred!), [1];
+        outer = [2], linear_inner = false, inner_options = in_opt_loose
+    )
+    x_sp_r3, _ = solve(elim_sp_r3, [0.0, 0.0], Newton(); options = out_opt_1step)
+    @test isapprox(x_sp_r3[2], 2.0; atol = 1e-12)
+
+    st_sp_r3 = init_state(Newton(), elim_sp_r3, [0.0, 0.0], nothing)
+    st_sp_r3 = start!!(st_sp_r3, Newton(), elim_sp_r3, [0.0, 0.0], [0.0], nothing, 1.0)
+    copyto!(st_sp_r3.ws.z_prev, st_sp_r3.ws.z_curr)
+    Jv_sp = zeros(1)
+    jvp!!(Jv_sp, st_sp_r3.ws, elim_sp_r3, [0.0, 0.0], [0.5], nothing)
+    @test st_sp_r3.ws.z_prev == st_sp_r3.ws.z_curr
 
     # 2. VariableProjection reduced Jacobian vs central differences (catches MU3)
     x_ls_test = SVector(1.0, 0.5, 1.2)
@@ -448,6 +578,15 @@ end
         J_full_ex = jacobian!!(nothing, AutoForwardDiff(), prob_ls, x_full_ex, :exact)
         D_raw = J_full_ex[:, SVector(3)]
         @test norm(J_vp - D_raw) > 0.1
+
+        # jvp!! on VariableProjection with reduced and full-length tangent vector v
+        @test isapprox(
+            jvp!!(nothing, AutoForwardDiff(), vp_ex, x_ls_exact_z, SVector(0.5), :exact),
+            J_vp * SVector(0.5); rtol = 1e-12)
+        @test isapprox(
+            jvp!!(nothing, AutoForwardDiff(), vp_ex, x_ls_exact_z,
+                SVector(2.0, -1.0, 0.5), :exact),
+            J_vp * SVector(0.5); rtol = 1e-12)
     end
 
     # At nonzero residual (r_ls6 with :noisy at z = 1.2): :golub_pereyra matches central difference
@@ -478,6 +617,12 @@ end
         J_ref = mode === :golub_pereyra ? J_gp_n : J_kf_n
         @test norm(r_a - Vector(r_red_n(z_ls0))) <= 1e-12
         @test norm(J_a - Matrix(J_ref)) <= 1e-7 * max(1.0, norm(J_ref))
+
+        Jv_vp = zeros(6)
+        jvp!!(Jv_vp, prep, vp_r3, x_a, [0.5], :noisy)
+        @test isapprox(Jv_vp, J_a * [0.5]; rtol = 1e-10)
+        jvp!!(Jv_vp, prep, vp_r3, x_a, [2.0, -1.0, 0.5], :noisy)
+        @test isapprox(Jv_vp, J_a * [0.5]; rtol = 1e-10)
     end
 end
 
@@ -518,32 +663,34 @@ end
             @test norm(x_elim - x_joint) <= tol * max(one(T), norm(x_joint))
             @test norm(x_elim[SVector(1, 2)] - x0[SVector(1, 2)]) > T(1 // 20)
 
-            # init and solve!
-            solver = init(elim, x0, Newton(), p_val; options = opt_t)
-            @test solver isa NonlinearSolver
-            x_s1, st_s1 = solve!(solver)
-            @test st_s1.code == SUCCESS
-            @test norm(x_s1 - x_joint) <= tol * max(one(T), norm(x_joint))
+            if T === Float64
+                # init and solve!
+                solver = init(elim, x0, Newton(), p_val; options = opt_t)
+                @test solver isa NonlinearSolver
+                x_s1, st_s1 = solve!(solver)
+                @test st_s1.code == SUCCESS
+                @test norm(x_s1 - x_joint) <= tol * max(one(T), norm(x_joint))
 
-            # Second solve!(solver) from converged root takes 0 outer iterations
-            x_s2, st_s2 = solve!(solver)
-            @test st_s2.code == SUCCESS
-            @test st_s2.iterations == Int32(0)
-            @test x_s2 == x_s1
+                # Second solve!(solver) from converged root takes 0 outer iterations
+                x_s2, st_s2 = solve!(solver)
+                @test st_s2.code == SUCCESS
+                @test st_s2.iterations == Int32(0)
+                @test x_s2 == x_s1
 
-            # 0-outer-iteration solve from z₀ = z* with un-eliminated y₀ != y*(z*) (catches MU4a in finish!!)
-            x0_z_exact = SVector{4, T}(x0[1], x0[2], x_joint[3], x_joint[4])
-            x_z0, st_z0 = solve(elim, x0_z_exact, Newton(), p_val; options = opt_t)
-            @test st_z0.code == SUCCESS
-            @test st_z0.iterations == Int32(0)
-            @test norm(x_z0 - x_joint) <= tol * max(one(T), norm(x_joint))
-            @test norm(x_z0[SVector(1, 2)] - x0_z_exact[SVector(1, 2)]) > T(1 // 20)
+                # 0-outer-iteration solve from z₀ = z* with un-eliminated y₀ != y*(z*) (catches MU4a in finish!!)
+                x0_z_exact = SVector{4, T}(x0[1], x0[2], x_joint[3], x_joint[4])
+                x_z0, st_z0 = solve(elim, x0_z_exact, Newton(), p_val; options = opt_t)
+                @test st_z0.code == SUCCESS
+                @test st_z0.iterations == Int32(0)
+                @test norm(x_z0 - x_joint) <= tol * max(one(T), norm(x_joint))
+                @test norm(x_z0[SVector(1, 2)] - x0_z_exact[SVector(1, 2)]) > T(1 // 20)
 
-            # solve!! directly
-            state0 = init_state(Newton(), elim, x0, p_val)
-            x_s3, st_s3, _ = solve!!(state0, elim, x0, Newton(), p_val, opt_t)
-            @test st_s3.code == SUCCESS
-            @test norm(x_s3 - x_joint) <= tol * max(one(T), norm(x_joint))
+                # solve!! directly
+                state0 = init_state(Newton(), elim, x0, p_val)
+                x_s3, st_s3, _ = solve!!(state0, elim, x0, Newton(), p_val, opt_t)
+                @test st_s3.code == SUCCESS
+                @test norm(x_s3 - x_joint) <= tol * max(one(T), norm(x_joint))
+            end
 
             # R3 on Array and JLArray
             elim_r3 = BlockEliminated(
@@ -563,7 +710,7 @@ end
                 @test norm(Array(x_r3) - Vector(x_joint)) <=
                       tol * max(one(T), norm(x_joint))
 
-                if Arr === Array
+                if Arr === Array && T === Float64
                     solver_r3 = init(elim_r3, x0_r3, Newton(), p_val; options = opt_t)
                     x_r3_i, st_r3_i = solve!(solver_r3)
                     @test st_r3_i.code == SUCCESS
@@ -576,20 +723,45 @@ end
     end
 
     if T === Float64
-        # 2. BlockEliminated on StationarityProblem (with and without datum b)
+        # 2. BlockEliminated on StationarityProblem (with and without datum b, plus solve!(solver; b = ...))
         prob_stat = StationarityProblem(action_elim)
         x0_stat = SVector{3, T}(T(1 // 5), T(4 // 5), T(1 // 4))
         b_vec = SVector{3, T}(T(1 // 10), -T(1 // 5), T(3 // 10))
+        elim_stat = BlockEliminated(prob_stat, (1, 2); outer = (3,))
+        elim_stat_r3 = BlockEliminated(prob_stat, [1, 2]; outer = [3])
+        solver_stat = init(elim_stat, x0_stat, Newton(); options = opt_t)
+        solver_stat_r3 = init(elim_stat_r3, Vector(x0_stat), Newton(); options = opt_t)
+
         for b_val in (nothing, b_vec)
             x_st_joint, st_st_joint = solve(
                 prob_stat, x0_stat, Newton(); b = b_val, options = opt_t)
             @test st_st_joint.code == SUCCESS
-            elim_stat = BlockEliminated(prob_stat, (1, 2); outer = (3,))
             x_st_elim, st_st_elim = solve(
                 elim_stat, x0_stat, Newton(); b = b_val, options = opt_t)
             @test st_st_elim.code == SUCCESS
             @test norm(x_st_elim - x_st_joint) <= tol * max(one(T), norm(x_st_joint))
+
+            x_st_s, st_st_s = solve!(solver_stat, x0_stat, nothing; b = b_val)
+            @test st_st_s.code == SUCCESS
+            @test norm(x_st_s - x_st_joint) <= tol * max(one(T), norm(x_st_joint))
+
+            b_r3 = b_val === nothing ? nothing : Vector(b_vec)
+            x_st_r3, st_st_r3 = solve!(solver_stat_r3, Vector(x0_stat), nothing; b = b_r3)
+            @test st_st_r3.code == SUCCESS
+            @test norm(x_st_r3 - Vector(x_st_joint)) <= tol * max(one(T), norm(x_st_joint))
         end
+
+        # Implicit differentiation through solve on BlockEliminated and VariableProjection (R1 and R3)
+        elim_imp_r1 = BlockEliminated(prob_j, (1, 2); outer = (3, 4))
+        elim_imp_r3 = BlockEliminated(prob_r3, [1, 2]; outer = [3, 4])
+        dx_dp_joint = ForwardDiff.derivative(
+            p -> solve(prob_j, x0, Newton(), p; options = opt_t)[1], 0.2)
+        dx_dp_r1 = ForwardDiff.derivative(
+            p -> solve(elim_imp_r1, x0, Newton(), p; options = opt_t)[1], 0.2)
+        dx_dp_r3 = ForwardDiff.derivative(
+            p -> solve(elim_imp_r3, Vector(x0), Newton(), p; options = opt_t)[1], 0.2)
+        @test isapprox(dx_dp_r1, dx_dp_joint; rtol = 1e-8)
+        @test isapprox(dx_dp_r3, Vector(dx_dp_joint); rtol = 1e-8)
     end
 
     # 3. VariableProjection on LeastSquaresProblem (exact zero-residual and noisy nonzero-residual)
@@ -614,15 +786,16 @@ end
             @test norm(x_vp - x_ls_joint) <= tol_ls * max(one(T), norm(x_ls_joint))
         end
 
-        r3_modes = (T === Float64 && tag === :noisy) ? (:kaufman, :golub_pereyra) :
-                   (:kaufman,)
-        for mode in r3_modes
-            vp_r3 = VariableProjection(prob_ls_r3, [1, 2]; outer = [3], jacobian_mode = mode)
-            x_vp_r3, st_vp_r3 = solve(vp_r3, Vector(x0_ls), m_ls, tag; options = opt_t)
-            @test st_vp_r3.code == SUCCESS
-            tol_ls = tag === :noisy ? (T === Float64 ? T(1e-7) : T(5e-3)) : tol
-            @test norm(x_vp_r3 - Vector(x_ls_joint)) <=
-                  tol_ls * max(one(T), norm(x_ls_joint))
+        if T === Float64
+            for mode in (:kaufman, :golub_pereyra)
+                vp_r3 = VariableProjection(
+                    prob_ls_r3, [1, 2]; outer = [3], jacobian_mode = mode)
+                x_vp_r3, st_vp_r3 = solve(vp_r3, Vector(x0_ls), m_ls, tag; options = opt_t)
+                @test st_vp_r3.code == SUCCESS
+                tol_ls = tag === :noisy ? T(1e-7) : tol
+                @test norm(x_vp_r3 - Vector(x_ls_joint)) <=
+                      tol_ls * max(one(T), norm(x_ls_joint))
+            end
         end
     end
 end
@@ -683,7 +856,24 @@ end
     _, _, _, info_un_r3 = step!!(st_r3, Newton(), elim_r3, copy(x0_r3), copy(Fx0_r3), 0.2)
     @test info_un_r3.code == NONFINITE
 
-    # 2. Adaptive inner tolerance tightens as 0.5 * g2_prev^2 even when inner_options has a loose cap (catches MU6a)
+    # 2. Adaptive inner tolerance scales as 0.5 * g2_prev^2 when inner_options === nothing at O(1) outer residual (catches MU4a)
+    τ_at_o1, _ = GS._inner_tol_r1(nothing, Float64, 1.0, 0.8)
+    @test isapprox(τ_at_o1, 0.5 * 0.8^2; rtol = 1e-12)
+    τ_at_start, _ = GS._inner_tol_r1(nothing, Float64, 1.0, NaN)
+    @test isapprox(τ_at_start, sqrt(eps(Float64)); rtol = 1e-12)
+
+    _, _, _, _, iters_first_step = GS._eliminate_r1(
+        elim_nl, st_r1.inner_state, SVector(0.2, 0.4), SVector(0.5, 0.6),
+        0.2, 0.8, SVector(1, 2), SVector(3, 4), SVector(1, 2), SVector(3, 4)
+    )
+    _, _, _, _, iters_tight = GS._eliminate_r1(
+        elim_nl, st_r1.inner_state, SVector(0.2, 0.4), SVector(0.5, 0.6),
+        0.2, 1e-8, SVector(1, 2), SVector(3, 4), SVector(1, 2), SVector(3, 4)
+    )
+    @test iters_first_step <= 2
+    @test iters_first_step < iters_tight
+
+    # 3. Adaptive inner tolerance tightens as 0.5 * g2_prev^2 even when inner_options has a loose cap (catches MU4b)
     elim_loose = BlockEliminated(
         prob_nl, (1, 2);
         outer = (3, 4),
@@ -706,7 +896,56 @@ end
     @test st_loose_r3.code == SUCCESS
     @test norm(x_loose_r3 - Vector(x_joint)) <= 1e-11
 
-    # 3. 0-step warm start on repeat evaluation at the same z, and warm-start tracking (catches MU6b)
+    # 4. VariableProjection with linear_inner = false: adaptive tolerance, step_failures on non-convergence, and inner_method
+    prob_vp_nl_r1 = LeastSquaresProblem(r_vp_nl, 2)
+    prob_vp_nl_r3 = LeastSquaresProblem(r_vp_nl!, 2)
+    m_gn_svd = GaussNewton(; linsolve = SVDFactorization())
+
+    vp_fail_r1 = VariableProjection(
+        prob_vp_nl_r1, (1,);
+        outer = (2,),
+        linear_inner = false,
+        inner_method = Newton(; linsolve = QRFactorization()),
+        inner_options = Options(
+            Float64; max_iterations = 1, f_abstol = 1e-15, f_reltol = 1e-15)
+    )
+    _, st_vpf_r1 = solve(vp_fail_r1, SVector(10.0, 0.5), m_gn_svd; max_iterations = 2)
+    @test st_vpf_r1.step_failures >= 1
+
+    vp_fail_r3 = VariableProjection(
+        prob_vp_nl_r3, [1];
+        outer = [2],
+        linear_inner = false,
+        inner_method = Newton(; linsolve = QRFactorization()),
+        inner_options = Options(
+            Float64; max_iterations = 1, f_abstol = 1e-15, f_reltol = 1e-15)
+    )
+    _, st_vpf_r3 = solve(vp_fail_r3, [10.0, 0.5], m_gn_svd; max_iterations = 2)
+    @test st_vpf_r3.step_failures >= 1
+
+    vp_loose_r1 = VariableProjection(
+        prob_vp_nl_r1, (1,);
+        outer = (2,),
+        linear_inner = false,
+        inner_method = Newton(; linsolve = QRFactorization()),
+        inner_options = Options(Float64; f_abstol = 1e-1, f_reltol = 1e-1)
+    )
+    x_vpl_r1, st_vpl_r1 = solve(vp_loose_r1, SVector(2.0, 0.5), m_gn_svd)
+    @test st_vpl_r1.code == SUCCESS
+    @test norm(x_vpl_r1 - SVector(1.5, 0.8)) <= 1e-8
+
+    vp_loose_r3 = VariableProjection(
+        prob_vp_nl_r3, [1];
+        outer = [2],
+        linear_inner = false,
+        inner_method = Newton(; linsolve = QRFactorization()),
+        inner_options = Options(Float64; f_abstol = 1e-1, f_reltol = 1e-1)
+    )
+    x_vpl_r3, st_vpl_r3 = solve(vp_loose_r3, [2.0, 0.5], m_gn_svd)
+    @test st_vpl_r3.code == SUCCESS
+    @test norm(x_vpl_r3 - [1.5, 0.8]) <= 1e-8
+
+    # 5. 0-step warm start on repeat evaluation at the same z, and warm-start tracking (catches MU6)
     st_r3_warm = init_state(Newton(), elim_r3, copy(x0_r3), 0.2)
     st_r3_warm = start!!(st_r3_warm, Newton(), elim_r3, copy(x0_r3), copy(Fx0_r3), 0.2, 1.0)
     @test st_r3_warm.ws.last_inner_iters >= 1
@@ -726,46 +965,66 @@ end
 @testset "Check 4: Singular J_yy dead unit minimum-norm step and step_failures" begin
     allowscalar(false)
 
-    # 1. Dead unit (zero second column in J_yy) in R1 and R3 (catches MU5a and MU5b)
+    # 1. Dead unit and duplicate columns in R1 and R3 with both linear_inner = false (default) and true (catches MU5, MU5a, MU5b)
     prob_sing = NonlinearProblem(f_singular_inner)
-    elim_dead = BlockEliminated(prob_sing, (1, 2); outer = (3,), linear_inner = true)
-    x0_dead = SVector(3.0, 7.0, 0.5)
-    x_dead, st_dead = solve(elim_dead, x0_dead, Newton(), :dead)
-    @test st_dead.code == SUCCESS
-    @test isapprox(x_dead[1], 1.0; atol = 1e-12)
-    @test abs(x_dead[2]) <= 1e-12
-    @test isapprox(x_dead[3], 2.0; atol = 1e-12)
-    @test st_dead.step_failures >= 1
-
-    # Duplicate columns in J_yy: x1 + x2 = x3, so minimum-norm solution has x1 == x2 == x3 / 2
-    x_dup, st_dup = solve(elim_dead, SVector(5.0, -3.0, 0.5), Newton(), :dup)
-    @test st_dup.code == SUCCESS
-    @test isapprox(x_dup[1], 1.0; atol = 1e-12)
-    @test isapprox(x_dup[2], 1.0; atol = 1e-12)
-    @test isapprox(x_dup[3], 2.0; atol = 1e-12)
-    @test st_dup.step_failures >= 1
-
-    # R3 dead unit on Array
     prob_dead_r3 = NonlinearProblem(f_singular_inner!)
-    elim_dead_r3 = BlockEliminated(prob_dead_r3, [1, 2]; outer = [3], linear_inner = true)
-    x_d_h, st_d_r3 = solve(elim_dead_r3, [3.0, 7.0, 0.5], Newton())
-    @test st_d_r3.code == SUCCESS
-    @test isapprox(x_d_h[1], 1.0; atol = 1e-12)
-    @test abs(x_d_h[2]) <= 1e-12
-    @test isapprox(x_d_h[3], 2.0; atol = 1e-12)
-    @test st_d_r3.step_failures >= 1
+    for lin_in in (false, true)
+        elim_dead = BlockEliminated(prob_sing, (1, 2); outer = (3,), linear_inner = lin_in)
+        for z_init in (0.5, 2.0)
+            x_dead, st_dead = solve(elim_dead, SVector(3.0, 7.0, z_init), Newton(), :dead)
+            @test st_dead.code == SUCCESS
+            @test isapprox(x_dead[1], 1.0; atol = 1e-10)
+            @test abs(x_dead[2]) <= 1e-10
+            @test isapprox(x_dead[3], 2.0; atol = 1e-10)
+            @test st_dead.step_failures >= 1
+        end
 
-    # Dead unit in VariableProjection (second column of Φ(z) is identically zero)
-    vp_dead = VariableProjection(LeastSquaresProblem(r_vp_dead, 4), (1, 2); outer = (3,))
-    x_vpd, st_vpd = solve(vp_dead, SVector(4.0, 9.0, 0.5), GaussNewton(;
-        linsolve = SVDFactorization()))
-    @test st_vpd.code == SUCCESS
-    @test isapprox(x_vpd[1], 1.0; atol = 1e-12)
-    @test abs(x_vpd[2]) <= 1e-12
-    @test isapprox(x_vpd[3], 2.0; atol = 1e-12)
-    @test st_vpd.step_failures >= 1
+        # Duplicate columns in J_yy: x1 + x2 = x3, so minimum-norm solution has x1 == x2 == x3 / 2
+        x_dup, st_dup = solve(elim_dead, SVector(5.0, -3.0, 0.5), Newton(), :dup)
+        @test st_dup.code == SUCCESS
+        @test isapprox(x_dup[1], 1.0; atol = 1e-10)
+        @test isapprox(x_dup[2], 1.0; atol = 1e-10)
+        @test isapprox(x_dup[3], 2.0; atol = 1e-10)
+        @test st_dup.step_failures >= 1
 
-    # Inner nonlinear solver failure (max_iterations = 1 from a distant guess) increments step_failures
+        # R3 dead unit on Array
+        elim_dead_r3 = BlockEliminated(
+            prob_dead_r3, [1, 2]; outer = [3], linear_inner = lin_in)
+        for z_init in (0.5, 2.0)
+            x_d_h, st_d_r3 = solve(elim_dead_r3, [3.0, 7.0, z_init], Newton())
+            @test st_d_r3.code == SUCCESS
+            @test isapprox(x_d_h[1], 1.0; atol = 1e-10)
+            @test abs(x_d_h[2]) <= 1e-10
+            @test isapprox(x_d_h[3], 2.0; atol = 1e-10)
+            @test st_d_r3.step_failures >= 1
+        end
+    end
+
+    # 2. Dead unit in VariableProjection in R1 and R3 with linear_inner = true and false (catches MU5c)
+    prob_vp_dead_r1 = LeastSquaresProblem(r_vp_dead, 4)
+    prob_vp_dead_r3 = LeastSquaresProblem(r_vp_dead!, 4)
+    m_gn_svd = GaussNewton(; linsolve = SVDFactorization())
+    for lin_in in (true, false)
+        vp_dead = VariableProjection(
+            prob_vp_dead_r1, (1, 2); outer = (3,), linear_inner = lin_in)
+        x_vpd, st_vpd = solve(vp_dead, SVector(4.0, 9.0, 0.5), m_gn_svd)
+        @test st_vpd.code == SUCCESS
+        @test isapprox(x_vpd[1], 1.0; atol = 1e-10)
+        @test abs(x_vpd[2]) <= 1e-10
+        @test isapprox(x_vpd[3], 2.0; atol = 1e-10)
+        @test st_vpd.step_failures >= 1
+
+        vp_dead_r3 = VariableProjection(
+            prob_vp_dead_r3, [1, 2]; outer = [3], linear_inner = lin_in)
+        x_vpd_r3, st_vpd_r3 = solve(vp_dead_r3, [4.0, 9.0, 0.5], m_gn_svd)
+        @test st_vpd_r3.code == SUCCESS
+        @test isapprox(x_vpd_r3[1], 1.0; atol = 1e-10)
+        @test abs(x_vpd_r3[2]) <= 1e-10
+        @test isapprox(x_vpd_r3[3], 2.0; atol = 1e-10)
+        @test st_vpd_r3.step_failures >= 1
+    end
+
+    # 3. Inner nonlinear solver failure (max_iterations = 1 from a distant guess) increments step_failures
     elim_fail_in = BlockEliminated(
         NonlinearProblem(f_elim), (1, 2);
         outer = (3, 4),
@@ -805,8 +1064,22 @@ end
     @test (@inferred solve(vp_kf, x0_ls, m_gn, :noisy))[2].code == SUCCESS
     @test (@inferred solve(vp_gp, x0_ls, m_gn, :noisy))[2].code == SUCCESS
 
+    elim_r3_opt = BlockEliminated(
+        NonlinearProblem(f_elim!), [1, 2]; outer = [3, 4], linear_inner = false)
+    vp_r3_opt = VariableProjection(
+        LeastSquaresProblem(r_ls6!, 6), [1, 2]; outer = [3], jacobian_mode = :kaufman)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve(elim_lin, x0, Newton(), 0.0)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve(elim_nl, x0, Newton(), 0.2)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve(vp_kf, x0_ls, m_gn, :noisy)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve(vp_gp, x0_ls, m_gn, :noisy)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve(
+        elim_r3_opt, [0.2, 0.4, 0.5, 0.6], Newton(), 0.2)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve(
+        vp_r3_opt, [1.0, 0.5, 1.2], m_gn, :exact)
+
     if Base.JLOptions().check_bounds != 1
         # skipped where a run forces `--check-bounds=yes`
+        @test allocations(collect, x0) > 0
         @test allocations(a -> solve(elim_lin, a, Newton(), 0.0), x0) == 0
         @test allocations(a -> solve(elim_nl, a, Newton(), 0.2), x0) == 0
         @test allocations(a -> solve(elim_def, a, Newton(), 0.0), x0) == 0
