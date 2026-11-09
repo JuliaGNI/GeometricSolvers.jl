@@ -1352,13 +1352,17 @@ so that a compat-only bump can be told apart from an interface change.
   raises the same `ArgumentError` as the other combinators, before the primal solve, since implicit
   differentiation through a combinator is not implemented (K60). The method-first
   `solve(prob, method::Anderson, x₀, p, options)` is not provided (K73).
-- **`Broyden` multisecant combinator and `AndersonHistory` buffer.** `Broyden(inner = Picard();
-  m = 4, c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0)` accelerates an inner
-  iterator with the Type-I Broyden multisecant update (Fang & Saad, 2009) using the Δx-Gram weights
-  `solve_broyden_weights(ΔX, Δxₖ)` / `solve_broyden_weights!(α, G, ipiv, ΔX, Δxₖ)` and the shared
-  `AndersonHistory` ring buffer (`push_history!!`, `step_multisecant!!`). `Broyden` shares the
-  safeguard filter, residual-spike restart, and `Union{..., Broyden}` implicit-differentiation and
-  `LeastSquaresProblem` refusals with `Anderson`.
+- **`Broyden` multisecant combinator and `AndersonHistory` view.** `Broyden(member = Picard(),
+  Val(m) = Val(4); c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0,
+  safeguard_cos = nothing, grow_depth = false)`, and `Broyden(m::Integer; damping = 1.0, kwargs...)`
+  for the default `Picard` member, accelerates an inner iterator with the Type-II ("bad") Broyden
+  multisecant update of group size one (Fang & Saad, 2009) by forward substitution on the
+  lower-triangular Gram system, `solve_broyden_weights(G, b, kept, p)` in R1 and
+  `solve_broyden_weights!(γ, G, b, kept, p)` in R3, over the difference history that `Anderson`
+  stores (`push_history!!`, `step_multisecant!!`), which `AndersonHistory` exposes as
+  `state.history`. `Broyden` shares the length and angle filters, the safeguards, the restarts and
+  the `Union{..., Broyden}` implicit-differentiation and `LeastSquaresProblem` refusals with
+  `Anderson`.
 
 - `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
   curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or

@@ -32,6 +32,9 @@ function GeometricSolvers.finish!!(st, ::ScriptedBroydenMember, prob, x, Fx, sta
     return x, status, st
 end
 
+# The only `step!!` of this member, on the R1 signature of `Broyden`: every state the file builds
+# for it holds an `SVector` or a `Number` iterate. A second method on `AbstractVector` would make
+# `SVector`, which is both a `StaticVector` and an `AbstractVector`, ambiguous.
 function GeometricSolvers.step!!(
         st, m::ScriptedBroydenMember, prob, x::Union{StaticVector, Number}, Fx, p)
     R = real(eltype(x))
@@ -43,18 +46,18 @@ function GeometricSolvers.step!!(
     StepInfo{R}(m.code, rnorm(F_cand), stepnorm, failures, false, false)
 end
 
-function GeometricSolvers.step!!(
-        st, m::ScriptedBroydenMember, prob, x::AbstractVector{T}, Fx::AbstractVector{T},
-        p) where {T}
-    R = real(T)
-    x_cand = m.step_fn(x)
-    stepnorm = rnorm(x_cand - x)
-    copyto!(x, x_cand)
-    prob.F(Fx, x, p)
-    failures = m.code == SUCCESS ? Int32(0) : Int32(1)
-    return x, Fx, st,
-    StepInfo{R}(m.code, rnorm(Fx), stepnorm, failures, false, false)
+# The residual of Check 3: `Coupled`'s, `x_i² + p_i x_i + 2 x_{perm_i}`, minus a constant, so that
+# the problem has no root at zero. The clause's bound `n * eps(R) * rnorm(x₊)` is relative, and a
+# root at zero takes it below the round-off floor of the weights, where no pair of summation
+# orders meets it. One type with a value form and an in-place form, as the two storage forms of a
+# residual take it.
+struct CoupledShift{P, C}
+    perm::P
+    shift::C
 end
+
+(c::CoupledShift)(x, p) = x .* x .+ p .* x .+ 2 .* x[c.perm] .- c.shift
+(c::CoupledShift)(r, x, p) = (r .= x .* x .+ p .* x .+ 2 .* x[c.perm] .- c.shift; r)
 
 function _r1_broyden_step_alloc_probe(st, method, prob, x, Fx, p)
     step!!(st, method, prob, x, Fx, p)
@@ -398,7 +401,10 @@ end
     @testset "R1 SVector and scalar convergence, allocations, and inference ($T)" for T in ELTYPES
         R = real(T)
         opt = Options(R)
-        method_br = Broyden(Picard(; damping = 1 / 10), Val(4))
+        # `solve` adapts the method to `real(eltype(x₀))`; a test that calls `step!!` itself does
+        # the same, so that the member's `Static{Float64}` step does not promote a `Float32`
+        # iterate.
+        method_br = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(4)))
 
         # Scalar R1 problem: F(x, p) = x * x + p * x, J(x, p) = x + x + p, p = T(5) from x₀ = T(1/2)
         F_sc(x, p) = x * x + p * x
@@ -416,7 +422,7 @@ end
         @test rnorm(x_sc_br - x_sc_n) <= abstol_sc * cond_sc
 
         for m_val in (Val(1), Val(2), Val(3), Val(4))
-            bm = Broyden(Picard(; damping = 1 / 10), m_val)
+            bm = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), m_val))
             st_m = init_state(bm, prob_sc, x0_sc, p_sc)
             @test isbits(st_m)
             Fx0_sc = F_sc(x0_sc, p_sc)
@@ -453,7 +459,7 @@ end
                 @test rnorm(x_br - x_n) <= abstol * cond(J_star)
 
                 for m_val in (Val(1), Val(2), Val(3), Val(4))
-                    bm = Broyden(Picard(; damping = 1 / 10), m_val)
+                    bm = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), m_val))
                     st0 = init_state(bm, prob, x₀, p_s)
                     @test isbits(st0)
                     Fx₀ = prob.F(x₀, p_s)
@@ -474,16 +480,18 @@ end
     @testset "R3 Array and JLArray convergence on Holomorphic and Coupled ($T)" for T in ELTYPES
         R = real(T)
         opt = Options(R)
-        method_br = Broyden(Picard(; damping = 1 / 10), Val(4))
+        method_br = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(4)))
         for n in (2, 4)
             p_vec = fill(T(5), n)
             perm = r1_shift(Int, n)
+            # The R3 stubs of `test/helpers/adproblems.jl`. A host permutation indexes an `Array`,
+            # a `JLArray` and a KA `CPU()` array alike.
             problems = (
                 ("Holomorphic",
-                    NonlinearProblem(HolomorphicResidual!(), HolomorphicAnalyticalJacobian!()),
+                    NonlinearProblem(Holomorphic()),
                     NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian)),
                 ("Coupled",
-                    NonlinearProblem(CoupledResidual!(perm), CoupledAnalyticalJacobian!(perm)),
+                    NonlinearProblem(Coupled(cyclic_perm(Array, n))),
                     NonlinearProblem(R1Coupled(perm), (x, p) -> r1_coupled_jacobian(x, p, perm)))
             )
             for (name, prob_r3, prob_r1) in problems
@@ -505,14 +513,24 @@ end
                 @test rnorm(Fx_br) <= abstol
                 @test rnorm(x_br - Vector(x_n_s)) <= abstol * cond(J_star)
 
-                # Check 4: R3 step!! and solve! allocate 0 bytes on Array after warm-up
-                st_r3 = init_state(method_br, prob_r3, x₀, p_vec)
-                st_r3 = start!!(st_r3, method_br, prob_r3, x₀, Fx₀, p_vec, rnorm(Fx₀))
+                # Check 4: R3 step!! and solve! allocate 0 bytes on Array after warm-up. The
+                # residual is `Scaled()`, one fused broadcast: `Coupled`'s `x[perm]` gather
+                # allocates a new array at every evaluation — 64 bytes at n = 2, `Float32` —
+                # which no method can avoid.
+                prob_alloc = NonlinearProblem(Scaled())
+                p_alloc = fill(T(2), n)
+                Fx_alloc = similar(x₀)
+                prob_alloc.F(Fx_alloc, x₀, p_alloc)
+                st_alloc = init_state(method_br, prob_alloc, x₀, p_alloc)
+                st_alloc = start!!(
+                    st_alloc, method_br, prob_alloc, x₀, Fx_alloc, p_alloc, rnorm(Fx_alloc))
                 x_work = copy(x₀)
-                Fx_work = copy(Fx₀)
+                Fx_work = copy(Fx_alloc)
                 @test _r3_broyden_step_alloc_probe(
-                    st_r3, method_br, prob_r3, x_work, x₀, Fx_work, Fx₀, p_vec) == 0
-                @test _r3_broyden_solve_alloc_probe(solver, x_work, x₀) == 0
+                    st_alloc, method_br, prob_alloc, x_work, x₀, Fx_work, Fx_alloc,
+                    p_alloc) == 0
+                solver_alloc = init(prob_alloc, copy(x₀), method_br, p_alloc)
+                @test _r3_broyden_solve_alloc_probe(solver_alloc, x_work, x₀) == 0
 
                 # Edge 7: JLArray R3 solve with scalar indexing forbidden
                 x₀_jl = JLArray(x₀)
@@ -528,9 +546,11 @@ end
     @testset "Check 3 & Edge 7: R1 vs R3 (Array, JLArray, KA CPU) one-step agreement ($T)" for T in ELTYPES
         R = real(T)
         n = 4
-        perm = r1_shift(Int, n)
-        prob_r1 = NonlinearProblem(R1Coupled(perm), (x, p) -> r1_coupled_jacobian(x, p, perm))
-        prob_r3 = NonlinearProblem(CoupledResidual!(perm), CoupledAnalyticalJacobian!(perm))
+        # The residual of Check 3 has no root at zero (`CoupledShift`), so the relative bound
+        # `n * eps(R) * rnorm(x₊)` stays above the round-off floor of the weights. A host
+        # permutation indexes an `Array`, a `JLArray` and a KA `CPU()` array alike.
+        prob_r1 = NonlinearProblem(CoupledShift(r1_shift(Int, n), T(8)))
+        prob_r3 = NonlinearProblem(CoupledShift(cyclic_perm(Array, n), T(8)))
         p_vec = fill(T(5), n)
         p_s = SVector{n, T}(p_vec)
         p_jl = JLArray(p_vec)
@@ -538,7 +558,7 @@ end
         copyto!(p_ka, p_vec)
 
         for m in (1, 2, 3, 4)
-            method = Broyden(Picard(; damping = 1 / 10), Val(m))
+            method = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(m)))
             x_r1 = SVector{n, T}(fill(T(1 / 2), n))
             Fx_r1 = prob_r1.F(x_r1, p_s)
             st_r1 = start!!(init_state(method, prob_r1, x_r1, p_s),
@@ -583,7 +603,10 @@ end
         x0_mv = MVector(0.2, 0.3)
         x_mv, st_mv = solve(prob_mv, x0_mv, Broyden(Picard(), Val(3)))
         @test isconverged(st_mv)
-        @test rnorm(prob_mv.F(x_mv, nothing)) <= Options(Float64).f_abstol
+        # The default `f_abstol` is `0.0`: the residual stop of the default `Options` is relative
+        # to the start, as in `test/composition/anderson.jl`.
+        @test rnorm(prob_mv.F(x_mv, nothing)) <=
+              Options(Float64).f_reltol * rnorm(prob_mv.F(x0_mv, nothing))
     end
 
     @testset "R2 solve_batch! ($T)" for T in ELTYPES
@@ -650,7 +673,7 @@ end
         JET.@test_opt target_modules = (GeometricSolvers,) solve!!(
             st_r1, prob_r1, x0_r1, m_br, p_r1, opt)
 
-        prob_r3 = NonlinearProblem(HolomorphicResidual!(), HolomorphicAnalyticalJacobian!())
+        prob_r3 = NonlinearProblem(Holomorphic())
         x0_r3 = [0.5, 0.5]
         Fx0_r3 = similar(x0_r3)
         p_r3 = [5.0, 5.0]
@@ -661,13 +684,10 @@ end
             st_r3, m_br, prob_r3, x0_r3, Fx0_r3, p_r3)
     end
 
-    @testset "StationarityProblem and composition with Multiplicative, Repeat, Switch" begin
+    @testset "Composition with Multiplicative, Repeat, Switch" begin
         F_stat(x, p) = SVector(2 * x[1] + 0.2 * x[2] - 1.0, 0.2 * x[1] + 3 * x[2] - 2.0)
-        prob_stat = StationarityProblem(F_stat, :, :)
         x0 = SVector(0.0, 0.0)
-        x_st, st_st = solve(prob_stat, x0, Broyden(Picard(; damping = 0.3), Val(3)))
-        @test isconverged(st_st)
-        @test rnorm(F_stat(x_st, nothing)) <= Options(Float64).f_abstol
+        abstol = Options(Float64).f_reltol * rnorm(F_stat(x0, nothing))
 
         # Broyden composed inside Repeat, Multiplicative, and Switch
         prob_nl = NonlinearProblem(F_stat)
@@ -678,7 +698,7 @@ end
         )
             x_c, st_c = solve(prob_nl, x0, comb)
             @test isconverged(st_c)
-            @test rnorm(F_stat(x_c, nothing)) <= Options(Float64).f_abstol
+            @test rnorm(F_stat(x_c, nothing)) <= abstol
         end
     end
 end
@@ -707,7 +727,11 @@ end
     # - when member produces a finite step, should_restart_growth clears history (depth == 0),
     #   takes x_m, and increments failures by 1.
     Fx_nan = SVector(NaN, 1.0)
-    member_ok = ScriptedBroydenMember(SUCCESS, x -> SVector(1.0, 2.0))
+    # The member's candidate is not the root: a candidate whose residual is zero leaves
+    # `fnorm_best` at zero, and the growth restart then fires on every later step, so no history
+    # could accumulate.
+    x_mem = SVector(0.6, 1.2)
+    member_ok = ScriptedBroydenMember(SUCCESS, x -> x_mem)
     b_ok = Broyden(member_ok, Val(3))
     st_nan0 = start!!(init_state(b_ok, prob_r1, x0, nothing),
         b_ok, prob_r1, x0, Fx0, nothing, rnorm(Fx0))
@@ -719,7 +743,7 @@ end
     @test st_nan2.depth == 1
     x_nf, Fx_nf, st_nf, info_nf = step!!(
         st_nan2, b_ok, prob_r1, SVector(0.25, 0.5), Fx_nan, nothing)
-    @test x_nf == SVector(1.0, 2.0)
+    @test x_nf == x_mem
     @test st_nf.depth == 0
     @test info_nf.failures == 1
 

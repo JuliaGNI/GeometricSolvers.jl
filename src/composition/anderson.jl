@@ -129,7 +129,7 @@ end
     Broyden(member, m::Integer; kwargs...)
     Broyden(m::Integer; damping = 1.0, kwargs...)
 
-Type-II Broyden (good Broyden) multisecant acceleration of history depth `m` wrapping an
+Type-II Broyden (bad Broyden) multisecant acceleration of history depth `m` wrapping an
 inner nonlinear method `member` ([`Picard`](@ref), [`Newton`](@ref), or a combinator).
 Shares the difference history, length and angle filters of Pollock and Rebholz (2022),
 extrapolation safeguards, restarts, and best-iterate restoration of [`Anderson`](@ref),
