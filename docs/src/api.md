@@ -11,9 +11,11 @@ the residual, optionally its derivative, and optionally `jacobian_prototype` for
 Jacobian in [`NonlinearProblem`](@ref); the residual, optionally its derivative, and its length in
 [`LeastSquaresProblem`](@ref); or the scalar action, its equation and unknown index sets, and an
 optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps a
-`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`. The storage of
-the iterate selects the call form of the functions, so one problem serves every regime.
-`NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem` and `Reparametrized` are exported;
+`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`, and
+[`Deflated`](@ref) wraps either in a deflation of the roots it is given, so that a solve from the
+same start converges to another root. The storage of the iterate selects the call form of the
+functions, so one problem serves every regime. `NonlinearProblem`, `StationarityProblem`,
+`LeastSquaresProblem`, `Reparametrized` and `Deflated` are exported;
 `GeometricSolvers.jacobian_prototype` and `GeometricSolvers.jacobian_pattern` are internal
 accessors.
 
@@ -23,6 +25,7 @@ NonlinearProblem
 StationarityProblem
 LeastSquaresProblem
 Reparametrized
+Deflated
 jacobian_prototype
 jacobian_pattern
 ```

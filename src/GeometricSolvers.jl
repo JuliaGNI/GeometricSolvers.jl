@@ -28,7 +28,7 @@ isgpu(backend) = !(backend isa CPU)
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options, stopping_test
-export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized
+export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized, Deflated
 export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
@@ -89,6 +89,7 @@ include("nonlinear/batched.jl")
 include("nonlinear/stationarity.jl")
 include("ad/hessian.jl")
 include("nonlinear/reparametrized.jl")
+include("nonlinear/deflation.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")
