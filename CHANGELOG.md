@@ -22,15 +22,18 @@ so that a compat-only bump can be told apart from an interface change.
   SPIR-V, so a kernel argument must be `isbits` and a kernel body may not format an error
   message. `isgpu` left the KernelAbstractions API, so the package states it as
   `!(backend isa CPU)`: the CPU backend answers `false`, and every device backend answers `true`,
-  as before — CUDA, ROCm, Metal and the `JLBackend` of JLArrays. For a caller: `Newton(; ...)`
-  validates its arguments, while a positional `Newton(...)` no longer does, because `adapt`
-  rebuilds a method inside a kernel through the positional constructors and the check formats a
-  message; `Static{R}(α)` still validates, and only `Static{R}(α, Val(:raw))`, which the `adapt`
-  rule alone calls, is unchecked; `prepare_solve` re-runs those checks on the host after `adapt`,
-  through `check_adapted`, as do `init`, `solve` and both `solve_batch!` forms of a
-  `StationarityProblem`, the `solve_batch!` of a `Reparametrized` problem, and the batch
-  preparation of a `NonlinearProblem`, so a `Newton` method whose `Static` step `ToReal` narrows to
-  `Inf` or to zero, or whose regularization it makes non-finite, is still refused there; a batch
+  as before — CUDA, ROCm, Metal and the `JLBackend` of JLArrays. For a caller: every
+  constructor of `Newton` and `Static`, positional or keyword, validates its arguments, as before,
+  but the messages of these checks are constant strings and no longer carry the rejected value —
+  "Newton regularization must be finite and ≥ 0" instead of "..., got 1.0e300", "the step of
+  Static must be positive and finite" without ", got α", and the reuse messages without
+  ", got reuse = k" — because `adapt` rebuilds a method through these constructors, also inside a
+  device kernel (a `Reparametrized` batch adapts its method there), and a formatted message does
+  not compile to SPIR-V (`InvalidIRError`) while a constant one does; since `adapt` rebuilds
+  through the checked constructors, every path that adapts a method — `solve`, `init`, every
+  `solve_batch!`, and composite methods such as `Picard`, `Repeat` and `Anderson`, whose `adapt`
+  rebuilds their members — refuses a method whose `Static` step `ToReal` narrows to `Inf` or to
+  zero, or whose regularization it makes non-finite, with an `ArgumentError`; a batch
   `order` that is not `isbits` goes to the kernel as an array of the batch's backend — the order
   itself when it already is one and a copy otherwise, because a kernel reads only its own backend's
   memory — while an `isbits` order, a range for instance, still goes by value; a callable
