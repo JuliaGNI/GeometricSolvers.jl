@@ -7,6 +7,7 @@
 
 using ADTypes: AutoFiniteDiff
 using FiniteDiff: FiniteDiff
+using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
 using LinearAlgebra: I, mul!, norm
@@ -29,6 +30,11 @@ allowscalar(false)
 
 # The matrix-free R5 problem of Check 1: a diagonal residual `F_i = x_i^3 + 2x_i - 3`, whose
 # Jacobian `3x_i^2 + 2` no array holds, with the counted residual and the counted product.
+#
+# `R5Diagonal` is the residual of the counted wrapper, and the chunked forward mode differentiates
+# it through the same buffer: a call on a `Dual` iterate is a Jacobian-vector product, so the
+# wrapper counts it as one, and a call on the plain element type is one evaluation of `F`. The two
+# counts then partition the calls, and each equals the count the solve reports.
 mutable struct R5Counts
     f::Int
     jvp::Int
@@ -39,7 +45,11 @@ struct R5Diagonal{C}
 end
 
 function (p::R5Diagonal)(r, x, q)
-    p.counts.f += 1
+    if eltype(x) <: ForwardDiff.Dual
+        p.counts.jvp += 1
+    else
+        p.counts.f += 1
+    end
     @. r = x^3 + 2x - 3
     return r
 end
@@ -141,6 +151,7 @@ end
         x, st = solve!(solver, zeros(T, 8))
         @test st.code == SUCCESS
         @test st.f_calls == counts.f
+        @test st.jvp_calls == counts.jvp
         @test st.jvp_calls > 0
     end
 
@@ -225,9 +236,10 @@ end
         @test abs(η - reference1[k + 1]) <= 4 * eps(R)
     end
 
-    # the floor: a raw ratio of zero is floored at 2 eps(R), never zero
+    # the floor: a raw ratio of zero is floored at 2 eps(R), never zero. The safeguard does not
+    # reach the floor here, so `η_prev` is zero: `γ η_prev^α = 0` stays below 0.1
     @test GeometricSolvers.compute_forcing(
-        EisenstatWalkerChoice2(R), 1, zero(R), one(R), R(0.5), zero(R)) == 2 * eps(R)
+        EisenstatWalkerChoice2(R), 1, zero(R), one(R), zero(R), zero(R)) == 2 * eps(R)
     @test GeometricSolvers.compute_forcing(
         FixedForcing(zero(R)), 3, one(R), one(R), one(R),
         zero(R)) == 2 * eps(R)
@@ -235,12 +247,14 @@ end
 
 @testset "Check 2: the solver's recorded η sequence, $T" for T in REAL_ELTYPES
     R = real(T)
-    prob = r5_affine()
+    # a nonlinear problem, whose Newton steps are more than one: an affine one is solved in a
+    # single step, and a sequence of length one says nothing about the rule
+    prob = NonlinearProblem((r, x, q) -> (@. r = x^3 + 2x - 3; r))
     for forcing in (EisenstatWalkerChoice2(R), EisenstatWalkerChoice1(R))
-        m = Newton(; linsolve = GMRES(; maxiter = 20, forcing = forcing))
-        x₀ = zeros(T, 4)
-        solver = init(prob, x₀, m)
-        x = copy(x₀)
+        solver = init(prob, zeros(T, 8),
+            Newton(; linsolve = GMRES(; maxiter = 20, forcing = forcing)))
+        m = solver.method
+        x = copy(solver.x)
         Fx = similar(x)
         prob.F(Fx, x, nothing)
         state = start!!(solver.state, m, prob, x, Fx, nothing, rnorm(Fx))
@@ -252,7 +266,9 @@ end
             push!(norms, R(info.fnorm))
             push!(ηs, R(state.ws.last_eta))
             push!(lins, R(state.ws.linres))
-            info.code == SUCCESS && break
+            # a step's `code` is the outcome of the globalization, not the solve's: the loop ends
+            # where the solve's residual test does
+            (info.code == SUCCESS && info.fnorm > sqrt(eps(R)) * norms[1]) || break
         end
         steps = length(ηs)
         @test steps >= 2
@@ -273,9 +289,11 @@ end
 @testset "Check 3: inexact backtracking, $T" for T in REAL_ELTYPES
     R = real(T)
     prob = r5_full_step_fails()
-    m = Newton(; linsolve = GMRES(; maxiter = 4), globalization = Backtracking())
     x₀ = [T(R5_FAIL_START)]
-    solver = init(prob, x₀, m)
+    solver = init(prob, x₀,
+        Newton(; linsolve = GMRES(; maxiter = 4), globalization = Backtracking()))
+    # `init` adapts the method to the iterate's real type, and a `step!!` reads the adapted one
+    m = solver.method
     x = copy(x₀)
     Fx = similar(x)
     prob.F(Fx, x, nothing)
@@ -287,7 +305,7 @@ end
     Fx_prev = copy(Fx)
     x₁, Fx₁, state₁, info = step!!(state, m, prob, x, Fx, nothing)
     d = copy(state₁.ws.d)
-    c₁ = Backtracking().c₁
+    c₁ = m.globalization.c₁
     η_ach = state₁.ws.linres / fnorm₀
     α = info.stepnorm / rnorm(d)
     @test info.code == SUCCESS
@@ -309,7 +327,7 @@ end
     lf = LineFunction(prob, x_prev, Fx_prev, d, nothing, state.jvpprep,
         similar(x_prev), similar(x_prev), similar(x_prev))
     for η in (zero(R), R(1e-4), R(0.25), R(0.5), R(0.75))
-        res = GeometricSolvers.linesearch(Backtracking(), lf, InexactStep(η), φ₀, one(R))
+        res = GeometricSolvers.linesearch(m.globalization, lf, InexactStep(η), φ₀, one(R))
         @test res.code == SUCCESS
         ηα_k = abs(1 - res.α) + res.α * η
         @test sqrt(res.φ) <= (1 - c₁ * (1 - ηα_k)) * sqrt(φ₀) + 4 * eps(R) * sqrt(φ₀)
@@ -595,15 +613,21 @@ end
         @test st.jvp_calls == counts.jvp
         @test x isa JLArray
 
-        # the cap of Check 4 on the same array type
+        # the cap of Check 4 on the same array type. The 4 × 4 matrix of Check 4 is a host matrix,
+        # and its `mul!` would index the device array one entry at a time, so the coupling here is
+        # a rank-one term that a reduction gives: `J = diag(3x² + 2) + 0.1 · 𝟙𝟙ᵀ`. The start has
+        # distinct entries: at `zeros` the residual is `-3 · 𝟙` and `𝟙` is an eigenvector of `J`,
+        # so one Arnoldi step breaks down and the cap is never reached
+        coupling = T(0.1)
         prob_4 = NonlinearProblem((r, x, q) -> begin
-            mul!(r, R5_A4, x)
-            r .-= R5_B4
+            s = sum(x)
+            @. r = x^3 + 2x - 3 + coupling * s
             r
         end)
-        solver_cap = init(prob_4, JLArray(zeros(T, 4)),
+        x₀cap = JLArray(T[1, 2, 3, 4])
+        solver_cap = init(prob_4, copy(x₀cap),
             Newton(; linsolve = GMRES(; maxiter = 1, forcing = FixedForcing(1e-12))))
-        _, st_cap = solve!(solver_cap, JLArray(zeros(T, 4)))
+        _, st_cap = solve!(solver_cap, copy(x₀cap))
         @test st_cap.step_failures >= 1
         @test max_inner_iterations(solver_cap) <= 1
     end

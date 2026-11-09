@@ -23,10 +23,11 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The ten columns of the standard test set, each a name and a method: `Newton` with each
+The eleven columns of the standard test set, each a name and a method: `Newton` with each
 globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
-`LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, and
-`Picard` with `Backtracking`.
+`LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, `Picard` with
+`Backtracking`, and the matrix-free `Newton` with `GMRES` and `Backtracking`, whose column holds
+no Jacobian.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),
@@ -41,7 +42,9 @@ const STANDARD_COLUMNS = (
     "Newton LevenbergMarquardt SVD" => Newton(;
         linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
     "Newton reuse 3 Backtracking LU" => Newton(; reuse = 3, globalization = Backtracking()),
-    "Picard Backtracking" => Picard(; globalization = Backtracking())
+    "Picard Backtracking" => Picard(; globalization = Backtracking()),
+    "Newton Backtracking GMRES" => Newton(;
+        linsolve = GMRES(), globalization = Backtracking())
 )
 
 """

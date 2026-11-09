@@ -205,11 +205,14 @@ end
     k > Int32(0) || return x, Fx, δ,
     StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
     nN = newton ? R(rnorm(sN)) : R(Inf)
-    for j in 1:k
-        ws.cg[j] = -β₀ * conj(ws.H0[1, j])
-        ws.yN[j] = ws.y[j]
-    end
-    cnorm = R(rnorm(@view ws.cg[1:k]))
+    cg = @view ws.cg[1:k]
+    yk = @view ws.y[1:k]
+    yNk = @view ws.yN[1:k]
+    ybk = @view ws.yb[1:k]
+    # the projected Cauchy weights, and the Newton weights the segment branch reads
+    map!!(h -> -β₀ * conj(h), cg, @view ws.H0[1, 1:k])
+    copy!!(yNk, yk)
+    cnorm = R(rnorm(cg))
     # ‖g̃‖ = ‖Jᴴ F‖/‖F‖ and ‖J ĝ‖, both from the projected Cauchy weights: the scale of `c_g` is
     # β₀ times that of `g̃`, and both norms of the loop are ratios of it
     gnorm = cnorm / fnorm
@@ -232,34 +235,27 @@ end
         elseif !newton || nC >= δ
             # the Cauchy point, cut to the radius
             σ = -min(nC, δ) / gnorm
-            for j in 1:k
-                ws.y[j] = σ * ws.cg[j]
-            end
+            map!!(c -> σ * c, yk, cg)
             s = reduced_direction!(g_s(g), ws, ws.y, k)
             boundary = nC >= δ
             model = R(rnorm(reduced_model!(ws, ws.y, k, β₀)))
         else
             # the point of norm δ on the segment from the Cauchy point to the Newton step, in units
             # of δ: `a = -(nC/δ) ĝ` and `b = sN + nC ĝ`, with the root `t ≥ 0` of `‖a + t b̂‖ = 1`
-            for j in 1:k
-                ws.y[j] = -(nC / δ) / gnorm * ws.cg[j]
-                ws.yb[j] = ws.yN[j] + (nC / gnorm) * ws.cg[j]
-            end
-            bnorm = R(rnorm(@view ws.yb[1:k]))
+            map!!(c -> -(nC / δ) / gnorm * c, yk, cg)
+            map!!((n, c) -> n + (nC / gnorm) * c, ybk, yNk, cg)
+            bnorm = R(rnorm(ybk))
             c₀ = 1 - (nC / δ)^2
-            ab = zero(R)
-            if !iszero(bnorm)
-                for j in 1:k
-                    ws.yb[j] /= bnorm
-                end
-                for j in 1:k
-                    ab += real(conj(ws.y[j]) * ws.yb[j])
-                end
-            end
+            ab = iszero(bnorm) ? zero(R) : rdot(yk, ybk) / bnorm
             t = c₀ / (ab + sqrt(ab * ab + c₀))
-            for j in 1:k
-                ws.y[j] = δ * (ws.y[j] + t * ws.yb[j])
+            # the unit segment direction goes to the buffer of the Newton weights, which the curve
+            # above has already read, so that no helper writes an array beside itself
+            if iszero(bnorm)
+                map!!(y -> δ * y, yNk, yk)
+            else
+                map!!((y, b) -> δ * (y + (t / bnorm) * b), yNk, yk, ybk)
             end
+            copy!!(yk, yNk)
             s = reduced_direction!(g_s(g), ws, ws.y, k)
             boundary = true
             model = R(rnorm(reduced_model!(ws, ws.y, k, β₀)))

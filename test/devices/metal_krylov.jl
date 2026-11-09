@@ -7,7 +7,6 @@
 # run.
 
 using GPUArraysCore: allowscalar
-using LinearAlgebra: mul!
 using Metal: Metal
 using Test
 
@@ -33,7 +32,7 @@ metal_r5_residual!(r, x, q) = (@. r = x^3 + 2x - 3; r)
             prob = NonlinearProblem(metal_r5_residual!)
             x₀ = Metal.MtlArray(fill(2.0f0, N_METAL_R5))
             fnorm₀ = rnorm(x₀ .^ 3 .+ 2 .* x₀ .- 3)
-            m = Newton(; linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(1e-6f0)))
+            m = Newton(; linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(1.0f-6)))
             solver = init(prob, x₀, m)
             # the default preparation is the one-partial chunked product, on the device array
             @test solver.state.jvpprep.prep isa ChunkedForwardDiff{1}
@@ -60,33 +59,36 @@ metal_r5_residual!(r, x, q) = (@. r = x^3 + 2x - 3; r)
                 Jv
             end
             m = Newton(;
-                linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(1e-6f0)),
+                linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(1.0f-6)),
                 jacobian = JVPFunction(jvp!))
             solver = init(prob, x₀, m)
             @test solver.state.jvpprep.prep isa JVPFunction
             _, st = solve!(solver, copy(x₀))
             @test st.code == SUCCESS
             @test st.jvp_calls == count[]
-            @test all(isfinite, Array(st.fnorm))
+            @test isfinite(st.fnorm)
         end
 
         @testset "Check 4 on MtlArray, Float32" begin
-            A = Metal.MtlArray(Float32[4 1 0.5 0.2
-                                       0.3 3 0.8 0.1
-                                       0.2 0.4 2.5 0.6
-                                       0.1 0.2 0.3 2.0])
-            b = Metal.MtlArray(Float32[1, -2, 1.5, -0.5])
+            # `J = diag(3x² + 2) + 0.1 · 𝟙𝟙ᵀ`: a rank-one coupling a reduction gives, so that no
+            # host matrix is multiplied into the device array. The start has distinct entries: at
+            # `zeros` the residual is `-3 · 𝟙`, an eigenvector of `J`, and one Arnoldi step then
+            # breaks down instead of reaching the cap
+            # the constant is hoisted: inside `@.` it would be broadcast, and its `Float64`
+            # argument is a value a Metal kernel cannot compile
+            coupling = Float32(0.1)
             prob = NonlinearProblem(
                 (r, x, q) -> begin
-                mul!(r, A, x)
-                r .-= b
+                s = sum(x)
+                @. r = x^3 + 2x - 3 + coupling * s
                 r
             end)
+            x₀cap = Metal.MtlArray(Float32[1, 2, 3, 4, 5, 6, 7, 8])
             solver = init(
-                prob, Metal.MtlArray(zeros(Float32, 4)),
+                prob, copy(x₀cap),
                 Newton(;
-                    linsolve = GMRES(; maxiter = 1, forcing = FixedForcing(1e-7f0))))
-            x, st = solve!(solver, Metal.MtlArray(zeros(Float32, 4)))
+                    linsolve = GMRES(; maxiter = 1, forcing = FixedForcing(1.0f-7))))
+            x, st = solve!(solver, copy(x₀cap))
             # one inner iteration cannot meet the tolerance, and the step records the cap
             @test st.step_failures >= 1
             @test max_inner_iterations(solver) <= 1

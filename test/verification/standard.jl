@@ -304,7 +304,7 @@ end
 @testset "The reference" begin
     cells, iterates = run_standard_cells()
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
-    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1340
+    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1474
     @test all(c -> c.code in codes, cells)
     # Every cell runs with max_iterations = 200.
     @test any(c -> c.code == "MAXITERS", cells)

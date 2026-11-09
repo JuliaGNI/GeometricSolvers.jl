@@ -1,6 +1,7 @@
 """
     Newton(; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
-             refinement = NoRefinement(), regularization = 0, reuse = nothing)
+             refinement = NoRefinement(), regularization = 0, reuse = nothing,
+             forcing = nothing, preconditioner = nothing)
 
 Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) and, as
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
@@ -52,6 +53,17 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   once, in the same step, from a fresh factor. A [`DogLeg`](@ref) or
   [`LevenbergMarquardt`](@ref) globalization takes no reuse: its model needs the Jacobian of the
   current iterate, and the constructor raises an `ArgumentError`.
+
+# Keywords of a `GMRES` linear method
+
+`forcing` and `preconditioner` configure the [`GMRES`](@ref) of `linsolve`, and a `Newton` that
+takes either of them with any other linear method raises an `ArgumentError`.
+
+- `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
+  the relative tolerance of every Newton step's inner solve.
+- `preconditioner`: the right preconditioner of `linsolve`, which [`refresh!`](@ref) is called on
+  once per Newton step and [`apply_preconditioner!`](@ref) on before every Jacobian-vector
+  product.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
     linsolve::L

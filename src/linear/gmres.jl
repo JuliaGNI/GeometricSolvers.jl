@@ -265,7 +265,7 @@ function GMRES(; maxiter::Integer = 30, restart::Union{Nothing, Integer} = nothi
         m, r, forcing, preconditioner, jvp_eltype)
 end
 
-# An `Integer` constructer argument as an `Int32`, with a constant message where it does not fit: a
+# An `Integer` constructor argument as an `Int32`, with a constant message where it does not fit: a
 # kernel cannot format one.
 @inline function to_int32(n::Integer, message::String)
     (typemin(Int32) <= n <= typemax(Int32)) || throw(ArgumentError(message))
