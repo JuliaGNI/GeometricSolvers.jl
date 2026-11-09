@@ -297,10 +297,17 @@ end
     @test :Δx in propertynames(st_b)
     @test :Δr in propertynames(st_b)
 
-    # Edge 8: R1 init_state with m > 4 throws ArgumentError
+    # Edge 8: R1 init_state with m > 4 throws ArgumentError with the constant Broyden message
     @test_throws ArgumentError init_state(
         Broyden(Picard(), Val(5)), prob_r1, x0, nothing)
     @test_throws ArgumentError init(prob_r1, x0, Broyden(Picard(), Val(5)))
+    err_m5 = try
+        init_state(Broyden(Picard(), Val(5)), prob_r1, x0, nothing)
+    catch e
+        e
+    end
+    @test err_m5 isa ArgumentError
+    @test err_m5.msg == "R1 Broyden history depth m must be <= 4"
 
     # Edge 1: un-started step!! returns NONFINITE and leaves x, Fx unchanged
     Fx0 = prob_r1.F(x0, nothing)
@@ -778,6 +785,17 @@ end
     x_d2, F_d2, st_dr2, info_d2 = step!!(st_dr1, b_drop, prob_lin, z3, -b_vec, nothing)
     @test x_d2 == SVector(0.2, 0.1, -0.1)
     @test info_d2.failures == 1
+
+    # A step that keeps every history column counts no filter failure: `filter_failures` adds
+    # `d - p`, and here `d == p == 1`.
+    member_moving = ScriptedBroydenMember(SUCCESS, x -> SVector(0.2, 0.1, -0.1) + 0.5 * x)
+    b_keep = Broyden(member_moving, Val(3))
+    st_k0 = start!!(init_state(b_keep, prob_lin, z3, nothing),
+        b_keep, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
+    x_k1, F_k1, st_k1, _ = step!!(st_k0, b_keep, prob_lin, z3, -b_vec, nothing)
+    _, _, st_k2, info_k2 = step!!(st_k1, b_keep, prob_lin, x_k1, F_k1, nothing)
+    @test st_k2.depth == 1
+    @test info_k2.failures == 0
 
     # M_alpha weight-bound rejection and safeguard_cos angle restart
     # Tight M_alpha = 1.0 forces weight rejection when any γ_c != 0 makes ∑|α_j| > 1
