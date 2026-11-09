@@ -1,17 +1,19 @@
 using Adapt: Adapt
 using ForwardDiff: ForwardDiff
 using GeometricSolvers
-using GeometricSolvers: AndersonHistory, AndersonState, NONFINITE, LINESEARCH_FAILED,
-                        MAXITERS, SINGULAR, STALLED, SUCCESS, StepInfo, ToReal, finish!!,
-                        init_state, isconverged, push_history!!, rdot, rnorm, solve!!,
-                        solve_broyden_weights, solve_broyden_weights!, solve_weights,
-                        solve_weights!, start!!, step!!, step_multisecant!!
+using GeometricSolvers: AndersonHistory, NONFINITE, LINESEARCH_FAILED, SINGULAR, SUCCESS,
+                        StepInfo, ToReal, finish!!, init_state, is_hard_failure,
+                        isconverged,
+                        push_history!!, rdot, rnorm, solve!!, solve_broyden_weights,
+                        solve_broyden_weights!, solve_weights, start!!, step!!,
+                        step_multisecant!!
 using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions as KA
-using LinearAlgebra: BLAS, LowerTriangular, cond, norm
-using StaticArrays: @SMatrix, MVector, SMatrix, StaticVector, SVector
+using LinearAlgebra: BLAS, I, cond, mul!, norm
+using Random: Xoshiro, randn
+using StaticArrays: @SMatrix, MVector, SMatrix, StaticVector, SVector, setindex
 using Test
 
 include("../helpers/matrix.jl")
@@ -46,6 +48,43 @@ function GeometricSolvers.step!!(
     StepInfo{R}(m.code, rnorm(F_cand), stepnorm, failures, false, false)
 end
 
+# The R3 counterpart of the member above: its step takes the iterate and residual buffers of the
+# R3 signature, writes its candidate into the iterate, and evaluates the in-place residual.
+struct ScriptedR3BroydenMember{C, F}
+    code::C
+    step_fn::F
+end
+
+GeometricSolvers.init_state(::ScriptedR3BroydenMember, prob, x, p) = nothing
+GeometricSolvers.start!!(st, ::ScriptedR3BroydenMember, prob, x, Fx, p, fnorm₀) = st
+GeometricSolvers.sync_merit(st, ::ScriptedR3BroydenMember, merit::Real) = st
+function GeometricSolvers.finish!!(st, ::ScriptedR3BroydenMember, prob, x, Fx, status)
+    return x, status, st
+end
+
+function GeometricSolvers.step!!(
+        st, m::ScriptedR3BroydenMember, prob, x::AbstractVector, Fx, p)
+    R = real(eltype(x))
+    x_cand = m.step_fn(Vector(x))
+    stepnorm = rnorm(x_cand - Vector(x))
+    copyto!(x, x_cand)
+    prob.F(Fx, x, p)
+    failures = m.code == SUCCESS ? Int32(0) : Int32(1)
+    return x, Fx, st, StepInfo{R}(m.code, rnorm(Fx), stepnorm, failures, false, false)
+end
+
+# The map of the post-step restart testset: `A x + c x³ - b`, a damped `Picard` member and
+# `restart_factor = 3`. From this start the third step's accelerated iterate grows the residual
+# past `3 fnorm_best` while the third step's incoming residual does not, so only the post-step
+# safeguard can fire there.
+const POST_RESTART_A = [2.658268422170796 -1.0553858794800004 1.4510152505141574;
+                        0.8940164711789151 1.4968130681990974 0.7636812440860139;
+                        -0.46367073975036655 -0.480087178200877 2.410821387913771]
+const POST_RESTART_C = 1.6842200338181805
+const POST_RESTART_B = [-0.5532856214164881, -0.32122990014172237, 1.424486481479478]
+const POST_RESTART_DAMPING = 0.9602548089183558
+const POST_RESTART_X = [-0.866579836099137, -0.3325072429872186, 0.6114335821524323]
+
 # The residual of Check 3: `Coupled`'s, `x_i² + p_i x_i + 2 x_{perm_i}`, minus a constant, so that
 # the problem has no root at zero. The clause's bound `n * eps(R) * rnorm(x₊)` is relative, and a
 # root at zero takes it below the round-off floor of the weights, where no pair of summation
@@ -58,6 +97,55 @@ end
 
 (c::CoupledShift)(x, p) = x .* x .+ p .* x .+ 2 .* x[c.perm] .- c.shift
 (c::CoupledShift)(r, x, p) = (r .= x .* x .+ p .* x .+ 2 .* x[c.perm] .- c.shift; r)
+
+# The in-place Jacobians of the two R3 `Check 1` problems, so that `Newton()` runs on the same
+# problem the R3 `Broyden` solve does: `Holomorphic` is `Diagonal(2x + p)`, and `Coupled` adds `2`
+# at `(i, perm[i])`.
+function r3_holomorphic_jacobian!(J, x, p)
+    fill!(J, zero(eltype(J)))
+    @inbounds for i in eachindex(x)
+        J[i, i] = x[i] + x[i] + p[i]
+    end
+    return J
+end
+
+function r3_coupled_jacobian!(J, x, p, perm)
+    fill!(J, zero(eltype(J)))
+    @inbounds for i in eachindex(x)
+        J[i, i] = x[i] + x[i] + p[i]
+        J[i, perm[i]] += eltype(J)(2)
+    end
+    return J
+end
+
+# The size `S` of `Check 3`, from the R1 state the step returned: `x_m = x_prev + w_k`, and each
+# kept column's `(abs(γ_c) + rnorm(w_k) / rnorm(Δw_c)) * rnorm(Δx_c + Δw_c)`. `x_m` and
+# `γ_c (Δx_c + Δw_c)` are summed in `x₊`, and `b_c = Re⟨Δw_c, w_k⟩` in `γ_c`, so a different
+# summation order is bounded by `n * eps(R) * S`, not by the size of the sum itself.
+function _multisecant_step_scale(s1, ::Val{m}, ::Type{R}) where {m, R}
+    p = Int(s1.depth)
+    w_k = s1.w_prev
+    x_m = s1.x_prev + w_k
+    S = rnorm(x_m)
+    p <= 0 && return S
+    G = zero(SMatrix{m, m, R})
+    b = zero(SVector{m, R})
+    ΔXc = ntuple(c -> c <= p ? s1.ΔX[c] : zero(x_m), Val(m))
+    ΔWc = ntuple(c -> c <= p ? s1.ΔW[c] : zero(x_m), Val(m))
+    @inbounds for j in 1:p
+        b = setindex(b, R(rdot(ΔWc[j], w_k)), j)
+        for i in 1:j
+            g = R(rdot(ΔWc[i], ΔWc[j]))
+            G = setindex(G, g, i + (j - 1) * m)
+            i == j || (G = setindex(G, g, j + (i - 1) * m))
+        end
+    end
+    γ = solve_broyden_weights(G, b, SVector{m, Int}(ntuple(identity, m)), p)
+    @inbounds for c in 1:p
+        S += (abs(γ[c]) + rnorm(w_k) / rnorm(ΔWc[c])) * rnorm(ΔXc[c] + ΔWc[c])
+    end
+    return S
+end
 
 function _r1_broyden_step_alloc_probe(st, method, prob, x, Fx, p)
     step!!(st, method, prob, x, Fx, p)
@@ -95,6 +183,13 @@ function _r3_broyden_solve_alloc_probe(solver, x, x₀)
     finally
         BLAS.set_num_threads(nt)
     end
+end
+
+# The R3 weight solve on one call, through a barrier: the arguments are concrete and the call runs
+# once before it is measured.
+function _broyden_weights_alloc_probe(γ, G, b, kept)
+    solve_broyden_weights!(γ, G, b, kept, 3)
+    return @allocated solve_broyden_weights!(γ, G, b, kept, 3)
 end
 
 @testset "Broyden constructors, validation, and Adapt" begin
@@ -191,6 +286,46 @@ end
     @test_throws ArgumentError Broyden(Picard(), 4; safeguard_cos = Inf)
 end
 
+@testset "Edge 6: the other precision" begin
+    # `Adapt.adapt(ToReal{Float32}(), …)` narrows every field and keeps `m`, and a `Float32` solve
+    # runs with the `Float32` defaults of `Options`.
+    b32 = Adapt.adapt(ToReal{Float32}(),
+        Broyden(Picard(; damping = 0.25), Val(3);
+            c_s = 0.25, κ_bar = 1e5, restart_factor = 8.0, M_alpha = 15.0,
+            safeguard_cos = 0.85))
+    @test b32 isa Broyden{3}
+    @test b32.member.damping isa Float32
+    @test b32.c_s isa Float32
+    @test b32.κ_bar isa Float32
+    @test b32.restart_factor isa Float32
+    @test b32.M_alpha isa Float32
+    @test b32.safeguard_cos isa Float32
+
+    opt32 = Options(Float32)
+    prob_r1 = NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian)
+    x0 = SVector{2, Float32}(1 / 2, 1 / 2)
+    p = SVector{2, Float32}(5, 5)
+    x32, st32 = solve(prob_r1, x0, Broyden(Picard(; damping = 1 // 10), Val(3)), p)
+    @test st32.code == SUCCESS
+    @test eltype(x32) === Float32
+    abstol_r1 = max(opt32.f_abstol, opt32.f_reltol * rnorm(prob_r1.F(x0, p)))
+    @test rnorm(prob_r1.F(x32, p)) <= abstol_r1
+
+    prob_r3 = NonlinearProblem(Holomorphic())
+    x3 = Float32[1 / 2, 1 / 2]
+    p3 = Float32[5, 5]
+    F3 = similar(x3)
+    prob_r3.F(F3, x3, p3)
+    abstol_r3 = max(opt32.f_abstol, opt32.f_reltol * rnorm(F3))
+    solver = init(prob_r3, copy(x3), Broyden(Picard(; damping = 1 // 10), Val(3)), p3)
+    x_sol, st_sol = solve!(solver, copy(x3))
+    @test st_sol.code == SUCCESS
+    @test eltype(x_sol) === Float32
+    F_sol = similar(x3)
+    prob_r3.F(F_sol, x_sol, p3)
+    @test rnorm(F_sol) <= abstol_r3
+end
+
 @testset "Check 2 & Edges 3, 4, 5: solve_broyden_weights and solve_broyden_weights!" begin
     @testset "$R" for R in REAL_ELTYPES
         G = @SMatrix [R(4) R(2) R(1);
@@ -246,10 +381,13 @@ end
         @test iszero(γ_vec[3])
         solve_broyden_weights!(γ_vec, G_mat, b_vec, kept_vec, 3)
         @test maximum(abs, γ_vec - Vector(γ3_ref)) <= 4 * 3 * eps(R) * maximum(abs, γ3_b)
-        @test (@allocated solve_broyden_weights!(γ_vec, G_mat, b_vec, kept_vec, 3)) == 0
+        if Base.JLOptions().check_bounds != 1
+            # Skipped where a run forces --check-bounds=yes.
+            @test _broyden_weights_alloc_probe(γ_vec, G_mat, b_vec, kept_vec) == 0
+        end
 
-        # Edge 5: zero Gram diagonal with zero right-hand side gives finite 0 when tr(G_K) > 0,
-        # and non-finite (NaN) when tr(G_K) == 0 so weights_acceptable rejects it.
+        # Edge 5: zero Gram diagonal with zero right-hand side gives the finite weight 0 when
+        # `tr(G_K) > 0`, because `λ = eps(R) tr(G_K) / p > 0`.
         G_zero = @SMatrix [R(4) zero(R); zero(R) zero(R)]
         b_zero = SVector{2, R}(R(4), zero(R))
         kept_z = SVector{2, Int}(1, 2)
@@ -261,24 +399,30 @@ end
         solve_broyden_weights!(γ_z_r3, Matrix(G_zero), Vector(b_zero), [1, 2], 2)
         @test all(isfinite, γ_z_r3)
         @test iszero(γ_z_r3[2])
-
-        G_allzero = @SMatrix [zero(R) zero(R); zero(R) zero(R)]
-        γ_allz = solve_broyden_weights(
-            G_allzero, SVector{2, R}(zero(R), zero(R)), kept_z, 2)
-        @test !all(isfinite, γ_allz)
-
-        γ_allz_r3 = fill(zero(R), 2)
-        solve_broyden_weights!(
-            γ_allz_r3, Matrix(G_allzero), [zero(R), zero(R)], [1, 2], 2)
-        @test !all(isfinite, γ_allz_r3)
     end
 end
 
-@testset "Check 2: shared AndersonState, AndersonHistory, push_history!!, and step_multisecant!!" begin
-    prob_r1 = NonlinearProblem((x, p) -> SVector(x[1]^2 - 2.0, x[2] - 1.0))
-    m_a = Anderson(Picard(; damping = 0.5), Val(3))
-    m_b = Broyden(Picard(; damping = 0.5), Val(3))
-    x0 = SVector(1.5, 0.5)
+# One linear problem and one sequence of iterates per element type. A complex type carries no real
+# entry, so a Gram matrix formed with `transpose` instead of `adjoint` cannot pass by accident.
+function broyden_sequence(::Type{T}) where {T}
+    c = T <: Complex ? T(0, 1) : zero(T)
+    A = @SMatrix [T(2) T(0.8)+c/5 T(0.3);
+                  T(0.4) T(1.7) T(0.5)-c/7;
+                  T(0.2) T(0.3) T(1.4)]
+    b = SVector{3, T}(T(1), T(-0.5) + c / 3, T(0.8))
+    xs = (zero(SVector{3, T}),
+        SVector{3, T}(T(0.5) + c / 9, T(-0.25), T(0.4)),
+        SVector{3, T}(T(0.35), T(-0.4) - c / 4, T(0.55)))
+    return A, b, xs
+end
+
+@testset "Check 2: shared AndersonState and AndersonHistory ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    prob_r1 = NonlinearProblem((x, p) -> A * x - b)
+    x0 = xs[1]
+    m_a = Adapt.adapt(ToReal{R}(), Anderson(Picard(; damping = 0.5), Val(3)))
+    m_b = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(3)))
 
     st_a = init_state(m_a, prob_r1, x0, nothing)
     st_b = init_state(m_b, prob_r1, x0, nothing)
@@ -297,70 +441,9 @@ end
     @test :Δx in propertynames(st_b)
     @test :Δr in propertynames(st_b)
 
-    # Edge 8: R1 init_state with m > 4 throws ArgumentError with the constant Broyden message
-    @test_throws ArgumentError init_state(
-        Broyden(Picard(), Val(5)), prob_r1, x0, nothing)
-    @test_throws ArgumentError init(prob_r1, x0, Broyden(Picard(), Val(5)))
-    err_m5 = try
-        init_state(Broyden(Picard(), Val(5)), prob_r1, x0, nothing)
-    catch e
-        e
-    end
-    @test err_m5 isa ArgumentError
-    @test err_m5.msg == "R1 Broyden history depth m must be <= 4"
-
-    # Edge 1: un-started step!! returns NONFINITE and leaves x, Fx unchanged
-    Fx0 = prob_r1.F(x0, nothing)
-    x_u, Fx_u, st_u, info_u = step!!(st_b, m_b, prob_r1, x0, Fx0, nothing)
-    @test info_u.code == NONFINITE
-    @test iszero(info_u.stepnorm)
-    @test x_u == x0
-    @test Fx_u == Fx0
-
-    # Check 2 & Edge 4: Shared history on identical iterate sequence, p = 1 agreement, p >= 2 difference
-    A_mat = @SMatrix [2.0 0.8 0.3; 0.4 1.7 0.5; 0.2 0.3 1.4]
-    b_vec = SVector(1.0, -0.5, 0.8)
-    prob_lin = NonlinearProblem((x, p) -> A_mat * x - b_vec)
-    z3 = SVector(0.0, 0.0, 0.0)
-    st_a1 = start!!(init_state(m_a, prob_lin, z3, nothing),
-        m_a, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
-    st_b1 = start!!(init_state(m_b, prob_lin, z3, nothing),
-        m_b, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
-    seq_x = (z3, SVector(0.5, -0.25, 0.4), SVector(0.35, -0.4, 0.55))
-    for k in 1:3
-        xk = seq_x[k]
-        fk = prob_lin.F(xk, nothing)
-        xa, _, st_a1, _ = step!!(st_a1, m_a, prob_lin, xk, fk, nothing)
-        xb, _, st_b1, _ = step!!(st_b1, m_b, prob_lin, xk, fk, nothing)
-        @test st_b1.ΔX === st_a1.ΔX
-        @test st_b1.ΔW === st_a1.ΔW
-        @test st_b1.history === st_a1.history
-        if k == 2
-            @test rnorm(xb - xa) <= 4 * eps(Float64) * rnorm(xb)
-        elseif k == 3
-            @test xb != xa
-        end
-    end
-
-    # Edge 4: Broyden{1} and Anderson{1} agree within 4 * eps(R) * rnorm(x₊) in R1 and R3
-    m_a1 = Anderson(Picard(; damping = 0.5), Val(1))
-    m_b1 = Broyden(Picard(; damping = 0.5), Val(1))
-    st_m1a = start!!(init_state(m_a1, prob_lin, z3, nothing),
-        m_a1, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
-    st_m1b = start!!(init_state(m_b1, prob_lin, z3, nothing),
-        m_b1, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
-    for k in 1:3
-        xk = seq_x[k]
-        fk = prob_lin.F(xk, nothing)
-        xa, _, st_m1a, _ = step!!(st_m1a, m_a1, prob_lin, xk, fk, nothing)
-        xb, _, st_m1b, _ = step!!(st_m1b, m_b1, prob_lin, xk, fk, nothing)
-        @test rnorm(xb - xa) <= 4 * eps(Float64) * rnorm(xb)
-    end
-
-    # R3 shared state, history bit-for-bit equality on identical sequence, and un-started step!! guard
     prob_r3 = NonlinearProblem((F, x, p) -> (
-        F .= Matrix(A_mat) * x .- Vector(b_vec); nothing))
-    x0_r3 = [0.0, 0.0, 0.0]
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    x0_r3 = Vector(x0)
     Fx0_r3 = similar(x0_r3)
     prob_r3.F(Fx0_r3, x0_r3, nothing)
     st_a_r3 = init_state(m_a, prob_r3, x0_r3, nothing)
@@ -371,37 +454,532 @@ end
     @test typeof(st_b_r3.ΔW) === typeof(st_a_r3.ΔW)
     @test st_b_r3.Δx === st_b_r3.ΔX
     @test st_b_r3.Δr === st_b_r3.ΔW
+    @test st_b_r3.history.ΔX === st_b_r3.ΔX
+end
 
-    x_u3 = copy(x0_r3)
-    Fx_u3 = copy(Fx0_r3)
-    _, _, _, info_u3 = step!!(st_b_r3, m_b, prob_r3, x_u3, Fx_u3, nothing)
-    @test info_u3.code == NONFINITE
-    @test iszero(info_u3.stepnorm)
-    @test x_u3 == x0_r3
+@testset "Check 2: equal history on one iterate sequence ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    prob_r1 = NonlinearProblem((x, p) -> A * x - b)
+    prob_r3 = NonlinearProblem((F, x, p) -> (
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    m_a = Adapt.adapt(ToReal{R}(), Anderson(Picard(; damping = 0.5), Val(3)))
+    m_b = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(3)))
 
-    # `start!!` and `step!!` return the state to use next; the argument is not updated.
-    st_a_r3 = start!!(st_a_r3, m_a, prob_r3, x0_r3, Fx0_r3, nothing, rnorm(Fx0_r3))
-    st_b_r3 = start!!(st_b_r3, m_b, prob_r3, x0_r3, Fx0_r3, nothing, rnorm(Fx0_r3))
+    z = xs[1]
+    Fz = prob_r1.F(z, nothing)
+    st_a1 = start!!(
+        init_state(m_a, prob_r1, z, nothing), m_a, prob_r1, z, Fz, nothing, rnorm(Fz))
+    st_b1 = start!!(
+        init_state(m_b, prob_r1, z, nothing), m_b, prob_r1, z, Fz, nothing, rnorm(Fz))
+    z_r3 = Vector(z)
+    Fz_r3 = Vector(Fz)
+    st_a3 = start!!(init_state(m_a, prob_r3, z_r3, nothing),
+        m_a, prob_r3, z_r3, Fz_r3, nothing, rnorm(Fz_r3))
+    st_b3 = start!!(init_state(m_b, prob_r3, z_r3, nothing),
+        m_b, prob_r3, z_r3, Fz_r3, nothing, rnorm(Fz_r3))
     for k in 1:3
-        xk_a = Vector(seq_x[k])
-        xk_b = Vector(seq_x[k])
-        fk_a = similar(xk_a)
-        fk_b = similar(xk_b)
-        prob_r3.F(fk_a, xk_a, nothing)
-        prob_r3.F(fk_b, xk_b, nothing)
-        xk_a, _, st_a_r3, info_a = step!!(st_a_r3, m_a, prob_r3, xk_a, fk_a, nothing)
-        xk_b, _, st_b_r3, info_b = step!!(st_b_r3, m_b, prob_r3, xk_b, fk_b, nothing)
-        @test info_a.code == SUCCESS
-        @test info_b.code == SUCCESS
-        @test xk_b != Vector(seq_x[k])
-        @test isequal(st_b_r3.ΔX, st_a_r3.ΔX)
-        @test isequal(st_b_r3.ΔW, st_a_r3.ΔW)
+        xk = xs[k]
+        fk = prob_r1.F(xk, nothing)
+        xa, _, st_a1, _ = step!!(st_a1, m_a, prob_r1, xk, fk, nothing)
+        xb, _, st_b1, _ = step!!(st_b1, m_b, prob_r1, xk, fk, nothing)
+        @test st_b1.ΔX === st_a1.ΔX
+        @test st_b1.ΔW === st_a1.ΔW
+        @test st_b1.history === st_a1.history
+        # An R3 step writes its iterate and residual arguments, so each method takes its own copy.
+        xk_r3 = Vector(xk)
+        fk_r3 = Vector(fk)
+        xa3, _, st_a3, _ = step!!(st_a3, m_a, prob_r3, copy(xk_r3), copy(fk_r3), nothing)
+        xb3, _, st_b3, _ = step!!(st_b3, m_b, prob_r3, copy(xk_r3), copy(fk_r3), nothing)
+        @test isequal(st_b3.ΔX, st_a3.ΔX)
+        @test isequal(st_b3.ΔW, st_a3.ΔW)
+        # With one kept column the Cholesky solve rounds twice where the recurrence divides once,
+        # so the iterates agree within `4 eps(R) rnorm(x₊)`; with `p >= 2` they differ. The
+        # weights themselves are compared in the weight-solver testset.
         if k == 2
-            @test rnorm(xk_b - xk_a) <= 4 * eps(Float64) * rnorm(xk_b)
+            @test rnorm(xb - xa) <= 4 * eps(R) * rnorm(xb)
+            @test rnorm(xb3 - xa3) <= 4 * eps(R) * rnorm(xb3)
         elseif k == 3
-            @test xk_b != xk_a
+            @test xb != xa
+            @test xb3 != xa3
         end
     end
+    @test st_b1.depth >= 2
+    @test st_b3.depth >= 2
+end
+
+@testset "Check 2: push_history!! and step_multisecant!! ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    prob_r1 = NonlinearProblem((x, p) -> A * x - b)
+    prob_r3 = NonlinearProblem((F, x, p) -> (
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    meth = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(3)))
+
+    # R1: the shared history update prepends `(x - x_prev, w - w_prev)` at column 1, of age 1, and
+    # returns the column count capped at `m`.
+    st = init_state(meth, prob_r1, xs[1], nothing)
+    @test st.depth == 0
+    x_new = SVector{3, T}(T(0.4), T(-0.2), T(0.5))
+    w_new = SVector{3, T}(T(0.1), T(0.2), T(-0.3))
+    ΔX_cand, ΔW_cand, ages_cand, d = push_history!!(st, x_new, w_new)
+    @test d == 1
+    @test ΔX_cand[1] == x_new - st.x_prev
+    @test ΔW_cand[1] == w_new - st.w_prev
+    @test ages_cand[1] == Int32(1)
+    @test all(iszero, ΔX_cand[2:end]) && all(iszero, ΔW_cand[2:end])
+
+    # R3: the four-argument form writes the newest column of `ΔX, ΔW` from `x` and `w`.
+    x0_r3 = Vector(xs[1])
+    Fx0_r3 = similar(x0_r3)
+    prob_r3.F(Fx0_r3, x0_r3, nothing)
+    st3 = init_state(meth, prob_r3, x0_r3, nothing)
+    x_new3 = Vector(x_new)
+    w_new3 = Vector(w_new)
+    d3 = push_history!!(st3, x_new3, w_new3)
+    @test d3 == 1
+    @test st3.ages[1] == Int32(1)
+    # `w_prev` fails closed at `NaN`, so the columns compare with `isequal`.
+    @test isequal(st3.ΔX[:, st3.work.col_idx[1]], x_new3 - st3.x_prev)
+    @test isequal(st3.ΔW[:, st3.work.col_idx[1]], w_new3 - st3.w_prev)
+
+    # `step!!` of `Broyden` is `step_multisecant!!`: one state and one input give one step.
+    Fz = prob_r1.F(xs[1], nothing)
+    st_x = start!!(init_state(meth, prob_r1, xs[1], nothing),
+        meth, prob_r1, xs[1], Fz, nothing, rnorm(Fz))
+    st_y = start!!(init_state(meth, prob_r1, xs[1], nothing),
+        meth, prob_r1, xs[1], Fz, nothing, rnorm(Fz))
+    for k in 2:3
+        xk = xs[k]
+        fk = prob_r1.F(xk, nothing)
+        x_s, _, st_x, info_s = step!!(st_x, meth, prob_r1, xk, fk, nothing)
+        x_m, _, st_y, info_m = step_multisecant!!(st_y, meth, prob_r1, xk, fk, nothing)
+        @test x_s == x_m
+        @test info_s.code == info_m.code
+        @test info_s.failures == info_m.failures
+        @test st_x.depth == st_y.depth
+        @test st_x.ΔX === st_y.ΔX
+    end
+    # The count is capped at `m`, and at `m_cap` where one is given.
+    @test push_history!!(st_x, xs[3], st_x.w_prev)[4] == min(Int(st_x.depth) + 1, 3)
+    @test push_history!!(st_x, xs[3], st_x.w_prev, 1)[4] == 1
+end
+
+@testset "Check 2: the history is bit-identical up to the first restart split ($T)" for T in ELTYPES
+    R = real(T)
+    compared = 0
+    split_count = 0
+    for seed in 1:10
+        rng = Xoshiro(seed)
+        A = Matrix{T}(I, 3, 3) + R(0.3) * randn(rng, T, 3, 3)
+        b = randn(rng, T, 3)
+        A_s = SMatrix{3, 3, T}(A)
+        b_s = SVector{3, T}(b)
+        prob_r1 = NonlinearProblem((x, p) -> A_s * x - b_s)
+        prob_r3 = NonlinearProblem((F, x, p) -> (mul!(F, A, x); F .-= b; nothing))
+        seq = [randn(rng, T, 3) for _ in 1:6]
+        for m in 1:4
+            m_a = Adapt.adapt(ToReal{R}(), Anderson(Picard(; damping = 0.5), Val(m)))
+            m_b = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(m)))
+            z = SVector{3, T}(seq[1])
+            Fz = prob_r1.F(z, nothing)
+            st_a1 = start!!(init_state(m_a, prob_r1, z, nothing),
+                m_a, prob_r1, z, Fz, nothing, rnorm(Fz))
+            st_b1 = start!!(init_state(m_b, prob_r1, z, nothing),
+                m_b, prob_r1, z, Fz, nothing, rnorm(Fz))
+            z_r3 = Vector{T}(seq[1])
+            Fz_r3 = similar(z_r3)
+            prob_r3.F(Fz_r3, z_r3, nothing)
+            st_a3 = start!!(init_state(m_a, prob_r3, z_r3, nothing),
+                m_a, prob_r3, z_r3, Fz_r3, nothing, rnorm(Fz_r3))
+            st_b3 = start!!(init_state(m_b, prob_r3, z_r3, nothing),
+                m_b, prob_r3, z_r3, Fz_r3, nothing, rnorm(Fz_r3))
+            split1 = false
+            split3 = false
+            for k in 1:6
+                xk = SVector{3, T}(seq[k])
+                fk = prob_r1.F(xk, nothing)
+                _, _, st_a1, _ = step!!(st_a1, m_a, prob_r1, xk, fk, nothing)
+                _, _, st_b1, _ = step!!(st_b1, m_b, prob_r1, xk, fk, nothing)
+                xk_r3 = Vector{T}(seq[k])
+                fk_r3 = similar(xk_r3)
+                prob_r3.F(fk_r3, xk_r3, nothing)
+                _, _, st_a3, _ = step!!(
+                    st_a3, m_a, prob_r3, copy(xk_r3), copy(fk_r3), nothing)
+                _, _, st_b3, _ = step!!(
+                    st_b3, m_b, prob_r3, copy(xk_r3), copy(fk_r3), nothing)
+
+                if !split1
+                    if (st_a1.depth == 0) != (st_b1.depth == 0)
+                        split1 = true
+                        split_count += 1
+                        restarted = st_a1.depth == 0 ? st_a1 : st_b1
+                        kept_on = st_a1.depth == 0 ? st_b1 : st_a1
+                        @test restarted.depth == 0
+                        @test all(iszero, restarted.ΔX)
+                        @test all(iszero, restarted.ΔW)
+                        @test kept_on.depth >= 1
+                    else
+                        @test st_b1.ΔX === st_a1.ΔX
+                        @test st_b1.ΔW === st_a1.ΔW
+                        Int(st_a1.depth) >= 1 && (compared += 1)
+                    end
+                end
+                if !split3
+                    if (st_a3.depth == 0) != (st_b3.depth == 0)
+                        split3 = true
+                        split_count += 1
+                        restarted = st_a3.depth == 0 ? st_a3 : st_b3
+                        kept_on = st_a3.depth == 0 ? st_b3 : st_a3
+                        @test restarted.depth == 0
+                        @test all(iszero, restarted.ΔX)
+                        @test all(iszero, restarted.ΔW)
+                        @test kept_on.depth >= 1
+                    else
+                        @test isequal(st_b3.ΔX, st_a3.ΔX)
+                        @test isequal(st_b3.ΔW, st_a3.ΔW)
+                        Int(st_a3.depth) >= 1 && (compared += 1)
+                    end
+                end
+            end
+        end
+    end
+    # The sweep must reach both shapes: a compared step at depth >= 1, and a split.
+    @test compared >= 1
+    @test split_count >= 1
+end
+
+@testset "Edge 4: Broyden{1} and Anderson{1} agree per step ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    prob_r1 = NonlinearProblem((x, p) -> A * x - b)
+    prob_r3 = NonlinearProblem((F, x, p) -> (
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    m_a1 = Adapt.adapt(ToReal{R}(), Anderson(Picard(; damping = 0.5), Val(1)))
+    m_b1 = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(1)))
+
+    z = xs[1]
+    Fz = prob_r1.F(z, nothing)
+    st_a1 = start!!(init_state(m_a1, prob_r1, z, nothing),
+        m_a1, prob_r1, z, Fz, nothing, rnorm(Fz))
+    st_b1 = start!!(init_state(m_b1, prob_r1, z, nothing),
+        m_b1, prob_r1, z, Fz, nothing, rnorm(Fz))
+    z_r3 = Vector(z)
+    Fz_r3 = Vector(Fz)
+    st_a3 = start!!(init_state(m_a1, prob_r3, z_r3, nothing),
+        m_a1, prob_r3, z_r3, Fz_r3, nothing, rnorm(Fz_r3))
+    st_b3 = start!!(init_state(m_b1, prob_r3, z_r3, nothing),
+        m_b1, prob_r3, z_r3, Fz_r3, nothing, rnorm(Fz_r3))
+    for k in 1:3
+        xk = xs[k]
+        fk = prob_r1.F(xk, nothing)
+        xa, _, st_a1, _ = step!!(st_a1, m_a1, prob_r1, xk, fk, nothing)
+        xb, _, st_b1, _ = step!!(st_b1, m_b1, prob_r1, xk, fk, nothing)
+        @test rnorm(xb - xa) <= 4 * eps(R) * rnorm(xb)
+        xk_r3 = Vector(xk)
+        fk_r3 = Vector(fk)
+        xa3, _, st_a3, _ = step!!(st_a3, m_a1, prob_r3, xk_r3, fk_r3, nothing)
+        xb3, _, st_b3, _ = step!!(st_b3, m_b1, prob_r3, xk_r3, fk_r3, nothing)
+        @test rnorm(xb3 - xa3) <= 4 * eps(R) * rnorm(xb3)
+        @test st_a1.depth == st_b1.depth
+        @test st_a3.depth == st_b3.depth
+    end
+    @test st_b1.depth == 1
+end
+
+@testset "Edge 1: a step on a state that no start!! saw ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    prob_r1 = NonlinearProblem((x, p) -> A * x - b)
+    prob_r3 = NonlinearProblem((F, x, p) -> (
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    meth = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(3)))
+
+    x = xs[2]
+    Fx = prob_r1.F(x, nothing)
+    x_u, Fx_u, st_u, info_u = step!!(
+        init_state(meth, prob_r1, x, nothing), meth, prob_r1, x, Fx, nothing)
+    @test info_u.code == NONFINITE
+    @test iszero(info_u.stepnorm)
+    @test x_u == x
+    @test Fx_u == Fx
+    @test st_u.depth == 0
+
+    x3 = Vector(x)
+    Fx3 = Vector(Fx)
+    x_u3, Fx_u3, st_u3, info_u3 = step!!(
+        init_state(meth, prob_r3, x3, nothing), meth, prob_r3, x3, Fx3, nothing)
+    @test info_u3.code == NONFINITE
+    @test iszero(info_u3.stepnorm)
+    @test x_u3 == x3
+    @test Fx_u3 == Fx3
+    @test st_u3.depth == 0
+end
+
+@testset "Edge 2: a non-finite incoming residual ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    prob_r1 = NonlinearProblem((x, p) -> A * x - b)
+    prob_r3 = NonlinearProblem((F, x, p) -> (
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    meth = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(3)))
+    picard = Adapt.adapt(ToReal{R}(), Picard(; damping = 0.5))
+
+    # The member fails hard on a non-finite residual: `Broyden` returns the code the member's own
+    # `step!!` returns on the same input, and keeps `x` and the history.
+    for bad in (T(NaN), T(Inf))
+        x = xs[3]
+        Fx = prob_r1.F(x, nothing)
+        st = start!!(init_state(meth, prob_r1, x, nothing),
+            meth, prob_r1, x, Fx, nothing, rnorm(Fx))
+        for _ in 1:2
+            x, Fx, st, _ = step!!(st, meth, prob_r1, x, Fx, nothing)
+        end
+        Fx_bad = setindex(Fx, bad, 2)
+        st_pic = start!!(init_state(picard, prob_r1, x, nothing),
+            picard, prob_r1, x, Fx, nothing, rnorm(Fx))
+        _, _, _, info_pic = step!!(st_pic, picard, prob_r1, x, Fx_bad, nothing)
+        x_out, _, st_out, info_out = step!!(st, meth, prob_r1, x, Fx_bad, nothing)
+        @test is_hard_failure(info_pic)
+        @test info_out.code == info_pic.code
+        @test x_out == x
+        @test st_out.depth == st.depth
+
+        x3 = Vector(x)
+        Fx3 = Vector(Fx)
+        st3 = start!!(init_state(meth, prob_r3, x3, nothing),
+            meth, prob_r3, x3, Fx3, nothing, rnorm(Fx3))
+        for _ in 1:2
+            x3, Fx3, st3, _ = step!!(st3, meth, prob_r3, x3, Fx3, nothing)
+        end
+        Fx_bad3 = copy(Fx3)
+        Fx_bad3[2] = bad
+        st_pic3 = start!!(init_state(picard, prob_r3, copy(x3), nothing),
+            picard, prob_r3, copy(x3), copy(Fx3), nothing, rnorm(Fx3))
+        _, _, _, info_pic3 = step!!(
+            st_pic3, picard, prob_r3, copy(x3), copy(Fx_bad3), nothing)
+        x_in3 = copy(x3)
+        x_out3, _, st_out3, info_out3 = step!!(
+            st3, meth, prob_r3, x3, Fx_bad3, nothing)
+        @test is_hard_failure(info_pic3)
+        @test info_out3.code == info_pic3.code
+        @test x_out3 == x_in3
+        @test st_out3.depth == st3.depth
+    end
+
+    # A member that survives the non-finite residual: the growth restart clears the history, the
+    # step is the member's own candidate, and `failures` grows by one.
+    x_mem = SVector{3, T}(T(0.6), T(1.2), T(-0.4))
+    x_mem3 = Vector(x_mem)
+    b_mem = Broyden(ScriptedBroydenMember(SUCCESS, x -> x_mem), Val(3))
+    b_mem3 = Broyden(ScriptedR3BroydenMember(SUCCESS, x -> x_mem3), Val(3))
+
+    x = xs[1]
+    Fx = prob_r1.F(x, nothing)
+    st = start!!(init_state(b_mem, prob_r1, x, nothing), b_mem, prob_r1, x, Fx, nothing,
+        rnorm(Fx))
+    for xk in xs[1:2]
+        x, Fx, st, _ = step!!(st, b_mem, prob_r1, xk, prob_r1.F(xk, nothing), nothing)
+    end
+    @test st.depth == 1
+    x_out, _, st_out, info_out = step!!(
+        st, b_mem, prob_r1, xs[3], setindex(prob_r1.F(xs[3], nothing), T(NaN), 2), nothing)
+    @test x_out == x_mem
+    @test st_out.depth == 0
+    @test info_out.failures == Int32(1)
+
+    x03 = Vector{T}(xs[1])
+    F03 = similar(x03)
+    prob_r3.F(F03, x03, nothing)
+    st3 = start!!(init_state(b_mem3, prob_r3, x03, nothing),
+        b_mem3, prob_r3, x03, F03, nothing, rnorm(F03))
+    for xk in xs[1:2]
+        xk3 = Vector{T}(xk)
+        fk3 = similar(xk3)
+        prob_r3.F(fk3, xk3, nothing)
+        _, _, st3, _ = step!!(st3, b_mem3, prob_r3, xk3, fk3, nothing)
+    end
+    @test st3.depth == 1
+    xk3 = Vector{T}(xs[3])
+    fk3 = similar(xk3)
+    prob_r3.F(fk3, xk3, nothing)
+    fk3[2] = T(NaN)
+    x_out3, _, st_out3, info_out3 = step!!(st3, b_mem3, prob_r3, xk3, fk3, nothing)
+    @test x_out3 == x_mem3
+    @test st_out3.depth == 0
+    @test info_out3.failures == Int32(1)
+end
+
+@testset "Edge 3: the empty history, a degenerate newest column, and the filter count ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    prob_r1 = NonlinearProblem((x, p) -> A * x - b)
+    prob_r3 = NonlinearProblem((F, x, p) -> (
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    meth = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(3)))
+
+    # The first step after `start!!` is the member step, with the member's failure count.
+    x = xs[1]
+    Fx = prob_r1.F(x, nothing)
+    x_m = x .- R(0.5) .* Fx
+    st = start!!(
+        init_state(meth, prob_r1, x, nothing), meth, prob_r1, x, Fx, nothing, rnorm(Fx))
+    x_1, _, st_1, info_1 = step!!(st, meth, prob_r1, x, Fx, nothing)
+    @test x_1 == x_m
+    @test info_1.failures == Int32(0)
+    @test st_1.depth == 0
+    @test st_1.has_prev
+    x3 = Vector(x)
+    Fx3 = Vector(Fx)
+    st3 = start!!(init_state(meth, prob_r3, x3, nothing),
+        meth, prob_r3, x3, Fx3, nothing, rnorm(Fx3))
+    x_13, _, st_13, info_13 = step!!(st3, meth, prob_r3, copy(x3), copy(Fx3), nothing)
+    @test x_13 == Vector(x_m)
+    @test info_13.failures == Int32(0)
+    @test st_13.depth == 0
+    @test st_13.has_prev
+
+    # The degenerate newest column: the same iterate twice gives `Δw = 0`, so the degenerate-column
+    # restart runs before the filters and clears the history, one failure more.
+    xw = xs[2]
+    Fw = prob_r1.F(xw, nothing)
+    st = start!!(
+        init_state(meth, prob_r1, x, nothing), meth, prob_r1, x, Fx, nothing, rnorm(Fx))
+    _, _, st, _ = step!!(st, meth, prob_r1, xw, Fw, nothing)
+    _, _, st, info_d = step!!(st, meth, prob_r1, xw, Fw, nothing)
+    @test info_d.failures == Int32(1)
+    @test st.depth == 0
+    @test st.has_prev
+    xw3 = Vector(xw)
+    Fw3 = Vector(Fw)
+    st3 = start!!(init_state(meth, prob_r3, Vector(x), nothing),
+        meth, prob_r3, Vector(x), Vector(Fx), nothing, rnorm(Fx))
+    _, _, st3, _ = step!!(st3, meth, prob_r3, copy(xw3), copy(Fw3), nothing)
+    _, _, st3, info_d3 = step!!(st3, meth, prob_r3, copy(xw3), copy(Fw3), nothing)
+    @test info_d3.failures == Int32(1)
+    @test st3.depth == 0
+    @test st3.has_prev
+
+    # A step whose filters drop one of two columns counts `d - p_kept` failures and is the
+    # accelerated step.
+    u = SVector{3, T}(T(0.5), T(-0.25), T(0.375))
+    seq_x = (zero(u), u, 3 * u)
+    st = start!!(init_state(meth, prob_r1, seq_x[1], nothing),
+        meth, prob_r1, seq_x[1], prob_r1.F(seq_x[1], nothing), nothing,
+        rnorm(prob_r1.F(seq_x[1], nothing)))
+    info_f = nothing
+    x_f = seq_x[1]
+    for xk in seq_x
+        x_f, F_f, st, info_f = step!!(
+            st, meth, prob_r1, xk, prob_r1.F(xk, nothing), nothing)
+    end
+    @test info_f.code == SUCCESS
+    @test info_f.failures == Int32(1)
+    @test st.depth == 1
+    st3 = start!!(init_state(meth, prob_r3, Vector(seq_x[1]), nothing),
+        meth, prob_r3, Vector(seq_x[1]), Vector(prob_r1.F(seq_x[1], nothing)), nothing,
+        rnorm(prob_r1.F(seq_x[1], nothing)))
+    info_f3 = nothing
+    for xk in seq_x
+        xk3 = Vector(xk)
+        fk3 = Vector(prob_r1.F(xk, nothing))
+        _, _, st3, info_f3 = step!!(st3, meth, prob_r3, xk3, fk3, nothing)
+    end
+    @test info_f3.code == SUCCESS
+    @test info_f3.failures == Int32(1)
+    @test st3.depth == 1
+end
+
+@testset "Edge 7: a device array ($T)" for T in ELTYPES
+    R = real(T)
+    n = 4
+    method = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(4)))
+    prob_r1 = NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian)
+    prob_r3 = NonlinearProblem(Holomorphic())
+    pv = fill(T(5), n)
+    p_s = SVector{n, T}(pv)
+    x0 = fill(T(1 / 2), n)
+    x_n, _ = solve(prob_r1, SVector{n, T}(x0), Newton(), p_s)
+    J_star = Matrix(prob_r1.J(x_n, p_s))
+    Fx0 = similar(x0)
+    prob_r3.F(Fx0, x0, pv)
+    abstol = max(Options(R).f_abstol, Options(R).f_reltol * rnorm(Fx0))
+
+    for AT in (Array, JLArray, :ka)
+        conv = if AT === :ka
+            v -> (a = KA.allocate(KA_BACKEND, T, n); copyto!(a, v); a)
+        elseif AT === Array
+            v -> Vector{T}(v)
+        else
+            v -> JLArray(v)
+        end
+        xa = conv(x0)
+        pa = conv(pv)
+        Fa = similar(xa)
+        prob_r3.F(Fa, xa, pa)
+        st = start!!(init_state(method, prob_r3, xa, pa), method, prob_r3, xa, Fa, pa,
+            rnorm(Fa))
+        x_step, Fx_step, _, info = step!!(st, method, prob_r3, copy(xa), copy(Fa), pa)
+        @test info.code == SUCCESS
+        @test all(isfinite, Array(x_step))
+        @test rnorm(Array(Fx_step)) <= rnorm(Fx0)
+        solver = init(prob_r3, copy(xa), method, pa)
+        x_sol, st_sol = solve!(solver, copy(xa))
+        @test st_sol.code == SUCCESS
+        Fx_sol = similar(x0)
+        prob_r3.F(Fx_sol, Array(x_sol), pv)
+        @test rnorm(Fx_sol) <= abstol
+        @test rnorm(Vector(Array(x_sol)) - Vector(x_n)) <= abstol * cond(J_star)
+    end
+end
+
+@testset "MU5: the post-step residual-growth restart ($T)" for T in ELTYPES
+    R = real(T)
+    A = T.(POST_RESTART_A)
+    c = T(POST_RESTART_C)
+    b = T.(POST_RESTART_B)
+    damping = R(POST_RESTART_DAMPING)
+    x0 = T.(POST_RESTART_X)
+    # `restart_factor = 3`, and this start: the third step's accelerated iterate grows the
+    # residual past `3 fnorm_best` while the incoming residual of the third step does not, so only
+    # the post-step safeguard can fire there.
+    meth = Adapt.adapt(ToReal{R}(),
+        Broyden(Picard(; damping = POST_RESTART_DAMPING), Val(3); restart_factor = 3.0))
+    prob_r1 = NonlinearProblem((x, p) -> A * x .+ c .* x .^ 3 .- b)
+    prob_r3 = NonlinearProblem(
+        (F, x, p) -> (mul!(F, A, x); @. F = F + c * x ^ 3 - b; nothing))
+
+    x = SVector{3, T}(x0)
+    Fx = prob_r1.F(x, nothing)
+    st = start!!(
+        init_state(meth, prob_r1, x, nothing), meth, prob_r1, x, Fx, nothing, rnorm(Fx))
+    for _ in 1:2
+        x, Fx, st, _ = step!!(st, meth, prob_r1, x, Fx, nothing)
+    end
+    @test st.depth >= 1
+    @test rnorm(Fx) <= 3 * st.fnorm_best
+    x_m = x .- damping .* Fx
+    x_out, _, st_out, info_out = step!!(st, meth, prob_r1, x, Fx, nothing)
+    @test rnorm(x_out - x_m) <= 16 * eps(R) * rnorm(x_m)
+    @test st_out.depth == 0
+    @test info_out.failures == Int32(1)
+
+    x3 = Vector{T}(x0)
+    Fx3 = similar(x3)
+    prob_r3.F(Fx3, x3, nothing)
+    st3 = start!!(init_state(meth, prob_r3, x3, nothing),
+        meth, prob_r3, x3, Fx3, nothing, rnorm(Fx3))
+    for _ in 1:2
+        x3, Fx3, st3, _ = step!!(st3, meth, prob_r3, x3, Fx3, nothing)
+    end
+    @test st3.depth >= 1
+    @test rnorm(Fx3) <= 3 * st3.fnorm_best
+    x_m3 = x3 .- damping .* Fx3
+    x_out3, _, st_out3, info_out3 = step!!(
+        st3, meth, prob_r3, copy(x3), copy(Fx3), nothing)
+    @test rnorm(x_out3 - x_m3) <= 16 * eps(R) * rnorm(x_m3)
+    @test st_out3.depth == 0
+    @test info_out3.failures == Int32(1)
 end
 
 @testset "Check 1, Check 3, Check 4, and Edge 7: R1, R2, and R3 convergence, agreement, and allocations" begin
@@ -444,9 +1022,13 @@ end
             end
         end
 
+        # A complex row with a real start and real parameters leaves every iterate exactly real,
+        # so the imaginary part of the Gram matrix and of the weights is never read. The complex
+        # types therefore also take a start and parameters with no real entry.
+        datasets = T <: Complex ?
+                   ((T(1 / 2), T(5)), (T(1 / 2, 1 / 3), T(5, 1))) :
+                   ((T(1 / 2), T(5)),)
         for n in (2, 4)
-            pv = fill(T(5), n)
-            p_s = SVector{n, T}(pv)
             perm = r1_shift(Int, n)
             problems = (
                 ("R1Holomorphic",
@@ -454,30 +1036,34 @@ end
                 ("R1Coupled",
                     NonlinearProblem(R1Coupled(perm), (x, p) -> r1_coupled_jacobian(x, p, perm)))
             )
-            for (name, prob) in problems
-                x₀ = SVector{n, T}(fill(T(1 / 2), n))
-                x_n, st_n = solve(prob, x₀, Newton(), p_s)
-                x_br, st_br = @inferred solve(prob, x₀, method_br, p_s)
-                abstol = max(opt.f_abstol, opt.f_reltol * rnorm(prob.F(x₀, p_s)))
-                J_star = Matrix(prob.J(x_n, p_s))
-                @test st_n.code == SUCCESS
-                @test st_br.code == SUCCESS
-                @test rnorm(prob.F(x_br, p_s)) <= abstol
-                @test rnorm(x_br - x_n) <= abstol * cond(J_star)
+            for (x0_c, p_c) in datasets
+                pv = fill(p_c, n)
+                p_s = SVector{n, T}(pv)
+                for (name, prob) in problems
+                    x₀ = SVector{n, T}(fill(x0_c, n))
+                    x_n, st_n = solve(prob, x₀, Newton(), p_s)
+                    x_br, st_br = @inferred solve(prob, x₀, method_br, p_s)
+                    abstol = max(opt.f_abstol, opt.f_reltol * rnorm(prob.F(x₀, p_s)))
+                    J_star = Matrix(prob.J(x_n, p_s))
+                    @test st_n.code == SUCCESS
+                    @test st_br.code == SUCCESS
+                    @test rnorm(prob.F(x_br, p_s)) <= abstol
+                    @test rnorm(x_br - x_n) <= abstol * cond(J_star)
 
-                for m_val in (Val(1), Val(2), Val(3), Val(4))
-                    bm = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), m_val))
-                    st0 = init_state(bm, prob, x₀, p_s)
-                    @test isbits(st0)
-                    Fx₀ = prob.F(x₀, p_s)
-                    st0_s = start!!(st0, bm, prob, x₀, Fx₀, p_s, rnorm(Fx₀))
-                    @inferred step!!(st0_s, bm, prob, x₀, Fx₀, p_s)
-                    if Base.JLOptions().check_bounds != 1
-                        # Skipped where a run forces --check-bounds=yes.
-                        @test _r1_broyden_step_alloc_probe(
-                            st0_s, bm, prob, x₀, Fx₀, p_s) == 0
-                        @test _r1_broyden_solve_alloc_probe(
-                            st0, prob, x₀, bm, p_s, opt) == 0
+                    for m_val in (Val(1), Val(2), Val(3), Val(4))
+                        bm = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), m_val))
+                        st0 = init_state(bm, prob, x₀, p_s)
+                        @test isbits(st0)
+                        Fx₀ = prob.F(x₀, p_s)
+                        st0_s = start!!(st0, bm, prob, x₀, Fx₀, p_s, rnorm(Fx₀))
+                        @inferred step!!(st0_s, bm, prob, x₀, Fx₀, p_s)
+                        if Base.JLOptions().check_bounds != 1
+                            # Skipped where a run forces --check-bounds=yes.
+                            @test _r1_broyden_step_alloc_probe(
+                                st0_s, bm, prob, x₀, Fx₀, p_s) == 0
+                            @test _r1_broyden_solve_alloc_probe(
+                                st0, prob, x₀, bm, p_s, opt) == 0
+                        end
                     end
                 end
             end
@@ -488,76 +1074,170 @@ end
         R = real(T)
         opt = Options(R)
         method_br = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(4)))
+        datasets = T <: Complex ?
+                   ((T(1 / 2), T(5)), (T(1 / 2, 1 / 3), T(5, 1))) :
+                   ((T(1 / 2), T(5)),)
         for n in (2, 4)
-            p_vec = fill(T(5), n)
             perm = r1_shift(Int, n)
+            perm_r3 = cyclic_perm(Array, n)
             # The R3 stubs of `test/helpers/adproblems.jl`. A host permutation indexes an `Array`,
             # a `JLArray` and a KA `CPU()` array alike.
             problems = (
                 ("Holomorphic",
                     NonlinearProblem(Holomorphic()),
-                    NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian)),
+                    NonlinearProblem(R1Holomorphic(), r1_holomorphic_jacobian),
+                    r3_holomorphic_jacobian!),
                 ("Coupled",
-                    NonlinearProblem(Coupled(cyclic_perm(Array, n))),
-                    NonlinearProblem(R1Coupled(perm), (x, p) -> r1_coupled_jacobian(x, p, perm)))
+                    NonlinearProblem(Coupled(perm_r3)),
+                    NonlinearProblem(R1Coupled(perm), (x, p) -> r1_coupled_jacobian(x, p, perm)),
+                    (J, x, p) -> r3_coupled_jacobian!(J, x, p, perm_r3))
             )
-            for (name, prob_r3, prob_r1) in problems
-                x₀_s = SVector{n, T}(fill(T(1 / 2), n))
+            for (x0_c, p_c) in datasets
+                p_vec = fill(p_c, n)
                 p_s = SVector{n, T}(p_vec)
-                x_n_s, st_n_s = solve(prob_r1, x₀_s, Newton(), p_s)
-                J_star = Matrix(prob_r1.J(x_n_s, p_s))
+                for (name, prob_r3, prob_r1, jac_r3) in problems
+                    x₀_s = SVector{n, T}(fill(x0_c, n))
+                    x_n_s, st_n_s = solve(prob_r1, x₀_s, Newton(), p_s)
+                    J_star = Matrix(prob_r1.J(x_n_s, p_s))
 
-                x₀ = fill(T(1 / 2), n)
-                Fx₀ = similar(x₀)
-                prob_r3.F(Fx₀, x₀, p_vec)
-                abstol = max(opt.f_abstol, opt.f_reltol * rnorm(Fx₀))
+                    x₀ = fill(x0_c, n)
+                    Fx₀ = similar(x₀)
+                    prob_r3.F(Fx₀, x₀, p_vec)
+                    abstol = max(opt.f_abstol, opt.f_reltol * rnorm(Fx₀))
 
-                solver = init(prob_r3, copy(x₀), method_br, p_vec)
-                x_br, st_br = solve!(solver, copy(x₀))
-                @test st_br.code == SUCCESS
-                Fx_br = similar(x_br)
-                prob_r3.F(Fx_br, x_br, p_vec)
-                @test rnorm(Fx_br) <= abstol
-                @test rnorm(x_br - Vector(x_n_s)) <= abstol * cond(J_star)
+                    # Check 1 runs `Newton()` on the R3 problem too, with its in-place Jacobian,
+                    # and compares `Broyden` with that root.
+                    prob_n3 = NonlinearProblem(prob_r3.F, jac_r3)
+                    x_n3, st_n3 = solve(prob_n3, copy(x₀), Newton(), p_vec)
+                    Fx_n3 = similar(x_n3)
+                    prob_n3.F(Fx_n3, x_n3, p_vec)
+                    @test st_n3.code == SUCCESS
+                    @test rnorm(Fx_n3) <= abstol
 
-                # Check 4: R3 step!! and solve! allocate 0 bytes on Array after warm-up. The
-                # residual is `Scaled()`, one fused broadcast: `Coupled`'s `x[perm]` gather
-                # allocates a new array at every evaluation — 64 bytes at n = 2, `Float32` —
-                # which no method can avoid.
-                prob_alloc = NonlinearProblem(Scaled())
-                p_alloc = fill(T(2), n)
-                Fx_alloc = similar(x₀)
-                prob_alloc.F(Fx_alloc, x₀, p_alloc)
-                st_alloc = init_state(method_br, prob_alloc, x₀, p_alloc)
-                st_alloc = start!!(
-                    st_alloc, method_br, prob_alloc, x₀, Fx_alloc, p_alloc, rnorm(Fx_alloc))
-                x_work = copy(x₀)
-                Fx_work = copy(Fx_alloc)
-                @test _r3_broyden_step_alloc_probe(
-                    st_alloc, method_br, prob_alloc, x_work, x₀, Fx_work, Fx_alloc,
-                    p_alloc) == 0
-                solver_alloc = init(prob_alloc, copy(x₀), method_br, p_alloc)
-                @test _r3_broyden_solve_alloc_probe(solver_alloc, x_work, x₀) == 0
+                    solver = init(prob_r3, copy(x₀), method_br, p_vec)
+                    x_br, st_br = solve!(solver, copy(x₀))
+                    @test st_br.code == SUCCESS
+                    Fx_br = similar(x_br)
+                    prob_r3.F(Fx_br, x_br, p_vec)
+                    @test rnorm(Fx_br) <= abstol
+                    @test rnorm(x_br - x_n3) <= abstol * cond(J_star)
+                    @test rnorm(x_br - Vector(x_n_s)) <= abstol * cond(J_star)
 
-                # Edge 7: JLArray R3 solve with scalar indexing forbidden
-                x₀_jl = JLArray(x₀)
-                p_jl = JLArray(p_vec)
-                solver_jl = init(prob_r3, copy(x₀_jl), method_br, p_jl)
-                x_jl, st_jl = solve!(solver_jl, copy(x₀_jl))
-                @test st_jl.code == SUCCESS
-                @test rnorm(Array(x_jl) - Vector(x_n_s)) <= abstol * cond(J_star)
+                    # Check 4: R3 step!! and solve! allocate 0 bytes on Array after warm-up. The
+                    # residual is `Scaled()`, one fused broadcast: `Coupled`'s `x[perm]` gather
+                    # allocates a new array at every evaluation — 64 bytes at n = 2, `Float32` —
+                    # which no method can avoid.
+                    prob_alloc = NonlinearProblem(Scaled())
+                    p_alloc = fill(T(2), n)
+                    Fx_alloc = similar(x₀)
+                    prob_alloc.F(Fx_alloc, x₀, p_alloc)
+                    st_alloc = init_state(method_br, prob_alloc, x₀, p_alloc)
+                    st_alloc = start!!(
+                        st_alloc, method_br, prob_alloc, x₀, Fx_alloc, p_alloc, rnorm(Fx_alloc))
+                    x_work = copy(x₀)
+                    Fx_work = copy(Fx_alloc)
+                    if Base.JLOptions().check_bounds != 1
+                        # Skipped where a run forces --check-bounds=yes.
+                        @test _r3_broyden_step_alloc_probe(
+                            st_alloc, method_br, prob_alloc, x_work, x₀, Fx_work, Fx_alloc,
+                            p_alloc) == 0
+                        solver_alloc = init(prob_alloc, copy(x₀), method_br, p_alloc)
+                        @test _r3_broyden_solve_alloc_probe(solver_alloc, x_work, x₀) == 0
+                    end
+
+                    # Edge 7: the JLArray R3 solve, with scalar indexing forbidden, reaches the
+                    # same root and satisfies the residual stop of its own start.
+                    x₀_jl = JLArray(x₀)
+                    p_jl = JLArray(p_vec)
+                    solver_jl = init(prob_r3, copy(x₀_jl), method_br, p_jl)
+                    x_jl, st_jl = solve!(solver_jl, copy(x₀_jl))
+                    @test st_jl.code == SUCCESS
+                    Fx_jl = similar(x_jl)
+                    prob_r3.F(Fx_jl, x_jl, p_jl)
+                    @test rnorm(Fx_jl) <= abstol
+                    @test rnorm(Array(x_jl) - Vector(x_n_s)) <= abstol * cond(J_star)
+                end
             end
         end
     end
 
-    @testset "Check 3 & Edge 7: R1 vs R3 (Array, JLArray, KA CPU) one-step agreement ($T)" for T in ELTYPES
+    @testset "Check 3: R1 and R3 agree on every step of a default solve ($T)" for T in ELTYPES
+        R = real(T)
+        opt = Options(R)
+        datasets = T <: Complex ?
+                   ((T(1 / 2), T(5)), (T(1 / 2, 1 / 3), T(5, 1))) :
+                   ((T(1 / 2), T(5)),)
+        for n in (2, 4), m in (1, 2, 3, 4)
+
+            perm = r1_shift(Int, n)
+            for (x0_c, p_c) in datasets
+                pv = fill(p_c, n)
+                p_s = SVector{n, T}(pv)
+                method = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(m)))
+                problems = (
+                    ("Holomorphic", NonlinearProblem(R1Holomorphic()),
+                        NonlinearProblem(Holomorphic())),
+                    ("Coupled",
+                        NonlinearProblem(R1Coupled(perm),
+                            (x, p) -> r1_coupled_jacobian(x, p, perm)),
+                        NonlinearProblem(Coupled(cyclic_perm(Array, n)))))
+                for (name, prob_r1, prob_r3) in problems
+                    x = SVector{n, T}(fill(x0_c, n))
+                    Fx = prob_r1.F(x, p_s)
+                    abstol = max(opt.f_abstol, opt.f_reltol * rnorm(Fx))
+                    st = start!!(init_state(method, prob_r1, x, p_s),
+                        method, prob_r1, x, Fx, p_s, rnorm(Fx))
+                    # The R3 states take the R1 trajectory's iterates, so before every step the
+                    # two histories hold the same columns: each step is one step from the same
+                    # populated state. A host permutation indexes an `Array`, a `JLArray` and a
+                    # KA `CPU()` array alike.
+                    trackers = map((Array, JLArray, :ka)) do AT
+                        conv = if AT === :ka
+                            v -> (a = KA.allocate(KA_BACKEND, T, n); copyto!(a, v); a)
+                        else
+                            v -> AT(v)
+                        end
+                        pa = conv(pv)
+                        xa = conv(Vector(x))
+                        Fa = conv(Vector(Fx))
+                        sr = Ref{Any}(start!!(init_state(method, prob_r3, xa, pa),
+                            method, prob_r3, xa, Fa, pa, rnorm(Fx)))
+                        (AT, conv, pa, sr)
+                    end
+                    steps = 0
+                    while rnorm(Fx) > abstol && steps < opt.max_iterations
+                        steps += 1
+                        x₊, F₊, st_new, info = step!!(st, method, prob_r1, x, Fx, p_s)
+                        (info.code == SUCCESS || info.code == STALLED) || break
+                        tol = n * eps(R) * _multisecant_step_scale(st_new, Val(m), R)
+                        for (AT, conv, pa, sr) in trackers
+                            xr, _, sr_new, _ = step!!(
+                                sr[], method, prob_r3, conv(Vector(x)), conv(Vector(Fx)), pa)
+                            sr[] = sr_new
+                            @test Int(sr_new.depth) == Int(st_new.depth)
+                            if Int(st_new.depth) >= 1
+                                @test rnorm(Array(xr) - Vector(x₊)) <= tol
+                            end
+                        end
+                        x, Fx, st = x₊, F₊, st_new
+                    end
+                    @test steps >= 1
+                end
+            end
+        end
+    end
+
+    @testset "Check 3: CoupledShift, R1 against R3 ($T)" for T in ELTYPES
         R = real(T)
         n = 4
-        # The residual of Check 3 has no root at zero (`CoupledShift`), so the relative bound
-        # `n * eps(R) * rnorm(x₊)` stays above the round-off floor of the weights. A host
-        # permutation indexes an `Array`, a `JLArray` and a KA `CPU()` array alike.
-        prob_r1 = NonlinearProblem(CoupledShift(r1_shift(Int, n), T(8)))
-        prob_r3 = NonlinearProblem(CoupledShift(cyclic_perm(Array, n), T(8)))
+        # This row's residual has no root at zero, so the relative bound
+        # `n * eps(R) * rnorm(x₊)` stays above the round-off floor of the weights; and for a
+        # complex element type the shift and the start carry an imaginary part, so a Gram matrix
+        # formed with `transpose` instead of `adjoint` cannot pass.
+        shift = T <: Complex ? T(8, 3) : T(8)
+        x0_c = T <: Complex ? T(1 / 2, 1 / 3) : T(1 / 2)
+        prob_r1 = NonlinearProblem(CoupledShift(r1_shift(Int, n), shift))
+        prob_r3 = NonlinearProblem(CoupledShift(cyclic_perm(Array, n), shift))
         p_vec = fill(T(5), n)
         p_s = SVector{n, T}(p_vec)
         p_jl = JLArray(p_vec)
@@ -566,7 +1246,7 @@ end
 
         for m in (1, 2, 3, 4)
             method = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(m)))
-            x_r1 = SVector{n, T}(fill(T(1 / 2), n))
+            x_r1 = SVector{n, T}(fill(x0_c, n))
             Fx_r1 = prob_r1.F(x_r1, p_s)
             st_r1 = start!!(init_state(method, prob_r1, x_r1, p_s),
                 method, prob_r1, x_r1, Fx_r1, p_s, rnorm(Fx_r1))
@@ -646,10 +1326,24 @@ end
         end
     end
 
-    @testset "Edge 8: R3 supports m >= 5" begin
+    @testset "Edge 8: m > 4 is refused in R1 and runs in R3" begin
         for T in ELTYPES
             R = real(T)
             n = 6
+            # R1: `m = 5` throws with the constant message, from both entry points.
+            x0_s = SVector{n, T}(fill(T(1 / 2), n))
+            prob_r1 = NonlinearProblem(R1Holomorphic())
+            @test_throws ArgumentError init_state(
+                Broyden(Picard(), Val(5)), prob_r1, x0_s, nothing)
+            @test_throws ArgumentError init(prob_r1, x0_s, Broyden(Picard(), Val(5)))
+            err = try
+                init_state(Broyden(Picard(), Val(5)), prob_r1, x0_s, nothing)
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test err.msg == "R1 Broyden history depth m must be <= 4"
+
             prob = NonlinearProblem(
                 (F, x, p) -> begin
                 @inbounds for i in eachindex(x)
@@ -710,7 +1404,7 @@ end
     end
 end
 
-@testset "Decided edges 2, 3, 5, 6 and Mutants (restarts, safeguards, failures, finish!!, solver reuse)" begin
+@testset "Restarts, safeguards, failures of the member, finish!!, and solver reuse" begin
     # Hard failure of inner member returns immediately and preserves history
     prob_r1 = NonlinearProblem((x, p) -> SVector(x[1] - 1.0, x[2] - 2.0))
     x0 = SVector(0.0, 0.0)
@@ -729,31 +1423,6 @@ end
         @test st_out.has_prev == st0.has_prev
     end
 
-    # Edge 2: Non-finite incoming residual (NaN or Inf in Fx):
-    # - when member hard-fails, returns member's code and keeps x;
-    # - when member produces a finite step, should_restart_growth clears history (depth == 0),
-    #   takes x_m, and increments failures by 1.
-    Fx_nan = SVector(NaN, 1.0)
-    # The member's candidate is not the root: a candidate whose residual is zero leaves
-    # `fnorm_best` at zero, and the growth restart then fires on every later step, so no history
-    # could accumulate.
-    x_mem = SVector(0.6, 1.2)
-    member_ok = ScriptedBroydenMember(SUCCESS, x -> x_mem)
-    b_ok = Broyden(member_ok, Val(3))
-    st_nan0 = start!!(init_state(b_ok, prob_r1, x0, nothing),
-        b_ok, prob_r1, x0, Fx0, nothing, rnorm(Fx0))
-    # Populate 1 history column first
-    x_p1, Fx_p1, st_nan1, _ = step!!(
-        st_nan0, b_ok, prob_r1, x0, Fx0, nothing)
-    x_p2, Fx_p2, st_nan2, _ = step!!(
-        st_nan1, b_ok, prob_r1, SVector(0.5, 1.0), prob_r1.F(SVector(0.5, 1.0), nothing), nothing)
-    @test st_nan2.depth == 1
-    x_nf, Fx_nf, st_nf, info_nf = step!!(
-        st_nan2, b_ok, prob_r1, SVector(0.25, 0.5), Fx_nan, nothing)
-    @test x_nf == x_mem
-    @test st_nf.depth == 0
-    @test info_nf.failures == 1
-
     # Soft LINESEARCH_FAILED (stepnorm > 0) uses the moved candidate and preserves code
     member_soft = ScriptedBroydenMember(
         LINESEARCH_FAILED, x -> SVector(0.5 * (x[1] + 1.0), 0.5 * (x[2] + 2.0)))
@@ -768,26 +1437,12 @@ end
     @test info2.stepnorm > 0
     @test st_s2.depth >= 1
 
-    # Edge 3: Empty history (first step after start!! is x_m; when filters drop all d columns,
-    # p_kept == 0, takes x_m, and increments failures by d).
+    # A step that keeps every history column counts no filter failure: `filter_failures` adds
+    # `d - p`, and here `d == p == 1`.
     A_mat = @SMatrix [2.0 0.8 0.3; 0.4 1.7 0.5; 0.2 0.3 1.4]
     b_vec = SVector(1.0, -0.5, 0.8)
     prob_lin = NonlinearProblem((x, p) -> A_mat * x - b_vec)
     z3 = SVector(0.0, 0.0, 0.0)
-    # Two identical steps give Δw = 0 on the second step, so G_11 = 0 fails the angle filter (p_kept = 0, d = 1)
-    member_const = ScriptedBroydenMember(SUCCESS, x -> SVector(0.2, 0.1, -0.1))
-    b_drop = Broyden(member_const, Val(3))
-    st_dr0 = start!!(init_state(b_drop, prob_lin, z3, nothing),
-        b_drop, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
-    x_d1, F_d1, st_dr1, info_d1 = step!!(st_dr0, b_drop, prob_lin, z3, -b_vec, nothing)
-    @test x_d1 == SVector(0.2, 0.1, -0.1)
-    @test info_d1.failures == 0
-    x_d2, F_d2, st_dr2, info_d2 = step!!(st_dr1, b_drop, prob_lin, z3, -b_vec, nothing)
-    @test x_d2 == SVector(0.2, 0.1, -0.1)
-    @test info_d2.failures == 1
-
-    # A step that keeps every history column counts no filter failure: `filter_failures` adds
-    # `d - p`, and here `d == p == 1`.
     member_moving = ScriptedBroydenMember(SUCCESS, x -> SVector(0.2, 0.1, -0.1) + 0.5 * x)
     b_keep = Broyden(member_moving, Val(3))
     st_k0 = start!!(init_state(b_keep, prob_lin, z3, nothing),
