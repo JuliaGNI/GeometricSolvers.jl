@@ -13,12 +13,16 @@ to the complement of `inner` in `1:n`), and the residual equations into inner eq
 [`LeastSquaresProblem`](@ref), `BlockEliminated(prob, inner; kwargs...)` forwards to
 [`VariableProjection`](@ref).
 
-At each outer iterate `z`, the inner equations ``F_{E_y}(y, z) = 0`` are solved for ``y^*(z)``
-(in one linear solve ``y^*(z) = -J_{yy}(0, z)^+ F_{E_y}(0, z)`` when `linear_inner = true`, or by
-warm-starting from the previous inner solution `y_warm` with adaptive tolerance
-``\\tau_{\\text{inner}} \\le 0.5 \\|F_{E_z}(\\text{prev})\\|_2^2`` when `linear_inner = false`), and
-the outer solver steps on the reduced residual ``F_{\\text{red}}(z) = F_{E_z}(y^*(z), z)`` using the
-Schur complement
+At each outer iterate `z`, the inner equations ``F_{E_y}(y, z) = 0`` are solved for ``y^*(z)``:
+in one linear solve ``y^*(z) = -J_{yy}(0, z)^+ F_{E_y}(0, z)`` when `linear_inner = true`, or from
+the previous inner solution `y_warm` when `linear_inner = false`, with the adaptive tolerance
+``\\tau_{\\text{inner}} = \\max(10\\,\\varepsilon\\max(1, \\|F_{E_y}^0\\|_2),
+\\min(c, 0.5 \\|F_{E_z}(\\text{prev})\\|_2^2))``, where ``c`` is the tolerance cap of
+`inner_options` (unbounded when they are `nothing`) and ``\\|F_{E_y}^0\\|_2`` is the inner residual
+at the warm start. The cap stands alone before the first outer residual exists, so the tolerance is
+``\\max(10\\,\\varepsilon\\max(1, \\|F_{E_y}^0\\|_2), c)`` with `inner_options` and the floor alone
+without them. The outer solver then steps on the reduced residual
+``F_{\\text{red}}(z) = F_{E_z}(y^*(z), z)`` using the Schur complement
 
 ```math
 S(z) = J_{zz}(y^*(z), z) - J_{zy}(y^*(z), z)\\, J_{yy}(y^*(z), z)^+\\, J_{yz}(y^*(z), z).

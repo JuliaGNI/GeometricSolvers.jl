@@ -100,10 +100,10 @@ include("composition/switch.jl")
 include("composition/anderson.jl")
 include("composition/implicit.jl")
 
-# `solve!` asks the type of the problem which path it takes. That predicate is defined here, and
-# not beside `solve!`, because `BlockEliminated` arrives with `eliminate.jl`, which loads after
-# `solver.jl`. A `<:` test on the problem type would build a `UnionAll` at run time and allocate,
-# so the test is a dispatch on the type instead.
+# `solve!` asks the type of the problem which path it takes. The predicate is defined below the
+# `eliminate.jl` include, and not beside `solve!`, because its signature names `BlockEliminated`,
+# which `eliminate.jl` defines after `solver.jl` has loaded. A `<:` test on the problem type would
+# build a `UnionAll` at run time and allocate, so the test is a dispatch on the type instead.
 
 @inline function is_elim_stationarity_problem(
         ::Type{<:BlockEliminated{<:StationarityProblem}})

@@ -22,9 +22,11 @@ so that a compat-only bump can be told apart from an interface change.
   `F_{E_y}(y, z) = 0` for `y*(z)` — in one linear solve `y*(z) = -J_yy(0, z)⁺ F_{E_y}(0, z)` when
   `linear_inner = true`, or from the warm start `y_warm` (initialised to `NaN` in `init_state` and
   set to `x₀[Y]` in `start!!`, taking 0 inner steps on a repeat evaluation at the same `z`) with
-  adaptive inner tolerance `τ_inner ≤ 0.5 ‖F_{E_z}(prev)‖₂²` and pseudoinverse null-space
-  projection on rank-deficient inner steps when `linear_inner = false` — and steps on the Schur-
-  corrected outer residual `F_{E_z}(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ F_{E_y}(y*(z), z)`
+  the adaptive inner tolerance `τ_inner = max(10 eps max(1, ‖F_y0‖), min(c, 0.5 ‖F_{E_z}(prev)‖₂²))`
+  (`c` the `inner_options` cap, which stands alone before the first outer residual) and
+  pseudoinverse null-space projection on rank-deficient inner steps when `linear_inner = false` —
+  and steps on the Schur-corrected outer residual
+  `F_{E_z}(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ F_{E_y}(y*(z), z)`
   with the Schur complement `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`.
   `VariableProjection(prob::LeastSquaresProblem, inner; outer = nothing,
   linsolve = SVDFactorization(), jacobian_mode = :kaufman, linear_inner = true,
@@ -33,13 +35,14 @@ so that a compat-only bump can be told apart from an interface change.
   inner least-squares subproblem across all `m` residual rows for `y*(z)` and forms the `m × |Z|`
   reduced Jacobian by Kaufman's projection `J_red(z) = (I - Φ(z) Φ(z)⁺) D(z)` (`jacobian_mode =
   :kaufman`) or the full Golub–Pereyra formula subtracting `(Φ(z)⁺)ᴴ (∂_z Φ(z))ᴴ r_red(z)`
-  (`jacobian_mode = :golub_pereyra`); on the 5-parameter 2-exponential separable fit over 100 seeded
-  starts (`Xoshiro(42)`), both `:kaufman` and `:golub_pereyra` converge on `>= 85 / 100` starts
-  versus `64 / 100` for joint Levenberg–Marquardt. `solve`, `init`, `solve!` and `solve!!` accept a
-  full initial guess `x₀` of length `n` in R1 (`StaticVector`) and R3 (`Array` and
-  `AbstractGPUArray`), support `StationarityProblem` datum `b` and implicit differentiation, and
-  return `(x*, status)` with `x*[Y] = y*(z*)` and `x*[Z] = z*`; any inner solver failure or rank-
-  deficient inner factor (`rank < |Y|`) increments `status.step_failures`.
+  (`jacobian_mode = :golub_pereyra`); on the 5-parameter 2-exponential separable fit over the 100
+  seeded starts of `Xoshiro(42)`, both modes converge from 100 of the 100 starts against 70 for
+  joint Levenberg–Marquardt, and the test requires strictly more than joint and at least 85 of 100.
+  `solve`, `init`, `solve!` and `solve!!` accept a full initial guess `x₀` of length `n` in R1
+  (`StaticVector`) and R3 (`Array` and `AbstractGPUArray`), support `StationarityProblem` datum `b`
+  and implicit differentiation, and return `(x*, status)` with `x*[Y] = y*(z*)` and `x*[Z] = z*`;
+  any inner solver failure or rank-deficient inner factor (`rank < |Y|`) increments
+  `status.step_failures`.
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
   range starts at `6.5.1`.** The `Adapt` floor rises from 4.6.1 to 4.7.3 and the `GPUArraysCore`
   floor from 0.2 to 0.2.1, because Metal 1.12 needs `GPUArrays` 12.1, which needs both; with the
