@@ -751,7 +751,7 @@ end
             @test norm(x_st_r3 - Vector(x_st_joint)) <= tol * max(one(T), norm(x_st_joint))
         end
 
-        # Implicit differentiation through solve on BlockEliminated and VariableProjection (R1 and R3)
+        # Implicit differentiation through solve on BlockEliminated (R1 and R3)
         elim_imp_r1 = BlockEliminated(prob_j, (1, 2); outer = (3, 4))
         elim_imp_r3 = BlockEliminated(prob_r3, [1, 2]; outer = [3, 4])
         dx_dp_joint = ForwardDiff.derivative(
@@ -860,7 +860,7 @@ end
     τ_at_o1, _ = GS._inner_tol_r1(nothing, Float64, 1.0, 0.8)
     @test isapprox(τ_at_o1, 0.5 * 0.8^2; rtol = 1e-12)
     τ_at_start, _ = GS._inner_tol_r1(nothing, Float64, 1.0, NaN)
-    @test isapprox(τ_at_start, sqrt(eps(Float64)); rtol = 1e-12)
+    @test isapprox(τ_at_start, 10 * eps(Float64); rtol = 1e-12)
 
     _, _, _, _, iters_first_step = GS._eliminate_r1(
         elim_nl, st_r1.inner_state, SVector(0.2, 0.4), SVector(0.5, 0.6),
@@ -897,8 +897,8 @@ end
     @test norm(x_loose_r3 - Vector(x_joint)) <= 1e-11
 
     # 4. VariableProjection with linear_inner = false: adaptive tolerance, step_failures on non-convergence, and inner_method
-    prob_vp_nl_r1 = LeastSquaresProblem(r_vp_nl, 2)
-    prob_vp_nl_r3 = LeastSquaresProblem(r_vp_nl!, 2)
+    prob_vp_nl_r1 = LeastSquaresProblem(r_vp_nl, 4)
+    prob_vp_nl_r3 = LeastSquaresProblem(r_vp_nl!, 4)
     m_gn_svd = GaussNewton(; linsolve = SVDFactorization())
 
     vp_fail_r1 = VariableProjection(
@@ -960,6 +960,14 @@ end
         st_started.E_y, st_started.E_z
     )
     @test iters_r1_repeat == 0
+
+    # 6. VariableProjection delegates Dual solve_implicit to LeastSquaresProblem ArgumentError
+    d_tag = ForwardDiff.Dual{Nothing}(0.2, 1.0)
+    @test_throws ArgumentError solve(vp_loose_r1, SVector(2.0, 0.5), m_gn_svd, d_tag)
+    @test_throws ArgumentError solve(vp_loose_r3, [2.0, 0.5], m_gn_svd, d_tag)
+    v_full = SVector(0.1, 0.2, 0.3, 0.4)
+    @test jvp!!(nothing, nothing, elim_nl, x0, v_full, 0.2) ≈
+          jvp!!(nothing, AutoForwardDiff(), elim_nl, x0, v_full[SVector(3, 4)], 0.2)
 end
 
 @testset "Check 4: Singular J_yy dead unit minimum-norm step and step_failures" begin

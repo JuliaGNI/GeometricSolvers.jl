@@ -1032,9 +1032,23 @@ end
 end
 
 @inline function jvp!!(
+        ::Nothing, ::AutoForwardDiff,
+        prob::Union{BlockEliminated, VariableProjection},
+        x::StaticVector{N, T}, v::StaticVector{N, T}, p) where {N, T}
+    return _elim_jac_r1(prob, x, p) * _jvp_vec_r1(prob, x, v, p)
+end
+
+@inline function jvp!!(
         ::Nothing, ::Nothing,
         prob::Union{BlockEliminated, VariableProjection},
         x::StaticVector{N, T}, v::StaticVector{Nv, T}, p) where {N, Nv, T}
+    return _elim_jac_r1(prob, x, p) * _jvp_vec_r1(prob, x, v, p)
+end
+
+@inline function jvp!!(
+        ::Nothing, ::Nothing,
+        prob::Union{BlockEliminated, VariableProjection},
+        x::StaticVector{N, T}, v::StaticVector{N, T}, p) where {N, T}
     return _elim_jac_r1(prob, x, p) * _jvp_vec_r1(prob, x, v, p)
 end
 
@@ -2599,8 +2613,7 @@ end
         x_star::StaticVector{S, T}, p, p_val,
         status::SolverStatus) where {Tg, V, N, D <: ForwardDiff.Dual{Tg, V, N}, S, T}
     Jmat = _inner_jac_r1(AutoForwardDiff(), prob_in, x_star, p_val)
-    ls = size(Jmat, 1) == size(Jmat, 2) ? LUFactorization() : QRFactorization()
-    fac = factorize!!(nothing, ls, Jmat)
+    fac = factorize!!(nothing, LUFactorization(), Jmat)
     if returncode(fac) === SINGULAR
         return _make_nan_duals(D, x_star), _singular_status(status)
     end
@@ -2611,15 +2624,14 @@ end
 end
 
 function _elim_implicit_tangent_r3(
-        ::Type{D}, ws::Union{BlockElimPrep, VarProPrep},
+        ::Type{D}, ws::BlockElimPrep,
         prob_in::AbstractNonlinearProblem,
         x_star::AbstractVector{T}, p, p_val,
         status::SolverStatus) where {Tg, V, N, D <: ForwardDiff.Dual{Tg, V, N}, T}
     _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, x_star, p_val)
     m_rows, n_cols = size(ws.J_buf)
-    ls = m_rows == n_cols ? LUFactorization() : QRFactorization()
-    fac_slot = m_rows == n_cols ? init_linear(ls, nothing, x_star) :
-               init_linear(ls, nothing, x_star, m_rows)
+    ls = LUFactorization()
+    fac_slot = init_linear(ls, nothing, x_star)
     fac = factorize!!(fac_slot, ls, ws.J_buf)
     if returncode(fac) === SINGULAR
         return _make_nan_duals(D, x_star), _singular_status(status)
@@ -2640,7 +2652,13 @@ function _elim_implicit_tangent_r3(
 end
 
 function solve_implicit(
-        prob::Union{BlockEliminated, VariableProjection}, x₀, method, p,
+        vp::VariableProjection, x₀, method, p,
+        options::Union{Nothing, Options}, kwargs)
+    return solve_implicit(getfield(vp, :prob), x₀, method, p, options, kwargs)
+end
+
+function solve_implicit(
+        prob::BlockEliminated, x₀, method, p,
         options::Union{Nothing, Options}, kwargs)
     prob_in = getfield(prob, :prob)
     if prob_in isa StationarityProblem
