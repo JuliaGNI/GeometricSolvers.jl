@@ -214,7 +214,9 @@ end
     copy!!(yNk, yk)
     cnorm = R(rnorm(cg))
     # ‖g̃‖ = ‖Jᴴ F‖/‖F‖ and ‖J ĝ‖, both from the projected Cauchy weights: the scale of `c_g` is
-    # β₀ times that of `g̃`, and both norms of the loop are ratios of it
+    # β₀ times that of `g̃`, so each norm is a ratio of `c_g`'s. The direction of the two Cauchy
+    # branches is `ĝ = V_k c_g / ‖c_g‖`, which is the weight vector `c_g / cnorm`: the loop divides
+    # by `cnorm`, as the factorised loop divides `g̃` by its own norm, and never by `gnorm`.
     gnorm = cnorm / fnorm
     jnorm = iszero(cnorm) ? zero(R) : R(reduced_hessenberg_norm(ws, ws.cg, k) / cnorm)
     cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm) && isfinite(jnorm)
@@ -234,7 +236,7 @@ end
             return x, Fx, δ, StepInfo{R}(STALLED, fnorm, zero(R), Int32(0), false, false)
         elseif !newton || nC >= δ
             # the Cauchy point, cut to the radius
-            σ = -min(nC, δ) / gnorm
+            σ = -min(nC, δ) / cnorm
             map!!(c -> σ * c, yk, cg)
             s = reduced_direction!(g_s(g), ws, ws.y, k)
             boundary = nC >= δ
@@ -242,8 +244,8 @@ end
         else
             # the point of norm δ on the segment from the Cauchy point to the Newton step, in units
             # of δ: `a = -(nC/δ) ĝ` and `b = sN + nC ĝ`, with the root `t ≥ 0` of `‖a + t b̂‖ = 1`
-            map!!(c -> -(nC / δ) / gnorm * c, yk, cg)
-            map!!((n, c) -> n + (nC / gnorm) * c, ybk, yNk, cg)
+            map!!(c -> -(nC / δ) / cnorm * c, yk, cg)
+            map!!((n, c) -> n + (nC / cnorm) * c, ybk, yNk, cg)
             bnorm = R(rnorm(ybk))
             c₀ = 1 - (nC / δ)^2
             ab = iszero(bnorm) ? zero(R) : rdot(yk, ybk) / bnorm

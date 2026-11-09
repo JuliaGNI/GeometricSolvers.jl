@@ -492,6 +492,27 @@ end
         globalization = Backtracking()) isa Newton
 end
 
+# The Cauchy point of the matrix-free loop is `V_k c_g / ‖c_g‖` scaled to the radius, as the one of
+# the factorised loop is `ĝ = g̃ / ‖g̃‖` scaled to it. A weight vector divided by `‖Jᴴ F‖ / ‖F‖`
+# instead makes the step `‖F‖` times too long, which the trial test refuses: at a radius that binds,
+# the radius decides the step, so the two loops part. The first start puts the Cauchy point outside
+# the radius and the second puts it inside the Newton step's length, which is the segment branch.
+@testset "Check 6: the matrix-free DogLeg at a binding radius, $T" for T in REAL_ELTYPES
+    R = real(T)
+    prob_r3, prob_r5 = r5_dogleg_pair()
+    for (x₀, radius) in ((T[3.5, -2.8], R(1e-3)), (T[0.1, -0.1], R(10)))
+        m = Newton(;
+            linsolve = GMRES(; maxiter = 2, forcing = FixedForcing(1e-14)),
+            globalization = DogLeg(; radius = radius))
+        x_r5, st_r5 = solve(prob_r5, copy(x₀), m)
+        x_r3, st_r3 = solve(prob_r3, copy(x₀),
+            Newton(; globalization = DogLeg(; radius = radius)))
+        @test st_r5.code == SUCCESS
+        @test st_r5.iterations == st_r3.iterations
+        @test norm(x_r5 - x_r3) <= 8 * eps(R) * max(1, norm(x_r3))
+    end
+end
+
 @testset "Check 6: a restarted GMRES solves with a line search, $T" for T in REAL_ELTYPES
     # `restart < maxiter` runs the restart cycle: its residual is formed with one more product
     prob = NonlinearProblem((r, x, q) -> begin
@@ -673,6 +694,17 @@ end
     state = init_state(Newton(; linsolve = GMRES()), prob, zeros(4), nothing)
     @test !isbits(state)
     @test state.ws isa GeometricSolvers.GMRESWorkspace
+
+    # the one host kernel entry refuses the method, and the batch keeps its iterates. The refusal
+    # is the iterate test of the R5 state, which sees the batch's value iterate: without it the
+    # state is built from that iterate and the product preparation raises a `MethodError`.
+    X = [SVector(2.0, 2.0) for _ in 1:4]
+    X₀ = copy(X)
+    S = Vector{SolverStatus{Float64}}(undef, 4)
+    prob_value = NonlinearProblem((x, q) -> x .^ 3 .- 1)
+    @test_throws ArgumentError solve_batch!(X, S, prob_value, Newton(; linsolve = GMRES()))
+    @test_throws ArgumentError solve_batch!(X, prob_value, Newton(; linsolve = GMRES()))
+    @test X == X₀
 end
 
 # ─── The allocations of the inner solve ──────────────────────────────────────
