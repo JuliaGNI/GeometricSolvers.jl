@@ -6,7 +6,7 @@ using GeometricSolvers: AndersonHistory, AndersonState, NONFINITE, LINESEARCH_FA
                         init_state, isconverged, push_history!!, rdot, rnorm, solve!!,
                         solve_broyden_weights, solve_broyden_weights!, solve_weights,
                         solve_weights!, start!!, step!!, step_multisecant!!
-using GPUArraysCore: @allowscalar
+using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
 using KernelAbstractions: KernelAbstractions as KA
@@ -17,6 +17,7 @@ using Test
 include("../helpers/matrix.jl")
 include("../helpers/r1problems.jl")
 include("../helpers/adproblems.jl")
+allowscalar(false)
 
 # Inner member whose step returns a prescribed ReturnCode and candidate for edge tests.
 struct ScriptedBroydenMember{C, F}
@@ -368,8 +369,9 @@ end
     @test iszero(info_u3.stepnorm)
     @test x_u3 == x0_r3
 
-    start!!(st_a_r3, m_a, prob_r3, x0_r3, Fx0_r3, nothing, rnorm(Fx0_r3))
-    start!!(st_b_r3, m_b, prob_r3, x0_r3, Fx0_r3, nothing, rnorm(Fx0_r3))
+    # `start!!` and `step!!` return the state to use next; the argument is not updated.
+    st_a_r3 = start!!(st_a_r3, m_a, prob_r3, x0_r3, Fx0_r3, nothing, rnorm(Fx0_r3))
+    st_b_r3 = start!!(st_b_r3, m_b, prob_r3, x0_r3, Fx0_r3, nothing, rnorm(Fx0_r3))
     for k in 1:3
         xk_a = Vector(seq_x[k])
         xk_b = Vector(seq_x[k])
@@ -377,8 +379,11 @@ end
         fk_b = similar(xk_b)
         prob_r3.F(fk_a, xk_a, nothing)
         prob_r3.F(fk_b, xk_b, nothing)
-        step!!(st_a_r3, m_a, prob_r3, xk_a, fk_a, nothing)
-        step!!(st_b_r3, m_b, prob_r3, xk_b, fk_b, nothing)
+        xk_a, _, st_a_r3, info_a = step!!(st_a_r3, m_a, prob_r3, xk_a, fk_a, nothing)
+        xk_b, _, st_b_r3, info_b = step!!(st_b_r3, m_b, prob_r3, xk_b, fk_b, nothing)
+        @test info_a.code == SUCCESS
+        @test info_b.code == SUCCESS
+        @test xk_b != Vector(seq_x[k])
         @test isequal(st_b_r3.ΔX, st_a_r3.ΔX)
         @test isequal(st_b_r3.ΔW, st_a_r3.ΔW)
         if k == 2
@@ -502,7 +507,7 @@ end
 
                 # Check 4: R3 step!! and solve! allocate 0 bytes on Array after warm-up
                 st_r3 = init_state(method_br, prob_r3, x₀, p_vec)
-                start!!(st_r3, method_br, prob_r3, x₀, Fx₀, p_vec, rnorm(Fx₀))
+                st_r3 = start!!(st_r3, method_br, prob_r3, x₀, Fx₀, p_vec, rnorm(Fx₀))
                 x_work = copy(x₀)
                 Fx_work = copy(Fx₀)
                 @test _r3_broyden_step_alloc_probe(
@@ -512,8 +517,8 @@ end
                 # Edge 7: JLArray R3 solve with scalar indexing forbidden
                 x₀_jl = JLArray(x₀)
                 p_jl = JLArray(p_vec)
-                solver_jl = @allowscalar false init(prob_r3, copy(x₀_jl), method_br, p_jl)
-                x_jl, st_jl = @allowscalar false solve!(solver_jl, copy(x₀_jl))
+                solver_jl = init(prob_r3, copy(x₀_jl), method_br, p_jl)
+                x_jl, st_jl = solve!(solver_jl, copy(x₀_jl))
                 @test st_jl.code == SUCCESS
                 @test rnorm(Array(x_jl) - Vector(x_n_s)) <= abstol * cond(J_star)
             end
@@ -542,26 +547,26 @@ end
             x_arr = Vector(x_r1)
             Fx_arr = Vector(Fx_r1)
             st_arr = init_state(method, prob_r3, x_arr, p_vec)
-            start!!(st_arr, method, prob_r3, x_arr, Fx_arr, p_vec, rnorm(Fx_arr))
+            st_arr = start!!(st_arr, method, prob_r3, x_arr, Fx_arr, p_vec, rnorm(Fx_arr))
 
             x_jl = JLArray(x_arr)
             Fx_jl = JLArray(Fx_arr)
-            st_jl = @allowscalar false init_state(method, prob_r3, x_jl, p_jl)
-            @allowscalar false start!!(
-                st_jl, method, prob_r3, x_jl, Fx_jl, p_jl, rnorm(Fx_jl))
+            st_jl = init_state(method, prob_r3, x_jl, p_jl)
+            st_jl = start!!(st_jl, method, prob_r3, x_jl, Fx_jl, p_jl, rnorm(Fx_jl))
 
             x_ka = KA.allocate(KA_BACKEND, T, n)
             copyto!(x_ka, x_arr)
             Fx_ka = KA.allocate(KA_BACKEND, T, n)
             copyto!(Fx_ka, Fx_arr)
             st_ka = init_state(method, prob_r3, x_ka, p_ka)
-            start!!(st_ka, method, prob_r3, x_ka, Fx_ka, p_ka, rnorm(Fx_ka))
+            st_ka = start!!(st_ka, method, prob_r3, x_ka, Fx_ka, p_ka, rnorm(Fx_ka))
 
             for step_idx in 1:(m + 1)
                 x_r1, Fx_r1, st_r1, _ = step!!(st_r1, method, prob_r1, x_r1, Fx_r1, p_s)
-                step!!(st_arr, method, prob_r3, x_arr, Fx_arr, p_vec)
-                @allowscalar false step!!(st_jl, method, prob_r3, x_jl, Fx_jl, p_jl)
-                step!!(st_ka, method, prob_r3, x_ka, Fx_ka, p_ka)
+                x_arr, Fx_arr, st_arr, _ = step!!(
+                    st_arr, method, prob_r3, x_arr, Fx_arr, p_vec)
+                x_jl, Fx_jl, st_jl, _ = step!!(st_jl, method, prob_r3, x_jl, Fx_jl, p_jl)
+                x_ka, Fx_ka, st_ka, _ = step!!(st_ka, method, prob_r3, x_ka, Fx_ka, p_ka)
 
                 tol = n * eps(R) * rnorm(x_r1)
                 @test rnorm(x_arr - Vector(x_r1)) <= tol
@@ -651,7 +656,7 @@ end
         p_r3 = [5.0, 5.0]
         prob_r3.F(Fx0_r3, x0_r3, p_r3)
         st_r3 = init_state(m_br, prob_r3, x0_r3, p_r3)
-        start!!(st_r3, m_br, prob_r3, x0_r3, Fx0_r3, p_r3, rnorm(Fx0_r3))
+        st_r3 = start!!(st_r3, m_br, prob_r3, x0_r3, Fx0_r3, p_r3, rnorm(Fx0_r3))
         JET.@test_opt target_modules = (GeometricSolvers,) step!!(
             st_r3, m_br, prob_r3, x0_r3, Fx0_r3, p_r3)
     end
