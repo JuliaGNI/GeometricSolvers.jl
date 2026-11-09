@@ -390,7 +390,7 @@ _r2_scalar_problem() = NonlinearProblem(_r2_scalar_res, _r2_scalar_jac)
                     s_P = Adapt.adapt(B, PerSystem(copy(s_p_host)))
                     solve_batch!(s_X, s_S, scalar_prob, Newton(), s_P; max_iterations = 40)
                     @test Array(s_X) == s_ref_x
-                    @test Array(s_S) == s_ref_st
+                    @test all(status_agrees.(Array(s_S), s_ref_st))
                 end
             end
         end

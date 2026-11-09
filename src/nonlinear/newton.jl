@@ -82,8 +82,9 @@ function check_newton(regularization::R, reuse, globalization, refinement) where
 end
 
 # The checks of a method after `adapt`: the rule cannot validate, because it also runs inside a
-# kernel, so `prepare_solve` and `_prepare_batch` run this on the host, where `ToReal` may have
-# narrowed a value to `Inf` or to zero.
+# kernel, so each host entry that adapts a method — `prepare_solve`, every `_prepare_batch`, and
+# the `init`, `solve` and `solve_batch!` of a `StationarityProblem` — runs this, where `ToReal` may
+# have narrowed a value to `Inf` or to zero.
 @inline function check_adapted(m::Newton)
     check_newton(m.regularization, m.reuse, m.globalization, m.refinement)
     check_adapted(m.globalization)
