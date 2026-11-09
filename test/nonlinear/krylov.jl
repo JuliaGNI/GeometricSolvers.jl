@@ -339,6 +339,38 @@ end
     @test abs(x_s[1]) <= 100 * sqrt(eps(R))
 end
 
+@testset "Check 3: the inexact step kind is what accepts the full step, $T" for T in REAL_ELTYPES
+    R = real(T)
+    # `F = A x - b` with `A = diag(1, 10)` and `b = 𝟙`: one GMRES iteration leaves the relative
+    # linear residual `0.836`, which is above the bound `1 - c₁ = 0.5` that the exact (Armijo) test
+    # gives and below the inexact bound `1 - c₁ (1 - η) = 0.918`. The full step is accepted under
+    # `InexactStep(η)` and rejected under `ExactStep()`, so the accepted iterate is the full step's.
+    A = T[1 0; 0 10]
+    b = T[1, 1]
+    prob = NonlinearProblem((r, x, q) -> begin
+        mul!(r, A, x)
+        r .-= b
+        r
+    end)
+    solver = init(prob, zeros(T, 2),
+        Newton(;
+            linsolve = GMRES(; maxiter = 1, forcing = FixedForcing(R(0.9))),
+            globalization = Backtracking(; c₁ = 0.5)))
+    m = solver.method
+    x = copy(solver.x)
+    Fx = similar(x)
+    prob.F(Fx, x, nothing)
+    fnorm₀ = rnorm(Fx)
+    state = start!!(solver.state, m, prob, x, Fx, nothing, fnorm₀)
+    _, Fx₁, state₁, info = step!!(state, m, prob, x, Fx, nothing)
+    η_ach = state₁.ws.linres / fnorm₀
+    @test info.code == SUCCESS
+    @test R(0.6) < η_ach < R(0.7)
+    # the exact test rejects this step, and the accepted iterate is the one of the full step
+    @test R(rnorm(Fx₁)) > (1 - m.globalization.c₁) * fnorm₀
+    @test abs(R(rnorm(Fx₁)) - η_ach * fnorm₀) <= 4 * eps(R) * fnorm₀
+end
+
 # ─── The inner cap (Check 4) ─────────────────────────────────────────────────
 
 @testset "Check 4: the inner cap and its recording, $T" for T in REAL_ELTYPES
