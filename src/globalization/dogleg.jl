@@ -188,8 +188,8 @@ end
 # Walker and Shadid 2008, Corollary 2.3, p. 2121). With `J V_k = V_{k+1} H̄_k` and `F = -β₀ V e₁`,
 # the model of a direction `s = V_k y` is `F + J s = V (-β₀ e₁ + H̄_k y)`, so its norm is that of a
 # vector of length `k + 1` and costs no product; the Cauchy point is the one of `dogleg_step`,
-# `ĝ = V_k c_g` with `c_g = -β₀ (H̄_{1, 1:k})ᴴ`, whose norm is `‖c_g‖` and whose model norm
-# `‖J ĝ‖` is `‖H̄_k c_g‖`. The loop accepts, rejects and updates the radius as the factorised loop
+# `ĝ = V_k c_g / ‖c_g‖` with `c_g = -β₀ (H̄_{1, 1:k})ᴴ`, whose model norm `‖J ĝ‖` is
+# `‖H̄_k c_g‖ / ‖c_g‖`. The loop accepts, rejects and updates the radius as the factorised loop
 # does, on the same curve and with the same constants, and each trial costs one evaluation of `F`.
 @inline function dogleg_step_mf(
         ws::GMRESWorkspace{T, R}, g, prob, x, Fx, p, sN, newton::Bool,

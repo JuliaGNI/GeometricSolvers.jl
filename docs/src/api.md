@@ -388,6 +388,7 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 prepare_ad
+prepare_jvp
 DIJacobian
 DIStationarity
 ChunkedForwardDiff
@@ -441,9 +442,12 @@ GMRESWorkspace
 init_gmres_workspace
 GMRESInfo
 gmres_solve!
+arnoldi_dot
 R5Operator
 R5JVP
 CountingResidual
+sat16
+with_calls
 jacobi_rotation
 ToReal
 StripDual

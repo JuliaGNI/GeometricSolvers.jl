@@ -494,9 +494,9 @@ end
 
 # The Cauchy point of the matrix-free loop is `V_k c_g / ‖c_g‖` scaled to the radius, as the one of
 # the factorised loop is `ĝ = g̃ / ‖g̃‖` scaled to it. A weight vector divided by `‖Jᴴ F‖ / ‖F‖`
-# instead makes the step `‖F‖` times too long, which the trial test refuses: at a radius that binds,
-# the radius decides the step, so the two loops part. The first start puts the Cauchy point outside
-# the radius and the second puts it inside the Newton step's length, which is the segment branch.
+# instead makes each step of the two Cauchy branches `‖F‖` times too long, so a radius that binds
+# gives a different step and the two solves part. The first start below puts the Cauchy point
+# outside the radius, the second puts it between the Cauchy point and the Newton step.
 @testset "Check 6: the matrix-free DogLeg at a binding radius, $T" for T in REAL_ELTYPES
     R = real(T)
     prob_r3, prob_r5 = r5_dogleg_pair()
