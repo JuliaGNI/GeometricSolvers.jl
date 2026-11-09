@@ -42,8 +42,9 @@ element type and a real one.
 
 `roots` is a non-empty `Tuple` of roots — a `Number` for a `Number` iterate, an `SVector` for an R1
 iterate, a `Vector` for an R3 iterate — or an `AbstractVector` of real vectors. Every root has the
-length of the iterate and finite real entries. The `AbstractVector` form is not `isbits`, so
-[`solve_batch!`](@ref) refuses it: the batch kernel takes the problem by value.
+length of the iterate and finite real entries, and the roots of one set share their element type
+and their storage. The `AbstractVector` form is not `isbits`, so [`solve_batch!`](@ref) refuses it:
+the batch kernel takes the problem by value.
 
 For a wrapped [`StationarityProblem`](@ref) a root is a full state, as [`solve`](@ref) returns it,
 and the distance is taken on the unknowns `x_U`: `M` and `∇M` are functions of the `|U|` entries the
@@ -52,12 +53,15 @@ solve steps on, so `∇M` has length `|U|` whatever the length of the state.
 # Evaluation
 
 At a deflated root (`x = rᵢ`) the factor `mᵢ` is `Inf`, so a solve from `x₀ = rᵢ` returns
-`NONFINITE` at `0` iterations, and a trial step onto `rᵢ` has a non-finite merit, which a
-line search shrinks away from (`Backtracking` steps `0.1α` off a non-finite merit).
+`NONFINITE` at `0` iterations, and a trial step onto `rᵢ` has a non-finite merit, which
+`Backtracking` shrinks away from by the step `min(0.1α, √α √αmin)`.
 A factor that overflows (`‖x - rᵢ‖^{-p} = Inf`, as at `10^{-200}` in `Float64`) does the same.
 Every coordinate of `∇mᵢ` is evaluated unit-scaled, `-(p ((uⱼ/d) ϕ)/d)` with `d = ‖u‖` and
 `ϕ = d^{-p}`, which forms no `ϕ/d²` and so leaves no `NaN` where `uⱼ` is zero: the unscaled
 `-(p ϕ/d²) uⱼ` overflows to `Inf` at `d = 10^{-100}` and gives `Inf * 0.0 = NaN` there.
+Where `‖u‖^{-p-1}` overflows although `‖u‖^{-p}` does not (between about `10^{-155}` and
+`10^{-103}` in `Float64` for `p = 2`), `∇mᵢ` has an infinite coordinate and the Jacobian is not
+finite.
 
 # Implicit differentiation
 
@@ -68,8 +72,10 @@ an `ArgumentError`, as a [`StationarityProblem`](@ref) does.
 
 # R2
 
-[`solve_batch!`](@ref) solves every system of a batch of a [`NonlinearProblem`](@ref) under one
-`Deflated`, so each system is deflated at the same roots and ends at a root distinct from them.
+[`solve_batch!`](@ref) solves every system of a batch under one `Deflated`, so each system is
+deflated at the same roots and ends at a root distinct from them. The batch of a wrapped
+[`StationarityProblem`](@ref) takes the datum of its solves from the keyword `b`, shared or
+[`PerSystem`](@ref), or from the problem's own `b`.
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x^3 - x);
@@ -124,12 +130,14 @@ end
         "Deflated needs a NonlinearProblem or a StationarityProblem"))
 end
 
-@inline _root_length(r::Number) = 1
-@inline _root_length(r) = length(r)
-
 @inline _is_root(r::Real) = true
 @inline _is_root(r::Union{StaticVector, AbstractVector}) = true
 @inline _is_root(r) = false
+
+# A `Number` iterate has `Number` roots, and a vector iterate has vector roots: `x - r` has no
+# method across the two.
+@inline _scalar_iterate(x::Number) = true
+@inline _scalar_iterate(x) = false
 
 @inline function _finite_root(r::Real)
     return isfinite(r)
@@ -138,17 +146,24 @@ end
     return eltype(r) <: Real && all(isfinite, r)
 end
 
-# A root is non-empty, as long as every other root, and finite. The length of the iterate itself is
-# checked where a solve starts, because only then is the iterate known.
+# A root is non-empty, of the first root's length and element type, and finite. The length and the
+# storage of the iterate itself are checked where a solve starts, because only then is the iterate
+# known.
 @inline function _check_deflated_roots(roots::Tuple)
     isempty(roots) && throw(ArgumentError("Deflated needs at least one root"))
-    n = _root_length(first(roots))
+    n = length(first(roots))
+    T = eltype(first(roots))
+    scalar = _scalar_iterate(first(roots))
     for r in roots
         _is_root(r) || throw(ArgumentError(
             "Deflated roots must be real numbers or real vectors"))
         n >= 1 || throw(ArgumentError("Deflated roots must be non-empty"))
-        _root_length(r) == n || throw(ArgumentError(
+        length(r) == n || throw(ArgumentError(
             "Deflated needs roots of one length"))
+        eltype(r) === T || throw(ArgumentError(
+            "Deflated needs roots of one element type"))
+        _scalar_iterate(r) === scalar || throw(ArgumentError(
+            "Deflated needs roots of one storage"))
         _finite_root(r) || throw(ArgumentError(
             "Deflated needs roots with finite real entries"))
     end
@@ -158,11 +173,14 @@ end
 @inline function _check_deflated_roots(
         roots::AbstractVector{<:AbstractVector{<:Real}})
     isempty(roots) && throw(ArgumentError("Deflated needs at least one root"))
-    n = _root_length(first(roots))
+    n = length(first(roots))
+    T = eltype(first(roots))
     for r in roots
         n >= 1 || throw(ArgumentError("Deflated roots must be non-empty"))
-        _root_length(r) == n || throw(ArgumentError(
+        length(r) == n || throw(ArgumentError(
             "Deflated needs roots of one length"))
+        eltype(r) === T || throw(ArgumentError(
+            "Deflated needs roots of one element type"))
         _finite_root(r) || throw(ArgumentError(
             "Deflated needs roots with finite real entries"))
     end
@@ -468,12 +486,8 @@ end
 
 # ─── The checks of a solve ───────────────────────────────────────────────────
 
-# The iterate of a solve: real, in the element type of the roots, and as long as every root. A
-# complex iterate has no deflated Jacobian, because `M` is not holomorphic. `_iterate_length` reads
-# a `Number` as the one-entry iterate it is.
-@inline _iterate_length(x::Number) = 1
-@inline _iterate_length(x) = length(x)
-
+# The iterate of a solve: real, in the element type of the roots, as long as every root, and of the
+# roots' storage.
 function _check_deflated_solve(def::Deflated, x₀)
     real_eltype = eltype(x₀)
     real_eltype <: Real || throw(ArgumentError(
@@ -482,11 +496,15 @@ function _check_deflated_solve(def::Deflated, x₀)
     real_eltype === typeof(def.power) || throw(ArgumentError(
         "Deflated needs an iterate in the element type of its roots: the roots give " *
         "$(typeof(def.power)) and the start is $real_eltype"))
-    n = _iterate_length(x₀)
+    n = length(x₀)
+    scalar = _scalar_iterate(x₀)
     for r in def.roots
-        _iterate_length(r) == n || throw(ArgumentError(
+        length(r) == n || throw(ArgumentError(
             "Deflated needs roots of the length of the iterate: the start has $n entries and a " *
-            "root has $(_iterate_length(r))"))
+            "root has $(length(r))"))
+        _scalar_iterate(r) === scalar || throw(ArgumentError(
+            "Deflated needs roots of the storage of the iterate: the start is a $(typeof(x₀)) " *
+            "and a root is a $(typeof(r))"))
     end
     return nothing
 end
@@ -511,6 +529,17 @@ function init(
     _check_deflated_solve(def, x₀)
     return invoke(init, Tuple{AbstractNonlinearProblem, Any, Any, Any}, def, x₀, method, p;
         options = options, kwargs...)
+end
+
+# `solve` delegates to `solve!!`, but a caller may reach the loop directly with an iterate that
+# `init` never saw, so the checks of a solve start are made here as well.
+@inline function solve!!(
+        state, def::Deflated{<:NonlinearProblem}, x₀, method, p = nothing,
+        options::Options{R} = Options(eltype(x₀))) where {R <: Real}
+    _check_deflated_solve(def, x₀)
+    return invoke(solve!!,
+        Tuple{Any, AbstractNonlinearProblem, Any, Any, Any, Options{R}},
+        state, def, x₀, method, p, options)
 end
 
 # The derivative of the deflated solve at a dual input is the derivative of the **undeflated**
@@ -579,10 +608,13 @@ end
 
 Solve a batch of independent small systems under one [`Deflated`](@ref) problem, as
 [`solve_batch!`](@ref) does on a [`NonlinearProblem`](@ref): every system is deflated at the same
-roots, so each ends at a root distinct from them. The kernel takes the problem by value, so a
-`Deflated` whose roots or inner problem are not `isbits` — the `AbstractVector` root storage of an
-R3 iterate, for one — raises an `ArgumentError`; a root of another length than the iterate, or an
-iterate of another element type than the roots, raises one too.
+roots, so each ends at a root distinct from them. The batch of a wrapped
+[`StationarityProblem`](@ref) is deflated on the unknowns of the same full-state roots, and its
+datum comes from the keyword `b`, shared or [`PerSystem`](@ref), or from the problem's own `b`.
+The kernel takes the problem by value, so a `Deflated` whose roots or inner problem are not
+`isbits` — the `AbstractVector` root storage of an R3 iterate, for one — raises an
+`ArgumentError`; a root of another length than the iterate, or an iterate of another element type
+than the roots, raises one too.
 """
 function solve_batch!(
         X::AbstractVector{<:Union{SVector, Number}},
@@ -747,11 +779,13 @@ end
 @inline function solve!!(
         s::StaticDeflatedState, def::Deflated{<:StationarityProblem}, x₀, m, p,
         opt::Options{R}; b = nothing) where {R <: Real}
-    b_raw = _resolve_datum(def.prob, p, b)
+    p_sys = p isa _StationaritySysParams ? p.p : p
+    b_sys = p isa _StationaritySysParams && b === nothing ? p.b : b
+    b_raw = _resolve_datum(def.prob, p_sys, b_sys)
     b_eff = _static_datum(def.prob, x₀, b_raw)
     dprob = _deflated_reduced(def, x₀, b_eff)
     u₀ = _extract_unknowns(def.prob.U, x₀)
-    u, status, inner₊ = solve!!(s.inner, dprob, u₀, m, p, opt)
+    u, status, inner₊ = solve!!(s.inner, dprob, u₀, m, p_sys, opt)
     x = _like_iterate(x₀, _embed_unknowns(def.prob.U, x₀, u))
     return x, status, StaticDeflatedState(inner₊)
 end
@@ -870,4 +904,71 @@ function solve!(
     solver.x = x₊
     solver.state === state || (solver.state = state)
     return solver.x, status
+end
+
+# ─── `solve_batch!` of a `Deflated(::StationarityProblem)` ───────────────────
+
+# The batch steps of the base's stationarity batch, with the wrapped problem in the base problem's
+# place: one `Deflated` for the whole batch, every system deflated at the same full-state roots on
+# the unknowns, and the per-system datum from the keyword `b` or from the problem's own `b`.
+function solve_batch!(
+        X::AbstractVector{<:Union{SVector, Number}},
+        def::Deflated{<:StationarityProblem},
+        method = Newton(),
+        p = nothing;
+        order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
+        options::Union{Nothing, Options} = nothing, b = nothing, kwargs...
+)
+    b_src = b === nothing ? def.prob.b : b
+    _validate_batch(X, p, order)
+    _check_deflated_batch(def, X)
+    b_src isa PerSystem && _validate_batch(X, b_src, nothing)
+    _refuse_deflated_stationarity_duals(:solve_batch!, zero(eltype(X)), p)
+    T = eltype(eltype(X))
+    R = real(T)
+    opt = resolve_options(T, options, kwargs)
+    m = Adapt.adapt(ToReal{R}(), method)
+    _validate_stationarity_batch(X, def.prob, b_src, p)
+    isempty(X) && return _tally_return_codes(ReturnCode[])
+    idx₀ = firstindex(X)
+    p₀ = _sample_batch_item(p, idx₀)
+    state₀ = init_state(
+        m, def, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
+    codes = allocate(get_backend(X), ReturnCode, length(X))
+    sp = _StationarityBatchParams(p, b_src)
+    return _tally_return_codes(Array(_launch!(X, codes, def, m, sp, opt, state₀, order)))
+end
+
+function solve_batch!(
+        X::AbstractVector{<:Union{SVector, Number}},
+        S::AbstractVector{SolverStatus{R}},
+        def::Deflated{<:StationarityProblem},
+        method = Newton(),
+        p = nothing;
+        order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
+        options::Union{Nothing, Options} = nothing, b = nothing,
+        kwargs...) where {R <: Real}
+    b_src = b === nothing ? def.prob.b : b
+    _validate_batch(X, p, order)
+    _check_deflated_batch(def, X)
+    b_src isa PerSystem && _validate_batch(X, b_src, nothing)
+    _refuse_deflated_stationarity_duals(:solve_batch!, zero(eltype(X)), p)
+    R_X = real(eltype(eltype(X)))
+    R === R_X || throw(ArgumentError(
+        "solve_batch! requires the status vector S to use the real type $R_X of the batch iterates, got SolverStatus{$R}"))
+    length(S) == length(X) || throw(DimensionMismatch(
+        "status vector S has length $(length(S)), expected $(length(X)) to match the batch X"))
+    get_backend(S) == get_backend(X) || throw(ArgumentError(
+        "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
+    T = eltype(eltype(X))
+    opt = resolve_options(T, options, kwargs)
+    m = Adapt.adapt(ToReal{R}(), method)
+    _validate_stationarity_batch(X, def.prob, b_src, p)
+    isempty(X) && return S
+    idx₀ = firstindex(X)
+    p₀ = _sample_batch_item(p, idx₀)
+    state₀ = init_state(
+        m, def, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
+    sp = _StationarityBatchParams(p, b_src)
+    return _launch!(X, S, def, m, sp, opt, state₀, order)
 end

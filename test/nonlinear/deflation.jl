@@ -3,14 +3,15 @@ using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JET: JET, @test_opt
 using JLArrays: JLArray
-using LinearAlgebra: norm
+using LinearAlgebra: diagm, norm
 using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
 using GeometricSolvers: AutoForwardDiff, Backtracking, Deflated, LeastSquaresProblem,
                         NONFINITE,
-                        Newton, NonlinearProblem, Options, Reparametrized, SolverStatus,
+                        Newton, NonlinearProblem, Options, PerSystem, Reparametrized,
+                        SolverStatus,
                         StationarityProblem, ToReal, init, init_state, jacobian!!, jvp!!,
                         prepare_ad, residual!!, solve, solve!, solve!!, solve_batch!
 
@@ -296,14 +297,15 @@ end
             @test norm(Vector(jvp!!(nothing, prep, def, xt, vt, nothing)) - Jref * vt) <=
                   bound * norm(vt)
         end
-        # edge 5: the cross terms of the product rule appear only for k >= 2
+        # edge 5: the cross terms of the product rule appear only for k >= 2, and the factor and
+        # the gradient the code forms are the ones the reference composes from the single roots
         if length(roots) == 2
             M1 = mass(xt, (roots[1],), 2, 1)
             M2 = mass(xt, (roots[2],), 2, 1)
-            g1 = mass_gradient(xt, (roots[1],), 2, 1)
-            g2 = mass_gradient(xt, (roots[2],), 2, 1)
-            @test isapprox(M, M1 * M2; rtol = 1e-6)
-            @test norm(gM - (M2 * g1 + M1 * g2)) <= 1e-6 * norm(gM)
+            @test isapprox(residual!!(nothing, def, xt, nothing), M1 * M2 * Fx; rtol = 1e-6)
+            @test norm(
+                Matrix(jacobian!!(nothing, AutoForwardDiff(), def, xt, nothing)) -
+                (M * Jx + Fx * transpose(gM))) <= bound
         end
     end
 end
@@ -334,26 +336,33 @@ end
     p = AT(T[1, 4])
     xt = AT(T[0.4, 1.3])
     vt = AT(T[0.7, -0.3])
-    roots = [[T(1), T(2)]]
-    host_roots = [copy(r) for r in roots]
-    def = Deflated(prob, roots)
-    F = similar(xt)
-    prep = prepare_ad(AutoForwardDiff(), def, F, xt, p)
-    J = similar(xt, T, 2, 2)
-    M = mass(Array(xt), host_roots, 2, 1)
-    gM = mass_gradient(Array(xt), host_roots, 2, 1)
-    Jx = ForwardDiff.jacobian(y -> r3_ref(y, Array(p)), Array(xt))
-    Fx = r3_ref(Array(xt), Array(p))
-    Jref = ForwardDiff.jacobian(
-        y -> mass(y, host_roots, 2, 1) * r3_ref(y, Array(p)), Array(xt))
-    bound = jacobian_bound(T, M, Jx, Fx, gM)
-    @test norm(Array(jacobian!!(J, prep, def, xt, p)) - Jref) <= bound
-    Jv = similar(xt)
-    @test norm(Array(jvp!!(Jv, prep, def, xt, vt, p)) - Jref * Array(vt)) <=
-          bound * norm(Array(vt))
-    Fd = similar(xt)
-    @test norm(Array(residual!!(Fd, prep, def, xt, p)) - M * Fx) <=
-          64 * eps(T) * norm(M * Fx)
+    for roots in ([[T(1), T(2)]], [[T(1), T(2)], [T(-1), T(-2)]])
+        host_roots = [copy(r) for r in roots]
+        def = Deflated(prob, roots)
+        F = similar(xt)
+        prep = prepare_ad(AutoForwardDiff(), def, F, xt, p)
+        J = similar(xt, T, 2, 2)
+        M = mass(Array(xt), host_roots, 2, 1)
+        gM = mass_gradient(Array(xt), host_roots, 2, 1)
+        Jx = ForwardDiff.jacobian(y -> r3_ref(y, Array(p)), Array(xt))
+        Fx = r3_ref(Array(xt), Array(p))
+        Jref = ForwardDiff.jacobian(
+            y -> mass(y, host_roots, 2, 1) * r3_ref(y, Array(p)), Array(xt))
+        bound = jacobian_bound(T, M, Jx, Fx, gM)
+        @test norm(Array(jacobian!!(J, prep, def, xt, p)) - Jref) <= bound
+        Jv = similar(xt)
+        @test norm(Array(jvp!!(Jv, prep, def, xt, vt, p)) - Jref * Array(vt)) <=
+              bound * norm(Array(vt))
+        Fd = similar(xt)
+        @test norm(Array(residual!!(Fd, prep, def, xt, p)) - M * Fx) <=
+              64 * eps(T) * norm(M * Fx)
+        # edge 5 in R3: the cross terms of the product rule appear only for k >= 2
+        if length(roots) == 2
+            @test norm(Array(jacobian!!(J, prep, def, xt, p)) -
+                       (M * Jx + Fx * transpose(gM))) <=
+                  bound
+        end
+    end
 end
 
 # The inner problem's own in-place Jacobian: the deflated Jacobian writes it into the caller's
@@ -403,6 +412,17 @@ end
     @test s1.code == NONFINITE
     @test s1.iterations == 0
     @test x1 == zero(T)
+    # edge 1 on an array iterate of both backends, where the factor is `Inf` in the R3 workspace
+    for AT in ARRAY_BACKENDS
+        p = AT(T[1, 4])
+        root = AT(T[1, 2])
+        def = Deflated(p2_problem_r3(), [Array(root)])
+        x = copy(root)
+        xa, status = solve(def, x, BT, p)
+        @test status.code == NONFINITE
+        @test status.iterations == 0
+        @test Array(xa) == Array(root)
+    end
 end
 
 @testset "Edge 2: an overflowing d^-p gives NONFINITE at 0 iterations ($T)" for T in REAL_ELTYPES
@@ -420,39 +440,49 @@ end
     @test !isfinite(residual!!(nothing, def, x0, nothing))
 end
 
-@testset "Edge 3 and MU4: P5 at (1e-100, 0) is finite, with no NaN" begin
-    T = Float64
-    root = SVector{2, T}(0, 0)
+@testset "Edge 3 and MU4: P5 near the origin is finite, with no NaN" begin
+    root = SVector{2, Float64}(0, 0)
     def = Deflated(p5_problem(), (root,))
-    x = SVector{2, T}(1e-100, 0)
-    F = residual!!(nothing, def, x, nothing)
-    J = jacobian!!(nothing, AutoForwardDiff(), def, x, nothing)
-    @test all(isfinite, F)
-    @test all(isfinite, J)
-    @test !any(isnan, J)
-    # the unit-scaled gradient: `M` is 1e200 and the first coordinate of `∇M` is -2e300, where the
-    # unscaled `ϕ/d²` overflows and `Inf * 0.0` gives `NaN` for the second
+    # the three decided points: the last two decades in which `∇mᵢ` is finite in `Float64`, and
+    # the corresponding point in `Float32`
+    for (T, d) in ((Float64, 1e-100), (Float64, 1e-102), (Float32, 1.0f-12))
+        defT = T === Float64 ? def : Deflated(p5_problem(), (SVector{2, T}(0, 0),))
+        x = SVector{2, T}(T(d), zero(T))
+        F = residual!!(nothing, defT, x, nothing)
+        J = jacobian!!(nothing, AutoForwardDiff(), defT, x, nothing)
+        @test all(isfinite, F)
+        @test all(isfinite, J)
+        @test !any(isnan, J)
+        # the unit-scaled gradient: `M` is `d^{-2}` and the first coordinate of `∇M` is `-2d^{-3}`,
+        # where the unscaled `ϕ/d²` overflows and `Inf * 0.0` gives `NaN` for the second
+        @test isapprox(J[1, 1], inv(T(d))^2; rtol = 1e-5)
+        Jv = jvp!!(nothing, AutoForwardDiff(), defT, x, SVector{2, T}(1, 0), nothing)
+        @test all(isfinite, Jv)
+    end
+    # the test's own closed form of `M` at the first point: 1e200, which the code agrees with
+    x = SVector{2, Float64}(1e-100, 0)
     @test isapprox(mass(x, (root,), 2, 1), 1e200; rtol = 1e-6)
-    @test isapprox(J[1, 1], 1e200; rtol = 1e-6)
-    Jv = jvp!!(nothing, AutoForwardDiff(), def, x, SVector{2, T}(1, 0), nothing)
-    @test all(isfinite, Jv)
+    @test isapprox(residual!!(nothing, def, x, nothing),
+        1e200 * SVector(x[1]^3 - x[1], x[2]); rtol = 1e-6)
 end
 
-@testset "Edge 4 and MU3: a distant root gives shift * F to rtol 1e-5" begin
+@testset "Edge 4 and MU3: a distant root gives shift * F to rtol 1e-5 ($T)" for T in REAL_ELTYPES
     prob = p2_problem()
-    x_far = SVector(1000.0, 2000.0)
+    x_far = SVector{2, T}(T(1000), T(2000))
     F = p2_f(x_far, nothing)
-    for shift in (2.5, 1.0)
-        def = Deflated(prob, (SVector(1.0, 2.0),); shift = shift)
+    for shift in (T(2.5), T(1))
+        def = Deflated(prob, (SVector{2, T}(1, 2),); shift = shift)
         @test isapprox(residual!!(nothing, def, x_far, nothing), shift * F; rtol = 1e-5)
     end
-    def2 = Deflated(prob, (SVector(1.0, 2.0), SVector(-1.0, -2.0)); shift = 2.5)
-    @test isapprox(residual!!(nothing, def2, x_far, nothing), 2.5^2 * F; rtol = 1e-5)
+    def2 = Deflated(
+        prob, (SVector{2, T}(1, 2), SVector{2, T}(-1, -2)); shift = T(2.5))
+    @test isapprox(residual!!(nothing, def2, x_far, nothing), T(2.5)^2 * F; rtol = 1e-5)
 end
 
-@testset "Edge 6: a NaN in F gives NONFINITE at 0 iterations" begin
+@testset "Edge 6: a NaN in F gives NONFINITE at 0 iterations ($T)" for T in REAL_ELTYPES
     prob = NonlinearProblem((x, p) -> SVector(x[1]^2 - 1, x[2] / x[2] - 1))
-    _, status = solve(Deflated(prob, (SVector(1.0, 2.0),)), SVector(0.8, 0.0), Newton())
+    _, status = solve(
+        Deflated(prob, (SVector{2, T}(1, 2),)), SVector{2, T}(T(0.8), zero(T)), Newton())
     @test status.code == NONFINITE
     @test status.iterations == 0
 end
@@ -477,6 +507,20 @@ end
     @test_throws ArgumentError Deflated(prob, [1.0, 2.0])
     @test_throws ArgumentError Deflated(prob, (r,), 0.0, 1.0)
     @test_throws ArgumentError Deflated(prob, (r,), 2.0, 0.0)
+    # a root set of mixed element types or of mixed storage has no iterate it can serve
+    @test_throws ArgumentError Deflated(
+        prob, (SVector{2, Float32}(1, 2), SVector{2, Float64}(-1, -2)))
+    @test_throws ArgumentError Deflated(prob, (1.0, SVector(1.0)))
+    # MU7: the inner constructor's own refusals, which the outer one reaches first for an empty
+    # root set: `_root_float_type` reads `first(roots)` before the constructor validates
+    @test_throws ArgumentError Deflated{
+        typeof(prob), Vector{Vector{Float64}}, Float64}(
+        prob, Vector{Float64}[], 2.0, 1.0)
+    @test_throws ArgumentError Deflated{
+        typeof(prob), Tuple{SVector{2, Float64}}, Float64}(prob, (r,), 0.0, 1.0)
+    @test_throws ArgumentError Deflated{
+        typeof(prob), Tuple{SVector{2, Float64}}, Float64}(
+        prob, (SVector(1.0, NaN),), 2.0, 1.0)
     # edge 13: an inner problem that is neither a NonlinearProblem nor a StationarityProblem
     @test_throws ArgumentError Deflated(Deflated(prob, (r,)), (r,))
     @test_throws ArgumentError Deflated(Reparametrized(prob, (y, p) -> y, nothing), (r,))
@@ -516,10 +560,32 @@ end
         Deflated(prob, (SVector(1.0, 2.0),)), SVector(0.8 + 0im, 1.7 + 0im), Newton())
     @test_throws ArgumentError init(
         Deflated(prob, (SVector(1.0, 2.0),)), SVector(0.8 + 0im, 1.7 + 0im), Newton())
+    # MU9: the complex refusal is the one that names holomorphy, not the element-type check that
+    # a complex iterate fails as well
+    complex_err = try
+        solve(Deflated(prob, (SVector(1.0, 2.0),)), SVector(0.8 + 0im, 1.7 + 0im), Newton())
+        nothing
+    catch err
+        err
+    end
+    @test complex_err isa ArgumentError
+    @test occursin("not holomorphic", sprint(showerror, complex_err))
+    # a root of another storage than the iterate has no `x - r`, which is a refusal, not a
+    # `MethodError` deep in an evaluation
+    @test_throws ArgumentError solve(
+        Deflated(p1_problem(), (SVector(0.0),)), 0.1, Newton())
+    @test_throws ArgumentError solve(
+        Deflated(p1_problem(), (0.0,)), SVector(0.1), Newton())
     @test_throws ArgumentError solve_batch!(
         fill(SVector(0.8, 1.7), 2), Deflated(prob, (SVector{2, Float32}(1, 2),)), Newton())
     @test_throws ArgumentError solve_batch!(
         fill(SVector{2, Float32}(0.8, 1.7), 2), Deflated(prob, (SVector(1.0, 2.0),)), Newton())
+    # the checks of a solve start hold on a direct `solve!!` as well
+    m32 = Adapt.adapt(ToReal{Float32}(), Newton())
+    def32_only = Deflated(p1_problem(), (zero(Float32),))
+    state32 = init_state(m32, def32_only, Float32(0.1), nothing)
+    @test_throws ArgumentError solve!!(
+        state32, def32_only, 0.1, m32, nothing, Options(Float64))
     # a `Float32` root gives a `Float32` power and shift, and a `Float32` solve runs in that type
     def32 = Deflated(prob, (SVector{2, Float32}(1, 2),))
     @test def32.power isa Float32
@@ -605,6 +671,89 @@ end
     @test_throws ArgumentError solve!(solver, zeros(T, 3))
 end
 
+# ─── Edge 14: the batch of a wrapped StationarityProblem ────────────────────
+
+@testset "Edge 14: the batch of a wrapped StationarityProblem ($T)" for T in REAL_ELTYPES
+    atol = residual_atol(T)
+    opts = residual_options(T)
+    other = T === Float32 ? Float64 : Float32
+    # (a) P3: one Deflated for the whole batch, in both forms
+    p3 = p3_problem()
+    x03 = SVector{2, T}(T(0.1), T(0.3))
+    r1, st1 = solve(p3, x03, BT; opts...)
+    @test GS.isconverged(st1)
+    def3 = Deflated(p3, (r1,))
+    X = fill(x03, 4)
+    S = Vector{SolverStatus{T}}(undef, 4)
+    solve_batch!(X, S, def3, BT; opts...)
+    @test all(GS.isconverged, S)
+    @test all(x -> norm(x - r1) > 1 / 2, X)
+    tally = solve_batch!(fill(x03, 4), def3, BT; opts...)
+    @test tally.SUCCESS == 4
+    # (b) P4: the state's fixed complement stays where it started, and the unknowns move off the
+    # deflated root
+    p4 = p4_problem()
+    x04 = SVector{4, T}(T(0.1), T(0.3), T(1), T(2))
+    a1, t1 = solve(p4, x04, BT; opts...)
+    @test GS.isconverged(t1)
+    X4 = fill(x04, 4)
+    tally4 = solve_batch!(X4, Deflated(p4, (a1,)), BT; opts...)
+    @test tally4.SUCCESS == 4
+    @test all(x -> x[SVector(3, 4)] == SVector{2, T}(T(1), T(2)), X4)
+    @test all(x -> norm(x[SVector(1, 2)] - a1[SVector(1, 2)]) > 1 / 2, X4)
+    # (c) the datum: a `PerSystem` one then a shared one, each against the one `solve` takes
+    b = SVector{2, T}(T(0.05), T(-0.02))
+    prob_b = StationarityProblem(p3_action; b = b)
+    defb = Deflated(prob_b, (r1,))
+    per = [SVector{2, T}(T(0.05), T(-0.02)), SVector{2, T}(T(-0.03), T(0.04)),
+        SVector{2, T}(zero(T), T(0.06)), SVector{2, T}(zero(T), T(-0.02))]
+    Xb = fill(x03, 4)
+    Sb = Vector{SolverStatus{T}}(undef, 4)
+    solve_batch!(Xb, Sb, defb, BT; b = PerSystem(per), opts...)
+    @test all(GS.isconverged, Sb)
+    for i in 1:4
+        @test Xb[i] ≈ solve(defb, x03, BT; b = per[i], opts...)[1]
+        @test norm(p3_gradient(Xb[i]) + per[i]) <= atol
+    end
+    Xs = fill(x03, 4)
+    solve_batch!(Xs, Deflated(prob_b, (r1,)), BT; b = b, opts...)
+    @test all(x -> x ≈ solve(defb, x03, BT; b = b, opts...)[1], Xs)
+    @test all(x -> norm(p3_gradient(x) + b) <= atol, Xs)
+    # (d) a datum of the wrong length: a `PerSystem` of another length is a batch mismatch, and a
+    # shared vector one is refused by the stationarity check
+    @test_throws DimensionMismatch solve_batch!(
+        fill(x03, 4), defb, BT; b = PerSystem(per[1:3]))
+    @test_throws ArgumentError solve_batch!(
+        fill(x03, 4), defb, BT; b = SVector{3, T}(T(0.1), T(0.2), T(0.3)))
+    # (e) edge 8: a root of the unknowns alone is refused in both forms
+    root_u = SVector{2, T}(T(1), zero(T))
+    @test_throws ArgumentError solve_batch!(fill(x04, 4), Deflated(p4, (root_u,)), BT)
+    @test_throws ArgumentError solve_batch!(
+        fill(x04, 4), Vector{SolverStatus{T}}(undef, 4), Deflated(p4, (root_u,)), BT)
+    # (f) edge 9: an iterate of another element type than the roots
+    @test_throws ArgumentError solve_batch!(
+        fill(SVector{2, other}(other(0.1), other(0.3)), 4), def3, BT)
+    # (g) edge 11: a root storage that is not `isbits` is refused in both forms
+    @test_throws ArgumentError solve_batch!(
+        fill(x03, 4), Deflated(p3, [[zero(T), zero(T)]]), BT)
+    @test_throws ArgumentError solve_batch!(
+        fill(x03, 4), Vector{SolverStatus{T}}(undef, 4),
+        Deflated(p3, [[zero(T), zero(T)]]), BT)
+    # (h) the status vector: its real type and its length
+    @test_throws ArgumentError solve_batch!(
+        fill(x03, 4), Vector{SolverStatus{other}}(undef, 4), def3, BT)
+    @test_throws DimensionMismatch solve_batch!(
+        fill(x03, 4), Vector{SolverStatus{T}}(undef, 3), def3, BT)
+    # (i) a dual parameter has no stationarity batch
+    @test_throws ArgumentError solve_batch!(
+        fill(x03, 4), def3, BT, ForwardDiff.Dual(T(1), one(T)))
+    # (j) an empty batch: the all-zero tally, and the status vector itself
+    empty_tally = solve_batch!(SVector{2, T}[], def3, BT)
+    @test all(iszero, values(empty_tally))
+    empty_S = SolverStatus{T}[]
+    @test solve_batch!(SVector{2, T}[], empty_S, def3, BT) === empty_S
+end
+
 # ─── Clause 4: R1 kernel cleanliness ────────────────────────────────────────
 
 # Allocation measured through a barrier, after one call that compiles the path. `--check-bounds=yes`
@@ -612,7 +761,7 @@ end
 # is skipped there.
 allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
 
-@testset "Clause 4: R1 isbits, @inferred and allocation-free ($T)" for T in REAL_ELTYPES
+@testset "Clause 4: R1 SVector isbits, @inferred and allocation-free ($T)" for T in REAL_ELTYPES
     prob = p2_problem()
     roots = (SVector{2, T}(1, 2),)
     def = Deflated(prob, roots)
@@ -635,6 +784,40 @@ allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
               0
         # the control: the barrier sees an allocation
         @test allocations(collect, (x0[1], x0[2])) > 0
+    end
+end
+
+@testset "Clause 4: R1 Number isbits, @inferred and allocation-free ($T)" for T in REAL_ELTYPES
+    prob = p1_problem()
+    x0 = T(0.1)
+    # one deflated root and two: the three roots of the cubic are -1, 0 and 1
+    for roots in ((zero(T),), (zero(T), one(T)))
+        def = Deflated(prob, roots)
+        @test isbits(def)
+        @test isbits(init(def, x0, BT).state)
+        x, status = @inferred solve(def, x0, BT)
+        @test x isa T
+        @test status isa SolverStatus{T}
+        @inferred residual!!(nothing, def, x0, nothing)
+        @inferred jacobian!!(nothing, AutoForwardDiff(), def, x0, nothing)
+        @inferred jvp!!(nothing, AutoForwardDiff(), def, x0, x0, nothing)
+        if Base.JLOptions().check_bounds != 1
+            @test allocations(a -> solve(def, a, BT), x0) == 0
+            @test allocations(a -> residual!!(nothing, def, a, nothing), x0) == 0
+            @test allocations(
+                a -> jacobian!!(
+                    nothing, AutoForwardDiff(), def, a, nothing), x0) ==
+                  0
+            @test allocations(a -> jvp!!(nothing, AutoForwardDiff(), def, a, a, nothing), x0) ==
+                  0
+            # the control: the barrier sees an allocation
+            @test allocations(collect, (x0,)) > 0
+        end
+        @test_opt residual!!(nothing, def, x0, nothing)
+        @test_opt jacobian!!(nothing, AutoForwardDiff(), def, x0, nothing)
+        @test_opt jvp!!(nothing, AutoForwardDiff(), def, x0, x0, nothing)
+        @test_opt jacobian!!(nothing, nothing, def, x0, nothing)
+        @test_opt solve(def, x0, Newton())
     end
 end
 
@@ -705,7 +888,7 @@ end
     @test abs(abs(xs) - 2) < 1e-8
     d = ForwardDiff.derivative(p -> solve(def, 0.1, Newton(), p)[1], 4.0)
     dref = xs / (3 * xs^2 - 4.0)
-    @test abs(abs(d) - abs(dref)) <= 8 * eps(Float64) * abs(dref)
+    @test abs(d - dref) <= 8 * eps(Float64) * abs(dref)
     # the primal solve at a dual parameter returns the same root as the primal one
     xd = solve(def, 0.1, Newton(), ForwardDiff.Dual(4.0, 1.0))[1]
     @test ForwardDiff.value(xd) ≈ xs
@@ -718,6 +901,36 @@ end
     @test_throws ArgumentError solve(def, x0, Newton(), ForwardDiff.Dual(1.0, 1.0))
     @test_throws ArgumentError init(def, x0, Newton(), ForwardDiff.Dual(1.0, 1.0))
     @test_throws ArgumentError solve(def, ForwardDiff.Dual.(x0, 1.0), Newton())
+end
+
+# `x² = p` at `p = (1, 4)`: the derivative of the root the deflated solve returns is that of the
+# **undeflated** problem there, `∂x*/∂p = 1 / (2x*)`, whatever root the deflation left.
+@testset "Clause 5: implicit differentiation of an R1 SVector Deflated solve" begin
+    prob = NonlinearProblem((x, p) -> x .^ 2 .- p)
+    q0 = SVector(1.0, 4.0)
+    x0 = SVector(0.8, 1.7)
+    r1, _ = solve(prob, x0, BT, q0)
+    def = Deflated(prob, (r1,))
+    xs, status = solve(def, x0, BT, q0)
+    @test GS.isconverged(status)
+    @test norm(xs - r1) > 1 / 2
+    d = ForwardDiff.jacobian(q -> solve(def, x0, BT, q)[1], q0)
+    dref = SMatrix{2, 2}(1 / (2 * xs[1]), 0.0, 0.0, 1 / (2 * xs[2]))
+    @test norm(d - dref) <= 8 * eps(Float64) * norm(dref)
+end
+
+@testset "Clause 5: implicit differentiation of an R3 Deflated solve" begin
+    prob = NonlinearProblem(p2_r3!)
+    q0 = [1.0, 4.0]
+    x0 = [0.8, 1.7]
+    r1, _ = solve(prob, copy(x0), BT, q0)
+    def = Deflated(prob, [copy(r1)])
+    xs, status = solve(def, copy(x0), BT, q0)
+    @test GS.isconverged(status)
+    @test norm(xs - r1) > 1 / 2
+    d = ForwardDiff.jacobian(q -> solve(def, copy(x0), BT, q)[1], q0)
+    dref = diagm(0 => 1 ./ (2 .* xs))
+    @test norm(d - dref) <= 8 * eps(Float64) * norm(dref)
 end
 
 # ─── The solver loop: `solve!!`, the hooks, and a second solve ──────────────

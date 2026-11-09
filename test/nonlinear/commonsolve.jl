@@ -62,9 +62,9 @@ end
     # `Reparametrized` problem have their own
     for (f, owned) in (
         (CommonSolve.init,
-        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized)),
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated)),
         (CommonSolve.solve,
-        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized)),
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated)),
         (CommonSolve.solve!, (NonlinearSolver, ReparametrizedSolver)))
         ours = filter(m -> m.module === GS, collect(methods(f)))
         @test !isempty(ours)

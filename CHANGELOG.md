@@ -1382,19 +1382,22 @@ so that a compat-only bump can be told apart from an interface change.
   `SVector`, `Array` and `JLArray` storages all run, with an `isbits` R1 wrapper and `0`
   allocations per solve in R1 and after `init` in R3. `power` and `shift` are stored in
   `float(real(eltype(first(roots))))`, so `Float32` roots give an all-`Float32` product; a solve
-  needs an iterate of that element type, real, and as long as every root, and a root with a
-  non-finite entry, a `power` or `shift` that is not finite and positive, an empty root set, or
-  an inner problem that is neither a `NonlinearProblem` nor a `StationarityProblem` raises an
-  `ArgumentError` at construction, while a `solve_batch!` whose kernel would take a non-`isbits`
-  wrapper by value — the `AbstractVector` root storage of an R3 iterate, for one — raises one
-  at the call. At a deflated root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns
-  `NONFINITE` at `0` iterations with `x == x₀` instead of `SUCCESS` at a known root, a factor
-  that overflows does the same, and the gradient is evaluated unit-scaled so that a point at
-  `norm(x - rᵢ) = 1e-100` keeps finite entries with no `NaN`. A wrapped `StationarityProblem`
-  iterates on its unknowns and takes full states as its roots, so the distance is that of `x_U`.
+  needs an iterate of that element type, real, of the roots' storage and as long as every root,
+  and a root with a non-finite entry, a root set of mixed element type or storage, a `power` or
+  `shift` that is not finite and positive, an empty root set, or an inner problem that is neither
+  a `NonlinearProblem` nor a `StationarityProblem` raises an `ArgumentError` at construction,
+  while a `solve_batch!` whose kernel would take a non-`isbits` wrapper by value — the
+  `AbstractVector` root storage of an R3 iterate, for one — raises one at the call. At a deflated
+  root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0` iterations
+  with `x == x₀` instead of `SUCCESS` at a known root, a factor that overflows does the same, and
+  the gradient is evaluated unit-scaled so that a point at `norm(x - rᵢ) = 1e-100` keeps finite
+  entries with no `NaN`. A wrapped `StationarityProblem` iterates on its unknowns and takes full
+  states as its roots, so the distance is that of `x_U`.
   `solve` on a `Deflated(NonlinearProblem)` with a `ForwardDiff.Dual` in `x₀` or `p`
   differentiates the undeflated inner problem implicitly at the root it found, and a
   `Deflated(StationarityProblem)` refuses a dual with an `ArgumentError`, as the problem itself
-  does. `solve_batch!` solves every system of a batch under one `Deflated`, `init` and `solve!`
-  serve R1 and R3, and the keyword datum `b` of an `init`, a `solve` or a `solve!` reaches a
-  wrapped `StationarityProblem`.
+  does. `solve_batch!` solves every system of a batch under one `Deflated`, in both forms for a
+  `NonlinearProblem` and in both forms for a wrapped `StationarityProblem`, whose per-system datum
+  comes from `b`, shared or `PerSystem`, or from the problem's own; `init` and `solve!` serve R1
+  and R3, and the keyword datum `b` of an `init`, a `solve` or a `solve!` reaches a wrapped
+  `StationarityProblem`.
