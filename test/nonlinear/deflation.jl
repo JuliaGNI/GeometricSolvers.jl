@@ -70,6 +70,11 @@ p4_unknowns(x) = x[SVector(1, 2)]
 # offset of 1e-100 from that root survives in `Float64`.
 p5_problem() = NonlinearProblem((x, p) -> SVector(x[1]^3 - x[1], x[2]))
 
+# The gradients of the two stationarity actions on an array iterate, for the residual test of an R3
+# solve: the test's own forms, independent of the code under test.
+p3_gradient(x) = [x[1]^3 - x[1] + x[2]^2 * x[1], x[2] * (1 + x[1]^2)]
+p4_gradient(x) = [x[3] * (x[1]^3 - x[1]) + x[4] * x[2]^2 * x[1], x[4] * x[2] * (1 + x[1]^2)]
+
 # The test's own closed form of `M(x)` and its gradient: neither reads the code under test.
 mass(x, roots, power, shift) = prod(r -> norm(x - r)^(-power) + shift, roots)
 function mass_gradient(x, roots, power, shift)
@@ -186,6 +191,40 @@ end
     @test all(r -> residual_norm(prob, r) <= atol, roots)
     # the weights are fixed components of the state and stay at their start
     @test all(r -> r[3] == T(1) && r[4] == T(2), roots)
+end
+
+@testset "Clause 1 and edge 12: P3 and P4 on Array, the distance on the unknowns ($T)" for T in REAL_ELTYPES
+    atol = residual_atol(T)
+    opts = residual_options(T)
+    # P3 on Array: the unknowns are the whole state, so the roots are full states too
+    p3 = p3_problem()
+    x03 = T[0.1, 0.3]
+    s1, st1 = solve(p3, copy(x03), BT; opts...)
+    s2, st2 = solve(Deflated(p3, [copy(s1)]), copy(x03), BT; opts...)
+    s3, st3 = solve(Deflated(p3, [copy(s1), copy(s2)]), copy(x03), BT; opts...)
+    roots3 = (s1, s2, s3)
+    @test all(GS.isconverged, (st1, st2, st3))
+    @test pairwise_distinct(roots3)
+    @test all(r -> norm(p3_gradient(r)) <= atol, roots3)
+    # P4 on Array: two unknowns of a four-entry state, and the weights stay put
+    p4 = p4_problem()
+    x04 = T[0.1, 0.3, 1, 2]
+    a1, t1 = solve(p4, copy(x04), BT; opts...)
+    a2, t2 = solve(Deflated(p4, [copy(a1)]), copy(x04), BT; opts...)
+    a3, t3 = solve(Deflated(p4, [copy(a1), copy(a2)]), copy(x04), BT; opts...)
+    roots4 = (a1, a2, a3)
+    @test all(GS.isconverged, (t1, t2, t3))
+    @test pairwise_distinct(roots4, r -> r[1:2])
+    @test all(r -> norm(p4_gradient(r)) <= atol, roots4)
+    @test all(r -> r[3] == T(1) && r[4] == T(2), roots4)
+    # the datum reaches an R3 solve, and one of another length is refused
+    b = T[0.05, -0.02]
+    prob_b = StationarityProblem(p3_action; b = b)
+    rb, stb = solve(Deflated(prob_b, [copy(s1)]), copy(x03), BT; b = b, opts...)
+    @test GS.isconverged(stb)
+    @test norm(rb - s1) > 1 / 2
+    @test_throws ArgumentError solve(
+        Deflated(prob_b, [copy(s1)]), copy(x03), BT; b = T[0.1, 0.2, 0.3])
 end
 
 @testset "Clause 1 and edge 10: P2 on $AT under allowscalar(false), ($AT, $T)" for AT in ARRAY_BACKENDS,
