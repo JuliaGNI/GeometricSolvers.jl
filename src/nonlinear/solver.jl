@@ -331,7 +331,7 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
     P <: StationarityProblem && return _solve_stationarity_solver!(solver, x, p, b)
-    P <: BlockEliminated{<:StationarityProblem} &&
+    is_elim_stationarity_problem(P) &&
         return _solve_elim_stationarity_solver!(solver, x, p, b)
     b === nothing ||
         throw(ArgumentError("keyword `b` is only supported for `StationarityProblem`"))
