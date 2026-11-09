@@ -213,6 +213,25 @@ function r_vp_nl!(r::Array, x::Array, p)
     return r
 end
 
+# Zero-residual fit `r_i = y + 0.3 y³ + z t_i - d_i` with root (y, z) = (1.5, 0.7): nonlinear in y,
+# with ∂r/∂y = 1 at y = 0, so one linear solve from y = 0 misses y*(z) without a rank-deficient Φ.
+const T_VP_CUB5 = SVector{5, Float64}(0.0, 0.5, 1.0, 1.5, 2.0)
+const D_VP_CUB5 = SVector{5, Float64}(ntuple(i -> 1.5 + 0.3 * 1.5^3 + 0.7 * T_VP_CUB5[i], Val(5)))
+
+function r_vp_cub(x, p)
+    T = eltype(x)
+    return SVector{5, T}(ntuple(
+        i -> x[1] + T(3 // 10) * x[1]^3 + x[2] * T(T_VP_CUB5[i]) - T(D_VP_CUB5[i]), Val(5)))
+end
+
+function r_vp_cub!(r::Array, x::Array, p)
+    T = eltype(x)
+    @inbounds for i in 1:5
+        r[i] = x[1] + T(3 // 10) * x[1]^3 + x[2] * T(T_VP_CUB5[i]) - T(D_VP_CUB5[i])
+    end
+    return r
+end
+
 # Holomorphic complex fixture
 function f_cplx_elim(x, p)
     T = eltype(x)
@@ -791,11 +810,29 @@ end
             for mode in (:kaufman, :golub_pereyra)
                 vp_r3 = VariableProjection(
                     prob_ls_r3, [1, 2]; outer = [3], jacobian_mode = mode)
-                x_vp_r3, st_vp_r3 = solve(vp_r3, Vector(x0_ls), m_ls, tag; options = opt_t)
-                @test st_vp_r3.code == SUCCESS
-                tol_ls = tag === :noisy ? T(1e-7) : tol
-                @test norm(x_vp_r3 - Vector(x_ls_joint)) <=
-                      tol_ls * max(one(T), norm(x_ls_joint))
+                if tag === :exact
+                    x_vp_r3, st_vp_r3 = solve(
+                        vp_r3, Vector(x0_ls), m_ls, tag; options = opt_t)
+                    @test st_vp_r3.code == SUCCESS
+                    @test st_vp_r3.step_failures == 0
+                    @test norm(x_vp_r3 - Vector(x_ls_joint)) <=
+                          tol * max(one(T), norm(x_ls_joint))
+                else
+                    # at a nonzero residual the stationarity test sits at the noise floor of the
+                    # reduced residual, so a start may end `STALLED`: assert a rate over 40 seeded
+                    # starts within 1e-3 relative of `x0_ls`, and the distance of each `SUCCESS`
+                    rng = Xoshiro(71)
+                    n_success = 0
+                    for _ in 1:40
+                        x0_k = Vector(x0_ls) .* (1 .+ 1e-3 .* (2 .* rand(rng, 3) .- 1))
+                        x_k, st_k = solve(vp_r3, x0_k, m_ls, tag; options = opt_t)
+                        st_k.code == SUCCESS || continue
+                        n_success += 1
+                        @test norm(x_k - Vector(x_ls_joint)) <=
+                              T(1e-7) * max(one(T), norm(x_ls_joint))
+                    end
+                    @test n_success >= 30
+                end
             end
         end
     end
@@ -1043,6 +1080,50 @@ end
     _, st_fail_in = solve(
         elim_fail_in, SVector(10.0, -10.0, 0.5, 0.6), Newton(), 0.2; max_iterations = 2)
     @test st_fail_in.step_failures >= 1
+
+    # 4. linear_inner = true on an inner block that is nonlinear in y: the linear solve returns a
+    # point that is no root, the missed inner residual increments step_failures, and the solve goes
+    # on; an affine inner block, and linear_inner = false, count no failure
+    x0_lin = SVector(0.2, 0.4, 0.5, 0.6)
+    for (c, lin_in) in ((0.2, true), (0.2, false), (nothing, true))
+        miss = c !== nothing && lin_in
+        elim_lin = BlockEliminated(
+            NonlinearProblem(f_elim), (1, 2); outer = (3, 4), linear_inner = lin_in)
+        x_lin, st_lin = solve(elim_lin, x0_lin, Newton(), c)
+        elim_lin_r3 = BlockEliminated(
+            NonlinearProblem(f_elim!), [1, 2]; outer = [3, 4], linear_inner = lin_in)
+        x_lin_r3, st_lin_r3 = solve(elim_lin_r3, Vector(x0_lin), Newton(), c)
+        for (x_l, st_l) in ((x_lin, st_lin), (SVector{4}(x_lin_r3), st_lin_r3))
+            @test st_l.code == SUCCESS
+            if miss
+                @test st_l.step_failures >= 1
+                @test norm(f_elim(x_l, c)) > 1e-2
+            else
+                @test st_l.step_failures == 0
+                @test norm(f_elim(x_l, c)) <= 1e-10
+            end
+        end
+    end
+
+    m_gn_cub = GaussNewton(; linsolve = SVDFactorization())
+    for lin_in in (true, false)
+        vp_cub = VariableProjection(
+            LeastSquaresProblem(r_vp_cub, 5), (1,); outer = (2,), linear_inner = lin_in)
+        x_cub, st_cub = solve(vp_cub, SVector(1.0, 0.5), m_gn_cub)
+        vp_cub_r3 = VariableProjection(
+            LeastSquaresProblem(r_vp_cub!, 5), [1]; outer = [2], linear_inner = lin_in)
+        x_cub_r3, st_cub_r3 = solve(vp_cub_r3, [1.0, 0.5], m_gn_cub)
+        for (x_c, st_c) in ((x_cub, st_cub), (SVector{2}(x_cub_r3), st_cub_r3))
+            @test st_c.code == SUCCESS
+            if lin_in
+                @test st_c.step_failures >= 1
+                @test norm(r_vp_cub(x_c, nothing)) > 1
+            else
+                @test st_c.step_failures == 0
+                @test norm(r_vp_cub(x_c, nothing)) <= 1e-10
+            end
+        end
+    end
 end
 
 @testset "Inference, isbits, and zero allocations" begin

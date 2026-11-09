@@ -9,7 +9,9 @@
 Partition the unknowns `x` of a [`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref) `prob`
 into inner indices `Y = inner` (`y = x[Y]`) and outer indices `Z = outer` (`z = x[Z]`, defaulting
 to the complement of `inner` in `1:n`), and the residual equations into inner equations
-`E_y = inner_eqs` and outer equations `E_z = outer_eqs` (`|E_y| == |Y|`, `|E_z| == |Z|`). On a
+`E_y = inner_eqs` and outer equations `E_z = outer_eqs` (`|E_y| == |Y|`, `|E_z| == |Z|`). The
+default `outer_eqs = outer` takes the outer unknown indices as equation indices, so give
+`outer_eqs` whenever `inner_eqs` differs from `inner`. On a
 [`LeastSquaresProblem`](@ref), `BlockEliminated(prob, inner; kwargs...)` forwards to
 [`VariableProjection`](@ref).
 
@@ -36,7 +38,10 @@ S(z) = J_{zz}(y^*(z), z) - J_{zy}(y^*(z), z)\\, J_{yy}(y^*(z), z)^+\\, J_{yz}(y^
 ```
 
 At return, ``x^*[Y] = y^*(z^*)`` and ``x^*[Z] = z^*``. Any inner solver failure or rank-deficient
-inner Jacobian (`fac_yy.rank < |Y|` under SVD) increments `status.step_failures`.
+inner Jacobian (`fac_yy.rank < |Y|` under SVD) increments `status.step_failures`. The linear solve
+of `linear_inner = true` solves the inner equations only when they are affine in `y`: an inner
+residual ``\\|F_{E_y}(y^*(z), z)\\|_2`` above ``\\sqrt{\\varepsilon}\\max(1, \\|F_{E_y}(0, z)\\|_2)``
+also counts as an inner failure, and the solve goes on.
 """
 struct BlockEliminated{P <: AbstractNonlinearProblem, YI, ZI, EY, EZ, M, LI, IO} <:
        AbstractNonlinearProblem
@@ -87,6 +92,12 @@ steps on the reduced residual
   ``J_{\\text{red}}(z) = (I - \\Phi(z)\\Phi(z)^+) D(z)``, where ``D(z) = \\partial r(y^*(z), z)/\\partial z``.
 - `jacobian_mode = :golub_pereyra`: the full Golub–Pereyra reduced Jacobian
   ``J_{\\text{red}}(z) = (I - \\Phi(z)\\Phi(z)^+) D(z) - (\\Phi(z)^+)^H (\\partial\\Phi/\\partial z)^H r_{\\text{red}}(z)``.
+
+Any inner solver failure or rank-deficient ``\\Phi`` increments `status.step_failures`. The linear
+solve of `linear_inner = true` minimises over `y` only when `r` is affine in `y`: an inner gradient
+``\\|\\Phi(y^*)^H r(y^*, z)\\|_2`` above
+``\\sqrt{\\varepsilon}\\max(1, \\|r(0, z)\\|_2)\\max(1, \\|\\Phi(y^*)\\|_F)`` also counts as an
+inner failure, and the solve goes on.
 """
 struct VariableProjection{P <: LeastSquaresProblem, YI, ZI, LS, JM, LI, M, IO} <:
        AbstractNonlinearProblem
@@ -603,6 +614,14 @@ end
     return y_corr, F_corr[E_z], x_corr, fail_c
 end
 
+# `linear_inner = true` takes one linear solve from `y = 0`, which solves the inner block only when
+# it is affine in `y`. The inner residual at `y*` (for variable projection, the inner gradient
+# `Φ(y*)ᴴ r(y*)`) is measured against this floor, set by the inner residual at `y = 0`; above it the
+# elimination counts as an inner failure, and the solve goes on.
+@inline function _linear_inner_floor(::Type{R}, fnorm0::R) where {R <: Real}
+    return sqrt(eps(R)) * max(one(R), fnorm0)
+end
+
 @inline function _eliminate_r1(
         elim::BlockEliminated{P, YI, ZI, EY, EZ, M, true, IO}, _inner_state,
         ::SVector{Ny, T}, z::SVector{Nz, T}, p, ::R,
@@ -624,8 +643,9 @@ end
     x_star = _scatter_yz_r1(y_star, z, Y, Z, Val(N))
     F_star = _inner_res_r1(getfield(elim, :prob), x_star, p)
     Fz = F_star[E_z]
+    inner_miss = !(R(rnorm(F_star[E_y])) <= _linear_inner_floor(R, R(rnorm(Fy0))))
     failed = (returncode(fac_yy) != SUCCESS) || _is_rank_deficient(fac_yy, Ny) ||
-             !all(isfinite, y_star)
+             !all(isfinite, y_star) || inner_miss
     return y_star, Fz, x_star, failed, 1
 end
 
@@ -786,8 +806,11 @@ end
     y_star = -dy
     x_star = _scatter_yz_r1(y_star, z, Y, Z, Val(N))
     r_star = prob_in.F(x_star, p)
+    Φ_star = _inner_jac_r1(backend, prob_in, x_star, p)[:, Y]
+    inner_miss = !(R(rnorm(adjoint(Φ_star) * r_star)) <=
+                   _linear_inner_floor(R, R(rnorm(r0))) * max(one(R), R(rnorm(Φ_star))))
     failed = (returncode(fac_phi) != SUCCESS) || _is_rank_deficient(fac_phi, Ny) ||
-             !all(isfinite, y_star)
+             !all(isfinite, y_star) || inner_miss
     return y_star, r_star, x_star, failed, 1
 end
 
@@ -1586,13 +1609,16 @@ function _eliminate_r3!(
     _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
     _extract_submat!(ws.J_yy, ws.J_buf, ws.Ey_h, ws.Y_h, ws.Ey_d, ws.Y_d)
     fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+    fnorm_y0 = R(rnorm(ws.Fy_buf))
     ldiv!!(ws.dy_buf, fac_yy, ws.Fy_buf)
     ws.y_warm .= .-ws.dy_buf
     _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     _inner_res_r3!(ws.F_buf, ws.inner_prep, prob_in, ws.x_buf, p)
     _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
+    _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
     if returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, ny) ||
-       !all(isfinite, ws.y_warm)
+       !all(isfinite, ws.y_warm) ||
+       !(R(rnorm(ws.Fy_buf)) <= _linear_inner_floor(R, fnorm_y0))
         ws.inner_failures += one(Int32)
     end
     ws.last_inner_iters = 1
@@ -1775,12 +1801,17 @@ function _eliminate_vp_r3!(
     _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
     _extract_submat!(ws.Φ_mat, ws.J_buf, ws.M_h, ws.Y_h, ws.M_d, ws.Y_d)
     fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
+    floor_r0 = _linear_inner_floor(R, R(rnorm(ws.r_buf)))
     ldiv!!(ws.dy_buf, fac_phi, ws.r_buf)
     ws.y_warm .= .-ws.dy_buf
     _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     prob_in.F(ws.Fz_buf, ws.x_buf, p)
-    if returncode(fac_phi) != SUCCESS || _is_rank_deficient(fac_phi, ny) ||
-       !all(isfinite, ws.y_warm)
+    failed = returncode(fac_phi) != SUCCESS || _is_rank_deficient(fac_phi, ny) ||
+             !all(isfinite, ws.y_warm)
+    _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
+    _extract_submat!(ws.Φ_mat, ws.J_buf, ws.M_h, ws.Y_h, ws.M_d, ws.Y_d)
+    mul!(ws.w_vec, adjoint(ws.Φ_mat), ws.Fz_buf)
+    if failed || !(R(rnorm(ws.w_vec)) <= floor_r0 * max(one(R), R(rnorm(ws.Φ_mat))))
         ws.inner_failures += one(Int32)
     end
     ws.last_inner_iters = 1
