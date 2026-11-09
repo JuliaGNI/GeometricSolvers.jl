@@ -744,9 +744,12 @@ end
         fill(x03, 4), Vector{SolverStatus{other}}(undef, 4), def3, BT)
     @test_throws DimensionMismatch solve_batch!(
         fill(x03, 4), Vector{SolverStatus{T}}(undef, 3), def3, BT)
-    # (i) a dual parameter has no stationarity batch
+    # (i) a dual parameter has no stationarity batch, in either form
     @test_throws ArgumentError solve_batch!(
         fill(x03, 4), def3, BT, ForwardDiff.Dual(T(1), one(T)))
+    @test_throws ArgumentError solve_batch!(
+        fill(x03, 4), Vector{SolverStatus{T}}(undef, 4), def3, BT,
+        ForwardDiff.Dual(T(1), one(T)))
     # (j) an empty batch: the all-zero tally, and the status vector itself
     empty_tally = solve_batch!(SVector{2, T}[], def3, BT)
     @test all(iszero, values(empty_tally))
