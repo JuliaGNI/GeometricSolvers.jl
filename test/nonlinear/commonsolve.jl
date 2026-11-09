@@ -74,10 +74,10 @@ end
         owned_names = map(t -> Base.unwrap_unionall(t).name, owned)
         owned_first_arg(t) = all(u -> Base.unwrap_unionall(u).name in owned_names,
             Base.uniontypes(t))
+        @test !owned_first_arg(Union{first(owned), Vector{Float64}})
         for m in ours
             first_arg = Base.unwrap_unionall(Base.unwrap_unionall(m.sig).parameters[2])
             @test owned_first_arg(first_arg)
-            @test !owned_first_arg(Union{first(owned), Vector{Float64}})
         end
     end
 end
