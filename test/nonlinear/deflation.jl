@@ -568,6 +568,43 @@ end
         solver, ForwardDiff.Dual.(x0, 1.0), solver.p)
 end
 
+# `solve` fills the datum buffer of the dense state when it initialises it, so only a solver that
+# `init` built without a datum shows the refill of the per-solve one: this test initialises without
+# a datum, gives one to `solve!`, and reads the root against the one `solve` returns for it.
+@testset "Edge 12: an R3 solve! refills its per-solve datum ($T)" for T in REAL_ELTYPES
+    atol = residual_atol(T)
+    opts = residual_options(T)
+    prob = p3_problem()
+    x0 = T[0.1, 0.3]
+    r0, st0 = solve(prob, copy(x0), BT; opts...)
+    @test GS.isconverged(st0)
+    def = Deflated(prob, [copy(r0)])
+    b = T[0.05, -0.02]
+    r_def, st_def = solve(def, copy(x0), BT; b = b, opts...)
+    @test GS.isconverged(st_def)
+    r_st, st_st = solve!(init(def, copy(x0), BT; opts...), copy(x0); b = b)
+    @test GS.isconverged(st_st)
+    @test r_st ≈ r_def
+    # the returned point is a stationary point of the problem with this solve's datum, not of the
+    # undeflated one
+    @test norm(p3_gradient(r_st) + b) <= atol
+end
+
+@testset "Edge 12: an R3 solve! refuses a datum and an iterate of another length ($T)" for T in REAL_ELTYPES
+    opts = residual_options(T)
+    prob = p3_problem()
+    x0 = T[0.1, 0.3]
+    r0, st0 = solve(prob, copy(x0), BT; opts...)
+    @test GS.isconverged(st0)
+    def = Deflated(prob, [copy(r0)])
+    solver = init(def, copy(x0), BT; b = T[0.05, -0.02], opts...)
+    # `init` refuses a datum of another length, so the datum below reaches the check of `solve!`
+    @test_throws ArgumentError solve!(solver, copy(x0); b = T[0.1, 0.2, 0.3])
+    # the length of an `Array` is not part of its type, so the template of `init` refuses an
+    # iterate of another length
+    @test_throws ArgumentError solve!(solver, zeros(T, 3))
+end
+
 # ─── Clause 4: R1 kernel cleanliness ────────────────────────────────────────
 
 # Allocation measured through a barrier, after one call that compiles the path. `--check-bounds=yes`
