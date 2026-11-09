@@ -2245,8 +2245,7 @@ end
 end
 
 @inline function refresh_diagnostics!!(
-        st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
-        x, Fx, p) where {OST}
+        st::DenseElimState, m, vp::VariableProjection, x, Fx, p)
     outer_state = _refresh_elim_r3!!(st.outer_state, st.ws, st.oprob, m, vp, x, Fx, p)
     return DenseElimState(outer_state, st.ws, st.oprob)
 end
@@ -2655,12 +2654,14 @@ end
 
 # R3 `solve!!` keeps `outer_state` unboxed on its stack frame across `start!!`, `step!!`,
 # and `finish!!` rather than re-wrapping `DenseElimState` at every step.
-function _solve_elim_r3!!(
-        st, ws, oprob, prob,
-        x₀::AbstractVector{T}, method, p,
-        options::Options{R}) where {T, R <: Real}
+function solve!!(
+        st::DenseElimState, prob::Union{BlockEliminated, VariableProjection},
+        x₀::AbstractVector{T}, method, p = nothing,
+        options::Options{R} = Options(eltype(x₀))) where {T, R <: Real}
     check_options(eltype(x₀), options)
     x = x₀
+    ws = st.ws
+    oprob = st.oprob
     Fx = primal_residual!!(residual_buffer(st), prob, x, p)
     fnorm₀ = rnorm(Fx)
     outer_state = _start_elim_r3!!(
@@ -2730,20 +2731,6 @@ function _solve_elim_r3!!(
                 st, outer_state, method, prob, x, Fx, end_status(status, MAXITERS))
         end
     end
-end
-
-function solve!!(
-        st::DenseElimState{OST, <:BlockElimPrep}, elim::BlockEliminated,
-        x₀::AbstractVector{T}, method, p = nothing,
-        options::Options{R} = Options(eltype(x₀))) where {OST, T, R <: Real}
-    return _solve_elim_r3!!(st, st.ws, st.oprob, elim, x₀, method, p, options)
-end
-
-function solve!!(
-        st::DenseElimState{OST, <:VarProPrep}, vp::VariableProjection,
-        x₀::AbstractVector{T}, method, p = nothing,
-        options::Options{R} = Options(eltype(x₀))) where {OST, T, R <: Real}
-    return _solve_elim_r3!!(st, st.ws, st.oprob, vp, x₀, method, p, options)
 end
 
 # --- `init`, `solve!`, `solve_implicit`, and `solve` ---
