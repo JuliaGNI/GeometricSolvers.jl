@@ -23,21 +23,33 @@ so that a compat-only bump can be told apart from an interface change.
   message. `isgpu` left the KernelAbstractions API, so the package states it as
   `!(backend isa CPU)`: the CPU backend answers `false`, and every device backend answers `true`,
   as before — CUDA, ROCm, Metal and the `JLBackend` of JLArrays. For a caller: every
-  constructor of `Newton`, `Static`, `Picard`, `Repeat` and `DogLeg`, positional or keyword,
-  validates its arguments, as before, but the messages of these checks are constant strings and no
-  longer carry the rejected value — "Newton regularization must be finite and ≥ 0" instead of
-  "..., got 1.0e300", "the step of Static must be positive and finite" without ", got α", the reuse
-  messages without ", got reuse = k", "Picard damping must be positive and finite" without
-  ", got damping", "Repeat requires count >= 1" without ", got count", and "the radius of DogLeg
-  must be positive and finite" without ", got radius" — because `adapt` rebuilds a method through
-  these constructors, also inside a device kernel (a `Reparametrized` batch adapts its method
-  there), and a formatted message does not compile to SPIR-V (`InvalidIRError`) while a constant
-  one does (`Repeat` is not reachable from a kernel today, so its message changes for consistency
-  only); since `adapt` rebuilds
-  through the checked constructors, every path that adapts a method — `solve`, `init`, every
-  `solve_batch!`, and composite methods such as `Picard`, `Repeat` and `Anderson`, whose `adapt`
-  rebuilds their members — refuses a method whose `Static` step `ToReal` narrows to `Inf` or to
-  zero, or whose regularization it makes non-finite, with an `ArgumentError`; a batch
+  constructor of `Newton`, `Static`, `Picard`, `Repeat`, `DogLeg`, `Backtracking`, `Bisection`,
+  `StrongWolfe`, `Refinement`, `OptimalWeights`, `FixedWeights`, `Switch`, `Anderson`, `Additive`
+  and `Reparametrized`, positional or keyword, validates its arguments, as before, but the
+  messages of these checks are constant strings and no longer carry the rejected value — "Newton
+  regularization must be finite and ≥ 0" instead of "..., got 1.0e300", "the step of Static must
+  be positive and finite" without ", got α", the reuse messages without ", got reuse = k", "Picard
+  damping must be positive and finite" without ", got damping", "Repeat requires count >= 1"
+  without ", got count", "the radius of DogLeg must be positive and finite" without ", got
+  radius", "Backtracking needs 0 < c₁ < 1" without ", got c₁ = …" (and likewise for its `p` and
+  `maxiter` checks), "StrongWolfe needs αmax > 0", "Refinement η must be finite and in (0, 1)",
+  "Reparametrized type parameter C must be a Bool", the parameter and history-depth messages of
+  `Anderson`, in its inner constructor and in the keyword constructor that its `adapt` calls, and
+  "FixedWeights length does not match the number of members" for `Additive`, which named both
+  counts — because `adapt` rebuilds a method through these constructors, also inside a device
+  kernel (a `Reparametrized` batch adapts its method there), and a formatted message does not
+  compile to SPIR-V (`InvalidIRError`) while a constant one does. A `Reparametrized`
+  `solve_batch!` with `Newton(; globalization = Backtracking())`, `Bisection()`, `StrongWolfe()`,
+  `Newton(; refinement = true)` or `Picard(; globalization = Backtracking())` failed with
+  `InvalidIRError` on `CPU()`, at `Float32` and at `Float64`, and now succeeds (`Repeat`,
+  `OptimalWeights`, `FixedWeights`, `Switch`, `Anderson`, `Additive` and `Reparametrized` are not
+  reached from a kernel today — the composites have no `init_state` for a `Reparametrized`
+  problem, and a `Reparametrized` is adapted only on the host — so their messages change for
+  consistency only); since `adapt` rebuilds through the checked constructors, every path that
+  adapts a method — `solve`, `init`, every `solve_batch!`, and composite methods such as `Picard`,
+  `Repeat` and `Anderson`, whose `adapt` rebuilds their members — refuses a method whose `Static`
+  step `ToReal` narrows to `Inf` or to zero, or whose regularization it makes non-finite, with an
+  `ArgumentError`; a batch
   `order` that is not `isbits` goes to the kernel as an array of the batch's backend — the order
   itself when it already is one and a copy otherwise, because a kernel reads only its own backend's
   memory — while an `isbits` order, a range for instance, still goes by value; a callable
@@ -45,10 +57,13 @@ so that a compat-only bump can be told apart from an interface change.
   the launch, so a datum whose length differs between systems is an `ArgumentError` there instead
   of inside the kernel; and `solve_batch!` refuses a `jacobian_prototype` that is not `isbits` — a
   `SparseMatrixCSC`, for instance — because the kernel takes the problem by value, the check
-  reading through a `Reparametrized` to its inner problem. Two issues are recorded as known: K82,
+  reading through a `Reparametrized` to its inner problem. Three issues are recorded as known: K82,
   the Enzyme test environment cannot resolve against the `LLVM` bound of `KernelAbstractions`
-  0.10.5; and K84, an explicitly tagged `AutoForwardDiff` over a residual that calls
-  `ForwardDiff.derivative` throws in a kernel on the CPU backend.
+  0.10.5; K84, an explicitly tagged `AutoForwardDiff` over a residual that calls
+  `ForwardDiff.derivative` throws in a kernel on the CPU backend; and K85, with
+  `--check-bounds=yes` a `solve_batch!` with `Newton` on `CPU()`, over a `Reparametrized` or a
+  plain `NonlinearProblem`, throws `KernelException` at run time, and no CI job runs the flag,
+  because CI runs with `check_bounds: auto`.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`

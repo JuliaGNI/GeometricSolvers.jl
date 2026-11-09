@@ -453,3 +453,22 @@
   tagged-over-nested pair on the host.
 - **kind:** upstream
 - **found:** 2026-11-08
+
+### K85 · With `--check-bounds=yes`, a `solve_batch!` with `Newton` on `CPU()` throws `KernelException` at run time
+
+- **location:** `src/nonlinear/batched.jl`, `src/nonlinear/reparametrized.jl` (the batch kernels);
+  `.github/workflows/CI.yml` (`check_bounds: auto`)
+- **evidence:** in a fresh `julia --check-bounds=yes --project=test` (Julia 1.13.3,
+  KernelAbstractions 0.10.5), with `c = SVector{2, T}(1, 2)`,
+  `solve_batch!([SVector{2, T}(1, 1)], Reparametrized(NonlinearProblem((x, p) -> x - c), (y, p) -> 2 * y, nothing), Newton())`
+  and the same batch over the plain `NonlinearProblem((x, p) -> x - c)` both raise
+  `KernelException: exception thrown during kernel execution on device cpu`, at `Float32` and at
+  `Float64`; POCL prints `ERROR: exception during kernel execution on work-item (1, 1, 1).`
+  With `--check-bounds=auto` all four return `SUCCESS = 1`. `Picard()` on the plain problem
+  returns `SUCCESS = 1` under `yes` too. The default `Newton()` fails, so any testset that runs a
+  `Newton` batch on `CPU()` errors under the flag. The cause is not investigated; the general
+  mechanism is that a bounds check defeats `@inbounds`, a static kernel's local `MMatrix` or
+  `MVector` then escapes to the heap, and a compiled kernel cannot allocate. CI runs the suite
+  with `check_bounds: auto`, so no CI job runs it with `yes`.
+- **kind:** defect
+- **found:** PR #70
