@@ -2212,8 +2212,7 @@ end
     StaticElimState, DenseElimState}) = state_jnorm(st.outer_state)
 
 @inline function stationary_converged(
-        ::VariableProjection, options::Options{R},
-        state::Union{StaticElimState, DenseElimState},
+        ::VariableProjection, options::Options{R}, state,
         status::SolverStatus{R}) where {R}
     status.iterations >= options.min_iterations || return false
     jnorm = state_jnorm(state)
@@ -2233,12 +2232,21 @@ end
         st.Y, st.Z, st.E_y, st.E_z, st.init_failures)
 end
 
-@inline function refresh_diagnostics!!(
-        st::DenseElimState, m, ::VariableProjection, x, Fx, p)
+@inline function _refresh_elim_r3!!(
+        outer_state, ::BlockElimPrep, oprob, m, ::BlockEliminated, x, Fx, p)
+    return outer_state
+end
+
+@inline function _refresh_elim_r3!!(
+        outer_state, ws::VarProPrep, oprob, m, ::VariableProjection, x, Fx, p)
     R = real(eltype(x))
     m_r = Adapt.adapt(ToReal{R}(), m)
-    outer_state = refresh_diagnostics!!(
-        st.outer_state, m_r, st.oprob, st.ws.z_curr, Fx, p)
+    return refresh_diagnostics!!(outer_state, m_r, oprob, ws.z_curr, Fx, p)
+end
+
+@inline function refresh_diagnostics!!(
+        st::DenseElimState, m, vp::VariableProjection, x, Fx, p)
+    outer_state = _refresh_elim_r3!!(st.outer_state, st.ws, st.oprob, m, vp, x, Fx, p)
     return DenseElimState(outer_state, st.ws, st.oprob)
 end
 
@@ -2382,10 +2390,9 @@ end
         st.Y, st.Z, st.E_y, st.E_z, inner_fail ? Int32(1) : Int32(0))
 end
 
-@inline function start!!(
-        st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
-        x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {OST, T, R <: Real}
-    ws = st.ws
+@inline function _start_elim_r3!!(
+        outer_state, ws::BlockElimPrep, oprob_stored, m, elim::BlockEliminated,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {T, R <: Real}
     _gather_vec!(ws.y_warm, x, ws.Y_h, ws.Y_d)
     _gather_vec!(ws.z_curr, x, ws.Z_h, ws.Z_d)
     ws.fnorm_z_prev = R(NaN)
@@ -2396,15 +2403,13 @@ end
     ws.fnorm_z_prev = fnorm₀
     ws.init_failures = ws.inner_failures > Int32(0) ? Int32(1) : Int32(0)
     m_r = Adapt.adapt(ToReal{R}(), m)
-    oprob = elim === st.oprob.elim ? st.oprob : _R3BlockOuterProb(elim, ws)
-    outer_state = start!!(st.outer_state, m_r, oprob, ws.z_curr, Fx, p, R(rnorm(Fx)))
-    return DenseElimState(outer_state, ws, st.oprob)
+    oprob = elim === oprob_stored.elim ? oprob_stored : _R3BlockOuterProb(elim, ws)
+    return start!!(outer_state, m_r, oprob, ws.z_curr, Fx, p, R(rnorm(Fx)))
 end
 
-@inline function start!!(
-        st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
-        x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {OST, T, R <: Real}
-    ws = st.ws
+@inline function _start_elim_r3!!(
+        outer_state, ws::VarProPrep, oprob, m, vp::VariableProjection,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {T, R <: Real}
     _gather_vec!(ws.y_warm, x, ws.Y_h, ws.Y_d)
     _gather_vec!(ws.z_curr, x, ws.Z_h, ws.Z_d)
     ws.fnorm_z_prev = R(NaN)
@@ -2414,8 +2419,25 @@ end
     ws.fnorm_z_prev = fnorm₀
     ws.init_failures = ws.inner_failures > Int32(0) ? Int32(1) : Int32(0)
     m_r = Adapt.adapt(ToReal{R}(), m)
-    outer_state = start!!(st.outer_state, m_r, st.oprob, ws.z_curr, Fx, p, R(rnorm(Fx)))
-    return DenseElimState(outer_state, ws, st.oprob)
+    return start!!(outer_state, m_r, oprob, ws.z_curr, Fx, p, R(rnorm(Fx)))
+end
+
+@inline function start!!(
+        st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p,
+        fnorm₀::R) where {OST, T, R <: Real}
+    outer_state = _start_elim_r3!!(
+        st.outer_state, st.ws, st.oprob, m, elim, x, Fx, p, fnorm₀)
+    return DenseElimState(outer_state, st.ws, st.oprob)
+end
+
+@inline function start!!(
+        st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p,
+        fnorm₀::R) where {OST, T, R <: Real}
+    outer_state = _start_elim_r3!!(
+        st.outer_state, st.ws, st.oprob, m, vp, x, Fx, p, fnorm₀)
+    return DenseElimState(outer_state, st.ws, st.oprob)
 end
 
 @inline function _sync_outer_merit(outer_state::NewtonState, Fz, fnorm₊)
@@ -2493,13 +2515,13 @@ end
     return x₊, r₊, st₊, info
 end
 
-@inline function step!!(
-        st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
-        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
+@inline function _step_elim_r3!!(
+        outer_state, ws::BlockElimPrep, oprob_stored, m, elim::BlockEliminated,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {T}
     R = real(T)
-    ws = st.ws
     if !isfinite(ws.fnorm_z_prev)
-        return x, Fx, st, StepInfo{R}(NONFINITE, R(NaN), zero(R), Int32(0), false, false)
+        return x, Fx, outer_state,
+        StepInfo{R}(NONFINITE, R(NaN), zero(R), Int32(0), false, false)
     end
     ws.inner_failures = Int32(0)
     if !elim.linear_inner
@@ -2508,9 +2530,8 @@ end
         copyto!(ws.z_prev, ws.z_curr)
     end
     m_r = Adapt.adapt(ToReal{R}(), m)
-    oprob = elim === st.oprob.elim ? st.oprob : _R3BlockOuterProb(elim, ws)
-    z₊, _, outer_state₊, info_outer = step!!(
-        st.outer_state, m_r, oprob, ws.z_curr, Fx, p)
+    oprob = elim === oprob_stored.elim ? oprob_stored : _R3BlockOuterProb(elim, ws)
+    z₊, _, outer_state₊, info_outer = step!!(outer_state, m_r, oprob, ws.z_curr, Fx, p)
     z₊ === ws.z_curr || copyto!(ws.z_curr, z₊)
     _eliminate_r3!(ws, elim, ws.z_curr, p, false)
     copyto!(ws.z_prev, ws.z_curr)
@@ -2524,21 +2545,20 @@ end
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
         info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
-    return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
+    return x, Fx, outer_state₊, info
 end
 
-@inline function step!!(
-        st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
-        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
+@inline function _step_elim_r3!!(
+        outer_state, ws::VarProPrep, oprob, m, vp::VariableProjection,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {T}
     R = real(T)
-    ws = st.ws
     if !isfinite(ws.fnorm_z_prev)
-        return x, Fx, st, StepInfo{R}(NONFINITE, R(NaN), zero(R), Int32(0), false, false)
+        return x, Fx, outer_state,
+        StepInfo{R}(NONFINITE, R(NaN), zero(R), Int32(0), false, false)
     end
     ws.inner_failures = Int32(0)
     m_r = Adapt.adapt(ToReal{R}(), m)
-    z₊, _, outer_state₊, info_outer = step!!(
-        st.outer_state, m_r, st.oprob, ws.z_curr, Fx, p)
+    z₊, _, outer_state₊, info_outer = step!!(outer_state, m_r, oprob, ws.z_curr, Fx, p)
     z₊ === ws.z_curr || copyto!(ws.z_curr, z₊)
     _eliminate_vp_r3!(ws, vp, ws.z_curr, p)
     fnorm₊ = R(rnorm(ws.Fz_buf))
@@ -2546,13 +2566,34 @@ end
     _scatter_yz!(x, ws.y_warm, ws.z_curr, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     outer_state₊ = _sync_outer_merit(outer_state₊, Fx, fnorm₊)
     gr = state_gradratio(outer_state₊)
-    ws.fnorm_z_prev = (isfinite(gr) && gr > zero(R)) ? min(fnorm₊, gr * fnorm₊) : fnorm₊
+    ws.fnorm_z_prev = (isfinite(gr) && gr > zero(R)) ? min(fnorm₊, gr * fnorm₊) :
+                      fnorm₊
     extra_fail = ws.init_failures + (ws.inner_failures > Int32(0) ? Int32(1) : Int32(0))
     ws.init_failures = Int32(0)
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
         info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
-    return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
+    return x, Fx, outer_state₊, info
+end
+
+@inline function step!!(
+        st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
+    x, Fx, outer_state₊, info = _step_elim_r3!!(
+        st.outer_state, st.ws, st.oprob, m, elim, x, Fx, p)
+    st₊ = outer_state₊ === st.outer_state ? st :
+          DenseElimState(outer_state₊, st.ws, st.oprob)
+    return x, Fx, st₊, info
+end
+
+@inline function step!!(
+        st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
+        x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
+    x, Fx, outer_state₊, info = _step_elim_r3!!(
+        st.outer_state, st.ws, st.oprob, m, vp, x, Fx, p)
+    st₊ = outer_state₊ === st.outer_state ? st :
+          DenseElimState(outer_state₊, st.ws, st.oprob)
+    return x, Fx, st₊, info
 end
 
 @inline function finish!!(
@@ -2578,14 +2619,15 @@ end
     return _like_iterate(x, x_end), status_out, st_end
 end
 
-@inline function finish!!(
-        st::DenseElimState, m, ::Union{BlockEliminated, VariableProjection},
+@inline function _finish_elim_r3!!(
+        st_init::DenseElimState, outer_state, m,
+        ::Union{BlockEliminated, VariableProjection},
         x::AbstractVector{T}, Fx::AbstractVector{T},
         status::SolverStatus{R}) where {T, R}
-    ws = st.ws
+    ws = st_init.ws
     m_r = Adapt.adapt(ToReal{R}(), m)
     _, status_out, outer_end = finish!!(
-        st.outer_state, m_r, st.oprob, ws.z_curr, Fx, status)
+        outer_state, m_r, st_init.oprob, ws.z_curr, Fx, status)
     if ws.init_failures > Int32(0)
         status_out = SolverStatus{R}(
             status_out.code, status_out.iterations, status_out.fnorm,
@@ -2598,8 +2640,97 @@ end
     end
     ws.fnorm_z_prev = R(NaN)
     ws.init_failures = Int32(0)
-    st_end = outer_end === st.outer_state ? st : DenseElimState(outer_end, ws, st.oprob)
+    st_end = outer_end === st_init.outer_state ? st_init :
+             DenseElimState(outer_end, ws, st_init.oprob)
     return x, status_out, st_end
+end
+
+@inline function finish!!(
+        st::DenseElimState, m, prob::Union{BlockEliminated, VariableProjection},
+        x::AbstractVector{T}, Fx::AbstractVector{T},
+        status::SolverStatus{R}) where {T, R}
+    return _finish_elim_r3!!(st, st.outer_state, m, prob, x, Fx, status)
+end
+
+# R3 `solve!!` keeps `outer_state` unboxed on its stack frame across `start!!`, `step!!`,
+# and `finish!!` rather than re-wrapping `DenseElimState` at every step.
+function solve!!(
+        st::DenseElimState, prob::Union{BlockEliminated, VariableProjection},
+        x₀::AbstractVector{T}, method, p = nothing,
+        options::Options{R} = Options(eltype(x₀))) where {T, R <: Real}
+    check_options(eltype(x₀), options)
+    x = x₀
+    ws = st.ws
+    oprob = st.oprob
+    Fx = primal_residual!!(residual_buffer(st), prob, x, p)
+    fnorm₀ = rnorm(Fx)
+    outer_state = _start_elim_r3!!(
+        st.outer_state, ws, oprob, method, prob, x, Fx, p, fnorm₀)
+    status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false, false)
+    if !isfinite(fnorm₀)
+        return _finish_elim_r3!!(
+            st, outer_state, method, prob, x, Fx, end_status(status, NONFINITE))
+    end
+    if residual_converged(options, status, fnorm₀)
+        return _finish_elim_r3!!(st, outer_state, method, prob, x, Fx, status)
+    end
+    if options.max_iterations == Int32(0)
+        return _finish_elim_r3!!(
+            st, outer_state, method, prob, x, Fx, end_status(status, MAXITERS))
+    end
+    stalls = Int32(0)
+    while true
+        x, Fx, outer_state, info = _step_elim_r3!!(
+            outer_state, ws, oprob, method, prob, x, Fx, p)
+        status = record(status, info)
+        if info.code == SINGULAR || info.code == NONFINITE
+            return _finish_elim_r3!!(st, outer_state, method, prob, x, Fx, status)
+        end
+        if info.code == LINESEARCH_FAILED && iszero(info.stepnorm) &&
+           !stationary_converged(prob, options, outer_state, status)
+            return _finish_elim_r3!!(st, outer_state, method, prob, x, Fx, status)
+        end
+        if residual_converged(options, status, fnorm₀)
+            return _finish_elim_r3!!(
+                st, outer_state, method, prob, x, Fx, ok_status(status))
+        end
+        refreshed = false
+        if stationary_converged(prob, options, outer_state, status)
+            outer_state = _refresh_elim_r3!!(
+                outer_state, ws, oprob, method, prob, x, Fx, p)
+            refreshed = true
+            if stationary_converged(prob, options, outer_state, status)
+                return _finish_elim_r3!!(
+                    st, outer_state, method, prob, x, Fx, stationary_status(status))
+            end
+        end
+        if !(info.code == STALLED || info.limited) &&
+           (step_converged(options, status, rnorm(x)) ||
+            (info.code == SUCCESS && iszero(info.stepnorm) &&
+             status.iterations >= options.min_iterations))
+            refreshed || (outer_state = _refresh_elim_r3!!(
+                outer_state, ws, oprob, method, prob, x, Fx, p))
+            if stationary_converged(prob, options, outer_state, status)
+                return _finish_elim_r3!!(
+                    st, outer_state, method, prob, x, Fx, stationary_status(status))
+            end
+            return _finish_elim_r3!!(
+                st, outer_state, method, prob, x, Fx, end_status(status, STALLED))
+        end
+        if info.code == STALLED
+            stalls += one(Int32)
+            if stalls >= options.max_stalls
+                return _finish_elim_r3!!(
+                    st, outer_state, method, prob, x, Fx, end_status(status, STALLED))
+            end
+        else
+            stalls = Int32(0)
+        end
+        if status.iterations >= options.max_iterations
+            return _finish_elim_r3!!(
+                st, outer_state, method, prob, x, Fx, end_status(status, MAXITERS))
+        end
+    end
 end
 
 # --- `init`, `solve!`, `solve_implicit`, and `solve` ---
