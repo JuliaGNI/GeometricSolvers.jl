@@ -18,10 +18,9 @@ at each outer iterate by solving the inner equations, and steps on the outer equ
 Schur complement `J_zz - J_zy J_yy⁺ J_yz`; [`VariableProjection`](@ref) does the same for a
 `LeastSquaresProblem` across all `m` residual rows by Golub–Pereyra variable projection or
 Kaufman's reduced Jacobian (`BlockEliminated` on a `LeastSquaresProblem` forwards to
-`VariableProjection`). The storage of
-the iterate selects the call form of the functions, so one problem serves every regime.
-`NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem`, `Reparametrized`,
-`BlockEliminated` and `VariableProjection` are exported;
+`VariableProjection`). The storage of the iterate selects the call form of the functions, so one
+problem serves every regime. `NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem`,
+`Reparametrized`, `BlockEliminated` and `VariableProjection` are exported;
 `GeometricSolvers.jacobian_prototype` and `GeometricSolvers.jacobian_pattern` are internal
 accessors.
 

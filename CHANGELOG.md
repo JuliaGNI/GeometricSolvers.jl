@@ -25,9 +25,12 @@ so that a compat-only bump can be told apart from an interface change.
   the adaptive inner tolerance `τ_inner = max(10 eps max(1, ‖F_y0‖), min(c, 0.5 ‖F_{E_z}(prev)‖₂²))`
   (`c` the `inner_options` cap, which stands alone before the first outer residual) and
   pseudoinverse null-space projection on rank-deficient inner steps when `linear_inner = false` —
-  and steps on the Schur-corrected outer residual
-  `F_{E_z}(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ F_{E_y}(y*(z), z)`
-  with the Schur complement `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`.
+  and steps on the outer residual `F_{E_z}(ỹ(z), z)`, where for `linear_inner = false` and an inner
+  residual above the floor `ỹ = y - J_yy(y, z)⁺ F_{E_y}(y, z)` is the inner iterate `y` refined by
+  one Newton correction (to first order in `F_{E_y}` this is `F_{E_z} - J_zy J_yy⁺ F_{E_y}`), and
+  otherwise `ỹ = y`; the outer Jacobian is the Schur complement
+  `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`. `inner_method` supplies
+  only the linear solver of the inner iteration and of the Schur complement.
   `VariableProjection(prob::LeastSquaresProblem, inner; outer = nothing,
   linsolve = SVDFactorization(), jacobian_mode = :kaufman, linear_inner = true,
   inner_method = GaussNewton(; linsolve = SVDFactorization()), inner_options = nothing)`

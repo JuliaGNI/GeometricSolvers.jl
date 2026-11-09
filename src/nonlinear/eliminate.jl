@@ -21,8 +21,15 @@ the previous inner solution `y_warm` when `linear_inner = false`, with the adapt
 `inner_options` (unbounded when they are `nothing`) and ``\\|F_{E_y}^0\\|_2`` is the inner residual
 at the warm start. The cap stands alone before the first outer residual exists, so the tolerance is
 ``\\max(10\\,\\varepsilon\\max(1, \\|F_{E_y}^0\\|_2), c)`` with `inner_options` and the floor alone
-without them. The outer solver then steps on the reduced residual
-``F_{\\text{red}}(z) = F_{E_z}(y^*(z), z)`` using the Schur complement
+without them. The inner iteration is Newton's method with step halving (at most 8 halvings per
+step) and at most `max_iterations` steps of `inner_options` (50 without them); `inner_method`
+supplies only the linear solver of these steps and of the Schur complement
+(`inner_method.linsolve` for a `Newton`, or a linear method itself). The outer solver then steps on
+the reduced residual ``F_{\\text{red}}(z) = F_{E_z}(\\tilde y(z), z)``, where for
+`linear_inner = false` and an inner residual above the floor ``\\tilde y(z) = y - J_{yy}(y, z)^+
+F_{E_y}(y, z)`` is the inner iterate `y` refined by one Newton correction (it agrees with
+``F_{E_z}(y^*(z), z)`` to first order in ``F_{E_y}``), and otherwise ``\\tilde y = y``; the outer
+Jacobian is the Schur complement
 
 ```math
 S(z) = J_{zz}(y^*(z), z) - J_{zy}(y^*(z), z)\\, J_{yy}(y^*(z), z)^+\\, J_{yz}(y^*(z), z).
@@ -66,10 +73,14 @@ unknowns `x` into inner (linear or fast) parameters `Y = inner` (`y = x[Y]`) and
 `Z = outer` (`z = x[Z]`, defaulting to the complement of `inner` in `1:n`) across all `m` residual
 rows.
 
-For each outer iterate `z`, the inner subproblem ``\\min_y \\tfrac{1}{2}\\|r(y, z)\\|_2^2`` is
-solved for ``y^*(z)`` (in one linear least-squares solve ``y^*(z) = -\\Phi(z)^+ r(0, z)`` with
-``\\Phi(z) = \\partial r / \\partial y`` when `linear_inner = true`, or via `inner_method` warm-
-started from `y_warm` when `linear_inner = false`). The outer solver steps on the reduced residual
+For each outer iterate `z`, the inner subproblem
+``\\min_y \\tfrac{1}{2}\\|r(y, z)\\|_2^2`` is solved for ``y^*(z)`` (in one linear least-squares
+solve ``y^*(z) = -\\Phi(z)^+ r(0, z)`` with ``\\Phi(z) = \\partial r / \\partial y`` when
+`linear_inner = true`, or by a Gauss–Newton iteration with step halving, warm-started from `y_warm`,
+when `linear_inner = false`). `linsolve` factorises ``\\Phi(z)`` when `linear_inner = true`; with
+`linear_inner = false` the linear solver of `inner_method` (`inner_method.linsolve` for a `Newton`,
+or a linear method itself) does, in the iteration and in the reduced Jacobian. The outer solver
+steps on the reduced residual
 ``r_{\\text{red}}(z) = r(y^*(z), z)`` with reduced Jacobian (`m × |Z|`):
 
 - `jacobian_mode = :kaufman` (default): Kaufman's first-term reduced Jacobian
@@ -489,8 +500,9 @@ end
 @inline _is_rank_deficient(fac::Union{DenseSVD, DeviceSVD}, ny::Int) = fac.rank < ny
 @inline _is_rank_deficient(_, ::Int) = false
 
-# Apply (Φ^+)^H * w for StaticRectSVD / StaticSVD / StaticRectQR / StaticQR in R1:
-# Given Φ of size M × Ny and w of length Ny, returns an SVector{M, T}.
+# Apply (Φ^+)^H * w in R1 for Φ of size M × Ny and w of length Ny, returning an SVector{M, T}: from
+# the SVD factors of Φ for a StaticRectSVD or StaticSVD, and through the normal equations
+# Φ (Φ^H Φ)^+ w for any other factorization.
 @inline function _pinv_adj_mul_r1(
         fac::StaticRectSVD{M, Ny, TF, L, LN, R},
         ::SMatrix{M, Ny, T}, w::SVector{Ny, T}) where {M, Ny, TF, L, LN, R, T}

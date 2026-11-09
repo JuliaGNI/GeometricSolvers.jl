@@ -3,21 +3,21 @@ using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
-using LinearAlgebra: I, norm, pinv
+using LinearAlgebra: norm
 using Random: Xoshiro
 using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: AbstractNonlinearProblem, AutoForwardDiff, Backtracking,
-                        BlockEliminated, DogLeg, GaussNewton, LDLTFactorization,
-                        LUFactorization, LeastSquaresProblem, LevenbergMarquardt, MAXITERS,
-                        NONFINITE, Newton, NonlinearProblem, NonlinearSolver, Options,
-                        Picard, QRFactorization, STALLED, SUCCESS, SVDFactorization,
-                        SolverStatus, StationarityProblem, Static, ToReal,
-                        VariableProjection, finish!!, init, init_state, jacobian!!,
-                        jvp!!, prepare_ad, residual!!, rnorm, solve, solve!, solve!!,
-                        start!!, step!!
+using GeometricSolvers: AbstractNonlinearProblem, AutoForwardDiff, BlockEliminated,
+                        GaussNewton,
+                        LeastSquaresProblem, LevenbergMarquardt, NONFINITE, Newton,
+                        NonlinearProblem, NonlinearSolver, Options, QRFactorization,
+                        SUCCESS,
+                        SVDFactorization, SolverStatus, StationarityProblem, ToReal,
+                        VariableProjection, finish!!, init, init_state, jacobian!!, jvp!!,
+                        prepare_ad, residual!!, rnorm, solve, solve!, solve!!, start!!,
+                        step!!
 
 const GS = GeometricSolvers
 
@@ -476,7 +476,8 @@ end
 
         @test norm(S_analytic - S_fd) <= 1e-6 * max(1.0, norm(S_fd))
 
-        # Unreduced J_zz and wrong-sign J_zz + J_zy J_yy^+ J_yz differ from S_fd (catches MU2)
+        # The reduced Jacobian differs from the unreduced J_zz by O(1) (catches MU2); the
+        # comparison with S_fd above fixes the sign of the J_zy J_yy^+ J_yz term
         J_full = jacobian!!(nothing, AutoForwardDiff(), prob_f, x_test, p_val)
         J_zz_raw = J_full[SVector{2, Int}(outer_eqs), SVector(3, 4)]
         @test norm(S_analytic - J_zz_raw) > 1e-2
