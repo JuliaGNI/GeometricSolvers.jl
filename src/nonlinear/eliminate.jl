@@ -567,19 +567,24 @@ end
 end
 
 @inline function _schur_res_corr_r1(
-        backend, ls_y, prob_in, x::SVector{N, T}, p,
+        backend, ls_y, prob_in,
+        y::SVector{Ny, T}, z::SVector{Nz, T}, x::SVector{N, T}, p,
         Fy::SVector{Ny, T}, Fz::SVector{Nz, T},
-        Y::SVector{Ny, Int}, E_y::SVector{Ny, Int}, E_z::SVector{Nz, Int},
+        Y::SVector{Ny, Int}, Z::SVector{Nz, Int},
+        E_y::SVector{Ny, Int}, E_z::SVector{Nz, Int},
         fnorm_y::R, τ_floor::R) where {N, Ny, Nz, T, R <: Real}
-    (fnorm_y <= τ_floor || !isfinite(fnorm_y)) && return Fz, false
+    (fnorm_y <= τ_floor || !isfinite(fnorm_y)) && return y, Fz, x, false
     J_full = _inner_jac_r1(backend, prob_in, x, p)
     J_yy = J_full[E_y, Y]
-    J_zy = J_full[E_z, Y]
     fac_yy = factorize!!(nothing, ls_y, J_yy)
     fail_c = returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, Ny)
+    y_base = fail_c ? ldiv!!(nothing, fac_yy, J_yy * y) : y
     wy = ldiv!!(nothing, fac_yy, Fy)
-    all(isfinite, wy) || return Fz, true
-    return Fz - J_zy * wy, fail_c
+    all(isfinite, wy) || return y_base, Fz, x, true
+    y_corr = y_base - wy
+    x_corr = _scatter_yz_r1(y_corr, z, Y, Z, Val(N))
+    F_corr = _inner_res_r1(prob_in, x_corr, p)
+    return y_corr, F_corr[E_z], x_corr, fail_c
 end
 
 @inline function _eliminate_r1(
@@ -641,10 +646,10 @@ end
             end
         end
         if fnorm_y0 > τ_floor && isfinite(fnorm_y0)
-            Fz_c, fail_c = _schur_res_corr_r1(
-                backend, ls_y, prob_in, x, p, Fy, F_full[E_z],
-                Y, E_y, E_z, fnorm_y0, τ_floor)
-            return y, Fz_c, x, (fail_0 | fail_c), 0
+            y_c, Fz_c, x_c, fail_c = _schur_res_corr_r1(
+                backend, ls_y, prob_in, y, z, x, p, Fy, F_full[E_z],
+                Y, Z, E_y, E_z, fnorm_y0, τ_floor)
+            return y_c, Fz_c, x_c, (fail_0 | fail_c), 0
         end
         return y, F_full[E_z], x, fail_0, 0
     end
@@ -664,10 +669,10 @@ end
             Fy_p = F_p[E_y]
             fnorm_p = R(rnorm(Fy_p))
             if fnorm_p <= τ_in
-                Fz_p, fail_c = _schur_res_corr_r1(
-                    backend, ls_y, prob_in, x_p, p, Fy_p, F_p[E_z],
-                    Y, E_y, E_z, fnorm_p, τ_floor)
-                return y_p, Fz_p, x_p, (fail_p | fail_c), 1
+                y_c, Fz_p, x_c, fail_c = _schur_res_corr_r1(
+                    backend, ls_y, prob_in, y_p, z, x_p, p, Fy_p, F_p[E_z],
+                    Y, Z, E_y, E_z, fnorm_p, τ_floor)
+                return y_c, Fz_p, x_c, (fail_p | fail_c), 1
             end
         end
     end
@@ -715,9 +720,10 @@ end
     if !(fnorm_y <= τ_in)
         failed = true
     end
-    Fz_out, fail_c = _schur_res_corr_r1(
-        backend, ls_y, prob_in, x, p, Fy, F_full[E_z], Y, E_y, E_z, fnorm_y, τ_floor)
-    return y, Fz_out, x, (failed | fail_c), iters
+    y_out, Fz_out, x_out, fail_c = _schur_res_corr_r1(
+        backend, ls_y, prob_in, y, z, x, p, Fy, F_full[E_z],
+        Y, Z, E_y, E_z, fnorm_y, τ_floor)
+    return y_out, Fz_out, x_out, (failed | fail_c), iters
 end
 
 @inline function _schur_jacobian_r1(
@@ -783,7 +789,13 @@ end
     x = _scatter_yz_r1(y, z, Y, Z, Val(N))
     r_curr = prob_in.F(x, p)
     fnorm_r0 = R(rnorm(r_curr))
-    τ_in, max_it = _inner_tol_r1(getfield(vp, :inner_options), R, fnorm_r0, fnorm_z_prev)
+    inner_opt = getfield(vp, :inner_options)
+    if inner_opt === nothing
+        τ_in = R(10) * eps(R) * max(one(R), fnorm_r0)
+        max_it = Int32(50)
+    else
+        τ_in, max_it = _inner_tol_r1(inner_opt, R, fnorm_r0, fnorm_z_prev)
+    end
     failed = false
     converged = isfinite(fnorm_r0) && fnorm_r0 <= τ_in
     iters = 0
@@ -928,21 +940,21 @@ end
 
 @inline function prepare_ad(
         ::Nothing, prob::Union{BlockEliminated, VariableProjection},
-        ::Nothing, x::StaticVector, p)
+        ::Nothing, x::Union{StaticVector, Number}, p)
     _validate_elim_x(prob, x, p)
     return AutoForwardDiff()
 end
 
 @inline function prepare_ad(
         backend::AutoForwardDiff, prob::Union{BlockEliminated, VariableProjection},
-        ::Nothing, x::StaticVector, p)
+        ::Nothing, x::Union{StaticVector, Number}, p)
     _validate_elim_x(prob, x, p)
     return backend
 end
 
 @inline function prepare_ad(
         backend::AbstractADType, prob::Union{BlockEliminated, VariableProjection},
-        ::Nothing, x::StaticVector, p)
+        ::Nothing, x::Union{StaticVector, Number}, p)
     _validate_elim_x(prob, x, p)
     return backend
 end
@@ -1229,7 +1241,7 @@ function _dec_col!(M::AbstractMatrix, col::AbstractVector, j::Int)
     return M
 end
 
-function _pinv_adj_mul_r3!(
+@inline function _pinv_adj_mul_r3!(
         out::AbstractVector{T}, fac::DenseSVD, w::AbstractVector{T}) where {T}
     rk = fac.rank
     if rk == 0
@@ -1246,7 +1258,7 @@ function _pinv_adj_mul_r3!(
     return out
 end
 
-function _pinv_adj_mul_r3!(
+@inline function _pinv_adj_mul_r3!(
         out::AbstractVector{T}, fac::DeviceSVD, w::AbstractVector{T}) where {T}
     rk = fac.rank
     if rk == 0
@@ -1296,7 +1308,7 @@ mutable struct BlockElimPrep{
     const Ey_d::IV
     const Ez_d::IV
     const inner_prep::IP
-    fac_yy::FAC
+    const fac_yy::FAC
     fnorm_z_prev::R
     last_inner_iters::Int
     inner_failures::Int32
@@ -1353,7 +1365,7 @@ mutable struct VarProPrep{
     const M_d::IV
     const idx_n::IV
     const inner_prep::IP
-    fac_phi::FAC
+    const fac_phi::FAC
     const x_nest1::XN
     const r_nest1::RN
     fnorm_z_prev::R
@@ -1380,13 +1392,13 @@ struct _R3VPJac{VP <: VariableProjection, WS <: VarProPrep}
     ws::WS
 end
 
-function (f::_R3VPRes)(r_out::AbstractVector, z::AbstractVector, p)
+@inline function (f::_R3VPRes)(r_out::AbstractVector, z::AbstractVector, p)
     _eliminate_vp_r3!(f.ws, f.vp, z, p)
     r_out === f.ws.Fz_buf || copyto!(r_out, f.ws.Fz_buf)
     return r_out
 end
 
-function (j::_R3VPJac)(J_out::AbstractMatrix, z::AbstractVector, p)
+@inline function (j::_R3VPJac)(J_out::AbstractMatrix, z::AbstractVector, p)
     _eliminate_vp_r3!(j.ws, j.vp, z, p)
     _varpro_jacobian_r3!(J_out, j.ws, j.vp, p)
     return J_out
@@ -1557,13 +1569,13 @@ function _eliminate_r3!(
     _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
     _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
     _extract_submat!(ws.J_yy, ws.J_buf, ws.Ey_h, ws.Y_h, ws.Ey_d, ws.Y_d)
-    ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
-    ldiv!!(ws.dy_buf, ws.fac_yy, ws.Fy_buf)
+    fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+    ldiv!!(ws.dy_buf, fac_yy, ws.Fy_buf)
     ws.y_warm .= .-ws.dy_buf
     _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     _inner_res_r3!(ws.F_buf, ws.inner_prep, prob_in, ws.x_buf, p)
     _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
-    if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny) ||
+    if returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, ny) ||
        !all(isfinite, ws.y_warm)
         ws.inner_failures += one(Int32)
     end
@@ -1572,19 +1584,24 @@ function _eliminate_r3!(
 end
 
 function _schur_res_corr_r3!(
-        ws::BlockElimPrep{T, R}, ls_y, prob_in, p, fnorm_y::R, τ_floor::R) where {T, R}
+        ws::BlockElimPrep{T, R}, ls_y, prob_in, z::AbstractVector{T},
+        p, fnorm_y::R, τ_floor::R) where {T, R}
     (fnorm_y <= τ_floor || !isfinite(fnorm_y)) && return ws.Fz_buf
     ny = length(ws.Y_h)
     _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
     _extract_submat!(ws.J_yy, ws.J_buf, ws.Ey_h, ws.Y_h, ws.Ey_d, ws.Y_d)
-    _extract_submat!(ws.J_zy, ws.J_buf, ws.Ez_h, ws.Y_h, ws.Ez_d, ws.Y_d)
-    ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
-    if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny)
+    fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+    if returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, ny)
         ws.inner_failures += one(Int32)
+        mul!(ws.w_col, ws.J_yy, ws.y_warm)
+        ldiv!!(ws.y_warm, fac_yy, ws.w_col)
     end
-    ldiv!!(ws.w_col, ws.fac_yy, ws.Fy_buf)
+    ldiv!!(ws.w_col, fac_yy, ws.Fy_buf)
     if all(isfinite, ws.w_col)
-        mul!(ws.Fz_buf, ws.J_zy, ws.w_col, -one(T), one(T))
+        ws.y_warm .-= ws.w_col
+        _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
+        _inner_res_r3!(ws.F_buf, ws.inner_prep, prob_in, ws.x_buf, p)
+        _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
     else
         ws.inner_failures += one(Int32)
     end
@@ -1616,28 +1633,24 @@ function _eliminate_r3!(
         elseif !isfinite(ws.fnorm_z_prev)
             _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
             _extract_submat!(ws.J_yy, ws.J_buf, ws.Ey_h, ws.Y_h, ws.Ey_d, ws.Y_d)
-            ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
-            if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny)
+            fac_yy0 = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+            if returncode(fac_yy0) != SUCCESS || _is_rank_deficient(fac_yy0, ny)
                 ws.inner_failures += one(Int32)
                 mul!(ws.w_col, ws.J_yy, ws.y_warm)
-                ldiv!!(ws.y_warm, ws.fac_yy, ws.w_col)
+                ldiv!!(ws.y_warm, fac_yy0, ws.w_col)
                 _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
                 _inner_res_r3!(ws.F_buf, ws.inner_prep, prob_in, ws.x_buf, p)
                 _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
                 _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
             end
         end
-        _schur_res_corr_r3!(ws, ls_y, prob_in, p, fnorm_y0, τ_floor)
+        _schur_res_corr_r3!(ws, ls_y, prob_in, z, p, fnorm_y0, τ_floor)
         return ws.Fz_buf
     end
     if has_schur_pred && max_it >= 1 && z != ws.z_prev
         ws.Fz_buf .= z .- ws.z_prev
         mul!(ws.dy_buf, ws.W_mat, ws.Fz_buf)
         ws.dy_buf .+= ws.w_col
-        if _is_rank_deficient(ws.fac_yy, ny)
-            mul!(ws.Fy_buf, ws.J_yy, ws.y_warm)
-            ldiv!!(ws.y_warm, ws.fac_yy, ws.Fy_buf)
-        end
         ws.y_trial .= ws.y_warm .- ws.dy_buf
         if all(isfinite, ws.y_trial)
             _scatter_yz!(ws.x_buf, ws.y_trial, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
@@ -1647,7 +1660,7 @@ function _eliminate_r3!(
             if fnorm_p <= τ_in
                 copyto!(ws.y_warm, ws.y_trial)
                 _gather_vec!(ws.Fz_buf, ws.F_buf, ws.Ez_h, ws.Ez_d)
-                _schur_res_corr_r3!(ws, ls_y, prob_in, p, fnorm_p, τ_floor)
+                _schur_res_corr_r3!(ws, ls_y, prob_in, z, p, fnorm_p, τ_floor)
                 ws.last_inner_iters = 1
                 return ws.Fz_buf
             end
@@ -1663,13 +1676,13 @@ function _eliminate_r3!(
         iters += 1
         _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
         _extract_submat!(ws.J_yy, ws.J_buf, ws.Ey_h, ws.Y_h, ws.Ey_d, ws.Y_d)
-        ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
-        if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny)
+        fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+        if returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, ny)
             failed = true
             mul!(ws.w_col, ws.J_yy, ws.y_warm)
-            ldiv!!(ws.y_warm, ws.fac_yy, ws.w_col)
+            ldiv!!(ws.y_warm, fac_yy, ws.w_col)
         end
-        ldiv!!(ws.dy_buf, ws.fac_yy, ws.Fy_buf)
+        ldiv!!(ws.dy_buf, fac_yy, ws.Fy_buf)
         if !all(isfinite, ws.dy_buf)
             failed = true
             break
@@ -1700,7 +1713,7 @@ function _eliminate_r3!(
     if failed || !(fnorm_y <= τ_in)
         ws.inner_failures += one(Int32)
     end
-    _schur_res_corr_r3!(ws, ls_y, prob_in, p, fnorm_y, τ_floor)
+    _schur_res_corr_r3!(ws, ls_y, prob_in, z, p, fnorm_y, τ_floor)
     ws.last_inner_iters = iters
     return ws.Fz_buf
 end
@@ -1716,17 +1729,19 @@ function _schur_jacobian_r3!(
     _extract_submat!(ws.J_yz, ws.J_buf, ws.Ey_h, ws.Z_h, ws.Ey_d, ws.Z_d)
     _extract_submat!(ws.J_zy, ws.J_buf, ws.Ez_h, ws.Y_h, ws.Ez_d, ws.Y_d)
     _extract_submat!(ws.J_zz, ws.J_buf, ws.Ez_h, ws.Z_h, ws.Ez_d, ws.Z_d)
-    ws.fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
-    if returncode(ws.fac_yy) != SUCCESS || _is_rank_deficient(ws.fac_yy, ny)
+    fac_yy = factorize!!(ws.fac_yy, ls_y, ws.J_yy)
+    if returncode(fac_yy) != SUCCESS || _is_rank_deficient(fac_yy, ny)
         ws.inner_failures += one(Int32)
+        mul!(ws.Fy_buf, ws.J_yy, ws.y_warm)
+        ldiv!!(ws.y_warm, fac_yy, ws.Fy_buf)
     end
     for j in 1:nz
         _extract_col!(ws.Fy_buf, ws.J_yz, j)
-        ldiv!!(ws.w_col, ws.fac_yy, ws.Fy_buf)
+        ldiv!!(ws.w_col, fac_yy, ws.Fy_buf)
         _store_col!(ws.W_mat, ws.w_col, j)
     end
     _gather_vec!(ws.Fy_buf, ws.F_buf, ws.Ey_h, ws.Ey_d)
-    ldiv!!(ws.w_col, ws.fac_yy, ws.Fy_buf)
+    ldiv!!(ws.w_col, fac_yy, ws.Fy_buf)
     Sz === ws.J_zz || copyto!(Sz, ws.J_zz)
     mul!(Sz, ws.J_zy, ws.W_mat, -one(T), one(T))
     return Sz
@@ -1743,12 +1758,12 @@ function _eliminate_vp_r3!(
     prob_in.F(ws.r_buf, ws.x_buf, p)
     _inner_jac_r3!(ws.J_buf, ws.inner_prep, prob_in, ws.x_buf, p)
     _extract_submat!(ws.Φ_mat, ws.J_buf, ws.M_h, ws.Y_h, ws.M_d, ws.Y_d)
-    ws.fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
-    ldiv!!(ws.dy_buf, ws.fac_phi, ws.r_buf)
+    fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
+    ldiv!!(ws.dy_buf, fac_phi, ws.r_buf)
     ws.y_warm .= .-ws.dy_buf
     _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     prob_in.F(ws.Fz_buf, ws.x_buf, p)
-    if returncode(ws.fac_phi) != SUCCESS || _is_rank_deficient(ws.fac_phi, ny) ||
+    if returncode(fac_phi) != SUCCESS || _is_rank_deficient(fac_phi, ny) ||
        !all(isfinite, ws.y_warm)
         ws.inner_failures += one(Int32)
     end
@@ -1768,7 +1783,13 @@ function _eliminate_vp_r3!(
     _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
     prob_in.F(ws.Fz_buf, ws.x_buf, p)
     fnorm_r0 = R(rnorm(ws.Fz_buf))
-    τ_in, max_it = _inner_tol_r1(getfield(vp, :inner_options), R, fnorm_r0, ws.fnorm_z_prev)
+    inner_opt = getfield(vp, :inner_options)
+    if inner_opt === nothing
+        τ_in = R(10) * eps(R) * max(one(R), fnorm_r0)
+        max_it = Int32(50)
+    else
+        τ_in, max_it = _inner_tol_r1(inner_opt, R, fnorm_r0, ws.fnorm_z_prev)
+    end
     iters = 0
     failed = false
     converged = isfinite(fnorm_r0) && fnorm_r0 <= τ_in
@@ -1778,11 +1799,11 @@ function _eliminate_vp_r3!(
         mul!(ws.w_vec, adjoint(ws.Φ_mat), ws.Fz_buf)
         if R(rnorm(ws.w_vec)) <= τ_in * max(one(R), R(rnorm(ws.Φ_mat)))
             if k == 1 && !isfinite(ws.fnorm_z_prev)
-                ws.fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
-                if returncode(ws.fac_phi) != SUCCESS || _is_rank_deficient(ws.fac_phi, ny)
+                fac_phi0 = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
+                if returncode(fac_phi0) != SUCCESS || _is_rank_deficient(fac_phi0, ny)
                     failed = true
                     mul!(ws.col_m, ws.Φ_mat, ws.y_warm)
-                    ldiv!!(ws.y_warm, ws.fac_phi, ws.col_m)
+                    ldiv!!(ws.y_warm, fac_phi0, ws.col_m)
                     _scatter_yz!(ws.x_buf, ws.y_warm, z, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
                     prob_in.F(ws.Fz_buf, ws.x_buf, p)
                     fnorm_r0 = R(rnorm(ws.Fz_buf))
@@ -1793,13 +1814,13 @@ function _eliminate_vp_r3!(
         end
         k > max_it && break
         iters += 1
-        ws.fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
-        if returncode(ws.fac_phi) != SUCCESS || _is_rank_deficient(ws.fac_phi, ny)
+        fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
+        if returncode(fac_phi) != SUCCESS || _is_rank_deficient(fac_phi, ny)
             failed = true
             mul!(ws.col_m, ws.Φ_mat, ws.y_warm)
-            ldiv!!(ws.y_warm, ws.fac_phi, ws.col_m)
+            ldiv!!(ws.y_warm, fac_phi, ws.col_m)
         end
-        ldiv!!(ws.dy_buf, ws.fac_phi, ws.Fz_buf)
+        ldiv!!(ws.dy_buf, fac_phi, ws.Fz_buf)
         if !all(isfinite, ws.dy_buf)
             failed = true
             break
@@ -1852,31 +1873,31 @@ function _varpro_kaufman_r3!(
     _inner_jac_r3!(ws.J_buf, ws.inner_prep, getfield(vp, :prob), ws.x_buf, p)
     _extract_submat!(ws.Φ_mat, ws.J_buf, ws.M_h, ws.Y_h, ws.M_d, ws.Y_d)
     _extract_submat!(ws.D_mat, ws.J_buf, ws.M_h, ws.Z_h, ws.M_d, ws.Z_d)
-    ws.fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
-    if returncode(ws.fac_phi) != SUCCESS || _is_rank_deficient(ws.fac_phi, ny)
+    fac_phi = factorize!!(ws.fac_phi, ls_y, ws.Φ_mat)
+    if returncode(fac_phi) != SUCCESS || _is_rank_deficient(fac_phi, ny)
         ws.inner_failures += one(Int32)
     end
     for j in 1:nz
         _extract_col!(ws.col_m, ws.D_mat, j)
-        ldiv!!(ws.w_vec, ws.fac_phi, ws.col_m)
+        ldiv!!(ws.w_vec, fac_phi, ws.col_m)
         mul!(ws.col_m, ws.Φ_mat, ws.w_vec)
         _sub_col!(J_red, ws.D_mat, ws.col_m, j)
     end
-    return J_red
+    return J_red, fac_phi
 end
 
 function _varpro_jacobian_r3!(
         J_red::AbstractMatrix{T}, ws::VarProPrep{T, R},
         vp::VariableProjection{P, YI, ZI, LS, :kaufman, LI, M, IO},
         p) where {T, R, P, YI, ZI, LS, LI, M, IO}
-    return _varpro_kaufman_r3!(J_red, ws, vp, p)
+    return _varpro_kaufman_r3!(J_red, ws, vp, p)[1]
 end
 
 function _varpro_jacobian_r3!(
         J_red::AbstractMatrix{T}, ws::VarProPrep{T, R},
         vp::VariableProjection{P, YI, ZI, LS, :golub_pereyra, LI, M, IO},
         p) where {T, R, P, YI, ZI, LS, LI, M, IO}
-    _varpro_kaufman_r3!(J_red, ws, vp, p)
+    _, fac_phi = _varpro_kaufman_r3!(J_red, ws, vp, p)
     ny = length(ws.Y_h)
     nz = length(ws.Z_h)
     prob_in = getfield(vp, :prob)
@@ -1892,7 +1913,7 @@ function _varpro_jacobian_r3!(
             _store_col!(ws.dΦ_mat, ws.col_m, i)
         end
         mul!(ws.w_vec, adjoint(ws.dΦ_mat), ws.Fz_buf)
-        _pinv_adj_mul_r3!(ws.col_m, ws.fac_phi, ws.w_vec)
+        _pinv_adj_mul_r3!(ws.col_m, fac_phi, ws.w_vec)
         _dec_col!(J_red, ws.col_m, j)
     end
     return J_red
@@ -1904,7 +1925,7 @@ struct _ElimResBuffer{WS <: Union{BlockElimPrep, VarProPrep}}
     ws::WS
 end
 
-function residual!!(
+@inline function residual!!(
         Fz::AbstractVector, ws::BlockElimPrep,
         elim::BlockEliminated, x::AbstractVector, p)
     if !isfinite(ws.fnorm_z_prev)
@@ -1916,7 +1937,7 @@ function residual!!(
     return Fz
 end
 
-function residual!!(
+@inline function residual!!(
         r_out::AbstractVector, ws::VarProPrep,
         vp::VariableProjection, x::AbstractVector, p)
     if !isfinite(ws.fnorm_z_prev)
@@ -1940,21 +1961,21 @@ end
     return residual!!(rb.ws.Fz_buf, rb.ws, vp, x, p)
 end
 
-function residual!!(
+@inline function residual!!(
         Fz::AbstractVector, elim::BlockEliminated,
         x::AbstractVector, p)
     ws = prepare_ad(AutoForwardDiff(), elim, Fz, x, p)
     return residual!!(Fz, ws, elim, x, p)
 end
 
-function residual!!(
+@inline function residual!!(
         Fz::AbstractVector, vp::VariableProjection,
         x::AbstractVector, p)
     ws = prepare_ad(AutoForwardDiff(), vp, Fz, x, p)
     return residual!!(Fz, ws, vp, x, p)
 end
 
-function jacobian!!(
+@inline function jacobian!!(
         Sz::AbstractMatrix, ws::BlockElimPrep,
         elim::BlockEliminated, x::AbstractVector, p)
     if !isfinite(ws.fnorm_z_prev)
@@ -1965,7 +1986,7 @@ function jacobian!!(
     return _schur_jacobian_r3!(Sz, ws, elim, p)
 end
 
-function jacobian!!(
+@inline function jacobian!!(
         J_red::AbstractMatrix, ws::VarProPrep,
         vp::VariableProjection, x::AbstractVector, p)
     if !isfinite(ws.fnorm_z_prev)
@@ -1976,7 +1997,7 @@ function jacobian!!(
     return _varpro_jacobian_r3!(J_red, ws, vp, p)
 end
 
-function jvp!!(
+@inline function jvp!!(
         Jv::AbstractVector, ws::BlockElimPrep,
         elim::BlockEliminated,
         x::AbstractVector, v::AbstractVector, p)
@@ -1990,7 +2011,7 @@ function jvp!!(
     return Jv
 end
 
-function jvp!!(
+@inline function jvp!!(
         Jv::AbstractVector, ws::VarProPrep,
         vp::VariableProjection,
         x::AbstractVector, v::AbstractVector, p)
@@ -2018,7 +2039,7 @@ end
     return oprob.ws
 end
 
-function residual!!(
+@inline function residual!!(
         Fz::AbstractVector, oprob::_R3BlockOuterProb, z::AbstractVector, p)
     has_pred = !oprob.elim.linear_inner && isfinite(oprob.ws.fnorm_z_prev)
     _eliminate_r3!(oprob.ws, oprob.elim, z, p, has_pred)
@@ -2026,21 +2047,21 @@ function residual!!(
     return Fz
 end
 
-function jacobian!!(
+@inline function jacobian!!(
         Sz::AbstractMatrix, ::BlockElimPrep,
         oprob::_R3BlockOuterProb, z::AbstractVector, p)
     _eliminate_r3!(oprob.ws, oprob.elim, z, p)
     return _schur_jacobian_r3!(Sz, oprob.ws, oprob.elim, p)
 end
 
-function jacobian!!(
+@inline function jacobian!!(
         Sz::AbstractMatrix, ::Nothing,
         oprob::_R3BlockOuterProb, z::AbstractVector, p)
     _eliminate_r3!(oprob.ws, oprob.elim, z, p)
     return _schur_jacobian_r3!(Sz, oprob.ws, oprob.elim, p)
 end
 
-function jvp!!(
+@inline function jvp!!(
         Jv::AbstractVector, ::Union{BlockElimPrep, Nothing}, oprob::_R3BlockOuterProb,
         z::AbstractVector, v::AbstractVector, p)
     jacobian!!(oprob.ws.J_zz, oprob.ws, oprob, z, p)
@@ -2212,7 +2233,7 @@ end
         st.Y, st.Z, st.E_y, st.E_z, st.init_failures)
 end
 
-function refresh_diagnostics!!(
+@inline function refresh_diagnostics!!(
         st::DenseElimState, m, ::VariableProjection, x, Fx, p)
     R = real(eltype(x))
     m_r = Adapt.adapt(ToReal{R}(), m)
@@ -2361,7 +2382,7 @@ end
         st.Y, st.Z, st.E_y, st.E_z, inner_fail ? Int32(1) : Int32(0))
 end
 
-function start!!(
+@inline function start!!(
         st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
         x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {OST, T, R <: Real}
     ws = st.ws
@@ -2380,7 +2401,7 @@ function start!!(
     return DenseElimState(outer_state, ws, st.oprob)
 end
 
-function start!!(
+@inline function start!!(
         st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
         x::AbstractVector{T}, Fx::AbstractVector{T}, p, fnorm₀::R) where {OST, T, R <: Real}
     ws = st.ws
@@ -2460,17 +2481,19 @@ end
         vp, st.y_warm, z₊, p, st.fnorm_z_prev, st.Y, st.Z)
     fnorm₊ = R(rnorm(r₊))
     outer_state₊ = _sync_outer_merit(outer_state₊, r₊, fnorm₊)
+    gr = state_gradratio(outer_state₊)
+    fnorm_prev_vp = (isfinite(gr) && gr > zero(R)) ? min(fnorm₊, gr * fnorm₊) : fnorm₊
     extra_fail = st.init_failures + ((jac_fail | step_fail) ? Int32(1) : Int32(0))
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
         info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
     st₊ = StaticElimState(
-        outer_state₊, st.inner_state, y₊, z₊, fnorm₊,
+        outer_state₊, st.inner_state, y₊, z₊, fnorm_prev_vp,
         st.Y, st.Z, st.E_y, st.E_z, Int32(0))
     return x₊, r₊, st₊, info
 end
 
-function step!!(
+@inline function step!!(
         st::DenseElimState{OST, <:BlockElimPrep}, m, elim::BlockEliminated,
         x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
     R = real(T)
@@ -2504,7 +2527,7 @@ function step!!(
     return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
 end
 
-function step!!(
+@inline function step!!(
         st::DenseElimState{OST, <:VarProPrep}, m, vp::VariableProjection,
         x::AbstractVector{T}, Fx::AbstractVector{T}, p) where {OST, T}
     R = real(T)
@@ -2521,8 +2544,9 @@ function step!!(
     fnorm₊ = R(rnorm(ws.Fz_buf))
     Fx === ws.Fz_buf || copyto!(Fx, ws.Fz_buf)
     _scatter_yz!(x, ws.y_warm, ws.z_curr, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
-    ws.fnorm_z_prev = fnorm₊
     outer_state₊ = _sync_outer_merit(outer_state₊, Fx, fnorm₊)
+    gr = state_gradratio(outer_state₊)
+    ws.fnorm_z_prev = (isfinite(gr) && gr > zero(R)) ? min(fnorm₊, gr * fnorm₊) : fnorm₊
     extra_fail = ws.init_failures + (ws.inner_failures > Int32(0) ? Int32(1) : Int32(0))
     ws.init_failures = Int32(0)
     info = StepInfo{R}(
@@ -2554,7 +2578,7 @@ end
     return _like_iterate(x, x_end), status_out, st_end
 end
 
-function finish!!(
+@inline function finish!!(
         st::DenseElimState, m, ::Union{BlockEliminated, VariableProjection},
         x::AbstractVector{T}, Fx::AbstractVector{T},
         status::SolverStatus{R}) where {T, R}
@@ -2574,7 +2598,8 @@ function finish!!(
     end
     ws.fnorm_z_prev = R(NaN)
     ws.init_failures = Int32(0)
-    return x, status_out, DenseElimState(outer_end, ws, st.oprob)
+    st_end = outer_end === st.outer_state ? st : DenseElimState(outer_end, ws, st.oprob)
+    return x, status_out, st_end
 end
 
 # --- `init`, `solve!`, `solve_implicit`, and `solve` ---

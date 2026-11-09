@@ -1076,14 +1076,16 @@ end
         NonlinearProblem(f_elim!), [1, 2]; outer = [3, 4], linear_inner = false)
     vp_r3_opt = VariableProjection(
         LeastSquaresProblem(r_ls6!, 6), [1, 2]; outer = [3], jacobian_mode = :kaufman)
+    solver_r3_opt = init(elim_r3_opt, [0.2, 0.4, 0.5, 0.6], Newton(), 0.2)
+    solver_vp_r3_opt = init(vp_r3_opt, [1.0, 0.5, 1.2], m_gn, :exact)
     JET.@test_opt target_modules = (GeometricSolvers,) solve(elim_lin, x0, Newton(), 0.0)
     JET.@test_opt target_modules = (GeometricSolvers,) solve(elim_nl, x0, Newton(), 0.2)
     JET.@test_opt target_modules = (GeometricSolvers,) solve(vp_kf, x0_ls, m_gn, :noisy)
     JET.@test_opt target_modules = (GeometricSolvers,) solve(vp_gp, x0_ls, m_gn, :noisy)
-    JET.@test_opt target_modules = (GeometricSolvers,) solve(
-        elim_r3_opt, [0.2, 0.4, 0.5, 0.6], Newton(), 0.2)
-    JET.@test_opt target_modules = (GeometricSolvers,) solve(
-        vp_r3_opt, [1.0, 0.5, 1.2], m_gn, :exact)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve!(
+        solver_r3_opt, [0.2, 0.4, 0.5, 0.6], 0.2)
+    JET.@test_opt target_modules = (GeometricSolvers,) solve!(
+        solver_vp_r3_opt, [1.0, 0.5, 1.2], :exact)
 
     if Base.JLOptions().check_bounds != 1
         # skipped where a run forces `--check-bounds=yes`
@@ -1097,19 +1099,22 @@ end
         for (lin_in, p_val) in ((true, 0.0), (false, 0.2))
             prob_r3_wrap = BlockEliminated(
                 NonlinearProblem(f_elim!), [1, 2]; outer = [3, 4], linear_inner = lin_in)
-            solver_r3 = init(prob_r3_wrap, [0.2, 0.4, 0.5, 0.6], Newton(), p_val)
-            solve!(solver_r3, [0.2, 0.4, 0.5, 0.6], p_val)
-            x_in = [0.2, 0.4, 0.5, 0.6]
-            @test allocations(a -> solve!(solver_r3, a, p_val), x_in) == 0
+            x0_r3 = [0.2, 0.4, 0.5, 0.6]
+            solver_r3 = init(prob_r3_wrap, copy(x0_r3), Newton(), p_val)
+            x_in = copy(x0_r3)
+            solve!(solver_r3, copyto!(x_in, x0_r3), p_val)
+            @test allocations(a -> solve!(solver_r3, copyto!(a, x0_r3), p_val), x_in) == 0
         end
 
         for mode in (:kaufman, :golub_pereyra)
             vp_r3 = VariableProjection(
                 LeastSquaresProblem(r_ls6!, 6), [1, 2]; outer = [3], jacobian_mode = mode)
-            solver_vp_r3 = init(vp_r3, [1.0, 0.5, 1.2], m_gn, :exact)
-            solve!(solver_vp_r3, [1.0, 0.5, 1.2], :exact)
-            x_in_ls = [1.0, 0.5, 1.2]
-            @test allocations(a -> solve!(solver_vp_r3, a, :exact), x_in_ls) == 0
+            x0_ls_r3 = [1.0, 0.5, 1.2]
+            solver_vp_r3 = init(vp_r3, copy(x0_ls_r3), m_gn, :exact)
+            x_in_ls = copy(x0_ls_r3)
+            solve!(solver_vp_r3, copyto!(x_in_ls, x0_ls_r3), :exact)
+            @test allocations(
+                a -> solve!(solver_vp_r3, copyto!(a, x0_ls_r3), :exact), x_in_ls) == 0
         end
     end
 end
