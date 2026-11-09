@@ -1382,10 +1382,11 @@ so that a compat-only bump can be told apart from an interface change.
   `SVector`, `Array` and `JLArray` storages all run, with an `isbits` R1 wrapper and `0`
   allocations per solve in R1 and after `init` in R3. `power` and `shift` are stored in
   `float(real(eltype(first(roots))))`, so `Float32` roots give an all-`Float32` product; a solve
-  needs an iterate of that element type, real, of the roots' storage and as long as every root,
-  and a root with a non-finite entry, a root set of mixed element type or storage, a `power` or
-  `shift` that is not finite and positive, an empty root set, or an inner problem that is neither
-  a `NonlinearProblem` nor a `StationarityProblem` raises an `ArgumentError` at construction,
+  needs an iterate of that element type, real, as long as every root, with number roots for a
+  number iterate and vector roots for a vector iterate, and a root with a non-finite entry, a root
+  set of mixed element type, a root set of numbers and vectors mixed, a `power` or `shift` that is
+  not finite and positive, an empty root set, or an inner problem that is neither a
+  `NonlinearProblem` nor a `StationarityProblem` raises an `ArgumentError` at construction,
   while a `solve_batch!` whose kernel would take a non-`isbits` wrapper by value — the
   `AbstractVector` root storage of an R3 iterate, for one — raises one at the call. At a deflated
   root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0` iterations

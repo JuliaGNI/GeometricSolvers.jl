@@ -541,6 +541,15 @@ end
     prob = p2_problem()
     @test_throws ArgumentError Deflated(prob, [[1.0, 2.0], [3.0]])
     @test_throws ArgumentError Deflated(prob, [[1.0, NaN]])
+    # the element type of the `AbstractVector` form is refused on an entry after the first, since
+    # the float type of the set is read from the first entry
+    eltype_err = try
+        Deflated(prob, AbstractVector{<:Real}[Float32[1, 2], [1.0, 2.0]])
+    catch err
+        err
+    end
+    @test eltype_err isa ArgumentError
+    @test occursin("Deflated needs roots of one element type", sprint(showerror, eltype_err))
     def = Deflated(prob, [[1.0, 2.0]])
     @test def.roots == [[1.0, 2.0]]
 end
@@ -719,10 +728,49 @@ end
     solve_batch!(Xs, Deflated(prob_b, (r1,)), BT; b = b, opts...)
     @test all(x -> x ≈ solve(defb, x03, BT; b = b, opts...)[1], Xs)
     @test all(x -> norm(p3_gradient(x) + b) <= atol, Xs)
+    # (c′) the parameters: a batch under per-system `p` of an action that reads it matches the
+    # per-system `solve`, which is what the kernel's unwrap of the per-system parameters gives.
+    # The start lies in the basin of the root the deflation leaves, so every system converges.
+    pa(x, p) = p[1] * (x[1]^4 / 4 - x[1]^2 / 2) + x[2]^2 * (1 + x[1]^2) / 2
+    prob_p = StationarityProblem(pa)
+    p_per = PerSystem([one(T), T(2), T(0.5), T(1.5)])
+    x0p = SVector{2, T}(T(0.9), T(0.1))
+    rp1, stp1 = solve(prob_p, x0p, BT, p_per.data[1]; opts...)
+    @test GS.isconverged(stp1)
+    defp = Deflated(prob_p, (rp1,))
+    Xp = fill(x0p, 4)
+    Sp = Vector{SolverStatus{T}}(undef, 4)
+    solve_batch!(Xp, Sp, defp, BT, p_per; opts...)
+    @test all(GS.isconverged, Sp)
+    for i in 1:4
+        @test Xp[i] ≈ solve(defp, x0p, BT, p_per.data[i]; opts...)[1]
+    end
+    Xp_tally = fill(x0p, 4)
+    @test solve_batch!(Xp_tally, defp, BT, p_per; opts...).SUCCESS == 4
+    @test all(Xp_tally[i] ≈ Xp[i] for i in 1:4)
     # (d) a datum of the wrong length: a `PerSystem` of another length is a batch mismatch, and a
-    # shared vector one is refused by the stationarity check
+    # ragged `PerSystem` — an entry after the first of another length — and a shared vector of one
+    # are refused as a datum of the wrong length, the ragged one in both forms
     @test_throws DimensionMismatch solve_batch!(
         fill(x03, 4), defb, BT; b = PerSystem(per[1:3]))
+    @test_throws DimensionMismatch solve_batch!(
+        fill(x03, 4), Vector{SolverStatus{T}}(undef, 4), defb, BT; b = PerSystem(per[1:3]))
+    ragged = PerSystem([T[T(0.05), T(-0.02)], T[T(0.1), T(0.2), T(0.3)],
+        T[zero(T), T(0.06)], T[zero(T), T(-0.02)]])
+    ragged_err = try
+        solve_batch!(fill(x03, 4), defb, BT; b = ragged)
+    catch err
+        err
+    end
+    @test ragged_err isa ArgumentError
+    @test occursin("datum b must have length 2, got 3", sprint(showerror, ragged_err))
+    ragged_err_S = try
+        solve_batch!(fill(x03, 4), Vector{SolverStatus{T}}(undef, 4), defb, BT; b = ragged)
+    catch err
+        err
+    end
+    @test ragged_err_S isa ArgumentError
+    @test occursin("datum b must have length 2, got 3", sprint(showerror, ragged_err_S))
     @test_throws ArgumentError solve_batch!(
         fill(x03, 4), defb, BT; b = SVector{3, T}(T(0.1), T(0.2), T(0.3)))
     # (e) edge 8: a root of the unknowns alone is refused in both forms

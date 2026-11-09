@@ -43,8 +43,8 @@ element type and a real one.
 `roots` is a non-empty `Tuple` of roots — a `Number` for a `Number` iterate, an `SVector` for an R1
 iterate, a `Vector` for an R3 iterate — or an `AbstractVector` of real vectors. Every root has the
 length of the iterate and finite real entries, and the roots of one set share their element type
-and their storage. The `AbstractVector` form is not `isbits`, so [`solve_batch!`](@ref) refuses it:
-the batch kernel takes the problem by value.
+and are all numbers or all vectors. The `AbstractVector` form is not `isbits`, so
+[`solve_batch!`](@ref) refuses it: the batch kernel takes the problem by value.
 
 For a wrapped [`StationarityProblem`](@ref) a root is a full state, as [`solve`](@ref) returns it,
 and the distance is taken on the unknowns `x_U`: `M` and `∇M` are functions of the `|U|` entries the
@@ -486,8 +486,8 @@ end
 
 # ─── The checks of a solve ───────────────────────────────────────────────────
 
-# The iterate of a solve: real, in the element type of the roots, as long as every root, and of the
-# roots' storage.
+# The iterate of a solve: real, in the element type of the roots, as long as every root, and a
+# number iterate needs number roots while a vector iterate needs vector roots.
 function _check_deflated_solve(def::Deflated, x₀)
     real_eltype = eltype(x₀)
     real_eltype <: Real || throw(ArgumentError(
@@ -923,7 +923,6 @@ function solve_batch!(
     _validate_batch(X, p, order)
     _check_deflated_batch(def, X)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
-    _refuse_deflated_stationarity_duals(:solve_batch!, zero(eltype(X)), p)
     T = eltype(eltype(X))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
@@ -952,7 +951,6 @@ function solve_batch!(
     _validate_batch(X, p, order)
     _check_deflated_batch(def, X)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
-    _refuse_deflated_stationarity_duals(:solve_batch!, zero(eltype(X)), p)
     R_X = real(eltype(eltype(X)))
     R === R_X || throw(ArgumentError(
         "solve_batch! requires the status vector S to use the real type $R_X of the batch iterates, got SolverStatus{$R}"))
