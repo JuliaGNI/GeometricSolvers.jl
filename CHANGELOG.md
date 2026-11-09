@@ -12,10 +12,12 @@ so that a compat-only bump can be told apart from an interface change.
 ### Changed
 
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
-  range starts at `6.5.1`.** The three test environments that use `JLArrays` take 0.5 from an
-  unregistered commit of `GPUArrays.jl` through `[sources]`, because that 0.5 needs
-  `KernelAbstractions` 0.10.5 and `GPUArrays` 12.1; the `[sources]` entry is temporary.
-  Metal 1.12, and CUDA 6.5.1 through its `CUDACore`, are the first releases that take
+  range starts at `6.5.1`.** The `Adapt` floor rises from 4.6.1 to 4.7.3 and the `GPUArraysCore`
+  floor from 0.2 to 0.2.1, because Metal 1.12 needs `GPUArrays` 12.1, which needs both; with the
+  old floors the lowest versions the package admitted could not be installed together with the
+  Metal bound, so a resolve at those floors failed. The three test environments that use
+  `JLArrays` take the registered 0.5, which needs `KernelAbstractions` 0.10.5 and `GPUArrays`
+  12.1. Metal 1.12, and CUDA 6.5.1 through its `CUDACore`, are the first releases that take
   `KernelAbstractions` 0.10. The `CPU()` backend is now `POCLBackend`, which compiles kernels to
   SPIR-V, so a kernel argument must be `isbits` and a kernel body may not format an error
   message. `isgpu` left the KernelAbstractions API, so the package states it as
@@ -25,21 +27,23 @@ so that a compat-only bump can be told apart from an interface change.
   rebuilds a method inside a kernel through the positional constructors and the check formats a
   message; `Static{R}(α)` still validates, and only `Static{R}(α, Val(:raw))`, which the `adapt`
   rule alone calls, is unchecked; `prepare_solve` re-runs those checks on the host after `adapt`,
-  through `check_adapted`, as does the batch preparation of a `NonlinearProblem`, so a `Static`
-  step that `ToReal` narrows to `Inf` or to zero, or a regularization that it makes non-finite,
-  is still refused there; a batch `order` that is not `isbits` goes to the kernel as an array of
-  the batch's backend — the order itself when it already is one and a copy otherwise, because a
-  kernel reads only its own backend's memory — while an `isbits` order, a range for instance,
-  still goes by value; a callable `StationarityProblem` datum `b(p)` is evaluated for every system
-  of a batch on the host before the launch, so a datum whose length differs between systems is an
-  `ArgumentError` there instead of inside the kernel; and `solve_batch!` refuses a
-  `jacobian_prototype` that is not `isbits` — a `SparseMatrixCSC`, for instance — because the
-  kernel takes the problem by value, the check reading through a `Reparametrized` to its inner
-  problem. Three issues are recorded as known: K82, the Enzyme test environment cannot resolve
-  against the `LLVM` bound of `KernelAbstractions` 0.10.5; K83, the CPU backend emits invalid
-  SPIR-V for a batch kernel whose method loops, reported as `JuliaGPU/KernelAbstractions.jl#959`;
-  and K84, an explicitly tagged `AutoForwardDiff`
-  over a residual that calls `ForwardDiff.derivative` throws in a kernel on the CPU backend.
+  through `check_adapted`, as do `init`, `solve` and both `solve_batch!` forms of a
+  `StationarityProblem`, the `solve_batch!` of a `Reparametrized` problem, and the batch
+  preparation of a `NonlinearProblem`, so a `Newton` method whose `Static` step `ToReal` narrows to
+  `Inf` or to zero, or whose regularization it makes non-finite, is still refused there; a batch
+  `order` that is not `isbits` goes to the kernel as an array of the batch's backend — the order
+  itself when it already is one and a copy otherwise, because a kernel reads only its own backend's
+  memory — while an `isbits` order, a range for instance, still goes by value; a callable
+  `StationarityProblem` datum `b(p)` is evaluated for every system of a batch on the host before
+  the launch, so a datum whose length differs between systems is an `ArgumentError` there instead
+  of inside the kernel; and `solve_batch!` refuses a `jacobian_prototype` that is not `isbits` — a
+  `SparseMatrixCSC`, for instance — because the kernel takes the problem by value, the check
+  reading through a `Reparametrized` to its inner problem. Three issues are recorded as known: K82,
+  the Enzyme test environment cannot resolve against the `LLVM` bound of `KernelAbstractions`
+  0.10.5; K83, the CPU backend emits invalid SPIR-V for a batch kernel whose method loops,
+  reported as `JuliaGPU/KernelAbstractions.jl#959`; and K84, an explicitly tagged
+  `AutoForwardDiff` over a residual that calls `ForwardDiff.derivative` throws in a kernel on the
+  CPU backend.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
@@ -858,9 +862,9 @@ so that a compat-only bump can be told apart from an interface change.
   loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and
   `1` Julia versions, and a step before the tests fails that job where Metal is not functional. The
   job is not a required check.
-- The `Adapt` floor is 4.6.1. Metal 1.10 and later, and the GPUArrays 11.5.6 and later that they
-  require, need Adapt 4.6.1, so a test environment with `Metal = "1.10"` does not resolve with
-  Adapt held below it.
+- The `Adapt` floor is 4.7.3. Metal 1.12, which the test environments take, needs `GPUArrays`
+  12.1, and that needs Adapt 4.7.3, so a test environment with `Metal = "1.12"` does not resolve
+  with Adapt held below it.
 - The element types and array backends a test loops over are named once, in the new
   `test/helpers/matrix.jl`: `REAL_ELTYPES`, `ELTYPES`, `ARRAY_BACKENDS` and `KA_BACKEND`. Every
   test file under `test/base/`, `test/linear/` and `test/globalization/`, and `test/backends.jl`,

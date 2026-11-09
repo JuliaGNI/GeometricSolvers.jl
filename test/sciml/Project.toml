@@ -10,7 +10,6 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
 GeometricSolvers = {path = "../.."}
-JLArrays = {url = "https://github.com/JuliaGPU/GPUArrays.jl", rev = "30df35e28c38d6bee5e9e1b79244f4f3d25c92c6", subdir = "lib/JLArrays"}
 
 [compat]
 ADTypes = "1.23"
