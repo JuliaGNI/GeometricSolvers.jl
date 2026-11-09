@@ -363,14 +363,16 @@
 ### K72 · The R1 and R3 `Anderson` code duplicates the filter, the weight solve and the step skeleton
 
 - **location:** `src/composition/anderson.jl` (`filter_history_r1`, `filter_history_r3!`,
-  `solve_weights`, `solve_weights!`, both `step!!` methods)
+  `solve_weights`, `solve_weights!`, `solve_broyden_weights`, `solve_broyden_weights!`, both
+  `step_multisecant!!` methods)
 - **evidence:** The history storage and the Gram build differ for a reason (an `isbits` `NTuple`
   in R1; device `n × m` matrices with a `col_idx` permutation and one `mul!!` in R3). The two
   filters differ in 25 of 65 lines and the two Cholesky solves in 19 of 45, mostly `setindex`
-  against `setindex!`, and each `step!!` repeats the "take the member step" fallback 3 times and
-  the best-iterate update 4 times. `Multiplicative` and `Repeat` are one `step!!` each through
-  `copy!!` and `map!!`. A `!!` setter and `copy!!` on the state buffers would leave only the
-  history update and the Gram build per storage; the cost of that change was not measured.
+  against `setindex!`, and each `step_multisecant!!` method repeats the "take the member step"
+  fallback 3 times and the best-iterate update 4 times. `Multiplicative` and `Repeat` are one
+  `step!!` each through `copy!!` and `map!!`. A `!!` setter and `copy!!` on the state buffers
+  would leave only the history update and the Gram build per storage; the cost of that change
+  was not measured.
 - **kind:** defect
 - **found:** PR #63
 

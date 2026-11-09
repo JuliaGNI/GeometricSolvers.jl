@@ -4,7 +4,7 @@ using GeometricSolvers
 using GeometricSolvers: AndersonHistory, NONFINITE, LINESEARCH_FAILED, SINGULAR, SUCCESS,
                         StepInfo, ToReal, finish!!, init_state, is_hard_failure,
                         isconverged,
-                        push_history!!, rdot, rnorm, solve!!, solve_broyden_weights,
+                        norm2, push_history!!, rdot, rnorm, solve!!, solve_broyden_weights,
                         solve_broyden_weights!, solve_weights, start!!, step!!,
                         step_multisecant!!
 using GPUArraysCore: allowscalar
@@ -366,6 +366,29 @@ end
         γ3_ref = SVector{3, R}(γ3_ref1, γ3_ref2, γ3_ref3)
         @test maximum(abs, γ3_b - γ3_ref) <= 4 * 3 * eps(R) * maximum(abs, γ3_b)
 
+        # Check 2: a `kept` that is not a prefix. The kept columns are a subset of the candidate
+        # Gram matrix in age order, so `G[K[c], K[r]]` and `b[K[c]]` differ from `G[c, r]` and
+        # `b[c]`; the solver reads the indices of `kept`, never the logical position `c`.
+        kept_np = SVector{3, Int}(1, 3, 0)
+        λ_np = eps(R) * ((G[1, 1] + G[3, 3]) / R(2))
+        γ_np1 = b[1] / (G[1, 1] + λ_np)
+        γ_np2 = (b[3] - G[3, 1] * γ_np1) / (G[3, 3] + λ_np)
+        γ_np = solve_broyden_weights(G, b, kept_np, 2)
+        @test abs(γ_np[1] - γ_np1) <= 4 * 2 * eps(R) * maximum(abs, γ_np)
+        @test abs(γ_np[2] - γ_np2) <= 4 * 2 * eps(R) * maximum(abs, γ_np)
+        @test iszero(γ_np[3])
+
+        # A kept column out of order: with `kept = (1, 3, 2)` the off-diagonal read at `r = 2` is
+        # `G[2, 3]`, so an index taken from the logical position `r` reads `G[2, 2]` instead.
+        kept_np3 = SVector{3, Int}(1, 3, 2)
+        λ_np3 = eps(R) * ((G[1, 1] + G[3, 3] + G[2, 2]) / R(3))
+        γ_np31 = b[1] / (G[1, 1] + λ_np3)
+        γ_np32 = (b[3] - G[3, 1] * γ_np31) / (G[3, 3] + λ_np3)
+        γ_np33 = (b[2] - G[2, 1] * γ_np31 - G[2, 3] * γ_np32) / (G[2, 2] + λ_np3)
+        γ_np3_ref = SVector{3, R}(γ_np31, γ_np32, γ_np33)
+        γ_np3 = solve_broyden_weights(G, b, kept_np3, 3)
+        @test maximum(abs, γ_np3 - γ_np3_ref) <= 4 * 3 * eps(R) * maximum(abs, γ_np3)
+
         # R3 in-place solve_broyden_weights! matches R1 solve_broyden_weights
         G_mat = Matrix(G)
         b_vec = Vector(b)
@@ -381,6 +404,15 @@ end
         @test iszero(γ_vec[3])
         solve_broyden_weights!(γ_vec, G_mat, b_vec, kept_vec, 3)
         @test maximum(abs, γ_vec - Vector(γ3_ref)) <= 4 * 3 * eps(R) * maximum(abs, γ3_b)
+        fill!(γ_vec, R(NaN))
+        solve_broyden_weights!(γ_vec, G_mat, b_vec, [1, 3, 0], 2)
+        @test abs(γ_vec[1] - γ_np1) <= 4 * 2 * eps(R) * maximum(abs, γ_vec)
+        @test abs(γ_vec[2] - γ_np2) <= 4 * 2 * eps(R) * maximum(abs, γ_vec)
+        @test iszero(γ_vec[3])
+        fill!(γ_vec, R(NaN))
+        solve_broyden_weights!(γ_vec, G_mat, b_vec, [1, 3, 2], 3)
+        @test maximum(abs, γ_vec - Vector(γ_np3_ref)) <=
+              4 * 3 * eps(R) * maximum(abs, γ_vec)
         if Base.JLOptions().check_bounds != 1
             # Skipped where a run forces --check-bounds=yes.
             @test _broyden_weights_alloc_probe(γ_vec, G_mat, b_vec, kept_vec) == 0
@@ -649,6 +681,52 @@ end
     @test split_count >= 1
 end
 
+# The iterates of a `Broyden` trajectory on the map of the post-step restart testset, fed to
+# `Anderson` and `Broyden` alike. At the third step `Anderson` keeps its columns and `Broyden`
+# takes the post-step residual-growth restart, so Check 2's split is reached by the post-step
+# safeguard and not by the pre-filter restart that the sweep's splits take.
+@testset "Check 2: a Broyden-only post-step split ($T)" for T in ELTYPES
+    R = real(T)
+    A = T.(POST_RESTART_A)
+    c = T(POST_RESTART_C)
+    b = T.(POST_RESTART_B)
+    damping = R(POST_RESTART_DAMPING)
+    prob_r1 = NonlinearProblem(
+        (x, p) -> SMatrix{3, 3, T}(A) * x .+ c .* x .^ 3 .- SVector{3, T}(b))
+    prob_r3 = NonlinearProblem(
+        (F, x, p) -> (mul!(F, A, x); @. F = F + c * x ^ 3 - b; nothing))
+    m_br = Adapt.adapt(ToReal{R}(),
+        Broyden(Picard(; damping = POST_RESTART_DAMPING), Val(3); restart_factor = 3.0))
+    m_an = Adapt.adapt(ToReal{R}(),
+        Anderson(Picard(; damping = POST_RESTART_DAMPING), Val(3); restart_factor = 3.0))
+
+    x = SVector{3, T}(T.(POST_RESTART_X))
+    Fx = prob_r1.F(x, nothing)
+    st_b1 = start!!(init_state(m_br, prob_r1, x, nothing),
+        m_br, prob_r1, x, Fx, nothing, rnorm(Fx))
+    st_a1 = start!!(init_state(m_an, prob_r1, x, nothing),
+        m_an, prob_r1, x, Fx, nothing, rnorm(Fx))
+    x3 = Vector{T}(T.(POST_RESTART_X))
+    F3 = similar(x3)
+    prob_r3.F(F3, x3, nothing)
+    st_b3 = start!!(init_state(m_br, prob_r3, x3, nothing),
+        m_br, prob_r3, x3, F3, nothing, rnorm(F3))
+    st_a3 = start!!(init_state(m_an, prob_r3, x3, nothing),
+        m_an, prob_r3, x3, F3, nothing, rnorm(F3))
+    for _ in 1:3
+        _, _, st_a1, _ = step!!(st_a1, m_an, prob_r1, x, Fx, nothing)
+        xr = Vector(x)
+        Fr = Vector(Fx)
+        _, _, st_a3, _ = step!!(st_a3, m_an, prob_r3, copy(xr), copy(Fr), nothing)
+        _, _, st_b3, _ = step!!(st_b3, m_br, prob_r3, copy(xr), copy(Fr), nothing)
+        x, Fx, st_b1, _ = step!!(st_b1, m_br, prob_r1, x, Fx, nothing)
+    end
+    @test st_a1.depth >= 1 && st_b1.depth == 0
+    @test all(iszero, st_b1.ΔX) && all(iszero, st_b1.ΔW)
+    @test st_a3.depth >= 1 && st_b3.depth == 0
+    @test all(iszero, st_b3.ΔX) && all(iszero, st_b3.ΔW)
+end
+
 @testset "Edge 4: Broyden{1} and Anderson{1} agree per step ($T)" for T in ELTYPES
     R = real(T)
     A, b, xs = broyden_sequence(T)
@@ -658,6 +736,15 @@ end
     m_a1 = Adapt.adapt(ToReal{R}(), Anderson(Picard(; damping = 0.5), Val(1)))
     m_b1 = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(1)))
 
+    # The per-step bound `8 eps(R) S₁` with `S₁ = rnorm(x_m) + |γ₁| rnorm(Δx₁ + Δw₁)` is the size
+    # of the terms the two rounding paths sum in a different order: the member step `x_m` and the
+    # one correction `γ₁ (Δx₁ + Δw₁)`. `|γ₁| rnorm(Δx₁ + Δw₁)` is `rnorm(x₊ - x_m)` and
+    # `x_m = x_prev + w_k`, so both terms come from the state. The clause asserts on the steps
+    # where both methods take the accelerated step with its one kept column (`depth == 1`): a
+    # restart or a rejected weight gives the member step for both, which says nothing about the
+    # weights. The bound is per step, because the two paths compound over a solve.
+    fixed_r1 = 0
+    fixed_r3 = 0
     z = xs[1]
     Fz = prob_r1.F(z, nothing)
     st_a1 = start!!(init_state(m_a1, prob_r1, z, nothing),
@@ -675,16 +762,95 @@ end
         fk = prob_r1.F(xk, nothing)
         xa, _, st_a1, _ = step!!(st_a1, m_a1, prob_r1, xk, fk, nothing)
         xb, _, st_b1, _ = step!!(st_b1, m_b1, prob_r1, xk, fk, nothing)
-        @test rnorm(xb - xa) <= 4 * eps(R) * rnorm(xb)
         xk_r3 = Vector(xk)
         fk_r3 = Vector(fk)
-        xa3, _, st_a3, _ = step!!(st_a3, m_a1, prob_r3, xk_r3, fk_r3, nothing)
-        xb3, _, st_b3, _ = step!!(st_b3, m_b1, prob_r3, xk_r3, fk_r3, nothing)
-        @test rnorm(xb3 - xa3) <= 4 * eps(R) * rnorm(xb3)
+        xa3, _, st_a3, _ = step!!(st_a3, m_a1, prob_r3, copy(xk_r3), copy(fk_r3), nothing)
+        xb3, _, st_b3, _ = step!!(st_b3, m_b1, prob_r3, copy(xk_r3), copy(fk_r3), nothing)
         @test st_a1.depth == st_b1.depth
         @test st_a3.depth == st_b3.depth
+        if st_a1.depth == 1 && st_b1.depth == 1
+            x_m = st_b1.x_prev + st_b1.w_prev
+            @test rnorm(xb - xa) <= 8 * eps(R) * (rnorm(x_m) + rnorm(xb - x_m))
+            fixed_r1 += 1
+        end
+        if st_a3.depth == 1 && st_b3.depth == 1
+            x_m3 = st_b3.x_prev + st_b3.w_prev
+            @test rnorm(xb3 - xa3) <= 8 * eps(R) * (rnorm(x_m3) + rnorm(xb3 - x_m3))
+            fixed_r3 += 1
+        end
     end
+    @test fixed_r1 >= 1
+    @test fixed_r3 >= 1
     @test st_b1.depth == 1
+
+    # Every step of a default `Broyden{1}` solve of Check 1's vector problems: one R1 state stepped
+    # with both methods, and the same iterates fed to two R3 `Array` states up to their first split.
+    opt = Options(R)
+    datasets = T <: Complex ?
+               ((T(1 / 2), T(5)), (T(1 / 2, 1 / 3), T(5, 1))) : ((T(1 / 2), T(5)),)
+    compared1 = 0
+    compared3 = 0
+    for n in (2, 4)
+        perm = r1_shift(Int, n)
+        problems = (
+            ("Holomorphic",
+                NonlinearProblem(R1Holomorphic()), NonlinearProblem(Holomorphic())),
+            ("Coupled",
+                NonlinearProblem(R1Coupled(perm)),
+                NonlinearProblem(Coupled(cyclic_perm(Array, n)))))
+        for (x0_c, p_c) in datasets, (name, prob1, prob3) in problems
+
+            pv = fill(p_c, n)
+            p_s = SVector{n, T}(pv)
+            m_a = Adapt.adapt(ToReal{R}(), Anderson(Picard(; damping = 1 / 10), Val(1)))
+            m_b = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 1 / 10), Val(1)))
+            x = SVector{n, T}(fill(x0_c, n))
+            Fx = prob1.F(x, p_s)
+            abstol = max(opt.f_abstol, opt.f_reltol * rnorm(Fx))
+            st_a = start!!(
+                init_state(m_a, prob1, x, p_s), m_a, prob1, x, Fx, p_s, rnorm(Fx))
+            st_b = start!!(
+                init_state(m_b, prob1, x, p_s), m_b, prob1, x, Fx, p_s, rnorm(Fx))
+            x3 = Vector{T}(x)
+            F3 = Vector{T}(Fx)
+            st_a3 = start!!(
+                init_state(m_a, prob3, x3, pv), m_a, prob3, x3, F3, pv, rnorm(F3))
+            st_b3 = start!!(
+                init_state(m_b, prob3, x3, pv), m_b, prob3, x3, F3, pv, rnorm(F3))
+            split3 = false
+            steps = 0
+            while rnorm(Fx) > abstol && steps < opt.max_iterations
+                steps += 1
+                xa, _, st_a, _ = step!!(st_a, m_a, prob1, x, Fx, p_s)
+                xb, Fb, st_b, info_b = step!!(st_b, m_b, prob1, x, Fx, p_s)
+                if st_a.depth == 1 && st_b.depth == 1
+                    x_m = st_b.x_prev + st_b.w_prev
+                    @test rnorm(xb - xa) <= 8 * eps(R) * (rnorm(x_m) + rnorm(xb - x_m))
+                    compared1 += 1
+                end
+                if !split3
+                    xr = Vector(x)
+                    Fr = Vector(Fx)
+                    xa3, _, st_a3, _ = step!!(st_a3, m_a, prob3, copy(xr), copy(Fr), pv)
+                    xb3, _, st_b3, _ = step!!(st_b3, m_b, prob3, copy(xr), copy(Fr), pv)
+                    if (st_a3.depth == 0) != (st_b3.depth == 0)
+                        split3 = true
+                    elseif st_a3.depth == 1 && st_b3.depth == 1
+                        x_m3 = st_b3.x_prev + st_b3.w_prev
+                        @test rnorm(xb3 - xa3) <=
+                              8 * eps(R) * (rnorm(x_m3) + rnorm(xb3 - x_m3))
+                        compared3 += 1
+                    end
+                end
+                (info_b.code == SUCCESS || info_b.code == STALLED) || break
+                x, Fx = xb, Fb
+            end
+            @test steps >= 1
+        end
+    end
+    # One compared step at `depth == 1` per element type, in each storage form.
+    @test compared1 >= 1
+    @test compared3 >= 1
 end
 
 @testset "Edge 1: a step on a state that no start!! saw ($T)" for T in ELTYPES
@@ -810,6 +976,26 @@ end
     @test info_out3.failures == Int32(1)
 end
 
+# Two steps of `meth_r1` and `meth_r3` from `xa` and then from `xb`, so that a test asserts one
+# degenerate-column trigger's restart on both storage forms. Returns the state after the second
+# step and its `StepInfo`, R1 first.
+function _degenerate_restart(meth_r1, meth_r3, prob_r1, prob_r3, xa, xb)
+    Fa = prob_r1.F(xa, nothing)
+    st1 = start!!(init_state(meth_r1, prob_r1, xa, nothing),
+        meth_r1, prob_r1, xa, Fa, nothing, rnorm(Fa))
+    _, _, st1, _ = step!!(st1, meth_r1, prob_r1, xa, Fa, nothing)
+    Fb = prob_r1.F(xb, nothing)
+    _, _, st1, info1 = step!!(st1, meth_r1, prob_r1, xb, Fb, nothing)
+
+    xa3 = Vector(xa)
+    Fa3 = Vector(Fa)
+    st3 = start!!(init_state(meth_r3, prob_r3, xa3, nothing),
+        meth_r3, prob_r3, xa3, Fa3, nothing, rnorm(Fa3))
+    _, _, st3, _ = step!!(st3, meth_r3, prob_r3, copy(xa3), copy(Fa3), nothing)
+    _, _, st3, info3 = step!!(st3, meth_r3, prob_r3, Vector(xb), Vector(Fb), nothing)
+    return st1, info1, st3, info3
+end
+
 @testset "Edge 3: the empty history, a degenerate newest column, and the filter count ($T)" for T in ELTYPES
     R = real(T)
     A, b, xs = broyden_sequence(T)
@@ -859,6 +1045,56 @@ end
     @test info_d3.failures == Int32(1)
     @test st3.depth == 0
     @test st3.has_prev
+
+    # The other two triggers of the degenerate-column restart, each reached alone. The same iterate
+    # twice fires both at once; here one column measure is tiny and the other is not.
+    # (a) `0 < ‖Δw‖² <= floatmin(R)` with a `Δx` of normal size: the member shifts the zero `x₂`
+    # by `sqrt(floatmin(R)) x₁`, so the shift is exact and a quarter of a unit of `x₁` moves `Δw`
+    # by `sqrt(floatmin(R))/4` while `Δx` stays at a quarter. The residual is the clause's
+    # `(s x₁, x₂ - 2, x₃ - 3)`, which the shift leaves unchanged, so the step reaches the
+    # degenerate-column test and not a growth restart.
+    s_tiny = sqrt(floatmin(R))
+    tiny_r1 = NonlinearProblem(
+        (x, p) -> SVector{3, T}(s_tiny * x[1], x[2] - T(2), x[3] - T(3)))
+    tiny_r3 = NonlinearProblem((F, x, p) -> (
+        F[1] = s_tiny * x[1]; F[2] = x[2] - T(2); F[3] = x[3] - T(3); nothing))
+    meth_tiny = Broyden(
+        ScriptedBroydenMember(
+            SUCCESS, x -> x + SVector{3, T}(zero(T), s_tiny * x[1], zero(T))), Val(3))
+    meth_tiny_r3 = Broyden(
+        ScriptedR3BroydenMember(
+            SUCCESS, x -> x + [zero(T), s_tiny * x[1], zero(T)]), Val(3))
+    xa = SVector{3, T}(T(1) / 2, zero(T), T(3) / 4)
+    xb = xa + SVector{3, T}(T(1) / 4, zero(T), zero(T))
+    dw_tiny = s_tiny * SVector{3, T}(zero(T), xb[1] - xa[1], zero(T))
+    @test zero(R) < norm2(dw_tiny) <= floatmin(R)
+    @test rnorm(xb - xa) > eps(R) * max(one(R), rnorm(xb))
+    st_t1, info_t1, st_t3, info_t3 = _degenerate_restart(
+        meth_tiny, meth_tiny_r3, tiny_r1, tiny_r3, xa, xb)
+    @test st_t1.depth == 0 && info_t1.failures == Int32(1)
+    @test st_t3.depth == 0 && info_t3.failures == Int32(1)
+
+    # (b) `0 < rnorm(Δx) <= eps(R) * max(1, rnorm(x))` with a `Δw` above `floatmin(R)`: the
+    # iterate moves by `1e-17` in `x₁`, which moves only the member's third column measure, so
+    # `γ₁` stays of order one and an accelerated step is accepted with `depth == 1`.
+    stag_r1 = NonlinearProblem((x, p) -> x - SVector{3, T}(T(1), T(2), T(3)))
+    stag_r3 = NonlinearProblem(
+        (F, x, p) -> (F .= x .- SVector{3, T}(T(1), T(2), T(3)); nothing))
+    meth_stag = Broyden(
+        ScriptedBroydenMember(
+            SUCCESS, x -> x + SVector{3, T}(T(3) / 10, zero(T), T(10)^10 * x[1])), Val(3))
+    meth_stag_r3 = Broyden(
+        ScriptedR3BroydenMember(
+            SUCCESS, x -> x + [T(3) / 10, zero(T), T(10)^10 * x[1]]), Val(3))
+    xs_a = SVector{3, T}(zero(T), T(-1) / 4, T(2) / 5)
+    xs_b = xs_a + SVector{3, T}(T(1) / T(10)^17, zero(T), zero(T))
+    dw_stag = SVector{3, T}(zero(T), zero(T), T(10)^10 * xs_b[1] - T(10)^10 * xs_a[1])
+    @test norm2(dw_stag) > floatmin(R)
+    @test zero(R) < rnorm(xs_b - xs_a) <= eps(R) * max(one(R), rnorm(xs_b))
+    st_s1, info_s1, st_s3, info_s3 = _degenerate_restart(
+        meth_stag, meth_stag_r3, stag_r1, stag_r3, xs_a, xs_b)
+    @test st_s1.depth == 0 && info_s1.failures == Int32(1)
+    @test st_s3.depth == 0 && info_s3.failures == Int32(1)
 
     # A step whose filters drop one of two columns counts `d - p_kept` failures and is the
     # accelerated step.
@@ -963,6 +1199,8 @@ end
     @test rnorm(x_out - x_m) <= 16 * eps(R) * rnorm(x_m)
     @test st_out.depth == 0
     @test info_out.failures == Int32(1)
+    # The post-step safeguard clears the history: the restarted state holds no column.
+    @test all(iszero, st_out.ΔX) && all(iszero, st_out.ΔW)
 
     x3 = Vector{T}(x0)
     Fx3 = similar(x3)
@@ -980,6 +1218,30 @@ end
     @test rnorm(x_out3 - x_m3) <= 16 * eps(R) * rnorm(x_m3)
     @test st_out3.depth == 0
     @test info_out3.failures == Int32(1)
+    @test all(iszero, st_out3.ΔX) && all(iszero, st_out3.ΔW)
+end
+
+@testset "A rejected weight takes the member step in R3 ($T)" for T in ELTYPES
+    R = real(T)
+    A, b, xs = broyden_sequence(T)
+    # `A` and `b` build the in-place residual; the rejection is a property of the R3 step alone.
+    prob_r3 = NonlinearProblem((F, x, p) -> (
+        mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
+    # `M_alpha = 1` refuses a weight whose affine sum exceeds one, which any nonzero `γ` gives
+    # here. The step is then the member step `x_m`, counted as one failure.
+    damp = R(1 // 2)
+    meth = Adapt.adapt(ToReal{R}(), Broyden(Picard(; damping = 0.5), Val(3); M_alpha = 1.0))
+    z = xs[1]
+    z3 = Vector(z)
+    Fz3 = similar(z3)
+    prob_r3.F(Fz3, z3, nothing)
+    st = start!!(init_state(meth, prob_r3, z3, nothing),
+        meth, prob_r3, z3, Fz3, nothing, rnorm(Fz3))
+    x_1, F_1, st_1, _ = step!!(st, meth, prob_r3, copy(z3), copy(Fz3), nothing)
+    x_m = x_1 .- damp .* F_1
+    x_2, _, _, info_2 = step!!(st_1, meth, prob_r3, copy(x_1), copy(F_1), nothing)
+    @test rnorm(x_2 - x_m) <= 16 * eps(R) * rnorm(x_m)
+    @test info_2.failures >= 1
 end
 
 @testset "Check 1, Check 3, Check 4, and Edge 7: R1, R2, and R3 convergence, agreement, and allocations" begin
@@ -1156,6 +1418,16 @@ end
                     prob_r3.F(Fx_jl, x_jl, p_jl)
                     @test rnorm(Fx_jl) <= abstol
                     @test rnorm(Array(x_jl) - Vector(x_n_s)) <= abstol * cond(J_star)
+
+                    # Check 1 names R3 `JLArray` for `Newton()` too: it runs on the same problem
+                    # with its default AD Jacobian and reaches a root that `Broyden`'s `JLArray`
+                    # root lies within the forward error of.
+                    x_n_jl, st_n_jl = solve(prob_r3, copy(x₀_jl), Newton(), p_jl)
+                    @test st_n_jl.code == SUCCESS
+                    Fx_n_jl = similar(x_n_jl)
+                    prob_r3.F(Fx_n_jl, x_n_jl, p_jl)
+                    @test rnorm(Fx_n_jl) <= abstol
+                    @test rnorm(Array(x_jl) - Array(x_n_jl)) <= abstol * cond(J_star)
                 end
             end
         end
