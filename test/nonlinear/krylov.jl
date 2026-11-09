@@ -342,9 +342,10 @@ end
 @testset "Check 3: the inexact step kind is what accepts the full step, $T" for T in REAL_ELTYPES
     R = real(T)
     # `F = A x - b` with `A = diag(1, 10)` and `b = 𝟙`: one GMRES iteration leaves the relative
-    # linear residual `0.836`, which is above the bound `1 - c₁ = 0.5` that the exact (Armijo) test
-    # gives and below the inexact bound `1 - c₁ (1 - η) = 0.918`. The full step is accepted under
-    # `InexactStep(η)` and rejected under `ExactStep()`, so the accepted iterate is the full step's.
+    # linear residual `0.633`, which is above the bound `1 - c₁ = 0.5` that the exact (Armijo) test
+    # gives and below the inexact bound `1 - c₁ (1 - η_ach) = 0.817`. The full step is accepted
+    # under `InexactStep(η)` and rejected under `ExactStep()`, so the accepted iterate is the full
+    # step's.
     A = T[1 0; 0 10]
     b = T[1, 1]
     prob = NonlinearProblem((r, x, q) -> begin
