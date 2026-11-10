@@ -32,10 +32,11 @@ end
 The `n × n` storage of the factors of a factorisation, in the element type of the factor: the
 packed LU (`U` on and above the diagonal, the multipliers of the unit `L` below it) of an
 [`LUFactorization`](@ref), which is the storage that [`promote_lu_factors!`](@ref) copies into the
-working precision. It is `nothing` for a solve that holds no factor.
+working precision. It is `nothing` for a solve that holds no factor, and for a factor that is no
+LU factor: a QR, SVD or LDLᵀ factorisation has no GMRES-IR stage that promotes it.
 """
 @inline stored_factors(fac::Union{DenseLU, DeviceLU, StaticLU}) = fac.factors
-@inline stored_factors(::Nothing) = nothing
+@inline stored_factors(::Union{Nothing, AnyFactor, StaticRectQR, StaticRectSVD}) = nothing
 
 """
     promote_lu_factors!(fac_promoted, fac_TF)
