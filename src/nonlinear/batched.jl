@@ -20,6 +20,74 @@ otherwise.
 @inline parameters(p::PerSystem, i::Integer) = @inbounds p.data[i]
 @inline parameters(p, ::Integer) = p
 
+"""
+    BatchParams(shared, per_system)
+
+Wrap a parameter value that every system of a batch shares together with an indexable collection
+of per-system values, so [`solve_batch!`](@ref) passes `(p.shared, p.per_system[i])` to system
+`i`. It is what a batch whose systems differ in one field and agree in another takes, such as the
+particles of an implicit PIC step, which each carry their own previous position and velocity and
+share the field they gather. On a device backend the kernel launch converts both parts with
+`Adapt`, as it converts every argument: an array of that backend becomes its device form, and a
+host `Array` stays on the host, so `shared` there is an array of that backend or an `isbits` value.
+"""
+struct BatchParams{S, P}
+    shared::S
+    per_system::P
+end
+
+Adapt.@adapt_structure BatchParams
+
+"""
+    parameters(p::BatchParams, i::Integer)
+
+The parameter value of system `i` of a [`BatchParams`](@ref): the pair `(p.shared,
+p.per_system[i])`.
+"""
+@inline parameters(p::BatchParams, i::Integer) = (p.shared, @inbounds p.per_system[i])
+
+"""
+    BatchSummary{R <: Real}
+
+The reduction of a batch's per-system [`SolverStatus`](@ref) vector to one report.
+
+# Fields
+
+- `fnorm::R`: ``\\sqrt{\\sum_i \\|g_i\\|_2^2}``, the norm of the concatenated per-system residuals,
+  from the `fnorm` of each system's status, taken in the batch's real element type `R`.
+- `all_converged::Bool`: every system ended with `SUCCESS`.
+- `failure_count::Int`: the number of systems that did not.
+- `max_iterations::Int32`, `total_iterations::Int`: the largest and the sum of the per-system
+  iteration counts.
+"""
+struct BatchSummary{R <: Real}
+    fnorm::R
+    all_converged::Bool
+    failure_count::Int
+    max_iterations::Int32
+    total_iterations::Int
+end
+
+"""
+    batch_summary(S::AbstractVector{SolverStatus{R}}) -> BatchSummary{R}
+
+Reduce the statuses `S` of a batch to a [`BatchSummary`](@ref), on the backend of `S`: the global
+residual norm is the 2-norm of the per-system norms through the [`rnorm`](@ref) seam, and the
+counts are the `mapreduce` forms of `count`, `maximum` and `sum`, so no entry of `S` is indexed by
+the host and the reduction runs on a device array as it does on an `Array`. An empty batch
+converged, with `fnorm = 0` and both iteration counts `0`.
+"""
+function batch_summary(S::AbstractVector{SolverStatus{R}}) where {R <: Real}
+    isempty(S) && return BatchSummary{R}(zero(R), true, 0, Int32(0), 0)
+    batch_norm = rnorm(map(s -> s.fnorm, S))
+    failure_count = Int(count(s -> !isconverged(s), S))
+    max_iterations = maximum(s -> s.iterations, S)
+    total_iterations = sum(s -> Int(s.iterations), S)
+    return BatchSummary{R}(
+        batch_norm, iszero(failure_count), failure_count, max_iterations,
+        total_iterations)
+end
+
 @inline _system_index(::Nothing, i::Integer) = Int(i)
 @inline _system_index(order::AbstractVector{<:Integer}, i::Integer) = Int(@inbounds order[i])
 
@@ -54,6 +122,10 @@ function _validate_batch(
     if p isa PerSystem && length(p.data) != length(X)
         throw(DimensionMismatch(
             "PerSystem parameter length $(length(p.data)) does not match batch length $(length(X))"))
+    end
+    if p isa BatchParams && length(p.per_system) != length(X)
+        throw(DimensionMismatch(
+            "BatchParams per-system length $(length(p.per_system)) does not match batch length $(length(X))"))
     end
     if order !== nothing && length(order) != length(X)
         throw(DimensionMismatch(
@@ -107,17 +179,34 @@ end
 end
 
 # Solve every system of `X` in one launch on `get_backend(X)`, write each result into `out`, and
-# wait for the kernel.
-function _launch!(X, out, prob, m, p, opt, state₀, order)
+# wait for the kernel. A `workgroupsize` of `nothing` leaves the launch at the backend's default.
+function _launch!(X, out, prob, m, p, opt, state₀, order, workgroupsize)
     backend = get_backend(X)
     order_dev = _adapt_order(backend, order)
-    _solve_kernel!(backend)(X, out, prob, m, p, opt, state₀, order_dev; ndrange = length(X))
+    kernel! = _solve_kernel!(backend)
+    if workgroupsize === nothing
+        kernel!(X, out, prob, m, p, opt, state₀, order_dev; ndrange = length(X))
+    else
+        kernel!(X, out, prob, m, p, opt, state₀, order_dev;
+            ndrange = length(X), workgroupsize = workgroupsize)
+    end
     isgpu(backend) && synchronize(backend)
     return out
 end
 
 function _tally_return_codes(codes_host::Vector{ReturnCode})
     return ReturnCodeCounts(map(c -> count(==(c), codes_host), instances(ReturnCode)))
+end
+
+# The workgroup size of a launch, refused unless it is a positive count: a non-positive one is a
+# mistake that no backend refuses. A size above the device's own maximum is left to the launch,
+# which reports it — on CPU a size above 4096 raises `ArgumentError: … more than 4096 work-items`
+# rather than being rounded down.
+@inline function _validate_workgroupsize(workgroupsize::Union{Nothing, Integer})
+    workgroupsize === nothing && return nothing
+    workgroupsize >= 1 || throw(ArgumentError(
+        "workgroupsize must be a positive integer or `nothing`, got $workgroupsize"))
+    return Int(workgroupsize)
 end
 
 """
@@ -128,6 +217,7 @@ end
                  p = nothing;
                  order = nothing,
                  options = nothing,
+                 workgroupsize = nothing,
                  kwargs...) -> S
 
     solve_batch!(X::AbstractVector{<:Union{SVector, Number}},
@@ -136,6 +226,7 @@ end
                  p = nothing;
                  order = nothing,
                  options = nothing,
+                 workgroupsize = nothing,
                  kwargs...) -> NamedTuple{(:SUCCESS, :STALLED, :MAXITERS, :SINGULAR, :NONFINITE, :LINESEARCH_FAILED), NTuple{6, Int}}
 
 Solve a batch of independent small nonlinear systems in place on `get_backend(X)`, assigning one
@@ -143,14 +234,20 @@ work-item per system.
 
 Each element `X[idx]` is the initial guess for system `idx` and is overwritten with its final
 iterate. Wrap an indexable per-system parameter collection in [`PerSystem`](@ref) so system `idx`
-receives `p.data[idx]`; any other `p` is shared across all systems. When `order` is a
+receives `p.data[idx]`, or in [`BatchParams`](@ref) so it receives `(p.shared, p.per_system[idx])`;
+any other `p` is shared across all systems. When `order` is a
 permutation of `1:length(X)`, work-item `i` solves system `idx = order[i]`; any other `order`
 throws. An `order` that is not `isbits` needs a method of `get_backend`, and one that is not an
 array of the backend of `X`, such as an array of another backend or a host `view`, is copied into
 one. Any `ForwardDiff.Dual` in `X` or `p` raises an `ArgumentError`. The kernel takes `prob` by
 value, so a `jacobian_prototype` that is not `isbits`, such as a `SparseMatrixCSC`, raises an
 `ArgumentError`. `solve_batch!` does not look for a `ForwardDiff.Dual` captured in `prob`, so one is
-not detected in a batch.
+not detected in a batch. A `workgroupsize` of `nothing` leaves the launch at the backend's
+default; any other positive value is the workgroup size of the single launch. The `Options` of the
+solve may also be passed as the sixth positional argument, `solve_batch!(X, S, prob, method, p,
+options)`, instead of the `options` keyword. The forms of a [`StationarityProblem`](@ref) and of a
+[`Reparametrized`](@ref) problem take the same `order`, `options` and `workgroupsize` keywords, and
+the `StationarityProblem` form the datum `b` as well.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)
@@ -165,6 +262,7 @@ function solve_batch!(
         p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing,
         kwargs...
 ) where {R <: Real}
     _validate_batch(X, p, order)
@@ -182,9 +280,10 @@ function solve_batch!(
         throw(ArgumentError(
             "status vector backend $(get_backend(S)) does not match batch backend $(get_backend(X))"))
     end
+    ws = _validate_workgroupsize(workgroupsize)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return S
-    return _launch!(X, S, prob, m, p, opt, state₀, order)
+    return _launch!(X, S, prob, m, p, opt, state₀, order, ws)
 end
 
 function solve_batch!(
@@ -194,12 +293,40 @@ function solve_batch!(
         p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing,
         kwargs...
 )
     _validate_batch(X, p, order)
     _validate_batch_problem(prob)
+    ws = _validate_workgroupsize(workgroupsize)
     m, opt, state₀ = _prepare_batch(X, prob, method, options, kwargs)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))
-    return _tally_return_codes(Array(_launch!(X, codes, prob, m, p, opt, state₀, order)))
+    return _tally_return_codes(Array(_launch!(
+        X, codes, prob, m, p, opt, state₀, order, ws)))
+end
+
+# The options of a batch are the sixth positional argument where a caller passes them positionally,
+# so that a batch call reads like the `solve` call whose keywords it shares.
+function solve_batch!(
+        X::AbstractVector{<:Union{SVector, Number}},
+        S::AbstractVector{SolverStatus{R}},
+        prob::NonlinearProblem,
+        method,
+        p,
+        options::Options;
+        kwargs...
+) where {R <: Real}
+    return solve_batch!(X, S, prob, method, p; options = options, kwargs...)
+end
+
+function solve_batch!(
+        X::AbstractVector{<:Union{SVector, Number}},
+        prob::NonlinearProblem,
+        method,
+        p,
+        options::Options;
+        kwargs...
+)
+    return solve_batch!(X, prob, method, p; options = options, kwargs...)
 end

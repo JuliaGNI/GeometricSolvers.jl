@@ -89,6 +89,36 @@ function prepare_ad(backend::AbstractADType, prob, r::AbstractArray, x::Abstract
     return DIJacobian(eff_backend, jacprep, jvpprep, similar(r))
 end
 
+"""
+    prepare_jvp(backend, prob, r, x, p)
+
+Build the Jacobian–vector preparation of a solve that forms no Jacobian and reads the product
+alone, such as a [`Newton`](@ref) with [`GMRES`](@ref): the same [`DIJacobian`](@ref) that
+[`prepare_ad`](@ref) returns, without the prepared `jacobian!` it would never call. `AutoForwardDiff`
+takes the own chunked forward mode of `src/ad/chunked.jl` on every array type; any other back end
+takes DifferentiationInterface's `pushforward!` on a CPU iterate, and raises `ArgumentError` on a
+device array iterate, as [`prepare_ad`](@ref) does. `r` is a residual buffer like a residual of the
+problem at `x`.
+"""
+function prepare_jvp end
+
+function prepare_jvp(backend::AbstractADType, prob, r::AbstractArray, x::AbstractArray, p)
+    x isa AbstractGPUArray && throw(
+        ArgumentError(
+        "a device array iterate takes a Jacobian-vector product through AutoForwardDiff() only: " *
+        "DifferentiationInterface raises a scalar-indexing error on an MtlArray, a " *
+        "CuArray and a JLArray. Solve on an Array to use another back end."
+    )
+    )
+    check_iterate_shape(x)
+    jvp_backend = backend isa AutoSparse ? dense_ad(backend) : backend
+    # the tangent is zeroed, so that preparation does not evaluate the residual on whatever is in
+    # a fresh buffer
+    jvpprep = DI.prepare_pushforward(
+        prob.F, similar(r), jvp_backend, x, (zero(x),), DI.Constant(p))
+    return DIJacobian(jvp_backend, nothing, jvpprep, similar(r))
+end
+
 function jvp!!(Jv, prep::DIJacobian{<:AutoSparse}, prob, x, v, p)
     DI.pushforward!(
         prob.F, prep.y, (Jv,), prep.jvpprep, dense_ad(prep.backend), x, (v,), DI.Constant(p)

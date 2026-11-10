@@ -11,6 +11,48 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`BlockEliminated` and `VariableProjection` for single-system block elimination and separable
+  least-squares variable projection.** Both problem wrappers are exported and subtype
+  `AbstractNonlinearProblem`. `BlockEliminated(prob::Union{NonlinearProblem, StationarityProblem},
+  inner; outer = nothing, inner_eqs = inner, outer_eqs = outer,
+  inner_method = Newton(; linsolve = SVDFactorization()), linear_inner = false,
+  inner_options = nothing)` partitions the unknown vector `x` into inner unknowns `y = x[Y]` and
+  outer unknowns `z = x[Z]` (defaulting `Z = setdiff(1:n, Y)`) and the equations into `E_y` and
+  `E_z` (`|E_y| == |Y|`, `|E_z| == |Z|`). For each outer iterate `z`, it solves
+  `F_{E_y}(y, z) = 0` for `y*(z)` — in one linear solve `y*(z) = -J_yy(0, z)⁺ F_{E_y}(0, z)` when
+  `linear_inner = true`, or from the warm start `y_warm` (initialised to `NaN` in `init_state` and
+  set to `x₀[Y]` in `start!!`, taking 0 inner steps on a repeat evaluation at the same `z`) with
+  the adaptive inner tolerance `τ_inner = max(10 eps max(1, ‖F_y0‖), min(c, 0.5 ‖F_{E_z}(prev)‖₂²))`
+  (`c` the `inner_options` cap, which stands alone before the first outer residual) and
+  pseudoinverse null-space projection on rank-deficient inner steps when `linear_inner = false` —
+  and steps on the outer residual `F_{E_z}(ỹ(z), z)`, where for `linear_inner = false` and an inner
+  residual above the floor `ỹ = y - J_yy(y, z)⁺ F_{E_y}(y, z)` is the inner iterate `y` refined by
+  one Newton correction (to first order in `F_{E_y}` this is `F_{E_z} - J_zy J_yy⁺ F_{E_y}`), and
+  otherwise `ỹ = y`; the outer Jacobian is the Schur complement
+  `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`. `inner_method` supplies
+  only the linear solver of the inner iteration and of the Schur complement.
+  `VariableProjection(prob::LeastSquaresProblem, inner; outer = nothing,
+  linsolve = SVDFactorization(), jacobian_mode = :kaufman, linear_inner = true,
+  inner_method = GaussNewton(; linsolve = SVDFactorization()), inner_options = nothing)`
+  (`BlockEliminated(prob::LeastSquaresProblem, ...)` forwards to `VariableProjection`) solves the
+  inner least-squares subproblem across all `m` residual rows for `y*(z)` and forms the `m × |Z|`
+  reduced Jacobian by Kaufman's projection `J_red(z) = (I - Φ(z) Φ(z)⁺) D(z)` (`jacobian_mode =
+  :kaufman`) or the full Golub–Pereyra formula subtracting `(Φ(z)⁺)ᴴ (∂_z Φ(z))ᴴ r_red(z)`
+  (`jacobian_mode = :golub_pereyra`); on the 5-parameter 2-exponential separable fit over the 100
+  seeded starts of `Xoshiro(42)`, both modes converge from 100 of the 100 starts against 70 for
+  joint Levenberg–Marquardt, and the test requires strictly more than joint and at least 85 of 100.
+  `solve`, `init`, `solve!` and `solve!!` accept a full initial guess `x₀` of length `n` in R1
+  (`StaticVector`) and R3 (`Array` and `AbstractGPUArray`), support `StationarityProblem` datum `b`
+  (implicit differentiation works through `solve` alone, for a `BlockEliminated` of a
+  `NonlinearProblem`; a `ForwardDiff.Dual` input raises an `ArgumentError` for `VariableProjection`
+  and for a `BlockEliminated` of a `StationarityProblem`), and return `(x*, status)` with
+  `x*[Y] = y*(z*)` and `x*[Z] = z*`;
+  any inner solver failure or rank-deficient inner factor (`rank < |Y|`) increments
+  `status.step_failures`; with `linear_inner = true` the one linear solve solves (or minimises
+  over) the inner block only when the residual is affine in `y`, so an inner residual
+  ‖F_{E_y}(y*(z), z)‖₂ above √ε · max(1, ‖F_{E_y}(0, z)‖₂) for `BlockEliminated`, or an inner
+  gradient ‖Φ(y*)ᴴ r(y*, z)‖₂ above √ε · max(1, ‖r(0, z)‖₂) · max(1, ‖Φ(y*)‖_F) for
+  `VariableProjection`, also counts as an inner failure and the solve goes on.
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
   range starts at `6.5.1`.** The `Adapt` floor rises from 4.6.1 to 4.7.3 and the `GPUArraysCore`
   floor from 0.2 to 0.2.1, because Metal 1.12 needs `GPUArrays` 12.1, which needs both; with the
@@ -718,6 +760,168 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **Reduced-space nonlinear elimination: a whole R2 batch inside the residual of an R5 outer
+  Newton (`BatchEliminated`, `BatchSummary`, `batch_summary`, `BatchParams`, `DepositedMoments`).**
+  The outer solver steps on the `m`-vector alone, and every evaluation of that residual — the
+  Jacobian–vector products of a matrix-free `Newton(; linsolve = GMRES())` included — solves the
+  batch of independent inner systems and deposits its moments: the implicit PIC pattern of
+  `Chen2011` (pp. 7025, 7033) and the reduced-space elimination of `LanzkronRoseWilkes:1996`, where
+  the particle unknowns are never part of the outer iterate.
+  `BatchEliminated(outer_F!, inner_prob, Y₀, deposit!, moments; per_system = nothing,
+  inner_method = Newton(), inner_options = nothing, inner_atol_cap = 1e-2,
+  eliminated_indices = nothing, workgroupsize = 64)` keeps the batch state `Y` in place across
+  outer evaluations, so a second evaluation at the same iterate and tolerance reports `0` inner
+  iterations for every system, and records at each evaluation the pair `(‖g₁‖, ‖g₂(prev)‖)` in
+  `g₁_history` and `g₂_prev_history`, the index set it eliminated in `eliminated_index_log`, and its
+  inner counts in `statuses`; `reset_batch!` returns the problem to `Y₀`. `eliminated_indices`
+  holds one index for each unknown of the batch, the entries of every system stacked in turn, so
+  its default is `1:sum(length, Y₀)` and a set of another length is a `DimensionMismatch`; on
+  `make_pic_elimination_problem` it is `N_x .+ (1:2N_p)`. The inner tolerance is
+  the adaptive quadratic
+  ``\max(2\varepsilon(R_{\text{in}}), R_{\text{in}}(\tfrac{1}{2}\min(c, \|g_2(\text{prev})\|^2)/\sqrt{N_p}))``,
+  which satisfies ``\|g_1\| < \|g_2(\text{prev})\|^2`` strictly wherever
+  ``\|g_2(\text{prev})\|^2 > 4\varepsilon(R_{\text{in}})\sqrt{N_p}`` and stops at the floor of
+  the batch's own precision below it, where no arithmetic in the batch's type
+  reaches the quadratic. A batch whose systems did not all converge and whose residual is above the
+  coarse ceiling ``32\varepsilon(R_{\text{in}})\sqrt{N_p}`` leaves no residual: the evaluation
+  returns `NaN` and the outer solve reports `NONFINITE` rather than stepping on a deposit the
+  elimination cannot vouch for. An outer iterate of any length but the field's is a
+  `DimensionMismatch`, and a non-finite `Δt` or `inner_atol_cap` an `ArgumentError`. The outer
+  `Newton` on a `BatchEliminated` takes `jacobian = nothing`, `AutoForwardDiff()` or a
+  `JVPFunction`, and a `GMRES` without a `jvp_eltype`; any other AD back end, and a `jvp_eltype`,
+  is an `ArgumentError`. The outer product is a one-sided difference at the step
+  ``h = \varepsilon \max(1, \|x\|)/\|v\|`` with the relative step
+  ``\varepsilon = \sqrt{\operatorname{eps}(R_{\text{eff}})}`` of the coarser of the two precisions
+  (`ChenChaconBarnes:2012`, p. 5384), and a zero direction gives a zero product without a solve;
+  the difference is solved at the batch's floor on both sides and restored to the anchor's state
+  afterwards, so a `Float32` batch inside a `Float64` outer
+  solve converges at the tolerance its accuracy supports and stalls — never a factorisation
+  failure — below it: on the 16-node, 64-particle problem of
+  `make_pic_elimination_problem(Float32, Float64)` the solve at `2e-4` returns `SUCCESS` with
+  ``\|F\| = 3.8 \times 10^{-6}`` in 2 outer steps, and at `1e-10` returns `STALLED` with
+  ``\|F\| = 3.6 \times 10^{-7}``. `BatchSummary` reduces a status vector to the global residual
+  norm ``\sqrt{\sum_i \|g_i\|^2}``, `all_converged`, `failure_count` and the two iteration counts,
+  on the vector's own backend and without scalar indexing; `batch_summary(prob)` reduces the inner
+  batch that a `BatchEliminated`'s last outer evaluation solved, and a Jacobian–vector product
+  writes its own outcomes to a slot of its own. `BatchParams(shared, per_system)` gives system `i`
+  of a batch the pair `(shared, per_system[i])`, for a batch whose systems agree in one parameter
+  and differ in another, and `solve_batch!` takes a `workgroupsize` keyword and the options as a
+  sixth positional argument.
+  `make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64, Δt = 1 // 10)` builds the
+  one-dimensional implicit electrostatic PIC test problem after `Chen2011`: one implicit
+  Vlasov–Ampère step on ``[0, 2\pi)``, Crank–Nicolson in the particle orbits and backward Euler in
+  the field, whose Ampère residual reads the current deposited at the new time level rather than
+  the time-centred current of `Chen2011`, with a periodic quadratic B-spline field gather, a
+  canonical-order deposit of the current, density, momentum flux and temperature — bit for bit the
+  same over 100 evaluations at one field — and the Ampère residual added in the batch's own
+  precision, so the `Float32` floor of `F` is a property of `F` and the outer solve stalls on it
+  rather than failing.
+  `scripts/verify_nonlinear_elimination.jl` runs the six checks of the elimination and prints their
+  numbers.
+
+- **GMRES-IR: `GMRESRefinement` refines a `Float64` Newton solve whose factorisation is in
+  `Float32` with a GMRES in `Float64` preconditioned by a promoted copy of the same factors, so a
+  low-precision factorisation buys the iteration history of the working precision without a
+  refactorisation** (the SDD variant of Amestoy et al. 2024, in the five precisions
+  `(u_f, u, u_p, u_g, u_r) = (Float32, Float64, Float64, Float64, Float64)`).
+  `GMRESRefinement(; η, maxiter, gmres_maxiter = 30, gmres_tol = 1e-6)` is exported, and only it
+  builds the type; `Refinement` keeps its fields `(:η, :maxiter)` and its behaviour. The refinement
+  of a step is now a chain of three stages, each a remedy of the one before it: the LU-IR passes
+  of `Refinement`; where they fail, a left-preconditioned MGS-GMRES in the working precision `T` on
+  ``\\hat{U}^{-1}\\hat{L}^{-1}P J \\,\\delta d = \\hat{U}^{-1}\\hat{L}^{-1}P \\, r``, with the
+  `gmres_solve!` loop of the matrix-free R5 solver, the cap `min(gmres_maxiter, n)`, and a stop on
+  the true residual ``\\|-F(x) - J d\\|_2`` recomputed in `T`: corrections accumulate while it
+  misses `gmres_tol ‖F(x)‖` and the cap is not spent, a correction is accepted up to ten times
+  that tolerance, and none passes on the Arnoldi estimate of the preconditioned system alone, so
+  the same Jacobian takes the same branch whatever the scale of the problem; and where that fails
+  too, the refactorisation of the Jacobian in `T`. `SolverStatus` counts each failed stage in
+  `step_failures` and records the refactorisation in `promoted`. `promote_lu_factors!` copies the
+  packed `L`, `U` and `ipiv` of the `Float32` factor into the working-precision slot and
+  factorises nothing, which is what separates this remedy from the refactorisation: the stored
+  factor stays in `TF`, and the copy, the preconditioned product and the residual are in `T`. The
+  buffers of a solve are readable after it:
+  `stored_factors(solver)`, `promoted_factors(solver)`, `preconditioned_buffer(solver)` and
+  `linear_residual_buffer(solver)` are exported, and the working-precision slot is left zeroed
+  by `init` so a read before the first promotion reads zeros. For a caller:
+  `test/nonlinear/gmres_ir.jl` runs the five checks, each written to fail for a wrong
+  implementation of the stage it covers, on `Array` in `Float64` and `ComplexF64` and on
+  `JLArray`, over a linear fixture whose right-hand side lies along the smallest singular
+  vector — the one direction in which a `Float32` solve's relative residual is of order
+  `κ eps(Float32)`, so that the chain's three branches are reached at `κ = 1e4`, `5e7` and
+  `1e11` — and asserts that a mixed solve allocates nothing after `init`;
+  `scripts/gmres_ir_comparison.jl` prints the Newton iteration count and the linear residual of
+  both methods at `κ ∈ {1e4, 5e7, 2e8, 5e10}` and recomputes both from the raw output of the
+  solves. Gaps: no CUDA or ROCm device run has been made, and Metal has no `Float64` working
+  precision, so this variant has no Metal row; a `Newton` whose linear method is `GMRES` takes no
+  refinement and a value iterate (`Number` or `StaticArray`) has no Krylov basis, so both keep the
+  LU-IR passes and the refactorisation without the middle stage; and the tensor-core markers
+  `TF32`, `FP16` and `BF16` select no code path here.
+
+- **A matrix-free Newton–GMRES regime (R5): `GMRES` is a linear-solver method with no factor, so a
+  `Newton` with it holds no `n × n` Jacobian and solves a system whose Jacobian only a product can
+  give.** `GMRES(; maxiter = 30, restart = nothing, forcing = EisenstatWalkerChoice2(),
+  preconditioner = nothing, jvp_eltype = Nothing)` solves ``J M^{-1} u = -F(x)`` and returns
+  ``d = M^{-1} u`` to the relative tolerance that the forcing term of the Newton step returns; its
+  Krylov basis is preallocated, its Hessenberg matrix, Givens rotations and least-squares
+  right-hand side stay on the host, and its loop allocates nothing and indexes no entry of a
+  vector, so it runs under `allowscalar(false)` on a `JLArray` and on an `MtlArray`. The package
+  exports `GMRES`, `AbstractForcingTerm`, `EisenstatWalkerChoice2`, `EisenstatWalkerChoice1`,
+  `FixedForcing`, `JVPFunction`, `refresh!`, `apply_preconditioner!`, `f_calls` and `jvp_calls`.
+  The forcing term is Eisenstat and Walker's Choice 2 by default and Choice 1 or a fixed tolerance
+  on request, with their safeguard ``\\max(\\eta_k, \\gamma \\eta_{k-1}^\\alpha)`` where
+  ``\\gamma \\eta_{k-1}^\\alpha > 0.1``, the cap ``\\eta_{\\max}`` and the floor
+  ``2\\varepsilon(R)``; `compute_forcing` is the rule, and its constants are parameters. Choice 1
+  reads ``\\|F_{k-1} + J_{k-1} s_{k-1}\\|``, the linear residual of the step taken: after a line
+  search on an unrestarted inner solve the workspace records the linear residual of the accepted
+  step ``\\alpha d``, from the Arnoldi relation and with no extra product, while a restarted inner
+  solve and a `DogLeg` step keep the residual of the GMRES direction. A right
+  preconditioner given as `GMRES(; preconditioner = P)` is refreshed by `refresh!(P, prob, x, Fx,
+  p)` once per Newton step and applied by `apply_preconditioner!(z, P, v)` before every product,
+  and a matrix-free problem supplies its own product as `JVPFunction(jvp!)` in the `jacobian` field
+  of `Newton` or through the chunked forward mode that every device array takes; a `Newton` with
+  `jacobian = JVPFunction(f)` and a factorising linear method raises an `ArgumentError` at
+  construction, because a product gives no matrix to factorise. The step passes
+  `InexactStep(η_ach)` to a line search, so each accepted step obeys
+  ``\\|F(x + s)\\| \\le [1 - c_1 (1 - \\eta)] \\|F(x)\\|``, and reaching `maxiter` inner iterations
+  without meeting the tolerance increments `status.step_failures`. At a breakdown where the
+  Jacobian is singular on the Krylov space, `gmres_solve!` reports `converged = false` and the true
+  residual, not a converged solve with residual 0.
+  `SolverStatus{R}` carries `f_calls::Int16` and `jvp_calls::Int16` in its two alignment holes — its
+  sizes stay 36 bytes for `Float32` and 56 for `Float64`, it stays `isbits`, and both counts
+  saturate at `typemax(Int16)` — filled in `finish!!` for a `Newton` with `GMRES`, and
+  `f_calls(solver)` / `jvp_calls(solver)` return the same numbers. A combinator reports 0 for both
+  counts, as `Additive` does: `Anderson`, `Switch`, `Multiplicative` and `Additive` hold no count
+  of their own, because their members count only their own steps and `Anderson`'s own evaluations
+  are not counted, while `Repeat` reports its member's count, which is exact. The matrix-free
+  `DogLeg` runs on
+  the Arnoldi relation of an unrestarted `GMRES` (`Pawlowski et al. 2008`, Corollary 2.3), and a
+  `Newton` with a restarted one or with a preconditioner under a `DogLeg` raises an
+  `ArgumentError`. Under a `DogLeg`, the inner solve of a Newton step stops at `min(maxiter, n)`
+  inner iterations, one Arnoldi cycle, and never restarts, so `maxiter > n` cannot make the model
+  read a relation that spans more than one cycle. `Newton` takes `forcing` and `preconditioner`
+  keywords that configure its `GMRES`. `solve` with a `ForwardDiff.Dual` in `x₀` or `p` and a
+  `Newton` with `GMRES` raises an `ArgumentError` before the primal solve, because implicit
+  differentiation factorises the Jacobian at the root, which a GMRES solve does not form. For a
+  caller: `test/nonlinear/krylov.jl` runs the
+  matrix-free solve with no Jacobian and exact `F` and product counts, the forcing terms, the
+  inexact backtracking test, the inner cap, the right preconditioner and the matrix-free `DogLeg`,
+  the refusal of a dual input, the call counts of the combinators, and Choice 1 reading the linear
+  residual of the accepted step, together with the edges of a non-finite residual or product, a zero residual at the start, a zero
+  previous residual norm in the forcing term, a happy breakdown, a breakdown on a singular
+  operator, `maxiter` above `n`, `n = 1` with a value iterate refused, the element types of the
+  product, and a device-compatible array under `allowscalar(false)`, on `Array` in `Float32` and
+  `Float64`, and the matrix-free solve and the device-array edge on `JLArray` as well;
+  `test/devices/metal_krylov.jl` runs the solve, the inner cap and a
+  non-finite start on `MtlArray` in `Float32` under `allowscalar(false)`; and the standard test
+  set gains the column `Newton Backtracking GMRES`, whose 134 cells are 115 `SUCCESS`, 13
+  `LINESEARCH_FAILED`, 4 `MAXITERS` and 2 `STALLED`, with 18 flagged `unstable` (a `Newton` with
+  `GMRES` takes none of the set's direction-perturbed runs, because its step passes no direction
+  through `refine!!`, and its flags do not change); no existing cell changes. Gaps: an R5 state holds the mutable Krylov workspace, so it is not `isbits` and there
+  is no kernel entry for R5 (R1 and R2 own that); the CUDA and ROCm device runs have not been
+  made; and `GMRES(; jvp_eltype)`, which evaluates the product in a lower precision than the
+  residual (a defect-correction solve), is provided as a seam, and no measurement of that
+  precision trade is part of this change.
+
 - **A `SciMLBase` package extension (`GeometricSolversSciMLBaseExt`) accepts a
   `SciMLBase.NonlinearProblem` in `solve` and `init`, and returns `(x, status)`** (decision 52 of
   the design). `SciMLBase` is a weak dependency (`[compat] SciMLBase = "3.55"`), so the package and
@@ -1369,9 +1573,9 @@ so that a compat-only bump can be told apart from an interface change.
   `GeometricSolvers.AndersonHistory`. `Broyden` shares the length and angle filters, the
   safeguards, the restarts and the `Union{..., Broyden}` implicit-differentiation and
   `LeastSquaresProblem` refusals with `Anderson`.
-  `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 11th column
-  `"Broyden" => Broyden()`, and `test/verification/standard_reference.csv` grows from 1340 to 1474
-  cells (67 problems × 11 columns × 2 element types). The `Broyden()` column ends 27 `SUCCESS`, 12
+  `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 12th column
+  `"Broyden" => Broyden()`, and `test/verification/standard_reference.csv` grows by 134 cells to
+  1608 (67 problems × 12 columns × 2 element types). The `Broyden()` column ends 27 `SUCCESS`, 12
   `MAXITERS` and 95 `NONFINITE` of its 134 cells; with an undamped `Picard` member the same column
   ended 26, 10 and 98, and the undamped `Picard()` member alone ends 106 `NONFINITE`, so the
   `NONFINITE` cells come from the member and not from the Broyden update.
@@ -1395,3 +1599,49 @@ so that a compat-only bump can be told apart from an interface change.
   `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set. For
   an R1 iterate the index sets are `:`, a tuple or an `SVector`, as for a `StationarityProblem`
   without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.
+
+- `Deflated(prob, roots; power = 2, shift = 1)` (exported) wraps a `NonlinearProblem` or a
+  `StationarityProblem` in a shifted norm deflation of the given roots, so that a solve from the
+  same start converges to a root other than those (Farrell, Birkisson and Funke 2015). The
+  residual is `M(x) F(x)` with `M(x) = prod_i (norm(x - r_i)^(-power) + shift)`, the deflated
+  Jacobian is the product-rule exact `M(x) J(x) + F(x) transpose(grad M(x))`, and `jvp!!` reads
+  the same two terms, so no new linear method and no factorisation type is needed; the `Number`,
+  `SVector`, `Array` and `JLArray` storages all run, with an `isbits` R1 wrapper and `0`
+  allocations per solve in R1 and after `init` in R3. `power` and `shift` are stored in
+  `float(real(eltype(first(roots))))`, so `Float32` roots give an all-`Float32` product; a solve
+  needs an iterate of that element type, real, as long as every root, with number roots for a
+  number iterate and, for an array iterate, roots that are arrays of the iterate's own type, and a
+  root with a non-finite entry, a root set of mixed element type, a root set of numbers and
+  vectors mixed, a `power` or `shift` that is not finite and positive, an empty root set, or an
+  inner problem that is neither a `NonlinearProblem` nor a `StationarityProblem` raises an
+  `ArgumentError` at construction, while a `solve_batch!` whose kernel would take a non-`isbits`
+  wrapper by value — the `AbstractVector` root storage of an R3 iterate, for one — raises one at
+  the call. A solve on an array iterate raises an `ArgumentError` too when a root is on another
+  back end than the iterate — a host `Array` root with a `JLArray` or `MtlArray` iterate, a device
+  root with a host iterate — or when a root is a static array, because the deflation broadcasts
+  `x .- r` on the iterate's back end; a wrapped `StationarityProblem` is checked the same way, its
+  full-state roots against the start. `solve`, `init` and both forms of `solve_batch!` on a
+  `Deflated` also raise an `ArgumentError` for a `Newton` whose `jacobian` is a callable, because
+  that callable is the Jacobian of the inner residual `F` and `Newton` would step with it as the
+  deflated Jacobian; an analytic Jacobian of `F` goes into the wrapped `NonlinearProblem` as its
+  `J`, and `Newton(jacobian = <AD backend>)` is accepted.
+  The Newton steps and the line search of a `Deflated` solve take the deflated residual
+  `M(x) F(x)`, but the residual test of `Options` reads the inner residual: `status.fnorm` is
+  `norm(F(x))`, `f_abstol` bounds it, and `f_reltol` is relative to `norm(F(x₀))`, so a deflated
+  root meets the same tolerance as a solve of the inner problem. The cubic `x^3 - x` with the root
+  `0` deflated, solved from `x₀ = 0.1` with default options, ends at `abs(F) = 0.0`. The base loop
+  `solve!!` reaches this through an internal hook, `converged_status(state, prob, x, status)`,
+  which returns `status` by default and is not exported.
+  At a deflated root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0`
+  iterations with `x == x₀` instead of `SUCCESS` at a known root, a factor that overflows does the
+  same, and the gradient is evaluated unit-scaled so that a point at `norm(x - rᵢ) = 1e-100` keeps
+  finite entries with no `NaN`. A wrapped `StationarityProblem` iterates on its unknowns and takes
+  full states as its roots, so the distance is that of `x_U`.
+  `solve` on a `Deflated(NonlinearProblem)` with a `ForwardDiff.Dual` in `x₀` or `p`
+  differentiates the undeflated inner problem implicitly at the root it found, and a
+  `Deflated(StationarityProblem)` refuses a dual with an `ArgumentError`, as the problem itself
+  does. `solve_batch!` solves every system of a batch under one `Deflated`, in both forms for a
+  `NonlinearProblem` and in both forms for a wrapped `StationarityProblem`, whose per-system datum
+  comes from `b`, shared or `PerSystem`, or from the problem's own; `init` and `solve!` serve R1
+  and R3, and the keyword datum `b` of an `init`, a `solve` or a `solve!` reaches a wrapped
+  `StationarityProblem`.

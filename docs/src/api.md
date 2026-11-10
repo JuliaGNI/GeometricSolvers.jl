@@ -11,9 +11,17 @@ the residual, optionally its derivative, and optionally `jacobian_prototype` for
 Jacobian in [`NonlinearProblem`](@ref); the residual, optionally its derivative, and its length in
 [`LeastSquaresProblem`](@ref); or the scalar action, its equation and unknown index sets, and an
 optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps a
-`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`. The storage of
-the iterate selects the call form of the functions, so one problem serves every regime.
-`NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem` and `Reparametrized` are exported;
+`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`, and
+[`Deflated`](@ref) wraps either in a deflation of the roots it is given, so that a solve from the
+same start converges to another root. [`BlockEliminated`](@ref) partitions the unknowns of a
+`NonlinearProblem` or a `StationarityProblem` into inner unknowns `y = x[Y]` and outer unknowns
+`z = x[Z]`, eliminates `y` at each outer iterate by solving the inner equations, and steps on the
+outer equations with the Schur complement `J_zz - J_zy J_yy⁺ J_yz`; [`VariableProjection`](@ref)
+does the same for a `LeastSquaresProblem` across all `m` residual rows by Golub–Pereyra variable
+projection or Kaufman's reduced Jacobian (`BlockEliminated` on a `LeastSquaresProblem` forwards to
+`VariableProjection`). The storage of the iterate selects the call form of the functions, so one
+problem serves every regime. `NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem`,
+`Reparametrized`, `Deflated`, `BlockEliminated` and `VariableProjection` are exported;
 `GeometricSolvers.jacobian_prototype` and `GeometricSolvers.jacobian_pattern` are internal
 accessors.
 
@@ -23,8 +31,47 @@ NonlinearProblem
 StationarityProblem
 LeastSquaresProblem
 Reparametrized
+Deflated
+BlockEliminated
+VariableProjection
 jacobian_prototype
 jacobian_pattern
+```
+
+### Reduced-space elimination with a batch inside the residual
+
+[`BatchEliminated`](@ref) eliminates a whole batch of independent inner systems *from the residual
+of an outer matrix-free [`Newton`](@ref)*, rather than a block of one unknown vector: the outer
+solver steps on the `m`-vector alone, and every evaluation of that residual — the Krylov products
+of the outer step included — solves the batch and deposits its moments. It is the pattern of the
+implicit PIC method (`Chen2011`, pp. 7025 and 7033; `LanzkronRoseWilkes:1996`), where the outer
+Newton works on the field and the per-particle orbit solves are the eliminated unknowns. The inner
+tolerance of each evaluation is the adaptive quadratic
+``\max(2\varepsilon(R_{\text{in}}), R_{\text{in}}(\tfrac{1}{2}\min(c, \|g_2(\text{prev})\|^2)/\sqrt{N_p}))``,
+the batch is warm-started from the previous evaluation — so a second evaluation at the same
+iterate and tolerance takes `0` inner iterations — and the outer Jacobian–vector product is a
+one-sided difference at the step ``\varepsilon \max(1, \|x\|)/\|v\|``, with the relative step
+``\varepsilon = \sqrt{\operatorname{eps}(R_{\text{eff}})}`` of the coarser of the two precisions,
+so that a `Float32` batch inside a `Float64` outer solve converges at the
+tolerance its own accuracy supports and, below it, ends on a stall rather than on a factorisation
+failure — on the problem of [`make_pic_elimination_problem`](@ref), the solve at `2e-4` returns
+`SUCCESS` and the one at `1e-10` `STALLED`. The batch's
+[`BatchSummary`](@ref) reports its global residual norm, whether every system converged, and how
+many did not; [`deposited_moments`](@ref) returns what the deposit wrote, and
+[`reset_batch!`](@ref) returns the problem to its initial state.
+[`make_pic_elimination_problem`](@ref) builds the one-dimensional implicit electrostatic PIC test
+problem that the elimination checks solve.
+
+```@docs
+BatchEliminated
+BatchSummary
+batch_summary
+BatchParams
+DepositedMoments
+deposited_moments
+reset_batch!
+eliminated_indices
+make_pic_elimination_problem
 ```
 
 ## The storage seam
@@ -164,6 +211,45 @@ exact_solve
 singular_values
 ```
 
+### Matrix-free Krylov solves
+
+[`GMRES`](@ref) is a [`LinearMethod`](@ref) with no factor. The Jacobian enters a step only through
+a Jacobian–vector product, so a [`Newton`](@ref) with it holds no `n × n` Jacobian (`state.J ===
+nothing`) and serves a system that no array can hold the Jacobian of: a small system whose every
+column costs a full evaluation of an expensive residual, or a device array. Its step solves
+``J M^{-1} u = -F(x)`` and returns ``d = M^{-1} u`` to the relative tolerance that the forcing term
+returns.
+
+The forcing term sets that tolerance. [`EisenstatWalkerChoice2`](@ref) is the default, and
+[`EisenstatWalkerChoice1`](@ref) and [`FixedForcing`](@ref) are the alternatives; a term is an
+[`AbstractForcingTerm`](@ref), and [`compute_forcing`](@ref) is its rule. The right preconditioner
+of `GMRES(; preconditioner = P)` is refreshed by [`refresh!`](@ref) once per Newton step and
+applied by [`apply_preconditioner!`](@ref) before every product. A matrix-free problem supplies its
+own product as [`JVPFunction`](@ref)`(jvp!)` in the `jacobian` field of [`Newton`](@ref), and the
+solve reports the exact counts of its residual and product evaluations in
+[`f_calls`](@ref)/[`jvp_calls`](@ref) and in the `f_calls` and `jvp_calls` fields of
+[`SolverStatus`](@ref). A combinator other than [`Repeat`](@ref) reports `0` in those fields,
+because its members count only their own steps. `GMRES(; maxiter)` caps the inner iterations of
+one Newton step, and
+[`max_inner_iterations`](@ref) gives the largest count of the last solve.
+
+The matrix-free [`DogLeg`](@ref) runs on the Arnoldi relation of an unrestarted `GMRES` only
+(`restart == maxiter`), and a `Newton` with a preconditioner or a restarted `GMRES` under it raises
+an `ArgumentError`. These names are exported.
+
+```@docs
+GMRES
+AbstractForcingTerm
+EisenstatWalkerChoice2
+EisenstatWalkerChoice1
+FixedForcing
+JVPFunction
+refresh!
+apply_preconditioner!
+f_calls
+jvp_calls
+```
+
 ### Eigensolver
 
 [`jacobi_eigen`](@ref) is a function on a matrix and not a linear-solver method: cyclic two-sided
@@ -242,6 +328,37 @@ QuasiNewton
 Picard
 NoRefinement
 Refinement
+GMRESRefinement
+```
+
+### Mixed-precision refinement
+
+A [`Newton`](@ref) step whose factorisation runs in a precision `TF` below the working precision
+`T` of the iterate — `linsolve = LUFactorization(Float32)` on a `Float64` problem — corrects its
+linear direction in `T`. [`Refinement`](@ref) is the LU-IR loop of Kelley 2023: the factor's
+`TF` solve, the residual `-F(x) - J d` in `T`, and the correction that solve gives, to the
+tolerance `max(η, √eps(T)) ‖F(x)‖`. [`GMRESRefinement`](@ref) adds the SDD variant of Amestoy et
+al. 2024 in front of the refactorisation of the Jacobian in `T`: where the LU-IR passes fail, a
+left-preconditioned GMRES in `T` solves for a correction with a copy of the same `Float32` factors
+promoted to `T`, so the step reaches the accuracy of a factorisation in `T` without forming one.
+The remedy chain of a step is therefore `LU-IR -> GMRES-IR -> refactorisation in T`, and
+[`SolverStatus`](@ref) counts each failed stage in `step_failures` and records a factorisation in
+`T` in `promoted`.
+
+The buffers of a mixed-precision solve are readable after it: [`stored_factors`](@ref) is the
+packed `L` and `U` of the factorisation in `TF`, [`promoted_factors`](@ref) the working-precision
+copy of it that the GMRES-IR stage promotes (or the factors of the refactorisation, where the step
+promoted), [`preconditioned_buffer`](@ref) the slot of the preconditioned product the inner GMRES
+forms, and [`linear_residual_buffer`](@ref) the slot of the linear residual `-F(x) - J d`.
+`scripts/gmres_ir_comparison.jl` runs both methods at `κ∞ ∈ {1e4, 5e7, 2e8, 5e10}`, prints their
+Newton iteration counts and linear residuals, and recomputes both from the raw output of the
+solves.
+
+```@docs
+stored_factors
+promoted_factors
+preconditioned_buffer
+linear_residual_buffer
 ```
 
 ### Combinators
@@ -355,6 +472,7 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 prepare_ad
+prepare_jvp
 DIJacobian
 DIStationarity
 ChunkedForwardDiff
@@ -374,7 +492,8 @@ A nonlinear method enters the loop of [`solve!!`](@ref) through [`init_state`](@
 its state, [`step!!`](@ref), and the two hooks [`start!!`](@ref) and [`finish!!`](@ref), which run
 once before the first step and at every return. [`residual_buffer`](@ref) names the slot of the
 state that holds `F(x₀)`, and [`refine!!`](@ref) refines the linear direction `d` in working
-precision before globalization.
+precision before globalization; [`gmres_ir!!`](@ref) is the GMRES-IR stage that follows a failed
+pass of a [`GMRESRefinement`](@ref).
 
 ```@docs
 init_state
@@ -402,6 +521,20 @@ classify
 backtrack_step
 zoom_step
 LinearMethod
+compute_forcing
+max_inner_iterations
+GMRESWorkspace
+init_gmres_workspace
+GMRESInfo
+gmres_solve!
+gmres_ir!!
+promote_lu_factors!
+arnoldi_dot
+R5Operator
+R5JVP
+CountingResidual
+sat16
+with_calls
 jacobi_rotation
 ToReal
 StripDual
@@ -413,4 +546,12 @@ isstalled
 norm2
 rnorm
 rdot
+BatchEliminatedJVPPrep
+PIC1DParams
+pic_gather
+pic_inner_residual
+pic_inner_jacobian
+deposit_pic_moments!
+pic_outer_residual!
+counting_problem
 ```
