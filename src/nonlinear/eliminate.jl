@@ -2984,9 +2984,11 @@ Build the one-dimensional implicit electrostatic PIC test problem of a [`BatchEl
 after `Chen2011`, in the batch's element type `T_in` and the outer field's `T_out`, and return it
 with the initial field `E0`.
 
-The problem is one Crank–Nicolson Vlasov–Ampère step on the periodic domain ``[0, 2\\pi)`` with
-`N_x` field nodes, `N_p` particles, each an `SVector{2, T_in}` of position and velocity, and the
-time step `Δt`. The outer unknown is the field at the new time level; the inner unknown is the
+The problem is one implicit Vlasov–Ampère step on the periodic domain ``[0, 2\\pi)``:
+Crank–Nicolson in the particle orbits, and backward Euler in the field, whose Ampère residual
+reads the current deposited at the new time level rather than the time-centred current of
+`Chen2011`. It has `N_x` field nodes, `N_p` particles, each an `SVector{2, T_in}` of position and
+velocity, and the time step `Δt`. The outer unknown is the field at the new time level; the inner unknown is the
 whole batch, which is solved per particle by [`solve_batch!`](@ref) from the [`PIC1DParams`](@ref)
 of each particle and the shared field. The particle distribution and the previous field are fixed
 by the constructor, so two calls with the same element types build the same problem, and one outer
@@ -3032,7 +3034,7 @@ function make_pic_elimination_problem(
         per_system = per_system,
         inner_method = Newton(),
         inner_atol_cap = T_in(1 // 100),
-        eliminated_indices = N_x .+ (1:N_p),
+        eliminated_indices = N_x .+ (1:(2 * N_p)),
         workgroupsize = 64)
     return prob, E0
 end
@@ -3042,9 +3044,10 @@ end
 
 The Jacobian–vector preparation of a [`BatchEliminated`](@ref) under a matrix-free outer
 [`Newton`](@ref): the anchor-iterate and perturbed-iterate slots `xa` and `xp`, their residual slots
-`Fa` and `Fp`, the directional step `ε = \\sqrt{\\operatorname{eps}(R_{\\text{eff}})}` with `R_eff`
+`Fa` and `Fp`, the relative step `ε = \\sqrt{\\operatorname{eps}(R_{\\text{eff}})}` with `R_eff`
 the coarser of the batch's and the outer iterate's element type, and the inner tolerance `tol` of
-both evaluations. The product is the one-sided difference `(F(x + ε v) - F(x))/ε`.
+both evaluations. The product is the one-sided difference `(F(x + h v) - F(x))/h` at the step
+`h = ε max(1, ‖x‖)/‖v‖`.
 """
 struct BatchEliminatedJVPPrep{XA, FA, XP, FP, R <: Real, T <: Real}
     xa::XA
@@ -3076,7 +3079,8 @@ parameters. `deposit!(moments, Y, shared, per_system)` fills `moments` from the 
 shared parameter, and `outer_F!(F_out, x, moments, shared)` writes the outer residual at `x` —
 where `shared` is the outer iterate converted to `real(eltype(eltype(Y₀)))`, which is what every
 system of the batch gathers. `eliminated_indices` are the indices of the eliminated unknowns in
-the stacked unknown vector, `1:length(Y₀)` by default.
+the stacked unknown vector, one for each entry of every system, `1:sum(length, Y₀)` by default;
+a set of another length is a `DimensionMismatch`.
 
 The inner tolerance of the batch at one outer evaluation is the adaptive quadratic one of
 `LanzkronRoseWilkes:1996` (Thm 5.4 and Cor 5.5),
@@ -3106,14 +3110,16 @@ batch state is the root of the first one, and `residual!!(F_out, prob, x, p; rep
 true)` re-uses the tolerance of the previous evaluation instead of narrowing it.
 
 The outer Jacobian–vector product is a one-sided difference with the step
-``\\varepsilon = \\sqrt{\\operatorname{eps}(R_{\\text{eff}})}``, `R_eff` the coarser of the batch's
-and the outer iterate's element type (`ChenChaconBarnes:2012`, p. 5384): a `Float32` batch inside a
-`Float64` outer solve converges at the outer tolerance that the batch's accuracy supports and
-stalls, rather than failing, below it. Both evaluations of the difference are solved at the batch's
-own floor `2 eps(R_in)`, so the difference is the field's response and not the tolerance's, and the
-batch returns to `prob.Y_anchor` afterwards. The outer `Newton` takes `jacobian = nothing` or
-`AutoForwardDiff()` for this difference, or a [`JVPFunction`](@ref) of its own; any other back end
-is an `ArgumentError`.
+``h = \\varepsilon \\max(1, \\|x\\|)/\\|v\\|``, scaled by the iterate and the direction, and the
+relative step ``\\varepsilon = \\sqrt{\\operatorname{eps}(R_{\\text{eff}})}``, `R_eff` the coarser of
+the batch's and the outer iterate's element type (`ChenChaconBarnes:2012`, p. 5384): a `Float32`
+batch inside a `Float64` outer solve converges at the outer tolerance that the batch's accuracy
+supports and stalls, rather than failing, below it. Both evaluations of the difference are solved
+at the batch's own floor `2 eps(R_in)`, so the difference is the field's response and not the
+tolerance's, and the batch returns to `prob.Y_anchor` afterwards. The outer `Newton` takes
+`jacobian = nothing` or `AutoForwardDiff()` for this difference, or a [`JVPFunction`](@ref) of its
+own, and a `GMRES` without a `jvp_eltype`; any other back end, and a `jvp_eltype`, is an
+`ArgumentError`.
 
 `prob.Y`, `prob.Y_anchor`, `prob.statuses`, `prob.moments`, the two history vectors and
 `prob.eliminated_index_log` are the state of the elimination, and a Jacobian–vector product writes
@@ -3150,11 +3156,14 @@ mutable struct BatchEliminated{P <: AbstractNonlinearProblem, YT, PT, D, M, IM, 
     outer_evaluations::Int
 end
 
-# The eliminated index set, as a tuple of indices into the stacked unknown vector.
+# The eliminated index set, as a tuple of indices into the stacked unknown vector: one index for
+# each of the `n` unknowns of the batch, which are the entries of every system stacked in turn.
 function _normalize_eliminated_indices(idx, n::Int)
     idx === nothing && return ntuple(identity, n)
     v = Int.(idx)
     _check_unique_positive(v, :eliminated_indices)
+    length(v) == n || throw(DimensionMismatch(
+        "eliminated_indices has $(length(v)) entries, but the batch has $n unknowns"))
     return Tuple(v)
 end
 
@@ -3196,7 +3205,7 @@ function BatchEliminated(
     n_outer = length(moments.current)
     statuses = fill(
         SolverStatus{RIn}(SUCCESS, Int32(0), zero(RIn), zero(RIn), Int32(0), false), n_sys)
-    elim = _normalize_eliminated_indices(eliminated_indices, n_sys)
+    elim = _normalize_eliminated_indices(eliminated_indices, sum(length, Y₀))
     return BatchEliminated{
         typeof(inner_prob), typeof(Y), typeof(ps), typeof(deposit!),
         typeof(moments), typeof(inner_method), typeof(opt), typeof(elim), typeof(outer_F!),
@@ -3212,8 +3221,9 @@ end
     eliminated_indices(prob::BatchEliminated)
 
 The indices, in the stacked unknown vector of the un-eliminated problem, of the unknowns this
-reduced-space elimination removes: the batch's own `length(prob.Y)` unknowns, `1:length(prob.Y)`
-unless the constructor was given another set. They are fixed for the life of the problem, and
+reduced-space elimination removes: one for each of the batch's `sum(length, prob.Y)` unknowns, the
+entries of every system stacked in turn, `1:sum(length, prob.Y)` unless the constructor was given
+another set. They are fixed for the life of the problem, and
 `prob.eliminated_index_log` records the set at every outer evaluation.
 """
 @inline eliminated_indices(prob::BatchEliminated) = prob.eliminated
@@ -3408,7 +3418,9 @@ end
     jvp!!(Jv, prep::BatchEliminatedJVPPrep, prob::BatchEliminated, x, v, p) -> Jv
 
 The outer Jacobian–vector product `J v` of a [`BatchEliminated`](@ref) as the one-sided difference
-`(F(x + ε v) - F(x))/ε` with `ε` the step of `prep`. Both residuals of the difference are formed at
+`(F(x + h v) - F(x))/h` with the step `h = ε max(1, ‖x‖)/‖v‖`, `ε` the relative step of `prep`, so
+that the perturbation is `ε` relative to the iterate whatever the scale of `x` and `v`; a zero `v`
+gives `J v = 0` without a solve. Both residuals of the difference are formed at
 the batch's own floor `2 eps(R_in)`, and not at the tolerance of the outer evaluation: a difference
 taken at a tolerance that the step does not override is noise, so a product solves the batch twice
 at that floor instead of reading the anchor residual. Its per-system statuses go to a slot of their
@@ -3420,16 +3432,23 @@ systems stop above the floor still gives a difference rather than a `NaN`. The b
         Jv::AbstractVector, prep::BatchEliminatedJVPPrep, prob::BatchEliminated,
         x::AbstractVector, v::AbstractVector, p)
     ε = prep.ε
+    vnorm = oftype(ε, rnorm(v))
+    # `J 0 = 0` exactly, and the scaled step of a zero direction is not finite
+    if iszero(vnorm)
+        fill!(Jv, zero(eltype(Jv)))
+        return Jv
+    end
+    h = ε * max(one(ε), oftype(ε, rnorm(x))) / vnorm
     xa = prep.xa
     xp = prep.xp
     copyto!(xa, x)
     @inbounds for i in eachindex(xp, x, v)
-        xp[i] = x[i] + ε * v[i]
+        xp[i] = x[i] + h * v[i]
     end
     _probe_residual!!(prep.Fa, prob, xa, p, prep.tol)
     _probe_residual!!(prep.Fp, prob, xp, p, prep.tol)
     @inbounds for i in eachindex(Jv, prep.Fp, prep.Fa)
-        Jv[i] = (prep.Fp[i] - prep.Fa[i]) / ε
+        Jv[i] = (prep.Fp[i] - prep.Fa[i]) / h
     end
     copyto!(prob.Y, prob.Y_anchor)
     return Jv
@@ -3469,7 +3488,8 @@ end
 # `NonlinearProblem` gets, from the same pieces, with the matrix-free product of the batch in the
 # Jacobian–vector slot and no Jacobian matrix anywhere. Only `GMRES` is a linear method of this
 # problem: a factorising method would need the outer Jacobian as a matrix, which the batch does not
-# form. The product is the batch's own difference, which no AD back end but the default selects.
+# form. The product is the batch's own difference, which no AD back end but the default selects,
+# in the precision the difference sets, which no `jvp_eltype` replaces.
 @inline function init_state(m::Newton, prob::BatchEliminated, x::AbstractVector, p)
     g = m.linsolve
     g isa GMRES || throw(ArgumentError(
@@ -3481,6 +3501,10 @@ end
         "a BatchEliminated problem forms its Jacobian–vector product as the directional " *
         "difference of the batch, so it takes jacobian = nothing, AutoForwardDiff() or a " *
         "JVPFunction; got jacobian = $(typeof(j))"))
+    g.jvp_eltype === Nothing || throw(ArgumentError(
+        "a BatchEliminated problem takes a GMRES with jvp_eltype = Nothing: the precision of its " *
+        "product is the coarser of the batch's and the outer iterate's; got jvp_eltype = " *
+        "$(g.jvp_eltype)"))
     R = real(eltype(x))
     Fx = buffer(x)
     ws = init_gmres_workspace(g, x)
@@ -3510,9 +3534,9 @@ end
 end
 
 # The preparation of the outer product of a matrix-free `Newton`: the two iterate slots, their
-# residual slots, the step of `√eps` of the coarser precision — so that a `Float32` batch inside a
-# `Float64` outer solve is differenced at the step its own residual resolves — and the batch floor
-# `2 eps(R_in)` that both evaluations of the difference are solved to.
+# residual slots, the relative step `√eps` of the coarser precision — so that a `Float32` batch
+# inside a `Float64` outer solve is differenced at the step its own residual resolves — and the
+# batch floor `2 eps(R_in)` that both evaluations of the difference are solved to.
 function prepare_jvp(
         ::AutoForwardDiff, prob::BatchEliminated, r::AbstractArray, x::AbstractArray, p)
     check_iterate_shape(x)

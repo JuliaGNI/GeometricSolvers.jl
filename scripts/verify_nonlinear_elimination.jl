@@ -25,7 +25,7 @@ println("GeometricSolvers ", pkgversion(GeometricSolvers),
     " · reduced-space elimination with an R2 batch inside an R5 outer Newton")
 println()
 
-# ─── The problem: one Crank–Nicolson Vlasov–Ampère step, 16 nodes, 64 particles ───
+# ─── The problem: one implicit Vlasov–Ampère step, 16 nodes, 64 particles ───
 outer, E0 = GS.make_pic_elimination_problem(Float64, Float64)
 println(@sprintf("problem: 16 field nodes, 64 particles, Δt = 0.1, ‖E₀‖ = %.3e, batch = Float64",
     norm(E0)))

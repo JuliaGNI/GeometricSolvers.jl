@@ -1312,7 +1312,7 @@ end
     prob, E0 = GS.make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64)
     @test length(E0) == 16 && length(prob.Y) == 64
     @test eltype(prob.Y) == SVector{2, T_in}
-    @test eliminated_indices(prob) == Tuple(17:80)
+    @test eliminated_indices(prob) == Tuple(17:144)     # 64 particles of two unknowns each
     @test length(prob.statuses) == 64
     @test_throws ArgumentError GS.make_pic_elimination_problem(T_in, T_out; N_x = 2)
     # the batch's time step is finite in the batch's own type: `Δt = Inf` passes `> 0`, and a
@@ -1425,6 +1425,14 @@ end
     blocks = BatchEliminated((F, x, m, s) -> F, inner, [SVector(0.0) for _ in 1:3],
         (m, Y, s, ps) -> m, DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2)))
     @test eliminated_indices(blocks) == (1, 2, 3)
+    # one index per unknown: a system of two unknowns takes two, and a set of another length is
+    # refused
+    pairs = BatchEliminated((F, x, m, s) -> F, inner, [SVector(0.0, 0.0) for _ in 1:3],
+        (m, Y, s, ps) -> m, DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2)))
+    @test eliminated_indices(pairs) == Tuple(1:6)
+    @test_throws DimensionMismatch BatchEliminated(
+        (F, x, m, s) -> F, inner, [SVector(0.0, 0.0) for _ in 1:3], (m, Y, s, ps) -> m,
+        DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2)); eliminated_indices = 1:3)
 end
 
 @testset "Check 3: the deposit is deterministic, $T_in in Float64" for T_in in REAL_ELTYPES
@@ -1586,7 +1594,7 @@ end
 @testset "Check 5: the eliminated index set is fixed over a solve, $T_in in Float64" for T_in in REAL_ELTYPES
     prob, E0 = GS.make_pic_elimination_problem(T_in, Float64; N_x = 16, N_p = 64)
     fixed = eliminated_indices(prob)
-    @test fixed == Tuple(17:80)
+    @test fixed == Tuple(17:144)
     reset_batch!(prob)
     @test isempty(prob.eliminated_index_log)
     solve(prob, copy(E0), R5(); f_abstol = T_in === Float32 ? 2e-4 : 1e-8, f_reltol = 0.0)
@@ -1657,6 +1665,9 @@ end
     # left to the DifferentiationInterface preparation, which reads a field the batch does not have
     @test_throws ArgumentError solve(prob, copy(E0),
         Newton(; jacobian = GS.AutoFiniteDiff(), linsolve = GMRES(; maxiter = 16)))
+    # in the precision the difference sets, which a `jvp_eltype` would replace
+    @test_throws ArgumentError solve(prob, copy(E0),
+        Newton(; linsolve = GMRES(; maxiter = 16, jvp_eltype = Float32)))
     # a wrong inner options precision, an empty batch, a bad cap, a bad index set
     moments = DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2))
     inner = NonlinearProblem((y, c) -> y .- c)
@@ -1753,6 +1764,28 @@ end
     GS.jvp!!(similar(Fr), prep, prob, E0, one.(E0), nothing)
     @test prob.statuses == anchor_statuses
     @test batch_summary(prob) == anchor_summary
+    # a zero direction has a zero product, and no step to divide by
+    Jz = fill(NaN, length(E0))
+    GS.jvp!!(Jz, prep, prob, E0, zero(E0), nothing)
+    @test all(iszero, Jz)
+
+    # the step scales with the iterate: on a field of order 1e3, an unscaled `√eps(Float32)` step
+    # is below the batch's resolution and the product loses its `I/Δt` term. The `Float64` batch,
+    # whose resolution that step clears, is the reference
+    function batch_jvp(T_in, shift)
+        pb, Eb = GS.make_pic_elimination_problem(T_in, Float64)
+        xb = Eb .+ shift
+        Fb = similar(xb)
+        reset_batch!(pb)
+        residual!!(Fb, pb, xb, nothing)
+        pp = GS.prepare_jvp(AutoForwardDiff(), pb, Fb, xb, nothing)
+        Jb = similar(Fb)
+        GS.jvp!!(Jb, pp, pb, xb, fill(1 / sqrt(length(xb)), length(xb)), nothing)
+        return Jb
+    end
+    J32 = batch_jvp(Float32, 1e3)
+    J64 = batch_jvp(Float64, 1e3)
+    @test norm(J32 - J64) / norm(J64) < 1e-2
 
     # an inner batch that fails leaves no outer residual: the deposit of a batch that did not
     # converge is not the value of the reduced residual. Its seventh system has no real root, and
