@@ -73,7 +73,7 @@ function one_step(prob, x0, m)
     state = start!!(state, m, prob, x, Fx, nothing, rnorm(Fx))
     start_x = copy(x)
     start_F = copy(Fx)
-    x₊, _, state₊, info = step!!(state, m, prob, x, Fx, nothing)
+    x₊, _, _, info = step!!(state, m, prob, x, Fx, nothing)
     return (; F = start_F, dir = x₊ .- start_x, info = info)
 end
 
@@ -166,7 +166,7 @@ end
         _, st = solve!(init(prob, copy(x0), ir_method()), copy(x0))
         @test isconverged(st)
         @test st.step_failures == 0
-        @test st.promoted == false
+        @test !st.promoted
 
         # MU4: above the LU-IR limit and within the GMRES-IR limit, the first stage fails and the
         # second converges with the promoted factors, so no step refactorises in `T`.
@@ -174,7 +174,7 @@ end
         _, st = solve!(init(prob, copy(x0), ir_method()), copy(x0))
         @test isconverged(st)
         @test st.step_failures >= 1
-        @test st.promoted == false
+        @test !st.promoted
 
         # MU5: beyond the GMRES-IR limit both refinement stages fail, and the second remedy is the
         # refactorisation of the Jacobian in `T`.
@@ -182,7 +182,7 @@ end
         _, st = solve!(init(prob, copy(x0), ir_method()), copy(x0))
         @test isconverged(st)
         @test st.step_failures >= 2
-        @test st.promoted == true
+        @test st.promoted
     end
 
     # ─── Check 3: the cap of the inner GMRES ─────────────────────────────────
@@ -198,7 +198,7 @@ end
         _, st = solve!(init(prob, copy(x0), m), copy(x0))
         @test isconverged(st)
         @test st.step_failures >= 2
-        @test st.promoted == true
+        @test st.promoted
     end
 
     # ─── Check 4: the true linear residual bound in T ────────────────────────
@@ -207,7 +207,7 @@ end
         prob, J!, _, x0 = ir_problem(K_MID, Array, T)
         step = one_step(prob, copy(x0), ir_method())
         @test step.info.failures == 1
-        @test step.info.promoted == false
+        @test !step.info.promoted
         Jm = similar(x0, length(x0), length(x0))
         J!(Jm, x0, nothing)
         # MU7: the bound is on the true residual recomputed in `T`, not on the Arnoldi estimate of
@@ -281,6 +281,11 @@ end
         truncated = copy(raw)
         truncated[1] = merge(truncated[1], (residual = truncated[1].residual[1:(end - 1)],))
         @test !recompute_and_verify_gmres_ir_table(truncated, table)
+        # a raw output whose own step count contradicts its history, against a table that agrees
+        # with that history: the step-count cross-check alone refuses it
+        miscounted = copy(raw)
+        miscounted[1] = merge(miscounted[1], (steps = miscounted[1].steps + 1,))
+        @test !recompute_and_verify_gmres_ir_table(miscounted, table)
     end
 
     # ─── Construction, keywords, refusals and allocations ────────────────────
@@ -371,7 +376,7 @@ end
         _, st = solve!(init(prob, copy(x0), ir_method(4)), copy(x0))
         @test st.code == SINGULAR
         @test st.step_failures == 1
-        @test st.promoted == true
+        @test st.promoted
         _, st_ref = solve!(
             init(prob, copy(x0),
                 Newton(; linsolve = LUFactorization(Float32), refinement = Refinement())),
