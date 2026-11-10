@@ -73,7 +73,8 @@ end
         status::SolverStatus{R}) where {R}
     _, st1, s1 = finish!!(state.s1, m.first, prob, x, Fx, status)
     _, st2, s2 = finish!!(state.s2, m.second, prob, x, Fx, status)
-    st_out = state.switched ? st2 : st1
+    # each member counts only its own steps, so `Switch` keeps no count
+    st_out = with_calls(state.switched ? st2 : st1, 0, 0)
     return x, st_out, SwitchState(s1, s2, state.Fx, R(NaN), state.switched)
 end
 

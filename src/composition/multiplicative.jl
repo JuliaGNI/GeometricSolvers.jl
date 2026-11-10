@@ -116,7 +116,8 @@ end
         status.step_failures, status.promoted, Int32(-1), R(NaN), R(NaN))
     states, st_out = _finish_multiplicative_states(
         state.states, m.members, prob, x, Fx, status, st_init)
-    return x, st_out, MultiplicativeState(states, state.Fx, state.x₀)
+    # each member counts only its own sub-steps, so `Multiplicative` keeps no count
+    return x, with_calls(st_out, 0, 0), MultiplicativeState(states, state.Fx, state.x₀)
 end
 
 @inline function _step_multiplicative_tail(
