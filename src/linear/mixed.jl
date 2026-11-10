@@ -34,9 +34,7 @@ packed LU (`U` on and above the diagonal, the multipliers of the unit `L` below 
 [`LUFactorization`](@ref), which is the storage that [`promote_lu_factors!`](@ref) copies into the
 working precision. It is `nothing` for a solve that holds no factor.
 """
-@inline stored_factors(fac::DenseLU) = fac.factors
-@inline stored_factors(fac::DeviceLU) = fac.factors
-@inline stored_factors(fac::StaticLU) = fac.factors
+@inline stored_factors(fac::Union{DenseLU, DeviceLU, StaticLU}) = fac.factors
 @inline stored_factors(::Nothing) = nothing
 
 """
@@ -53,7 +51,8 @@ dense or device factors of one shape, and the copy allocates nothing.
         fac::DenseLU{A, P, V}, fac_TF::DenseLU{B, Q, W}) where {A, P, V, B, Q, W}
     copyto!(fac.factors, fac_TF.factors)
     copyto!(fac.ipiv, fac_TF.ipiv)
-    return DenseLU(fac.factors, fac.ipiv, fac.rhs, fac_TF.info, fac_TF.scale_exponent)
+    return typeof(fac)(
+        fac.factors, fac.ipiv, fac.rhs, fac_TF.info, fac_TF.scale_exponent)
 end
 
 @inline function promote_lu_factors!(
@@ -61,8 +60,8 @@ end
         A, P, V, S, B, Q, W, U}
     copyto!(fac.factors, fac_TF.factors)
     copyto!(fac.ipiv, fac_TF.ipiv)
-    return DeviceLU(fac.factors, fac.ipiv, fac.rhs, fac_TF.info, fac_TF.scale_exponent,
-        fac.status)
+    return typeof(fac)(
+        fac.factors, fac.ipiv, fac.rhs, fac_TF.info, fac_TF.scale_exponent, fac.status)
 end
 
 """

@@ -133,9 +133,11 @@ end
 Adapt.@adapt_structure GMRESRefinement
 
 # Whether a refinement corrects the direction of the system that the factor solves, which a damped
-# `LevenbergMarquardt` step and a matrix-free `GMRES` step take no method of.
-@inline is_refining(::NoRefinement) = false
+# `LevenbergMarquardt` step and a matrix-free `GMRES` step take no method of. A refinement that this
+# package does not define refines nothing here, so a caller's own type keeps the paths of
+# `NoRefinement`, as it did where the step read `refinement isa Refinement`.
 @inline is_refining(::Union{Refinement, GMRESRefinement}) = true
+@inline is_refining(refinement) = false
 
 # Pre-allocated R3 scratch buffers for `refine!!`: `r` holds the linear residual `-Fx - J d` and
 # `d_try` holds the correction `δd` and candidate direction `d + δd`. In R1 both slots are `nothing`.
@@ -147,7 +149,7 @@ end
 # The workspace of a `GMRESRefinement`, added to those two slots: `b` the preconditioned
 # right-hand side `M̂⁻¹ r` of the inner solve, `tmp` a product slot, `z` the preconditioned product
 # `M̂⁻¹ (J v)` that the operator of the inner solve writes, and `ws` the Krylov workspace of
-# [`gmres_solve!`](@ref), which is `nothing` on a value iterate, whose storage holds no basis.
+# [`gmres_solve!`](@ref). A value iterate has no storage for any of them and keeps `nothing`.
 struct GMRESIRBuffer{B, W}
     r::B
     d_try::B
@@ -164,12 +166,16 @@ end
     return RefinementBuffer(r, buffer(x))
 end
 
-@inline function init_refinement(r::GMRESRefinement, x)
+@inline function init_refinement(r::GMRESRefinement, x::AbstractVector)
     r_slot = buffer(x)
     r_slot === nothing && return nothing
     return GMRESIRBuffer(r_slot, buffer(x), buffer(x), buffer(x), buffer(x),
         init_gmres_ir_workspace(r, x))
 end
+
+# A value iterate has no buffer and no Krylov basis, so it keeps the LU-IR passes of a
+# `Refinement` and, where they fail, its refactorisation in `T`.
+@inline init_refinement(::GMRESRefinement, x) = nothing
 
 # The Krylov workspace of the GMRES-IR stage: the basis of `min(gmres_maxiter, n)` columns in the
 # working precision `T`, unrestarted, which is the widest basis that one correction forms.

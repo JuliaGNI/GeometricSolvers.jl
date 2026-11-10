@@ -9,17 +9,19 @@
 # leaves LU-IR successful at every `κ`, and exercises no stage of the chain.
 
 using ADTypes: AutoFiniteDiff
+using Adapt: Adapt
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
+using KernelAbstractions: @index, @kernel, synchronize
 using LinearAlgebra: Diagonal, mul!, norm
 using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: PromotedProduct, accepts_gmres_ir, factor_eltype, factorize!!,
-                        gmres_ir!!, init_linear,
+using GeometricSolvers: Options, PromotedProduct, ToReal, accepts_gmres_ir, factor_eltype,
+                        factorize!!, gmres_ir!!, init_linear,
                         init_state, isconverged, ldiv!!, promote_lu_factors,
-                        promote_lu_factors!, rnorm, solve!, start!!, step!!
+                        promote_lu_factors!, rnorm, solve!, solve!!, start!!, step!!
 
 include("../helpers/matrix.jl")
 
@@ -48,11 +50,13 @@ end
 
 # The linear problem `F(x) = A x` with `A = Q diag(σ) Qᵀ` of `κ∞ ≈ κ`, its analytic Jacobian `J!`,
 # and the start `2 Q[:, n]` along the smallest singular vector of `A`, on the array type `AT` and in
-# the working type `T`.
-function ir_problem(κ::Float64, AT = Array, ::Type{T} = Float64; n::Integer = 8) where {T}
+# the working type `T`. A `scale` multiplies `J` and `F` and leaves every relative quantity and
+# `κ∞` unchanged, which is what the scaling testsets below vary.
+function ir_problem(κ::Float64, AT = Array, ::Type{T} = Float64; n::Integer = 8,
+        scale::Float64 = 1.0) where {T}
     Q = ir_basis(n)
     σ = [κ^(-(i - 1) / (n - 1)) for i in 1:n]
-    A = AT(T.(Q * Diagonal(σ) * Q'))
+    A = AT(T.(scale .* (Q * Diagonal(σ) * Q')))
     F!(r, x, p) = (mul!(r, A, x); r)
     J!(J, x, p) = (copyto!(J, A); J)
     return NonlinearProblem(F!, J!), J!, A, AT(T.(2.0 .* Q[:, n]))
@@ -86,6 +90,18 @@ end
     return @allocated solve!(solver, x)
 end
 
+# One `solve!!` per index of the KA backend, on the value iterate `x₀`: the shape of a solve inside
+# a kernel, which is the one a `GMRESRefinement` reaches without a Krylov basis.
+@kernel function gmres_ir_kernel!(
+        codes, xs, prob, method, state₀, opt, @Const(x₀), @Const(p))
+    i = @index(Global, Linear)
+    @inbounds begin
+        x, st, _ = solve!!(state₀, prob, x₀, method, p, opt)
+        codes[i] = st.code
+        xs[i] = x
+    end
+end
+
 @testset "GMRES-IR" begin
     # ─── Check 1: the SDD precision variant ──────────────────────────────────
 
@@ -104,7 +120,11 @@ end
         @test eltype(stored_factors(solver)) === factor_eltype(LUFactorization(Float32), T)
         @test eltype(promoted_factors(solver)) === T
         @test eltype(preconditioned_buffer(solver)) === T
-        @test eltype(residual_buffer(solver)) === T
+        @test eltype(linear_residual_buffer(solver)) === T
+        # and it is the linear residual `r = -F(x) - J d` of the stage, not the `F(x₀)` slot that
+        # `residual_buffer` names: a stage that keeps `r` in the factorisation precision fails here
+        @test linear_residual_buffer(solver) === solver.state.refbuf.r
+        @test linear_residual_buffer(solver) !== GS.residual_buffer(solver.state)
         @test Array(promoted_factors(solver)) == Array(stored_factors(solver))
 
         # the promotion itself: the packed factors, the pivots and the scaling travel as they are
@@ -185,6 +205,28 @@ end
         @test st.promoted
     end
 
+    @testset "Check 2: the chain takes the same branch at every scale ($T)" for T in SDD_ELTYPES
+
+        # Multiplying `J` and `F` by `s` leaves `κ∞` and every relative quantity unchanged, so the
+        # same Jacobian must reach the same stage at every `s`: a stop that compares a residual in
+        # the units of `x` with a tolerance in the units of `F` reads a different system at each
+        # `s`, and promotes at the large ones and not at the small ones.
+        for scales in ((1.0e-6, 1.0, 1.0e6, 1.0e8), (2.0^-30, 2.0^-10, 2.0^10, 2.0^30))
+            prob, _, _, x0 = ir_problem(K_MID, Array, T)
+            _, st_ref = solve!(init(prob, copy(x0), ir_method()), copy(x0))
+            @test isconverged(st_ref)
+            @test st_ref.step_failures >= 1
+            @test !st_ref.promoted
+            for s in scales
+                sprob, _, _, sx0 = ir_problem(K_MID, Array, T; scale = s)
+                _, st = solve!(init(sprob, copy(sx0), ir_method()), copy(sx0))
+                @test isconverged(st)
+                @test st.promoted == st_ref.promoted
+                @test st.step_failures == st_ref.step_failures
+            end
+        end
+    end
+
     # ─── Check 3: the cap of the inner GMRES ─────────────────────────────────
 
     @testset "Check 3: a cap of one Krylov iteration ($T, $AT)" for T in SDD_ELTYPES,
@@ -203,9 +245,17 @@ end
 
     # ─── Check 4: the true linear residual bound in T ────────────────────────
 
-    @testset "Check 4: the true linear residual in T ($T)" for T in SDD_ELTYPES
-        prob, J!, _, x0 = ir_problem(K_MID, Array, T)
-        step = one_step(prob, copy(x0), ir_method())
+    @testset "Check 4: the true linear residual in T ($T, κ = $κ, n = $n)" for T in SDD_ELTYPES,
+        κ in (5.0e7, 1.0e8, 2.0e8, 5.0e8), n in (8, 16, 32)
+
+        # The bound is a relative one, so it holds at every size and every `κ∞` of the range in
+        # which GMRES-IR is the stage that supplies the direction. The cap is wide enough for the
+        # whole Krylov space, so what the grid varies is the conditioning and the size, not the cap
+        # (Check 3 owns the cap). A residual rounded to the factorisation precision meets the bound
+        # at a small `κ` and misses it here: every cell of the grid meets it, the tightest at 0.92
+        # of it.
+        prob, J!, _, x0 = ir_problem(κ, Array, T; n = n)
+        step = one_step(prob, copy(x0), ir_method(16))
         @test step.info.failures == 1
         @test !step.info.promoted
         Jm = similar(x0, length(x0), length(x0))
@@ -214,6 +264,22 @@ end
         # the preconditioned system, and the direction the stage accepts meets it.
         @test norm(step.F .+ Jm * step.dir) <= 10 * IR_TOL * norm(step.F)
         @test norm(step.F .+ Jm * step.dir) < norm(step.F)
+    end
+
+    @testset "Check 4: the accepted direction meets the bound at every scale ($T)" for T in SDD_ELTYPES
+
+        # A true residual is scale-free, so a stage that stops on one accepts at every `s`. A stage
+        # whose stop mixes the units of `x` and of `F` rejects at the large `s` and promotes.
+        for s in (1.0e-6, 1.0, 1.0e6, 1.0e8), n in (8, 16)
+
+            prob, J!, _, x0 = ir_problem(K_MID, Array, T; n = n, scale = s)
+            step = one_step(prob, copy(x0), ir_method())
+            @test step.info.failures == 1
+            @test !step.info.promoted
+            Jm = similar(x0, length(x0), length(x0))
+            J!(Jm, x0, nothing)
+            @test norm(step.F .+ Jm * step.dir) <= 10 * IR_TOL * norm(step.F)
+        end
     end
 
     @testset "Check 4: the stage refuses a direction that misses the bound ($T)" for T in SDD_ELTYPES
@@ -346,9 +412,29 @@ end
     @testset "a mixed solve allocates nothing after init" begin
         prob, _, _, x0 = ir_problem(K_MID)
         solver = init(prob, copy(x0), ir_method())
-        if Base.JLOptions().check_bounds != 1
-            @test sdd_allocations(solver, copy(x0), x0) == 0
-        end
+        @test sdd_allocations(solver, copy(x0), x0) == 0
+        # the control: the probe reads an allocation that is there
+        @test Base.allocations(collect, x0) > 0
+    end
+
+    @testset "a reused factor keeps the scale of the factor it stored ($T)" for T in SDD_ELTYPES
+        # Under reuse the state keeps the factor a step stored, and a step whose GMRES-IR stage
+        # succeeds stores the factor it factorised as the LU-IR success does: a state that keeps
+        # the slot `init` made solves the next reused step with a scale that factor does not have.
+        prob, J!, _, x0 = ir_problem(K_MID, Array, T)
+        m = Newton(; linsolve = LUFactorization(Float32), reuse = Int32(3),
+            refinement = GMRESRefinement(Float64; gmres_maxiter = 8, gmres_tol = IR_TOL))
+        solver = init(prob, copy(x0), m)
+        _, st = solve!(solver, copy(x0))
+        @test isconverged(st)
+        @test st.step_failures >= 1
+        @test !st.promoted
+        Jm = similar(x0, length(x0), length(x0))
+        J!(Jm, x0, nothing)
+        fac_ref = factorize!!(init_linear(LUFactorization(Float32), nothing, x0),
+            LUFactorization(Float32), Jm)
+        @test Array(stored_factors(solver)) == Array(fac_ref.factors)
+        @test solver.state.fac.scale_exponent == fac_ref.scale_exponent
     end
 
     @testset "the tenfold allowance of the true residual bound" begin
@@ -397,5 +483,31 @@ end
             Newton(; linsolve = LUFactorization(Float32), refinement = GMRESRefinement()))
         @test isconverged(st)
         @test norm(Array(x) - sqrt.([2.0, 3.0])) < 1e-6
+    end
+
+    @testset "a GMRESRefinement solve inside a KernelAbstractions kernel on CPU" begin
+        # §V names the KA backend: a value iterate carries no Krylov basis, so the kernel reaches
+        # the LU-IR passes and the refactorisation, and `GMRESRefinement` has to be `isbits` for the
+        # method to travel into the kernel at all.
+        for T in SDD_ELTYPES
+            R = real(T)
+            m = Newton(; linsolve = LUFactorization(Float32),
+                refinement = GMRESRefinement(T; gmres_maxiter = 4, gmres_tol = IR_TOL))
+            @test isbits(m)
+            mat = Adapt.adapt(ToReal{R}(), m)
+            opt = Options(T)
+            x0 = SVector{2, T}(T(3), T(5))
+            p = SVector{2, T}(T(4), T(9))
+            prob = NonlinearProblem((y, q) -> y .* y .- q)
+            _, st_host = solve(prob, x0, mat, p)
+            codes = Vector{GeometricSolvers.ReturnCode}(undef, 2)
+            xs = Vector{SVector{2, T}}(undef, 2)
+            state0 = init_state(mat, prob, x0, p)
+            gmres_ir_kernel!(KA_BACKEND)(
+                codes, xs, prob, mat, state0, opt, x0, p; ndrange = 2)
+            synchronize(KA_BACKEND)
+            @test all(==(st_host.code), codes)
+            @test all(x -> isapprox(x, SVector{2, T}(T(2), T(3)); rtol = 10 * sqrt(eps(R))), xs)
+        end
     end
 end
