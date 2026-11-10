@@ -359,7 +359,6 @@ end
 # --- the derivative of a non-RAS inner method: a central difference ---------------------------
 
 @testset "A non-RAS inner is differentiated by a central difference, $T" for T in REAL_ELTYPES
-    n = 6
     c = T[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- c; nothing))
     ω = T(1) / 2
