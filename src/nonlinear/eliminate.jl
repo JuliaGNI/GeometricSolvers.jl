@@ -2836,7 +2836,7 @@ const _PIC_MAX_CELLS = 9.2e18
 # non-finite, and an outer solve reports it instead of taking an `InexactError` out of a kernel.
 @inline function _pic_node(ξ, Δx, n_cells)
     s = ξ / Δx
-    usable = isfinite(s) && abs(s) <= _PIC_MAX_CELLS
+    usable = isfinite(s) && abs(s) <= oftype(s, _PIC_MAX_CELLS)
     r = usable ? round(Int, s) : 0
     return mod(r, n_cells) + 1, usable ? s - r : oftype(s, NaN)
 end
@@ -3068,7 +3068,9 @@ of `length(Y₀)` independent inner systems and deposits its moments.
 
 `inner_prob` is the [`NonlinearProblem`](@ref) of one inner system, solved for every system by
 [`solve_batch!`](@ref) from the batch's warm start `Y`, which the problem keeps in place across
-outer evaluations; `Y₀` is the initial batch state and is never mutated; `per_system` is the
+outer evaluations; `Y₀` is the initial batch state and is never mutated, and `Y` is a host
+`Vector` copy of it, so the batch runs on the CPU backend whatever the array type of `Y₀`;
+`per_system` is the
 indexable per-system data of the batch, or `nothing` for a batch whose systems share all their
 parameters. `deposit!(moments, Y, shared, per_system)` fills `moments` from the batch `Y` and the
 shared parameter, and `outer_F!(F_out, x, moments, shared)` writes the outer residual at `x` —
@@ -3109,7 +3111,9 @@ and the outer iterate's element type (`ChenChaconBarnes:2012`, p. 5384): a `Floa
 `Float64` outer solve converges at the outer tolerance that the batch's accuracy supports and
 stalls, rather than failing, below it. Both evaluations of the difference are solved at the batch's
 own floor `2 eps(R_in)`, so the difference is the field's response and not the tolerance's, and the
-batch returns to `prob.Y_anchor` afterwards.
+batch returns to `prob.Y_anchor` afterwards. The outer `Newton` takes `jacobian = nothing` or
+`AutoForwardDiff()` for this difference, or a [`JVPFunction`](@ref) of its own; any other back end
+is an `ArgumentError`.
 
 `prob.Y`, `prob.Y_anchor`, `prob.statuses`, `prob.moments`, the two history vectors and
 `prob.eliminated_index_log` are the state of the elimination, and a Jacobian–vector product writes
@@ -3465,13 +3469,18 @@ end
 # `NonlinearProblem` gets, from the same pieces, with the matrix-free product of the batch in the
 # Jacobian–vector slot and no Jacobian matrix anywhere. Only `GMRES` is a linear method of this
 # problem: a factorising method would need the outer Jacobian as a matrix, which the batch does not
-# form.
+# form. The product is the batch's own difference, which no AD back end but the default selects.
 @inline function init_state(m::Newton, prob::BatchEliminated, x::AbstractVector, p)
     g = m.linsolve
     g isa GMRES || throw(ArgumentError(
         "a BatchEliminated problem takes a Newton with GMRES: the outer Jacobian is matrix-free, " *
         "and its product is the precision-matched directional difference of the batch; got " *
         "linsolve = $(typeof(g))"))
+    j = m.jacobian
+    (j === nothing || j isa AutoForwardDiff || j isa JVPFunction) || throw(ArgumentError(
+        "a BatchEliminated problem forms its Jacobian–vector product as the directional " *
+        "difference of the batch, so it takes jacobian = nothing, AutoForwardDiff() or a " *
+        "JVPFunction; got jacobian = $(typeof(j))"))
     R = real(eltype(x))
     Fx = buffer(x)
     ws = init_gmres_workspace(g, x)

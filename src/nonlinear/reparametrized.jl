@@ -994,10 +994,10 @@ function solve_batch!(
     end
     _validate_batch(Y, p, order)
     _validate_batch_problem(reparam)
+    ws = _validate_workgroupsize(workgroupsize)
     m, opt, state₀ = _prepare_batch(Y, reparam, method, options, kwargs)
     isempty(Y) && return S
-    return _launch!(Y, S, reparam, m, p, opt, state₀, order,
-        _validate_workgroupsize(workgroupsize))
+    return _launch!(Y, S, reparam, m, p, opt, state₀, order, ws)
 end
 
 function solve_batch!(
@@ -1012,12 +1012,12 @@ function solve_batch!(
 )
     _validate_batch(Y, p, order)
     _validate_batch_problem(reparam)
+    ws = _validate_workgroupsize(workgroupsize)
     m, opt, state₀ = _prepare_batch(Y, reparam, method, options, kwargs)
     isempty(Y) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(Y), ReturnCode, length(Y))
     return _tally_return_codes(Array(_launch!(
-        Y, codes, reparam, m, p, opt, state₀, order,
-        _validate_workgroupsize(workgroupsize))))
+        Y, codes, reparam, m, p, opt, state₀, order, ws)))
 end
 
 # The chart with the datum `b` of `init` or `solve` set on its inner `StationarityProblem`, as

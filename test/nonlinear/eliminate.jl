@@ -1653,6 +1653,10 @@ end
 
     # a batch is solved by a matrix-free outer Newton only
     @test_throws ArgumentError solve(prob, copy(E0), Newton())
+    # whose product is the batch's own difference: another AD back end is refused by name, not
+    # left to the DifferentiationInterface preparation, which reads a field the batch does not have
+    @test_throws ArgumentError solve(prob, copy(E0),
+        Newton(; jacobian = GS.AutoFiniteDiff(), linsolve = GMRES(; maxiter = 16)))
     # a wrong inner options precision, an empty batch, a bad cap, a bad index set
     moments = DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2))
     inner = NonlinearProblem((y, c) -> y .- c)
@@ -1709,6 +1713,15 @@ end
         X -> solve_batch!(X, rep, Newton(); workgroupsize = 0),
         X -> solve_batch!(X, Ss, rep, Newton(); workgroupsize = 0))
         @test_throws ArgumentError f(Xs)
+    end
+    # the refusal comes before the return of an empty batch, as it does in the plain forms
+    X_empty = eltype(Xs)[]
+    S_empty = similar(X_empty, SolverStatus{Float64})
+    for f in (() -> solve_batch!(X_empty, stat, Newton(); workgroupsize = 0),
+        () -> solve_batch!(X_empty, S_empty, stat, Newton(); workgroupsize = 0),
+        () -> solve_batch!(X_empty, rep, Newton(); workgroupsize = 0),
+        () -> solve_batch!(X_empty, S_empty, rep, Newton(); workgroupsize = 0))
+        @test_throws ArgumentError f()
     end
     # and the size it validated reaches the launch on every form: a launch that dropped the keyword
     # accepts 5000, which the CPU device refuses

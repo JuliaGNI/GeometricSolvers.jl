@@ -27,8 +27,9 @@ Wrap a parameter value that every system of a batch shares together with an inde
 of per-system values, so [`solve_batch!`](@ref) passes `(p.shared, p.per_system[i])` to system
 `i`. It is what a batch whose systems differ in one field and agree in another takes, such as the
 particles of an implicit PIC step, which each carry their own previous position and velocity and
-share the field they gather. Both parts are adapted to the batch's backend with `Adapt`, so a
-`shared` value that is an `Array` follows `X` onto a device.
+share the field they gather. On a device backend the kernel launch converts both parts with
+`Adapt`, as it converts every argument: an array of that backend becomes its device form, and a
+host `Array` stays on the host, so `shared` there is an array of that backend or an `isbits` value.
 """
 struct BatchParams{S, P}
     shared::S
@@ -79,11 +80,11 @@ converged, with `fnorm = 0` and both iteration counts `0`.
 function batch_summary(S::AbstractVector{SolverStatus{R}}) where {R <: Real}
     isempty(S) && return BatchSummary{R}(zero(R), true, 0, Int32(0), 0)
     batch_norm = rnorm(map(s -> s.fnorm, S))
-    all_converged = all(isconverged, S)
-    failure_count = count(s -> !isconverged(s), S)
+    failure_count = Int(count(s -> !isconverged(s), S))
     max_iterations = maximum(s -> s.iterations, S)
     total_iterations = sum(s -> Int(s.iterations), S)
-    return BatchSummary{R}(batch_norm, all_converged, Int(failure_count), max_iterations,
+    return BatchSummary{R}(
+        batch_norm, iszero(failure_count), failure_count, max_iterations,
         total_iterations)
 end
 
