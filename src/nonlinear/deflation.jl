@@ -380,11 +380,12 @@ end
 
 # ─── R3: the residual, the Jacobian and the Jacobian-vector product ──────────
 
-# The workspace of a deflated array identical in R3: the inner derivative's preparation, the
-# residual and the gradient of the rank-1 update, one difference buffer, and — for an inner problem
-# with an analytic Jacobian only, whose Jacobian-vector product the base seam reads from a matrix —
-# the matrix that product needs. The Jacobian itself needs no second matrix: the inner Jacobian is
-# written into the caller's buffer, which the rank-1 update then completes in place.
+# The workspace of a deflated problem on an array iterate (R3): the inner derivative's
+# preparation, the residual and the gradient of the rank-1 update, one difference buffer, and —
+# for an inner problem with an analytic Jacobian only, whose Jacobian-vector product the base
+# seam reads from a matrix — the matrix that product needs. The Jacobian itself needs no second
+# matrix: the inner Jacobian is written into the caller's buffer, which the rank-1 update then
+# completes in place.
 struct DeflatedPrep{INNER, F, G, U, JX}
     inner::INNER
     Fs::F
@@ -682,14 +683,10 @@ struct DenseDeflatedState{ST, DP, U}
     u_work::U
 end
 
-# The `U` entries of a full-state root: the unknown part the distance is taken on.
-@inline function _deflated_root_u(U, r)
-    return _extract_unknowns(U, r)
-end
-
+# The `U` entries of the full-state roots: the unknown part the distance is taken on.
 @inline function _deflated_roots_r1(def::Deflated{<:StationarityProblem})
     U = def.prob.U
-    return map(r -> _deflated_root_u(U, r), def.roots)
+    return map(r -> _extract_unknowns(U, r), def.roots)
 end
 
 @inline function _deflated_roots_r3(def::Deflated{<:StationarityProblem})
