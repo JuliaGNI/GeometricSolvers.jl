@@ -58,20 +58,26 @@ end
 @testset "CommonSolve's functions dispatch their first argument on the package's types" begin
     # the first positional argument of every method that the package adds is one of the package's
     # own problem or solver types: `init` and `solve` take any `AbstractNonlinearProblem`, so that
-    # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem` and a
-    # `Reparametrized` problem have their own
+    # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem`, a
+    # `Reparametrized` and a `Deflated` problem and the `BlockEliminated` and `VariableProjection`
+    # wrappers have their own, the last two taking one `Union` arm each
     for (f, owned) in (
         (CommonSolve.init,
-        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized)),
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated,
+            BlockEliminated, VariableProjection)),
         (CommonSolve.solve,
-        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized)),
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated,
+            BlockEliminated, VariableProjection)),
         (CommonSolve.solve!, (NonlinearSolver, ReparametrizedSolver)))
         ours = filter(m -> m.module === GS, collect(methods(f)))
         @test !isempty(ours)
         owned_names = map(t -> Base.unwrap_unionall(t).name, owned)
+        owned_first_arg(t) = all(u -> Base.unwrap_unionall(u).name in owned_names,
+            Base.uniontypes(t))
+        @test !owned_first_arg(Union{first(owned), Vector{Float64}})
         for m in ours
             first_arg = Base.unwrap_unionall(Base.unwrap_unionall(m.sig).parameters[2])
-            @test first_arg.name in owned_names
+            @test owned_first_arg(first_arg)
         end
     end
 end
