@@ -2959,8 +2959,7 @@ element type `typeof(Δt)`, and the value is converted to the element type of `F
 is known to the batch's precision only, so a residual summed in the outer precision would report a
 distance to the root that the batch cannot resolve. That floor of `F` is a property of `F`, not of
 the outer factorisation, so on the problem of [`make_pic_elimination_problem`](@ref) the outer
-solve at a tolerance below it ends on a stall and never on a factorisation failure (`§1.4`, `§L`
-2026-11-06).
+solve at a tolerance below it ends on a stall and never on a factorisation failure (`§1.4`).
 """
 function pic_outer_residual!(F_out, E, moments::DepositedMoments, E_previous, Δt)
     T = typeof(Δt)
@@ -2971,19 +2970,19 @@ function pic_outer_residual!(F_out, E, moments::DepositedMoments, E_previous, Δ
 end
 
 """
-    make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64) -> (prob, E0)
+    make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64, Δt = 1 // 10) -> (prob, E0)
 
 Build the one-dimensional implicit electrostatic PIC test problem of a [`BatchEliminated`](@ref)
 after `Chen2011`, in the batch's element type `T_in` and the outer field's `T_out`, and return it
 with the initial field `E0`.
 
 The problem is one Crank–Nicolson Vlasov–Ampère step on the periodic domain ``[0, 2\\pi)`` with
-`N_x` field nodes and `N_p` particles, each an `SVector{2, T_in}` of position and velocity. The
-outer unknown is the field at the new time level; the inner unknown is the whole batch, which is
-solved per particle by [`solve_batch!`](@ref) from the [`PIC1DParams`](@ref) of each particle and
-the shared field. The particle distribution and the previous field are fixed by the constructor,
-so two calls with the same element types build the same problem, and one outer evaluation deposits
-one set of moments bit for bit.
+`N_x` field nodes, `N_p` particles, each an `SVector{2, T_in}` of position and velocity, and the
+time step `Δt`. The outer unknown is the field at the new time level; the inner unknown is the
+whole batch, which is solved per particle by [`solve_batch!`](@ref) from the [`PIC1DParams`](@ref)
+of each particle and the shared field. The particle distribution and the previous field are fixed
+by the constructor, so two calls with the same element types build the same problem, and one outer
+evaluation deposits one set of moments bit for bit.
 """
 function make_pic_elimination_problem(
         ::Type{T_in}, ::Type{T_out}; N_x::Integer = 16, N_p::Integer = 64,

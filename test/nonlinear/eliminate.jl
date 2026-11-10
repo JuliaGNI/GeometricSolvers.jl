@@ -1372,6 +1372,16 @@ end
     end
     @test all(isfinite, m.temperature)
 
+    # the deposit accumulates in the canonical order of the batch, so the association of these
+    # three velocities at one node is the batch's index order: the pairwise cancellation leaves the
+    # third velocity's contribution, and any other order loses it
+    mo = DepositedMoments(zeros(16), zeros(16), zeros(16), zeros(16))
+    cancel = [SVector(x_node, 1e16), SVector(x_node, -1e16), SVector(x_node, 1.0)]
+    cancel_ps = [GS.PIC1DParams(x_node, 0.0, 0.0) for _ in 1:3]
+    GS.deposit_pic_moments!(mo, cancel, zeros(16), cancel_ps, h, Δx, 16)
+    @test mo.current[5] == 3 / 4          # (3/4·1e16 − 3/4·1e16) + 3/4·1, and not 1.0
+    @test mo.density[5] == 3 * 3 / 4
+
     # the inner options of a batch are absolute only, so a repeat evaluation stops at 0 iterations
     options = GS._batch_inner_options(prob, 1e-6)
     @test options.f_abstol == 1e-6
@@ -1500,6 +1510,9 @@ end
     F = similar(E0)
     reset_batch!(prob)
     residual!!(F, prob, E0, nothing)
+    # the whole residual is evaluated in the batch's precision, its linear term and its sum too,
+    # so every value it writes is a `Float32` value whatever the outer iterate's type
+    @test all(v -> Float32(v) == v, F)
     prep = GS.prepare_jvp(AutoForwardDiff(), prob, F, E0, nothing)
     @test prep.ε ≈ sqrt(eps(Float32))
     @test prep.tol == 2 * eps(Float32)
@@ -1558,6 +1571,17 @@ end
     @test_throws ArgumentError BatchEliminated(
         (F, x, m, s) -> F, inner, [SVector(0.0)], (m, Y, s, ps) -> m, moments;
         workgroupsize = 0)
+
+    # a counted residual adds to the `f_calls` of the workspace, so the trial points of a line
+    # search reach the status: both of the residual's call forms count
+    ws = GS.init_gmres_workspace(GMRES(; maxiter = 16), E0)
+    ws.f_calls = Int32(0)
+    counted = GS.counting_problem(prob, ws).F
+    Fc = similar(E0)
+    counted(Fc, E0, nothing)
+    @test ws.f_calls == Int32(1)
+    counted(E0, nothing)
+    @test ws.f_calls == Int32(2)
 end
 
 @testset "Reduced-space elimination: inference, allocations, and JET" begin

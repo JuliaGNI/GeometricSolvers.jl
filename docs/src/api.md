@@ -57,7 +57,7 @@ failure — on the problem of [`make_pic_elimination_problem`](@ref), the solve 
 many did not; [`deposited_moments`](@ref) returns what the deposit wrote, and
 [`reset_batch!`](@ref) returns the problem to its initial state.
 [`make_pic_elimination_problem`](@ref) builds the one-dimensional implicit electrostatic PIC test
-problem that the checks of this part solve.
+problem that the elimination checks solve.
 
 ```@docs
 BatchEliminated

@@ -792,12 +792,13 @@ so that a compat-only bump can be told apart from an interface change.
   the pair `(shared, per_system[i])`, for a batch whose systems agree in one parameter and differ
   in another, and `solve_batch!` takes a `workgroupsize` keyword and the options as a sixth
   positional argument.
-  `make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64)` builds the one-dimensional
-  implicit electrostatic PIC test problem after `Chen2011`: one Crank–Nicolson Vlasov–Ampère step
-  on ``[0, 2\pi)`` with a periodic quadratic B-spline field gather, a canonical-order deposit of
-  the current, density, momentum flux and temperature — bit for bit the same over 100 evaluations
-  at one field — and the Ampère residual added in the batch's own precision, so the `Float32`
-  floor of `F` is a property of `F` and the outer solve stalls on it rather than failing.
+  `make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64, Δt = 1 // 10)` builds the
+  one-dimensional implicit electrostatic PIC test problem after `Chen2011`: one Crank–Nicolson
+  Vlasov–Ampère step on ``[0, 2\pi)`` with a periodic quadratic B-spline field gather, a
+  canonical-order deposit of the current, density, momentum flux and temperature — bit for bit the
+  same over 100 evaluations at one field — and the Ampère residual added in the batch's own
+  precision, so the `Float32` floor of `F` is a property of `F` and the outer solve stalls on it
+  rather than failing.
   `scripts/verify_nonlinear_elimination.jl` runs the six checks of the elimination and prints their
   numbers.
 
