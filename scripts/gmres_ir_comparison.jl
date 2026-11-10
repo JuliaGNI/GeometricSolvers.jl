@@ -1,11 +1,11 @@
 # A deterministic comparison of the SDD GMRES-IR of [`GMRESRefinement`](@ref) with `Float32` LU-IR
 # by the Newton iteration count and the linear residual of every step, and the recomputation of both
-# from the raw output of the solves (§13.AD and §1.4 of the plan). It times nothing, and it names no
-# device: the comparison is of counts and residuals, which are the same on every backend.
+# from the raw output of the solves. It times nothing, and it names no device: the comparison is of
+# counts and residuals, which are the same on every backend.
 #
 #   julia --project=. scripts/gmres_ir_comparison.jl
 #
-# `generate_gmres_ir_raw_data` runs both methods on the four conditioning numbers of the plan and
+# `generate_gmres_ir_raw_data` runs both methods on the four conditioning numbers `κ∞` below and
 # returns the raw per-solve output: for every step, the true linear residual `‖-F(x) - J d‖` of the
 # direction it took and the residual `‖F(x)‖` it reached. `format_gmres_ir_table` renders the raw
 # output as a table. `recompute_and_verify_gmres_ir_table` derives the two columns again from the
@@ -17,7 +17,7 @@ using LinearAlgebra: Diagonal, mul!, norm
 
 const GS_IR = GeometricSolvers
 
-"the four conditioning numbers of the comparison (§13.AD)"
+"the four conditioning numbers of the comparison"
 const GMRES_IR_KAPPAS = (1.0e4, 5.0e7, 2.0e8, 5.0e10)
 
 # The DCT-II matrix of `n` points, orthogonal to rounding: the singular vectors of the fixture.
