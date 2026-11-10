@@ -704,12 +704,11 @@ so that a compat-only bump can be told apart from an interface change.
   fails the file, on a pre-release Julia too. This closes `K1` in
   `KNOWN_ISSUES.md`.
 
-- The test environment sets Metal's `precompile` preference to `false` in `test/Project.toml`,
-  and `test/devices/metal.jl` asserts that the test process reads it. Metal.jl 1.11.1 then
-  precompiles where `Metal.devices()` is empty, as in a sandbox, and the Metal files record their
-  device skip; with the preference `true` and no Metal cache for it, the sandboxed run fails with
-  `Failed to precompile Metal`. `K2` stays in `KNOWN_ISSUES.md`, worked around: the upstream fix,
-  Metal.jl 1.12.0, needs KernelAbstractions 0.10.
+- A sandboxed run of the `metal` group precompiles Metal and records the device skip. Metal.jl
+  1.11.1 ran its precompile workload where `Metal.devices()` is empty, as in a sandbox, and failed
+  with `Failed to precompile Metal`. Metal.jl 1.12, which the `Metal = "1.12"` bound requires, runs
+  the workload only where a device exists (JuliaGPU/Metal.jl#1000), so the test environment sets no
+  Metal `precompile` preference. This closes `K2` in `KNOWN_ISSUES.md`.
 
 - `test/devices/metal_linear.jl` runs `QRFactorization` in `Float32` and `ComplexF32` at every
   `n` in `1:12` beside `STATIC_SIZES`, because other fills of `x` in the static QR fail on Metal
