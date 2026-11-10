@@ -465,6 +465,40 @@ end
     @test info.fnorm === rnorm(Array(x₁) .^ 2 .- c)
 end
 
+# An inner step that does not return `SUCCESS` returns its input, so `x - x₊` would be an exact
+# zero of `rˡ` and the outer's merit would read a converged residual: `rˡ` is non-finite instead, so
+# the merit is `NaN` and an acceptance test `norm2(f(α)) < norm2(f(0))` rejects the trial.
+@testset "A failed inner step makes rˡ non-finite, $T" for T in REAL_ELTYPES
+    n = 4
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 2; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25]
+    F!, J! = affine_global(x0, A, b)
+    for kind in (:singular, :nonfinite)
+        singular_jacobian = (J1, x1, x, p) -> (fill!(J1, zero(T)); J1)
+        nan_block = (f, x1, x, p) -> (fill!(f, T(NaN)); f)
+        ab = affine_blocks(x0, part, A, b)
+        residuals = ntuple(
+            i -> kind === :nonfinite && i == 1 ?
+                 nan_block : affine_block(ab, i, nothing),
+            2)
+        jacobians = ntuple(
+            i -> kind === :singular && i == 2 ?
+                 singular_jacobian : affine_block_jacobian(ab, i),
+            2)
+        prob = NonlinearProblem(F!, J!; block_residuals = residuals,
+            block_jacobians = jacobians)
+        m = LeftPreconditioned(Picard(; damping = one(T) / 2), RAS(part; max_iterations = 1))
+        state = init_state(m, prob, copy(x0), nothing)
+        r = residual!!(similar(x0), state.problem, x0, nothing)
+        @test !all(isfinite, r)
+        @test isnan(norm2(r))
+        # the value slot of the residual seam gives the same non-finite vector
+        @test !all(isfinite, residual!!(nothing, state.problem, x0, nothing))
+    end
+end
+
 # --- the derivative of a non-RAS inner method: a central difference ---------------------------
 
 @testset "A non-RAS inner is differentiated by a central difference, $T" for T in REAL_ELTYPES

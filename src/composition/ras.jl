@@ -172,7 +172,8 @@ end
 #   on a state whose block factors a RASPEN preparation reads — one more per block and sweep for
 #   the block Jacobian that the sweep forms at the local iterate it returns.
 # - `parallel_block_solves`: the block solves of the parallel schedule, one per inner iteration of
-#   the slowest block, summed over the sweeps, with the same one per block on such a state.
+#   the slowest block, summed over the sweeps, and — on such a state — one per sweep for the block
+#   Jacobian that the slowest block forms at the local iterate its sweep returns.
 mutable struct RASCounter
     sweeps::Int
     block_solves::Int
