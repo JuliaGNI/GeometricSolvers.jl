@@ -11,16 +11,17 @@ the residual, optionally its derivative, and optionally `jacobian_prototype` for
 Jacobian in [`NonlinearProblem`](@ref); the residual, optionally its derivative, and its length in
 [`LeastSquaresProblem`](@ref); or the scalar action, its equation and unknown index sets, and an
 optional datum in [`StationarityProblem`](@ref). [`Reparametrized`](@ref) wraps a
-`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`.
-[`BlockEliminated`](@ref) partitions the unknowns of a `NonlinearProblem` or a
-`StationarityProblem` into inner unknowns `y = x[Y]` and outer unknowns `z = x[Z]`, eliminates `y`
-at each outer iterate by solving the inner equations, and steps on the outer equations with the
-Schur complement `J_zz - J_zy J_yy⁺ J_yz`; [`VariableProjection`](@ref) does the same for a
-`LeastSquaresProblem` across all `m` residual rows by Golub–Pereyra variable projection or
-Kaufman's reduced Jacobian (`BlockEliminated` on a `LeastSquaresProblem` forwards to
+`NonlinearProblem` or a `StationarityProblem` in a coordinate chart `x = g(y, p)`, and
+[`Deflated`](@ref) wraps either in a deflation of the roots it is given, so that a solve from the
+same start converges to another root. [`BlockEliminated`](@ref) partitions the unknowns of a
+`NonlinearProblem` or a `StationarityProblem` into inner unknowns `y = x[Y]` and outer unknowns
+`z = x[Z]`, eliminates `y` at each outer iterate by solving the inner equations, and steps on the
+outer equations with the Schur complement `J_zz - J_zy J_yy⁺ J_yz`; [`VariableProjection`](@ref)
+does the same for a `LeastSquaresProblem` across all `m` residual rows by Golub–Pereyra variable
+projection or Kaufman's reduced Jacobian (`BlockEliminated` on a `LeastSquaresProblem` forwards to
 `VariableProjection`). The storage of the iterate selects the call form of the functions, so one
 problem serves every regime. `NonlinearProblem`, `StationarityProblem`, `LeastSquaresProblem`,
-`Reparametrized`, `BlockEliminated` and `VariableProjection` are exported;
+`Reparametrized`, `Deflated`, `BlockEliminated` and `VariableProjection` are exported;
 `GeometricSolvers.jacobian_prototype` and `GeometricSolvers.jacobian_pattern` are internal
 accessors.
 
@@ -30,6 +31,7 @@ NonlinearProblem
 StationarityProblem
 LeastSquaresProblem
 Reparametrized
+Deflated
 BlockEliminated
 VariableProjection
 jacobian_prototype
@@ -326,6 +328,37 @@ QuasiNewton
 Picard
 NoRefinement
 Refinement
+GMRESRefinement
+```
+
+### Mixed-precision refinement
+
+A [`Newton`](@ref) step whose factorisation runs in a precision `TF` below the working precision
+`T` of the iterate — `linsolve = LUFactorization(Float32)` on a `Float64` problem — corrects its
+linear direction in `T`. [`Refinement`](@ref) is the LU-IR loop of Kelley 2023: the factor's
+`TF` solve, the residual `-F(x) - J d` in `T`, and the correction that solve gives, to the
+tolerance `max(η, √eps(T)) ‖F(x)‖`. [`GMRESRefinement`](@ref) adds the SDD variant of Amestoy et
+al. 2024 in front of the refactorisation of the Jacobian in `T`: where the LU-IR passes fail, a
+left-preconditioned GMRES in `T` solves for a correction with a copy of the same `Float32` factors
+promoted to `T`, so the step reaches the accuracy of a factorisation in `T` without forming one.
+The remedy chain of a step is therefore `LU-IR -> GMRES-IR -> refactorisation in T`, and
+[`SolverStatus`](@ref) counts each failed stage in `step_failures` and records a factorisation in
+`T` in `promoted`.
+
+The buffers of a mixed-precision solve are readable after it: [`stored_factors`](@ref) is the
+packed `L` and `U` of the factorisation in `TF`, [`promoted_factors`](@ref) the working-precision
+copy of it that the GMRES-IR stage promotes (or the factors of the refactorisation, where the step
+promoted), [`preconditioned_buffer`](@ref) the slot of the preconditioned product the inner GMRES
+forms, and [`linear_residual_buffer`](@ref) the slot of the linear residual `-F(x) - J d`.
+`scripts/gmres_ir_comparison.jl` runs both methods at `κ∞ ∈ {1e4, 5e7, 2e8, 5e10}`, prints their
+Newton iteration counts and linear residuals, and recomputes both from the raw output of the
+solves.
+
+```@docs
+stored_factors
+promoted_factors
+preconditioned_buffer
+linear_residual_buffer
 ```
 
 ### Combinators
@@ -455,7 +488,8 @@ A nonlinear method enters the loop of [`solve!!`](@ref) through [`init_state`](@
 its state, [`step!!`](@ref), and the two hooks [`start!!`](@ref) and [`finish!!`](@ref), which run
 once before the first step and at every return. [`residual_buffer`](@ref) names the slot of the
 state that holds `F(x₀)`, and [`refine!!`](@ref) refines the linear direction `d` in working
-precision before globalization.
+precision before globalization; [`gmres_ir!!`](@ref) is the GMRES-IR stage that follows a failed
+pass of a [`GMRESRefinement`](@ref).
 
 ```@docs
 init_state
@@ -489,6 +523,8 @@ GMRESWorkspace
 init_gmres_workspace
 GMRESInfo
 gmres_solve!
+gmres_ir!!
+promote_lu_factors!
 arnoldi_dot
 R5Operator
 R5JVP
