@@ -723,11 +723,10 @@ so that a compat-only bump can be told apart from an interface change.
   low-precision factorisation buys the iteration history of the working precision without a
   refactorisation** (the SDD variant of Amestoy et al. 2024, in the five precisions
   `(u_f, u, u_p, u_g, u_r) = (Float32, Float64, Float64, Float64, Float64)`).
-  `GMRESRefinement(; η, maxiter, gmres_maxiter = 30, gmres_tol = 1e-6)` is exported, and
-  `Refinement(; gmres_maxiter = k, gmres_tol = t)` builds one from either keyword; `Refinement`
-  keeps its fields `(:η, :maxiter)` and its behaviour. The refinement of a step is now a chain of
-  three stages, each a remedy of the one before it: the LU-IR passes of `Refinement`; where they
-  fail, a left-preconditioned MGS-GMRES in the working precision `T` on
+  `GMRESRefinement(; η, maxiter, gmres_maxiter = 30, gmres_tol = 1e-6)` is exported, and only it
+  builds the type; `Refinement` keeps its fields `(:η, :maxiter)` and its behaviour. The refinement
+  of a step is now a chain of three stages, each a remedy of the one before it: the LU-IR passes
+  of `Refinement`; where they fail, a left-preconditioned MGS-GMRES in the working precision `T` on
   ``\\hat{U}^{-1}\\hat{L}^{-1}P J \\,\\delta d = \\hat{U}^{-1}\\hat{L}^{-1}P \\, r``, with the
   `gmres_solve!` loop of the matrix-free R5 solver, the cap `min(gmres_maxiter, n)`, and a stop on
   the true residual ``\\|-F(x) - J d\\|_2`` recomputed in `T`: corrections accumulate while it
@@ -736,10 +735,10 @@ so that a compat-only bump can be told apart from an interface change.
   the same Jacobian takes the same branch whatever the scale of the problem; and where that fails
   too, the refactorisation of the Jacobian in `T`. `SolverStatus` counts each failed stage in
   `step_failures` and records the refactorisation in `promoted`. `promote_lu_factors!` copies the
-  packed `L`, `U` and `ipiv` of the `Float32` factor into the working-precision slot — the R1 form
-  is `promote_lu_factors(fac, T)` — and factorises nothing, which is what separates this remedy
-  from the refactorisation: the stored factor stays in `TF`, and the copy, the preconditioned
-  product and the residual are in `T`. The buffers of a solve are readable after it:
+  packed `L`, `U` and `ipiv` of the `Float32` factor into the working-precision slot and
+  factorises nothing, which is what separates this remedy from the refactorisation: the stored
+  factor stays in `TF`, and the copy, the preconditioned product and the residual are in `T`. The
+  buffers of a solve are readable after it:
   `stored_factors(solver)`, `promoted_factors(solver)`, `preconditioned_buffer(solver)` and
   `linear_residual_buffer(solver)` are exported, and the working-precision slot is left zeroed
   by `init` so a read before the first promotion reads zeros. For a caller:

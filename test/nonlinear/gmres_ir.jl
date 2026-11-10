@@ -20,8 +20,8 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: Options, PromotedProduct, ToReal, accepts_gmres_ir, factor_eltype,
                         factorize!!, gmres_ir!!, init_linear,
-                        init_state, isconverged, ldiv!!, promote_lu_factors,
-                        promote_lu_factors!, rnorm, solve!, solve!!, start!!, step!!
+                        init_state, isconverged, ldiv!!, promote_lu_factors!, rnorm,
+                        solve!, solve!!, start!!, step!!
 
 include("../helpers/matrix.jl")
 
@@ -140,39 +140,18 @@ end
         @test fac_T.info == fac32.info
 
         # MU1: the preconditioned product `M̂⁻¹ (J v)` that the inner GMRES forms is solved with the
-        # promoted factors. A solve with the stored `Float32` factor differs from it well above
-        # `eps(T)`, so the assertions below cannot hold for a stage that solves with `fac`.
+        # promoted factors. A solve with the stored `Float32` factor differs from it by its
+        # `Float32` rounding, more than `eps(Float32)` relative, so the assertions below cannot
+        # hold for a stage that solves with `fac`.
         b = similar(x0)
         mul!(b, A, x0)
         z_T = ldiv!!(similar(x0), fac_T, b)
         z_32 = ldiv!!(similar(x0), fac32, b)
-        @test rnorm(z_T - z_32) > 1e-6 * rnorm(z_T)
+        @test rnorm(z_T - z_32) > eps(Float32) * rnorm(z_T)
         out = similar(x0)
         PromotedProduct(Jm, fac_T, similar(x0), similar(x0))(out, x0)
         @test out ≈ z_T
-        @test rnorm(out - z_32) > 1e-6 * rnorm(z_T)
-    end
-
-    @testset "Check 1: the R1 promotion of a value iterate" begin
-        # the R1 form of the same copy, for a factorisation that is `isbits` and has no buffer
-        A = SMatrix{4, 4, Float64}(
-            1.0, 2.0, 0.0, 1.0, 0.0, 3.0, 1.0, 0.0, 1.0, 0.0, 4.0, 2.0,
-            0.0, 1.0, 0.0, 5.0)
-        fac32 = factorize!!(nothing, LUFactorization(Float32), A)
-        @test fac32 isa GS.StaticLU
-        fac_T = promote_lu_factors(fac32, Float64)
-        @test fac_T isa GS.StaticLU
-        @test eltype(fac_T.factors) === Float64
-        @test fac_T.factors == SMatrix{4, 4, Float64}(Array(fac32.factors))
-        @test fac_T.ipiv == fac32.ipiv
-        @test fac_T.scale_exponent == fac32.scale_exponent
-        @test fac_T.info == fac32.info
-        b = SVector{4, Float64}(1.0, -2.0, 3.0, 0.5)
-        @test ldiv!!(nothing, fac_T, b) isa SVector{4, Float64}
-        # the same factors, solved in each element type: the two differ by the rounding of the
-        # `Float32` solve, and by nothing else
-        @test isapprox(ldiv!!(nothing, fac_T, b),
-            Float64.(ldiv!!(nothing, fac32, Float32.(b))); rtol = 8 * eps(Float32))
+        @test rnorm(out - z_32) > eps(Float32) * rnorm(z_T)
     end
 
     # ─── Check 2: the three-stage order ──────────────────────────────────────
@@ -359,14 +338,17 @@ end
     @testset "the API of the refinement" begin
         @test fieldnames(Refinement) === (:η, :maxiter)
         @test fieldnames(GMRESRefinement) === (:η, :maxiter, :gmres_maxiter, :gmres_tol)
-        # the keyword forwarding of `Refinement` to a `GMRESRefinement`
-        r = Refinement(Float64; gmres_maxiter = 4, gmres_tol = 1e-9)
-        @test r isa GMRESRefinement
+        # the keyword constructor of a `GMRESRefinement`; a `Refinement` takes no GMRES keyword and
+        # builds a `Refinement` alone
+        r = GMRESRefinement(Float64; gmres_maxiter = 4, gmres_tol = 1e-9)
+        @test r isa GMRESRefinement{Float64}
         @test r.η == sqrt(eps(Float64))
         @test r.maxiter === Int32(5)
         @test r.gmres_maxiter === Int32(4)
         @test r.gmres_tol === 1e-9
-        @test Refinement(Float64; gmres_tol = 1e-5) isa GMRESRefinement
+        @test_throws MethodError Refinement(Float64; gmres_tol = 1e-5)
+        @test_throws MethodError Refinement(; gmres_maxiter = 4)
+        @test (@inferred Refinement(Float64; η = 1e-6)) isa Refinement{Float64}
         @test Refinement(1e-6, 3) isa Refinement
         @test Refinement() isa Refinement
         g = GMRESRefinement(1e-6, 7, 3, 1e-8)

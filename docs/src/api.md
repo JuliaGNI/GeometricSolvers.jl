@@ -478,7 +478,6 @@ GMRESInfo
 gmres_solve!
 gmres_ir!!
 promote_lu_factors!
-promote_lu_factors
 arnoldi_dot
 R5Operator
 R5JVP

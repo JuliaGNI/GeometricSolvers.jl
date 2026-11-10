@@ -64,16 +64,3 @@ end
     return typeof(fac)(
         fac.factors, fac.ipiv, fac.rhs, fac_TF.info, fac_TF.scale_exponent, fac.status)
 end
-
-"""
-    promote_lu_factors(fac_TF, T)
-
-The LU factors of `fac_TF` as a new factor in the working precision `T`, for an R1 solve whose
-factor is `isbits` and which therefore has no buffer to promote into: a [`StaticLU`](@ref) whose
-matrix, pivot vector, `info` and `scale_exponent` are those of `fac_TF`, converted. It factorises
-no Jacobian, as [`promote_lu_factors!`](@ref) does not.
-"""
-@inline function promote_lu_factors(fac::StaticLU{N, TF, L}, ::Type{T}) where {N, TF, L, T}
-    return StaticLU{N, T, L}(SMatrix{N, N, T, L}(fac.factors), fac.ipiv, fac.info,
-        fac.scale_exponent)
-end

@@ -8,8 +8,6 @@ factorised at `x` multiplies by the regularised Jacobian it holds, and a step al
 factor takes [`jvp!!`](@ref) at `x`.
 
 The keyword constructor takes the real type `T` of `η`, and the positional one the type of `η`.
-With `gmres_maxiter` or `gmres_tol`, the keyword constructor returns a
-[`GMRESRefinement`](@ref).
 
 At each inner pass (`1 ≤ iter ≤ maxiter`), `refine!!` forms the linear residual
 `r = -F(x) - J(x) d` in `T`, solves `fac \\ r` in the factor precision `TF` for the correction
@@ -43,14 +41,8 @@ end
 Refinement(η::R, maxiter::Integer = Int32(5)) where {R <: Real} = Refinement{R}(η, maxiter)
 
 function Refinement(::Type{T} = Float64; η = sqrt(eps(float(real(T)))),
-        maxiter::Integer = Int32(5), gmres_maxiter::Union{Nothing, Integer} = nothing,
-        gmres_tol::Union{Nothing, Real} = nothing) where {T}
+        maxiter::Integer = Int32(5)) where {T}
     R = float(real(T))
-    if gmres_maxiter !== nothing || gmres_tol !== nothing
-        return GMRESRefinement{R}(R(η), maxiter,
-            gmres_maxiter === nothing ? GMRES_MAXITER : gmres_maxiter,
-            gmres_tol === nothing ? GMRES_TOL : gmres_tol)
-    end
     return Refinement{R}(R(η), maxiter)
 end
 
@@ -95,7 +87,6 @@ A `Newton` step whose factorisation is already in `T` runs the LU-IR passes alon
 low-precision factor there is no GMRES-IR stage, and the refinement is then a [`Refinement`](@ref).
 A value iterate (`Number` or `StaticArray`) has no Krylov basis, so it too runs the LU-IR passes
 alone, and a step that fails them refactorises in `T` as with a [`Refinement`](@ref).
-`Refinement(; gmres_maxiter = k, gmres_tol = t)` builds a `GMRESRefinement` from either keyword.
 """
 struct GMRESRefinement{R <: Real}
     η::R
