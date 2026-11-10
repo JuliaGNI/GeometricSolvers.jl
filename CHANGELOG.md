@@ -762,8 +762,8 @@ so that a compat-only bump can be told apart from an interface change.
 - **GMRES-IR: `GMRESRefinement` refines a `Float64` Newton solve whose factorisation is in
   `Float32` with a GMRES in `Float64` preconditioned by a promoted copy of the same factors, so a
   low-precision factorisation buys the iteration history of the working precision without a
-  refactorisation** (R5's refinement; the SDD variant of Amestoy et al. 2024, in the five
-  precisions `(u_f, u, u_p, u_g, u_r) = (Float32, Float64, Float64, Float64, Float64)`).
+  refactorisation** (the SDD variant of Amestoy et al. 2024, in the five precisions
+  `(u_f, u, u_p, u_g, u_r) = (Float32, Float64, Float64, Float64, Float64)`).
   `GMRESRefinement(; η, maxiter, gmres_maxiter = 30, gmres_tol = 1e-6)` is exported, and
   `Refinement(; gmres_maxiter = k, gmres_tol = t)` builds one from either keyword; `Refinement`
   keeps its fields `(:η, :maxiter)` and its behaviour. The refinement of a step is now a chain of
@@ -775,8 +775,7 @@ so that a compat-only bump can be told apart from an interface change.
   misses `gmres_tol ‖F(x)‖` and the cap is not spent, a correction is accepted up to ten times
   that tolerance, and none passes on the Arnoldi estimate of the preconditioned system alone, so
   the same Jacobian takes the same branch whatever the scale of the problem; and where that fails
-  too, the
-  refactorisation of the Jacobian in `T`. `SolverStatus` counts each failed stage in
+  too, the refactorisation of the Jacobian in `T`. `SolverStatus` counts each failed stage in
   `step_failures` and records the refactorisation in `promoted`. `promote_lu_factors!` copies the
   packed `L`, `U` and `ipiv` of the `Float32` factor into the working-precision slot — the R1 form
   is `promote_lu_factors(fac, T)` — and factorises nothing, which is what separates this remedy
@@ -785,11 +784,12 @@ so that a compat-only bump can be told apart from an interface change.
   `stored_factors(solver)`, `promoted_factors(solver)`, `preconditioned_buffer(solver)` and
   `linear_residual_buffer(solver)` are exported, and the working-precision slot is left zeroed
   by `init` so a read before the first promotion reads zeros. For a caller:
-  `test/nonlinear/gmres_ir.jl` runs the five checks and the eight named mutants on `Array` in
-  `Float64` and `ComplexF64` and on `JLArray`, over a linear fixture whose right-hand side lies
-  along the smallest singular vector — the one direction in which a `Float32` solve's relative
-  residual is of order `κ eps(Float32)`, so that the chain's three branches are reached at
-  `κ = 1e4`, `5e7` and `1e11` — and asserts that a mixed solve allocates nothing after `init`;
+  `test/nonlinear/gmres_ir.jl` runs the five checks, each written to fail for a wrong
+  implementation of the stage it covers, on `Array` in `Float64` and `ComplexF64` and on
+  `JLArray`, over a linear fixture whose right-hand side lies along the smallest singular
+  vector — the one direction in which a `Float32` solve's relative residual is of order
+  `κ eps(Float32)`, so that the chain's three branches are reached at `κ = 1e4`, `5e7` and
+  `1e11` — and asserts that a mixed solve allocates nothing after `init`;
   `scripts/gmres_ir_comparison.jl` prints the Newton iteration count and the linear residual of
   both methods at `κ ∈ {1e4, 5e7, 2e8, 5e10}` and recomputes both from the raw output of the
   solves. Gaps: no CUDA or ROCm device run has been made, and Metal has no `Float64` working
