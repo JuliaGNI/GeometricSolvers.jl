@@ -491,10 +491,12 @@ end
         # method to travel into the kernel at all.
         # Under `--check-bounds=yes` a bounds check stops the compiler eliding the local
         # `MVector` and `MMatrix` of the static solve, which reach the heap, and a kernel cannot
-        # allocate: the launch fails in `gc_pool_alloc`. CI's `julia-runtest` step passes
-        # `check_bounds: auto`, so the set runs there.
+        # allocate: the launch fails in `gc_pool_alloc`. The guard below therefore sits between the
+        # `isbits` check and the launch, so `isbits(m)` runs at every element type under either
+        # setting, and the host reference solve, the output buffers, `init_state` and the launch
+        # run only where `--check-bounds=yes` is not forced. CI's `julia-runtest` step passes
+        # `check_bounds: auto`, so the whole set runs there.
         for T in SDD_ELTYPES
-            Base.JLOptions().check_bounds == 1 && continue
             R = real(T)
             m = Newton(; linsolve = LUFactorization(Float32),
                 refinement = GMRESRefinement(T; gmres_maxiter = 4, gmres_tol = IR_TOL))
@@ -504,6 +506,9 @@ end
             x0 = SVector{2, T}(T(3), T(5))
             p = SVector{2, T}(T(4), T(9))
             prob = NonlinearProblem((y, q) -> y .* y .- q)
+            # the launch is what a bounds check breaks, and the host solve only checks it, so both
+            # wait for a run that does not force `--check-bounds=yes`
+            Base.JLOptions().check_bounds == 1 && continue
             _, st_host = solve(prob, x0, mat, p)
             codes = Vector{GeometricSolvers.ReturnCode}(undef, 2)
             xs = Vector{SVector{2, T}}(undef, 2)
