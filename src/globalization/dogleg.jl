@@ -224,7 +224,7 @@ end
     yk = @view ws.y[1:k]
     yNk = @view ws.yN[1:k]
     ybk = @view ws.yb[1:k]
-    # the projected Cauchy weights, and the Newton weights the segment branch reads
+    # the projected Cauchy weights, and the Newton weights that every segment trial reads
     map!!(h -> -β₀ * conj(h), cg, @view ws.H0[1, 1:k])
     copy!!(yNk, yk)
     cnorm = R(rnorm(cg))
@@ -265,14 +265,13 @@ end
             c₀ = 1 - (nC / δ)^2
             ab = iszero(bnorm) ? zero(R) : rdot(yk, ybk) / bnorm
             t = c₀ / (ab + sqrt(ab * ab + c₀))
-            # the unit segment direction goes to the buffer of the Newton weights, which the curve
-            # above has already read, so that no helper writes an array beside itself
+            # the segment point overwrites `a` in place, one index at a time: the Newton weights
+            # stay unchanged for the segment trials after a rejection
             if iszero(bnorm)
-                scaled_weights!(yNk, yk, δ)
+                scaled_weights!(yk, yk, δ)
             else
-                segment_weights!(yNk, yk, ybk, δ, t / bnorm)
+                segment_weights!(yk, yk, ybk, δ, t / bnorm)
             end
-            copy!!(yk, yNk)
             s = reduced_direction!(g_s(g), ws, ws.y, k)
             boundary = true
             model = R(rnorm(reduced_model!(ws, ws.y, k, β₀)))

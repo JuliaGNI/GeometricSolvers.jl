@@ -687,6 +687,54 @@ end
     end
 end
 
+# Every segment trial reads the Newton weights `yN`, so the loop keeps them for the whole step. The
+# Newton step `(-1, -1000)` is far longer than the Cauchy point, of length about 1, and
+# the curvature of `F₂` rejects the segment trials at the radii 100, 25, 6.25 and 1.5625; the
+# Cauchy trial at 0.390625 is accepted. A segment point left in `yN` lies on the segment itself,
+# so it gives the same trial points up to rounding, and only `V_k yN` tells it from the Newton
+# direction.
+@testset "Check 6: consecutive segment trials keep the Newton weights, $T" for T in REAL_ELTYPES
+    R = real(T)
+    trials = Vector{Vector{T}}()
+    F! = (r, x, p) -> begin
+        x isa AbstractVector{T} && push!(trials, copy(x))
+        r[1] = x[1] + 1
+        r[2] = T(1e-3) * x[2] + x[2]^2 + 1
+        r
+    end
+    J! = (J, x, p) -> begin
+        J[1, 1] = 1
+        J[1, 2] = 0
+        J[2, 1] = 0
+        J[2, 2] = T(1e-3) + 2 * x[2]
+        J
+    end
+    x₀ = zeros(T, 2)
+    radius = R(100)
+    m = Newton(; linsolve = GMRES(; maxiter = 2, forcing = FixedForcing(1e-14)),
+        globalization = DogLeg(; radius = radius))
+    solver = init(NonlinearProblem(F!), copy(x₀), m; max_iterations = 1)
+    empty!(trials)
+    x_r5, _ = solve!(solver, copy(x₀))
+    trials_r5 = copy(trials)
+    solver_r3 = init(NonlinearProblem(F!, J!), copy(x₀),
+        Newton(; globalization = DogLeg(; radius = radius)); max_iterations = 1)
+    empty!(trials)
+    x_r3, _ = solve!(solver_r3, copy(x₀))
+    # the residual at `x₀`, then four segment trials of norm δ and the accepted Cauchy trial
+    @test length(trials_r5) == length(trials) == 6
+    @test norm.(trials_r5) ≈ R[0, 100, 25, 6.25, 1.5625, 0.390625] rtol = sqrt(eps(R))
+    for (a, b) in zip(trials_r5, trials)
+        @test norm(a - b) <= sqrt(eps(R)) * max(1, norm(b))
+    end
+    @test x_r5 != x₀
+    @test norm(x_r5 - x_r3) <= sqrt(eps(R)) * max(1, norm(x_r3))
+    ws = solver.state.ws
+    k = Int(ws.arnoldi)
+    @test k == 2
+    @test norm(ws.V[:, 1:k] * ws.yN[1:k] - ws.d) <= 8 * eps(R) * norm(ws.d)
+end
+
 # The model of the matrix-free loop reads the Arnoldi relation of one cycle. With `maxiter > n` and a
 # tolerance that `n` iterations miss in floating point, the inner solve would restart, and the loop
 # would read the last cycle's basis against the first residual. The inner solve of a `DogLeg` step
