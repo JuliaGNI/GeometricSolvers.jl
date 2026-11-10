@@ -399,7 +399,7 @@ end
     part = BlockPartition([[1], [2, 3], [4]], [[1], [2, 3], [4]])
     prob, _ = affine_problem(x0, A, b, part)
     ras = RAS(part; max_iterations = 1)
-    x, Fx, info = one_step(prob, ras, copy(x0), residual!!(similar(x0), prob, x0, nothing))
+    x, _, info = one_step(prob, ras, copy(x0), residual!!(similar(x0), prob, x0, nothing))
     @test info.code === SUCCESS
     # a one-index block solves `x_i - f_i / J_ii` exactly
     f1 = dot(A[1, :], x0) - b[1]
@@ -436,7 +436,6 @@ end
         prob = NonlinearProblem(F!, J!; block_residuals = residuals,
             block_jacobians = jacobians)
         ras = RAS(part; max_iterations = 1)
-        x = copy(x0)
         Fx = residual!!(similar(x0), prob, x0, nothing)
         x₊, Fx₊, info = one_step(prob, ras, copy(x0), copy(Fx))
         @test info.code === code
@@ -463,7 +462,7 @@ end
     Fx = residual!!(similar(x0), prob, x0, nothing)
     # each block residual is smaller than the global residual, so rho = 1 skips the sweep
     skipped = RAS(part; max_iterations = 1, balance_threshold = one(T))
-    x, Fx₊, info = one_step(prob, skipped, copy(x0), copy(Fx))
+    x, _, info = one_step(prob, skipped, copy(x0), copy(Fx))
     @test Array(x) == x0
     @test info.code === SUCCESS
     @test iszero(info.stepnorm)
@@ -611,7 +610,7 @@ end
     # NKS-RAS: Multiplicative(RAS(partition), Newton())
     ras = RAS(part; max_iterations = 1)
     counting = CountingRAS(ras, counters)
-    x_nks, nks_status, state_nks = GeometricSolvers.solve!!(
+    _, nks_status, state_nks = GeometricSolvers.solve!!(
         init_state(Multiplicative(counting, Newton()), prob, x0, nothing),
         prob, copy(x0), Multiplicative(counting, Newton()), nothing,
         GeometricSolvers.Options(T))
@@ -630,7 +629,7 @@ end
     ras2 = RAS(part; max_iterations = 1)
     counting2 = CountingRAS(ras2, counters)
     m = LeftPreconditioned(Newton(), counting2)
-    x_raspen, raspen_status, state_raspen = GeometricSolvers.solve!!(
+    _, raspen_status, state_raspen = GeometricSolvers.solve!!(
         init_state(m, prob, x0, nothing), prob, copy(x0), m, nothing,
         GeometricSolvers.Options(T))
     @test raspen_status.code === SUCCESS
