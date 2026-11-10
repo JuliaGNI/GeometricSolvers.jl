@@ -1388,8 +1388,12 @@ so that a compat-only bump can be told apart from an interface change.
   not finite and positive, an empty root set, or an inner problem that is neither a
   `NonlinearProblem` nor a `StationarityProblem` raises an `ArgumentError` at construction,
   while a `solve_batch!` whose kernel would take a non-`isbits` wrapper by value — the
-  `AbstractVector` root storage of an R3 iterate, for one — raises one at the call. At a deflated
-  root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0` iterations
+  `AbstractVector` root storage of an R3 iterate, for one — raises one at the call. `solve`, `init`
+  and both forms of `solve_batch!` on a `Deflated` also raise an `ArgumentError` for a `Newton`
+  whose `jacobian` is a callable, because that callable is the Jacobian of the inner residual `F`
+  and `Newton` would step with it as the deflated Jacobian; an analytic Jacobian of `F` goes into
+  the wrapped `NonlinearProblem` as its `J`, and `Newton(jacobian = <AD backend>)` is accepted.
+  At a deflated root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0` iterations
   with `x == x₀` instead of `SUCCESS` at a known root, a factor that overflows does the same, and
   the gradient is evaluated unit-scaled so that a point at `norm(x - rᵢ) = 1e-100` keeps finite
   entries with no `NaN`. A wrapped `StationarityProblem` iterates on its unknowns and takes full
