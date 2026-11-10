@@ -576,7 +576,8 @@ function solve_batch!(
     state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     codes = allocate(get_backend(X), ReturnCode, length(X))
     sp = _StationarityBatchParams(p, b_src)
-    return _tally_return_codes(Array(_launch!(X, codes, prob, m, sp, opt, state₀, order)))
+    return _tally_return_codes(Array(_launch!(
+        X, codes, prob, m, sp, opt, state₀, order, nothing)))
 end
 
 function solve_batch!(
@@ -604,7 +605,7 @@ function solve_batch!(
     p₀ = _sample_batch_item(p, idx₀)
     state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     sp = _StationarityBatchParams(p, b_src)
-    return _launch!(X, S, prob, m, sp, opt, state₀, order)
+    return _launch!(X, S, prob, m, sp, opt, state₀, order, nothing)
 end
 
 # `CommonSolve.init` and `CommonSolve.solve` on `StationarityProblem`, the counterparts of the
