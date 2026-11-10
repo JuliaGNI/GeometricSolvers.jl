@@ -8,7 +8,7 @@
 """
     LeftPreconditioned(outer, inner)
 
-The left-preconditioned method of [`NonlinearProblem`](@ref) `prob`: the method `outer` runs on
+The left-preconditioned method of a [`NonlinearProblem`](@ref): the method `outer` runs on
 the residual ``r^\\ell(y) = y - N(y)`` of the inner map ``N``, one [`step!!`](@ref) of `inner` from
 `(y, F(y))`, instead of on `F` itself. Every trial point of `outer`'s globalization therefore
 costs one inner step, and every merit value it reads is ``\\|r^\\ell\\|_2^2``. The zeros of

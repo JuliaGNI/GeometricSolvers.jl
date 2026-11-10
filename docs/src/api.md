@@ -287,8 +287,8 @@ Anderson
 ### Nonlinear preconditioning
 
 [`LeftPreconditioned`](@ref)`(outer, inner)` runs `outer` on the residual
-``r^\\ell(y) = y - N(y)`` of one step of `inner` instead of on `F`, so every trial point of its
-globalization costs one inner step and every merit value it reads is ``\\|r^\\ell\\|_2^2``. With
+``r^\ell(y) = y - N(y)`` of one step of `inner` instead of on `F`, so every trial point of its
+globalization costs one inner step and every merit value it reads is ``\|r^\ell\|_2^2``. With
 the inner method a one-level [`RAS`](@ref) map over a [`BlockPartition`](@ref) it is RASPEN,
 `LeftPreconditioned(Newton(), RAS(partition))`, whose Jacobian is the exact form from the block
 factors of the last sweep; RASPEN needs converged local solves.

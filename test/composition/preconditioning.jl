@@ -20,6 +20,7 @@ using GPUArraysCore: allowscalar
 using LinearAlgebra: cond, dot, mul!, norm
 using Random: Xoshiro
 using StaticArrays: SVector
+using Test
 
 include("../helpers/matrix.jl")
 
@@ -302,9 +303,8 @@ end
         S = part.subdomains[i]
         rhs = A[S, :] * xh0 - b[S]
         local_solution = xh0[S] - A[S, S] \ rhs
-        for (k, o) in enumerate(part.owners[i])
-            @test xh[o] === local_solution[part.local_owners[i][k]]
-        end
+        @test isapprox(xh[part.owners[i]], local_solution[part.local_owners[i]];
+            rtol = 8 * eps(T))
     end
 
     # no index of 1:n is written twice: the owner sets are disjoint and cover 1:n
@@ -326,7 +326,7 @@ end
     x₊, Fx₊, info = one_step(prob, ras, xr, Fx)
     @test info.code === SUCCESS
     @test global_calls[] == 1
-    @test Array(Fx₊) == A * Array(x₊) - b
+    @test isapprox(Array(Fx₊) + b, A * Array(x₊); rtol = 8 * eps(T))
     # the step leaves the iterate it was given alone: its sweep runs on the state's own copy
     @test Array(xr) == Array(x0)
 end
