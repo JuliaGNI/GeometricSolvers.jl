@@ -336,7 +336,7 @@ end
 
 function ras_prolongate!(dest, x_locals, owners, local_owners)
     for i in eachindex(x_locals)
-        dest[owners[i]] .= x_locals[i][local_owners[i]]
+        dest[owners[i]] .= view(x_locals[i], local_owners[i])
     end
     return dest
 end
@@ -357,7 +357,7 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
         x_loc = blocks.x_locals[i]
         f_i = blocks.f_locals[i]
         J_i = blocks.jacobians[i]
-        x_loc .= x[blocks.subdomains[i]]
+        x_loc .= view(x, blocks.subdomains[i])
         f₀ = zero(real(eltype(x)))
         k = 0
         for it in 1:m.max_iterations
@@ -420,7 +420,7 @@ function ras_balanced(state::RASState, m::RAS, prob, x, Fx, p)
     for i in eachindex(blocks.subdomains)
         x_loc = blocks.x_locals[i]
         f_i = blocks.f_locals[i]
-        x_loc .= x[blocks.subdomains[i]]
+        x_loc .= view(x, blocks.subdomains[i])
         block_residual(prob, i)(f_i, x_loc, x, p)
         largest = max(largest, rnorm(f_i))
     end
@@ -499,9 +499,9 @@ function raspen_jvp!(Jv, state::RASState, prob, x, v, p)
         u[blocks.subdomains[i]] .= blocks.x_locals[i]
         w = jvp!!(W, state.jvp_prep, prob, u, v, p)
         r_i = blocks.f_locals[i]
-        r_i .= w[blocks.subdomains[i]]
+        r_i .= view(w, blocks.subdomains[i])
         δ = ldiv!!(blocks.deltas[i], state.factors[i], r_i)
-        Jv[blocks.owners[i]] .+= δ[blocks.local_owners[i]]
+        Jv[blocks.owners[i]] .+= view(δ, blocks.local_owners[i])
     end
     return Jv
 end
