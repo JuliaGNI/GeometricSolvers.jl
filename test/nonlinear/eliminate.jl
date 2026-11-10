@@ -1521,23 +1521,65 @@ end
           length(prob.eliminated_index_log)
     @test length(prob.g₁_history) >= 2
     @test prob.g₂_prev_history[1] == Inf
+    loose = collect(zip(prob.g₁_history, prob.g₂_prev_history))
+    # The ceiling branch runs only on a record where `g₂² ≤ 4 eps(R_in) √N_p`, and the converging
+    # solve has no such record: all of its evaluations sit above the floor. The solve Check 6 makes
+    # at `1e-10` does reach the floored region (52 of 55 records at `Float32`, one of six at
+    # `Float64`), so the testset solves at that tolerance too, and counts the records in the region
+    # before it bounds one of them.
+    reset_batch!(prob)
+    solve(prob, copy(E0), R5(); f_abstol = 1e-10, f_reltol = 0.0, max_iterations = 25)
+    tight = collect(zip(prob.g₁_history, prob.g₂_prev_history))
+    @test length(tight) >= 2
     # the floor binds where `min(cap, g₂²)/2/√N_p` is below `2 eps(R_in)`, below `g₂² = 4 eps √N_p`
     n_p = length(prob.Y)
     bound = 4 * eps(T_in) * sqrt(n_p)
     ceiling = 32 * eps(T_in) * sqrt(n_p)
-    for (g1, g2) in zip(prob.g₁_history, prob.g₂_prev_history)
-        if g2^2 > bound
-            @test g1 < g2^2
-        else
-            @test g1 <= ceiling
+    @test count(p -> !(p[2]^2 > bound), tight) > 0
+    for pairs in (loose, tight)
+        for (g1, g2) in pairs
+            if g2^2 > bound
+                @test g1 < g2^2
+            else
+                @test g1 <= ceiling
+            end
+        end
+        # and where the floor does not bind, the recorded inner residual is under the schedule
+        for k in 2:length(pairs)
+            g2 = pairs[k][2]
+            if g2^2 > bound
+                @test pairs[k][1] <= 0.5 * min(prob.inner_atol_cap, g2^2) * (1 + 1e-6)
+            end
         end
     end
-    # and where the floor does not bind, the recorded inner residual is under the schedule
-    for k in 2:length(prob.g₁_history)
-        g2 = prob.g₂_prev_history[k]
-        if g2^2 > bound
-            @test prob.g₁_history[k] <= 0.5 * min(prob.inner_atol_cap, g2^2) * (1 + 1e-6)
-        end
+end
+
+@testset "The ceiling of a failed batch: NaN above it, the deposit below it" begin
+    # A batch that did not converge has no outer residual when its norm is above
+    # `32 eps(R_in) √N_p`, and `NaN` is what the evaluation writes; at or below the ceiling the batch
+    # stopped at the floor of its own arithmetic and its deposit is the residual to that accuracy.
+    # The inner residual here is the constant `tiny`, which no step can change: every system fails
+    # with the same norm, the batch's is `√N_p · tiny`, and the two cases sit at 14 times the
+    # ceiling and at 0.56 of it.
+    ceiling = 32 * eps(Float64) * sqrt(8)
+    for (tiny, nan_expected) in ((1e-13, true), (4e-15, false))
+        inner = NonlinearProblem((y, c) -> SVector(tiny, zero(tiny)))
+        p = BatchEliminated(
+            (F, x, m, s) -> (F .= x), inner, [SVector(0.5, 0.5) for _ in 1:8],
+            (m, Y, s, ps) -> fill!(m.current, 1.0),
+            DepositedMoments(zeros(4), zeros(4), zeros(4), zeros(4));
+            inner_atol_cap = 1e-16)
+        reset_batch!(p)
+        F = zeros(4)
+        residual!!(F, p, ones(4), nothing)
+        summary = batch_summary(p)
+        @test !summary.all_converged
+        @test summary.failure_count == 8
+        ratio = summary.fnorm / ceiling
+        # the crossing case is above the ceiling and far below a thousand times it: a ceiling that
+        # loose reports the failed batch as one stopped at its floor, and keeps its deposit
+        @test nan_expected ? 1 < ratio < 1000 : ratio < 1
+        @test nan_expected ? all(isnan, F) : all(isfinite, F)
     end
 end
 
@@ -1647,21 +1689,35 @@ end
         similar([zero(SVector{2, Float64}) for _ in 1:4], SolverStatus{Float64}),
         NonlinearProblem((y, c) -> y .- c), Newton(),
         PerSystem([SVector(1.0, 2.0) for _ in 1:4]); workgroupsize = 5000)
-    # every `solve_batch!` form takes it: each refuses a zero, which no launch accepts, and the
-    # reparametrized form runs a launch at a real size
-    stat = GS.StationarityProblem(x -> x .- 1.0)
+    # every `solve_batch!` form takes it: each refuses a zero, which the backend would accept, and
+    # the reparametrized and stationarity forms run a launch at a real size. The stationarity
+    # objective is a scalar function of the pair `(x, p)`, whose gradient a batch of `SVector`
+    # roots: the residual evaluates it at a `Dual` field with a second argument, so a one-argument
+    # `x -> ...` has no stationarity state for the kernel to compile.
+    stat = GS.StationarityProblem((x, p) -> sum(abs2, x) / 2 - sum(x))
     Xs = [zero(SVector{2, Float64}) for _ in 1:4]
     Ss = similar(Xs, SolverStatus{Float64})
     rep = GS.Reparametrized(NonlinearProblem((x, p) -> x .- 1.0), (y, p) -> 2 * y, nothing)
     @test solve_batch!(Xs, rep, Newton(); workgroupsize = 2).SUCCESS == 4
     @test all(st -> st.code == SUCCESS,
         solve_batch!(Xs, Ss, rep, Newton(); workgroupsize = 2))
+    @test solve_batch!(Xs, stat, Newton(); workgroupsize = 2).SUCCESS == 4
+    @test all(st -> st.code == SUCCESS,
+        solve_batch!(Xs, Ss, stat, Newton(); workgroupsize = 2))
     for f in (X -> solve_batch!(X, stat, Newton(); workgroupsize = 0),
         X -> solve_batch!(X, Ss, stat, Newton(); workgroupsize = 0),
         X -> solve_batch!(X, rep, Newton(); workgroupsize = 0),
         X -> solve_batch!(X, Ss, rep, Newton(); workgroupsize = 0))
         @test_throws ArgumentError f(Xs)
     end
+    # and the size it validated reaches the launch on every form: a launch that dropped the keyword
+    # accepts 5000, which the CPU device refuses
+    @test_throws ArgumentError solve_batch!(Xs, rep, Newton(); workgroupsize = 5000)
+    @test_throws ArgumentError solve_batch!(
+        copy(Xs), Ss, rep, Newton(); workgroupsize = 5000)
+    @test_throws ArgumentError solve_batch!(Xs, stat, Newton(); workgroupsize = 5000)
+    @test_throws ArgumentError solve_batch!(
+        copy(Xs), Ss, stat, Newton(); workgroupsize = 5000)
 
     # an outer iterate of another length is refused, not resized into an `@inbounds` read past
     # the deposited moments and the shared field

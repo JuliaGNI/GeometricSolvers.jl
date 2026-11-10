@@ -34,27 +34,42 @@ println()
 # ─── Check 1: the inner tolerance is quadratic in the previous outer residual ───
 reset_batch!(outer)
 _, status1 = solve(outer, copy(E0), r5(); f_abstol = 1e-8, f_reltol = 0.0)
-pairs = collect(zip(outer.g₁_history, outer.g₂_prev_history))
-println(@sprintf("Check 1 · %d outer evaluations, status %s after %d steps, ‖F‖ = %.3e",
-    length(pairs), status1.code, status1.iterations, status1.fnorm))
-for (k, (g1, g2)) in enumerate(pairs)
-    println(@sprintf("  %2d: ‖g₁‖ = %.3e   ‖g₂(prev)‖ = %.3e   ‖g₂(prev)‖² = %.3e",
-        k, g1, g2, g2^2))
-end
 check(status1.code == SUCCESS, "Check 1: the outer solve did not converge")
-check(!isempty(pairs), "Check 1: no outer evaluation was recorded")
 # The floor of the schedule binds below `‖g₂(prev)‖² = 4 eps(R_in) √N_p`, where no arithmetic in the
-# batch's type reaches the quadratic; there the clause is the coarse ceiling instead.
-bound = 4 * eps(Float64) * sqrt(length(outer.Y))
-ceiling = 32 * eps(Float64) * sqrt(length(outer.Y))
-above = filter(p -> p[2]^2 > bound, pairs)
-below = filter(p -> !(p[2]^2 > bound), pairs)
-println(@sprintf("          %d evaluations above the floor, %d below it",
-    length(above), length(below)))
-check(all(p -> p[1] < p[2]^2, above),
-    "Check 1: an evaluation above the floor does not satisfy ‖g₁‖ < ‖g₂(prev)‖²")
-check(all(p -> p[1] <= ceiling, below),
-    "Check 1: an evaluation below the floor exceeds 32 eps(R_in) √N_p")
+# batch's type reaches the quadratic; there the clause is the coarse ceiling instead. The converging
+# `Float64` solve above never reaches that region, so its ceiling assertion would run zero times: the
+# `Float32` stall solve of Check 6, at `1e-10`, puts 52 of its 55 evaluations below the floor, and
+# Check 1 runs it too.
+floored_prob, floored_E0 = GS.make_pic_elimination_problem(Float32, Float64)
+reset_batch!(floored_prob)
+_, status_floored = solve(floored_prob, copy(floored_E0), r5(); f_abstol = 1e-10,
+    f_reltol = 0.0, max_iterations = 25)
+floored = Int[]
+for (label, prob, status) in (("Float64 at 1e-8", outer, status1),
+    ("Float32 at 1e-10", floored_prob, status_floored))
+    pairs = collect(zip(prob.g₁_history, prob.g₂_prev_history))
+    println(@sprintf("Check 1 · %s: %d outer evaluations, status %s after %d steps, ‖F‖ = %.3e",
+        label, length(pairs), status.code, status.iterations, status.fnorm))
+    for (k, (g1, g2)) in enumerate(pairs)
+        println(@sprintf("  %2d: ‖g₁‖ = %.3e   ‖g₂(prev)‖ = %.3e   ‖g₂(prev)‖² = %.3e",
+            k, g1, g2, g2^2))
+    end
+    R_in = eltype(prob.g₁_history)
+    bound = 4 * eps(R_in) * sqrt(length(prob.Y))
+    ceiling = 32 * eps(R_in) * sqrt(length(prob.Y))
+    above = filter(p -> p[2]^2 > bound, pairs)
+    below = filter(p -> !(p[2]^2 > bound), pairs)
+    println(@sprintf("            %d evaluations above the floor, %d below it",
+        length(above), length(below)))
+    check(!isempty(pairs), "Check 1: no outer evaluation was recorded")
+    check(all(p -> p[1] < p[2]^2, above),
+        "Check 1: an evaluation above the floor does not satisfy ‖g₁‖ < ‖g₂(prev)‖²")
+    check(all(p -> p[1] <= ceiling, below),
+        "Check 1: an evaluation below the floor exceeds 32 eps(R_in) √N_p")
+    push!(floored, length(below))
+end
+check(sum(floored) > 0,
+    "Check 1: no evaluation reached the floored region, so the ceiling was never asserted")
 println()
 
 # ─── Check 2: the reduction reports a failure, with the right count and norm ───
