@@ -195,7 +195,7 @@ end
 @testset "Broyden constructors, validation, and Adapt" begin
     b_def = Broyden()
     @test b_def isa Broyden{4, <:Picard}
-    @test b_def.member.damping == 1.0
+    @test b_def.member.damping == 0.5
     @test b_def.c_s == 0.2
     @test b_def.κ_bar === nothing
     @test b_def.restart_factor == 10.0
@@ -209,6 +209,9 @@ end
     b4_int_def = Broyden(4)
     @test typeof(b4) === typeof(b4_int) === typeof(b4_val) === typeof(b4_int_def) ===
           typeof(b_def)
+    # Without a member the default `Picard` is damped by 0.5; an explicit `Picard()` is not.
+    @test b4_val.member.damping == b4_int_def.member.damping == 0.5
+    @test b4.member.damping == b4_int.member.damping == 1
 
     b_damp = Broyden(Val(3); damping = 0.5, c_s = 0.25, κ_bar = 1e5,
         restart_factor = 8.0, M_alpha = 15.0, safeguard_cos = 0.85, grow_depth = true)
@@ -492,13 +495,11 @@ end
     @test typeof(st_b.history) === typeof(st_a.history)
     @test typeof(st_b.ΔX) === typeof(st_a.ΔX)
     @test typeof(st_b.ΔW) === typeof(st_a.ΔW)
-    @test st_b.Δx === st_b.ΔX
-    @test st_b.Δr === st_b.ΔW
-    @test st_b.history.Δx === st_b.ΔX
-    @test st_b.history.Δr === st_b.ΔW
+    @test st_b.history.ΔX === st_b.ΔX
+    @test st_b.history.ΔW === st_b.ΔW
     @test :history in propertynames(st_b)
-    @test :Δx in propertynames(st_b)
-    @test :Δr in propertynames(st_b)
+    @test !(:Δx in propertynames(st_b)) && !(:Δr in propertynames(st_b))
+    @test !(:AndersonHistory in names(GeometricSolvers))
 
     prob_r3 = NonlinearProblem((F, x, p) -> (
         mul!(F, Matrix(A), x); F .-= Vector(b); nothing))
@@ -511,9 +512,8 @@ end
     @test typeof(st_b_r3.history) === typeof(st_a_r3.history)
     @test typeof(st_b_r3.ΔX) === typeof(st_a_r3.ΔX)
     @test typeof(st_b_r3.ΔW) === typeof(st_a_r3.ΔW)
-    @test st_b_r3.Δx === st_b_r3.ΔX
-    @test st_b_r3.Δr === st_b_r3.ΔW
     @test st_b_r3.history.ΔX === st_b_r3.ΔX
+    @test st_b_r3.history.ΔW === st_b_r3.ΔW
 end
 
 @testset "Check 2: equal history on one iterate sequence ($T)" for T in ELTYPES

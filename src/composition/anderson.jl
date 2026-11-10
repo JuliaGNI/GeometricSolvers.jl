@@ -4,10 +4,12 @@
 # residual-growth and stagnation restarts, optional growing depth, and best-iterate tracking.
 
 """
-    Anderson(member = Picard(), ::Val{m} = Val(4);
+    Anderson(member, ::Val{m};
              c_s = 0.2, κ_bar = nothing, restart_factor = 10.0,
              M_alpha = 25.0, safeguard_cos = nothing, grow_depth = false)
-    Anderson(member, m::Integer; kwargs...)
+    Anderson(::Val{m}; damping = 1, kwargs...)
+    Anderson(member, m::Integer = 4; kwargs...)
+    Anderson(m::Integer = 4; damping = 1, kwargs...)
 
 Type-II Anderson acceleration of history depth `m` wrapping an inner nonlinear method
 `member` ([`Picard`](@ref), [`Newton`](@ref), or a combinator). At each outer iteration,
@@ -26,6 +28,9 @@ In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4`, and the stat
 When a solve ends with a code other than `SUCCESS`, [`finish!!`](@ref) restores the
 iterate with the smallest residual norm `‖F(x)‖` seen during the solve. A step is `STALLED`
 when the step of `member` is.
+
+The constructors without a `member` wrap `Picard(; damping)`, so `Anderson()` wraps the
+undamped `Picard()`.
 
 Keywords:
 
@@ -85,7 +90,7 @@ struct Anderson{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
 end
 
 function Anderson(
-        member::M = Picard(), ::Val{m} = Val(4);
+        member::M, ::Val{m};
         c_s::Real = 0.2,
         κ_bar::Union{Nothing, Real} = nothing,
         restart_factor::Real = 10.0,
@@ -103,9 +108,18 @@ function Anderson(
         member, R(c_s), kb, R(restart_factor), R(M_alpha), sc, grow_depth)
 end
 
-function Anderson(member, m::Integer; kwargs...)
+function Anderson(member, m::Integer = 4; kwargs...)
     m isa Bool && throw(ArgumentError("Anderson history depth m must be an Int, got Bool"))
     return Anderson(member, Val(Int(m)); kwargs...)
+end
+
+function Anderson(::Val{m}; damping::Real = 1, kwargs...) where {m}
+    return Anderson(Picard(; damping = damping), Val(m); kwargs...)
+end
+
+function Anderson(m::Integer = 4; damping::Real = 1, kwargs...)
+    m isa Bool && throw(ArgumentError("Anderson history depth m must be an Int, got Bool"))
+    return Anderson(Picard(; damping = damping), Val(Int(m)); kwargs...)
 end
 
 function Adapt.adapt_structure(to, a::Anderson{m}) where {m}
@@ -122,12 +136,12 @@ function Adapt.adapt_structure(to, a::Anderson{m}) where {m}
 end
 
 """
-    Broyden(member = Picard(), ::Val{m} = Val(4);
+    Broyden(member, ::Val{m};
             c_s = 0.2, κ_bar = nothing, restart_factor = 10.0,
             M_alpha = 25.0, safeguard_cos = nothing, grow_depth = false)
-    Broyden(::Val{m} = Val(4); damping = 1.0, kwargs...)
-    Broyden(member, m::Integer; kwargs...)
-    Broyden(m::Integer; damping = 1.0, kwargs...)
+    Broyden(::Val{m}; damping = 0.5, kwargs...)
+    Broyden(member, m::Integer = 4; kwargs...)
+    Broyden(m::Integer = 4; damping = 0.5, kwargs...)
 
 Type-II Broyden (bad Broyden) multisecant acceleration of history depth `m` wrapping an
 inner nonlinear method `member` ([`Picard`](@ref), [`Newton`](@ref), or a combinator).
@@ -145,8 +159,9 @@ In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4`, and the stat
 `m >= 1` is supported with preallocated `n × m` difference matrices, and `step!!` on an
 `Array` allocates nothing.
 
-Keywords are identical to [`Anderson`](@ref), with the convenience `damping` keyword on the
-default-member constructors forwarding to `Picard(; damping)`.
+Keywords are identical to [`Anderson`](@ref). The constructors without a `member` wrap
+`Picard(; damping)` with `damping = 0.5` by default, so `Broyden()` wraps a damped `Picard`,
+while `Anderson()` wraps the undamped `Picard()`.
 """
 struct Broyden{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
     member::M
@@ -210,11 +225,11 @@ function Broyden(member, m::Integer = 4; kwargs...)
     return Broyden(member, Val(Int(m)); kwargs...)
 end
 
-function Broyden(::Val{m}; damping::Real = 1.0, kwargs...) where {m}
+function Broyden(::Val{m}; damping::Real = 0.5, kwargs...) where {m}
     return Broyden(Picard(; damping = damping), Val(m); kwargs...)
 end
 
-function Broyden(m::Integer = 4; damping::Real = 1.0, kwargs...)
+function Broyden(m::Integer = 4; damping::Real = 0.5, kwargs...)
     m isa Bool && throw(ArgumentError("Broyden history depth m must be an Int"))
     return Broyden(Picard(; damping = damping), Val(Int(m)); kwargs...)
 end
@@ -301,9 +316,9 @@ Fields:
   - `x_prev`: previous outer iterate `x_{k-1}`.
   - `w_prev`: previous member correction `w_{k-1} = g(x_{k-1}) - x_{k-1}`.
   - `ΔX`: stored iterate differences `Δx_j = x_{k-a_j+1} - x_{k-a_j}` (`NTuple{m}` in R1,
-    `n × m` matrix in R3), also accessible as `.Δx`.
+    `n × m` matrix in R3).
   - `ΔW`: stored correction differences `Δw_j = w_{k-a_j+1} - w_{k-a_j}` (`NTuple{m}` in R1,
-    `n × m` matrix in R3), also accessible as `.Δr`.
+    `n × m` matrix in R3).
   - `ages`: column ages (`NTuple{m, Int32}` in R1, `Vector{Int32}` in R3).
   - `depth`: number of active columns currently stored in `ΔX` and `ΔW`.
   - `current_depth`: active depth cap (`1:m`) after the most recent step.
@@ -325,20 +340,6 @@ function AndersonHistory{m}(
         depth::Int32, current_depth::Int32, has_prev::Bool) where {m, X, DX, DW, A}
     return AndersonHistory{m, X, DX, DW, A}(
         x_prev, w_prev, ΔX, ΔW, ages, depth, current_depth, has_prev)
-end
-
-@inline function Base.getproperty(h::AndersonHistory, sym::Symbol)
-    if sym === :Δx
-        return getfield(h, :ΔX)
-    elseif sym === :Δr
-        return getfield(h, :ΔW)
-    else
-        return getfield(h, sym)
-    end
-end
-
-@inline function Base.propertynames(::AndersonHistory)
-    return (fieldnames(AndersonHistory)..., :Δx, :Δr)
 end
 
 # State of `Anderson{m}` and `Broyden{m}`: `isbits` in R1 (`work`, `Fx` and `Fx_best` are
@@ -380,17 +381,13 @@ end
             getfield(state, :ΔX), getfield(state, :ΔW), getfield(state, :ages),
             getfield(state, :depth), getfield(state, :current_depth),
             getfield(state, :has_prev))
-    elseif sym === :Δx
-        return getfield(state, :ΔX)
-    elseif sym === :Δr
-        return getfield(state, :ΔW)
     else
         return getfield(state, sym)
     end
 end
 
 @inline function Base.propertynames(::AndersonState)
-    return (fieldnames(AndersonState)..., :history, :Δx, :Δr)
+    return (fieldnames(AndersonState)..., :history)
 end
 
 @inline residual_buffer(state::AndersonState) = state.Fx
