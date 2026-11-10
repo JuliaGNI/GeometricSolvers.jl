@@ -182,6 +182,11 @@ end
     @test length(perturbed_runs(sp, "u0", sp.u0(Float64),
         "LeftPreconditioned Picard Backtracking Newton",
         LeftPreconditioned(picard, Newton()))) == 16
+    # a GMRES step passes no direction through `refine!!`, so the direction family is left out
+    gmres = Newton(; linsolve = GMRES(), globalization = Backtracking())
+    @test perturbed_direction(gmres, 1) === nothing
+    @test length(perturbed_runs(
+        sp, "u0", sp.u0(Float64), "Newton Backtracking GMRES", gmres)) == 16
 end
 
 @testset "The rule of the marker" begin
@@ -312,7 +317,7 @@ end
 @testset "The reference" begin
     cells, iterates = run_standard_cells()
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
-    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1474
+    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1742
     @test all(c -> c.code in codes, cells)
     # Every cell runs with max_iterations = 200.
     @test any(c -> c.code == "MAXITERS", cells)

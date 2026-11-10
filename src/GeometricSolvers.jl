@@ -28,19 +28,26 @@ isgpu(backend) = !(backend isa CPU)
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options, stopping_test
-export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized
+export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized, Deflated,
+       BlockEliminated, VariableProjection
 export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
-export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard,
-       NonlinearSolver, ReparametrizedSolver, init, solve, solve!
-export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
+export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice1,
+       FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
+export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
+       PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
+export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson,
+       Broyden
 export BlockResidual, block_residuals, block_jacobians, block_residual, block_jacobian
 export BlockPartition, RAS, RASState, ras_prolongate!, ras_sweep!!, ras_counts
 export LeftPreconditioned, LeftPreconditionedState, LeftPreconditionedProblem,
        raspen_jvp!, raspen_jacobian!
 export solve_batch!
+export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summary,
+       deposited_moments, eliminated_indices, reset_batch!
 
 public solve!!, sciml_retcode
 
@@ -66,6 +73,7 @@ include("linear/ka/ldlt.jl")
 include("linear/ka/qr.jl")
 include("linear/ka/svd.jl")
 include("linear/mixed.jl")
+include("linear/gmres.jl")
 
 include("globalization/linesearch.jl")
 include("globalization/static.jl")
@@ -93,6 +101,8 @@ include("nonlinear/batched.jl")
 include("nonlinear/stationarity.jl")
 include("ad/hessian.jl")
 include("nonlinear/reparametrized.jl")
+include("nonlinear/deflation.jl")
+include("nonlinear/eliminate.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")
@@ -103,5 +113,16 @@ include("composition/anderson.jl")
 include("composition/ras.jl")
 include("composition/preconditioning.jl")
 include("composition/implicit.jl")
+
+# `solve!` asks the type of the problem which path it takes. The predicate is defined below the
+# `eliminate.jl` include, and not beside `solve!`, because its signature names `BlockEliminated`,
+# which `eliminate.jl` defines after `solver.jl` has loaded. A `<:` test on the problem type would
+# build a `UnionAll` at run time and allocate, so the test is a dispatch on the type instead.
+
+@inline function is_elim_stationarity_problem(
+        ::Type{<:BlockEliminated{<:StationarityProblem}})
+    return true
+end
+@inline is_elim_stationarity_problem(::Type) = false
 
 end

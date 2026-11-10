@@ -175,6 +175,27 @@ end
         a_def = Anderson(p)
         @test a_def isa Anderson{4}
 
+        # Without a member, every form wraps `Picard(; damping)`, undamped by default.
+        @test Anderson() === Anderson(Picard(), Val(4))
+        @test Anderson(4) === Anderson(Picard(), Val(4))
+        @test Anderson(Val(3)) === Anderson(Picard(), Val(3))
+        @test Anderson(2) isa Anderson{2, <:Picard}
+        a_damp = Anderson(; damping = 0.5)
+        @test a_damp isa Anderson{4, <:Picard}
+        @test a_damp.member.damping == 0.5
+        a_damp_val = Anderson(Val(3); damping = 0.5, c_s = 0.25)
+        @test a_damp_val isa Anderson{3, <:Picard}
+        @test a_damp_val.member.damping == 0.5
+        @test a_damp_val.c_s == 0.25
+        a_damp_int = Anderson(3; damping = 0.5, grow_depth = true)
+        @test typeof(a_damp_int) === typeof(a_damp_val)
+        @test a_damp_int.member.damping == 0.5
+        @test a_damp_int.grow_depth === true
+        for bad_m in (0, -1, true, false)
+            @test_throws ArgumentError Anderson(bad_m)
+        end
+        @test_throws ArgumentError Anderson(Val(0))
+
         @test effective_kappa_bar(a_val, Float64) == inv(sqrt(eps(Float64)))
         @test effective_kappa_bar(a_val, Float32) == inv(sqrt(eps(Float32)))
         a_kb = Anderson(p, Val(2); κ_bar = 500.0, safeguard_cos = 0.942, grow_depth = true)

@@ -51,7 +51,9 @@ const FAMILIES = (
     "direction 1 ulp" =>
         (sp, start, x₀, column, method) -> [run_cell(sp, start, x₀, column,
                                                 perturbed_direction(method, seed))
-                                            for seed in 1:4 if !(method isa Picard)]
+                                            for seed in 1:4
+                                            if perturbed_direction(method, seed) !==
+                                               nothing]
 )
 
 flips(c, c′) = c.code != c′.code || abs(c.iterations - c′.iterations) > 1

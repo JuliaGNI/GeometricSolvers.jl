@@ -599,7 +599,7 @@ end
     end
 
     @testset "Check 5: the standard reference column" begin
-        @test length(STANDARD_COLUMNS) == 11
+        @test length(STANDARD_COLUMNS) == 13
         @test "Newton LevenbergMarquardt SVD" in first.(STANDARD_COLUMNS)
         lm_column = STANDARD_COLUMNS[findfirst(
             c -> first(c) == "Newton LevenbergMarquardt SVD", STANDARD_COLUMNS)]

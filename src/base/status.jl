@@ -7,6 +7,10 @@ is in `R = real(T)` for the element type `T` of the iterate.
 # Fields
 
 - `code::ReturnCode`: why the solve ended.
+- `f_calls::Int16`: the evaluations of the residual `F` of the solve, saturated at
+  `typemax(Int16)`; `0` for a method that keeps no count. A `Newton` with a
+  [`GMRES`](@ref) keeps the count, and so does a [`Repeat`](@ref) of it. The other combinators
+  keep none and report `0`, because their members count only their own steps.
 - `iterations::Int32`: the number of steps taken.
 - `fnorm::R`: ``\\|F(x)\\|`` at return.
 - `stepnorm::R`: ``\\|Δx\\|`` of the last step.
@@ -15,6 +19,8 @@ is in `R = real(T)` for the element type `T` of the iterate.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
   of its method, after a stall or as a vendor fallback.
 - `stationary::Bool`: the solve converged by the stationarity test rather than the residual test.
+- `jvp_calls::Int16`: the Jacobian–vector products of the solve, saturated at
+  `typemax(Int16)`; `0` for a method that keeps no count, the same methods as for `f_calls`.
 - `rank::Int32`: the numerical rank of the last fresh factorisation where it is an SVD factor
   with `info == 0`, else `Int32(-1)`: no factorisation, an LU or QR factor, or a failed SVD
   factor.
@@ -47,15 +53,34 @@ may want for itself.
 """
 struct SolverStatus{R <: Real}
     code::ReturnCode
+    f_calls::Int16
     iterations::Int32
     fnorm::R
     stepnorm::R
     step_failures::Int32
     promoted::Bool
     stationary::Bool
+    jvp_calls::Int16
     rank::Int32
     nullnorm::R
     gradratio::R
+end
+
+"""
+    sat16(n)
+
+The saturated count that a call count occupies in a [`SolverStatus`](@ref): `n` clipped to
+`0:typemax(Int16)`, so that a long solve reports its count without overflowing the field.
+"""
+@inline sat16(n::Integer) = Int16(clamp(n, 0, typemax(Int16)))
+
+@inline function SolverStatus{R}(
+        code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool,
+        stationary::Bool, rank::Int32, nullnorm::R, gradratio::R) where {R <: Real}
+    return SolverStatus{R}(
+        code, Int16(0), iterations, fnorm, stepnorm, step_failures, promoted, stationary,
+        Int16(0), rank, nullnorm, gradratio)
 end
 
 @inline function SolverStatus{R}(
@@ -63,24 +88,38 @@ end
         step_failures::Int32, promoted::Bool,
         rank::Int32, nullnorm::R, gradratio::R) where {R <: Real}
     return SolverStatus{R}(
-        code, iterations, fnorm, stepnorm, step_failures, promoted, false,
-        rank, nullnorm, gradratio)
+        code, Int16(0), iterations, fnorm, stepnorm, step_failures, promoted, false,
+        Int16(0), rank, nullnorm, gradratio)
 end
 
 @inline function SolverStatus{R}(
         code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
         step_failures::Int32, promoted::Bool, stationary::Bool) where {R <: Real}
     return SolverStatus{R}(
-        code, iterations, fnorm, stepnorm, step_failures, promoted, stationary,
-        Int32(-1), R(NaN), R(NaN))
+        code, Int16(0), iterations, fnorm, stepnorm, step_failures, promoted, stationary,
+        Int16(0), Int32(-1), R(NaN), R(NaN))
 end
 
 @inline function SolverStatus{R}(
         code::ReturnCode, iterations::Int32, fnorm::R, stepnorm::R,
         step_failures::Int32, promoted::Bool) where {R <: Real}
     return SolverStatus{R}(
-        code, iterations, fnorm, stepnorm, step_failures, promoted, false,
-        Int32(-1), R(NaN), R(NaN))
+        code, Int16(0), iterations, fnorm, stepnorm, step_failures, promoted, false,
+        Int16(0), Int32(-1), R(NaN), R(NaN))
+end
+
+"""
+    with_calls(status::SolverStatus, f_calls, jvp_calls)
+
+`status` with its residual and Jacobian–vector call counts replaced by `f_calls` and
+`jvp_calls`, saturated to the `Int16` of their fields.
+"""
+@inline function with_calls(status::SolverStatus{R}, f_calls::Integer,
+        jvp_calls::Integer) where {R}
+    return SolverStatus{R}(
+        status.code, sat16(f_calls), status.iterations, status.fnorm, status.stepnorm,
+        status.step_failures, status.promoted, status.stationary, sat16(jvp_calls),
+        status.rank, status.nullnorm, status.gradratio)
 end
 
 """
@@ -130,12 +169,14 @@ the step, add its failures, keep `promoted` once it is set, and preserve `statio
 """
 function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
     SolverStatus{R}(info.code,
+        status.f_calls,
         status.iterations + one(Int32),
         info.fnorm,
         info.stepnorm,
         status.step_failures + info.failures,
         status.promoted | info.promoted,
         status.stationary,
+        status.jvp_calls,
         status.rank,
         status.nullnorm,
         status.gradratio)

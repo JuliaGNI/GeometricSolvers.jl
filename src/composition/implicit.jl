@@ -6,7 +6,7 @@
 # primal solve, as `init` and `solve!` refuse one for every method.
 function solve_implicit(
         ::NonlinearProblem, x₀,
-        method::Union{Additive, Multiplicative, Repeat, Switch, Anderson,
+        method::Union{Additive, Multiplicative, Repeat, Switch, Anderson, Broyden,
             LeftPreconditioned, RAS}, p,
         options::Union{Nothing, Options}, kwargs)
     throw(ArgumentError(
@@ -17,7 +17,7 @@ end
 # member takes a square `NonlinearProblem` alone, so a `LeastSquaresProblem`, whose residual may be
 # longer than the iterate, is not a `CombinatorProblem`; `init_state` refuses it.
 function init_state(
-        method::Union{Additive, Multiplicative, Repeat, Switch, Anderson,
+        method::Union{Additive, Multiplicative, Repeat, Switch, Anderson, Broyden,
             LeftPreconditioned, RAS},
         ::LeastSquaresProblem, x, p)
     throw(ArgumentError(

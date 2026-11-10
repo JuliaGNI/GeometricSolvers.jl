@@ -79,6 +79,11 @@ end
         status.step_failures, status.promoted, false)
 end
 
+# The status that the residual test of `solve!!` reads at `x`. It is `status` itself, unless a
+# problem steps on a scaled residual and converges on its unscaled one: a `Deflated` problem sets
+# `fnorm` to the norm of its inner residual.
+@inline converged_status(state, prob, x, status) = status
+
 @inline function stationary_converged(
         ::AbstractNonlinearProblem, ::Options{R}, state, ::SolverStatus{R}) where {R}
     return false
@@ -160,7 +165,9 @@ function solve!!(
     if !isfinite(fnorm₀)
         return finish!!(state, method, prob, x, Fx, end_status(status, NONFINITE))
     end
-    if residual_converged(options, status, fnorm₀)
+    status = converged_status(state, prob, x, status)
+    ftest₀ = status.fnorm
+    if residual_converged(options, status, ftest₀)
         return finish!!(state, method, prob, x, Fx, status)
     end
     if options.max_iterations == Int32(0)
@@ -169,7 +176,7 @@ function solve!!(
     stalls = Int32(0)
     while true
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
-        status = record(status, info)
+        status = converged_status(state, prob, x, record(status, info))
         if info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS
             return finish!!(state, method, prob, x, Fx, status)
         end
@@ -177,7 +184,7 @@ function solve!!(
            !stationary_converged(prob, options, state, status)
             return finish!!(state, method, prob, x, Fx, status)
         end
-        if residual_converged(options, status, fnorm₀)
+        if residual_converged(options, status, ftest₀)
             return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
         # the diagnostics are re-measured at `x` at most once per step
@@ -308,8 +315,9 @@ the parameters that [`init`](@ref) or the last `solve!(solver, x, p)` stored, an
 solution into `solver.x` when it is an array.
 `solve!(solver, x, p)` stores `x` in `solver.x` and `p` in `solver.p`, then solves from `x` with
 `p`; an array `x` receives the solution in place and stays in `solver.x`. Without `p`, it solves
-with the parameters that the solver holds. For a [`StationarityProblem`](@ref), the keyword `b`
-overrides the datum of the solve without reallocating. An `x` whose element type or length differs
+with the parameters that the solver holds. For a [`StationarityProblem`](@ref), or a
+[`BlockEliminated`](@ref) of one, the keyword `b` overrides the datum of the solve without
+reallocating. An `x` whose element type or length differs
 from the iterate of `init` raises an `ArgumentError`, and so do an `x` of another type, a `p` of
 another type than those of `init`, and any `ForwardDiff.Dual` in `x` or `p`. A refused call
 changes neither `solver` nor `x`.
@@ -333,8 +341,11 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
     P <: StationarityProblem && return _solve_stationarity_solver!(solver, x, p, b)
+    is_elim_stationarity_problem(P) &&
+        return _solve_elim_stationarity_solver!(solver, x, p, b)
     b === nothing ||
-        throw(ArgumentError("keyword `b` is only supported for `StationarityProblem`"))
+        throw(ArgumentError(
+            "keyword `b` is only supported for a `StationarityProblem` or a `BlockEliminated` `StationarityProblem`"))
     solver.x = x
     solver.p = p
     x₊, status, state = solve!!(
@@ -376,7 +387,7 @@ performs no back-substitution and returns primal values at `x*` with `NaN` parti
 `status.code === SINGULAR`. Nested duals, distinct dual tags or partial counts across `x₀` and `p`,
 and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`. A
 combinator method, [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref),
-[`Switch`](@ref) or [`Anderson`](@ref), and a preconditioning method,
+[`Switch`](@ref), [`Anderson`](@ref) or [`Broyden`](@ref), and a preconditioning method,
 [`LeftPreconditioned`](@ref) or [`RAS`](@ref), has no implicit differentiation: with a
 `ForwardDiff.Dual` in `x₀` or `p`, `solve` raises an `ArgumentError` before the primal solve.
 
