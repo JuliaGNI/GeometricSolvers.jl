@@ -711,6 +711,46 @@ end
     # one complete sweep forms them, and the product runs
     ras_sweep!!(state, ras, prob, copy(x0), nothing)
     @test all(isfinite, raspen_jvp!(Jv, state, prob, x0, v, nothing))
+    # `start!!` opens a solve, so the factors of the sweep before it are no longer readable: a
+    # product between it and the next sweep would read the factor of an earlier solve
+    Fx = residual!!(similar(x0), prob, x0, nothing)
+    state = start!!(state, ras, prob, copy(x0), Fx, nothing, rnorm(Fx))
+    @test_throws "a RASPEN Jacobian product needs" raspen_jvp!(
+        Jv, state, prob, x0, v, nothing)
+end
+
+# A sweep that fails leaves the factors of the sweep before it, and no complete sweep formed the
+# state it returns, so a product on that state raises instead of reading a stale factor.
+@testset "A RASPEN product after a failed sweep raises, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
+    F!, J! = affine_global(x0, A, b)
+    ab = affine_blocks(x0, part, A, b)
+    singular = Ref(false)
+    jacobians = ntuple(
+        i -> let i = i, J_i = affine_block_jacobian(ab, i)
+            function (J, x_loc, x, p)
+                singular[] ? fill!(J, zero(T)) : J_i(J, x_loc, x, p)
+                return J
+            end
+        end,
+        3)
+    prob = NonlinearProblem(F!, J!;
+        block_residuals = ntuple(i -> affine_block(ab, i, nothing), 3),
+        block_jacobians = jacobians)
+    ras = RAS(part; max_iterations = 1)
+    state = init_state(ras, prob, copy(x0), nothing)
+    v = T[0.7, -1.2, 0.4, 0.9, -0.3, 0.6]
+    Jv = similar(v)
+    ras_sweep!!(state, ras, prob, copy(x0), nothing)
+    @test all(isfinite, raspen_jvp!(Jv, state, prob, x0, v, nothing))
+    singular[] = true
+    ras_sweep!!(state, ras, prob, copy(x0), nothing)
+    @test_throws "a RASPEN Jacobian product needs" raspen_jvp!(
+        Jv, state, prob, x0, v, nothing)
 end
 
 @testset "A sweep skipped inside RASPEN is the zero residual, $T" for T in REAL_ELTYPES
@@ -889,6 +929,82 @@ end
             GeometricSolvers.Options(T; max_iterations = 200))
         @info "the P8 NKS-RAS counts at one inner step" T status1.code status1.iterations ras_counts(
             state1)
+    end
+end
+
+# The block-Jacobian calls of one sweep, counted where the block Jacobians are called: the second
+# half of Check 6, which the counting inner member cannot see, because a method that forms the
+# extra block factor and also counts it keeps the two counts equal.
+function block_jacobian_calls(::Type{T}, make) where {T}
+    n = 20
+    part = BlockPartition(n, 5; overlap = 2)
+    λ = T(200)
+    global_, residuals, jacobians = p8_blocks(T, n, λ, part)
+    calls = Ref(0)
+    counted = ntuple(
+        i -> let i = i, J_i = jacobians[i]
+            (J, x_loc, x, p) -> (calls[] += 1; J_i(J, x_loc, x, p))
+        end,
+        length(part.owners))
+    prob = NonlinearProblem(global_; block_residuals = residuals, block_jacobians = counted)
+    h = inv(T(n + 1))
+    x0 = T[sin(T(pi) * j * h) for j in 1:n]
+    m = make(part)
+    state = init_state(m, prob, copy(x0), nothing)
+    Fx = residual!!(similar(x0), prob, x0, nothing)
+    # `start!!` of a `LeftPreconditioned` evaluates `rˡ` once, so the count opens after it
+    state = start!!(state, m, prob, copy(x0), Fx, nothing, rnorm(Fx))
+    calls[] = 0
+    if m isa LeftPreconditioned
+        # one evaluation of `rˡ` is one inner sweep
+        residual!!(similar(x0), state.problem, copy(x0), nothing)
+    else
+        step!!(state, m, prob, copy(x0), copy(Fx), nothing)
+    end
+    return calls[], length(part.owners)
+end
+
+# Check 6's second half, asserted directly: a method that does not consume the block factor at the
+# local iterate the sweep returns forms it no times, so plain `RAS` and NKS-RAS make one
+# block-Jacobian call per block solve and a RASPEN `rˡ` evaluation makes two.
+@testset "Check 6: the extra block factor is formed only for a RASPEN reader, $T" for T in REAL_ELTYPES
+    ras(part) = RAS(part; max_iterations = 1)
+    calls, nblocks = block_jacobian_calls(T, ras)
+    @test nblocks == 5
+    @test calls == nblocks
+    calls, _ = block_jacobian_calls(T, part -> Multiplicative(ras(part), Newton()))
+    @test calls == nblocks
+    calls, _ = block_jacobian_calls(T, part -> LeftPreconditioned(Newton(), ras(part)))
+    @test calls == 2 * nblocks
+    # the calls of a `Picard` outer under `Static` and under `Backtracking`, recorded as a
+    # measurement, not asserted: the preparation of `init_state` is the RASPEN form, so the sweep
+    # forms the extra block factor even where the globalization reads no slope
+    cs, _ = block_jacobian_calls(T, part -> LeftPreconditioned(Picard(), ras(part)))
+    cb, _ = block_jacobian_calls(
+        T, part -> LeftPreconditioned(Picard(; globalization = Backtracking()), ras(part)))
+    @info "the block-Jacobian calls per sweep of a Picard outer, Static and Backtracking" T cs cb
+end
+
+# A solve whose first sweep forms no block factor returns a status: `rˡ` is non-finite there, and
+# the outer's Jacobian would read a factor nothing has written, so the wrapper returns the failure
+# before it asks the outer for a step, with either outer method.
+@testset "A solve whose first sweep is singular returns a status, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
+    F!, J! = affine_global(x0, A, b)
+    ab = affine_blocks(x0, part, A, b)
+    singular = (J2, x_loc, x, p) -> (fill!(J2, zero(T)); J2)
+    residuals = ntuple(i -> affine_block(ab, i, nothing), 3)
+    jacobians = ntuple(i -> i == 2 ? singular : affine_block_jacobian(ab, i), 3)
+    prob = NonlinearProblem(F!, J!; block_residuals = residuals, block_jacobians = jacobians)
+    for outer in (Newton(), Newton(; globalization = Backtracking()))
+        m = LeftPreconditioned(outer, RAS(part; max_iterations = 2))
+        x, status = solve(prob, copy(x0), m; max_iterations = 20)
+        @test status.code === NONFINITE
+        @test Array(x) == x0
     end
 end
 

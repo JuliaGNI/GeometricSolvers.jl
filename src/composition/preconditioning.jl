@@ -19,8 +19,11 @@ Schwarz map, and the Jacobian of ``r^\\ell`` is the exact form of [`raspen_jvp!`
 the block factors of the last sweep (`Dolean:2016`, eq. 3.17). RASPEN needs converged local solves.
 With any other `inner` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
-[`prepare_ad`](@ref) prepares at `init_state`; a globalization that reads no slope, such as
-[`Static`](@ref), pays for none.
+[`prepare_ad`](@ref) prepares at `init_state` whatever its globalization reads. With a
+[`RAS`](@ref) inner that preparation is the RASPEN form, so every sweep forms the block factor at
+the local iterate it returns even for a globalization that reads no slope: measured on the
+5-block P8 problem at one inner iteration per block, a `LeftPreconditioned(Picard(), RAS)` under
+[`Static`](@ref) makes 10 block-Jacobian calls per sweep against plain `RAS`'s 5.
 
 The [`solve!!`](@ref) status of a `LeftPreconditioned` solve is the one of the loop: its `fnorm` is
 ``\\|F(x)\\|`` of the global residual at the returned iterate, and its convergence tests apply to
@@ -151,7 +154,9 @@ end
 @inline jacobian_prototype(::LeftPreconditionedProblem) = nothing
 
 # A preconditioned problem has no analytic Jacobian of `rˡ`, so a `Picard` outer prepares its
-# derivative through `prepare_ad`, and a globalization that reads no slope pays for none.
+# derivative through `prepare_ad` here, at `init_state`, whatever its globalization reads: with a
+# `RAS` inner that sets the RASPEN flag of the inner state, and every sweep then forms the block
+# factor at the local iterate it returns.
 @inline function picard_jvpprep(m::Picard, prob::LeftPreconditionedProblem, Fx, x, p)
     return Fx === nothing ? nothing : prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
 end
@@ -244,7 +249,15 @@ end
     lprob = state.problem
     R = real(eltype(x))
     Fxˡ = residual!!(residual_buffer(state.outer_state), lprob, x, p)
-    if iszero(rnorm(Fxˡ))
+    fnormˡ = rnorm(Fxˡ)
+    if !isfinite(fnormˡ)
+        # an inner step that failed makes `rˡ` non-finite, and the outer's Jacobian would then
+        # read the block factors of a sweep that formed none: the failure is this step's status,
+        # which ends the solve
+        return x, Fx, state,
+        StepInfo{R}(NONFINITE, rnorm(Fx), zero(R), Int32(0), false, false)
+    end
+    if iszero(fnormˡ)
         # `x` is a fixed point of the inner map, so the outer solves `rˡ = 0` here: its step is of
         # zero length, the iterate and its global residual are unchanged, and a sweep that
         # `balance_threshold` skipped left no block factor for the outer's Jacobian, which this

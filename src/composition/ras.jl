@@ -518,10 +518,11 @@ end
     raspen_jacobian!(J, state, prob, x, p)
 
 The Jacobian of the left-preconditioned residual ``r^\\ell`` at `x` of the exact RASPEN form, one
-column per [`raspen_jvp!`](@ref) with a unit direction. It overwrites `J` and returns it.
+column per [`raspen_jvp!`](@ref) with a unit direction. It overwrites `J` and returns it. Each
+column is one [`raspen_jvp!`](@ref) call, whose own check raises an `ArgumentError` on a state that
+no complete sweep formed, so a product on such a state raises here too.
 """
 function raspen_jacobian!(J, state::RASState, prob, x, p)
-    check_formed(state)
     for j in axes(J, 2)
         unit_direction!(state.dx, j)
         raspen_jvp!(state.column, state, prob, x, state.dx, p)
