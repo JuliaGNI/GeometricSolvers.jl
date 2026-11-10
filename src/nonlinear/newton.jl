@@ -414,8 +414,6 @@ end
 # [`promoted_factors`](@ref) reads zeros before a GMRES-IR stage or a promotion writes it, rather
 # than the storage that `similar` left. A value iterate, a factorisation in the working precision
 # and a factor that no promotion copies keep no such slot.
-@inline zero_promoted_factors!(::Nothing) = nothing
-@inline zero_promoted_factors!(fac::StaticLU) = nothing
 @inline function zero_promoted_factors!(fac::Union{DenseLU, DeviceLU})
     fill!(fac.factors, zero(eltype(fac.factors)))
     return nothing
@@ -775,7 +773,24 @@ end
 end
 
 @inline residual_buffer(state::NewtonState) = state.Fx
-@inline residual_buffer(solver::NonlinearSolver) = residual_buffer(solver.state)
+
+"""
+    linear_residual_buffer(solver)
+
+The buffer of the linear residual ``r = -F(x) - J d`` of the last step of `solver`, in the working
+precision `T`, which the defect-correction passes and the GMRES-IR stage reuse. It is `nothing` for
+a solve that refines nothing, and for a value iterate, whose storage holds no buffer. It is not the
+slot of `F(x₀)` that [`residual_buffer`](@ref) names. `linear_residual_buffer(state)` reads the
+state that [`init_state`](@ref) returned instead.
+"""
+@inline linear_residual_buffer(state::NewtonState) = linear_residual_buffer(state.refbuf)
+@inline function linear_residual_buffer(solver::NonlinearSolver)
+    return linear_residual_buffer(solver.state)
+end
+@inline function linear_residual_buffer(refbuf::Union{RefinementBuffer, GMRESIRBuffer})
+    return refbuf.r
+end
+@inline linear_residual_buffer(::Nothing) = nothing
 
 """
     stored_factors(solver)
@@ -1173,29 +1188,53 @@ end
 end
 
 @inline function gmres_ir_stage!(
-        d, ref::GMRESRefinement, refbuf::GMRESIRBuffer,
-        fac_T::Union{DenseLU, DeviceLU}, fac::Union{DenseLU, DeviceLU}, state, J, Fx,
+        d, ref::GMRESRefinement, refbuf::GMRESIRBuffer, fac_T::DenseLU, fac::DenseLU, state,
+        J, Fx, fnorm::R) where {R <: Real}
+    return gmres_ir_promoted!(
+        d, ref, refbuf, promote_lu_factors!(fac_T, fac), state, J, Fx, fnorm)
+end
+
+@inline function gmres_ir_stage!(
+        d, ref::GMRESRefinement, refbuf::GMRESIRBuffer, fac_T::DeviceLU, fac::DeviceLU,
+        state, J, Fx, fnorm::R) where {R <: Real}
+    return gmres_ir_promoted!(
+        d, ref, refbuf, promote_lu_factors!(fac_T, fac), state, J, Fx, fnorm)
+end
+
+# The stage itself, over the promoted copy of the low-precision factors: GMRES-IR corrections
+# accumulate in `T` while the true linear residual `-F(x) - J d` misses `ref.gmres_tol * ‖F(x)‖`
+# and the cap of inner iterations is not spent. The stop reads that residual and not the
+# preconditioned estimate of the inner solve, whose norm is in the units of the direction `d` while
+# the tolerance is in the units of `F(x)`: a stop on the estimate depends on the scale of the
+# problem, and the same Jacobian then takes a different branch at different scales.
+@inline function gmres_ir_promoted!(
+        d, ref::GMRESRefinement, refbuf::GMRESIRBuffer, fac_promoted, state, J, Fx,
         fnorm::R) where {R <: Real}
     T = eltype(Fx)
-    atol = R(ref.gmres_tol) * fnorm
-    fac_promoted = promote_lu_factors!(fac_T, fac)
+    tol = R(ref.gmres_tol)
     st = with_factor_T(state, fac_promoted)
-    Jv = mul!!(refbuf.tmp, J, d)
-    r = axpby!!(refbuf.r, -one(T), Fx, -one(T), Jv)
-    b = ldiv!!(refbuf.b, fac_promoted, r)
-    bnorm = R(rnorm(b))
-    (isfinite(bnorm) && isfinite(atol)) || return d, false, true, zero(R), st
     n = length(d)
     m_cap = min(Int(ref.gmres_maxiter), n)
-    tol = iszero(bnorm) ? zero(R) : atol / bnorm
-    δd, _ = gmres_solve!(
-        refbuf.ws, PromotedProduct(J, fac_promoted, refbuf.tmp, refbuf.z), nothing,
-        refbuf.b, bnorm, tol, m_cap, m_cap)
-    Jδ = mul!!(refbuf.tmp, J, δd)
-    rt = R(rnorm(axpby!!(refbuf.d_try, one(T), r, -one(T), Jδ)))
-    linrel = iszero(fnorm) ? zero(R) : rt / fnorm
-    accepts_gmres_ir(linrel, R(ref.gmres_tol)) || return d, false, true, linrel, st
-    return axpby!!(refbuf.d_try, one(T), d, one(T), δd), true, true, linrel, st
+    op = PromotedProduct(J, fac_promoted, refbuf.tmp, refbuf.z)
+    cand = copy!!(refbuf.d_try, d)
+    used = 0
+    linrel = zero(R)
+    while true
+        Jv = mul!!(refbuf.tmp, J, cand)
+        rt = R(rnorm(axpby!!(refbuf.r, -one(T), Fx, -one(T), Jv)))
+        linrel = iszero(fnorm) ? zero(R) : rt / fnorm
+        isfinite(linrel) || return d, false, true, linrel, st
+        (linrel <= tol || used >= m_cap) && break
+        b = ldiv!!(refbuf.b, fac_promoted, refbuf.r)
+        bnorm = R(rnorm(b))
+        (isfinite(bnorm) && !iszero(bnorm)) || break
+        δd, info = gmres_solve!(
+            refbuf.ws, op, nothing, b, bnorm, tol, m_cap - used, m_cap - used)
+        used += Int(info.iterations)
+        axpby!!(cand, one(T), cand, one(T), δd)
+    end
+    accepts_gmres_ir(linrel, tol) || return d, false, true, linrel, st
+    return cand, true, true, linrel, st
 end
 
 # The mixed-precision half of one Newton step: the solve in `TF`, the promotion to `T` when the
@@ -1242,8 +1281,12 @@ end
             (d, false, false, zero(R), state)
         end
         failures += one(Int32)
+        # A stage that succeeds keeps the factor it solved with, as the LU-IR success below does: a
+        # reused factor whose arrays were overwritten under the scale of the slot `init` made would
+        # solve the next step of a scale the factor does not have.
         ir_ok && return MixedNewton(
-            d_ir, Jreg, with_diag(st_ir, diag), ir_rel, true, false, true, failures)
+            d_ir, Jreg, with_diag(stored_factor(st_ir, fac, false, store), diag), ir_rel,
+            true, false, true, failures)
         ir_ran && (failures += one(Int32))
         fac_T, diag_T = promote_factor!!(st_ir, m, Jreg, x, Fx, fnorm_old, diag)
         st = with_mixed(

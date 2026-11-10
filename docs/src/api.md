@@ -313,15 +313,16 @@ The buffers of a mixed-precision solve are readable after it: [`stored_factors`]
 packed `L` and `U` of the factorisation in `TF`, [`promoted_factors`](@ref) the working-precision
 copy of it that the GMRES-IR stage promotes (or the factors of the refactorisation, where the step
 promoted), [`preconditioned_buffer`](@ref) the slot of the preconditioned product the inner GMRES
-forms, and [`residual_buffer`](@ref) the slot of the residual `F(x₀)`. `scripts/gmres_ir_comparison.jl`
-runs both methods on the four conditioning numbers of the plan, prints their Newton iteration
-counts and linear residuals, and recomputes both from the raw output of the solves.
+forms, and [`linear_residual_buffer`](@ref) the slot of the linear residual `-F(x) - J d`.
+`scripts/gmres_ir_comparison.jl` runs both methods on the four conditioning numbers of the plan,
+prints their Newton iteration counts and linear residuals, and recomputes both from the raw output
+of the solves.
 
 ```@docs
 stored_factors
 promoted_factors
 preconditioned_buffer
-residual_buffer
+linear_residual_buffer
 ```
 
 ### Combinators
@@ -449,12 +450,14 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 
 A nonlinear method enters the loop of [`solve!!`](@ref) through [`init_state`](@ref), which builds
 its state, [`step!!`](@ref), and the two hooks [`start!!`](@ref) and [`finish!!`](@ref), which run
-once before the first step and at every return. [`refine!!`](@ref) refines the linear direction `d`
-in working precision before globalization, and [`gmres_ir!!`](@ref) is the GMRES-IR stage that
-follows a failed pass of a [`GMRESRefinement`](@ref).
+once before the first step and at every return. [`residual_buffer`](@ref) names the slot of the
+state that holds `F(x₀)`, and [`refine!!`](@ref) refines the linear direction `d` in working
+precision before globalization; [`gmres_ir!!`](@ref) is the GMRES-IR stage that follows a failed
+pass of a [`GMRESRefinement`](@ref).
 
 ```@docs
 init_state
+residual_buffer
 step!!
 start!!
 finish!!
