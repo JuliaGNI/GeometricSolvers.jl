@@ -676,6 +676,41 @@ end
     end
 end
 
+# The model of the matrix-free loop reads the Arnoldi relation of one cycle. With `maxiter > n` and a
+# tolerance that `n` iterations miss in floating point, the inner solve would restart, and the loop
+# would read the last cycle's basis against the first residual. The inner solve of a `DogLeg` step
+# stops at `n` instead, so `maxiter = 10` and `maxiter = n` give the same solve.
+@testset "Check 6: the matrix-free DogLeg runs one Arnoldi cycle, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, q) -> begin
+        r[1] = x[1] - 1
+        r[2] = T(1e-10) * x[2] + x[1]^2 - 2
+        r
+    end)
+    x₀ = T[3, 3]
+    solve_with(maxiter) = begin
+        solver = init(prob, copy(x₀),
+            Newton(; linsolve = GMRES(; maxiter = maxiter, forcing = FixedForcing(0.0)),
+                globalization = DogLeg()))
+        x, st = solve!(solver, copy(x₀))
+        return x, st, max_inner_iterations(solver)
+    end
+    x10, st10, inner10 = solve_with(10)
+    x2, st2, inner2 = solve_with(2)
+    @test inner10 <= 2
+    @test st10.code == st2.code
+    @test st10.iterations == st2.iterations
+    @test x10 == x2
+    # the factorised loop is the control in Float64; in Float32 the condition number of `J`, about
+    # 1e11, is far above 1/eps(Float32), and the matrix-free loop fails there with or without a
+    # restart
+    if T == Float64
+        _, st_r3 = solve(prob, copy(x₀), Newton(; globalization = DogLeg()))
+        @test st_r3.code == SUCCESS
+        @test st10.code == SUCCESS
+        @test st10.iterations == st_r3.iterations
+    end
+end
+
 @testset "Check 6: a restarted GMRES solves with a line search, $T" for T in REAL_ELTYPES
     # `restart < maxiter` runs the restart cycle: its residual is formed with one more product
     prob = NonlinearProblem((r, x, q) -> begin

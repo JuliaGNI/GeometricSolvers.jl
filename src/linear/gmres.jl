@@ -218,8 +218,10 @@ with modified Gram–Schmidt on the Jacobian–vector product of the problem, th
 
 # Fields
 
-- `maxiter::Int32`: the cap on the inner GMRES iterations of one Newton step, `≥ 1`. A step that
-  reaches it without meeting the tolerance of its forcing term counts a step-rule failure.
+- `maxiter::Int32`: the cap on the inner GMRES iterations of one Newton step, `≥ 1`. Under a
+  [`DogLeg`](@ref) the cap is `min(maxiter, n)`, one Arnoldi cycle, because its model reads the
+  Arnoldi relation of that cycle. A step that reaches the cap without meeting the tolerance of its
+  forcing term counts a step-rule failure.
 - `restart::Int32`: the number of inner iterations between restarts, `1 ≤ restart ≤ maxiter`.
   `restart = nothing` stores `maxiter`, which is unrestarted GMRES, and which [`DogLeg`](@ref)
   needs. The Krylov basis holds `min(restart, n) + 1` columns.

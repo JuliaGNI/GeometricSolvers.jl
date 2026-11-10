@@ -1484,12 +1484,12 @@ end
 end
 
 # The direction of one R5 step: the forcing term of the step, the refresh of the right
-# preconditioner, and the inner solve. It returns whether the residual, the linear residual and the
-# direction were finite, the attained relative tolerance `η_ach`, the step-rule failures of the
-# inner solve, and `‖F_k‖`.
+# preconditioner, and the inner solve, capped at `maxiter` inner iterations. It returns whether the
+# residual, the linear residual and the direction were finite, the attained relative tolerance
+# `η_ach`, the step-rule failures of the inner solve, and `‖F_k‖`.
 @inline function gmres_direction!(
         state::NewtonState, g::GMRES{F, P, TJ}, ws::GMRESWorkspace,
-        prob, x, Fx, p) where {F, P, TJ}
+        prob, x, Fx, p, maxiter::Int32) where {F, P, TJ}
     T = eltype(x)
     R = real(T)
     fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
@@ -1502,7 +1502,7 @@ end
     map!!(-, ws.bb, Fx)
     op = R5Operator(state.jvpprep, prob, x, p)
     _, info = gmres_solve!(
-        ws, op, g.preconditioner, ws.bb, fnorm, η, g.maxiter, g.restart)
+        ws, op, g.preconditioner, ws.bb, fnorm, η, maxiter, g.restart)
     ws.gmres_iterations = info.iterations
     ws.max_inner = max(ws.max_inner, info.iterations)
     ws.linres = info.resnorm
@@ -1510,7 +1510,7 @@ end
     ws.prev_fnorm = fnorm
     ws.beta = fnorm
     ws.step += one(Int32)
-    failures = info.iterations >= g.maxiter && !info.converged ? Int32(1) : Int32(0)
+    failures = info.iterations >= maxiter && !info.converged ? Int32(1) : Int32(0)
     # a non-finite product, Hessenberg entry or preconditioner leaves a non-finite linear residual
     # or direction: the step ends with `NONFINITE` before a globalization reads either
     ok = isfinite(info.resnorm) && all(isfinite, ws.d)
@@ -1521,11 +1521,14 @@ end
 # The step of a `Newton` with `GMRES`: the inner solve and the globalization of its direction. A line
 # search gets the inexact step kind `InexactStep(η_ach)`, whose test is
 # `‖F(x + α d)‖ ≤ [1 - c₁(1 - η(α))] ‖F‖` with `η(α) = |1 - α| + α η_ach`; a `DogLeg` runs
-# its matrix-free trial loop on the Arnoldi relation of that same solve.
+# its matrix-free trial loop on the Arnoldi relation of that same solve. That relation holds for
+# one Arnoldi cycle only, so under a `DogLeg` the inner solve stops at the width of the basis,
+# `min(maxiter, n)`, and never restarts.
 @inline function gmres_step!!(state::NewtonState, ws::GMRESWorkspace,
         m::Newton, g::GMRES{F, P, TJ}, prob, x, Fx, p) where {F, P, TJ}
     R = real(eltype(x))
-    ok, η_ach, failures, fnorm = gmres_direction!(state, g, ws, prob, x, Fx, p)
+    cap = m.globalization isa DogLeg ? Int32(size(ws.V, 2) - 1) : g.maxiter
+    ok, η_ach, failures, fnorm = gmres_direction!(state, g, ws, prob, x, Fx, p, cap)
     ok ||
         return x, Fx, state, StepInfo{R}(NONFINITE, fnorm, zero(R), failures, false, false)
     d = ws.d
