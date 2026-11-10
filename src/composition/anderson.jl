@@ -315,7 +315,8 @@ end
         ms, nothing, state.x_prev, state.w_prev, state.x_best, nothing,
         state.ΔX, state.ΔW, state.ages, nothing,
         R(NaN), state.fnorm_best, state.depth, state.current_depth, state.has_prev)
-    return x_out, st_out, state_out
+    # the member's counts leave out the evaluations of the mixing, so `Anderson` keeps none
+    return x_out, with_calls(st_out, 0, 0), state_out
 end
 
 @inline function finish!!(
@@ -337,7 +338,8 @@ end
         ms, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
         state.ΔX, state.ΔW, state.ages, state.work,
         R(NaN), state.fnorm_best, state.depth, state.current_depth, state.has_prev)
-    return x_m, st_out, state_out
+    # the member's counts leave out the evaluations of the mixing, so `Anderson` keeps none
+    return x_m, with_calls(st_out, 0, 0), state_out
 end
 
 # Shared scalar predicates for the restarts, filters, regularisation, and safeguards.

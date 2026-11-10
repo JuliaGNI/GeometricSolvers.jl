@@ -129,6 +129,13 @@ const R5_COUPLED_X = (0.3, 1.1, -0.7, 2.0)
 const R5_ATAN_START = 1.3
 r5_atan() = NonlinearProblem((r, x, q) -> (r[1] = atan(x[1]); r))
 
+# `‖F(x) + J(x) d‖` of a direction `d`, with the product from ForwardDiff on `F` itself and not from
+# the solver: the attained tolerance of a step, whatever the workspace records after it.
+function direction_linres(prob, x, d)
+    F_at(t) = (y = similar(x, typeof(t)); prob.F(y, x .+ t .* d, nothing); y)
+    return rnorm(F_at(zero(eltype(x))) .+ ForwardDiff.derivative(F_at, zero(eltype(x))))
+end
+
 # ─── The allocation row of the inner solve ──────────────────────────────────
 
 # An `@allocated` assertion measures through a function barrier whose arguments have concrete types
@@ -416,10 +423,13 @@ end
     _, Fx₁, state₁, info = step!!(state, m, prob, x, Fx, nothing)
     d = copy(state₁.ws.d)
     c₁ = m.globalization.c₁
-    η_ach = state₁.ws.linres / fnorm₀
+    η_ach = direction_linres(prob, x_prev, d) / fnorm₀
     α = info.stepnorm / rnorm(d)
     @test info.code == SUCCESS
     @test zero(R) < α <= one(R)
+    # the workspace records the linear residual of the accepted step `α d` for Choice 1, and a
+    # one-dimensional solve is exact, so that residual is `(1 - α) ‖F‖`
+    @test abs(state₁.ws.linres - (1 - α) * fnorm₀) <= 16 * eps(R) * fnorm₀
 
     # MU3: the step kind is `InexactStep(η_ach)`, not `ExactStep()`: the accepted step obeys
     # ‖F(x + s)‖ ≤ [1 - c₁(1 - η)] ‖F(x)‖ with η ← 1 - α(1 - η) at the trial step α
@@ -499,7 +509,7 @@ end
     _, Fx₁, state₁, info = step!!(state, mm, prob, x, Fx, nothing)
     d = copy(state₁.ws.d)
     c₁ = mm.globalization.c₁
-    η_ach = state₁.ws.linres / fnorm₀
+    η_ach = direction_linres(prob, x₀, d) / fnorm₀
     α = info.stepnorm / rnorm(d)
     @test info.code == SUCCESS
     # a one-dimensional solve with one product is exact, so the attained tolerance is zero
@@ -749,6 +759,79 @@ end
     @test_throws ArgumentError Newton(;
         linsolve = QRFactorization(), jacobian = JVPFunction(jvp!))
     @test Newton(; linsolve = GMRES(), jacobian = JVPFunction(jvp!)) isa Newton
+end
+
+# Implicit differentiation factorises the Jacobian at the root, which a GMRES solve does not form:
+# `solve` refuses a dual input before the primal solve evaluates `F` once. The factorising control
+# gives `dx/dq = 1/(3x² + 2) = 1/5` per entry at the root `x = 1` of `q = 3`.
+@testset "solve refuses a dual input for a Newton with GMRES" begin
+    calls = Ref(0)
+    prob = NonlinearProblem((r, x, q) -> begin
+        calls[] += 1
+        @. r = x^3 + 2x - q
+        r
+    end)
+    total(q, m) = sum(first(solve(prob, [1.0, 1.0], m, q)))
+    @test ForwardDiff.derivative(q -> total(q, Newton()), 3.0) ≈ 0.4
+    calls[] = 0
+    @test_throws ArgumentError ForwardDiff.derivative(
+        q -> total(q, Newton(; linsolve = GMRES())), 3.0)
+    @test calls[] == 0
+end
+
+# A combinator's members count only their own steps, so every combinator but `Repeat` reports no
+# count; `Repeat` runs one member and evaluates nothing itself, so its count is the member's. The
+# residual counts its own evaluations on the working type, which a product on duals is not.
+@testset "A combinator keeps no call count, and Repeat keeps its member's" begin
+    calls = Ref(0)
+    prob = NonlinearProblem((r, x, q) -> begin
+        eltype(x) <: AbstractFloat && (calls[] += 1)
+        @. r = x^3 + 2x - 3
+        r
+    end)
+    g = Newton(; linsolve = GMRES(; maxiter = 10))
+    x₀ = collect(R5_COUPLED_X)
+    for method in (Anderson(g), Additive(g, g), Multiplicative(g, g), Switch(g, g))
+        _, st = solve(prob, copy(x₀), method)
+        @test st.iterations > 0
+        @test st.f_calls == 0
+        @test st.jvp_calls == 0
+    end
+    calls[] = 0
+    _, st = solve(prob, copy(x₀), Repeat(g, 2))
+    @test st.f_calls > 0
+    @test st.f_calls == calls[]
+end
+
+# Choice 1 reads `‖F + J s‖` of the step `s` taken. After a line search on one Arnoldi cycle the
+# workspace records that of the accepted step `α d`, from the Arnoldi relation; the control is the
+# product of ForwardDiff on `F`. A restarted solve keeps the residual of its direction.
+@testset "Choice 1 reads the linear residual of the accepted step, $T" for T in REAL_ELTYPES
+    R = real(T)
+    prob = r5_coupled(T)
+    x₀ = T.(collect(R5_COUPLED_X))
+    for (restart, accepted) in ((2, true), (1, false))
+        solver = init(prob, copy(x₀),
+            Newton(;
+                linsolve = GMRES(;
+                maxiter = 2, restart = restart, forcing = FixedForcing(R(1e-6)))))
+        m = solver.method
+        x = copy(x₀)
+        Fx = similar(x)
+        prob.F(Fx, x, nothing)
+        state = start!!(solver.state, m, prob, x, Fx, nothing, rnorm(Fx))
+        _, _, state₁, _ = step!!(state, m, prob, x, Fx, nothing)
+        ws = state₁.ws
+        d = copy(ws.d)
+        dn = rnorm(d)
+        # the full step of `Static` records the residual of the direction
+        full = direction_linres(prob, x₀, d)
+        @test isapprox(ws.linres, full; rtol = sqrt(eps(R)))
+        GeometricSolvers.accepted_linres!(ws, dn / 2, dn)
+        expected = accepted ? direction_linres(prob, x₀, d ./ 2) : full
+        @test isapprox(ws.linres, expected; rtol = sqrt(eps(R)))
+        @test accepted == !isapprox(ws.linres, full; rtol = sqrt(eps(R)))
+    end
 end
 
 # ─── The decided edges ───────────────────────────────────────────────────────

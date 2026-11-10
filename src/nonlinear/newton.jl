@@ -1545,11 +1545,30 @@ end
         return x₊, F₊, with_merit(state₊, state.merit, info.fnorm), info
     end
     counted = counting_problem(prob, ws)
+    dnorm = R(rnorm(d))
     x₊, F₊, _, info, merit = globalize_merit!!(
         state.g, m.globalization, counted, x, Fx, d, p, state.jvpprep,
         InexactStep(η_ach), state.merit)
+    accepted_linres!(ws, info.stepnorm, dnorm)
     info = bump_failures(info, failures)
     return x₊, F₊, with_merit(state, merit, info.fnorm), info
+end
+
+# The linear residual `‖F + α J d‖` of the step `α d` that a line search accepted, which the
+# Choice 1 forcing term of the next step reads; `α = stepnorm / ‖d‖`. On one Arnoldi cycle,
+# `F + α J M⁻¹ V_k y = V_{k+1} (-β₀ e₁ + α H̄_k y)`, so the value is the norm of a reduced vector
+# and costs no product. A restarted solve has no such relation and keeps the residual of its
+# direction, and so does a full step, whose residual that is.
+@inline function accepted_linres!(ws::GMRESWorkspace{T, R}, stepnorm, dnorm) where {T, R}
+    k = Int(ws.arnoldi)
+    (k > 0 && ws.gmres_iterations == ws.arnoldi) || return nothing
+    α = R(stepnorm) / R(dnorm)
+    (isfinite(α) && α != one(R)) || return nothing
+    for i in 1:k
+        ws.yb[i] = α * ws.y[i]
+    end
+    ws.linres = R(rnorm(reduced_model!(ws, ws.yb, k, ws.beta)))
+    return nothing
 end
 
 # The call counts of a solve, from the seed of `solve`: `max_inner_iterations` is the largest inner

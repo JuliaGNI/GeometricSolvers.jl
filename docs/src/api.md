@@ -181,7 +181,9 @@ applied by [`apply_preconditioner!`](@ref) before every product. A matrix-free p
 own product as [`JVPFunction`](@ref)`(jvp!)` in the `jacobian` field of [`Newton`](@ref), and the
 solve reports the exact counts of its residual and product evaluations in
 [`f_calls`](@ref)/[`jvp_calls`](@ref) and in the `f_calls` and `jvp_calls` fields of
-[`SolverStatus`](@ref). `GMRES(; maxiter)` caps the inner iterations of one Newton step, and
+[`SolverStatus`](@ref). A combinator other than [`Repeat`](@ref) reports `0` in those fields,
+because its members count only their own steps. `GMRES(; maxiter)` caps the inner iterations of
+one Newton step, and
 [`max_inner_iterations`](@ref) gives the largest count of the last solve.
 
 The matrix-free [`DogLeg`](@ref) runs on the Arnoldi relation of an unrestarted `GMRES` only

@@ -88,8 +88,10 @@ Adapt.@adapt_structure EisenstatWalkerChoice2
     EisenstatWalkerChoice1(T = Float64; η₀ = 0.5, η_max = 0.9)
 
 Eisenstat and Walker's Choice 1 forcing term (Eisenstat and Walker 1996, §2.2), which reads the
-linear residual of the last inner solve, where `s_{k-1}` is the direction GMRES returned and not the
-step that a backtrack accepted:
+linear residual of the last step `s_{k-1}`. After a line search on an unrestarted inner solve,
+`s_{k-1}` is the step that the search accepted, whose linear residual the Arnoldi relation gives
+without a product; after a restarted inner solve or a [`DogLeg`](@ref) step, it is the direction
+GMRES returned:
 
 ```math
 \\eta_k^{\\mathrm{raw}} =
@@ -162,8 +164,9 @@ forcing term's constants.
 `k` is the zero-based index of the step, so that `k = 0` returns the initial tolerance
 ``\\eta_0`` of the term. `fnorm` is ``\\|F_k\\|``, `fnorm_prev` is ``\\|F_{k-1}\\|``, `η_prev` is
 ``\\eta_{k-1}``, and `linres_prev` is the linear residual ``\\|F_{k-1} + J_{k-1} s_{k-1}\\|`` of the
-last inner solve, where `s_{k-1}` is the direction GMRES returned and not the step that a backtrack
-accepted. Only [`EisenstatWalkerChoice1`](@ref) reads it. A zero, non-finite or `NaN`
+last step: the step that a line search accepted on an unrestarted inner solve, and the direction
+GMRES returned after a restarted one or a [`DogLeg`](@ref) step. Only
+[`EisenstatWalkerChoice1`](@ref) reads it. A zero, non-finite or `NaN`
 `fnorm_prev` gives ``\\eta_{\\max}``: the ratio of the rule is then undefined, and a residual that
 vanished ends the solve before the next step reads its tolerance, so the value is a guard and
 never a step's choice. A non-finite ratio, which a non-finite residual gives, gives ``\\eta_{\\max}``
@@ -241,7 +244,10 @@ A `Newton` with `GMRES` allocates no `n × n` Jacobian, and its iterate must be 
 [`LeastSquaresProblem`](@ref) has no square system. The solve calls no Jacobian function of the
 problem: the product comes from the `jacobian` of the `Newton`, a [`JVPFunction`](@ref) or an AD
 back end, `AutoForwardDiff()` by default. A residual that the back end cannot differentiate
-therefore needs a `JVPFunction`, even where the problem carries a Jacobian. A constructor refuses
+therefore needs a `JVPFunction`, even where the problem carries a Jacobian. For the same reason
+[`solve`](@ref) refuses a `ForwardDiff.Dual` in `x₀` or `p` for a `Newton` with `GMRES` with an
+`ArgumentError`, before the solve: implicit differentiation factorises the Jacobian at the
+root. A constructor refuses
 `maxiter < 1` and a
 `restart` outside `1:maxiter` with an `ArgumentError`, and so does a [`Newton`](@ref) with a
 [`DogLeg`](@ref) globalization and a preconditioner or a `restart < maxiter`; a kernel cannot
@@ -328,7 +334,8 @@ largest inner count of the solve, `arnoldi` the number of Arnoldi steps of the l
 which the matrix-free `DogLeg` reads, and `step` the zero-based index of the current Newton step,
 which the forcing term reads. `last_eta`, `prev_fnorm`, `linres` and `beta` are the ``\\eta_k``,
 ``\\|F_{k-1}\\|``, linear residual and ``\\beta_0`` of the last step, `linres` being that of the
-direction of its inner solve; `start!!` sets them for the solve and `finish!!` returns them to
+step a line search accepted on an unrestarted inner solve and that of the direction otherwise;
+`start!!` sets them for the solve and `finish!!` returns them to
 `NaN`, so they are `NaN` on a state that no `start!!` saw and on the state that `solve!!` returned,
 and a step there fails closed. The counters are mutable, so that a step reports them without
 rebuilding the workspace.
