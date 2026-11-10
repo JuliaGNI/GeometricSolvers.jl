@@ -735,11 +735,13 @@ so that a compat-only bump can be told apart from an interface change.
   evaluates one global Jacobian per block and solves all its columns with that block's one
   factor, not one product per block per column: on problem P8 of
   `test/composition/preconditioning.jl` (`n = 20`, 5 blocks, overlap 2,
-  `RAS(part; max_iterations = 50, rtol = sqrt(eps(T)))`, `x0 = sin(πj/(n+1))`) the global
-  residual calls, `Dual` evaluations included, are 63 in `Float64` and 78 in `Float32`, against
-  423 and 528 at 863b278, the head of the pull request before this change, with the same outer
-  iteration counts, 4 and 5. With any other inner method the derivative of `rˡ` is a central
-  difference of the composed residual, because a step of an inner method is not
+  `LeftPreconditioned(Newton(), RAS(part; max_iterations = 50, rtol = 0))`,
+  `x0 = sin(πj/(n+1))`; `rtol = 0` because the local solves of P8 do not all converge, so the
+  benchmark makes no convergence claim for them) the global residual calls, `Dual` evaluations
+  included, are 78 in `Float64` and 63 in `Float32`, against 528 and 423 at 863b278, the head of
+  the pull request before the RASPEN change, with the same outer iteration counts on both trees,
+  5 in `Float64` and 4 in `Float32`. With any other inner method the derivative of `rˡ` is a
+  central difference of the composed residual, because a step of an inner method is not
   `ForwardDiff.Dual`-generic.
   `NonlinearProblem(F, J; block_residuals = …, block_jacobians = …)` wraps only `F`: `prob.J`
   stays the caller's Jacobian, and the block functions are read through `block_residuals`,
@@ -754,8 +756,20 @@ so that a compat-only bump can be told apart from an interface change.
   solution and a `RAS` or NKS-RAS sweep pays for no extra factor. A block factor that no complete
   sweep has formed fails closed, and a product on such a state raises an `ArgumentError`; an inner
   step that does not return `SUCCESS` makes `rˡ` non-finite, so its merit is `NaN`, the line search
-  rejects the trial, `solve` and `solve!` return `NONFINITE`, and a failed inner step is never read
-  as a zero of `rˡ`. `ras_counts` reports its
+  rejects the trial, and a failed inner step is never read as a zero of `rˡ`; the step of
+  `LeftPreconditioned` then returns `NONFINITE` and the solve ends, except for an unconverged local
+  solve, which returns `MAXITERS` as below. A `RAS` with a positive tolerance
+  (`atol > 0` or `rtol > 0`) whose local solve takes all `max_iterations` steps and ends above the
+  tolerance makes its step return `MAXITERS` with the iterate unchanged, and
+  `ras_counts(state).failed_block` names the block (`0` otherwise); with `atol = rtol = 0` a local
+  solve takes `max_iterations` steps and makes no claim. A local solve whose last Newton step `δ`
+  satisfies `‖δ‖ ≤ eps(T)·‖xᵢ‖` counts as converged, because its residual can fall no further;
+  without that floor a local solve that starts at a root, where `rtol·f₀` is below rounding, would
+  report a false non-convergence. A step that returns `MAXITERS` ends a solve, like `SINGULAR` and
+  `NONFINITE`, and is a hard failure of a member of `Multiplicative`, `Additive`, `Repeat` and
+  `Anderson`. A `LeftPreconditioned` step that meets an unconverged local solve, at its iterate or
+  at the trial point where its outer step reports `NONFINITE`, returns `MAXITERS`; RASPEN needs
+  converged local solves. `ras_counts` reports its
   sweeps, parallel block solves and inner iterations, and `RAS` takes `max_iterations`, `rtol`,
   `atol` and the balance threshold of Cai and Li, which `LeftPreconditioned` refuses: its
   `init_state` raises an `ArgumentError` for a `RAS` inner with a `balance_threshold`, because a

@@ -97,7 +97,15 @@ step then evaluates the global residual once at the swept iterate and returns it
 `Multiplicative(RAS(partition), Newton())` is NKS-RAS.
 
 An inner iteration of block `i` stops before its linear solve when the block residual norm is at
-most `atol + rtol * ‖f_i⁰‖`, with `f_i⁰` the block's residual at its first inner iteration. With
+most `atol + rtol * ‖f_i⁰‖`, with `f_i⁰` the block's residual at its first inner iteration. With a
+positive tolerance (`atol > 0` or `rtol > 0`), a local solve that takes all `max_iterations` steps
+is converged when its last Newton step ``\\delta`` is at the rounding level of its iterate,
+``\\|\\delta\\| \\le \\varepsilon \\|x_i\\|`` with ``\\varepsilon`` the `eps` of the element type,
+where the residual can fall no further; otherwise it evaluates its block residual once more, and
+where that norm is above the tolerance the local solve has not converged: the step returns the
+iterate unchanged with `MAXITERS`, which ends the solve, and [`ras_counts`](@ref) names the block
+in `failed_block`. With `atol = rtol = 0` every local
+solve takes `max_iterations` steps and makes no claim of convergence. With
 `balance_threshold = ρ` the step returns the iterate unchanged, as a `SUCCESS` of zero norm, when
 ``\\max_i \\|R_i F(x)\\| \\le \\rho \\|F(x)\\|`` (`CaiLi:2011`); the block residuals cost one call
 per block in that test, and the global residual costs none. [`LeftPreconditioned`](@ref) refuses a
@@ -175,13 +183,15 @@ end
 # - `parallel_block_solves`: the block solves of the parallel schedule, one per inner iteration of
 #   the slowest block, summed over the sweeps, and — on such a state — one per sweep for the block
 #   Jacobian that the slowest block forms at the local iterate its sweep returns.
+# - `failed_block`: the block whose local solve did not converge in the last sweep, or `0`.
 mutable struct RASCounter
     sweeps::Int
     block_solves::Int
     parallel_block_solves::Int
+    failed_block::Int
 end
 
-RASCounter() = RASCounter(0, 0, 0)
+RASCounter() = RASCounter(0, 0, 0, 0)
 
 # The workspace of one block: the index sets as arrays of the iterate's storage, the local
 # iterate, residual, Jacobian and step buffers, the subdomain rows of the global Jacobian that a
@@ -349,13 +359,17 @@ function ras_prolongate!(dest, x_locals, owners, local_owners)
 end
 
 # One sweep, and the code it ends with: `SINGULAR` where a block's factor reports a zero pivot,
-# `NONFINITE` where a block residual is not finite. A failed sweep prolongates nothing, so the
-# iterate it was given is unchanged, and leaves no factor readable. The couplings of the frozen
-# block residuals are the iterate of this call, and the factor at the returned local iterate is
-# formed only where a RASPEN preparation reads the block factors.
+# `NONFINITE` where a block residual is not finite, and `MAXITERS` where a local solve with a
+# positive tolerance ends its iterations above it and its last step above the rounding level of
+# its iterate, with that block in `failed_block`. A failed
+# sweep prolongates nothing, so the iterate it was given is unchanged, and leaves no factor
+# readable. The couplings of the frozen block residuals are the iterate of this call, and the
+# factor at the returned local iterate is formed only where a RASPEN preparation reads the block
+# factors.
 function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
     blocks = state.blocks
     blocks.formed = false
+    state.counts.failed_block = 0
     blocks.problems === nothing || copyto!(blocks.couplings, x)
     nblocks = length(blocks.subdomains)
     total = 0
@@ -367,18 +381,35 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
         x_loc .= view(x, blocks.subdomains[i])
         f₀ = zero(real(eltype(x)))
         k = 0
+        converged = false
         for it in 1:m.max_iterations
             block_residual(prob, i)(f_i, x_loc, x, p)
             all(isfinite, f_i) || return NONFINITE
             fnorm = rnorm(f_i)
             it == 1 && (f₀ = fnorm)
-            fnorm <= m.atol + m.rtol * f₀ && break
+            if fnorm <= m.atol + m.rtol * f₀
+                converged = true
+                break
+            end
             block_jacobian!!(J_i, blocks, prob, i, x_loc, x, p)
             fac = factorize!!(state.factors[i], LUFactorization(), J_i)
             iszero(fac.info) || return SINGULAR
             state.factors[i] = fac
             x_loc .-= ldiv!!(blocks.deltas[i], fac, f_i)
             k += 1
+        end
+        # a positive tolerance makes the local solve a claim of convergence, which the residual
+        # after its last step decides, unless that step is at the rounding level of the local
+        # iterate, `‖δ‖ ≤ eps ‖x_i‖`, where the residual can fall no further; zero tolerances take
+        # `max_iterations` steps and claim none
+        rounded = k > 0 && rnorm(blocks.deltas[i]) <= eps(real(eltype(x))) * rnorm(x_loc)
+        if !converged && !rounded && (m.atol > 0 || m.rtol > 0)
+            block_residual(prob, i)(f_i, x_loc, x, p)
+            all(isfinite, f_i) || return NONFINITE
+            if rnorm(f_i) > m.atol + m.rtol * f₀
+                state.counts.failed_block = i
+                return MAXITERS
+            end
         end
         # the block Jacobian that RASPEN reads is `R_i J(u⁽ⁱ⁾) P_i` at the local iterate this
         # sweep returns, not at the iterate one Newton step before it, so it is formed here
@@ -407,8 +438,9 @@ Run one restricted additive Schwarz sweep from the iterate `x`, overwrite `x` wi
 iterate, and return it. The sweep restricts each subdomain, evaluates that block's residual once
 per inner iteration, solves the block system with the block's own factor, and prolongates through
 the owner sets. It calls the global residual no times. A block factor that reports a zero pivot,
-and a block residual with a non-finite entry, leave `x` unchanged; the [`step!!`](@ref) of `RAS`
-reports them as `SINGULAR` and `NONFINITE`.
+a block residual with a non-finite entry, and a local solve with a positive tolerance that does
+not converge leave `x` unchanged; the [`step!!`](@ref) of `RAS` reports them as `SINGULAR`,
+`NONFINITE` and `MAXITERS`.
 """
 function ras_sweep!!(state::RASState, m::RAS, prob, x, p)
     _ras_sweep!!(state, m, prob, x, p)
@@ -467,6 +499,8 @@ The counters of the last solve of a [`RAS`](@ref) state, as a named tuple:
   sweep for the block Jacobian that each block forms at the local iterate its sweep returns.
 - `total_inner_iterations`, `block_solves`: every block solve, summed over the blocks and the
   sweeps, with the same one more per block on such a state.
+- `failed_block`: the block whose local solve did not converge in the last sweep, which made the
+  step return `MAXITERS`, or `0`.
 
 [`start!!`](@ref) resets them, so a second [`solve!`](@ref) on one solver reports its own solve. A
 state of [`LeftPreconditioned`](@ref) with an inner [`RAS`](@ref), and a state of
@@ -479,7 +513,8 @@ function ras_counts(state::RASState)
         parallel_inner_iterations = c.parallel_block_solves,
         total_inner_iterations = c.block_solves,
         inner_iterations = c.parallel_block_solves,
-        block_solves = c.block_solves)
+        block_solves = c.block_solves,
+        failed_block = c.failed_block)
 end
 
 """

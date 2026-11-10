@@ -123,7 +123,7 @@ end
 end
 
 @inline function is_hard_failure(info::StepInfo)
-    return info.code == SINGULAR || info.code == NONFINITE ||
+    return info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS ||
            (info.code == LINESEARCH_FAILED && iszero(info.stepnorm))
 end
 

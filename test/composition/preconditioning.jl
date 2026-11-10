@@ -935,10 +935,11 @@ end
     @test newton_status.code === SUCCESS
     @test newton_status.iterations > 15
 
-    tol = sqrt(eps(T))
+    # `rtol = 0`: the local solves make no claim of convergence, because block 4 of P8 does not
+    # converge locally from `x0`, and a positive tolerance would end the solve with `MAXITERS`
 
     # NKS-RAS: Multiplicative(RAS(partition), Newton())
-    ras = RAS(part; max_iterations = 50, rtol = tol)
+    ras = RAS(part; max_iterations = 50, rtol = zero(T))
     counting = CountingRAS(ras, counters)
     m_nks = Multiplicative(counting, Newton())
     _, nks_status, state_nks = GeometricSolvers.solve!!(
@@ -955,11 +956,11 @@ end
     @test c.total_inner_iterations == total
     @test c.inner_iterations == parallel
     @test c.block_solves == total
-    # the inner stop test ends each local solve before its last inner iteration
-    @test c.total_inner_iterations < 50 * length(part.owners) * c.sweeps
+    # with no tolerance the slowest block takes all 50 local steps in every sweep
+    @test c.parallel_block_solves == 50 * c.sweeps
 
     # RASPEN: LeftPreconditioned(Newton(), RAS(partition))
-    ras2 = RAS(part; max_iterations = 50, rtol = tol)
+    ras2 = RAS(part; max_iterations = 50, rtol = zero(T))
     counting2 = CountingRAS(ras2, counters)
     m = LeftPreconditioned(Newton(), counting2)
     _, raspen_status, state_raspen = GeometricSolvers.solve!!(
@@ -972,7 +973,8 @@ end
     @test c2.sweeps == sweeps2
     @test c2.parallel_block_solves == parallel2
     @test c2.total_inner_iterations == total2
-    @test c2.total_inner_iterations < 50 * length(part.owners) * c2.sweeps
+    # and one more for the block factor at the local iterate that a RASPEN sweep returns
+    @test c2.parallel_block_solves == 51 * c2.sweeps
 
     # the counts at one inner step are recorded as a measurement, not asserted
     let
@@ -1061,6 +1063,106 @@ end
         @test status.code === NONFINITE
         @test Array(x) == x0
     end
+end
+
+# Block 2's Jacobian is twice the true one, so each of its local steps halves its residual and two
+# steps leave it at a quarter, above a positive relative tolerance of 1e-3, while blocks 1 and 3
+# converge in one step. The step is `MAXITERS`, names block 2, and ends a RAS, an NKS-RAS and a
+# RASPEN solve at their first step; with zero tolerances the same local steps claim no convergence.
+@testset "An unconverged local solve is MAXITERS and names its block, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
+    F!, J! = affine_global(x0, A, b)
+    ab = affine_blocks(x0, part, A, b)
+    doubled = (J2, x_loc, x, p) -> (J2 .= 2 .* ab.local_jacobians[2]; J2)
+    jacobians = ntuple(i -> i == 2 ? doubled : affine_block_jacobian(ab, i), 3)
+    prob = NonlinearProblem(F!, J!;
+        block_residuals = ntuple(i -> affine_block(ab, i, nothing), 3),
+        block_jacobians = jacobians)
+    ras = RAS(part; max_iterations = 2, rtol = T(1e-3))
+    Fx = residual!!(similar(x0), prob, x0, nothing)
+
+    state = init_state(ras, prob, copy(x0), nothing)
+    state = start!!(state, ras, prob, copy(x0), Fx, nothing, rnorm(Fx))
+    x₊, Fx₊, state, info = step!!(state, ras, prob, copy(x0), copy(Fx), nothing)
+    @test info.code === MAXITERS
+    @test x₊ == x0
+    @test Fx₊ == Fx
+    @test ras_counts(state).failed_block == 2
+
+    for m in (ras, Multiplicative(ras, Newton()), LeftPreconditioned(Newton(), ras),
+        LeftPreconditioned(Newton(; globalization = Backtracking()), ras))
+        x, status, st = GeometricSolvers.solve!!(
+            init_state(m, prob, copy(x0), nothing), prob, copy(x0), m, nothing,
+            GeometricSolvers.Options(T))
+        @test status.code === MAXITERS
+        @test status.iterations == 1
+        @test x == x0
+        @test ras_counts(st).failed_block == 2
+    end
+
+    # zero tolerances: two local steps per block and no claim of convergence
+    x, _, info = one_step(prob, RAS(part; max_iterations = 2), copy(x0), copy(Fx))
+    @test info.code === SUCCESS
+    @test x != x0
+end
+
+# At the exact root each block's first residual is at the rounding level, so `rtol * f₀` lies below
+# what any step can reach; the last local step is then at the rounding level of the local iterate,
+# which counts as converged, and neither the step at the root nor a RASPEN solve that lands on it
+# fails.
+@testset "A local solve at the rounding level is converged, $T" for T in REAL_ELTYPES
+    n = 8
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75, 0.125, -0.125]
+    prob, _ = affine_problem(x0, A, b, part)
+    ras = RAS(part; max_iterations = 3, rtol = T(1e-10))
+
+    xstar = A \ b
+    Fstar = residual!!(similar(xstar), prob, xstar, nothing)
+    _, _, info = one_step(prob, ras, copy(xstar), copy(Fstar))
+    @test info.code === SUCCESS
+
+    for outer in (Newton(), Newton(; globalization = Backtracking()))
+        x, status = solve(prob, copy(x0), LeftPreconditioned(outer, ras); max_iterations = 20)
+        @test status.code === SUCCESS
+        @test norm(A * x - b) <= sqrt(eps(T)) * norm(b)
+    end
+end
+
+# Block 2's local solve converges at `x0` and at no other iterate away from the root, so a damped
+# Picard outer step, whose trial point is not the root, meets the failure there, where its residual
+# `rˡ` is non-finite: the step reports the inner `MAXITERS`, not the outer's `NONFINITE`, and names
+# block 2.
+@testset "An unconverged local solve at an outer trial point is MAXITERS, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
+    F!, J! = affine_global(x0, A, b)
+    ab = affine_blocks(x0, part, A, b)
+    exact_at_x0 = (J2, x_loc, x, p) -> begin
+        J2 .= (x == x0 ? 1 : 2) .* ab.local_jacobians[2]
+        J2
+    end
+    jacobians = ntuple(i -> i == 2 ? exact_at_x0 : affine_block_jacobian(ab, i), 3)
+    prob = NonlinearProblem(F!, J!;
+        block_residuals = ntuple(i -> affine_block(ab, i, nothing), 3),
+        block_jacobians = jacobians)
+    m = LeftPreconditioned(Picard(; damping = one(T) / 2),
+        RAS(part; max_iterations = 2, rtol = T(1e-3)))
+    _, status, st = GeometricSolvers.solve!!(
+        init_state(m, prob, copy(x0), nothing), prob, copy(x0), m, nothing,
+        GeometricSolvers.Options(T))
+    @test status.code === MAXITERS
+    @test status.iterations == 1
+    @test ras_counts(st).failed_block == 2
 end
 
 # --- the RASPEN Jacobian follows eq. 3.17 -----------------------------------------------------

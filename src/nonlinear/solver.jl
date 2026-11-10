@@ -124,7 +124,9 @@ with `0` iterations. `options` must be an `Options{real(eltype(x₀))}`; any oth
 evaluation inside a step: [`solve`](@ref) takes dual inputs.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
-`SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
+`SINGULAR` and `NONFINITE` return immediately, and so does `MAXITERS`, the code of a step whose
+inner iteration reached its own cap, such as a [`RAS`](@ref) step whose local solve did not
+converge. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
 (meaning the failed line-search trial did not decrease the merit) stops immediately with
 `LINESEARCH_FAILED`, unless the stationarity test below holds, which a nonzero-residual
 least-squares minimum reaches with every step a line search can try; one that decreased the merit
@@ -168,7 +170,7 @@ function solve!!(
     while true
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
         status = record(status, info)
-        if info.code == SINGULAR || info.code == NONFINITE
+        if info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS
             return finish!!(state, method, prob, x, Fx, status)
         end
         if info.code == LINESEARCH_FAILED && iszero(info.stepnorm) &&

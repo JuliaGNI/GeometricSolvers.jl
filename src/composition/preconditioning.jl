@@ -16,9 +16,12 @@ costs one inner step, and every merit value it reads is ``\\|r^\\ell\\|_2^2``. T
 
 `LeftPreconditioned(Newton(), RAS(partition))` is RASPEN: the merit is on the restricted additive
 Schwarz map, and the Jacobian of ``r^\\ell`` is the exact form of [`raspen_jvp!`](@ref) built from
-the block factors of the last sweep (`Dolean:2016`, eq. 3.17). RASPEN needs converged local solves.
-A `RAS` with a `balance_threshold` is refused at `init_state` with an `ArgumentError`, because a
-skipped sweep returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root.
+the block factors of the last sweep (`Dolean:2016`, eq. 3.17). RASPEN needs converged local solves:
+a `RAS` with a positive tolerance whose local solve does not converge returns `MAXITERS`, and a
+`LeftPreconditioned` step that meets it, at its iterate or at the trial point where its outer step
+reports `NONFINITE`, returns `MAXITERS` too, which ends the solve. A `RAS` with
+a `balance_threshold` is refused at `init_state` with an `ArgumentError`, because a skipped sweep
+returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root.
 With any other `inner` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
 [`prepare_ad`](@ref) prepares at `init_state` whatever its globalization reads. With a
@@ -40,12 +43,13 @@ end
 Adapt.@adapt_structure LeftPreconditioned
 
 """
-    LeftPreconditionedProblem(prob, inner, state, work)
+    LeftPreconditionedProblem(prob, inner, state, work, code)
 
 The problem that `outer` of a [`LeftPreconditioned`](@ref) method solves: the user's problem
-`prob`, the inner method `inner`, the inner method's state in the iterate's element type, and the
+`prob`, the inner method `inner`, the inner method's state in the iterate's element type, the
 iterate buffer that one inner step runs on — a step of an array iterate writes into its `x`, so the
-residual of this problem steps a copy. Its residual is ``r^\\ell(y) = y - N(y)``, one
+residual of this problem steps a copy — and a `Ref` that holds the code of the last inner step.
+Its residual is ``r^\\ell(y) = y - N(y)``, one
 [`step!!`](@ref) of `inner` from `(y, F(y))` subtracted from `y`, so [`residual!!`](@ref) evaluates
 it and a [`LineFunction`](@ref) merits it.
 """
@@ -54,6 +58,7 @@ struct LeftPreconditionedProblem{P, I, S, W} <: AbstractNonlinearProblem
     inner::I
     state::S
     work::W
+    code::Base.RefValue{ReturnCode}
 end
 
 """
@@ -111,7 +116,7 @@ end
         throw(ArgumentError(
             "LeftPreconditioned does not take a RAS with a balance_threshold: a skipped sweep returns its input, which reads as a zero of the preconditioned residual at a point that is not a root"))
     inner_state = init_state(m.inner, prob, x, p)
-    lprob = LeftPreconditionedProblem(prob, m.inner, inner_state, buffer(x))
+    lprob = LeftPreconditionedProblem(prob, m.inner, inner_state, buffer(x), Ref(SUCCESS))
     outer_state = init_state(m.outer, lprob, x, p)
     return LeftPreconditionedState(lprob, outer_state, buffer(x))
 end
@@ -144,6 +149,7 @@ end
     st = start!!(st, prob.inner, prob.prob, xw, Fx, p, rnorm(Fx))
     st = restart_with_counts(st, counts)
     x₊, _, _, info = step!!(st, prob.inner, prob.prob, xw, Fx, p)
+    prob.code[] = info.code
     # a failed inner step returns its input, so `x - x₊` would read as an exact zero of `rˡ`: the
     # residual is non-finite instead, which makes the outer's merit `NaN` and its line search
     # reject the trial
@@ -242,7 +248,8 @@ end
     # restarts and a solve would otherwise report every earlier solve too: this is the hook that
     # gives the counters of the solve that `start!!` opens
     inner = start!!(lprob.state, m.inner, prob, x, Fx, p, rnorm(Fx))
-    lprob = LeftPreconditionedProblem(lprob.prob, lprob.inner, inner, lprob.work)
+    lprob = LeftPreconditionedProblem(
+        lprob.prob, lprob.inner, inner, lprob.work, lprob.code)
     Fxˡ = residual!!(residual_buffer(state.outer_state), lprob, x, p)
     outer_state = start!!(
         state.outer_state, m.outer, lprob, x, Fxˡ, p, rnorm(Fxˡ))
@@ -258,9 +265,10 @@ end
     if !isfinite(fnormˡ)
         # an inner step that failed makes `rˡ` non-finite, and the outer's Jacobian would then
         # read the block factors of a sweep that formed none: the failure is this step's status,
-        # which ends the solve
-        return x, Fx, state,
-        StepInfo{R}(NONFINITE, rnorm(Fx), zero(R), Int32(0), false, false)
+        # which ends the solve. An inner local solve that did not converge keeps its `MAXITERS`,
+        # so that the status names the cause; every other failure is `NONFINITE`
+        code = lprob.code[] == MAXITERS ? MAXITERS : NONFINITE
+        return x, Fx, state, StepInfo{R}(code, rnorm(Fx), zero(R), Int32(0), false, false)
     end
     if iszero(fnormˡ)
         # `x` is a fixed point of the inner map, so the outer solves `rˡ = 0` here: its step is of
@@ -270,8 +278,11 @@ end
     end
     x₊, _, outer_state, info = step!!(state.outer_state, m.outer, lprob, x, Fxˡ, p)
     F₊ = residual!!(state.Fx, prob, x₊, p)
+    # an outer step whose own trial point found an unconverged local solve sees a non-finite
+    # `rˡ` there and reports `NONFINITE`: the inner `MAXITERS` names the cause instead
+    code = info.code == NONFINITE && lprob.code[] == MAXITERS ? MAXITERS : info.code
     info₊ = StepInfo{R}(
-        info.code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited)
+        code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited)
     return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx), info₊
 end
 
