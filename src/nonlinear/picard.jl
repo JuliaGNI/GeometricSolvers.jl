@@ -1,7 +1,8 @@
 """
     Picard(; damping = 1, globalization = Static())
 
-Damped fixed-point (Picard) iteration for [`NonlinearProblem`](@ref), with search direction
+Damped fixed-point (Picard) iteration for a [`NonlinearProblem`](@ref) or a
+[`LeftPreconditionedProblem`](@ref), with search direction
 ``d = -\\mathrm{damping}\\,F(x, p)`` and globalization `globalization` ([`Static`](@ref),
 [`Backtracking`](@ref), [`Bisection`](@ref) or [`StrongWolfe`](@ref)).
 
@@ -87,7 +88,8 @@ end
 end
 
 # The damping is real, so that `-ω F` of a complex `F` is the real scaling of each part.
-@inline function step!!(state::PicardState, m::Picard, prob::NonlinearProblem, x, Fx, p)
+@inline function step!!(
+        state::PicardState, m::Picard, prob::NonlinearProblem, x, Fx, p)
     ω = real(eltype(x))(m.damping)
     d = map!!(fi -> -ω * fi, state.d, Fx)
     x₊, F₊, _, info, merit = globalize_merit!!(

@@ -718,6 +718,28 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **Nonlinear preconditioning: `LeftPreconditioned(outer, inner)`, the block-residual interface
+  (`BlockResidual`, `BlockPartition`) and the restricted additive Schwarz map `RAS(partition)`
+  (decisions 26 and 31 of the design).** `LeftPreconditioned` runs its outer method on the
+  residual `rˡ(y) = y - N(y)` of one step of its inner method `N`, so every trial point of the
+  outer globalization costs one inner step and every merit value the outer reads is `‖rˡ‖²`;
+  with the inner map a one-level `RAS`, `LeftPreconditioned(Newton(), RAS(partition))` is RASPEN,
+  whose Jacobian-vector product is the exact form `Σᵢ R̃ᵢᵀ Jᵢᵢ⁻¹ Rᵢ J v` built from the block
+  factors of the last sweep, and `Multiplicative(RAS(partition), Newton())` is NKS-RAS. With any
+  other inner method the derivative of `rˡ` is a central difference of the composed residual,
+  because a step of an inner method is not `ForwardDiff.Dual`-generic.
+  `NonlinearProblem(F, J; block_residuals = …, block_jacobians = …)` wraps only `F`: `prob.J`
+  stays the caller's Jacobian, and the block functions are read through `block_residuals`,
+  `block_jacobians`, `block_residual` and `block_jacobian`. `BlockPartition(subdomains, owners)`
+  requires non-empty duplicate-free subdomains and owner sets that are disjoint and cover `1:n`
+  exactly, and `BlockPartition(n, nblocks; overlap)` builds one. A `RAS` sweep restricts each
+  subdomain, solves each block with `dense_factor`, `factorize!!` and `ldiv!!` — so a `JLArray`
+  iterate runs on the device factor and the kernels stay non-scalar — prolongates through the
+  owner sets only, so each index of `1:n` is written once, and calls the global residual no
+  times. `ras_counts` reports its sweeps, parallel block solves and inner iterations, and `RAS`
+  takes `max_iterations`, `rtol`, `atol` and the balance threshold of Cai and Li. The standard
+  test set gains the column `LeftPreconditioned Picard Backtracking Newton`, 134 cells.
+
 - **A `SciMLBase` package extension (`GeometricSolversSciMLBaseExt`) accepts a
   `SciMLBase.NonlinearProblem` in `solve` and `init`, and returns `(x, status)`** (decision 52 of
   the design). `SciMLBase` is a weak dependency (`[compat] SciMLBase = "3.55"`), so the package and

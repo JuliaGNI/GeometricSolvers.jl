@@ -36,6 +36,10 @@ export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard,
        NonlinearSolver, ReparametrizedSolver, init, solve, solve!
 export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
+export BlockResidual, block_residuals, block_jacobians, block_residual, block_jacobian
+export BlockPartition, RAS, RASState, ras_prolongate!, ras_sweep!!, ras_counts
+export LeftPreconditioned, LeftPreconditionedState, LeftPreconditionedProblem,
+       raspen_jvp!, raspen_jacobian!
 export solve_batch!
 
 public solve!!, sciml_retcode
@@ -96,6 +100,8 @@ include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
 include("composition/anderson.jl")
+include("composition/ras.jl")
+include("composition/preconditioning.jl")
 include("composition/implicit.jl")
 
 end

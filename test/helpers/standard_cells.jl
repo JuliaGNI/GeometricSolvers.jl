@@ -41,7 +41,9 @@ const STANDARD_COLUMNS = (
     "Newton LevenbergMarquardt SVD" => Newton(;
         linsolve = SVDFactorization(), globalization = LevenbergMarquardt()),
     "Newton reuse 3 Backtracking LU" => Newton(; reuse = 3, globalization = Backtracking()),
-    "Picard Backtracking" => Picard(; globalization = Backtracking())
+    "Picard Backtracking" => Picard(; globalization = Backtracking()),
+    "LeftPreconditioned Picard Backtracking Newton" =>
+        LeftPreconditioned(Picard(; globalization = Backtracking()), Newton())
 )
 
 """
@@ -201,6 +203,13 @@ function perturbed_direction(m::Newton, seed)
         m.reuse)
 end
 perturbed_direction(::Picard, seed) = nothing
+
+# A left-preconditioned method carries the direction of its outer method: its own outer `Newton`
+# is perturbed, and a `Picard` outer, which solves no linear system for its direction, is not.
+function perturbed_direction(m::LeftPreconditioned, seed)
+    outer = perturbed_direction(m.outer, seed)
+    return LeftPreconditioned(outer === nothing ? m.outer : outer, m.inner)
+end
 
 """
     perturbed_runs(sp, start, x₀, column, method)
@@ -391,7 +400,7 @@ function print_summary(io::IO, cells, iterates, problems = STANDARD_PROBLEMS)
             end
             rpad("$success/$(nstarts[T]), root $near/$rooted", 22)
         end
-        println(io, rpad(column, 32), join(entries))
+        println(io, rpad(column, 32), " ", join(entries))
     end
     println(io, "SUCCESS cells away from the stated root: ", length(away))
     foreach(line -> println(io, line), away)
