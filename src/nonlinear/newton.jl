@@ -99,12 +99,12 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse"))
         end
         globalization isa LevenbergMarquardt && is_refining(refinement) &&
-            throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
+            throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no refinement: a refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
         if linsolve isa GMRES
             reuse === nothing ||
                 throw(ArgumentError("Newton with GMRES takes no factor reuse: a GMRES step has no factor"))
             is_refining(refinement) &&
-                throw(ArgumentError("Newton with GMRES takes no Refinement: a GMRES step has no factor to refine against"))
+                throw(ArgumentError("Newton with GMRES takes no refinement: a GMRES step has no factor to refine against"))
             if globalization isa DogLeg
                 linsolve.restart == linsolve.maxiter ||
                     throw(ArgumentError("Newton with a DogLeg globalization needs unrestarted GMRES: restart must equal maxiter"))
@@ -189,7 +189,7 @@ end
 @inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
     if is_refining(m.refinement) && m.jacobian isa AbstractADType &&
        dense_ad(m.jacobian) isa AutoFiniteDiff
-        throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
+        throw(ArgumentError("A refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
     end
     has_J = _has_analytic_jacobian(prob)
     if m.jacobian === nothing && !has_J
@@ -397,7 +397,7 @@ end
 # `LevenbergMarquardt` trial loop and a refinement multiply by it.
 @inline function init_newton_J(m::Newton, fac, fac_T, x, Fx = x)
     if !(m.globalization isa Union{DogLeg, LevenbergMarquardt}) &&
-       !is_refining(m.refinement)
+       m.refinement isa NoRefinement
         if factor_eltype(m.linsolve, eltype(x)) === eltype(x)
             return fac.factors
         elseif fac_T !== nothing && m.linsolve isa LUFactorization
@@ -723,7 +723,7 @@ end
     # A `Refinement` drives the linear residual `J d + F` to zero, which a least-squares step with
     # more residuals than unknowns does not reach (known issue K80)
     if prob isa LeastSquaresProblem && is_refining(m.refinement)
-        throw(ArgumentError("LeastSquaresProblem does not support Refinement"))
+        throw(ArgumentError("LeastSquaresProblem does not support refinement"))
     end
     m.globalization isa LevenbergMarquardt &&
         check_lm_iterate(m.globalization, m.linsolve, prob, x)
@@ -799,7 +799,8 @@ The factors of the factorisation that the last step of `solver` took, in the fac
 precision `TF`: [`stored_factors`](@ref) of the factor of the state, the packed `L` and `U` of an
 [`LUFactorization`](@ref) with its `ipiv` in the factor itself. It is `nothing` for a solve that
 holds no factor — a matrix-free [`GMRES`](@ref) solve, and a value iterate whose factor no step
-stored. `stored_factors(state)` reads the state that [`init_state`](@ref) returned instead.
+stored — and for a factorisation that is no LU factorisation. `stored_factors(state)` reads the
+state that [`init_state`](@ref) returned instead.
 """
 @inline stored_factors(state::NewtonState) = stored_factors(state.fac)
 @inline stored_factors(solver::NonlinearSolver) = stored_factors(solver.state)
@@ -808,17 +809,16 @@ stored. `stored_factors(state)` reads the state that [`init_state`](@ref) return
     promoted_factors(solver)
 
 The factors of the working-precision copy of [`stored_factors`](@ref) that a [`GMRESRefinement`](@ref)
-promotes, in the element type of the iterate `T`: `Float64.(stored_factors(solver))` while the
+promotes, in the element type of the iterate `T`: `T.(stored_factors(solver))` while the
 GMRES-IR stage that promoted them is the one that holds them, and the refactorised factors of the
 Jacobian where the step promoted to `T` instead. The storage belongs to the state, and `init`
 leaves it zeroed, so a read before the first promotion reads zeros. It is `nothing` for a solve
 that keeps no working-precision factor slot: a factorisation already in `T`, a value iterate, and
-a matrix-free [`GMRES`](@ref) solve.
+a matrix-free [`GMRES`](@ref) solve; and for a factorisation that is no LU factorisation.
 """
 @inline promoted_factors(state::NewtonState) = promoted_factors(state.fac_T)
 @inline promoted_factors(solver::NonlinearSolver) = promoted_factors(solver.state)
-@inline promoted_factors(::Nothing) = nothing
-@inline promoted_factors(fac::Union{DenseLU, DeviceLU, StaticLU}) = stored_factors(fac)
+@inline promoted_factors(fac) = stored_factors(fac)
 
 """
     preconditioned_buffer(solver)
@@ -897,7 +897,7 @@ end
     if fresh && (m.jacobian === nothing || m.jacobian isa AbstractADType) &&
        iszero(m.regularization) &&
        (in_working_T ||
-        (factor_eltype(m.linsolve, T) === T && !is_refining(m.refinement)))
+        (factor_eltype(m.linsolve, T) === T && m.refinement isa NoRefinement))
         return ExactStep()
     else
         return MeasuredSlope()
@@ -1156,7 +1156,7 @@ end
 Stage 2 of the mixed-precision remedy chain of a [`Newton`](@ref) step, GMRES-IR after the LU-IR
 passes of `d` have failed: a left-preconditioned GMRES in the working precision `T` on
 ``\\hat{U}^{-1}\\hat{L}^{-1}P J \\,\\delta d = \\hat{U}^{-1}\\hat{L}^{-1}P r_{\\mathrm{lu}}``, with
-the copy of the `Float32` factors that [`promote_lu_factors!`](@ref) writes into the
+the copy of the factors in `TF` that [`promote_lu_factors!`](@ref) writes into the
 working-precision factor slot, a cap of `min(ref.gmres_maxiter, n)` inner iterations, and the
 tolerance `ref.gmres_tol` on the true linear residual
 ``r_{\\mathrm{true}} = -F(x) - J (d + \\delta d)`` recomputed in `T`, which the stage accepts up to

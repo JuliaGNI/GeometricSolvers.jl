@@ -1,6 +1,6 @@
 # GMRES-IR: the SDD five-precision variant of iterative refinement, the three-stage remedy chain
 # `LU-IR -> GMRES-IR -> T refactorisation`, the true linear residual bound of the inner GMRES, and
-# the comparison script (§13.AD, Checks 1–5).
+# the comparison script (Checks 1–5).
 #
 # The chain is only exercised by a Jacobian whose conditioning is above the LU-IR limit of about
 # `2e7`, so the fixture is a linear problem whose right-hand side lies along the smallest singular
@@ -30,7 +30,7 @@ const GS = GeometricSolvers
 allowscalar(false)
 
 # The working types of the chain: a `Float32` problem has no factorisation precision below it, and
-# the SDD variant is `Float32` factors of a `Float64` problem (§1.4).
+# the SDD variant is `Float32` factors of a `Float64` problem.
 const SDD_ELTYPES = filter(T -> real(T) === Float64, ELTYPES)
 
 # The conditioning numbers of the three branches: below the LU-IR limit, between the two limits, and
@@ -407,6 +407,13 @@ end
         free = init(prob, copy(x0), Newton(; linsolve = GMRES(; maxiter = 4)))
         @test stored_factors(free) === nothing
         @test promoted_factors(free) === nothing
+        # nor does a factorisation that is no LU factorisation, in either precision
+        for ls in (QRFactorization(), QRFactorization(Float32), SVDFactorization(),
+            SVDFactorization(Float32), LDLTFactorization(), LDLTFactorization(Float32))
+            other = init(prob, copy(x0), Newton(; linsolve = ls))
+            @test stored_factors(other) === nothing
+            @test promoted_factors(other) === nothing
+        end
     end
 
     @testset "a mixed solve allocates nothing after init" begin
@@ -509,7 +516,7 @@ end
     end
 
     @testset "a GMRESRefinement solve inside a KernelAbstractions kernel on CPU" begin
-        # §V names the KA backend: a value iterate carries no Krylov basis, so the kernel reaches
+        # On the KA backend a value iterate carries no Krylov basis, so the kernel reaches
         # the LU-IR passes and the refactorisation, and `GMRESRefinement` has to be `isbits` for the
         # method to travel into the kernel at all.
         # Under `--check-bounds=yes` a bounds check stops the compiler eliding the local
