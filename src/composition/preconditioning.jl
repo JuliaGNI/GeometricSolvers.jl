@@ -2,8 +2,8 @@
 # method `N`, so every line-search trial of the outer costs one inner solve and its merit is
 # `‖rˡ‖²` (`Brune:2015`, `CaiLi:2011`, `Dolean:2016`). With `N` the restricted additive Schwarz
 # map of `src/composition/ras.jl` it is RASPEN, whose Jacobian is exact from the block factors of
-# the last sweep; with any other `N` its derivative is the derivative of `rˡ` through the inner
-# step, one forward-mode directional derivative of the composed residual.
+# the last sweep; with any other `N` its derivative is a central difference of `rˡ`, one inner step
+# at each of `x ± h v`.
 
 """
     LeftPreconditioned(outer, inner)
@@ -16,8 +16,9 @@ costs one inner step, and every merit value it reads is ``\\|r^\\ell\\|_2^2``. T
 
 `LeftPreconditioned(Newton(), RAS(partition))` is RASPEN: the merit is on the restricted additive
 Schwarz map, and the Jacobian of ``r^\\ell`` is the exact form of [`raspen_jvp!`](@ref) built from
-the block factors of the last sweep (`Dolean:2016`, eq. 3.17). With any other `inner` the
-derivative of ``r^\\ell`` is a central difference of the composed residual, which
+the block factors of the last sweep (`Dolean:2016`, eq. 3.17). RASPEN needs converged local solves,
+and at one inner step its outer step is Newton's step. With any other `inner` the derivative of
+``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
 [`prepare_ad`](@ref) prepares at `init_state`; a globalization that reads no slope, such as
 [`Static`](@ref), pays for none.
 
@@ -67,9 +68,10 @@ end
 """
     RASPenPreparation
 
-The AD preparation of a [`LeftPreconditioned`](@ref) method whose inner method is [`RAS`](@ref):
-the RAS state, whose block factors the RASPEN Jacobian product reads. [`jacobian!!`](@ref) and
-[`jvp!!`](@ref) apply the exact form of [`raspen_jacobian!`](@ref) and [`raspen_jvp!`](@ref).
+The AD preparation of a [`LeftPreconditioned`](@ref) method whose inner state is a
+[`RASState`](@ref): the RAS state, whose block factors the RASPEN Jacobian product reads.
+[`jacobian!!`](@ref) and [`jvp!!`](@ref) apply the exact form of
+[`raspen_jacobian!`](@ref) and [`raspen_jvp!`](@ref).
 """
 struct RASPenPreparation{A}
     ras::A
@@ -78,9 +80,9 @@ end
 """
     LeftPreconditionedAD
 
-The AD preparation of a [`LeftPreconditioned`](@ref) method whose inner method is not
-[`RAS`](@ref): the iterate and residual buffers of the two points of a central difference, and the
-direction buffer that seeds one column at a time. [`jvp!!`](@ref) evaluates ``r^\\ell`` at
+The AD preparation of a [`LeftPreconditioned`](@ref) method whose inner state is not a
+[`RASState`](@ref): the iterate and residual buffers of the two points of a central difference,
+and the direction buffer that seeds one column at a time. [`jvp!!`](@ref) evaluates ``r^\\ell`` at
 ``x \\pm h v`` and forms ``(r^\\ell(x + hv) - r^\\ell(x - hv)) / 2h``, and [`jacobian!!`](@ref)
 takes one column per call of it.
 
@@ -170,7 +172,9 @@ end
 function prepare_ad(
         backend::AutoForwardDiff, prob::LeftPreconditionedProblem, Fx::AbstractArray,
         x::AbstractArray, p)
-    if prob.inner isa RAS
+    # the preparation reads the inner state's block factors, so the state that is a `RASState` —
+    # the state of a [`RAS`](@ref), and of any member that forwards to one — is a RASPEN inner map
+    if prob.state isa RASState
         return RASPenPreparation(prob.state)
     end
     return LeftPreconditionedAD(

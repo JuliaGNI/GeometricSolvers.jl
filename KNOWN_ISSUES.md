@@ -304,9 +304,9 @@
   (`solve_implicit` in `src/nonlinear/implicit.jl`). The tangent solve takes its Jacobian
   preparation from `_tangent_jacprep`, which has a method for a `NewtonState` and a `PicardState`
   only. `solve` with an `Additive`, `Multiplicative`, `Repeat`, `Switch`, `Anderson`,
-  `LeftPreconditioned` or `RAS` method
-  therefore raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal
-  solve; `init`, `solve!` and `solve_batch!` refuse a dual input for every method. Implicit
+  `LeftPreconditioned` or `RAS` method therefore raises an `ArgumentError` for a
+  `ForwardDiff.Dual` in `x₀` or `p`, before the primal solve; `init`, `solve!` and
+  `solve_batch!` refuse a dual input for every method. Implicit
   differentiation through a combinator, which needs the Jacobian of `F` at `x*` and not the steps
   of the members, is for a later pull request.
 - **kind:** defect

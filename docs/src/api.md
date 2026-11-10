@@ -291,7 +291,8 @@ Anderson
 globalization costs one inner step and every merit value it reads is ``\\|r^\\ell\\|_2^2``. With
 the inner method a one-level [`RAS`](@ref) map over a [`BlockPartition`](@ref) it is RASPEN,
 `LeftPreconditioned(Newton(), RAS(partition))`, whose Jacobian is the exact form from the block
-factors of the last sweep; `Multiplicative(RAS(partition), Newton())` is NKS-RAS, the same map
+factors of the last sweep; RASPEN needs converged local solves, and at one inner step its outer
+step is Newton's step. `Multiplicative(RAS(partition), Newton())` is NKS-RAS, the same map
 followed by one Newton step. A [`RAS`](@ref) sweep restricts each subdomain, solves each block
 with the package's own factor, and prolongates through the owner sets only, so each index of `1:n`
 is written once and the sweep calls the global residual no times; [`ras_counts`](@ref) reports the
@@ -302,6 +303,8 @@ block without a Jacobian is differentiated by `AutoForwardDiff()`.
 LeftPreconditioned
 LeftPreconditionedProblem
 LeftPreconditionedState
+LeftPreconditionedAD
+RASPenPreparation
 RAS
 RASState
 BlockPartition

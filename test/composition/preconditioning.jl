@@ -5,12 +5,14 @@
 # stiff cubic reaction-diffusion problem.
 
 using Adapt: Adapt
+using ADTypes: AutoForwardDiff
 using GeometricSolvers
 using GeometricSolvers: BlockPartition, BlockResidual, LeftPreconditioned,
                         LeftPreconditionedProblem, LeftPreconditionedState,
                         Multiplicative, NONFINITE, Newton, NonlinearProblem, Picard, RAS,
                         RASState, SINGULAR, SUCCESS, StepInfo, block_jacobians,
-                        block_residual, block_residuals, init_state, norm2, ras_counts,
+                        block_residual, block_residuals, init_state, jacobian!!, jvp!!,
+                        norm2, prepare_ad, ras_counts,
                         ras_prolongate!, ras_sweep!!, raspen_jacobian!, raspen_jvp!,
                         residual!!, residual_buffer, rnorm, solve, solve!, start!!, step!!
 using JLArrays: JLArray
@@ -277,16 +279,18 @@ end
     x0 = B(T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75, 0.125, -0.125])
     prob, _ = affine_problem(x0, A, b, part)
     ras = RAS(part; max_iterations = 1)
+    m = LeftPreconditioned(Newton(), ras)
     x = copy(x0)
-    state = init_state(ras, prob, x, nothing)
-    state = start!!(
-        state, ras, prob, x, residual!!(residual_buffer(state), prob, x, nothing),
-        nothing, rnorm(residual!!(similar(x), prob, x, nothing)))
-    ras_sweep!!(state, ras, prob, x, nothing)
+    state = init_state(m, prob, x, nothing)
+    lprob = state.problem
+    # one sweep at `x0` forms the block factors that the product reads
+    ras_sweep!!(lprob.state, ras, prob, copy(x0), nothing)
+    prep = prepare_ad(AutoForwardDiff(), lprob, similar(x0), x0, nothing)
+    @test prep isa GeometricSolvers.RASPenPreparation
 
     v = B(T[0.7, -1.2, 0.4, 0.9, -0.3, 0.6, -0.8, 0.2])
     Jv = similar(v)
-    raspen_jvp!(Jv, state, prob, x0, v, nothing)
+    jvp!!(Jv, prep, lprob, x0, v, nothing)
 
     vh = Array(v)
     Av = A * vh
@@ -303,7 +307,7 @@ end
 
     # the same product one column at a time is the Jacobian of `rˡ`
     J = similar(x0, eltype(x0), n, n)
-    raspen_jacobian!(J, state, prob, x0, nothing)
+    jacobian!!(J, prep, lprob, x0, nothing)
     expected_matrix = zeros(T, n, n)
     for i in 1:length(part.owners)
         S = part.subdomains[i]
@@ -350,6 +354,28 @@ end
     # the step reports the global residual at the iterate it returns
     @test Array(Fx₁) == Array(x₁) .^ 2 .- c
     @test info.fnorm === rnorm(Array(x₁) .^ 2 .- c)
+end
+
+# --- the derivative of a non-RAS inner method: a central difference ---------------------------
+
+@testset "A non-RAS inner is differentiated by a central difference, $T" for T in REAL_ELTYPES
+    n = 6
+    c = T[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- c; nothing))
+    ω = T(1) / 2
+    m = LeftPreconditioned(Picard(; damping = ω), Picard(; damping = ω))
+    x = T[1.1, 1.9, 3.2, 3.8, 5.3, 5.7]
+    state = init_state(m, prob, x, nothing)
+    lprob = state.problem
+    prep = prepare_ad(AutoForwardDiff(), lprob, similar(x), x, nothing)
+    @test prep isa GeometricSolvers.LeftPreconditionedAD
+    # `rˡ(x) = x - N(x) = ω F(x)` for the inner Picard step `N(x) = x - ω F(x)`, so the product
+    # is `ω · 3x² ⊙ v`, a central difference of `rˡ` to its own truncation and rounding error
+    v = T[0.3, -0.7, 0.5, 0.9, -0.2, 0.6]
+    Jv = similar(v)
+    jvp!!(Jv, prep, lprob, x, v, nothing)
+    expected = ω .* 3 .* x .^ 2 .* v
+    @test norm(Jv - expected) <= 10 * eps(T)^(2 / 3) * norm(expected)
 end
 
 # --- Check 5: NKS-RAS is a composition -------------------------------------------------------
@@ -565,8 +591,9 @@ function p8_blocks(::Type{T}, n::Integer, λ, part::BlockPartition) where {T}
     return global_, (residuals...,), (jacobians...,)
 end
 
-# A member that runs a `RAS` and counts, from the block residual calls it owns, the sweeps, the
-# block solves of the parallel schedule and every block solve.
+# A member that runs a `RAS` and counts, from the block-Jacobian calls it owns, the sweeps, the
+# block solves of the parallel schedule and every block solve. The sweep forms one block Jacobian
+# per block solve and one more per block at the local iterate it returns.
 struct CountingRAS{M, C, R}
     ras::M
     calls::C
@@ -583,7 +610,7 @@ end
 function GeometricSolvers.step!!(state, m::CountingRAS, prob, x, Fx, p)
     before = [c[] for c in m.calls]
     out = step!!(state, m.ras, prob, x, Fx, p)
-    per_block = [c[] for c in m.calls] .- before
+    per_block = [c[] for c in m.calls] .- before .- 1
     sweeps, parallel, total = m.counts[]
     m.counts[] = (sweeps + 1, parallel + maximum(per_block), total + sum(per_block))
     return out
@@ -596,25 +623,29 @@ end
     global_, residuals, jacobians = p8_blocks(T, n, λ, part)
     counters = [Ref(0) for _ in 1:length(part.owners)]
     counted = ntuple(
-        i -> let i = i, f = residuals[i]
-            (f_i, x_loc, x, p) -> (counters[i][] += 1; f(f_i, x_loc, x, p))
+        i -> let i = i, J_i = jacobians[i]
+            (J, x_loc, x, p) -> (counters[i][] += 1; J_i(J, x_loc, x, p))
         end,
         length(part.owners))
-    prob = NonlinearProblem(global_; block_residuals = counted, block_jacobians = jacobians)
+    prob = NonlinearProblem(global_; block_residuals = residuals, block_jacobians = counted)
 
     h = inv(T(n + 1))
     x0 = T[sin(T(pi) * j * h) for j in 1:n]
     _, newton_status = solve(prob, copy(x0), Newton(); max_iterations = 200)
+    @test newton_status.code === SUCCESS
     @test newton_status.iterations > 15
 
+    tol = sqrt(eps(T))
+
     # NKS-RAS: Multiplicative(RAS(partition), Newton())
-    ras = RAS(part; max_iterations = 1)
+    ras = RAS(part; max_iterations = 50, rtol = tol)
     counting = CountingRAS(ras, counters)
+    m_nks = Multiplicative(counting, Newton())
     _, nks_status, state_nks = GeometricSolvers.solve!!(
-        init_state(Multiplicative(counting, Newton()), prob, x0, nothing),
-        prob, copy(x0), Multiplicative(counting, Newton()), nothing,
+        init_state(m_nks, prob, x0, nothing), prob, copy(x0), m_nks, nothing,
         GeometricSolvers.Options(T))
     @test nks_status.code === SUCCESS
+    @test nks_status.iterations <= 6
 
     # Check 6: the counters of the state equal the counting inner member bit for bit
     sweeps, parallel, total = counting.counts[]
@@ -624,18 +655,75 @@ end
     @test c.total_inner_iterations == total
     @test c.inner_iterations == parallel
     @test c.block_solves == total
+    # the inner stop test ends each local solve before its last inner iteration
+    @test c.total_inner_iterations < 50 * length(part.owners) * c.sweeps
 
     # RASPEN: LeftPreconditioned(Newton(), RAS(partition))
-    ras2 = RAS(part; max_iterations = 1)
+    ras2 = RAS(part; max_iterations = 50, rtol = tol)
     counting2 = CountingRAS(ras2, counters)
     m = LeftPreconditioned(Newton(), counting2)
     _, raspen_status, state_raspen = GeometricSolvers.solve!!(
         init_state(m, prob, x0, nothing), prob, copy(x0), m, nothing,
         GeometricSolvers.Options(T))
     @test raspen_status.code === SUCCESS
+    @test raspen_status.iterations <= 6
     sweeps2, parallel2, total2 = counting2.counts[]
     c2 = ras_counts(state_raspen)
     @test c2.sweeps == sweeps2
     @test c2.parallel_block_solves == parallel2
     @test c2.total_inner_iterations == total2
+    @test c2.total_inner_iterations < 50 * length(part.owners) * c2.sweeps
+
+    # the counts at one inner step are a measurement, not an assertion: at one inner step the
+    # outer step of RASPEN is Newton's step, so the map is not the restricted one
+    let
+        ras1 = RAS(part; max_iterations = 1)
+        counting1 = CountingRAS(ras1, [Ref(0) for _ in 1:length(part.owners)])
+        m1 = Multiplicative(counting1, Newton())
+        _, status1, state1 = GeometricSolvers.solve!!(
+            init_state(m1, prob, copy(x0), nothing), prob, copy(x0), m1, nothing,
+            GeometricSolvers.Options(T; max_iterations = 200))
+        @info "the P8 NKS-RAS counts at one inner step" T status1.code status1.iterations ras_counts(
+            state1)
+    end
+end
+
+# --- the RASPEN Jacobian follows eq. 3.17 -----------------------------------------------------
+
+@testset "The RASPEN Jacobian is a central difference of rˡ, $T" for T in REAL_ELTYPES
+    n = 20
+    part = BlockPartition(n, 5; overlap = 2)
+    λ = T(200)
+    global_, residuals, jacobians = p8_blocks(T, n, λ, part)
+    prob = NonlinearProblem(global_; block_residuals = residuals,
+        block_jacobians = jacobians)
+    h = inv(T(n + 1))
+    x0 = T[sin(T(pi) * j * h) for j in 1:n]
+    xstar, newton_status = solve(prob, copy(x0), Newton(); max_iterations = 200)
+    @test newton_status.code === SUCCESS
+    # away from the root, so that the difference is not dominated by a converged residual
+    x = xstar .+ T.(sin.(1:n)) ./ 10
+
+    ras = RAS(part; max_iterations = 50, rtol = zero(T))
+    m = LeftPreconditioned(Newton(), ras)
+    state = init_state(m, prob, x, nothing)
+    lprob = state.problem
+    # the local solves of the point, and the block factors they formed
+    ras_sweep!!(lprob.state, ras, prob, copy(x), nothing)
+    prep = prepare_ad(AutoForwardDiff(), lprob, similar(x), x, nothing)
+    @test prep isa GeometricSolvers.RASPenPreparation
+
+    v = T[cos(T(3) * j) for j in 1:n]
+    Jv = similar(v)
+    jvp!!(Jv, prep, lprob, x, v, nothing)
+
+    # the central difference of `rˡ` at the same point, with the step of `difference_jvp!`
+    R = real(T)
+    hv = cbrt(eps(R)) * max(one(R), norm(x)) / norm(v)
+    rp = similar(x)
+    rm = similar(x)
+    residual!!(rp, lprob, x .+ hv .* v, nothing)
+    residual!!(rm, lprob, x .- hv .* v, nothing)
+    cd = (rp .- rm) ./ (2hv)
+    @test norm(Jv - cd) <= 10 * sqrt(eps(R)) * norm(cd)
 end

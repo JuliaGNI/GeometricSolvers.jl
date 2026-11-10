@@ -197,9 +197,10 @@ end
 
 The state of a [`RAS`](@ref) method: the workspace of every block, the factors of the block
 Jacobians of the last sweep, which [`raspen_jvp!`](@ref) and [`raspen_jacobian!`](@ref) read, a
-global Jacobian-vector preparation, and the counters that [`ras_counts`](@ref) reports. The block
-factors are re-formed in every inner iteration, so the factors of the last sweep are the block
-Jacobians at the last local iterate.
+global Jacobian-vector preparation, the composite iterate that a RASPEN Jacobian product forms per
+block, and the counters that [`ras_counts`](@ref) reports. Each block factor is re-formed in every
+inner iteration and once more at the local iterate that the sweep returns, so the factors of the
+last sweep are the block Jacobians at the local solutions.
 """
 mutable struct RASState{B, F, V, JP, JV, ID}
     blocks::B
@@ -210,6 +211,7 @@ mutable struct RASState{B, F, V, JP, JV, ID}
     jvp_prep::JP
     Jv::JV
     column::V
+    composite::V
     identity::ID
     counts::RASCounter
 end
@@ -265,7 +267,7 @@ end
     blocks = RASBlocks(subdomains, owners, local_owners, x_locals, f_locals, jacobians,
         deltas, problems, preps)
     return RASState(blocks, factors, Fx, similar(x), similar(x), jvp_prep, similar(x),
-        similar(x), identity, RASCounter())
+        similar(x), similar(x), identity, RASCounter())
 end
 
 # Every solve starts the counters again, so that `ras_counts` reports the solve that ended.
@@ -343,6 +345,13 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
             x_loc .-= ldiv!!(blocks.deltas[i], fac, f_i)
             k += 1
         end
+        # the block Jacobian that the sweep stores is the one at the local iterate it returns, so
+        # that `raspen_jvp!` reads the block matrix of the RASPEN Jacobian, `R_i J(u⁽ⁱ⁾) P_i`, at
+        # the local solution and not at the iterate one Newton step before it
+        block_jacobian!!(J_i, blocks, prob, i, x_loc, x, p)
+        fac = factorize!!(state.factors[i], LUFactorization(), J_i)
+        iszero(fac.info) || return SINGULAR
+        state.factors[i] = fac
         total += k
         parallel = max(parallel, k)
     end
@@ -434,18 +443,24 @@ end
 
 The Jacobian-vector product of the left-preconditioned residual
 ``r^\\ell(y) = y - N(y)`` of the exact RASPEN Jacobian,
-``J_{r^\\ell}(x) v = \\sum_{i=1}^M \\tilde{R}_i^\\top J_{i,ii}^{-1} R_i J(x) v``
-(`Dolean:2016`, eq. 3.17), with the block factors that the last sweep of `state` formed. `J(x) v`
-is one forward-mode directional derivative of the global residual of `prob`. `Jv` is overwritten
-and returned.
+``J_{r^\\ell}(x) v = \\sum_{i=1}^M \\tilde{R}_i^\\top (R_i J(u^{(i)}) P_i)^{-1} R_i J(u^{(i)}) v``
+(`Dolean:2016`, eq. 3.17), with the block factors that the last sweep of `state` formed and
+``u^{(i)}`` the iterate `x` with the local solve `x_locals[i]` of block `i` written over its
+subdomain ``S_i``. Per block it takes one global Jacobian-vector product at ``u^{(i)}``, keeps the
+rows of ``S_i``, solves with that block's factor, and prolongates through the owner set. `Jv` is
+overwritten and returned.
 """
 function raspen_jvp!(Jv, state::RASState, prob, x, v, p)
     blocks = state.blocks
-    W = jvp!!(state.Jv, state.jvp_prep, prob, x, v, p)
+    W = state.Jv
+    u = state.composite
     fill!(Jv, zero(eltype(Jv)))
     for i in eachindex(blocks.subdomains)
+        copy!!(u, x)
+        u[blocks.subdomains[i]] .= blocks.x_locals[i]
+        w = jvp!!(W, state.jvp_prep, prob, u, v, p)
         r_i = blocks.f_locals[i]
-        r_i .= W[blocks.subdomains[i]]
+        r_i .= w[blocks.subdomains[i]]
         δ = ldiv!!(blocks.deltas[i], state.factors[i], r_i)
         Jv[blocks.owners[i]] .+= δ[blocks.local_owners[i]]
     end
