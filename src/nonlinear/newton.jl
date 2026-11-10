@@ -60,7 +60,8 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
 takes either of them with any other linear method raises an `ArgumentError`. A `Newton` with `GMRES`
 forms no factor, so it takes no `reuse`, no [`Refinement`](@ref) and no
 [`LevenbergMarquardt`](@ref) globalization, and a [`DogLeg`](@ref) needs an unrestarted `GMRES`
-without a preconditioner; each refusal is an `ArgumentError`.
+without a preconditioner. A [`JVPFunction`](@ref) in `jacobian` needs a `GMRES`, because a
+factorising method needs a Jacobian matrix. Each refusal is an `ArgumentError`.
 
 - `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
   the relative tolerance of every Newton step's inner solve.
@@ -108,6 +109,8 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
             end
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a GMRES solve does not form"))
+        elseif jacobian isa JVPFunction
+            throw(ArgumentError("Newton with a JVPFunction needs linsolve = GMRES(...): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give"))
         end
         new{L, G, J, RF, R, K}(
             linsolve, globalization, jacobian, refinement, regularization, reuse)

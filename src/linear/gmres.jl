@@ -37,7 +37,7 @@ the safeguard of that choice and the floor ``2\\varepsilon(R)``:
 with ``\\eta_k^{\\mathrm{safe}} = \\max(\\eta_k^{\\mathrm{raw}}, \\gamma\\eta_{k-1}^{\\alpha})`` where
 ``\\gamma\\eta_{k-1}^{\\alpha} > 0.1`` and ``\\eta_k^{\\mathrm{raw}}`` elsewhere. The first step
 returns ``\\eta_0``, floored at ``2\\varepsilon(R)`` like every other value of the rule. The
-defaults are those of the plan, ``\\gamma = 0.9``, ``\\alpha = 2``,
+defaults are ``\\gamma = 0.9``, ``\\alpha = 2``,
 ``\\eta_0 = 0.5`` and ``\\eta_{\\max} = 0.9``; ``\\eta_{\\max}`` is 0.8 in Chen et al. (2011) and
 0.2 in Chen et al. (2014).
 
@@ -238,7 +238,11 @@ with modified Gram–Schmidt on the Jacobian–vector product of the problem, th
 
 A `Newton` with `GMRES` allocates no `n × n` Jacobian, and its iterate must be an
 `AbstractVector`: a `Number` and a `StaticArray` have no Krylov basis here, and a
-[`LeastSquaresProblem`](@ref) has no square system. A constructor refuses `maxiter < 1` and a
+[`LeastSquaresProblem`](@ref) has no square system. The solve calls no Jacobian function of the
+problem: the product comes from the `jacobian` of the `Newton`, a [`JVPFunction`](@ref) or an AD
+back end, `AutoForwardDiff()` by default. A residual that the back end cannot differentiate
+therefore needs a `JVPFunction`, even where the problem carries a Jacobian. A constructor refuses
+`maxiter < 1` and a
 `restart` outside `1:maxiter` with an `ArgumentError`, and so does a [`Newton`](@ref) with a
 [`DogLeg`](@ref) globalization and a preconditioner or a `restart < maxiter`; a kernel cannot
 format a message, so each message is constant.
@@ -430,9 +434,11 @@ stops at ``\\|b - J d\\|_2 \\le tol \\cdot bnorm``; `maxiter` caps the inner ite
 allocated for.
 
 The Arnoldi process is modified Gram–Schmidt with the conjugated inner product, so a complex
-iterate is supported and every norm is in `real(T)`. A zero `H[j+1, j]` is a happy breakdown: the
-Krylov space is invariant, the residual of the reduced problem is zero, and the solve stops there
-rather than dividing by zero. A restarted cycle forms its new residual with one more product,
+iterate is supported and every norm is in `real(T)`. A zero `H[j+1, j]` is a breakdown: the
+Krylov space is invariant, and the solve stops there rather than dividing by zero. The residual of
+the reduced problem is then zero, unless `J` is singular on that space: the rotated diagonal entry
+is then zero too, the residual is that of the last entry of the right-hand side, and the solve
+reports no convergence. A restarted cycle forms its new residual with one more product,
 `b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. The least-squares problem is solved
 from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only where the reduced
 system is singular, and the corresponding weight is then `0`.
@@ -498,7 +504,11 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             gj = ws.g[j]
             ws.g[j + 1] = -conj(ws.sn[j]) * gj
             ws.g[j] = ws.cs[j] * gj
-            linres = R(abs(ws.g[j + 1]))
+            # a zero rotated diagonal leaves row j of the reduced system without a solution, so
+            # the residual keeps `g[j]`: this happens only at a breakdown where `J` is singular on
+            # the Krylov space
+            linres = iszero(radius) ? R(hypot(abs(ws.g[j]), abs(ws.g[j + 1]))) :
+                     R(abs(ws.g[j + 1]))
             if iszero(hj) || linres <= atol
                 break
             end

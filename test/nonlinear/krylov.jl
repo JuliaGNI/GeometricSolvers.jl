@@ -264,7 +264,8 @@ end
 
 # ─── The forcing terms (Check 2) ─────────────────────────────────────────────
 
-# Choice 2 and Choice 1 written out as the plan states them, for the tests to compare against.
+# Choice 2 and Choice 1 written out as Eisenstat and Walker (1996) state them, with the safeguard,
+# the cap and the floor of the docstrings, for the tests to compare against.
 function reference_choice2(::Type{R}, norms, η_max, η₀ = R(0.5)) where {R}
     γ = R(0.9)
     α = R(2)
@@ -695,7 +696,7 @@ end
         return x, st, max_inner_iterations(solver)
     end
     x10, st10, inner10 = solve_with(10)
-    x2, st2, inner2 = solve_with(2)
+    x2, st2, _ = solve_with(2)
     @test inner10 <= 2
     @test st10.code == st2.code
     @test st10.iterations == st2.iterations
@@ -742,6 +743,12 @@ end
     @test m.linsolve.maxiter == 5
     @test m.linsolve.forcing === FixedForcing(0.1)
     @test m.linsolve.preconditioner === I
+    # a product alone gives a factorising method no matrix to factorise
+    jvp! = (Jv, x, v, q) -> (Jv .= v; Jv)
+    @test_throws ArgumentError Newton(; jacobian = JVPFunction(jvp!))
+    @test_throws ArgumentError Newton(;
+        linsolve = QRFactorization(), jacobian = JVPFunction(jvp!))
+    @test Newton(; linsolve = GMRES(), jacobian = JVPFunction(jvp!)) isa Newton
 end
 
 # ─── The decided edges ───────────────────────────────────────────────────────
@@ -828,6 +835,25 @@ end
     @test st.step_failures == 0
     @test max_inner_iterations(solver) == 1
     @test st.iterations == 1
+end
+
+# A breakdown where `J` is singular on the Krylov space: `J v₁ = 0` gives `H[1, 1] = H[2, 1] = 0`,
+# the reduced system has no solution, and the true residual of the direction stays `‖b‖`. The
+# solve reports that residual and no convergence; the residual is compared with `‖b - A d‖`.
+@testset "A breakdown on a singular operator does not converge, $T" for T in REAL_ELTYPES
+    R = real(T)
+    for A in (zeros(T, 3, 3), T[0 1; 0 0])
+        n = size(A, 1)
+        b = zeros(T, n)
+        b[1] = one(T)
+        ws = init_gmres_workspace(GMRES(; maxiter = 5), b)
+        d, info = gmres_solve!(
+            ws, (Jv, v) -> mul!(Jv, A, v), nothing, b, norm(b), R(1e-6), 5, 5)
+        @test info.breakdown
+        @test !info.converged
+        @test info.resnorm ≈ norm(b - A * d)
+        @test info.resnorm ≈ one(R)
+    end
 end
 
 @testset "E5: maxiter above n, $T" for T in REAL_ELTYPES

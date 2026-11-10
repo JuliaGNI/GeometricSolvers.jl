@@ -1,5 +1,4 @@
-# The matrix-free R5 Newton–GMRES on Metal in `Float32`, under `allowscalar(false)` (Check 7 of
-# the part's spec).
+# The matrix-free R5 Newton–GMRES on Metal in `Float32`, under `allowscalar(false)`.
 #
 # The R5 state holds the mutable Krylov workspace, so it is not `isbits` and not a kernel
 # argument: the solve runs on the host and every array it touches is an `MtlArray`. A shared
