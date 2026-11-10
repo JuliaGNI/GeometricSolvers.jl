@@ -40,6 +40,8 @@ export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, PerSystem, Pi
        NonlinearSolver, ReparametrizedSolver, init, solve, solve!
 export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
 export solve_batch!
+export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summary,
+       deposited_moments, eliminated_indices, reset_batch!
 
 public solve!!, sciml_retcode
 

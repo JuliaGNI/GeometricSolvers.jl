@@ -36,6 +36,39 @@ jacobian_prototype
 jacobian_pattern
 ```
 
+### Reduced-space elimination with a batch inside the residual
+
+[`BatchEliminated`](@ref) eliminates a whole batch of independent inner systems *from the residual
+of an outer matrix-free [`Newton`](@ref)*, rather than a block of one unknown vector: the outer
+solver steps on the `m`-vector alone, and every evaluation of that residual — the Krylov products
+of the outer step included — solves the batch and deposits its moments. It is the pattern of the
+implicit PIC method (`Chen2011`, pp. 7025 and 7033; `LanzkronRoseWilkes:1996`), where the outer
+Newton works on the field and the per-particle orbit solves are the eliminated unknowns. The inner
+tolerance of each evaluation is the adaptive quadratic
+``\\max(2\\varepsilon(R_{\\text{in}}), R_{\\text{in}}(\\tfrac{1}{2}\\min(c, \\|g_2(\\text{prev})\\|^2)/\\sqrt{N_p}))``,
+the batch is warm-started from the previous evaluation — so a second evaluation at the same
+iterate and tolerance takes `0` inner iterations — and the outer Jacobian–vector product is a
+one-sided difference at the step ``\\sqrt{\\operatorname{eps}(R_{\\text{eff}})}`` of the coarser of
+the two precisions, so that a `Float32` batch inside a `Float64` outer solve converges at the
+tolerance its own accuracy supports and stalls, rather than failing, below it. The batch's
+[`BatchSummary`](@ref) reports its global residual norm, whether every system converged, and how
+many did not; [`deposited_moments`](@ref) returns what the deposit wrote, and
+[`reset_batch!`](@ref) returns the problem to its initial state.
+[`make_pic_elimination_problem`](@ref) builds the one-dimensional implicit electrostatic PIC test
+problem that the checks of this part solve.
+
+```@docs
+BatchEliminated
+BatchSummary
+batch_summary
+BatchParams
+DepositedMoments
+deposited_moments
+reset_batch!
+eliminated_indices
+make_pic_elimination_problem
+```
+
 ## The storage seam
 
 The storage seam lets an algorithm read each function's result rather than the storage itself,
@@ -468,4 +501,12 @@ isstalled
 norm2
 rnorm
 rdot
+BatchEliminatedJVPPrep
+PIC1DParams
+pic_gather
+pic_inner_residual
+pic_inner_jacobian
+deposit_pic_moments!
+pic_outer_residual!
+counting_problem
 ```

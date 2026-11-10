@@ -1200,3 +1200,390 @@ end
         end
     end
 end
+
+# ─── Reduced-space elimination: an R2 batch inside the outer residual ───────────────────────────
+
+# One matrix-free outer Newton on a one-dimensional implicit PIC field, the method every check of
+# this section solves with.
+R5() = Newton(; linsolve = GMRES(; maxiter = 16), globalization = Backtracking())
+
+# The batch of `Check 2`: `y[1]^2 = c[1]`, `y[2]^2 = c[2]`, so the parameter `(-1, 3)` of system 7
+# has no real root and its inner solve cannot converge.
+function failing_batch(::Type{T}, n = 16) where {T}
+    prob = NonlinearProblem((y, c) -> SVector(y[1]^2 - c[1], y[2]^2 - c[2]))
+    Y = [SVector{2, T}(T(12 // 10), T(18 // 10)) for _ in 1:n]
+    ps = [i == 7 ? SVector{2, T}(T(-1), T(3)) : SVector{2, T}(T(2), T(3)) for i in 1:n]
+    return prob, Y, ps
+end
+
+@testset "Batch reduction: BatchSummary, batch_summary, and BatchParams" begin
+    ok_status(its) = SolverStatus{Float64}(SUCCESS, Int32(its), 0.0, 0.0, Int32(0), false)
+
+    @testset "The reduction of a status vector" begin
+        S = [ok_status(i) for i in 1:4]
+        S[1] = SolverStatus{Float64}(SUCCESS, Int32(1), 3.0, 0.0, Int32(0), false)
+        S[2] = SolverStatus{Float64}(SUCCESS, Int32(2), 4.0, 0.0, Int32(0), false)
+        s = batch_summary(S)
+        @test s isa BatchSummary{Float64}
+        # the global norm is the 2-norm of the per-system norms, not their sum or their maximum
+        @test s.fnorm == 5.0
+        @test s.all_converged
+        @test s.failure_count == 0
+        @test s.max_iterations == Int32(4)
+        @test s.total_iterations == 1 + 2 + 3 + 4
+        empty_summary = batch_summary(SolverStatus{Float64}[])
+        @test empty_summary.all_converged && empty_summary.fnorm == 0.0
+        @test empty_summary.max_iterations == Int32(0) &&
+              empty_summary.total_iterations == 0
+
+        F = copy(S)
+        F[3] = SolverStatus{Float64}(STALLED, Int32(8), 1.0, 0.0, Int32(0), false)
+        f = batch_summary(F)
+        @test !f.all_converged && f.failure_count == 1
+        @test f.max_iterations == Int32(8)
+        @test f.fnorm == sqrt(3.0^2 + 4.0^2 + 1.0^2 + 0.0^2)
+
+        for B in ARRAY_BACKENDS
+            @testset "backend $B" begin
+                @test batch_summary(B(S)).fnorm == 5.0
+                @test batch_summary(B(F)).failure_count == 1
+            end
+        end
+    end
+
+    @testset "BatchParams passes the shared value and the per-system value" begin
+        shared = SVector(1.5, 2.5)
+        per_system = [SVector(i, -i) for i in 1:4]
+        p = BatchParams(shared, per_system)
+        @test GS.parameters(p, 3) === (shared, per_system[3])
+        @test GS.parameters(shared, 3) === shared
+        @test Adapt.adapt(Array, p).per_system == per_system
+
+        # a system sees both halves: `y = a + b` with `a` shared and `b` per system
+        prob = NonlinearProblem((y, c) -> y .- (c[1] .+ c[2]))
+        for B in ARRAY_BACKENDS
+            @testset "backend $B" begin
+                X = [zero(SVector{2, Float64}) for _ in 1:4]
+                X = B(X)
+                S = B(similar(X, SolverStatus{Float64}))
+                solve_batch!(X, S, prob, Newton(), BatchParams(shared, B(per_system)))
+                @test all(st -> st.code == SUCCESS, Array(S))
+                @test Array(X)[3] == shared .+ per_system[3]
+            end
+        end
+        @test_throws DimensionMismatch solve_batch!(
+            [zero(SVector{2, Float64}) for _ in 1:4], similar(
+                [zero(SVector{2, Float64}) for _ in 1:4], SolverStatus{Float64}),
+            prob, Newton(), BatchParams(shared, per_system[1:2]))
+        @test_throws ArgumentError solve_batch!(
+            [zero(SVector{2, Float64}) for _ in 1:4], similar(
+                [zero(SVector{2, Float64}) for _ in 1:4], SolverStatus{Float64}),
+            prob, Newton(), BatchParams(shared, per_system); workgroupsize = 0)
+        # the positional form of the options, which the checks call
+        X = [zero(SVector{2, Float64}) for _ in 1:4]
+        counts = solve_batch!(
+            X, prob, Newton(), BatchParams(shared, per_system),
+            Options(Float64; max_iterations = 4))
+        @test counts.SUCCESS == 4
+    end
+end
+
+@testset "Check 2: one failing particle of the batch" begin
+    for T in REAL_ELTYPES, B in ARRAY_BACKENDS
+
+        @testset "$T, backend $B" begin
+            inner, Y_batch, params_vec = failing_batch(T)
+            Y_batch = B(Y_batch)
+            S = B(similar(Y_batch, SolverStatus{T}))
+            solve_batch!(Y_batch, S, inner, Newton(), PerSystem(B(params_vec)),
+                Options(T; max_iterations = 8))
+            summary = batch_summary(S)
+            host = reduce(vcat, [Vector(inner.F(Array(Y_batch)[i], params_vec[i]))
+                                 for i in 1:length(Y_batch)])
+            @test !summary.all_converged
+            @test summary.failure_count == 1
+            @test isapprox(summary.fnorm, norm(host); rtol = (2 * length(Y_batch)) * eps(T))
+        end
+    end
+end
+
+@testset "PIC1D: gather, deposit, and the outer residual" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+    @test length(E0) == 16 && length(prob.Y) == 64
+    @test eltype(prob.Y) == SVector{2, Float64}
+    @test eliminated_indices(prob) == Tuple(17:80)
+    @test length(prob.statuses) == 64
+    @test_throws ArgumentError GS.make_pic_elimination_problem(Float64, Float64; N_x = 2)
+
+    # the gather reproduces a constant field, and its derivative is continuous across a cell edge
+    E = fill(0.25, 16)
+    for ξ in range(0.0, 2π * (15 // 16); length = 33)
+        value, _ = GS.pic_gather(E, ξ, 2π / 16, 16)
+        @test value ≈ 0.25
+    end
+    _, slope_lo = GS.pic_gather(E, 2π * (1 // 16) - 1e-9, 2π / 16, 16)
+    _, slope_hi = GS.pic_gather(E, 2π * (1 // 16) + 1e-9, 2π / 16, 16)
+    @test slope_lo ≈ slope_hi atol = 1e-5
+
+    # the deposit fills all four moments, and each is non-zero on this distribution
+    reset_batch!(prob)
+    F = similar(E0)
+    residual!!(F, prob, E0, nothing)
+    m = deposited_moments(prob)
+    @test m === prob.moments
+    @test all(!all(iszero, v) for v in (m.current, m.density, m.flux, m.temperature))
+    @test sum(m.density) ≈ 64 rtol = 1e-12     # the S₂ weights sum to one, so the deposit is exact
+    @test length(m.temperature) == 16
+
+    # the inner residual vanishes at the root of a particle and its analytic Jacobian matches the
+    # central difference of the residual
+    h = 0.1
+    Δx = 2π / 16
+    grid = fill(0.3, 16)
+    ps = GS.PIC1DParams(1.1, 0.4, 0.2)
+    c = (grid, ps)
+    y = SVector(1.15, 0.45)
+    J = GS.pic_inner_jacobian(y, c, h, Δx, 16)
+    δ = sqrt(eps(Float64))
+    for j in 1:2
+        e = SVector(j == 1 ? δ : 0.0, j == 2 ? δ : 0.0)
+        fd = (GS.pic_inner_residual(y + e, c, h, Δx, 16) .-
+              GS.pic_inner_residual(y - e, c, h, Δx, 16)) ./ (2δ)
+        @test J[:, j] ≈ fd rtol = 1e-6
+    end
+
+    # one particle on a node deposits the S₂ weights on that node and its two neighbours, in the
+    # canonical order; every other node stays empty, and an empty node's temperature is zero
+    m = DepositedMoments(zeros(16), zeros(16), zeros(16), zeros(16))
+    x_node = 4 * Δx                       # node 5, whose position is `4 Δx`
+    single = [SVector(x_node, 2.0)]
+    single_ps = [GS.PIC1DParams(x_node, 2.0, 0.0)]
+    GS.deposit_pic_moments!(m, single, zeros(16), single_ps, h, Δx, 16)
+    @test m.density[5] ≈ 3 / 4
+    @test m.density[4] ≈ 1 / 8
+    @test m.density[6] ≈ 1 / 8
+    @test isapprox(sum(m.density), 1.0; atol = 1e-15)
+    @test m.current[5] ≈ 3 / 4 * 2.0
+    @test m.flux[5] ≈ 3 / 4 * 4.0
+    @test m.temperature[5] == 0            # one particle has no velocity spread
+    for j in (1, 2, 3, 7, 16)
+        @test m.density[j] == 0
+        @test m.temperature[j] == 0
+    end
+    @test all(isfinite, m.temperature)
+
+    # the inner options of a batch are absolute only, so a repeat evaluation stops at 0 iterations
+    options = GS._batch_inner_options(prob, 1e-6)
+    @test options.f_abstol == 1e-6
+    @test options.f_reltol == 0
+
+    # the default eliminated set is the batch's own index block
+    inner = NonlinearProblem((y, c) -> y .- c)
+    blocks = BatchEliminated((F, x, m, s) -> F, inner, [SVector(0.0) for _ in 1:3],
+        (m, Y, s, ps) -> m, DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2)))
+    @test eliminated_indices(blocks) == (1, 2, 3)
+end
+
+@testset "Check 3: the deposit is deterministic" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+    F = similar(E0)
+    reset_batch!(prob)
+    residual!!(F, prob, E0, nothing)
+    m0 = deposited_moments(prob)
+    reference = (copy(m0.current), copy(m0.density), copy(m0.flux), copy(m0.temperature))
+    for _ in 1:100
+        reset_batch!(prob)
+        residual!!(F, prob, E0, nothing)
+        mk = deposited_moments(prob)
+        @test mk.current == reference[1]
+        @test mk.density == reference[2]
+        @test mk.flux == reference[3]
+        @test mk.temperature == reference[4]
+    end
+    # a deposit that writes fewer than four moments, or in another order, changes these: the four
+    # are the moments of the same batch state
+    @test reference[1] != reference[2] && reference[3] != reference[4]
+end
+
+@testset "Check 4: the warm start reports 0 inner iterations on a repeat" begin
+    T_out = Float64
+    for T_in in REAL_ELTYPES
+        @testset "$T_in in $T_out" begin
+            prob, E0 = GS.make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64)
+            F = similar(E0)
+            reset_batch!(prob)
+            residual!!(F, prob, E0, nothing)
+            @test batch_summary(prob).total_iterations > 0
+            first_F = copy(F)
+            residual!!(F, prob, E0, nothing; repeat_same_tol = true)
+            summary = batch_summary(prob)
+            @test summary.max_iterations == 0
+            @test summary.total_iterations == 0
+            @test all(st -> st.iterations == 0, prob.statuses)
+            @test F == first_F
+
+            # a product does not disturb the warm start: after one it reports 0 iterations too
+            prep = GS.prepare_jvp(AutoForwardDiff(), prob, F, E0, nothing)
+            jv = similar(F)
+            GS.jvp!!(jv, prep, prob, E0, one.(E0), nothing)
+            residual!!(F, prob, E0, nothing; repeat_same_tol = true)
+            @test batch_summary(prob).total_iterations == 0
+        end
+    end
+end
+
+@testset "Check 1: the adaptive quadratic inner tolerance" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+    # the schedule: the floor `2 eps(R_in)` of the batch's own precision, and the quadratic term
+    # `min(cap, g2^2)/2/sqrt(N_p)` of the outer residual above it
+    R_in = Float64
+    floor = 2 * eps(R_in)
+    prob.g₂_prev = 0.05
+    t_half = GS._batch_inner_tolerance(prob)
+    prob.g₂_prev = 0.025
+    t_quarter = GS._batch_inner_tolerance(prob)
+    @test t_half > floor
+    @test t_quarter ≈ t_half / 4 rtol = 1e-12        # quadratic in the outer residual
+    @test t_quarter ≈ 0.5 * 0.025^2 / sqrt(64) rtol = 1e-12
+    prob.g₂_prev = 0.5
+    @test GS._batch_inner_tolerance(prob) ≈ 0.5 * prob.inner_atol_cap / sqrt(64) rtol = 1e-12
+    prob.g₂_prev = 1e-12
+    @test GS._batch_inner_tolerance(prob) == floor   # floored at the batch's own round-off
+    prob.g₂_prev = Inf
+    @test GS._batch_inner_tolerance(prob) ≈ 0.5 * prob.inner_atol_cap / sqrt(64) rtol = 1e-12
+
+    # and through a solve: every recorded evaluation satisfies ‖g₁‖ < ‖g₂(prev)‖² strictly
+    reset_batch!(prob)
+    _, status = solve(prob, copy(E0), R5(); f_abstol = 1e-8, f_reltol = 0.0)
+    @test status.code == SUCCESS
+    @test status.f_calls > 0
+    @test status.jvp_calls > 0
+    @test length(prob.g₁_history) == length(prob.g₂_prev_history) ==
+          length(prob.eliminated_index_log)
+    @test length(prob.g₁_history) >= 2
+    @test prob.g₂_prev_history[1] == Inf
+    @test all(g1 < g2^2 for (g1, g2) in zip(prob.g₁_history, prob.g₂_prev_history))
+    # and the recorded inner residual is the one the schedule bounds
+    for k in 2:length(prob.g₁_history)
+        @test prob.g₁_history[k] <=
+              0.5 * min(prob.inner_atol_cap, prob.g₂_prev_history[k]^2) * (1 + 1e-6)
+    end
+end
+
+@testset "Check 5: the eliminated index set is fixed over a solve" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+    fixed = eliminated_indices(prob)
+    @test fixed == Tuple(17:80)
+    reset_batch!(prob)
+    @test isempty(prob.eliminated_index_log)
+    solve(prob, copy(E0), R5(); f_abstol = 1e-8, f_reltol = 0.0)
+    @test !isempty(prob.eliminated_index_log)
+    @test all(==(fixed), prob.eliminated_index_log)
+    @test eliminated_indices(prob) == fixed
+end
+
+@testset "Check 6: a Float32 batch inside a Float64 outer Newton" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float32, Float64; N_x = 16, N_p = 64)
+    reset_batch!(prob)
+    _, status = solve(prob, copy(E0), R5(); f_abstol = 2e-4, f_reltol = 0.0)
+    @test status.code == SUCCESS
+    @test status.fnorm <= 2e-4
+    reset_batch!(prob)
+    _, stalled = solve(prob, copy(E0), R5(); f_abstol = 1e-10, f_reltol = 0.0,
+        max_iterations = 25)
+    @test stalled.code == STALLED
+    @test stalled.code != SINGULAR
+    @test stalled.fnorm > 1e-10
+
+    # the product's step is the batch's own: `√eps(Float32)`, not `√eps(Float64)`, which the
+    # plateau of a `Float32` residual swallows
+    F = similar(E0)
+    reset_batch!(prob)
+    residual!!(F, prob, E0, nothing)
+    prep = GS.prepare_jvp(AutoForwardDiff(), prob, F, E0, nothing)
+    @test prep.ε ≈ sqrt(eps(Float32))
+    @test prep.tol == 2 * eps(Float32)
+    jv = similar(F)
+    v = copy(E0) ./ norm(E0)
+    GS.jvp!!(jv, prep, prob, E0, v, nothing)
+    @test !iszero(norm(jv))
+    # against a central difference at a step the plateau cannot swallow, both evaluations at the
+    # batch's floor so that the difference is the field's response and not the tolerance's
+    far = 1e-2
+    prob.last_inner_tol = 2 * eps(Float32)
+    GS.residual!!(F, prob, E0 .+ far .* v, nothing; repeat_same_tol = true)
+    Fp = copy(F)
+    GS.residual!!(F, prob, E0 .- far .* v, nothing; repeat_same_tol = true)
+    central = (Fp .- F) ./ (2 * far)
+    @test isapprox(jv, central; rtol = 1e-2, atol = 1e-6 * norm(central))
+end
+
+@testset "Reduced-space elimination: construction, records, and hostile input" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 8, N_p = 16)
+    @test prob.workgroupsize == 64
+    @test prob.inner_atol_cap == 0.01
+    @test prob.g₂_prev == Inf
+    @test isempty(prob.g₁_history) && isempty(prob.g₂_prev_history)
+    @test prob.Y !== prob.Y_init && prob.Y_init == prob.Y_anchor
+    # the initial guess is not mutated by the constructor or by a solve
+    Y₀ = copy(prob.Y)
+    reset_batch!(prob)
+    @test prob.Y == Y₀
+    residual!!(similar(E0), prob, E0, nothing)
+    @test prob.outer_evaluations == 1
+    reset_batch!(prob)
+    @test prob.outer_evaluations == 0 && prob.g₂_prev == Inf
+    @test all(st -> st.iterations == 0, prob.statuses)
+
+    # a batch is solved by a matrix-free outer Newton only
+    @test_throws ArgumentError solve(prob, copy(E0), Newton())
+    # a wrong inner options precision, an empty batch, a bad cap, a bad index set
+    moments = DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2))
+    inner = NonlinearProblem((y, c) -> y .- c)
+    @test_throws ArgumentError BatchEliminated(
+        (F, x, m, s) -> F, inner, [SVector(0.0)], (m, Y, s, ps) -> m, moments;
+        inner_options = Options(Float32))
+    @test_throws ArgumentError BatchEliminated(
+        (F, x, m, s) -> F, inner, SVector{0, SVector{1, Float64}}(), (m, Y, s, ps) -> m,
+        moments)
+    @test_throws ArgumentError BatchEliminated(
+        (F, x, m, s) -> F, inner, [SVector(0.0)], (m, Y, s, ps) -> m, moments;
+        inner_atol_cap = -1.0)
+    @test_throws ArgumentError BatchEliminated(
+        (F, x, m, s) -> F, inner, [SVector(0.0)], (m, Y, s, ps) -> m, moments;
+        eliminated_indices = (1, 1))
+    @test_throws DimensionMismatch BatchEliminated(
+        (F, x, m, s) -> F, inner, [SVector(0.0), SVector(1.0)], (m, Y, s, ps) -> m, moments;
+        per_system = [1.0])
+    @test_throws ArgumentError BatchEliminated(
+        (F, x, m, s) -> F, inner, [SVector(0.0)], (m, Y, s, ps) -> m, moments;
+        workgroupsize = 0)
+end
+
+@testset "Reduced-space elimination: inference, allocations, and JET" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 8, N_p = 16)
+    F = similar(E0)
+    reset_batch!(prob)
+    residual!!(F, prob, E0, nothing)
+    S = prob.statuses
+    h = 0.1
+    Δx = 2π / 8
+    grid = fill(0.3, 8)
+    ps = GS.PIC1DParams(1.1, 0.4, 0.2)
+    c = (grid, ps)
+    y = SVector(1.15, 0.45)
+    @test (@inferred GS.pic_inner_residual(y, c, h, Δx, 8)) isa SVector{2, Float64}
+    @test (@inferred GS.pic_inner_jacobian(y, c, h, Δx, 8)) isa SMatrix{2, 2, Float64, 4}
+    @test (@inferred batch_summary(S)) isa BatchSummary{Float64}
+    @test (@inferred GS._batch_inner_tolerance(prob)) isa Float64
+    JET.@test_opt target_modules = (GeometricSolvers,) GS.pic_inner_residual(y, c, h, Δx, 8)
+    JET.@test_opt target_modules = (GeometricSolvers,) batch_summary(S)
+    JET.@test_opt target_modules = (GeometricSolvers,) GS._batch_inner_tolerance(prob)
+    if Base.JLOptions().check_bounds != 1
+        # skipped where a run forces `--check-bounds=yes`
+        inner_at(yy) = GS.pic_inner_residual(yy, c, h, Δx, 8)
+        @test allocations(inner_at, y) == 0
+        gather(ξ) = GS.pic_gather(grid, ξ, Δx, 8)
+        @test allocations(gather, 1.1) == 0
+    end
+end
