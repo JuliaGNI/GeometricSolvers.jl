@@ -17,6 +17,8 @@ costs one inner step, and every merit value it reads is ``\\|r^\\ell\\|_2^2``. T
 `LeftPreconditioned(Newton(), RAS(partition))` is RASPEN: the merit is on the restricted additive
 Schwarz map, and the Jacobian of ``r^\\ell`` is the exact form of [`raspen_jvp!`](@ref) built from
 the block factors of the last sweep (`Dolean:2016`, eq. 3.17). RASPEN needs converged local solves.
+A `RAS` with a `balance_threshold` is refused at `init_state` with an `ArgumentError`, because a
+skipped sweep returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root.
 With any other `inner` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
 [`prepare_ad`](@ref) prepares at `init_state` whatever its globalization reads. With a
@@ -105,6 +107,9 @@ end
 @inline function init_state(m::LeftPreconditioned, prob::NonlinearProblem, x, p)
     x isa Union{Number, StaticArray} && throw(ArgumentError(
         "LeftPreconditioned takes a mutable vector iterate: an R1 iterate (a Number or an SVector) has no workspace for an inner step"))
+    m.inner isa RAS && m.inner.balance_threshold !== nothing &&
+        throw(ArgumentError(
+            "LeftPreconditioned does not take a RAS with a balance_threshold: a skipped sweep returns its input, which reads as a zero of the preconditioned residual at a point that is not a root"))
     inner_state = init_state(m.inner, prob, x, p)
     lprob = LeftPreconditionedProblem(prob, m.inner, inner_state, buffer(x))
     outer_state = init_state(m.outer, lprob, x, p)
@@ -259,9 +264,7 @@ end
     end
     if iszero(fnormˡ)
         # `x` is a fixed point of the inner map, so the outer solves `rˡ = 0` here: its step is of
-        # zero length, the iterate and its global residual are unchanged, and a sweep that
-        # `balance_threshold` skipped left no block factor for the outer's Jacobian, which this
-        # step never asks for
+        # zero length, and the iterate and its global residual are unchanged
         return x, Fx, state,
         StepInfo{R}(SUCCESS, rnorm(Fx), zero(R), Int32(0), false, false)
     end

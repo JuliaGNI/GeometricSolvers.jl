@@ -426,6 +426,59 @@ end
     end
 end
 
+# A residual that takes no `ForwardDiff.Dual`: it has a method for a `Vector{T}` iterate only, so
+# a product that differentiated it would raise a `MethodError`.
+struct PrimalOnlyResidual{T}
+    A::Matrix{T}
+    b::Vector{T}
+end
+
+function (f::PrimalOnlyResidual{T})(r::Vector{T}, y::Vector{T}, p) where {T}
+    mul!(r, f.A, y)
+    r .-= f.b
+    return nothing
+end
+
+# RASPEN reads the problem's own `J` for the couplings outside each block, so a residual that takes
+# no dual number serves it, and its product and Jacobian are the exact form of Check 3.
+@testset "RASPEN reads the problem's J, not a dual residual, $T" for T in REAL_ELTYPES
+    n = 8
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75, 0.125, -0.125]
+    _, J! = affine_global(x0, A, b)
+    ab = affine_blocks(x0, part, A, b)
+    prob = NonlinearProblem(PrimalOnlyResidual(A, b), J!;
+        block_residuals = ntuple(i -> affine_block(ab, i, nothing), 3),
+        block_jacobians = ntuple(i -> affine_block_jacobian(ab, i), 3))
+    m = LeftPreconditioned(Newton(), RAS(part; max_iterations = 1))
+
+    x, status = solve(prob, copy(x0), m; max_iterations = 20)
+    @test status.code === SUCCESS
+    @test x != x0
+    @test norm(A * x - b) <= sqrt(eps(T)) * norm(b)
+
+    state = init_state(m, prob, copy(x0), nothing)
+    ras = state.problem.state
+    ras_sweep!!(ras, m.inner, prob, copy(x0), nothing)
+    expected = zeros(T, n, n)
+    κ_max = zero(T)
+    for i in 1:length(part.owners)
+        S = part.subdomains[i]
+        expected[part.owners[i], :] .= (A[S, S] \ A[S, :])[part.local_owners[i], :]
+        κ_max = max(κ_max, cond(A[S, S]))
+    end
+    column_bound = 10 * n * κ_max * eps(T)
+    J = raspen_jacobian!(similar(x0, T, n, n), ras, prob, x0, nothing)
+    for j in 1:n
+        @test norm(J[:, j] - expected[:, j]) <= column_bound
+    end
+    v = T[0.7, -1.2, 0.4, 0.9, -0.3, 0.6, -0.8, 0.2]
+    Jv = raspen_jvp!(similar(v), ras, prob, x0, v, nothing)
+    @test norm(Jv - expected * v) <= column_bound * norm(v)
+end
+
 # --- Check 4: the merit is on rˡ --------------------------------------------------------------
 
 # A diagonal nonlinear residual, so that one Newton step from `x` is exact and `rˡ` is a function
@@ -753,7 +806,9 @@ end
         Jv, state, prob, x0, v, nothing)
 end
 
-@testset "A sweep skipped inside RASPEN is the zero residual, $T" for T in REAL_ELTYPES
+# A sweep that the balance test skips returns its input, so inside `LeftPreconditioned` it would
+# read as `rˡ = 0` at a point that is not a root: `init_state` refuses the combination.
+@testset "LeftPreconditioned refuses a RAS with a balance_threshold, $T" for T in REAL_ELTYPES
     n = 6
     A = affine_matrix(T, n)
     b = affine_rhs(T, n)
@@ -761,13 +816,13 @@ end
     x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
     prob, _ = affine_problem(x0, A, b, part)
     m = LeftPreconditioned(Newton(), RAS(part; max_iterations = 1, balance_threshold = one(T)))
-    state = init_state(m, prob, copy(x0), nothing)
-    # the balance test skips the sweep at `x0`, so `rˡ(x0) = x0 - N(x0) = 0`
-    @test all(iszero, rl_direct(state.problem, x0))
-    # a zero preconditioned residual is reported as it is: the solve asks for no block factor
-    x, status = solve(prob, copy(x0), m; max_iterations = 20)
-    @test Array(x) == x0
-    @test status.code === STALLED
+    @test_throws ArgumentError init_state(m, prob, copy(x0), nothing)
+    @test_throws "LeftPreconditioned does not take a RAS with a balance_threshold" init_state(
+        m, prob, copy(x0), nothing)
+    @test_throws ArgumentError solve(prob, copy(x0), m; max_iterations = 20)
+    # the same RAS without a threshold is taken
+    m_plain = LeftPreconditioned(Newton(), RAS(part; max_iterations = 1))
+    @test init_state(m_plain, prob, copy(x0), nothing) isa LeftPreconditionedState
 end
 
 @testset "LeftPreconditioned refuses an R1 iterate, $T" for T in REAL_ELTYPES

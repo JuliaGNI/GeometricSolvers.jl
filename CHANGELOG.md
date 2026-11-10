@@ -727,9 +727,20 @@ so that a compat-only bump can be told apart from an interface change.
   whose Jacobian-vector product is the exact form
   `Σᵢ R̃ᵢᵀ (Rᵢ J(u⁽ⁱ⁾) Pᵢ)⁻¹ Rᵢ J(u⁽ⁱ⁾) v` of eq. 3.17 of `Dolean:2016`, built from the
   block factors of the last sweep and the local solves it reached, and
-  `Multiplicative(RAS(partition), Newton())` is NKS-RAS. With any other inner method the
-  derivative of `rˡ` is a central difference of the composed residual, because a step of an
-  inner method is not `ForwardDiff.Dual`-generic.
+  `Multiplicative(RAS(partition), Newton())` is NKS-RAS. The RASPEN product reads the subdomain
+  rows `Rᵢ J(u⁽ⁱ⁾)` of the global Jacobian at each composite iterate `u⁽ⁱ⁾`, `x` with the local
+  solve of block `i` over its subdomain, and applies that block's factor. The global Jacobian is
+  the problem's own `J` where it has one, so a residual `F` that takes no `ForwardDiff.Dual`
+  serves RASPEN, and `AutoForwardDiff()` on `F` where it has none. The Jacobian of `rˡ`
+  evaluates one global Jacobian per block and solves all its columns with that block's one
+  factor, not one product per block per column: on problem P8 of
+  `test/composition/preconditioning.jl` (`n = 20`, 5 blocks, overlap 2,
+  `RAS(part; max_iterations = 50, rtol = sqrt(eps(T)))`, `x0 = sin(πj/(n+1))`) the global
+  residual calls, `Dual` evaluations included, are 63 in `Float64` and 78 in `Float32`, against
+  423 and 528 at 863b278, the head of the pull request before this change, with the same outer
+  iteration counts, 4 and 5. With any other inner method the derivative of `rˡ` is a central
+  difference of the composed residual, because a step of an inner method is not
+  `ForwardDiff.Dual`-generic.
   `NonlinearProblem(F, J; block_residuals = …, block_jacobians = …)` wraps only `F`: `prob.J`
   stays the caller's Jacobian, and the block functions are read through `block_residuals`,
   `block_jacobians`, `block_residual` and `block_jacobian`. `BlockPartition(subdomains, owners)`
@@ -746,7 +757,10 @@ so that a compat-only bump can be told apart from an interface change.
   rejects the trial, `solve` and `solve!` return `NONFINITE`, and a failed inner step is never read
   as a zero of `rˡ`. `ras_counts` reports its
   sweeps, parallel block solves and inner iterations, and `RAS` takes `max_iterations`, `rtol`,
-  `atol` and the balance threshold of Cai and Li. The standard test set gains the column
+  `atol` and the balance threshold of Cai and Li, which `LeftPreconditioned` refuses: its
+  `init_state` raises an `ArgumentError` for a `RAS` inner with a `balance_threshold`, because a
+  skipped sweep returns its input and would read as a zero of `rˡ` at a point that is not a
+  root. The standard test set gains the column
   `LeftPreconditioned Picard Backtracking Newton`, 134 cells.
 
 - **A `SciMLBase` package extension (`GeometricSolversSciMLBaseExt`) accepts a
