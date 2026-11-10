@@ -352,7 +352,7 @@ end
         return copy(x₊), info
     end
     ref, ref_info = sweep(prob_j)
-    ad, ad_info = sweep(prob_ad)
+    ad, _ = sweep(prob_ad)
     @test ref_info.code === SUCCESS
     @test norm(ad - ref) <= 8 * eps(T) * norm(ref)
 
