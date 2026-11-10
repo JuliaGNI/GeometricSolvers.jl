@@ -35,8 +35,9 @@ export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
 export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice1,
        FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
-export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard,
-       NonlinearSolver, ReparametrizedSolver, init, solve, solve!
+export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
+       PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
+export stored_factors, promoted_factors, preconditioned_buffer, residual_buffer
 export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
 export solve_batch!
 
