@@ -17,11 +17,12 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: Backtracking, Bisection, ChunkedForwardDiff, DIJacobian, DogLeg,
                         EisenstatWalkerChoice1, EisenstatWalkerChoice2, FixedForcing, GMRES,
-                        InexactStep, JVPFunction, LineFunction, NONFINITE, NonlinearProblem,
-                        Newton, StrongWolfe, SUCCESS, SolverStatus, apply_preconditioner!,
-                        f_calls, gmres_solve!, init, init_gmres_workspace, init_state,
-                        jvp_calls, max_inner_iterations, refresh!, rnorm, solve, solve!,
-                        solve!!, start!!, step!!
+                        InexactStep, JVPFunction, LevenbergMarquardt, LineFunction,
+                        NONFINITE, NonlinearProblem, Newton, Refinement, StrongWolfe,
+                        SUCCESS, SolverStatus, apply_preconditioner!, f_calls, gmres_solve!,
+                        init, init_gmres_workspace, init_state, jvp_calls,
+                        max_inner_iterations, refresh!, rnorm, solve, solve!, solve!!,
+                        start!!, step!!
 
 include("../helpers/matrix.jl")
 
@@ -128,6 +129,13 @@ const R5_COUPLED_X = (0.3, 1.1, -0.7, 2.0)
 const R5_ATAN_START = 1.3
 r5_atan() = NonlinearProblem((r, x, q) -> (r[1] = atan(x[1]); r))
 
+# `‖F(x) + J(x) d‖` of a direction `d`, with the product from ForwardDiff on `F` itself and not from
+# the solver: the attained tolerance of a step, whatever the workspace records after it.
+function direction_linres(prob, x, d)
+    F_at(t) = (y = similar(x, typeof(t)); prob.F(y, x .+ t .* d, nothing); y)
+    return rnorm(F_at(zero(eltype(x))) .+ ForwardDiff.derivative(F_at, zero(eltype(x))))
+end
+
 # ─── The allocation row of the inner solve ──────────────────────────────────
 
 # An `@allocated` assertion measures through a function barrier whose arguments have concrete types
@@ -156,7 +164,7 @@ end
 
         counts.f = 0
         counts.jvp = 0
-        x, st = solve!(solver, x₀)
+        _, st = solve!(solver, x₀)
         fnorm₀ = rnorm(AT(fill(T(-1.5), 8)))
         # MU1: the reported counts are those of the solve, in the status and in the accessors
         @test st.code == SUCCESS
@@ -175,7 +183,7 @@ end
         @test prep isa ChunkedForwardDiff{1}
         # the Jacobian buffers of a solve that forms no Jacobian are not allocated
         @test prep.xdual === nothing && prep.rdual === nothing
-        x, st = solve!(solver, zeros(T, 8))
+        _, st = solve!(solver, zeros(T, 8))
         @test st.code == SUCCESS
         @test st.f_calls == counts.f
         @test st.jvp_calls == counts.jvp
@@ -263,7 +271,8 @@ end
 
 # ─── The forcing terms (Check 2) ─────────────────────────────────────────────
 
-# Choice 2 and Choice 1 written out as the plan states them, for the tests to compare against.
+# Choice 2 and Choice 1 written out as Eisenstat and Walker (1996) state them, with the safeguard,
+# the cap and the floor of the docstrings, for the tests to compare against.
 function reference_choice2(::Type{R}, norms, η_max, η₀ = R(0.5)) where {R}
     γ = R(0.9)
     α = R(2)
@@ -411,13 +420,16 @@ end
     # one step, with the iterate and the residual it starts from kept for the readings below
     x_prev = copy(x)
     Fx_prev = copy(Fx)
-    x₁, Fx₁, state₁, info = step!!(state, m, prob, x, Fx, nothing)
+    _, Fx₁, state₁, info = step!!(state, m, prob, x, Fx, nothing)
     d = copy(state₁.ws.d)
     c₁ = m.globalization.c₁
-    η_ach = state₁.ws.linres / fnorm₀
+    η_ach = direction_linres(prob, x_prev, d) / fnorm₀
     α = info.stepnorm / rnorm(d)
     @test info.code == SUCCESS
     @test zero(R) < α <= one(R)
+    # the workspace records the linear residual of the accepted step `α d` for Choice 1, and a
+    # one-dimensional solve is exact, so that residual is `(1 - α) ‖F‖`
+    @test abs(state₁.ws.linres - (1 - α) * fnorm₀) <= 16 * eps(R) * fnorm₀
 
     # MU3: the step kind is `InexactStep(η_ach)`, not `ExactStep()`: the accepted step obeys
     # ‖F(x + s)‖ ≤ [1 - c₁(1 - η)] ‖F(x)‖ with η ← 1 - α(1 - η) at the trial step α
@@ -497,7 +509,7 @@ end
     _, Fx₁, state₁, info = step!!(state, mm, prob, x, Fx, nothing)
     d = copy(state₁.ws.d)
     c₁ = mm.globalization.c₁
-    η_ach = state₁.ws.linres / fnorm₀
+    η_ach = direction_linres(prob, x₀, d) / fnorm₀
     α = info.stepnorm / rnorm(d)
     @test info.code == SUCCESS
     # a one-dimensional solve with one product is exact, so the attained tolerance is zero
@@ -519,7 +531,6 @@ end
 # ─── The inner cap (Check 4) ─────────────────────────────────────────────────
 
 @testset "Check 4: the inner cap and its recording, $T" for T in REAL_ELTYPES
-    R = real(T)
     prob = NonlinearProblem((r, x, q) -> begin
         mul!(r, R5_A4, x)
         r .-= R5_B4
@@ -622,7 +633,6 @@ function r5_dogleg_pair()
 end
 
 @testset "Check 6: the matrix-free DogLeg, $T" for T in REAL_ELTYPES
-    R = real(T)
     prob_r3, prob_r5 = r5_dogleg_pair()
     x₀ = T[3.5, -2.8]
     x_r3, st_r3 = solve(prob_r3, copy(x₀), Newton(; globalization = DogLeg()))
@@ -677,6 +687,41 @@ end
     end
 end
 
+# The model of the matrix-free loop reads the Arnoldi relation of one cycle. With `maxiter > n` and a
+# tolerance that `n` iterations miss in floating point, the inner solve would restart, and the loop
+# would read the last cycle's basis against the first residual. The inner solve of a `DogLeg` step
+# stops at `n` instead, so `maxiter = 10` and `maxiter = n` give the same solve.
+@testset "Check 6: the matrix-free DogLeg runs one Arnoldi cycle, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, q) -> begin
+        r[1] = x[1] - 1
+        r[2] = T(1e-10) * x[2] + x[1]^2 - 2
+        r
+    end)
+    x₀ = T[3, 3]
+    solve_with(maxiter) = begin
+        solver = init(prob, copy(x₀),
+            Newton(; linsolve = GMRES(; maxiter = maxiter, forcing = FixedForcing(0.0)),
+                globalization = DogLeg()))
+        x, st = solve!(solver, copy(x₀))
+        return x, st, max_inner_iterations(solver)
+    end
+    x10, st10, inner10 = solve_with(10)
+    x2, st2, _ = solve_with(2)
+    @test inner10 <= 2
+    @test st10.code == st2.code
+    @test st10.iterations == st2.iterations
+    @test x10 == x2
+    # the factorised loop is the control in Float64; in Float32 the condition number of `J`, about
+    # 1e11, is far above 1/eps(Float32), and the matrix-free loop fails there with or without a
+    # restart
+    if T == Float64
+        _, st_r3 = solve(prob, copy(x₀), Newton(; globalization = DogLeg()))
+        @test st_r3.code == SUCCESS
+        @test st10.code == SUCCESS
+        @test st10.iterations == st_r3.iterations
+    end
+end
+
 @testset "Check 6: a restarted GMRES solves with a line search, $T" for T in REAL_ELTYPES
     # `restart < maxiter` runs the restart cycle: its residual is formed with one more product
     prob = NonlinearProblem((r, x, q) -> begin
@@ -688,16 +733,110 @@ end
     end)
     solver = init(prob, zeros(T, 4),
         Newton(; linsolve = GMRES(; maxiter = 8, restart = 2), globalization = Backtracking()))
-    x, st = solve!(solver, zeros(T, 4))
+    _, st = solve!(solver, zeros(T, 4))
     @test st.code == SUCCESS
     @test max_inner_iterations(solver) <= 8
     @test st.jvp_calls >= st.iterations
 end
 
+@testset "Newton with GMRES refuses what needs a factor, and takes the forcing keywords" begin
+    # a GMRES step has no factor to reuse, to refine against or to damp
+    @test_throws ArgumentError Newton(; linsolve = GMRES(), reuse = 2)
+    @test_throws ArgumentError Newton(; linsolve = GMRES(), refinement = Refinement())
+    @test_throws ArgumentError Newton(;
+        linsolve = GMRES(), globalization = LevenbergMarquardt())
+    # the keywords configure a GMRES, and no other linear method takes them
+    @test_throws ArgumentError Newton(; forcing = FixedForcing(0.1))
+    @test_throws ArgumentError Newton(; preconditioner = I)
+    m = Newton(;
+        linsolve = GMRES(; maxiter = 5), forcing = FixedForcing(0.1), preconditioner = I)
+    @test m.linsolve.maxiter == 5
+    @test m.linsolve.forcing === FixedForcing(0.1)
+    @test m.linsolve.preconditioner === I
+    # a product alone gives a factorising method no matrix to factorise
+    jvp! = (Jv, x, v, q) -> (Jv .= v; Jv)
+    @test_throws ArgumentError Newton(; jacobian = JVPFunction(jvp!))
+    @test_throws ArgumentError Newton(;
+        linsolve = QRFactorization(), jacobian = JVPFunction(jvp!))
+    @test Newton(; linsolve = GMRES(), jacobian = JVPFunction(jvp!)) isa Newton
+end
+
+# Implicit differentiation factorises the Jacobian at the root, which a GMRES solve does not form:
+# `solve` refuses a dual input before the primal solve evaluates `F` once. The factorising control
+# gives `dx/dq = 1/(3x² + 2) = 1/5` per entry at the root `x = 1` of `q = 3`.
+@testset "solve refuses a dual input for a Newton with GMRES" begin
+    calls = Ref(0)
+    prob = NonlinearProblem((r, x, q) -> begin
+        calls[] += 1
+        @. r = x^3 + 2x - q
+        r
+    end)
+    total(q, m) = sum(first(solve(prob, [1.0, 1.0], m, q)))
+    @test ForwardDiff.derivative(q -> total(q, Newton()), 3.0) ≈ 0.4
+    calls[] = 0
+    @test_throws ArgumentError ForwardDiff.derivative(
+        q -> total(q, Newton(; linsolve = GMRES())), 3.0)
+    @test calls[] == 0
+end
+
+# A combinator's members count only their own steps, so every combinator but `Repeat` reports no
+# count; `Repeat` runs one member and evaluates nothing itself, so its count is the member's. The
+# residual counts its own evaluations on the working type, which a product on duals is not.
+@testset "A combinator keeps no call count, and Repeat keeps its member's" begin
+    calls = Ref(0)
+    prob = NonlinearProblem((r, x, q) -> begin
+        eltype(x) <: AbstractFloat && (calls[] += 1)
+        @. r = x^3 + 2x - 3
+        r
+    end)
+    g = Newton(; linsolve = GMRES(; maxiter = 10))
+    x₀ = collect(R5_COUPLED_X)
+    for method in (Anderson(g), Additive(g, g), Multiplicative(g, g), Switch(g, g))
+        _, st = solve(prob, copy(x₀), method)
+        @test st.iterations > 0
+        @test st.f_calls == 0
+        @test st.jvp_calls == 0
+    end
+    calls[] = 0
+    _, st = solve(prob, copy(x₀), Repeat(g, 2))
+    @test st.f_calls > 0
+    @test st.f_calls == calls[]
+end
+
+# Choice 1 reads `‖F + J s‖` of the step `s` taken. After a line search on one Arnoldi cycle the
+# workspace records that of the accepted step `α d`, from the Arnoldi relation; the control is the
+# product of ForwardDiff on `F`. A restarted solve keeps the residual of its direction.
+@testset "Choice 1 reads the linear residual of the accepted step, $T" for T in REAL_ELTYPES
+    R = real(T)
+    prob = r5_coupled(T)
+    x₀ = T.(collect(R5_COUPLED_X))
+    for (restart, accepted) in ((2, true), (1, false))
+        solver = init(prob, copy(x₀),
+            Newton(;
+                linsolve = GMRES(;
+                maxiter = 2, restart = restart, forcing = FixedForcing(R(1e-6)))))
+        m = solver.method
+        x = copy(x₀)
+        Fx = similar(x)
+        prob.F(Fx, x, nothing)
+        state = start!!(solver.state, m, prob, x, Fx, nothing, rnorm(Fx))
+        _, _, state₁, _ = step!!(state, m, prob, x, Fx, nothing)
+        ws = state₁.ws
+        d = copy(ws.d)
+        dn = rnorm(d)
+        # the full step of `Static` records the residual of the direction
+        full = direction_linres(prob, x₀, d)
+        @test isapprox(ws.linres, full; rtol = sqrt(eps(R)))
+        GeometricSolvers.accepted_linres!(ws, dn / 2, dn)
+        expected = accepted ? direction_linres(prob, x₀, d ./ 2) : full
+        @test isapprox(ws.linres, expected; rtol = sqrt(eps(R)))
+        @test accepted == !isapprox(ws.linres, full; rtol = sqrt(eps(R)))
+    end
+end
+
 # ─── The decided edges ───────────────────────────────────────────────────────
 
 @testset "E1: a non-finite residual or product, $T" for T in REAL_ELTYPES
-    R = real(T)
     # a non-finite residual at x₀ ends the solve at 0 iterations with NONFINITE
     prob_nan = NonlinearProblem((r, x, q) -> begin
         @. r = x^3 + 2x - 3
@@ -779,6 +918,25 @@ end
     @test st.step_failures == 0
     @test max_inner_iterations(solver) == 1
     @test st.iterations == 1
+end
+
+# A breakdown where `J` is singular on the Krylov space: `J v₁ = 0` gives `H[1, 1] = H[2, 1] = 0`,
+# the reduced system has no solution, and the true residual of the direction stays `‖b‖`. The
+# solve reports that residual and no convergence; the residual is compared with `‖b - A d‖`.
+@testset "A breakdown on a singular operator does not converge, $T" for T in REAL_ELTYPES
+    R = real(T)
+    for A in (zeros(T, 3, 3), T[0 1; 0 0])
+        n = size(A, 1)
+        b = zeros(T, n)
+        b[1] = one(T)
+        ws = init_gmres_workspace(GMRES(; maxiter = 5), b)
+        d, info = gmres_solve!(
+            ws, (Jv, v) -> mul!(Jv, A, v), nothing, b, norm(b), R(1e-6), 5, 5)
+        @test info.breakdown
+        @test !info.converged
+        @test info.resnorm ≈ norm(b - A * d)
+        @test info.resnorm ≈ one(R)
+    end
 end
 
 @testset "E5: maxiter above n, $T" for T in REAL_ELTYPES

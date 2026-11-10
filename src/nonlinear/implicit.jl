@@ -367,3 +367,12 @@ function solve_implicit(
     end
     return _implicit_tangent(D, state, prob, x_star, m, p, p_val, status)
 end
+
+# The tangent solve factorises `J(x*, p)`, and a `Newton` with `GMRES` forms no Jacobian, so
+# `solve` refuses a dual input for it before the primal solve, as it does for a combinator.
+function solve_implicit(
+        ::NonlinearProblem, x₀, method::Newton{<:GMRES}, p,
+        options::Union{Nothing, Options}, kwargs)
+    throw(ArgumentError(
+        "solve does not accept ForwardDiff.Dual inputs for a Newton with GMRES; implicit differentiation through a matrix-free solve is not implemented, so use a factorising linsolve such as LUFactorization()"))
+end

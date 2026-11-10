@@ -174,6 +174,11 @@ end
     picard = Picard(; globalization = Backtracking())
     @test length(perturbed_runs(sp, "u0", sp.u0(Float64), "Picard Backtracking", picard)) ==
           16
+    # a GMRES step passes no direction through `refine!!`, so the direction family is left out
+    gmres = Newton(; linsolve = GMRES(), globalization = Backtracking())
+    @test perturbed_direction(gmres, 1) === nothing
+    @test length(perturbed_runs(
+        sp, "u0", sp.u0(Float64), "Newton Backtracking GMRES", gmres)) == 16
 end
 
 @testset "The rule of the marker" begin

@@ -8,7 +8,9 @@ is in `R = real(T)` for the element type `T` of the iterate.
 
 - `code::ReturnCode`: why the solve ended.
 - `f_calls::Int16`: the evaluations of the residual `F` of the solve, saturated at
-  `typemax(Int16)`; `0` for a method that keeps no count.
+  `typemax(Int16)`; `0` for a method that keeps no count. A `Newton` with a
+  [`GMRES`](@ref) keeps the count, and so does a [`Repeat`](@ref) of it. The other combinators
+  keep none and report `0`, because their members count only their own steps.
 - `iterations::Int32`: the number of steps taken.
 - `fnorm::R`: ``\\|F(x)\\|`` at return.
 - `stepnorm::R`: ``\\|Δx\\|`` of the last step.
@@ -18,7 +20,7 @@ is in `R = real(T)` for the element type `T` of the iterate.
   of its method, after a stall or as a vendor fallback.
 - `stationary::Bool`: the solve converged by the stationarity test rather than the residual test.
 - `jvp_calls::Int16`: the Jacobian–vector products of the solve, saturated at
-  `typemax(Int16)`; `0` for a method that keeps no count.
+  `typemax(Int16)`; `0` for a method that keeps no count, the same methods as for `f_calls`.
 - `rank::Int32`: the numerical rank of the last fresh factorisation where it is an SVD factor
   with `info == 0`, else `Int32(-1)`: no factorisation, an LU or QR factor, or a failed SVD
   factor.
