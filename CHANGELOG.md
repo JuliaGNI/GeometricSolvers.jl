@@ -11,6 +11,48 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`BlockEliminated` and `VariableProjection` for single-system block elimination and separable
+  least-squares variable projection.** Both problem wrappers are exported and subtype
+  `AbstractNonlinearProblem`. `BlockEliminated(prob::Union{NonlinearProblem, StationarityProblem},
+  inner; outer = nothing, inner_eqs = inner, outer_eqs = outer,
+  inner_method = Newton(; linsolve = SVDFactorization()), linear_inner = false,
+  inner_options = nothing)` partitions the unknown vector `x` into inner unknowns `y = x[Y]` and
+  outer unknowns `z = x[Z]` (defaulting `Z = setdiff(1:n, Y)`) and the equations into `E_y` and
+  `E_z` (`|E_y| == |Y|`, `|E_z| == |Z|`). For each outer iterate `z`, it solves
+  `F_{E_y}(y, z) = 0` for `y*(z)` — in one linear solve `y*(z) = -J_yy(0, z)⁺ F_{E_y}(0, z)` when
+  `linear_inner = true`, or from the warm start `y_warm` (initialised to `NaN` in `init_state` and
+  set to `x₀[Y]` in `start!!`, taking 0 inner steps on a repeat evaluation at the same `z`) with
+  the adaptive inner tolerance `τ_inner = max(10 eps max(1, ‖F_y0‖), min(c, 0.5 ‖F_{E_z}(prev)‖₂²))`
+  (`c` the `inner_options` cap, which stands alone before the first outer residual) and
+  pseudoinverse null-space projection on rank-deficient inner steps when `linear_inner = false` —
+  and steps on the outer residual `F_{E_z}(ỹ(z), z)`, where for `linear_inner = false` and an inner
+  residual above the floor `ỹ = y - J_yy(y, z)⁺ F_{E_y}(y, z)` is the inner iterate `y` refined by
+  one Newton correction (to first order in `F_{E_y}` this is `F_{E_z} - J_zy J_yy⁺ F_{E_y}`), and
+  otherwise `ỹ = y`; the outer Jacobian is the Schur complement
+  `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`. `inner_method` supplies
+  only the linear solver of the inner iteration and of the Schur complement.
+  `VariableProjection(prob::LeastSquaresProblem, inner; outer = nothing,
+  linsolve = SVDFactorization(), jacobian_mode = :kaufman, linear_inner = true,
+  inner_method = GaussNewton(; linsolve = SVDFactorization()), inner_options = nothing)`
+  (`BlockEliminated(prob::LeastSquaresProblem, ...)` forwards to `VariableProjection`) solves the
+  inner least-squares subproblem across all `m` residual rows for `y*(z)` and forms the `m × |Z|`
+  reduced Jacobian by Kaufman's projection `J_red(z) = (I - Φ(z) Φ(z)⁺) D(z)` (`jacobian_mode =
+  :kaufman`) or the full Golub–Pereyra formula subtracting `(Φ(z)⁺)ᴴ (∂_z Φ(z))ᴴ r_red(z)`
+  (`jacobian_mode = :golub_pereyra`); on the 5-parameter 2-exponential separable fit over the 100
+  seeded starts of `Xoshiro(42)`, both modes converge from 100 of the 100 starts against 70 for
+  joint Levenberg–Marquardt, and the test requires strictly more than joint and at least 85 of 100.
+  `solve`, `init`, `solve!` and `solve!!` accept a full initial guess `x₀` of length `n` in R1
+  (`StaticVector`) and R3 (`Array` and `AbstractGPUArray`), support `StationarityProblem` datum `b`
+  (implicit differentiation works through `solve` alone, for a `BlockEliminated` of a
+  `NonlinearProblem`; a `ForwardDiff.Dual` input raises an `ArgumentError` for `VariableProjection`
+  and for a `BlockEliminated` of a `StationarityProblem`), and return `(x*, status)` with
+  `x*[Y] = y*(z*)` and `x*[Z] = z*`;
+  any inner solver failure or rank-deficient inner factor (`rank < |Y|`) increments
+  `status.step_failures`; with `linear_inner = true` the one linear solve solves (or minimises
+  over) the inner block only when the residual is affine in `y`, so an inner residual
+  ‖F_{E_y}(y*(z), z)‖₂ above √ε · max(1, ‖F_{E_y}(0, z)‖₂) for `BlockEliminated`, or an inner
+  gradient ‖Φ(y*)ᴴ r(y*, z)‖₂ above √ε · max(1, ‖r(0, z)‖₂) · max(1, ‖Φ(y*)‖_F) for
+  `VariableProjection`, also counts as an inner failure and the solve goes on.
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
   range starts at `6.5.1`.** The `Adapt` floor rises from 4.6.1 to 4.7.3 and the `GPUArraysCore`
   floor from 0.2 to 0.2.1, because Metal 1.12 needs `GPUArrays` 12.1, which needs both; with the

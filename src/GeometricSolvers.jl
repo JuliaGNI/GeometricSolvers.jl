@@ -28,7 +28,8 @@ isgpu(backend) = !(backend isa CPU)
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options, stopping_test
-export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized, Deflated
+export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized, Deflated,
+       BlockEliminated, VariableProjection
 export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
@@ -90,6 +91,7 @@ include("nonlinear/stationarity.jl")
 include("ad/hessian.jl")
 include("nonlinear/reparametrized.jl")
 include("nonlinear/deflation.jl")
+include("nonlinear/eliminate.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")
@@ -98,5 +100,16 @@ include("composition/repeat.jl")
 include("composition/switch.jl")
 include("composition/anderson.jl")
 include("composition/implicit.jl")
+
+# `solve!` asks the type of the problem which path it takes. The predicate is defined below the
+# `eliminate.jl` include, and not beside `solve!`, because its signature names `BlockEliminated`,
+# which `eliminate.jl` defines after `solver.jl` has loaded. A `<:` test on the problem type would
+# build a `UnionAll` at run time and allocate, so the test is a dispatch on the type instead.
+
+@inline function is_elim_stationarity_problem(
+        ::Type{<:BlockEliminated{<:StationarityProblem}})
+    return true
+end
+@inline is_elim_stationarity_problem(::Type) = false
 
 end

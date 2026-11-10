@@ -37,6 +37,7 @@ if "core" in GROUPS
     @safetestset "Stationarity problem" include("nonlinear/stationarity.jl")
     @safetestset "Reparametrized problem" include("nonlinear/reparametrized.jl")
     @safetestset "Deflated problem" include("nonlinear/deflation.jl")
+    @safetestset "Block elimination and variable projection" include("nonlinear/eliminate.jl")
     @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
     @safetestset "Newton" include("nonlinear/newton.jl")
     @safetestset "Iterative refinement" include("nonlinear/refinement.jl")
