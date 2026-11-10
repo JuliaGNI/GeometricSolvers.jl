@@ -197,8 +197,10 @@ function _tally_return_codes(codes_host::Vector{ReturnCode})
     return ReturnCodeCounts(map(c -> count(==(c), codes_host), instances(ReturnCode)))
 end
 
-# The workgroup size of a launch, refused unless it is a positive count: a kernel backend rounds a
-# size above its maximum down and raises nothing, so a nonsensical value is caught here.
+# The workgroup size of a launch, refused unless it is a positive count: a non-positive one is a
+# mistake that no backend refuses. A size above the device's own maximum is left to the launch,
+# which reports it — on CPU a size above 4096 raises `ArgumentError: … more than 4096 work-items`
+# rather than being rounded down.
 @inline function _validate_workgroupsize(workgroupsize::Union{Nothing, Integer})
     workgroupsize === nothing && return nothing
     workgroupsize >= 1 || throw(ArgumentError(
@@ -242,7 +244,9 @@ value, so a `jacobian_prototype` that is not `isbits`, such as a `SparseMatrixCS
 not detected in a batch. A `workgroupsize` of `nothing` leaves the launch at the backend's
 default; any other positive value is the workgroup size of the single launch. The `Options` of the
 solve may also be passed as the sixth positional argument, `solve_batch!(X, S, prob, method, p,
-options)`, instead of the `options` keyword.
+options)`, instead of the `options` keyword. The forms of a [`StationarityProblem`](@ref) and of a
+[`Reparametrized`](@ref) problem take the same `order`, `options` and `workgroupsize` keywords, and
+the `StationarityProblem` form the datum `b` as well.
 
 The first form writes each system's [`SolverStatus`](@ref) into `S[idx]` and returns `S` (requiring
 `R === real(eltype(eltype(X)))` and `get_backend(S) == get_backend(X)`). The second form allocates a 1-byte-per-system [`ReturnCode`](@ref)

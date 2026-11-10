@@ -560,7 +560,8 @@ _per_system_lengths(data::AbstractArray{<:AbstractVector}) = (length(bi) for bi 
 function solve_batch!(
         X::AbstractArray, prob::StationarityProblem, method = Newton(), p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
-        options::Union{Nothing, Options} = nothing, b = nothing, kwargs...)
+        options::Union{Nothing, Options} = nothing, b = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing, kwargs...)
     b_src = b === nothing ? prob.b : b
     _validate_batch(X, p, order)
     _validate_batch_problem(prob)
@@ -577,7 +578,7 @@ function solve_batch!(
     codes = allocate(get_backend(X), ReturnCode, length(X))
     sp = _StationarityBatchParams(p, b_src)
     return _tally_return_codes(Array(_launch!(
-        X, codes, prob, m, sp, opt, state₀, order, nothing)))
+        X, codes, prob, m, sp, opt, state₀, order, _validate_workgroupsize(workgroupsize))))
 end
 
 function solve_batch!(
@@ -585,6 +586,7 @@ function solve_batch!(
         prob::StationarityProblem, method = Newton(), p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing, b = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing,
         kwargs...) where {R <: Real}
     b_src = b === nothing ? prob.b : b
     _validate_batch(X, p, order)
@@ -605,7 +607,8 @@ function solve_batch!(
     p₀ = _sample_batch_item(p, idx₀)
     state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     sp = _StationarityBatchParams(p, b_src)
-    return _launch!(X, S, prob, m, sp, opt, state₀, order, nothing)
+    return _launch!(X, S, prob, m, sp, opt, state₀, order,
+        _validate_workgroupsize(workgroupsize))
 end
 
 # `CommonSolve.init` and `CommonSolve.solve` on `StationarityProblem`, the counterparts of the

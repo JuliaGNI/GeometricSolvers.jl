@@ -43,8 +43,18 @@ for (k, (g1, g2)) in enumerate(pairs)
 end
 check(status1.code == SUCCESS, "Check 1: the outer solve did not converge")
 check(!isempty(pairs), "Check 1: no outer evaluation was recorded")
-check(all(g1 < g2^2 for (g1, g2) in pairs),
-    "Check 1: an evaluation does not satisfy ‖g₁‖ < ‖g₂(prev)‖²")
+# The floor of the schedule binds below `‖g₂(prev)‖² = 4 eps(R_in) √N_p`, where no arithmetic in the
+# batch's type reaches the quadratic; there the clause is the coarse ceiling instead.
+bound = 4 * eps(Float64) * sqrt(length(outer.Y))
+ceiling = 32 * eps(Float64) * sqrt(length(outer.Y))
+above = filter(p -> p[2]^2 > bound, pairs)
+below = filter(p -> !(p[2]^2 > bound), pairs)
+println(@sprintf("          %d evaluations above the floor, %d below it",
+    length(above), length(below)))
+check(all(p -> p[1] < p[2]^2, above),
+    "Check 1: an evaluation above the floor does not satisfy ‖g₁‖ < ‖g₂(prev)‖²")
+check(all(p -> p[1] <= ceiling, below),
+    "Check 1: an evaluation below the floor exceeds 32 eps(R_in) √N_p")
 println()
 
 # ─── Check 2: the reduction reports a failure, with the right count and norm ───

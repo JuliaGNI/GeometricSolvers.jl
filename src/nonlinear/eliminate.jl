@@ -2825,12 +2825,20 @@ end
     return wm, w0, wp
 end
 
+# The cell count below which the nearest-node index fits an `Int`: `typemax(Int)` is `2^63 − 1`, so
+# `round(Int, s)` raises `InexactError` at or beyond `9.22e18`, and for a non-finite `s`.
+const _PIC_MAX_CELLS = 9.2e18
+
 # The node index of the grid point nearest `ξ` and the offset from it in cells, on the periodic
-# grid of `n_cells` nodes with spacing `Δx`.
+# grid of `n_cells` nodes with spacing `Δx`. A `ξ` that no cell holds — a non-finite one, or one
+# whose cell count is beyond the `Int` range — takes the first node with a `NaN` offset, so its
+# B-spline weights are `NaN` and the gather and the deposit stay in bounds: the moment is
+# non-finite, and an outer solve reports it instead of taking an `InexactError` out of a kernel.
 @inline function _pic_node(ξ, Δx, n_cells)
     s = ξ / Δx
-    r = round(Int, s)
-    return mod(r, n_cells) + 1, s - r
+    usable = isfinite(s) && abs(s) <= _PIC_MAX_CELLS
+    r = usable ? round(Int, s) : 0
+    return mod(r, n_cells) + 1, usable ? s - r : oftype(s, NaN)
 end
 
 """
@@ -2991,7 +2999,8 @@ function make_pic_elimination_problem(
     N_x >= 4 || throw(ArgumentError("N_x must be at least 4, got $N_x"))
     N_p >= 1 || throw(ArgumentError("N_p must be at least 1, got $N_p"))
     h = T_in(Δt)
-    h > zero(T_in) || throw(ArgumentError("Δt must be positive, got $Δt"))
+    (h > zero(T_in) && isfinite(h)) || throw(ArgumentError(
+        "Δt must be finite and positive in $T_in, got $Δt, which is $h"))
     L = T_in(2) * T_in(π)
     Δx = L / T_in(N_x)
     # The particles: a uniform position train whose offset is not a rational part of the grid, and
@@ -3076,12 +3085,19 @@ R_{\\text{in}}\\left(\\tfrac{1}{2}\\min(\\texttt{inner\\_atol\\_cap},
 \\|g_2(\\text{prev})\\|^2) / \\sqrt{N_p}\\right)\\right),
 ```
 
-so that the batch residual satisfies ``\\|g_1\\| < \\|g_2(\\text{prev})\\|^2`` at every evaluation
-whose previous outer residual is above the batch's own floor `2 ε(R_in) √N_p`; each evaluation
+so that the batch residual satisfies ``\\|g_1\\| < \\|g_2(\\text{prev})\\|^2`` wherever
+``\\|g_2(\\text{prev})\\|^2 > 4\\,\\varepsilon(R_{\\text{in}})\\sqrt{N_p}``. Below that bound the
+floor binds: no arithmetic in `R_in` reaches the quadratic, and the batch residual stops at the
+floor of the batch's own precision instead of following the schedule. Each evaluation
 records the pair `(‖g₁‖, ‖g₂(prev)‖)` in the fields `g₁_history` and `g₂_prev_history`, with `Inf`
 before the first outer residual exists, the index set it eliminated in `eliminated_index_log`, and
-accumulates its inner counts in `statuses`. [`reset_batch!`](@ref) returns the batch to `Y₀` and
-the records to empty.
+accumulates its inner counts in `statuses`. A batch whose systems did not all converge, with a
+residual above the coarse ceiling ``32\\,\\varepsilon(R_{\\text{in}})\\sqrt{N_p}``, has no value to
+deposit: the residual of that evaluation is `NaN` and the outer solve cannot step on it. Under the
+ceiling the batch has stopped at the floor of its own arithmetic instead, and its deposit stands.
+The next evaluation takes the cap as its tolerance when the previous residual is not finite, since
+such a residual narrows nothing. [`reset_batch!`](@ref) returns the batch to `Y₀` and the records
+to empty.
 
 A second evaluation at the same `(x, tolerance)` reports `0` inner iterations for every system: the
 batch state is the root of the first one, and `residual!!(F_out, prob, x, p; repeat_same_tol =
@@ -3096,7 +3112,9 @@ own floor `2 eps(R_in)`, so the difference is the field's response and not the t
 batch returns to `prob.Y_anchor` afterwards.
 
 `prob.Y`, `prob.Y_anchor`, `prob.statuses`, `prob.moments`, the two history vectors and
-`prob.eliminated_index_log` are the state of the elimination; [`eliminated_indices`](@ref),
+`prob.eliminated_index_log` are the state of the elimination, and a Jacobian–vector product writes
+its per-system statuses to `prob.probe_statuses` rather than to `prob.statuses`;
+[`eliminated_indices`](@ref),
 [`deposited_moments`](@ref), [`batch_summary`](@ref), [`reset_batch!`](@ref) and
 [`make_pic_elimination_problem`](@ref) read and reset it.
 """
@@ -3117,9 +3135,9 @@ mutable struct BatchEliminated{P <: AbstractNonlinearProblem, YT, PT, D, M, IM, 
     outer_F!::OF
     workgroupsize::Union{Nothing, Int}
     statuses::Vector{SolverStatus{RIn}}
+    probe_statuses::Vector{SolverStatus{RIn}}
     shared::Vector{RIn}
     F_anchor::Vector{ROut}
-    F_probe::Vector{ROut}
     last_inner_tol::RIn
     g₂_prev::ROut
     g₁_history::Vector{RIn}
@@ -3181,8 +3199,8 @@ function BatchEliminated(
         RIn, ROut}(
         inner_prob, Y, Y_init, Y_anchor, ps, deposit!, moments, moments_probe,
         inner_method, opt, cap, elim,
-        outer_F!, _validate_workgroupsize(workgroupsize), statuses,
-        zeros(RIn, n_outer), zeros(ROut, n_outer), zeros(ROut, n_outer),
+        outer_F!, _validate_workgroupsize(workgroupsize), statuses, copy(statuses),
+        zeros(RIn, n_outer), zeros(ROut, n_outer),
         cap, ROut(Inf), RIn[], ROut[], Vector{typeof(elim)}(), 0)
 end
 
@@ -3208,9 +3226,21 @@ the residual, not of a perturbation.
 """
     batch_summary(prob::BatchEliminated)
 
-The [`BatchSummary`](@ref) of the statuses of `prob`'s last inner batch solve.
+The [`BatchSummary`](@ref) of the inner batch that `prob`'s last outer evaluation solved. A
+Jacobian–vector product solves the batch into a status slot of its own, so it leaves this summary
+as the anchor evaluation recorded it.
 """
 batch_summary(prob::BatchEliminated) = batch_summary(prob.statuses)
+
+# The batch's and the outer iterate's element types, which the problem's fields are typed by: this
+# is the one spelling of the eleven type parameters, and every method below that needs them reads
+# them here instead of repeating the signature.
+@inline function _batch_real_types(
+        ::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn,
+        ROut}
+) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
+    return RIn, ROut
+end
 
 """
     reset_batch!(prob::BatchEliminated) -> prob
@@ -3222,9 +3252,8 @@ outer residual `prob.g₂_prev` (`Inf` again) and the tolerance of the previous 
 run, and the deposited moments are left as they are, since they belong to the batch state the
 reset discards.
 """
-function reset_batch!(prob::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn,
-        ROut}) where {P,
-        YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
+function reset_batch!(prob::BatchEliminated)
+    RIn, ROut = _batch_real_types(prob)
     copyto!(prob.Y, prob.Y_init)
     copyto!(prob.Y_anchor, prob.Y_init)
     empty!(prob.g₁_history)
@@ -3233,18 +3262,21 @@ function reset_batch!(prob::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn
     prob.g₂_prev = ROut(Inf)
     prob.last_inner_tol = prob.inner_atol_cap
     prob.outer_evaluations = 0
-    fill!(prob.statuses,
-        SolverStatus{RIn}(SUCCESS, Int32(0), zero(RIn), zero(RIn), Int32(0), false))
+    for S in (prob.statuses, prob.probe_statuses)
+        fill!(S, SolverStatus{RIn}(
+            SUCCESS, Int32(0), zero(RIn), zero(RIn), Int32(0), false))
+    end
     return prob
 end
 
-# The buffers a batched outer evaluation writes, sized from the outer iterate.
-@inline function _batch_buffers!(
-        prob::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}, n::Int
-) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
-    length(prob.shared) == n || (prob.shared = Vector{RIn}(undef, n))
-    length(prob.F_anchor) == n || (prob.F_anchor = Vector{ROut}(undef, n))
-    length(prob.F_probe) == n || (prob.F_probe = Vector{ROut}(undef, n))
+# The buffers an outer evaluation writes are the problem's own, sized from the moments' grid at
+# construction: an outer iterate of another length would be read past the end of the deposited
+# moments and of the shared field by the `@inbounds` gather and deposit loops.
+@inline function _batch_buffers!(prob::BatchEliminated, x)
+    n = length(x)
+    n == length(prob.shared) || throw(DimensionMismatch(
+        "the outer iterate has length $n, but the problem's field has " *
+        "$(length(prob.shared)) nodes"))
     return nothing
 end
 
@@ -3259,13 +3291,15 @@ end
 end
 
 # The inner tolerance of one outer evaluation, from the previous outer residual: the quadratic
-# schedule of the reduced-space elimination with the floor of the batch's own unit roundoff.
-@inline function _batch_inner_tolerance(
-        prob::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn,
-        ROut}
-) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
+# schedule of the reduced-space elimination with the floor of the batch's own unit roundoff. A
+# previous residual that is not finite — `Inf` before the first evaluation exists, `NaN` after one
+# whose batch failed — narrows nothing, and the cap stands alone.
+@inline function _batch_inner_tolerance(prob::BatchEliminated)
+    RIn, ROut = _batch_real_types(prob)
     n_sys = length(prob.Y)
-    quadratic = min(ROut(prob.inner_atol_cap), prob.g₂_prev * prob.g₂_prev)
+    g₂ = prob.g₂_prev
+    quadratic = isfinite(g₂) ? min(ROut(prob.inner_atol_cap), g₂ * g₂) :
+                ROut(prob.inner_atol_cap)
     tol = RIn(ROut(1 // 2) * quadratic / sqrt(ROut(n_sys)))
     return max(RIn(2) * eps(RIn), tol)
 end
@@ -3273,37 +3307,48 @@ end
 # The options of the batch's inner solve at the tolerance `tol`: the template of `inner_options` for
 # every field but the residual test, which is `tol` absolutely and not at all relatively, so that a
 # second evaluation at the same tolerance stops at `0` iterations.
-@inline function _batch_inner_options(
-        prob::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}, tol::RIn
-) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
+@inline function _batch_inner_options(prob::BatchEliminated, tol)
+    RIn, _ = _batch_real_types(prob)
     t = prob.inner_options
     return Options{RIn}(tol, zero(RIn), t.x_abstol, t.x_reltol,
         t.min_iterations, t.max_iterations, t.max_stalls)
 end
 
 # One inner batch solve from the warm start `prob.Y` at the tolerance `tol`, with the shared
-# parameter of `x`; returns the shared parameter.
-@inline function _batch_solve!(prob::BatchEliminated, x, tol)
+# parameter of `x`, writing each system's status into `statuses`; returns the shared parameter.
+@inline function _batch_solve!(prob::BatchEliminated, x, tol, statuses)
     shared = _batch_shared!(prob, x)
     params = BatchParams(shared, prob.per_system)
-    solve_batch!(prob.Y, prob.statuses, prob.inner_prob, prob.inner_method, params;
+    solve_batch!(prob.Y, statuses, prob.inner_prob, prob.inner_method, params;
         options = _batch_inner_options(prob, tol), workgroupsize = prob.workgroupsize)
     return shared
 end
 
+# The coarse ceiling of a batch residual, `32 eps(R_in) √N_p`: the bound that Check 1 states where
+# the floor of the schedule binds, and the largest residual a failed inner solve may leave while
+# its batch is still at the floor of its own arithmetic.
+@inline function _batch_ceiling(prob::BatchEliminated)
+    RIn, _ = _batch_real_types(prob)
+    return RIn(32) * eps(RIn) * sqrt(RIn(length(prob.Y)))
+end
+
 # One outer evaluation, which the histories and the records see: the inner tolerance from the
-# previous outer residual (or the previous tolerance again), the batch solve from `prob.Y`, the
-# deposit, and the residual written into `prob.F_anchor` and, when a slot is given, into it too.
-function _anchor_residual!!(
-        F_out, prob::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}, x, p,
-        repeat_tol::Bool
-) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
-    _batch_buffers!(prob, length(x))
+# previous outer residual (or the previous tolerance again), the batch solve from `prob.Y` into
+# `prob.statuses`, the deposit, and the residual written into `prob.F_anchor` and, when a slot is
+# given, into it too. A batch that did not converge has no value — its deposit is not the reduced
+# residual at `x` — so the residual is `NaN`, which no outer step accepts and no outer status calls
+# converged. Under the coarse ceiling the batch has stopped at the floor of its own arithmetic
+# instead, and its deposit is the residual to that accuracy.
+function _anchor_residual!!(F_out, prob::BatchEliminated, x, p, repeat_tol::Bool)
+    _, ROut = _batch_real_types(prob)
+    _batch_buffers!(prob, x)
     tol = repeat_tol ? prob.last_inner_tol : _batch_inner_tolerance(prob)
-    shared = _batch_solve!(prob, x, tol)
+    shared = _batch_solve!(prob, x, tol, prob.statuses)
     summary = batch_summary(prob.statuses)
     prob.deposit!(prob.moments, prob.Y, shared, prob.per_system)
     prob.outer_F!(prob.F_anchor, x, prob.moments, shared)
+    summary.all_converged || summary.fnorm <= _batch_ceiling(prob) ||
+        fill!(prob.F_anchor, ROut(NaN))
     push!(prob.g₁_history, summary.fnorm)
     push!(prob.g₂_prev_history, prob.g₂_prev)
     push!(prob.eliminated_index_log, eliminated_indices(prob))
@@ -3316,12 +3361,13 @@ function _anchor_residual!!(
     return F_out
 end
 
-# One outer evaluation of a Jacobian–vector product: the batch solve at `tol`, the deposit into the
-# probe slot, and no record. The caller restores `prob.Y` from `prob.Y_anchor`, so no product
-# disturbs the warm start of the outer iteration.
+# One outer evaluation of a Jacobian–vector product: the batch solve at `tol` into
+# `prob.probe_statuses`, the deposit into the probe slot, and no record, so the outcomes of the
+# probe are not the ones [`batch_summary`](@ref) reports for the problem. The caller restores
+# `prob.Y` from `prob.Y_anchor`, so no product disturbs the warm start of the outer iteration.
 function _probe_residual!!(F_out, prob::BatchEliminated, x, p, tol)
-    _batch_buffers!(prob, length(x))
-    shared = _batch_solve!(prob, x, tol)
+    _batch_buffers!(prob, x)
+    shared = _batch_solve!(prob, x, tol, prob.probe_statuses)
     prob.deposit!(prob.moments_probe, prob.Y, shared, prob.per_system)
     prob.outer_F!(F_out, x, prob.moments_probe, shared)
     return F_out
@@ -3334,10 +3380,13 @@ The outer residual of the reduced-space elimination at the field `x`: solve the 
 start `prob.Y` at the inner tolerance of this evaluation, deposit its moments, and write
 `g_2(x)`. Every call records its `(‖g₁‖, ‖g₂(prev)‖)` in `prob.g₁_history` and
 `prob.g₂_prev_history` and its eliminated set in `prob.eliminated_index_log`, and leaves the batch
-at the root of the system it solved, which the next evaluation warm-starts from. With
+at the root of the system it solved, which the next evaluation warm-starts from. A batch whose
+systems did not all converge, with a residual above `32 eps(R_in) √N_p`, has no value to report:
+the residual it writes is `NaN`, so no outer step accepts it. With
 `repeat_same_tol = true` it re-uses the tolerance of the previous evaluation instead of the
 schedule of [`BatchEliminated`](@ref), so a second evaluation at the same `x` stops every system at
-`0` iterations.
+`0` iterations. The outer iterate's length must be the length of the problem's field: any other is
+a `DimensionMismatch`.
 """
 @inline function residual!!(
         F_out::AbstractVector, prob::BatchEliminated,
@@ -3356,10 +3405,12 @@ end
 
 The outer Jacobian–vector product `J v` of a [`BatchEliminated`](@ref) as the one-sided difference
 `(F(x + ε v) - F(x))/ε` with `ε` the step of `prep`. Both residuals of the difference are formed at
-the batch's own floor `2 eps(R_in)`, the tightest its arithmetic resolves, and not at the tolerance
-of the outer evaluation: a difference taken at a tolerance that the step does not override is
-noise, so a product solves the batch twice at that floor instead of reading the anchor residual.
-The batch returns to `prob.Y_anchor` afterwards, so no product disturbs the warm start.
+the batch's own floor `2 eps(R_in)`, and not at the tolerance of the outer evaluation: a difference
+taken at a tolerance that the step does not override is noise, so a product solves the batch twice
+at that floor instead of reading the anchor residual. Its per-system statuses go to a slot of their
+own, so [`batch_summary`](@ref) keeps the outcomes of the last anchor evaluation, and a probe whose
+systems stop above the floor still gives a difference rather than a `NaN`. The batch returns to
+`prob.Y_anchor` afterwards, so no product disturbs the warm start.
 """
 @inline function jvp!!(
         Jv::AbstractVector, prep::BatchEliminatedJVPPrep, prob::BatchEliminated,
@@ -3435,19 +3486,17 @@ end
 
 # The precision of the directional step: the coarser of the batch's and the outer iterate's, whose
 # unit roundoff sets the smallest difference that the batch's residual resolves.
-@inline function _batch_step_precision(
-        ::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn,
-        ROut}
-) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
+@inline function _batch_step_precision(prob::BatchEliminated)
+    RIn, ROut = _batch_real_types(prob)
     return eps(RIn) > eps(ROut) ? RIn : ROut
 end
 
-# The inner tolerance of a Jacobian–vector product: the batch's own floor `2 eps(R_in)`, the
-# tightest residual its arithmetic resolves, which is what a difference over a step of `√eps` needs.
-@inline function _batch_probe_tolerance(
-        ::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn,
-        ROut}
-) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
+# The inner tolerance of a Jacobian–vector product: the batch's own floor `2 eps(R_in)`, which is
+# what a difference over a step of `√eps` needs. A solve may stop above it — the floor of a
+# `Float32` batch is below the residual it reaches on a field of order one — so it is the tolerance
+# of the probe and not a bound on the probe's residual.
+@inline function _batch_probe_tolerance(prob::BatchEliminated)
+    RIn, _ = _batch_real_types(prob)
     return RIn(2) * eps(RIn)
 end
 

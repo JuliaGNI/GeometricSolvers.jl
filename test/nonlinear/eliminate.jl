@@ -1307,22 +1307,34 @@ end
     end
 end
 
-@testset "PIC1D: gather, deposit, and the outer residual" begin
-    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+@testset "PIC1D: gather, deposit, and the outer residual, $T_in in Float64" for T_in in REAL_ELTYPES
+    T_out = Float64
+    prob, E0 = GS.make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64)
     @test length(E0) == 16 && length(prob.Y) == 64
-    @test eltype(prob.Y) == SVector{2, Float64}
+    @test eltype(prob.Y) == SVector{2, T_in}
     @test eliminated_indices(prob) == Tuple(17:80)
     @test length(prob.statuses) == 64
-    @test_throws ArgumentError GS.make_pic_elimination_problem(Float64, Float64; N_x = 2)
+    @test_throws ArgumentError GS.make_pic_elimination_problem(T_in, T_out; N_x = 2)
+    # the batch's time step is finite in the batch's own type: `Δt = Inf` passes `> 0`, and a
+    # `Float64` step that overflows `T_in` is `Inf` once converted
+    @test_throws ArgumentError GS.make_pic_elimination_problem(T_in, T_out; Δt = Inf)
+    @test_throws ArgumentError GS.make_pic_elimination_problem(T_in, T_out; Δt = NaN)
+    @test_throws ArgumentError GS.make_pic_elimination_problem(T_in, T_out; Δt = -1)
+    if T_in === Float32
+        # a `Float64` step that overflows the batch's type is `Inf32` there
+        @test_throws ArgumentError GS.make_pic_elimination_problem(T_in, T_out; Δt = 1e300)
+    end
 
     # the gather reproduces a constant field, and its derivative is continuous across a cell edge
-    E = fill(0.25, 16)
-    for ξ in range(0.0, 2π * (15 // 16); length = 33)
-        value, _ = GS.pic_gather(E, ξ, 2π / 16, 16)
-        @test value ≈ 0.25
+    Δx = T_in(2) * T_in(π) / T_in(16)
+    E = fill(T_in(1 // 4), 16)
+    for ξ in range(zero(T_in), Δx * T_in(15); length = 33)
+        value, _ = GS.pic_gather(E, ξ, Δx, 16)
+        @test value ≈ 1 // 4
     end
-    _, slope_lo = GS.pic_gather(E, 2π * (1 // 16) - 1e-9, 2π / 16, 16)
-    _, slope_hi = GS.pic_gather(E, 2π * (1 // 16) + 1e-9, 2π / 16, 16)
+    edge = T_in === Float32 ? 8 * eps(T_in) : T_in(1e-9)
+    _, slope_lo = GS.pic_gather(E, Δx - edge, Δx, 16)
+    _, slope_hi = GS.pic_gather(E, Δx + edge, Δx, 16)
     @test slope_lo ≈ slope_hi atol = 1e-5
 
     # the deposit fills all four moments, and each is non-zero on this distribution
@@ -1332,37 +1344,38 @@ end
     m = deposited_moments(prob)
     @test m === prob.moments
     @test all(!all(iszero, v) for v in (m.current, m.density, m.flux, m.temperature))
-    @test sum(m.density) ≈ 64 rtol = 1e-12     # the S₂ weights sum to one, so the deposit is exact
+    # the S₂ weights sum to one, so a deposit of the whole batch reproduces `N_p` up to the
+    # accumulated round-off of the batch's own type
+    @test sum(m.density) ≈ 64 rtol = T_in === Float32 ? 2e-4 : 1e-12
     @test length(m.temperature) == 16
 
-    # the inner residual vanishes at the root of a particle and its analytic Jacobian matches the
-    # central difference of the residual
-    h = 0.1
-    Δx = 2π / 16
-    grid = fill(0.3, 16)
-    ps = GS.PIC1DParams(1.1, 0.4, 0.2)
+    # the analytic inner Jacobian matches the central difference of the inner residual
+    h = T_in(1 // 10)
+    grid = fill(T_in(3 // 10), 16)
+    ps = GS.PIC1DParams(T_in(11 // 10), T_in(4 // 10), T_in(2 // 10))
     c = (grid, ps)
-    y = SVector(1.15, 0.45)
+    y = SVector(T_in(115 // 100), T_in(45 // 100))
     J = GS.pic_inner_jacobian(y, c, h, Δx, 16)
-    δ = sqrt(eps(Float64))
+    δ = sqrt(eps(T_in))
     for j in 1:2
-        e = SVector(j == 1 ? δ : 0.0, j == 2 ? δ : 0.0)
+        e = SVector(j == 1 ? δ : zero(δ), j == 2 ? δ : zero(δ))
         fd = (GS.pic_inner_residual(y + e, c, h, Δx, 16) .-
               GS.pic_inner_residual(y - e, c, h, Δx, 16)) ./ (2δ)
-        @test J[:, j] ≈ fd rtol = 1e-6
+        @test J[:, j] ≈ fd rtol = T_in === Float32 ? 2e-3 : 1e-6
     end
 
     # one particle on a node deposits the S₂ weights on that node and its two neighbours, in the
     # canonical order; every other node stays empty, and an empty node's temperature is zero
-    m = DepositedMoments(zeros(16), zeros(16), zeros(16), zeros(16))
-    x_node = 4 * Δx                       # node 5, whose position is `4 Δx`
-    single = [SVector(x_node, 2.0)]
-    single_ps = [GS.PIC1DParams(x_node, 2.0, 0.0)]
-    GS.deposit_pic_moments!(m, single, zeros(16), single_ps, h, Δx, 16)
+    m = DepositedMoments(
+        zeros(T_out, 16), zeros(T_out, 16), zeros(T_out, 16), zeros(T_out, 16))
+    x_node = T_in(4) * Δx                 # node 5, whose position is `4 Δx`
+    single = [SVector(x_node, T_in(2))]
+    single_ps = [GS.PIC1DParams(x_node, T_in(2), zero(T_in))]
+    GS.deposit_pic_moments!(m, single, zeros(T_in, 16), single_ps, h, Δx, 16)
     @test m.density[5] ≈ 3 / 4
     @test m.density[4] ≈ 1 / 8
     @test m.density[6] ≈ 1 / 8
-    @test isapprox(sum(m.density), 1.0; atol = 1e-15)
+    @test isapprox(sum(m.density), 1.0; atol = T_in === Float32 ? 2e-7 : 1e-15)
     @test m.current[5] ≈ 3 / 4 * 2.0
     @test m.flux[5] ≈ 3 / 4 * 4.0
     @test m.temperature[5] == 0            # one particle has no velocity spread
@@ -1372,19 +1385,39 @@ end
     end
     @test all(isfinite, m.temperature)
 
+    # a position no cell holds — non-finite, or a cell count beyond the `Int` range — is a
+    # non-finite moment, and not an `InexactError` from inside the gather or the deposit, which
+    # no outer solve can report
+    for ξ in (T_in(NaN), T_in(Inf), -T_in(Inf), T_in(1e20) * Δx)
+        j, t = GS._pic_node(ξ, Δx, 16)
+        @test 1 <= j <= 16
+        @test isnan(t)
+        value, slope = GS.pic_gather(E, ξ, Δx, 16)
+        @test isnan(value) && isnan(slope)
+    end
+    hostile = DepositedMoments(
+        zeros(T_out, 16), zeros(T_out, 16), zeros(T_out, 16), zeros(T_out, 16))
+    GS.deposit_pic_moments!(
+        hostile, [SVector(T_in(NaN), T_in(1))], zeros(T_in, 16), nothing, h, Δx, 16)
+    @test !all(isfinite, hostile.density)
+    @test !all(isfinite, hostile.current)
+    @test !all(isfinite, hostile.flux)
+
     # the deposit accumulates in the canonical order of the batch, so the association of these
     # three velocities at one node is the batch's index order: the pairwise cancellation leaves the
     # third velocity's contribution, and any other order loses it
-    mo = DepositedMoments(zeros(16), zeros(16), zeros(16), zeros(16))
-    cancel = [SVector(x_node, 1e16), SVector(x_node, -1e16), SVector(x_node, 1.0)]
-    cancel_ps = [GS.PIC1DParams(x_node, 0.0, 0.0) for _ in 1:3]
-    GS.deposit_pic_moments!(mo, cancel, zeros(16), cancel_ps, h, Δx, 16)
+    mo = DepositedMoments(
+        zeros(T_out, 16), zeros(T_out, 16), zeros(T_out, 16), zeros(T_out, 16))
+    cancel = [SVector(x_node, T_in(1e16)), SVector(x_node, -T_in(1e16)),
+        SVector(x_node, one(T_in))]
+    cancel_ps = [GS.PIC1DParams(x_node, zero(T_in), zero(T_in)) for _ in 1:3]
+    GS.deposit_pic_moments!(mo, cancel, zeros(T_in, 16), cancel_ps, h, Δx, 16)
     @test mo.current[5] == 3 / 4          # (3/4·1e16 − 3/4·1e16) + 3/4·1, and not 1.0
     @test mo.density[5] == 3 * 3 / 4
 
     # the inner options of a batch are absolute only, so a repeat evaluation stops at 0 iterations
-    options = GS._batch_inner_options(prob, 1e-6)
-    @test options.f_abstol == 1e-6
+    options = GS._batch_inner_options(prob, T_in(1e-6))
+    @test options.f_abstol == T_in(1e-6)
     @test options.f_reltol == 0
 
     # the default eliminated set is the batch's own index block
@@ -1394,8 +1427,8 @@ end
     @test eliminated_indices(blocks) == (1, 2, 3)
 end
 
-@testset "Check 3: the deposit is deterministic" begin
-    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+@testset "Check 3: the deposit is deterministic, $T_in in Float64" for T_in in REAL_ELTYPES
+    prob, E0 = GS.make_pic_elimination_problem(T_in, Float64; N_x = 16, N_p = 64)
     F = similar(E0)
     reset_batch!(prob)
     residual!!(F, prob, E0, nothing)
@@ -1422,11 +1455,22 @@ end
             prob, E0 = GS.make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64)
             F = similar(E0)
             reset_batch!(prob)
+            # the tolerance of an evaluation is the schedule's, not the cap: at `E0` the cap is
+            # sixteen times the schedule, so a repeat at the cap reports 0 iterations as well
+            first_tol = GS._batch_inner_tolerance(prob)
+            @test first_tol < prob.inner_atol_cap
             residual!!(F, prob, E0, nothing)
             @test batch_summary(prob).total_iterations > 0
+            @test prob.last_inner_tol == first_tol
+            # one evaluation on, the schedule is narrower still, and the repeat re-uses it
+            scheduled = GS._batch_inner_tolerance(prob)
+            @test scheduled < prob.inner_atol_cap
+            residual!!(F, prob, E0, nothing)
+            @test prob.last_inner_tol == scheduled
             first_F = copy(F)
             residual!!(F, prob, E0, nothing; repeat_same_tol = true)
             summary = batch_summary(prob)
+            @test prob.last_inner_tol == scheduled     # identical across the two calls
             @test summary.max_iterations == 0
             @test summary.total_iterations == 0
             @test all(st -> st.iterations == 0, prob.statuses)
@@ -1442,29 +1486,34 @@ end
     end
 end
 
-@testset "Check 1: the adaptive quadratic inner tolerance" begin
-    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+@testset "Check 1: the adaptive quadratic inner tolerance, $T_in in Float64" for T_in in REAL_ELTYPES
+    prob, E0 = GS.make_pic_elimination_problem(T_in, Float64; N_x = 16, N_p = 64)
     # the schedule: the floor `2 eps(R_in)` of the batch's own precision, and the quadratic term
     # `min(cap, g2^2)/2/sqrt(N_p)` of the outer residual above it
-    R_in = Float64
-    floor = 2 * eps(R_in)
+    exact = T_in === Float32 ? 1e-5 : 1e-12
+    batch_floor = 2 * eps(T_in)
+    cap_tol = 0.5 * prob.inner_atol_cap / sqrt(64)
     prob.g₂_prev = 0.05
     t_half = GS._batch_inner_tolerance(prob)
     prob.g₂_prev = 0.025
     t_quarter = GS._batch_inner_tolerance(prob)
-    @test t_half > floor
-    @test t_quarter ≈ t_half / 4 rtol = 1e-12        # quadratic in the outer residual
-    @test t_quarter ≈ 0.5 * 0.025^2 / sqrt(64) rtol = 1e-12
+    @test t_half > batch_floor
+    @test t_quarter ≈ t_half / 4 rtol = exact        # quadratic in the outer residual
+    @test t_quarter ≈ 0.5 * 0.025^2 / sqrt(64) rtol = exact
     prob.g₂_prev = 0.5
-    @test GS._batch_inner_tolerance(prob) ≈ 0.5 * prob.inner_atol_cap / sqrt(64) rtol = 1e-12
+    @test GS._batch_inner_tolerance(prob) ≈ cap_tol rtol = exact
     prob.g₂_prev = 1e-12
-    @test GS._batch_inner_tolerance(prob) == floor   # floored at the batch's own round-off
+    @test GS._batch_inner_tolerance(prob) == batch_floor   # floored at the batch's own round-off
     prob.g₂_prev = Inf
-    @test GS._batch_inner_tolerance(prob) ≈ 0.5 * prob.inner_atol_cap / sqrt(64) rtol = 1e-12
+    @test GS._batch_inner_tolerance(prob) ≈ cap_tol rtol = exact
+    prob.g₂_prev = NaN                  # an evaluation with no residual narrows nothing
+    @test GS._batch_inner_tolerance(prob) ≈ cap_tol rtol = exact
 
-    # and through a solve: every recorded evaluation satisfies ‖g₁‖ < ‖g₂(prev)‖² strictly
+    # and through a solve: `‖g₁‖ < ‖g₂(prev)‖²` strictly at every recorded evaluation where the
+    # floor does not bind, and under the coarse ceiling where it does
     reset_batch!(prob)
-    _, status = solve(prob, copy(E0), R5(); f_abstol = 1e-8, f_reltol = 0.0)
+    tol = T_in === Float32 ? 2e-4 : 1e-8
+    _, status = solve(prob, copy(E0), R5(); f_abstol = tol, f_reltol = 0.0)
     @test status.code == SUCCESS
     @test status.f_calls > 0
     @test status.jvp_calls > 0
@@ -1472,21 +1521,33 @@ end
           length(prob.eliminated_index_log)
     @test length(prob.g₁_history) >= 2
     @test prob.g₂_prev_history[1] == Inf
-    @test all(g1 < g2^2 for (g1, g2) in zip(prob.g₁_history, prob.g₂_prev_history))
-    # and the recorded inner residual is the one the schedule bounds
+    # the floor binds where `min(cap, g₂²)/2/√N_p` is below `2 eps(R_in)`, below `g₂² = 4 eps √N_p`
+    n_p = length(prob.Y)
+    bound = 4 * eps(T_in) * sqrt(n_p)
+    ceiling = 32 * eps(T_in) * sqrt(n_p)
+    for (g1, g2) in zip(prob.g₁_history, prob.g₂_prev_history)
+        if g2^2 > bound
+            @test g1 < g2^2
+        else
+            @test g1 <= ceiling
+        end
+    end
+    # and where the floor does not bind, the recorded inner residual is under the schedule
     for k in 2:length(prob.g₁_history)
-        @test prob.g₁_history[k] <=
-              0.5 * min(prob.inner_atol_cap, prob.g₂_prev_history[k]^2) * (1 + 1e-6)
+        g2 = prob.g₂_prev_history[k]
+        if g2^2 > bound
+            @test prob.g₁_history[k] <= 0.5 * min(prob.inner_atol_cap, g2^2) * (1 + 1e-6)
+        end
     end
 end
 
-@testset "Check 5: the eliminated index set is fixed over a solve" begin
-    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 16, N_p = 64)
+@testset "Check 5: the eliminated index set is fixed over a solve, $T_in in Float64" for T_in in REAL_ELTYPES
+    prob, E0 = GS.make_pic_elimination_problem(T_in, Float64; N_x = 16, N_p = 64)
     fixed = eliminated_indices(prob)
     @test fixed == Tuple(17:80)
     reset_batch!(prob)
     @test isempty(prob.eliminated_index_log)
-    solve(prob, copy(E0), R5(); f_abstol = 1e-8, f_reltol = 0.0)
+    solve(prob, copy(E0), R5(); f_abstol = T_in === Float32 ? 2e-4 : 1e-8, f_reltol = 0.0)
     @test !isempty(prob.eliminated_index_log)
     @test all(==(fixed), prob.eliminated_index_log)
     @test eliminated_indices(prob) == fixed
@@ -1571,6 +1632,94 @@ end
     @test_throws ArgumentError BatchEliminated(
         (F, x, m, s) -> F, inner, [SVector(0.0)], (m, Y, s, ps) -> m, moments;
         workgroupsize = 0)
+    # the cap is finite: `Inf` and `NaN` are not a tolerance
+    for bad_cap in (Inf, NaN)
+        @test_throws ArgumentError BatchEliminated(
+            (F, x, m, s) -> F, inner, [SVector(0.0)], (m, Y, s, ps) -> m, moments;
+            inner_atol_cap = bad_cap)
+    end
+
+    # the workgroup size reaches the launch: the CPU device refuses one above its 4096
+    # work-items, which a launch that dropped the keyword accepts
+    @test GS._validate_workgroupsize(5000) == 5000
+    @test_throws ArgumentError solve_batch!(
+        [zero(SVector{2, Float64}) for _ in 1:4],
+        similar([zero(SVector{2, Float64}) for _ in 1:4], SolverStatus{Float64}),
+        NonlinearProblem((y, c) -> y .- c), Newton(),
+        PerSystem([SVector(1.0, 2.0) for _ in 1:4]); workgroupsize = 5000)
+    # every `solve_batch!` form takes it: each refuses a zero, which no launch accepts, and the
+    # reparametrized form runs a launch at a real size
+    stat = GS.StationarityProblem(x -> x .- 1.0)
+    Xs = [zero(SVector{2, Float64}) for _ in 1:4]
+    Ss = similar(Xs, SolverStatus{Float64})
+    rep = GS.Reparametrized(NonlinearProblem((x, p) -> x .- 1.0), (y, p) -> 2 * y, nothing)
+    @test solve_batch!(Xs, rep, Newton(); workgroupsize = 2).SUCCESS == 4
+    @test all(st -> st.code == SUCCESS,
+        solve_batch!(Xs, Ss, rep, Newton(); workgroupsize = 2))
+    for f in (X -> solve_batch!(X, stat, Newton(); workgroupsize = 0),
+        X -> solve_batch!(X, Ss, stat, Newton(); workgroupsize = 0),
+        X -> solve_batch!(X, rep, Newton(); workgroupsize = 0),
+        X -> solve_batch!(X, Ss, rep, Newton(); workgroupsize = 0))
+        @test_throws ArgumentError f(Xs)
+    end
+
+    # an outer iterate of another length is refused, not resized into an `@inbounds` read past
+    # the deposited moments and the shared field
+    for n in (7, 9)
+        reset_batch!(prob)
+        x_bad = n < 8 ? E0[1:n] : vcat(E0, zeros(n - 8))
+        @test_throws DimensionMismatch residual!!(zeros(n), prob, x_bad, nothing)
+        @test_throws DimensionMismatch solve(prob, x_bad, R5())
+    end
+    @test isempty(prob.g₁_history)        # a refused evaluation records nothing
+
+    # a Jacobian–vector product solves into a status slot of its own, so it leaves the statuses
+    # of the anchor evaluation as they were
+    reset_batch!(prob)
+    Fr = similar(E0)
+    residual!!(Fr, prob, E0, nothing)
+    anchor_statuses = copy(prob.statuses)
+    anchor_summary = batch_summary(prob)
+    prep = GS.prepare_jvp(AutoForwardDiff(), prob, Fr, E0, nothing)
+    GS.jvp!!(similar(Fr), prep, prob, E0, one.(E0), nothing)
+    @test prob.statuses == anchor_statuses
+    @test batch_summary(prob) == anchor_summary
+
+    # an inner batch that fails leaves no outer residual: the deposit of a batch that did not
+    # converge is not the value of the reduced residual. Its seventh system has no real root, and
+    # the analytic Jacobian keeps the derivative out of the batch kernel; `c[2]` is the system's
+    # parameter, the second half of what `BatchParams` passes
+    inner_fail = NonlinearProblem(
+        (y, c) -> SVector(y[1]^2 - c[2][1], y[2]^2 - c[2][2]),
+        (y, c) -> SMatrix{2, 2}(2 * y[1], zero(y[1]), zero(y[1]), 2 * y[2]))
+    Y_fail = [SVector(1.2, 1.8) for _ in 1:8]
+    ps_fail = [i == 7 ? SVector(-1.0, 3.0) : SVector(2.0, 3.0) for i in 1:8]
+    fail = BatchEliminated(
+        (F, x, m, s) -> (F .= x), inner_fail, Y_fail,
+        (m, Y, s, ps) -> fill!(m.current, 1.0),
+        DepositedMoments(zeros(4), zeros(4), zeros(4), zeros(4));
+        per_system = ps_fail, inner_atol_cap = 1e-6)
+    reset_batch!(fail)
+    Ffail = zeros(4)
+    residual!!(Ffail, fail, ones(4), nothing)
+    @test !batch_summary(fail).all_converged
+    @test !all(isfinite, Ffail)
+    @test !isfinite(fail.g₂_prev)
+    _, fail_status = solve(fail, ones(4), R5())
+    @test fail_status.code == NONFINITE
+
+    # a particle at a position no cell holds is a non-finite residual and a status, not an
+    # `InexactError` from inside the kernel
+    nan_prob, nan_E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 8, N_p = 16)
+    nan_prob.Y[1] = SVector(NaN, 0.4)
+    nan_prob.Y_init[1] = SVector(NaN, 0.4)
+    reset_batch!(nan_prob)
+    Fnan = similar(nan_E0)
+    residual!!(Fnan, nan_prob, nan_E0, nothing)
+    @test !all(isfinite, Fnan)
+    @test !batch_summary(nan_prob).all_converged
+    _, nan_status = solve(nan_prob, copy(nan_E0), R5())
+    @test nan_status.code == NONFINITE
 
     # a counted residual adds to the `f_calls` of the workspace, so the trial points of a line
     # search reach the status: both of the residual's call forms count
@@ -1603,11 +1752,11 @@ end
     JET.@test_opt target_modules = (GeometricSolvers,) GS.pic_inner_residual(y, c, h, Δx, 8)
     JET.@test_opt target_modules = (GeometricSolvers,) batch_summary(S)
     JET.@test_opt target_modules = (GeometricSolvers,) GS._batch_inner_tolerance(prob)
-    if Base.JLOptions().check_bounds != 1
-        # skipped where a run forces `--check-bounds=yes`
-        inner_at(yy) = GS.pic_inner_residual(yy, c, h, Δx, 8)
-        @test allocations(inner_at, y) == 0
-        gather(ξ) = GS.pic_gather(grid, ξ, Δx, 8)
-        @test allocations(gather, 1.1) == 0
-    end
+    # the barrier's argument has a concrete type and the call is `SMatrix` arithmetic, so these
+    # hold under `--check-bounds=yes` as well
+    @test allocations(collect, y) > 0
+    inner_at(yy) = GS.pic_inner_residual(yy, c, h, Δx, 8)
+    @test allocations(inner_at, y) == 0
+    gather(ξ) = GS.pic_gather(grid, ξ, Δx, 8)
+    @test allocations(gather, 1.1) == 0
 end

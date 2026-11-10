@@ -776,8 +776,15 @@ so that a compat-only bump can be told apart from an interface change.
   inner counts in `statuses`; `reset_batch!` returns the problem to `Y₀`. The inner tolerance is
   the adaptive quadratic
   ``\max(2\varepsilon(R_{\text{in}}), R_{\text{in}}(\tfrac{1}{2}\min(c, \|g_2(\text{prev})\|^2)/\sqrt{N_p}))``,
-  which satisfies ``\|g_1\| < \|g_2(\text{prev})\|^2`` strictly at every evaluation above the
-  batch's own floor. The outer product is a one-sided difference at the step
+  which satisfies ``\|g_1\| < \|g_2(\text{prev})\|^2`` strictly wherever
+  ``\|g_2(\text{prev})\|^2 > 4\varepsilon(R_{\text{in}})\sqrt{N_p}`` and stops at the floor of
+  the batch's own precision below it, where no arithmetic in the batch's type
+  reaches the quadratic. A batch whose systems did not all converge and whose residual is above the
+  coarse ceiling ``32\varepsilon(R_{\text{in}})\sqrt{N_p}`` leaves no residual: the evaluation
+  returns `NaN` and the outer solve reports `NONFINITE` rather than stepping on a deposit the
+  elimination cannot vouch for. An outer iterate of any length but the field's is a
+  `DimensionMismatch`, and a non-finite `Δt` or `inner_atol_cap` an `ArgumentError`. The outer
+  product is a one-sided difference at the step
   ``\sqrt{\operatorname{eps}(R_{\text{eff}})}`` of the coarser of the two precisions
   (`ChenChaconBarnes:2012`, p. 5384), solved at the batch's floor on both sides of the difference
   and restored to the anchor's state afterwards, so a `Float32` batch inside a `Float64` outer
@@ -787,11 +794,12 @@ so that a compat-only bump can be told apart from an interface change.
   ``\|F\| = 3.8 \times 10^{-6}`` in 2 outer steps, and at `1e-10` returns `STALLED` with
   ``\|F\| = 3.6 \times 10^{-7}``. `BatchSummary` reduces a status vector to the global residual
   norm ``\sqrt{\sum_i \|g_i\|^2}``, `all_converged`, `failure_count` and the two iteration counts,
-  on the vector's own backend and without scalar indexing; `batch_summary(prob)` reduces the last
-  inner batch of a `BatchEliminated`. `BatchParams(shared, per_system)` gives system `i` of a batch
-  the pair `(shared, per_system[i])`, for a batch whose systems agree in one parameter and differ
-  in another, and `solve_batch!` takes a `workgroupsize` keyword and the options as a sixth
-  positional argument.
+  on the vector's own backend and without scalar indexing; `batch_summary(prob)` reduces the inner
+  batch that a `BatchEliminated`'s last outer evaluation solved, and a Jacobian–vector product
+  writes its own outcomes to a slot of its own. `BatchParams(shared, per_system)` gives system `i`
+  of a batch the pair `(shared, per_system[i])`, for a batch whose systems agree in one parameter
+  and differ in another, and `solve_batch!` takes a `workgroupsize` keyword and the options as a
+  sixth positional argument.
   `make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64, Δt = 1 // 10)` builds the
   one-dimensional implicit electrostatic PIC test problem after `Chen2011`: one Crank–Nicolson
   Vlasov–Ampère step on ``[0, 2\pi)`` with a periodic quadratic B-spline field gather, a
