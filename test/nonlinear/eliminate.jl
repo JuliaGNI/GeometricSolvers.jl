@@ -1691,9 +1691,9 @@ end
         PerSystem([SVector(1.0, 2.0) for _ in 1:4]); workgroupsize = 5000)
     # every `solve_batch!` form takes it: each refuses a zero, which the backend would accept, and
     # the reparametrized and stationarity forms run a launch at a real size. The stationarity
-    # objective is a scalar function of the pair `(x, p)`, whose gradient a batch of `SVector`
-    # roots: the residual evaluates it at a `Dual` field with a second argument, so a one-argument
-    # `x -> ...` has no stationarity state for the kernel to compile.
+    # objective is a scalar function of the pair `(x, p)`, whose gradient is the residual that the
+    # batch of `SVector` roots solves: the residual evaluates it at a `Dual` field with a second
+    # argument, so a one-argument `x -> ...` has no stationarity state for the kernel to compile.
     stat = GS.StationarityProblem((x, p) -> sum(abs2, x) / 2 - sum(x))
     Xs = [zero(SVector{2, Float64}) for _ in 1:4]
     Ss = similar(Xs, SolverStatus{Float64})

@@ -53,7 +53,7 @@ The reduction of a batch's per-system [`SolverStatus`](@ref) vector to one repor
 # Fields
 
 - `fnorm::R`: ``\\sqrt{\\sum_i \\|g_i\\|_2^2}``, the norm of the concatenated per-system residuals,
-  from the `fnorm` of each system's status in `real(eltype(...))` of the batch.
+  from the `fnorm` of each system's status, taken in the batch's real element type `R`.
 - `all_converged::Bool`: every system ended with `SUCCESS`.
 - `failure_count::Int`: the number of systems that did not.
 - `max_iterations::Int32`, `total_iterations::Int`: the largest and the sum of the per-system
