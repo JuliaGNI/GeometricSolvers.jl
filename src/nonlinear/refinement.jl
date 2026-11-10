@@ -8,6 +8,8 @@ factorised at `x` multiplies by the regularised Jacobian it holds, and a step al
 factor takes [`jvp!!`](@ref) at `x`.
 
 The keyword constructor takes the real type `T` of `η`, and the positional one the type of `η`.
+With `gmres_maxiter` or `gmres_tol`, the keyword constructor returns a
+[`GMRESRefinement`](@ref).
 
 At each inner pass (`1 ≤ iter ≤ maxiter`), `refine!!` forms the linear residual
 `r = -F(x) - J(x) d` in `T`, solves `fac \\ r` in the factor precision `TF` for the correction
@@ -216,9 +218,9 @@ end
 # The `maxiter` LU-IR passes of a refinement, at the tolerance `η`: the shared body of the
 # `Refinement` and the stage-1 method of the `GMRESRefinement`.
 @inline function refine_passes!!(
-        d, η::R, maxiter::Int32, fac, jvpprep, prob, x, Fx, fnorm, p,
-        refbuf) where {R <: Real}
+        d, η, maxiter::Int32, fac, jvpprep, prob, x, Fx, fnorm, p, refbuf)
     T = eltype(x)
+    R = real(T)
     fnorm_R = fnorm === nothing ? R(rnorm(Fx)) : R(fnorm)
     iszero(fnorm_R) && return d, false
     isfinite(fnorm_R) || return d, true

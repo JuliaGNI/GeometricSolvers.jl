@@ -359,7 +359,7 @@ end
     @testset "the API of the refinement" begin
         @test fieldnames(Refinement) === (:η, :maxiter)
         @test fieldnames(GMRESRefinement) === (:η, :maxiter, :gmres_maxiter, :gmres_tol)
-        # the keyword forwarding of the plan's decision D1
+        # the keyword forwarding of `Refinement` to a `GMRESRefinement`
         r = Refinement(Float64; gmres_maxiter = 4, gmres_tol = 1e-9)
         @test r isa GMRESRefinement
         @test r.η == sqrt(eps(Float64))
@@ -438,7 +438,7 @@ end
     end
 
     @testset "the tenfold allowance of the true residual bound" begin
-        # D3: a stage accepts a direction up to ten times its stated tolerance, the allowance for
+        # a stage accepts a direction up to ten times its stated tolerance, the allowance for
         # the rounding between the Arnoldi estimate of the preconditioned system and the true
         # residual of the direction, and no further.
         @test accepts_gmres_ir(1e-9, 1e-8)
@@ -448,6 +448,29 @@ end
         @test !accepts_gmres_ir(1e-6, 1e-8)
         @test !accepts_gmres_ir(NaN, 1e-8)
         @test !accepts_gmres_ir(Inf, 1e-8)
+    end
+
+    @testset "the LU-IR passes floor their tolerance at the precision of the iterate" begin
+        # `refine!!` stops at `max(η, √eps(real(T))) ‖F‖` for the `T` of the iterate, whatever the
+        # type of `η`: the `Float32` direction below is within that floor already, so a `Float64`
+        # `η` of `1e-12` must not refine it further, and a floor read from the type of `η` does.
+        B = Float32[4 1 0; 1 3 1; 0 1 2]
+        x = Float32[1, 2, 3]
+        Fx = B * x
+        F!(r, y, p) = (mul!(r, B, y); r)
+        J!(J, y, p) = (copyto!(J, B); J)
+        prob = NonlinearProblem(F!, J!)
+        m = Newton(; linsolve = LUFactorization(Float16))
+        fac = factorize!!(init_state(m, prob, copy(x), nothing).fac, m.linsolve, copy(B))
+        d₀ = -ldiv!!(similar(x), fac, Fx)
+        @test norm(Fx .+ B * d₀) < sqrt(eps(Float32)) * norm(Fx)
+        for ref in (Refinement(1e-12, 3), GMRESRefinement(1e-12, 3))
+            d, failed = GS.refine!!(
+                copy(d₀), ref, fac, GS.HeldJacobianJVP(B), prob, copy(x),
+                copy(Fx), nothing, nothing, GS.RefinementBuffer(similar(x), similar(x)))
+            @test !failed
+            @test d == d₀
+        end
     end
 
     @testset "a singular factorisation goes straight to the refactorisation" begin
