@@ -34,6 +34,10 @@ so that [`Newton`](@ref) started from the same `x₀` converges to a root other 
 nonlinear partial differential equations*). Near a simple root `‖M(x) F(x)‖` grows like
 `‖x - rᵢ‖^{1-p}`, which is what pushes the iterate away from it.
 
+The steps and the line search take the deflated residual, but the stopping test of
+[`Options`](@ref) reads the inner one: `status.fnorm` is `‖F(x)‖`, `f_abstol` bounds it, and
+`f_reltol` is relative to `‖F(x₀)‖`, so a deflated root meets the tolerance of a solve of `prob`.
+
 `power` (`p > 0`) and `shift` (`σ > 0`) are stored in `T = float(real(eltype(first(roots))))`, so
 `Float32` roots give `power::Float32` and a `Float32` product; a solve needs an iterate of that
 element type and a real one.
@@ -41,9 +45,12 @@ element type and a real one.
 # Roots
 
 `roots` is a non-empty `Tuple` of roots — a `Number` for a `Number` iterate, an `SVector` for an R1
-iterate, a `Vector` for an R3 iterate — or an `AbstractVector` of real vectors. Every root has the
-length of the iterate and finite real entries, and the roots of one set share their element type
-and are all numbers or all vectors. The `AbstractVector` form is not `isbits`, so
+iterate, an array of the iterate's own back end for an R3 iterate (a `Vector` for a `Vector`, a
+`JLArray` or an `MtlArray` for one on that device) — or an `AbstractVector` of real vectors. Every
+root has the length of the iterate and finite real entries, and the roots of one set share their
+element type and are all numbers or all vectors. A solve on an array iterate raises an
+`ArgumentError` for a root on another back end or a static root, because the deflation broadcasts
+`x .- r` on the iterate's back end. The `AbstractVector` form is not `isbits`, so
 [`solve_batch!`](@ref) refuses it: the batch kernel takes the problem by value.
 
 For a wrapped [`StationarityProblem`](@ref) a root is a full state, as [`solve`](@ref) returns it,
@@ -489,10 +496,38 @@ function jvp!!(
     return Jv
 end
 
+# ─── The stopping test on the inner residual ─────────────────────────────────
+
+# The steps and the line search take the deflated residual `M F`, but a solve converges on the inner
+# residual: `‖F‖ = ‖M F‖ / M` at the iterate, so `f_abstol` bounds `‖F(x)‖` and `f_reltol` is
+# relative to `‖F(x₀)‖`, as in a solve of the inner problem. A non-finite norm is kept, so a start
+# at a deflated root stays `NONFINITE`.
+@inline function _inner_status(status::SolverStatus{R}, M) where {R}
+    isfinite(status.fnorm) || return status
+    return SolverStatus{R}(
+        status.code, status.iterations, status.fnorm / M, status.stepnorm,
+        status.step_failures, status.promoted, status.stationary, status.rank,
+        status.nullnorm, status.gradratio)
+end
+
+@inline function converged_status(
+        state, def::Deflated, x::Union{StaticVector, Number}, status::SolverStatus)
+    return _inner_status(status, _deflate_scale(def, x))
+end
+
+# An array iterate reads `M` with the difference buffer of the deflated preparation, which is the
+# Jacobian preparation of its `Newton` state. The state is not named in the signature, which would
+# make a static iterate ambiguous between this method and the one above.
+@inline function converged_status(
+        state, def::Deflated, x::AbstractVector, status::SolverStatus)
+    return _inner_status(status, _deflate_scale!(state.jacprep.us, def, x))
+end
+
 # ─── The checks of a solve ───────────────────────────────────────────────────
 
 # The iterate of a solve: real, in the element type of the roots, as long as every root, and a
-# number iterate needs number roots while a vector iterate needs vector roots.
+# number iterate needs number roots while a vector iterate needs vector roots. An array iterate
+# needs array roots on its own back end, because the deflation broadcasts `x .- r`.
 function _check_deflated_solve(def::Deflated, x₀)
     real_eltype = eltype(x₀)
     real_eltype <: Real || throw(ArgumentError(
@@ -510,6 +545,22 @@ function _check_deflated_solve(def::Deflated, x₀)
         _scalar_iterate(r) === scalar || throw(ArgumentError(
             "Deflated needs roots of the storage of the iterate: the start is a $(typeof(x₀)) " *
             "and a root is a $(typeof(r))"))
+    end
+    _check_deflated_root_backend(def, x₀)
+    return nothing
+end
+
+# A number or a static iterate takes its roots by value. An array iterate takes array roots on its
+# own back end: a host root in a device broadcast cannot run, and a static root has no back end.
+@inline _check_deflated_root_backend(def::Deflated, x₀::Union{
+    Number, StaticArray}) = nothing
+function _check_deflated_root_backend(def::Deflated, x₀::AbstractArray)
+    backend = get_backend(x₀)
+    for r in def.roots
+        (!(r isa StaticArray) && get_backend(r) == backend) || throw(ArgumentError(
+            "Deflated needs array roots on the back end of the iterate: the start is a " *
+            "$(typeof(x₀)) and a root is a $(typeof(r)); give the roots in the array type of " *
+            "the start"))
     end
     return nothing
 end

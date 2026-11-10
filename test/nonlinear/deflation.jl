@@ -132,6 +132,30 @@ residual_options(::Type{T}) where {T} = (f_abstol = residual_atol(T), f_reltol =
     @test all(r -> residual_norm(prob, r) <= atol, roots)
 end
 
+@testset "The stopping test reads the inner residual, with default options ($T)" for T in REAL_ELTYPES
+    # `f_reltol` is relative to `‖F(x₀)‖` of the inner problem, the bound that a solve of the
+    # inner problem from the same start meets; a test on `M F` stopped short of it, at about
+    # `7.6e-9` from `0.1` in `Float64`
+    opts = Options(T)
+    bound(F0) = max(opts.f_abstol, opts.f_reltol * F0)
+    prob = p1_problem()
+    for x0 in (T(0.1), T(0.01))
+        x, status = solve(Deflated(prob, (zero(T),)), x0, Newton())
+        F = abs(x^3 - x)
+        @test GS.isconverged(status)
+        @test abs(abs(x) - 1) < 1 / 2
+        @test F <= bound(abs(x0^3 - x0))
+        @test isapprox(status.fnorm, F; rtol = 8 * eps(T))
+    end
+    # an array iterate reads `M` in the workspace of the deflated preparation
+    p = T[1, 4]
+    x0 = T[0.8, 1.7]
+    x, status = solve(Deflated(p2_problem_r3(), [T[1, 2]]), copy(x0), BT, p)
+    @test GS.isconverged(status)
+    @test norm(x - T[1, 2]) > 1 / 2
+    @test norm(r3_ref(x, p)) <= bound(norm(r3_ref(x0, p)))
+end
+
 @testset "Clause 1: three roots from one start, P2 SVector ($T)" for T in REAL_ELTYPES
     prob = p2_problem()
     x0 = SVector{2, T}(T(0.8), T(1.7))
@@ -238,8 +262,9 @@ end
     atol = residual_atol(T)
     opts = residual_options(T)
     r1, s1 = solve_root(prob, copy(x0), BT, p; opts...)
-    r2, s2 = solve_root(Deflated(prob, [Array(r1)]), copy(x0), BT, p; opts...)
-    r3, s3 = solve_root(Deflated(prob, [Array(r1), Array(r2)]), copy(x0), BT, p; opts...)
+    # the roots are on the iterate's back end, as the deflation's broadcast needs
+    r2, s2 = solve_root(Deflated(prob, [copy(r1)]), copy(x0), BT, p; opts...)
+    r3, s3 = solve_root(Deflated(prob, [copy(r1), copy(r2)]), copy(x0), BT, p; opts...)
     @test all(GS.isconverged, (s1, s2, s3))
     @test norm(Array(r1) - Array(r2)) > 1 / 2
     @test norm(Array(r1) - Array(r3)) > 1 / 2
@@ -253,6 +278,26 @@ end
     # with `U = :` the unknowns are the whole state, and a root on the device stays there
     def = Deflated(p3_problem(), [AT(T[1, 0])])
     @test all(r -> r isa AT{T, 1}, GS._deflated_roots_r3(def))
+end
+
+@testset "Edge 10: an array iterate refuses a root on another back end or a static root ($T)" for T in REAL_ELTYPES
+    p = JLArray(T[1, 4])
+    x0 = JLArray(T[0.8, 1.7])
+    host = Deflated(p2_problem_r3(), [T[1, 2]])
+    @test_throws ArgumentError solve(host, copy(x0), BT, p)
+    @test_throws ArgumentError init(host, copy(x0), BT, p)
+    # the device roots on a host iterate, and a static root on a host iterate
+    device = Deflated(p2_problem_r3(), [JLArray(T[1, 2])])
+    @test_throws ArgumentError solve(device, T[0.8, 1.7], BT, T[1, 4])
+    static = Deflated(p2_problem_r3(), (SVector{2, T}(1, 2),))
+    @test_throws ArgumentError solve(static, T[0.8, 1.7], BT, T[1, 4])
+    # a wrapped StationarityProblem checks its full-state roots against the start
+    @test_throws ArgumentError solve(
+        Deflated(p3_problem(), [T[1, 0]]), JLArray(T[0.1, 0.3]), BT)
+    # the roots on the iterate's own back end solve
+    x, status = solve(Deflated(p2_problem_r3(), [JLArray(T[1, 2])]), copy(x0), BT, p)
+    @test GS.isconverged(status)
+    @test norm(Array(x) - T[1, 2]) > 1 / 2
 end
 
 # ─── Clause 1: R2 and edge 11, one Deflated for a whole batch ───────────────
@@ -346,7 +391,7 @@ end
     vt = AT(T[0.7, -0.3])
     for roots in ([[T(1), T(2)]], [[T(1), T(2)], [T(-1), T(-2)]])
         host_roots = [copy(r) for r in roots]
-        def = Deflated(prob, roots)
+        def = Deflated(prob, [AT(r) for r in roots])
         F = similar(xt)
         prep = prepare_ad(AutoForwardDiff(), def, F, xt, p)
         J = similar(xt, T, 2, 2)
@@ -424,7 +469,7 @@ end
     for AT in ARRAY_BACKENDS
         p = AT(T[1, 4])
         root = AT(T[1, 2])
-        def = Deflated(p2_problem_r3(), [Array(root)])
+        def = Deflated(p2_problem_r3(), [copy(root)])
         x = copy(root)
         xa, status = solve(def, x, BT, p)
         @test status.code == NONFINITE

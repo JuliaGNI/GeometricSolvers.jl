@@ -79,6 +79,11 @@ end
         status.step_failures, status.promoted, false)
 end
 
+# The status that the residual test of `solve!!` reads at `x`. It is `status` itself, unless a
+# problem steps on a scaled residual and converges on its unscaled one: a `Deflated` problem sets
+# `fnorm` to the norm of its inner residual.
+@inline converged_status(state, prob, x, status) = status
+
 @inline function stationary_converged(
         ::AbstractNonlinearProblem, ::Options{R}, state, ::SolverStatus{R}) where {R}
     return false
@@ -158,7 +163,9 @@ function solve!!(
     if !isfinite(fnorm₀)
         return finish!!(state, method, prob, x, Fx, end_status(status, NONFINITE))
     end
-    if residual_converged(options, status, fnorm₀)
+    status = converged_status(state, prob, x, status)
+    ftest₀ = status.fnorm
+    if residual_converged(options, status, ftest₀)
         return finish!!(state, method, prob, x, Fx, status)
     end
     if options.max_iterations == Int32(0)
@@ -167,7 +174,7 @@ function solve!!(
     stalls = Int32(0)
     while true
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
-        status = record(status, info)
+        status = converged_status(state, prob, x, record(status, info))
         if info.code == SINGULAR || info.code == NONFINITE
             return finish!!(state, method, prob, x, Fx, status)
         end
@@ -175,7 +182,7 @@ function solve!!(
            !stationary_converged(prob, options, state, status)
             return finish!!(state, method, prob, x, Fx, status)
         end
-        if residual_converged(options, status, fnorm₀)
+        if residual_converged(options, status, ftest₀)
             return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
         # the diagnostics are re-measured at `x` at most once per step
