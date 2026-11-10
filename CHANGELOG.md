@@ -1383,21 +1383,33 @@ so that a compat-only bump can be told apart from an interface change.
   allocations per solve in R1 and after `init` in R3. `power` and `shift` are stored in
   `float(real(eltype(first(roots))))`, so `Float32` roots give an all-`Float32` product; a solve
   needs an iterate of that element type, real, as long as every root, with number roots for a
-  number iterate and vector roots for a vector iterate, and a root with a non-finite entry, a root
-  set of mixed element type, a root set of numbers and vectors mixed, a `power` or `shift` that is
-  not finite and positive, an empty root set, or an inner problem that is neither a
-  `NonlinearProblem` nor a `StationarityProblem` raises an `ArgumentError` at construction,
-  while a `solve_batch!` whose kernel would take a non-`isbits` wrapper by value — the
-  `AbstractVector` root storage of an R3 iterate, for one — raises one at the call. `solve`, `init`
-  and both forms of `solve_batch!` on a `Deflated` also raise an `ArgumentError` for a `Newton`
-  whose `jacobian` is a callable, because that callable is the Jacobian of the inner residual `F`
-  and `Newton` would step with it as the deflated Jacobian; an analytic Jacobian of `F` goes into
-  the wrapped `NonlinearProblem` as its `J`, and `Newton(jacobian = <AD backend>)` is accepted.
-  At a deflated root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0` iterations
-  with `x == x₀` instead of `SUCCESS` at a known root, a factor that overflows does the same, and
-  the gradient is evaluated unit-scaled so that a point at `norm(x - rᵢ) = 1e-100` keeps finite
-  entries with no `NaN`. A wrapped `StationarityProblem` iterates on its unknowns and takes full
-  states as its roots, so the distance is that of `x_U`.
+  number iterate and, for an array iterate, roots that are arrays of the iterate's own type, and a
+  root with a non-finite entry, a root set of mixed element type, a root set of numbers and
+  vectors mixed, a `power` or `shift` that is not finite and positive, an empty root set, or an
+  inner problem that is neither a `NonlinearProblem` nor a `StationarityProblem` raises an
+  `ArgumentError` at construction, while a `solve_batch!` whose kernel would take a non-`isbits`
+  wrapper by value — the `AbstractVector` root storage of an R3 iterate, for one — raises one at
+  the call. A solve on an array iterate raises an `ArgumentError` too when a root is on another
+  back end than the iterate — a host `Array` root with a `JLArray` or `MtlArray` iterate, a device
+  root with a host iterate — or when a root is a static array, because the deflation broadcasts
+  `x .- r` on the iterate's back end; a wrapped `StationarityProblem` is checked the same way, its
+  full-state roots against the start. `solve`, `init` and both forms of `solve_batch!` on a
+  `Deflated` also raise an `ArgumentError` for a `Newton` whose `jacobian` is a callable, because
+  that callable is the Jacobian of the inner residual `F` and `Newton` would step with it as the
+  deflated Jacobian; an analytic Jacobian of `F` goes into the wrapped `NonlinearProblem` as its
+  `J`, and `Newton(jacobian = <AD backend>)` is accepted.
+  The Newton steps and the line search of a `Deflated` solve take the deflated residual
+  `M(x) F(x)`, but the residual test of `Options` reads the inner residual: `status.fnorm` is
+  `norm(F(x))`, `f_abstol` bounds it, and `f_reltol` is relative to `norm(F(x₀))`, so a deflated
+  root meets the same tolerance as a solve of the inner problem. The cubic `x^3 - x` with the root
+  `0` deflated, solved from `x₀ = 0.1` with default options, ends at `abs(F) = 0.0`. The base loop
+  `solve!!` reaches this through an internal hook, `converged_status(state, prob, x, status)`,
+  which returns `status` by default and is not exported.
+  At a deflated root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0`
+  iterations with `x == x₀` instead of `SUCCESS` at a known root, a factor that overflows does the
+  same, and the gradient is evaluated unit-scaled so that a point at `norm(x - rᵢ) = 1e-100` keeps
+  finite entries with no `NaN`. A wrapped `StationarityProblem` iterates on its unknowns and takes
+  full states as its roots, so the distance is that of `x_U`.
   `solve` on a `Deflated(NonlinearProblem)` with a `ForwardDiff.Dual` in `x₀` or `p`
   differentiates the undeflated inner problem implicitly at the root it found, and a
   `Deflated(StationarityProblem)` refuses a dual with an `ArgumentError`, as the problem itself
