@@ -247,6 +247,14 @@ end
     @test all(r -> norm(r3_ref(Array(r), Array(p))) <= atol, (r1, r2, r3))
 end
 
+@testset "Edge 10: the roots of a wrapped StationarityProblem keep the storage of the iterate ($AT, $T)" for AT in ARRAY_BACKENDS,
+    T in REAL_ELTYPES
+
+    # with `U = :` the unknowns are the whole state, and a root on the device stays there
+    def = Deflated(p3_problem(), [AT(T[1, 0])])
+    @test all(r -> r isa AT{T, 1}, GS._deflated_roots_r3(def))
+end
+
 # ─── Clause 1: R2 and edge 11, one Deflated for a whole batch ───────────────
 
 @testset "Clause 1 and edge 11: one Deflated for a batch ($T)" for T in REAL_ELTYPES
@@ -610,6 +618,29 @@ end
     @test_throws ArgumentError solve_batch!(X, Deflated(prob, [[1.0, 2.0]]), Newton())
     @test_throws ArgumentError solve_batch!(
         X, Vector{SolverStatus{Float64}}(undef, 2), Deflated(prob, [[1.0, 2.0]]), Newton())
+end
+
+@testset "A Newton with a callable jacobian is refused, an AD backend is not" begin
+    # `Newton` would take the callable as the deflated Jacobian, so `p2_j`, the Jacobian of the
+    # inner residual, would step in the wrong direction
+    def = Deflated(p2_problem_ad(), (SVector(1.0, 2.0),))
+    x0 = SVector(0.8, 1.7)
+    X = fill(x0, 2)
+    m_j = Newton(; globalization = Backtracking(), jacobian = p2_j)
+    @test_throws ArgumentError solve(def, x0, m_j)
+    @test_throws ArgumentError init(def, x0, m_j)
+    @test_throws ArgumentError solve_batch!(copy(X), def, m_j)
+    @test_throws ArgumentError solve_batch!(
+        copy(X), Vector{SolverStatus{Float64}}(undef, 2), def, m_j)
+    sdef = Deflated(p3_problem(), (SVector(1.0, 0.0),))
+    s_j = Newton(; jacobian = (x, p) -> SMatrix{2, 2}(1.0, 0.0, 0.0, 1.0))
+    @test_throws ArgumentError solve(sdef, SVector(0.1, 0.3), s_j)
+    @test_throws ArgumentError init(sdef, SVector(0.1, 0.3), s_j)
+    @test_throws ArgumentError solve_batch!(fill(SVector(0.1, 0.3), 2), sdef, s_j)
+    x, status = solve(
+        def, x0, Newton(; globalization = Backtracking(), jacobian = AutoForwardDiff()))
+    @test GS.isconverged(status)
+    @test norm(x - SVector(1.0, 2.0)) > 1 / 2
 end
 
 # ─── Edge 12: the distance on the unknowns, and the datum `b` ───────────────

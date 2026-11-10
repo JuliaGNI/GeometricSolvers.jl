@@ -63,6 +63,10 @@ Where `‖u‖^{-p-1}` overflows although `‖u‖^{-p}` does not (between about
 `10^{-103}` in `Float64` for `p = 2`), `∇mᵢ` has an infinite coordinate and the Jacobian is not
 finite.
 
+A [`Newton`](@ref) with a callable `jacobian` raises an `ArgumentError`, because `Newton` would
+take it as the deflated Jacobian. Give an analytic Jacobian of `F` to the wrapped
+`NonlinearProblem` instead.
+
 # Implicit differentiation
 
 [`solve`](@ref) on a `Deflated(NonlinearProblem)` with a `ForwardDiff.Dual` in `x₀` or `p` runs the
@@ -131,7 +135,7 @@ end
 end
 
 @inline _is_root(r::Real) = true
-@inline _is_root(r::Union{StaticVector, AbstractVector}) = true
+@inline _is_root(r::AbstractVector) = true
 @inline _is_root(r) = false
 
 # A `Number` iterate has `Number` roots, and a vector iterate has vector roots: `x - r` has no
@@ -142,7 +146,7 @@ end
 @inline function _finite_root(r::Real)
     return isfinite(r)
 end
-@inline function _finite_root(r::Union{StaticVector, AbstractVector})
+@inline function _finite_root(r::AbstractVector)
     return eltype(r) <: Real && all(isfinite, r)
 end
 
@@ -152,12 +156,12 @@ end
 @inline function _check_deflated_roots(roots::Tuple)
     isempty(roots) && throw(ArgumentError("Deflated needs at least one root"))
     n = length(first(roots))
+    n >= 1 || throw(ArgumentError("Deflated roots must be non-empty"))
     T = eltype(first(roots))
     scalar = _scalar_iterate(first(roots))
     for r in roots
         _is_root(r) || throw(ArgumentError(
             "Deflated roots must be real numbers or real vectors"))
-        n >= 1 || throw(ArgumentError("Deflated roots must be non-empty"))
         length(r) == n || throw(ArgumentError(
             "Deflated needs roots of one length"))
         eltype(r) === T || throw(ArgumentError(
@@ -174,9 +178,9 @@ end
         roots::AbstractVector{<:AbstractVector{<:Real}})
     isempty(roots) && throw(ArgumentError("Deflated needs at least one root"))
     n = length(first(roots))
+    n >= 1 || throw(ArgumentError("Deflated roots must be non-empty"))
     T = eltype(first(roots))
     for r in roots
-        n >= 1 || throw(ArgumentError("Deflated roots must be non-empty"))
         length(r) == n || throw(ArgumentError(
             "Deflated needs roots of one length"))
         eltype(r) === T || throw(ArgumentError(
@@ -510,11 +514,23 @@ function _check_deflated_solve(def::Deflated, x₀)
     return nothing
 end
 
+# A `Newton` takes a callable `jacobian` as the Jacobian of the problem it solves, which here is the
+# deflated one, `M J + F ∇Mᵀ`; a Jacobian of the inner `F` there steps in the wrong direction. An
+# analytic Jacobian of `F` is the `J` of the wrapped `NonlinearProblem`.
+@inline _check_deflated_method(method) = nothing
+@inline function _check_deflated_method(m::Newton)
+    (m.jacobian === nothing || m.jacobian isa AbstractADType) || throw(ArgumentError(
+        "Deflated needs a Newton whose jacobian is nothing or an AD backend: a callable would be " *
+        "taken as the deflated Jacobian; give the Jacobian of F to the NonlinearProblem instead"))
+    return nothing
+end
+
 # ─── `Deflated(::NonlinearProblem)`: the entry points of the solver loop ─────
 
 function solve(
         def::Deflated{<:NonlinearProblem}, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
+    _check_deflated_method(method)
     if has_dual_type(typeof(x₀)) || has_dual_type(typeof(p))
         return solve_implicit(def, x₀, method, p, options, kwargs)
     end
@@ -527,6 +543,7 @@ end
 function init(
         def::Deflated{<:NonlinearProblem}, x₀, method, p = nothing;
         options::Union{Nothing, Options} = nothing, kwargs...)
+    _check_deflated_method(method)
     _check_deflated_solve(def, x₀)
     return invoke(init, Tuple{AbstractNonlinearProblem, Any, Any, Any}, def, x₀, method, p;
         options = options, kwargs...)
@@ -595,6 +612,7 @@ function _check_deflated_batch(def::Deflated, X)
 end
 
 function _prepare_deflated_batch(X, def, method, options, kwargs)
+    _check_deflated_method(method)
     T = eltype(eltype(X))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
@@ -692,7 +710,7 @@ end
 @inline function _deflated_roots_r3(def::Deflated{<:StationarityProblem})
     U = def.prob.U
     return map(def.roots) do r
-        U isa Colon ? collect(r) : r[U]
+        U isa Colon ? copy(r) : r[U]
     end
 end
 
@@ -830,6 +848,7 @@ end
 
 function _init_deflated_stationarity(def, x₀, method, p, b, options, kwargs)
     _refuse_deflated_stationarity_duals(:init, x₀, p)
+    _check_deflated_method(method)
     _check_deflated_solve(def, x₀)
     R = real(eltype(x₀))
     opt = resolve_options(eltype(x₀), options, kwargs)
@@ -845,6 +864,7 @@ end
 
 function _solve_deflated_stationarity(def, x₀, method, p, b, options, kwargs)
     _refuse_deflated_stationarity_duals(:solve, x₀, p)
+    _check_deflated_method(method)
     _check_deflated_solve(def, x₀)
     R = real(eltype(x₀))
     opt = resolve_options(eltype(x₀), options, kwargs)
@@ -918,6 +938,7 @@ function solve_batch!(
 )
     b_src = b === nothing ? def.prob.b : b
     _validate_batch(X, p, order)
+    _check_deflated_method(method)
     _check_deflated_batch(def, X)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
     T = eltype(eltype(X))
@@ -946,6 +967,7 @@ function solve_batch!(
         kwargs...) where {R <: Real}
     b_src = b === nothing ? def.prob.b : b
     _validate_batch(X, p, order)
+    _check_deflated_method(method)
     _check_deflated_batch(def, X)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
     R_X = real(eltype(eltype(X)))

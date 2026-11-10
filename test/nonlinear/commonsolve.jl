@@ -58,8 +58,8 @@ end
 @testset "CommonSolve's functions dispatch their first argument on the package's types" begin
     # the first positional argument of every method that the package adds is one of the package's
     # own problem or solver types: `init` and `solve` take any `AbstractNonlinearProblem`, so that
-    # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem` and a
-    # `Reparametrized` problem have their own
+    # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem`, a
+    # `Reparametrized` and a `Deflated` problem have their own
     for (f, owned) in (
         (CommonSolve.init,
         (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated)),
