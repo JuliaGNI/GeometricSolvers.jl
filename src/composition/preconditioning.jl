@@ -21,8 +21,10 @@ a `RAS` with a positive tolerance whose local solve does not converge returns `M
 `LeftPreconditioned` step that meets it, at its iterate or at the trial point where its outer step
 reports `NONFINITE`, returns `MAXITERS` too, which ends the solve. A `RAS` with
 a `balance_threshold` is refused at `init_state` with an `ArgumentError`, because a skipped sweep
-returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root.
-With any other `inner` the derivative of
+returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root. A
+[`Newton`](@ref) with [`GMRES`](@ref) as `outer` is refused at `init_state` with an
+`ArgumentError`, because it solves a `NonlinearProblem` and `outer` solves ``r^\\ell``; as `inner`
+it is taken. With any other `inner` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
 [`prepare_ad`](@ref) prepares at `init_state` whatever its globalization reads. With a
 [`RAS`](@ref) inner that preparation is the RASPEN form, so every sweep forms the block factor at
@@ -112,6 +114,9 @@ end
 @inline function init_state(m::LeftPreconditioned, prob::NonlinearProblem, x, p)
     x isa Union{Number, StaticArray} && throw(ArgumentError(
         "LeftPreconditioned takes a mutable vector iterate: an R1 iterate (a Number or an SVector) has no workspace for an inner step"))
+    m.outer isa Newton && m.outer.linsolve isa GMRES &&
+        throw(ArgumentError(
+            "LeftPreconditioned does not take a Newton with GMRES as its outer method: a Newton with GMRES solves a NonlinearProblem, and the outer method solves the preconditioned residual; use a Newton with a factorization, such as the default LUFactorization(), or a Picard as the outer method, or put the Newton with GMRES in the inner method"))
     m.inner isa RAS && m.inner.balance_threshold !== nothing &&
         throw(ArgumentError(
             "LeftPreconditioned does not take a RAS with a balance_threshold: a skipped sweep returns its input, which reads as a zero of the preconditioned residual at a point that is not a root"))

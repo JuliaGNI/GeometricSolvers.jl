@@ -816,7 +816,10 @@ so that a compat-only bump can be told apart from an interface change.
   `atol` and the balance threshold of Cai and Li, which `LeftPreconditioned` refuses: its
   `init_state` raises an `ArgumentError` for a `RAS` inner with a `balance_threshold`, because a
   skipped sweep returns its input and would read as a zero of `rˡ` at a point that is not a
-  root. The standard test set gains the column
+  root. Its `init_state` likewise raises an `ArgumentError` for a `Newton` with `GMRES` as the
+  outer method, because that Newton solves a `NonlinearProblem` and the outer method solves the
+  preconditioned residual `rˡ`; a `Newton` with `GMRES` as the inner method is taken. The
+  standard test set gains the column
   `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
   `test/verification/standard_reference.csv` holds 1742 (67 problems × 13 columns × 2 element
   types).

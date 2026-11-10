@@ -834,6 +834,27 @@ end
         m, prob, one(T), nothing)
 end
 
+# The outer method runs on the preconditioned residual, not on a `NonlinearProblem`, so a
+# matrix-free Newton outer is refused by `LeftPreconditioned` itself; a Newton with `GMRES` as the
+# inner map is taken.
+@testset "LeftPreconditioned refuses a Newton with GMRES as its outer method, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    x0 = T[1, 1.5]
+    gmres = Newton(; linsolve = GMRES(), globalization = Backtracking())
+    m = LeftPreconditioned(gmres, Newton())
+    msg = "LeftPreconditioned does not take a Newton with GMRES as its outer method"
+    @test_throws ArgumentError init_state(m, prob, copy(x0), nothing)
+    @test_throws msg init_state(m, prob, copy(x0), nothing)
+    @test_throws msg solve(prob, copy(x0), m; max_iterations = 20)
+    # the same outer on its default factorization, and a GMRES Newton as the inner map, are taken
+    @test init_state(
+        LeftPreconditioned(Newton(; globalization = Backtracking()), Newton()),
+        prob, copy(x0), nothing) isa LeftPreconditionedState
+    x, status = solve(prob, copy(x0), LeftPreconditioned(Newton(), gmres); max_iterations = 50)
+    @test status.code == SUCCESS
+    @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
+end
+
 # --- Check 6: the P8 benchmark counters -------------------------------------------------------
 
 # The P8 1D stiff cubic reaction-diffusion problem, `-u'' + λ (u³ - u) = 0` on `n` interior points
