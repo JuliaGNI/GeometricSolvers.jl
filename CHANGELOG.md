@@ -827,27 +827,40 @@ so that a compat-only bump can be told apart from an interface change.
   preconditioner given as `GMRES(; preconditioner = P)` is refreshed by `refresh!(P, prob, x, Fx,
   p)` once per Newton step and applied by `apply_preconditioner!(z, P, v)` before every product,
   and a matrix-free problem supplies its own product as `JVPFunction(jvp!)` in the `jacobian` field
-  of `Newton` or through the chunked forward mode that every device array takes. The step passes
+  of `Newton` or through the chunked forward mode that every device array takes; a `Newton` with
+  `jacobian = JVPFunction(f)` and a factorising linear method raises an `ArgumentError` at
+  construction, because a product gives no matrix to factorise. The step passes
   `InexactStep(η_ach)` to a line search, so each accepted step obeys
   ``\\|F(x + s)\\| \\le [1 - c_1 (1 - \\eta)] \\|F(x)\\|``, and reaching `maxiter` inner iterations
-  without meeting the tolerance increments `status.step_failures`.
+  without meeting the tolerance increments `status.step_failures`. At a breakdown where the
+  Jacobian is singular on the Krylov space, `gmres_solve!` reports `converged = false` and the true
+  residual, not a converged solve with residual 0.
   `SolverStatus{R}` carries `f_calls::Int16` and `jvp_calls::Int16` in its two alignment holes — its
   sizes stay 36 bytes for `Float32` and 56 for `Float64`, it stays `isbits`, and both counts
   saturate at `typemax(Int16)` — filled in `finish!!` for a `Newton` with `GMRES`, and
   `f_calls(solver)` / `jvp_calls(solver)` return the same numbers. The matrix-free `DogLeg` runs on
   the Arnoldi relation of an unrestarted `GMRES` (`Pawlowski et al. 2008`, Corollary 2.3), and a
   `Newton` with a restarted one or with a preconditioner under a `DogLeg` raises an
-  `ArgumentError`. `Newton` takes `forcing` and `preconditioner` keywords that configure its
-  `GMRES`. For a caller: `test/nonlinear/krylov.jl` runs the six checks and the eight decided
-  edges on `Array` in `Float32` and `Float64`, and Check 1 and the device-compatible edge on
-  `JLArray` as well; `test/devices/metal_krylov.jl` runs the solve, the inner cap and a
+  `ArgumentError`. Under a `DogLeg`, the inner solve of a Newton step stops at `min(maxiter, n)`
+  inner iterations, one Arnoldi cycle, and never restarts, so `maxiter > n` cannot make the model
+  read a relation that spans more than one cycle. `Newton` takes `forcing` and `preconditioner`
+  keywords that configure its `GMRES`. For a caller: `test/nonlinear/krylov.jl` runs the
+  matrix-free solve with no Jacobian and exact `F` and product counts, the forcing terms, the
+  inexact backtracking test, the inner cap, the right preconditioner and the matrix-free `DogLeg`,
+  together with the edges of a non-finite residual or product, a zero residual at the start, a zero
+  previous residual norm in the forcing term, a happy breakdown, a breakdown on a singular
+  operator, `maxiter` above `n`, `n = 1` with a value iterate refused, the element types of the
+  product, and a device-compatible array under `allowscalar(false)`, on `Array` in `Float32` and
+  `Float64`, and the matrix-free solve and the device-array edge on `JLArray` as well;
+  `test/devices/metal_krylov.jl` runs the solve, the inner cap and a
   non-finite start on `MtlArray` in `Float32` under `allowscalar(false)`; and the standard test
   set gains the column `Newton Backtracking GMRES`, whose 134 cells are 115 `SUCCESS`, 13
   `LINESEARCH_FAILED`, 4 `MAXITERS` and 2 `STALLED`, with 18 flagged `unstable`; no existing cell
   changes. Gaps: an R5 state holds the mutable Krylov workspace, so it is not `isbits` and there
   is no kernel entry for R5 (R1 and R2 own that); the CUDA and ROCm device runs have not been
-  made; and `GMRES(; jvp_eltype)` is the seam that the defect-correction measurement of the
-  design's §1.4 reads, which is not part of this change.
+  made; and `GMRES(; jvp_eltype)`, which evaluates the product in a lower precision than the
+  residual (a defect-correction solve), is provided as a seam, and no measurement of that
+  precision trade is part of this change.
 
 - **A `SciMLBase` package extension (`GeometricSolversSciMLBaseExt`) accepts a
   `SciMLBase.NonlinearProblem` in `solve` and `init`, and returns `(x, status)`** (decision 52 of

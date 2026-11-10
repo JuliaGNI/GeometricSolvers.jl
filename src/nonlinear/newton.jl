@@ -5,8 +5,8 @@
 
 Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) and, as
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
-`linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref), [`QRFactorization`](@ref) or
-[`SVDFactorization`](@ref)), globalization `globalization`
+`linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref), [`QRFactorization`](@ref),
+[`SVDFactorization`](@ref) or the matrix-free [`GMRES`](@ref)), globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the
 trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector
 `jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref) or [`Refinement`](@ref)),
@@ -57,7 +57,11 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
 # Keywords of a `GMRES` linear method
 
 `forcing` and `preconditioner` configure the [`GMRES`](@ref) of `linsolve`, and a `Newton` that
-takes either of them with any other linear method raises an `ArgumentError`.
+takes either of them with any other linear method raises an `ArgumentError`. A `Newton` with `GMRES`
+forms no factor, so it takes no `reuse`, no [`Refinement`](@ref) and no
+[`LevenbergMarquardt`](@ref) globalization, and a [`DogLeg`](@ref) needs an unrestarted `GMRES`
+without a preconditioner. A [`JVPFunction`](@ref) in `jacobian` needs a `GMRES`, because a
+factorising method needs a Jacobian matrix. Each refusal is an `ArgumentError`.
 
 - `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
   the relative tolerance of every Newton step's inner solve.
@@ -105,6 +109,8 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
             end
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a GMRES solve does not form"))
+        elseif jacobian isa JVPFunction
+            throw(ArgumentError("Newton with a JVPFunction needs linsolve = GMRES(...): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give"))
         end
         new{L, G, J, RF, R, K}(
             linsolve, globalization, jacobian, refinement, regularization, reuse)
@@ -1470,7 +1476,7 @@ end
         nothing, r5_jvp(prep, ws, g), Fx, ws.d, nothing, nothing,
         init_globalization(m.globalization, g, x, Fx), newton_rule(m, x),
         init_merit(m.globalization, x), R(NaN), NewtonDiagnostics(R),
-        init_refinement(m.refinement, x), nothing, false, Int32(0), ws)
+        nothing, nothing, false, Int32(0), ws)
 end
 
 # The Jacobian–vector preparation of the solve with its counters, and the `jvp_eltype` coupling
@@ -1481,12 +1487,12 @@ end
 end
 
 # The direction of one R5 step: the forcing term of the step, the refresh of the right
-# preconditioner, and the inner solve. It returns whether the residual, the linear residual and the
-# direction were finite, the attained relative tolerance `η_ach`, the step-rule failures of the
-# inner solve, and `‖F_k‖`.
+# preconditioner, and the inner solve, capped at `maxiter` inner iterations. It returns whether the
+# residual, the linear residual and the direction were finite, the attained relative tolerance
+# `η_ach`, the step-rule failures of the inner solve, and `‖F_k‖`.
 @inline function gmres_direction!(
         state::NewtonState, g::GMRES{F, P, TJ}, ws::GMRESWorkspace,
-        prob, x, Fx, p) where {F, P, TJ}
+        prob, x, Fx, p, maxiter::Int32) where {F, P, TJ}
     T = eltype(x)
     R = real(T)
     fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
@@ -1499,7 +1505,7 @@ end
     map!!(-, ws.bb, Fx)
     op = R5Operator(state.jvpprep, prob, x, p)
     _, info = gmres_solve!(
-        ws, op, g.preconditioner, ws.bb, fnorm, η, g.maxiter, g.restart)
+        ws, op, g.preconditioner, ws.bb, fnorm, η, maxiter, g.restart)
     ws.gmres_iterations = info.iterations
     ws.max_inner = max(ws.max_inner, info.iterations)
     ws.linres = info.resnorm
@@ -1507,7 +1513,7 @@ end
     ws.prev_fnorm = fnorm
     ws.beta = fnorm
     ws.step += one(Int32)
-    failures = info.iterations >= g.maxiter && !info.converged ? Int32(1) : Int32(0)
+    failures = info.iterations >= maxiter && !info.converged ? Int32(1) : Int32(0)
     # a non-finite product, Hessenberg entry or preconditioner leaves a non-finite linear residual
     # or direction: the step ends with `NONFINITE` before a globalization reads either
     ok = isfinite(info.resnorm) && all(isfinite, ws.d)
@@ -1515,18 +1521,20 @@ end
     return ok, R(η_ach), failures, fnorm
 end
 
-# The step of a `Newton` with `GMRES`: the inner solve, the refined direction, and the globalization
-# of the direction. A line search gets the inexact step kind `InexactStep(η_ach)`, whose test is
-# `‖F(x + α d)‖ ≤ [1 - c₁(1 - η(α))] ‖F‖` with `η(α) = |1 - α| + α η_ach` (§5.1); a `DogLeg` runs
-# its matrix-free trial loop on the Arnoldi relation of that same solve.
+# The step of a `Newton` with `GMRES`: the inner solve and the globalization of its direction. A line
+# search gets the inexact step kind `InexactStep(η_ach)`, whose test is
+# `‖F(x + α d)‖ ≤ [1 - c₁(1 - η(α))] ‖F‖` with `η(α) = |1 - α| + α η_ach`; a `DogLeg` runs
+# its matrix-free trial loop on the Arnoldi relation of that same solve. That relation holds for
+# one Arnoldi cycle only, so under a `DogLeg` the inner solve stops at the width of the basis,
+# `min(maxiter, n)`, and never restarts.
 @inline function gmres_step!!(state::NewtonState, ws::GMRESWorkspace,
         m::Newton, g::GMRES{F, P, TJ}, prob, x, Fx, p) where {F, P, TJ}
     R = real(eltype(x))
-    ok, η_ach, failures, fnorm = gmres_direction!(state, g, ws, prob, x, Fx, p)
+    cap = m.globalization isa DogLeg ? Int32(size(ws.V, 2) - 1) : g.maxiter
+    ok, η_ach, failures, fnorm = gmres_direction!(state, g, ws, prob, x, Fx, p, cap)
     ok ||
         return x, Fx, state, StepInfo{R}(NONFINITE, fnorm, zero(R), failures, false, false)
-    d, _ = refine!!(
-        ws.d, m.refinement, nothing, state.jvpprep, prob, x, Fx, fnorm, p, state.refbuf)
+    d = ws.d
     if m.globalization isa DogLeg
         nd = R(rnorm(d))
         newton = isfinite(nd) && !iszero(nd)
