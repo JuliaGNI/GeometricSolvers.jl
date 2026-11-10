@@ -489,7 +489,12 @@ end
         # §V names the KA backend: a value iterate carries no Krylov basis, so the kernel reaches
         # the LU-IR passes and the refactorisation, and `GMRESRefinement` has to be `isbits` for the
         # method to travel into the kernel at all.
+        # Under `--check-bounds=yes` a bounds check stops the compiler eliding the local
+        # `MVector` and `MMatrix` of the static solve, which reach the heap, and a kernel cannot
+        # allocate: the launch fails in `gc_pool_alloc`. CI's `julia-runtest` step passes
+        # `check_bounds: auto`, so the set runs there.
         for T in SDD_ELTYPES
+            Base.JLOptions().check_bounds == 1 && continue
             R = real(T)
             m = Newton(; linsolve = LUFactorization(Float32),
                 refinement = GMRESRefinement(T; gmres_maxiter = 4, gmres_tol = IR_TOL))
