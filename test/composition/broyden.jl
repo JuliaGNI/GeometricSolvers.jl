@@ -86,7 +86,7 @@ const POST_RESTART_DAMPING = 0.9602548089183558
 const POST_RESTART_X = [-0.866579836099137, -0.3325072429872186, 0.6114335821524323]
 
 # The residual of Check 3: `Coupled`'s, `x_i² + p_i x_i + 2 x_{perm_i}`, minus a constant, so that
-# the problem has no root at zero. The clause's bound `n * eps(R) * rnorm(x₊)` is relative, and a
+# the problem has no root at zero. The bound `n * eps(R) * rnorm(x₊)` is relative, and a
 # root at zero takes it below the round-off floor of the weights, where no pair of summation
 # orders meets it. One type with a value form and an in-place form, as the two storage forms of a
 # residual take it.
@@ -690,7 +690,6 @@ end
     A = T.(POST_RESTART_A)
     c = T(POST_RESTART_C)
     b = T.(POST_RESTART_B)
-    damping = R(POST_RESTART_DAMPING)
     prob_r1 = NonlinearProblem(
         (x, p) -> SMatrix{3, 3, T}(A) * x .+ c .* x .^ 3 .- SVector{3, T}(b))
     prob_r3 = NonlinearProblem(
@@ -739,7 +738,7 @@ end
     # The per-step bound `8 eps(R) S₁` with `S₁ = rnorm(x_m) + |γ₁| rnorm(Δx₁ + Δw₁)` is the size
     # of the terms the two rounding paths sum in a different order: the member step `x_m` and the
     # one correction `γ₁ (Δx₁ + Δw₁)`. `|γ₁| rnorm(Δx₁ + Δw₁)` is `rnorm(x₊ - x_m)` and
-    # `x_m = x_prev + w_k`, so both terms come from the state. The clause asserts on the steps
+    # `x_m = x_prev + w_k`, so both terms come from the state. The test asserts on the steps
     # where both methods take the accelerated step with its one kept column (`depth == 1`): a
     # restart or a rejected weight gives the member step for both, which says nothing about the
     # weights. The bound is per step, because the two paths compound over a solve.
@@ -1050,7 +1049,7 @@ end
     # twice fires both at once; here one column measure is tiny and the other is not.
     # (a) `0 < ‖Δw‖² <= floatmin(R)` with a `Δx` of normal size: the member shifts the zero `x₂`
     # by `sqrt(floatmin(R)) x₁`, so the shift is exact and a quarter of a unit of `x₁` moves `Δw`
-    # by `sqrt(floatmin(R))/4` while `Δx` stays at a quarter. The residual is the clause's
+    # by `sqrt(floatmin(R))/4` while `Δx` stays at a quarter. The residual is
     # `(s x₁, x₂ - 2, x₃ - 3)`, which the shift leaves unchanged, so the step reaches the
     # degenerate-column test and not a growth restart.
     s_tiny = sqrt(floatmin(R))
@@ -1104,9 +1103,8 @@ end
         meth, prob_r1, seq_x[1], prob_r1.F(seq_x[1], nothing), nothing,
         rnorm(prob_r1.F(seq_x[1], nothing)))
     info_f = nothing
-    x_f = seq_x[1]
     for xk in seq_x
-        x_f, F_f, st, info_f = step!!(
+        _, _, st, info_f = step!!(
             st, meth, prob_r1, xk, prob_r1.F(xk, nothing), nothing)
     end
     @test info_f.code == SUCCESS
@@ -1359,7 +1357,7 @@ end
                 p_s = SVector{n, T}(p_vec)
                 for (name, prob_r3, prob_r1, jac_r3) in problems
                     x₀_s = SVector{n, T}(fill(x0_c, n))
-                    x_n_s, st_n_s = solve(prob_r1, x₀_s, Newton(), p_s)
+                    x_n_s, _ = solve(prob_r1, x₀_s, Newton(), p_s)
                     J_star = Matrix(prob_r1.J(x_n_s, p_s))
 
                     x₀ = fill(x0_c, n)
@@ -1600,7 +1598,6 @@ end
 
     @testset "Edge 8: m > 4 is refused in R1 and runs in R3" begin
         for T in ELTYPES
-            R = real(T)
             n = 6
             # R1: `m = 5` throws with the constant message, from both entry points.
             x0_s = SVector{n, T}(fill(T(1 / 2), n))
@@ -1627,7 +1624,7 @@ end
             x0_vec = zeros(T, n)
             method = Broyden(Picard(; damping = 0.4), Val(5); grow_depth = true)
             solver = init(prob, copy(x0_vec), method, p_vec)
-            x_sol, st_sol = solve!(solver, copy(x0_vec))
+            _, st_sol = solve!(solver, copy(x0_vec))
             @test st_sol.code == SUCCESS
         end
     end
@@ -1686,7 +1683,7 @@ end
         b_hard = Broyden(member_hard, Val(3))
         st0 = start!!(init_state(b_hard, prob_r1, x0, nothing),
             b_hard, prob_r1, x0, Fx0, nothing, rnorm(Fx0))
-        x_out, Fx_out, st_out, info_out = step!!(st0, b_hard, prob_r1, x0, Fx0, nothing)
+        x_out, _, st_out, info_out = step!!(st0, b_hard, prob_r1, x0, Fx0, nothing)
         @test info_out.code == hard_code
         @test iszero(info_out.stepnorm)
         @test x_out == x0
@@ -1705,7 +1702,7 @@ end
     @test info1.code == LINESEARCH_FAILED
     @test info1.stepnorm > 0
     @test st_s1.has_prev
-    x2, Fx2, st_s2, info2 = step!!(st_s1, b_soft, prob_r1, x1, Fx1, nothing)
+    _, _, st_s2, info2 = step!!(st_s1, b_soft, prob_r1, x1, Fx1, nothing)
     @test info2.stepnorm > 0
     @test st_s2.depth >= 1
 
@@ -1730,7 +1727,7 @@ end
     st_t = start!!(init_state(b_tight, prob_lin, z3, nothing),
         b_tight, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
     xt1, Ft1, st_t1, _ = step!!(st_t, b_tight, prob_lin, z3, -b_vec, nothing)
-    xt2, Ft2, st_t2, info_t2 = step!!(st_t1, b_tight, prob_lin, xt1, Ft1, nothing)
+    _, _, _, info_t2 = step!!(st_t1, b_tight, prob_lin, xt1, Ft1, nothing)
     @test info_t2.failures >= 1
 
     # Tight safeguard_cos = 1e-6 triggers angle restart on aligned consecutive corrections
@@ -1738,7 +1735,7 @@ end
     st_c = start!!(init_state(b_cos, prob_lin, z3, nothing),
         b_cos, prob_lin, z3, -b_vec, nothing, rnorm(-b_vec))
     xc1, Fc1, st_c1, _ = step!!(st_c, b_cos, prob_lin, z3, -b_vec, nothing)
-    xc2, Fc2, st_c2, info_c2 = step!!(st_c1, b_cos, prob_lin, xc1, Fc1, nothing)
+    _, _, st_c2, info_c2 = step!!(st_c1, b_cos, prob_lin, xc1, Fc1, nothing)
     @test info_c2.failures >= 1
     @test st_c2.depth == 0
 
