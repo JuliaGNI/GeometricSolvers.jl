@@ -1567,10 +1567,10 @@ end
     # `32 eps(R_in) √N_p`, and `NaN` is what the evaluation writes; at or below the ceiling the batch
     # stopped at the floor of its own arithmetic and its deposit is the residual to that accuracy.
     # The inner residual here is the constant `tiny`, which no step can change: every system fails
-    # with the same norm, the batch's is `√N_p · tiny`, and the two cases sit at 14 times the
+    # with the same norm, the batch's is `√N_p · tiny`, and the two cases sit at 2.1 times the
     # ceiling and at 0.56 of it.
     ceiling = 32 * eps(Float64) * sqrt(8)
-    for (tiny, nan_expected) in ((1e-13, true), (4e-15, false))
+    for (tiny, nan_expected) in ((1.5e-14, true), (4e-15, false))
         inner = NonlinearProblem((y, c) -> SVector(tiny, zero(tiny)))
         p = BatchEliminated(
             (F, x, m, s) -> (F .= x), inner, [SVector(0.5, 0.5) for _ in 1:8],
@@ -1584,9 +1584,9 @@ end
         @test !summary.all_converged
         @test summary.failure_count == 8
         ratio = summary.fnorm / ceiling
-        # the crossing case is above the ceiling and far below a thousand times it: a ceiling that
-        # loose reports the failed batch as one stopped at its floor, and keeps its deposit
-        @test nan_expected ? 1 < ratio < 1000 : ratio < 1
+        # the crossing case is above the ceiling and below three times it: a ceiling three times
+        # as loose reports the failed batch as one stopped at its floor, and keeps its deposit
+        @test nan_expected ? 1 < ratio < 3 : ratio < 1
         @test nan_expected ? all(isnan, F) : all(isfinite, F)
     end
 end
