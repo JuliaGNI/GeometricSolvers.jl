@@ -165,7 +165,7 @@ Adapt.@adapt_structure Newton
 @inline _has_analytic_jacobian(::AbstractNonlinearProblem) = false
 
 # The JVP preparation from the analytic Jacobian of `prob`: the `m × n` buffer of the residual
-# `Fx`, or one like the Jacobian prototype of `prob`, which a line search and a `Refinement` along a
+# `Fx`, or one like the Jacobian prototype of `prob`, which a line search and a refinement along a
 # reused factor read.
 @inline function prototype_jvp(x, Fx, prob)
     P = jacobian_prototype(prob)
@@ -388,7 +388,7 @@ end
 
 # The Jacobian buffer of the step, `m × n` for the residual `Fx`. It is the matrix of a factor,
 # which the factorisation overwrites, unless the step reads the Jacobian after it: a `DogLeg` or
-# `LevenbergMarquardt` trial loop and a `Refinement` multiply by it.
+# `LevenbergMarquardt` trial loop and a refinement multiply by it.
 @inline function init_newton_J(m::Newton, fac, fac_T, x, Fx = x)
     if !(m.globalization isa Union{DogLeg, LevenbergMarquardt}) &&
        !is_refining(m.refinement)
@@ -984,8 +984,8 @@ end
 end
 
 # The refined direction from the factor `fac`. A step that factorised at `x` passes the regularised
-# Jacobian `Jreg` it factorised, and a `Refinement` multiplies by it; a step along a reused factor
-# passes `nothing`, and a `Refinement` takes the JVP at `x`, shifted by `μ`.
+# Jacobian `Jreg` it factorised, and a refinement multiplies by it; a step along a reused factor
+# passes `nothing`, and a refinement takes the JVP at `x`, shifted by `μ`.
 @inline function newton_direction(
         m::Newton, state::NewtonState, prob, x, Fx, p, fac, Jreg)
     d₁ = newton_solve(state, fac, Fx)
@@ -1006,7 +1006,7 @@ end
 
 @inline newton_solve(state::NewtonState, fac, Fx) = map!!(-, state.d, ldiv!!(state.d, fac, Fx))
 
-# The product with the regularised Jacobian that a step already holds: a `Refinement` of a step
+# The product with the regularised Jacobian that a step already holds: a refinement of a step
 # that factorised at `x` reads no Jacobian again.
 struct HeldJacobianJVP{M}
     J::M
@@ -1176,7 +1176,7 @@ end
 
 # Whether a GMRES-IR stage accepts the direction whose true relative residual is `linrel`: within ten
 # times its tolerance, the allowance for the rounding between the Arnoldi estimate of the
-# preconditioned system and the true residual of the direction (D3 of the plan).
+# preconditioned system and the true residual of the direction.
 @inline function accepts_gmres_ir(linrel::R, tol::R) where {R <: Real}
     return isfinite(linrel) && linrel <= R(10) * tol
 end
