@@ -1564,9 +1564,7 @@ end
     (k > 0 && ws.gmres_iterations == ws.arnoldi) || return nothing
     α = R(stepnorm) / R(dnorm)
     (isfinite(α) && α != one(R)) || return nothing
-    for i in 1:k
-        ws.yb[i] = α * ws.y[i]
-    end
+    scaled_weights!(@view(ws.yb[1:k]), @view(ws.y[1:k]), α)
     ws.linres = R(rnorm(reduced_model!(ws, ws.yb, k, ws.beta)))
     return nothing
 end
