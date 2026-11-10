@@ -17,11 +17,12 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: Backtracking, Bisection, ChunkedForwardDiff, DIJacobian, DogLeg,
                         EisenstatWalkerChoice1, EisenstatWalkerChoice2, FixedForcing, GMRES,
-                        InexactStep, JVPFunction, LineFunction, NONFINITE, NonlinearProblem,
-                        Newton, StrongWolfe, SUCCESS, SolverStatus, apply_preconditioner!,
-                        f_calls, gmres_solve!, init, init_gmres_workspace, init_state,
-                        jvp_calls, max_inner_iterations, refresh!, rnorm, solve, solve!,
-                        solve!!, start!!, step!!
+                        InexactStep, JVPFunction, LevenbergMarquardt, LineFunction,
+                        NONFINITE, NonlinearProblem, Newton, Refinement, StrongWolfe,
+                        SUCCESS, SolverStatus, apply_preconditioner!, f_calls, gmres_solve!,
+                        init, init_gmres_workspace, init_state, jvp_calls,
+                        max_inner_iterations, refresh!, rnorm, solve, solve!, solve!!,
+                        start!!, step!!
 
 include("../helpers/matrix.jl")
 
@@ -156,7 +157,7 @@ end
 
         counts.f = 0
         counts.jvp = 0
-        x, st = solve!(solver, x₀)
+        _, st = solve!(solver, x₀)
         fnorm₀ = rnorm(AT(fill(T(-1.5), 8)))
         # MU1: the reported counts are those of the solve, in the status and in the accessors
         @test st.code == SUCCESS
@@ -175,7 +176,7 @@ end
         @test prep isa ChunkedForwardDiff{1}
         # the Jacobian buffers of a solve that forms no Jacobian are not allocated
         @test prep.xdual === nothing && prep.rdual === nothing
-        x, st = solve!(solver, zeros(T, 8))
+        _, st = solve!(solver, zeros(T, 8))
         @test st.code == SUCCESS
         @test st.f_calls == counts.f
         @test st.jvp_calls == counts.jvp
@@ -411,7 +412,7 @@ end
     # one step, with the iterate and the residual it starts from kept for the readings below
     x_prev = copy(x)
     Fx_prev = copy(Fx)
-    x₁, Fx₁, state₁, info = step!!(state, m, prob, x, Fx, nothing)
+    _, Fx₁, state₁, info = step!!(state, m, prob, x, Fx, nothing)
     d = copy(state₁.ws.d)
     c₁ = m.globalization.c₁
     η_ach = state₁.ws.linres / fnorm₀
@@ -519,7 +520,6 @@ end
 # ─── The inner cap (Check 4) ─────────────────────────────────────────────────
 
 @testset "Check 4: the inner cap and its recording, $T" for T in REAL_ELTYPES
-    R = real(T)
     prob = NonlinearProblem((r, x, q) -> begin
         mul!(r, R5_A4, x)
         r .-= R5_B4
@@ -622,7 +622,6 @@ function r5_dogleg_pair()
 end
 
 @testset "Check 6: the matrix-free DogLeg, $T" for T in REAL_ELTYPES
-    R = real(T)
     prob_r3, prob_r5 = r5_dogleg_pair()
     x₀ = T[3.5, -2.8]
     x_r3, st_r3 = solve(prob_r3, copy(x₀), Newton(; globalization = DogLeg()))
@@ -688,16 +687,31 @@ end
     end)
     solver = init(prob, zeros(T, 4),
         Newton(; linsolve = GMRES(; maxiter = 8, restart = 2), globalization = Backtracking()))
-    x, st = solve!(solver, zeros(T, 4))
+    _, st = solve!(solver, zeros(T, 4))
     @test st.code == SUCCESS
     @test max_inner_iterations(solver) <= 8
     @test st.jvp_calls >= st.iterations
 end
 
+@testset "Newton with GMRES refuses what needs a factor, and takes the forcing keywords" begin
+    # a GMRES step has no factor to reuse, to refine against or to damp
+    @test_throws ArgumentError Newton(; linsolve = GMRES(), reuse = 2)
+    @test_throws ArgumentError Newton(; linsolve = GMRES(), refinement = Refinement())
+    @test_throws ArgumentError Newton(;
+        linsolve = GMRES(), globalization = LevenbergMarquardt())
+    # the keywords configure a GMRES, and no other linear method takes them
+    @test_throws ArgumentError Newton(; forcing = FixedForcing(0.1))
+    @test_throws ArgumentError Newton(; preconditioner = I)
+    m = Newton(;
+        linsolve = GMRES(; maxiter = 5), forcing = FixedForcing(0.1), preconditioner = I)
+    @test m.linsolve.maxiter == 5
+    @test m.linsolve.forcing === FixedForcing(0.1)
+    @test m.linsolve.preconditioner === I
+end
+
 # ─── The decided edges ───────────────────────────────────────────────────────
 
 @testset "E1: a non-finite residual or product, $T" for T in REAL_ELTYPES
-    R = real(T)
     # a non-finite residual at x₀ ends the solve at 0 iterations with NONFINITE
     prob_nan = NonlinearProblem((r, x, q) -> begin
         @. r = x^3 + 2x - 3

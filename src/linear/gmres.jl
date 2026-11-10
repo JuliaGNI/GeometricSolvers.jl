@@ -88,7 +88,8 @@ Adapt.@adapt_structure EisenstatWalkerChoice2
     EisenstatWalkerChoice1(T = Float64; η₀ = 0.5, η_max = 0.9)
 
 Eisenstat and Walker's Choice 1 forcing term (Eisenstat and Walker 1996, §2.2), which reads the
-linear residual of the last step:
+linear residual of the last inner solve, where `s_{k-1}` is the direction GMRES returned and not the
+step that a backtrack accepted:
 
 ```math
 \\eta_k^{\\mathrm{raw}} =
@@ -161,7 +162,8 @@ forcing term's constants.
 `k` is the zero-based index of the step, so that `k = 0` returns the initial tolerance
 ``\\eta_0`` of the term. `fnorm` is ``\\|F_k\\|``, `fnorm_prev` is ``\\|F_{k-1}\\|``, `η_prev` is
 ``\\eta_{k-1}``, and `linres_prev` is the linear residual ``\\|F_{k-1} + J_{k-1} s_{k-1}\\|`` of the
-last step, which only [`EisenstatWalkerChoice1`](@ref) reads. A zero, non-finite or `NaN`
+last inner solve, where `s_{k-1}` is the direction GMRES returned and not the step that a backtrack
+accepted. Only [`EisenstatWalkerChoice1`](@ref) reads it. A zero, non-finite or `NaN`
 `fnorm_prev` gives ``\\eta_{\\max}``: the ratio of the rule is then undefined, and a residual that
 vanished ends the solve before the next step reads its tolerance, so the value is a guard and
 never a step's choice. A non-finite ratio, which a non-finite residual gives, gives ``\\eta_{\\max}``
@@ -229,8 +231,8 @@ with modified Gram–Schmidt on the Jacobian–vector product of the problem, th
   that `ldiv!` applies, which is the frozen-Jacobian preconditioner of a Newton–Krylov method.
 - `jvp_eltype::Type{TJ}`: `Nothing` evaluates the Jacobian–vector product in the working type of
   the iterate; a real type `TJ` evaluates it in `TJ` and promotes the product to the working type,
-  which is the defect-correction variant of §1.4. The iterate, the residual and every norm stay in
-  the working type.
+  which is a defect-correction solve: a product in a lower precision, a residual in the working
+  one. The iterate, the residual and every norm stay in the working type.
 
 A `Newton` with `GMRES` allocates no `n × n` Jacobian, and its iterate must be an
 `AbstractVector`: a `Number` and a `StaticArray` have no Krylov basis here, and a
@@ -319,10 +321,11 @@ solve in `Int32`, `gmres_iterations` is the inner count of the last Newton step,
 largest inner count of the solve, `arnoldi` the number of Arnoldi steps of the last inner solve,
 which the matrix-free `DogLeg` reads, and `step` the zero-based index of the current Newton step,
 which the forcing term reads. `last_eta`, `prev_fnorm`, `linres` and `beta` are the ``\\eta_k``,
-``\\|F_{k-1}\\|``, linear residual and ``\\beta_0`` of the last step; `start!!` sets them for the
-solve and `finish!!` returns them to `NaN`, so they are `NaN` on a state that no `start!!` saw and
-on the state that `solve!!` returned, and a step there fails closed. The counters are mutable, so
-that a step reports them without rebuilding the workspace.
+``\\|F_{k-1}\\|``, linear residual and ``\\beta_0`` of the last step, `linres` being that of the
+direction of its inner solve; `start!!` sets them for the solve and `finish!!` returns them to
+`NaN`, so they are `NaN` on a state that no `start!!` saw and on the state that `solve!!` returned,
+and a step there fails closed. The counters are mutable, so that a step reports them without
+rebuilding the workspace.
 """
 mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D}
     V::V
@@ -542,10 +545,10 @@ function arnoldi_dot(a, b)
     return sum(products)
 end
 
-# `-β₀ e₁ + H̄_k y` for a weight vector `y` of length `k`: the reduced vector whose norm is the norm
-# of `F + J (V_k y)`, because `V` has orthonormal columns and `F = -β₀ V e₁`. It costs `O(k²)` on
-# the host and no product.
-@inline function reduced_model!(ws::GMRESWorkspace{T}, y, k::Int, β₀) where {T}
+# `H̄_k y` for a weight vector `y` of length `k`, in `ws.sm[1:k+1]`: the product of the unrotated
+# Hessenberg matrix with the weights, whose norm is that of `J (V_k y)`. It costs `O(k²)` on the
+# host and no Jacobian–vector product.
+@inline function hessenberg_product!(ws::GMRESWorkspace{T}, y, k::Int) where {T}
     for i in 1:(k + 1)
         acc = zero(T)
         for j in 1:k
@@ -553,20 +556,20 @@ end
         end
         ws.sm[i] = acc
     end
-    ws.sm[1] -= T(β₀)
     return @view ws.sm[1:(k + 1)]
 end
 
+# `-β₀ e₁ + H̄_k y`: the reduced vector whose norm is the norm of `F + J (V_k y)`, because `V` has
+# orthonormal columns and `F = -β₀ V e₁`.
+@inline function reduced_model!(ws::GMRESWorkspace{T}, y, k::Int, β₀) where {T}
+    model = hessenberg_product!(ws, y, k)
+    ws.sm[1] -= T(β₀)
+    return model
+end
+
 # `‖H̄_k y‖₂` of a weight vector: the norm of `J (V_k y)`.
-@inline function reduced_hessenberg_norm(ws::GMRESWorkspace{T}, y, k::Int) where {T}
-    for i in 1:(k + 1)
-        acc = zero(T)
-        for j in 1:k
-            acc += ws.H0[i, j] * y[j]
-        end
-        ws.sm[i] = acc
-    end
-    return rnorm(@view ws.sm[1:(k + 1)])
+@inline function reduced_hessenberg_norm(ws::GMRESWorkspace, y, k::Int)
+    return rnorm(hessenberg_product!(ws, y, k))
 end
 
 # `V_k y` in the storage of `s`. The accumulation is the one `gmres_solve!` makes for the solution,
@@ -616,13 +619,14 @@ end
 @inline counting_problem(prob, ws) = R5CountingProblem(prob, CountingResidual(prob.F, ws))
 
 """
-    R5JVP(prep, ws[, TJ])
+    R5JVP(prep, ws)
+    R5JVP{P, W, TJ}(prep, ws)
 
 The Jacobian–vector preparation `prep` of an R5 solve, which counts its products in the workspace
 `ws` and, where `TJ` names an element type, evaluates the product in `TJ` and promotes it to the
 working type of the iterate: the iterate, the direction and the product are converted to `TJ`, the
-product is formed there, and its result is copied back. That is the defect-correction variant of
-§1.4, where the residual in the working precision keeps the accuracy of the outer solve.
+product is formed there, and its result is copied back. That is a defect-correction solve, where the
+residual in the working precision keeps the accuracy of the outer solve.
 """
 struct R5JVP{P, W, TJ}
     prep::P
@@ -631,10 +635,7 @@ end
 
 R5JVP(prep, ws) = R5JVP{typeof(prep), typeof(ws), Nothing}(prep, ws)
 
-# The problem a product is formed on, from the problem a step's globalization hands it: a line
-# search reads a counting problem, whose `F` counts residual evaluations, and a product is not one
-# of them — a `DIJacobian` pushforward must be called on the function it prepared, and the chunked
-# forward mode evaluates `F` on duals.
+# The problem a product is formed on: the one that a counting problem wraps, and any other as given.
 @inline raw_problem(prob) = prob
 @inline raw_problem(prob::R5CountingProblem) = prob.prob
 
