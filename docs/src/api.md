@@ -50,7 +50,9 @@ the batch is warm-started from the previous evaluation — so a second evaluatio
 iterate and tolerance takes `0` inner iterations — and the outer Jacobian–vector product is a
 one-sided difference at the step ``\\sqrt{\\operatorname{eps}(R_{\\text{eff}})}`` of the coarser of
 the two precisions, so that a `Float32` batch inside a `Float64` outer solve converges at the
-tolerance its own accuracy supports and stalls, rather than failing, below it. The batch's
+tolerance its own accuracy supports and, below it, ends on a stall rather than on a factorisation
+failure — on the problem of [`make_pic_elimination_problem`](@ref), the solve at `2e-4` returns
+`SUCCESS` and the one at `1e-10` `STALLED`. The batch's
 [`BatchSummary`](@ref) reports its global residual norm, whether every system converged, and how
 many did not; [`deposited_moments`](@ref) returns what the deposit wrote, and
 [`reset_batch!`](@ref) returns the problem to its initial state.
