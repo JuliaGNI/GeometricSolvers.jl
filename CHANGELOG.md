@@ -11,6 +11,48 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`BlockEliminated` and `VariableProjection` for single-system block elimination and separable
+  least-squares variable projection.** Both problem wrappers are exported and subtype
+  `AbstractNonlinearProblem`. `BlockEliminated(prob::Union{NonlinearProblem, StationarityProblem},
+  inner; outer = nothing, inner_eqs = inner, outer_eqs = outer,
+  inner_method = Newton(; linsolve = SVDFactorization()), linear_inner = false,
+  inner_options = nothing)` partitions the unknown vector `x` into inner unknowns `y = x[Y]` and
+  outer unknowns `z = x[Z]` (defaulting `Z = setdiff(1:n, Y)`) and the equations into `E_y` and
+  `E_z` (`|E_y| == |Y|`, `|E_z| == |Z|`). For each outer iterate `z`, it solves
+  `F_{E_y}(y, z) = 0` for `y*(z)` — in one linear solve `y*(z) = -J_yy(0, z)⁺ F_{E_y}(0, z)` when
+  `linear_inner = true`, or from the warm start `y_warm` (initialised to `NaN` in `init_state` and
+  set to `x₀[Y]` in `start!!`, taking 0 inner steps on a repeat evaluation at the same `z`) with
+  the adaptive inner tolerance `τ_inner = max(10 eps max(1, ‖F_y0‖), min(c, 0.5 ‖F_{E_z}(prev)‖₂²))`
+  (`c` the `inner_options` cap, which stands alone before the first outer residual) and
+  pseudoinverse null-space projection on rank-deficient inner steps when `linear_inner = false` —
+  and steps on the outer residual `F_{E_z}(ỹ(z), z)`, where for `linear_inner = false` and an inner
+  residual above the floor `ỹ = y - J_yy(y, z)⁺ F_{E_y}(y, z)` is the inner iterate `y` refined by
+  one Newton correction (to first order in `F_{E_y}` this is `F_{E_z} - J_zy J_yy⁺ F_{E_y}`), and
+  otherwise `ỹ = y`; the outer Jacobian is the Schur complement
+  `S(z) = J_zz(y*(z), z) - J_zy(y*(z), z) J_yy(y*(z), z)⁺ J_yz(y*(z), z)`. `inner_method` supplies
+  only the linear solver of the inner iteration and of the Schur complement.
+  `VariableProjection(prob::LeastSquaresProblem, inner; outer = nothing,
+  linsolve = SVDFactorization(), jacobian_mode = :kaufman, linear_inner = true,
+  inner_method = GaussNewton(; linsolve = SVDFactorization()), inner_options = nothing)`
+  (`BlockEliminated(prob::LeastSquaresProblem, ...)` forwards to `VariableProjection`) solves the
+  inner least-squares subproblem across all `m` residual rows for `y*(z)` and forms the `m × |Z|`
+  reduced Jacobian by Kaufman's projection `J_red(z) = (I - Φ(z) Φ(z)⁺) D(z)` (`jacobian_mode =
+  :kaufman`) or the full Golub–Pereyra formula subtracting `(Φ(z)⁺)ᴴ (∂_z Φ(z))ᴴ r_red(z)`
+  (`jacobian_mode = :golub_pereyra`); on the 5-parameter 2-exponential separable fit over the 100
+  seeded starts of `Xoshiro(42)`, both modes converge from 100 of the 100 starts against 70 for
+  joint Levenberg–Marquardt, and the test requires strictly more than joint and at least 85 of 100.
+  `solve`, `init`, `solve!` and `solve!!` accept a full initial guess `x₀` of length `n` in R1
+  (`StaticVector`) and R3 (`Array` and `AbstractGPUArray`), support `StationarityProblem` datum `b`
+  (implicit differentiation works through `solve` alone, for a `BlockEliminated` of a
+  `NonlinearProblem`; a `ForwardDiff.Dual` input raises an `ArgumentError` for `VariableProjection`
+  and for a `BlockEliminated` of a `StationarityProblem`), and return `(x*, status)` with
+  `x*[Y] = y*(z*)` and `x*[Z] = z*`;
+  any inner solver failure or rank-deficient inner factor (`rank < |Y|`) increments
+  `status.step_failures`; with `linear_inner = true` the one linear solve solves (or minimises
+  over) the inner block only when the residual is affine in `y`, so an inner residual
+  ‖F_{E_y}(y*(z), z)‖₂ above √ε · max(1, ‖F_{E_y}(0, z)‖₂) for `BlockEliminated`, or an inner
+  gradient ‖Φ(y*)ᴴ r(y*, z)‖₂ above √ε · max(1, ‖r(0, z)‖₂) · max(1, ‖Φ(y*)‖_F) for
+  `VariableProjection`, also counts as an inner failure and the solve goes on.
 - **`KernelAbstractions` 0.10.5 replaces 0.9, the `Metal` bound becomes `1.12`, and the `CUDA`
   range starts at `6.5.1`.** The `Adapt` floor rises from 4.6.1 to 4.7.3 and the `GPUArraysCore`
   floor from 0.2 to 0.2.1, because Metal 1.12 needs `GPUArrays` 12.1, which needs both; with the
@@ -1437,3 +1479,49 @@ so that a compat-only bump can be told apart from an interface change.
   `solve`, `solve_batch!` and `prepare_ad` raise an `ArgumentError` for any other index set. For
   an R1 iterate the index sets are `:`, a tuple or an `SVector`, as for a `StationarityProblem`
   without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.
+
+- `Deflated(prob, roots; power = 2, shift = 1)` (exported) wraps a `NonlinearProblem` or a
+  `StationarityProblem` in a shifted norm deflation of the given roots, so that a solve from the
+  same start converges to a root other than those (Farrell, Birkisson and Funke 2015). The
+  residual is `M(x) F(x)` with `M(x) = prod_i (norm(x - r_i)^(-power) + shift)`, the deflated
+  Jacobian is the product-rule exact `M(x) J(x) + F(x) transpose(grad M(x))`, and `jvp!!` reads
+  the same two terms, so no new linear method and no factorisation type is needed; the `Number`,
+  `SVector`, `Array` and `JLArray` storages all run, with an `isbits` R1 wrapper and `0`
+  allocations per solve in R1 and after `init` in R3. `power` and `shift` are stored in
+  `float(real(eltype(first(roots))))`, so `Float32` roots give an all-`Float32` product; a solve
+  needs an iterate of that element type, real, as long as every root, with number roots for a
+  number iterate and, for an array iterate, roots that are arrays of the iterate's own type, and a
+  root with a non-finite entry, a root set of mixed element type, a root set of numbers and
+  vectors mixed, a `power` or `shift` that is not finite and positive, an empty root set, or an
+  inner problem that is neither a `NonlinearProblem` nor a `StationarityProblem` raises an
+  `ArgumentError` at construction, while a `solve_batch!` whose kernel would take a non-`isbits`
+  wrapper by value — the `AbstractVector` root storage of an R3 iterate, for one — raises one at
+  the call. A solve on an array iterate raises an `ArgumentError` too when a root is on another
+  back end than the iterate — a host `Array` root with a `JLArray` or `MtlArray` iterate, a device
+  root with a host iterate — or when a root is a static array, because the deflation broadcasts
+  `x .- r` on the iterate's back end; a wrapped `StationarityProblem` is checked the same way, its
+  full-state roots against the start. `solve`, `init` and both forms of `solve_batch!` on a
+  `Deflated` also raise an `ArgumentError` for a `Newton` whose `jacobian` is a callable, because
+  that callable is the Jacobian of the inner residual `F` and `Newton` would step with it as the
+  deflated Jacobian; an analytic Jacobian of `F` goes into the wrapped `NonlinearProblem` as its
+  `J`, and `Newton(jacobian = <AD backend>)` is accepted.
+  The Newton steps and the line search of a `Deflated` solve take the deflated residual
+  `M(x) F(x)`, but the residual test of `Options` reads the inner residual: `status.fnorm` is
+  `norm(F(x))`, `f_abstol` bounds it, and `f_reltol` is relative to `norm(F(x₀))`, so a deflated
+  root meets the same tolerance as a solve of the inner problem. The cubic `x^3 - x` with the root
+  `0` deflated, solved from `x₀ = 0.1` with default options, ends at `abs(F) = 0.0`. The base loop
+  `solve!!` reaches this through an internal hook, `converged_status(state, prob, x, status)`,
+  which returns `status` by default and is not exported.
+  At a deflated root the factor `M` is `Inf`, so a solve from `x₀ = rᵢ` returns `NONFINITE` at `0`
+  iterations with `x == x₀` instead of `SUCCESS` at a known root, a factor that overflows does the
+  same, and the gradient is evaluated unit-scaled so that a point at `norm(x - rᵢ) = 1e-100` keeps
+  finite entries with no `NaN`. A wrapped `StationarityProblem` iterates on its unknowns and takes
+  full states as its roots, so the distance is that of `x_U`.
+  `solve` on a `Deflated(NonlinearProblem)` with a `ForwardDiff.Dual` in `x₀` or `p`
+  differentiates the undeflated inner problem implicitly at the root it found, and a
+  `Deflated(StationarityProblem)` refuses a dual with an `ArgumentError`, as the problem itself
+  does. `solve_batch!` solves every system of a batch under one `Deflated`, in both forms for a
+  `NonlinearProblem` and in both forms for a wrapped `StationarityProblem`, whose per-system datum
+  comes from `b`, shared or `PerSystem`, or from the problem's own; `init` and `solve!` serve R1
+  and R3, and the keyword datum `b` of an `init`, a `solve` or a `solve!` reaches a wrapped
+  `StationarityProblem`.
