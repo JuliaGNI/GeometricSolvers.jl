@@ -34,6 +34,8 @@ export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
+export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice1,
+       FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, PerSystem, Picard,
        NonlinearSolver, ReparametrizedSolver, init, solve, solve!
 export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
@@ -63,6 +65,7 @@ include("linear/ka/ldlt.jl")
 include("linear/ka/qr.jl")
 include("linear/ka/svd.jl")
 include("linear/mixed.jl")
+include("linear/gmres.jl")
 
 include("globalization/linesearch.jl")
 include("globalization/static.jl")

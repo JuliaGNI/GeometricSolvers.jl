@@ -173,6 +173,43 @@ exact_solve
 singular_values
 ```
 
+### Matrix-free Krylov solves
+
+[`GMRES`](@ref) is a [`LinearMethod`](@ref) with no factor. The Jacobian enters a step only through
+a Jacobian–vector product, so a [`Newton`](@ref) with it holds no `n × n` Jacobian (`state.J ===
+nothing`) and serves a system that no array can hold the Jacobian of: a small system whose every
+column costs a full evaluation of an expensive residual, or a device array. Its step solves
+``J M^{-1} u = -F(x)`` and returns ``d = M^{-1} u`` to the relative tolerance that the forcing term
+returns.
+
+The forcing term sets that tolerance. [`EisenstatWalkerChoice2`](@ref) is the default, and
+[`EisenstatWalkerChoice1`](@ref) and [`FixedForcing`](@ref) are the alternatives; a term is an
+[`AbstractForcingTerm`](@ref), and [`compute_forcing`](@ref) is its rule. The right preconditioner
+of `GMRES(; preconditioner = P)` is refreshed by [`refresh!`](@ref) once per Newton step and
+applied by [`apply_preconditioner!`](@ref) before every product. A matrix-free problem supplies its
+own product as [`JVPFunction`](@ref)`(jvp!)` in the `jacobian` field of [`Newton`](@ref), and the
+solve reports the exact counts of its residual and product evaluations in
+[`f_calls`](@ref)/[`jvp_calls`](@ref) and in the `f_calls` and `jvp_calls` fields of
+[`SolverStatus`](@ref). `GMRES(; maxiter)` caps the inner iterations of one Newton step, and
+[`max_inner_iterations`](@ref) gives the largest count of the last solve.
+
+The matrix-free [`DogLeg`](@ref) runs on the Arnoldi relation of an unrestarted `GMRES` only
+(`restart == maxiter`), and a `Newton` with a preconditioner or a restarted `GMRES` under it raises
+an `ArgumentError`. These names are exported.
+
+```@docs
+GMRES
+AbstractForcingTerm
+EisenstatWalkerChoice2
+EisenstatWalkerChoice1
+FixedForcing
+JVPFunction
+refresh!
+apply_preconditioner!
+f_calls
+jvp_calls
+```
+
 ### Eigensolver
 
 [`jacobi_eigen`](@ref) is a function on a matrix and not a linear-solver method: cyclic two-sided
@@ -360,6 +397,7 @@ These names are not exported. Reach them as `GeometricSolvers.name`.
 
 ```@docs
 prepare_ad
+prepare_jvp
 DIJacobian
 DIStationarity
 ChunkedForwardDiff
@@ -407,6 +445,18 @@ classify
 backtrack_step
 zoom_step
 LinearMethod
+compute_forcing
+max_inner_iterations
+GMRESWorkspace
+init_gmres_workspace
+GMRESInfo
+gmres_solve!
+arnoldi_dot
+R5Operator
+R5JVP
+CountingResidual
+sat16
+with_calls
 jacobi_rotation
 ToReal
 StripDual

@@ -760,6 +760,45 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **A matrix-free Newton–GMRES regime (R5): `GMRES` is a linear-solver method with no factor, so a
+  `Newton` with it holds no `n × n` Jacobian and solves a system whose Jacobian only a product can
+  give.** `GMRES(; maxiter = 30, restart = nothing, forcing = EisenstatWalkerChoice2(),
+  preconditioner = nothing, jvp_eltype = Nothing)` solves ``J M^{-1} u = -F(x)`` and returns
+  ``d = M^{-1} u`` to the relative tolerance that the forcing term of the Newton step returns; its
+  Krylov basis is preallocated, its Hessenberg matrix, Givens rotations and least-squares
+  right-hand side stay on the host, and its loop allocates nothing and indexes no entry of a
+  vector, so it runs under `allowscalar(false)` on a `JLArray` and on an `MtlArray`. The package
+  exports `GMRES`, `AbstractForcingTerm`, `EisenstatWalkerChoice2`, `EisenstatWalkerChoice1`,
+  `FixedForcing`, `JVPFunction`, `refresh!`, `apply_preconditioner!`, `f_calls` and `jvp_calls`.
+  The forcing term is Eisenstat and Walker's Choice 2 by default and Choice 1 or a fixed tolerance
+  on request, with their safeguard ``\\max(\\eta_k, \\gamma \\eta_{k-1}^\\alpha)`` where
+  ``\\gamma \\eta_{k-1}^\\alpha > 0.1``, the cap ``\\eta_{\\max}`` and the floor
+  ``2\\varepsilon(R)``; `compute_forcing` is the rule, and its constants are parameters. A right
+  preconditioner given as `GMRES(; preconditioner = P)` is refreshed by `refresh!(P, prob, x, Fx,
+  p)` once per Newton step and applied by `apply_preconditioner!(z, P, v)` before every product,
+  and a matrix-free problem supplies its own product as `JVPFunction(jvp!)` in the `jacobian` field
+  of `Newton` or through the chunked forward mode that every device array takes. The step passes
+  `InexactStep(η_ach)` to a line search, so each accepted step obeys
+  ``\\|F(x + s)\\| \\le [1 - c_1 (1 - \\eta)] \\|F(x)\\|``, and reaching `maxiter` inner iterations
+  without meeting the tolerance increments `status.step_failures`.
+  `SolverStatus{R}` carries `f_calls::Int16` and `jvp_calls::Int16` in its two alignment holes — its
+  sizes stay 36 bytes for `Float32` and 56 for `Float64`, it stays `isbits`, and both counts
+  saturate at `typemax(Int16)` — filled in `finish!!` for a `Newton` with `GMRES`, and
+  `f_calls(solver)` / `jvp_calls(solver)` return the same numbers. The matrix-free `DogLeg` runs on
+  the Arnoldi relation of an unrestarted `GMRES` (`Pawlowski et al. 2008`, Corollary 2.3), and a
+  `Newton` with a restarted one or with a preconditioner under a `DogLeg` raises an
+  `ArgumentError`. `Newton` takes `forcing` and `preconditioner` keywords that configure its
+  `GMRES`. For a caller: `test/nonlinear/krylov.jl` runs the six checks and the eight decided
+  edges on `Array` in `Float32` and `Float64`, and Check 1 and the device-compatible edge on
+  `JLArray` as well; `test/devices/metal_krylov.jl` runs the solve, the inner cap and a
+  non-finite start on `MtlArray` in `Float32` under `allowscalar(false)`; and the standard test
+  set gains the column `Newton Backtracking GMRES`, whose 134 cells are 115 `SUCCESS`, 13
+  `LINESEARCH_FAILED`, 4 `MAXITERS` and 2 `STALLED`, with 18 flagged `unstable`; no existing cell
+  changes. Gaps: an R5 state holds the mutable Krylov workspace, so it is not `isbits` and there
+  is no kernel entry for R5 (R1 and R2 own that); the CUDA and ROCm device runs have not been
+  made; and `GMRES(; jvp_eltype)` is the seam that the defect-correction measurement of the
+  design's §1.4 reads, which is not part of this change.
+
 - **A `SciMLBase` package extension (`GeometricSolversSciMLBaseExt`) accepts a
   `SciMLBase.NonlinearProblem` in `solve` and `init`, and returns `(x, status)`** (decision 52 of
   the design). `SciMLBase` is a weak dependency (`[compat] SciMLBase = "3.55"`), so the package and
