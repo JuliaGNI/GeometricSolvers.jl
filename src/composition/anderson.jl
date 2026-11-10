@@ -135,7 +135,10 @@ Shares the difference history, length and angle filters of Pollock and Rebholz (
 extrapolation safeguards, restarts, and best-iterate restoration of [`Anderson`](@ref),
 differing in the weight solve: instead of the full Gram normal equations, `Broyden` solves
 the lower-triangular multisecant system `(L_G + λI) γ = b_K` by forward substitution, where
-`(L_G)_{c,r} = Re⟨Δw_{K[c]}, Δw_{K[r]}⟩` for `r <= c` and `λ = eps(R) * tr(G_K) / p`.
+`(L_G)_{c,r} = Re⟨Δw_{K[c]}, Δw_{K[r]}⟩` for `r <= c` and `λ = eps(R) * tr(G_K) / p`. The kept
+columns `K` are in increasing age, newest first; in this order, and for `λ = 0`, the weights
+are those of the sequential rank-one Type-II Broyden updates of group size one (Fang and Saad,
+2009), applied oldest column first.
 
 In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4`, and the state is
 `isbits` for an `SVector` or `Number` iterate. In R3 (`Array` or `AbstractGPUArray`), any
@@ -404,11 +407,8 @@ end
 function init_state(
         a::MultisecantMethod{m}, prob::CombinatorProblem,
         x::Union{StaticVector, Number}, p) where {m}
-    if m > 4
-        a isa Broyden &&
-            throw(ArgumentError("R1 Broyden history depth m must be <= 4"))
-        throw(ArgumentError("R1 Anderson history depth m must be <= 4"))
-    end
+    m <= 4 ||
+        throw(ArgumentError("R1 $(nameof(typeof(a))) history depth m must be <= 4, got $m"))
     R = real(eltype(x))
     ms = init_state(a.member, prob, x, p)
     z = zero(x)

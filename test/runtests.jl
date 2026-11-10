@@ -54,7 +54,6 @@ if "core" in GROUPS
     @safetestset "Repeat combinator" include("composition/repeat.jl")
     @safetestset "Switch combinator" include("composition/switch.jl")
     @safetestset "Anderson acceleration" include("composition/anderson.jl")
-    @safetestset "Broyden multisecant" include("composition/broyden.jl")
     @safetestset "Combinators refuse ForwardDiff.Dual inputs" include("composition/implicit.jl")
     @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
     @safetestset "R3 Jacobian" include("ad/jacobian.jl")
@@ -67,6 +66,7 @@ if "slow" in GROUPS
     @safetestset "Dense linear solvers (large)" include("linear/dense_large.jl")
     @safetestset "KA dense linear solvers (large)" include("linear/ka_large.jl")
     @safetestset "Static SVD" include("linear/static/svd.jl")
+    @safetestset "Broyden multisecant" include("composition/broyden.jl")
 end
 if "doctests" in GROUPS
     @safetestset "Doctests" include("quality/doctests.jl")

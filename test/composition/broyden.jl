@@ -434,6 +434,33 @@ end
     end
 end
 
+# The weights against their defining property rather than the formula of the solver: the step
+# `w - (ΔX + ΔW) γ` equals `-H w`, where `H` is built from `H₀ = -I` by the sequential rank-one
+# Type-II Broyden updates `H += (Δx - H Δw) Δwᵀ / ‖Δw‖²`, oldest column first. Columns are in
+# increasing age, so the newest is column 1.
+@testset "solve_broyden_weights matches the sequential Type-II Broyden updates" begin
+    rng = Xoshiro(74)
+    n, m = 6, 4
+    for _ in 1:20
+        ΔX = randn(rng, n, m)
+        ΔW = randn(rng, n, m)
+        w = randn(rng, n)
+        H = -Matrix{Float64}(I, n, n)
+        for c in m:-1:1
+            Δx, Δw = ΔX[:, c], ΔW[:, c]
+            H += (Δx - H * Δw) * Δw' / (Δw' * Δw)
+        end
+        step_ref = -H * w
+        G = SMatrix{m, m}(ΔW' * ΔW)
+        b = SVector{m}(ΔW' * w)
+        γ = solve_broyden_weights(G, b, SVector{m, Int}(1:m), m)
+        @test isapprox(w - (ΔX + ΔW) * γ, step_ref; rtol = sqrt(eps(Float64)))
+        γ_r3 = zeros(m)
+        solve_broyden_weights!(γ_r3, Matrix(G), Vector(b), collect(1:m), m)
+        @test isapprox(w - (ΔX + ΔW) * γ_r3, step_ref; rtol = sqrt(eps(Float64)))
+    end
+end
+
 # One linear problem and one sequence of iterates per element type. A complex type carries no real
 # entry, so a Gram matrix formed with `transpose` instead of `adjoint` cannot pass by accident.
 function broyden_sequence(::Type{T}) where {T}
@@ -1599,7 +1626,7 @@ end
     @testset "Edge 8: m > 4 is refused in R1 and runs in R3" begin
         for T in ELTYPES
             n = 6
-            # R1: `m = 5` throws with the constant message, from both entry points.
+            # R1: `m = 5` throws, from both entry points, with a message that names the depth.
             x0_s = SVector{n, T}(fill(T(1 / 2), n))
             prob_r1 = NonlinearProblem(R1Holomorphic())
             @test_throws ArgumentError init_state(
@@ -1611,7 +1638,7 @@ end
                 e
             end
             @test err isa ArgumentError
-            @test err.msg == "R1 Broyden history depth m must be <= 4"
+            @test err.msg == "R1 Broyden history depth m must be <= 4, got 5"
 
             prob = NonlinearProblem(
                 (F, x, p) -> begin
