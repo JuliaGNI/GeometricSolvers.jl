@@ -9,8 +9,9 @@ Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) an
 [`SVDFactorization`](@ref) or the matrix-free [`GMRES`](@ref)), globalization `globalization`
 ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the
 trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector
-`jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref) or [`Refinement`](@ref)),
-diagonal regularisation `regularization`, and factor-reuse period `reuse`.
+`jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
+[`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
+`reuse`.
 
 # Fields
 
@@ -35,20 +36,23 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
   `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
-- `refinement::RF`: the refinement setting ([`NoRefinement`](@ref) or [`Refinement`](@ref)).
-  A `Refinement` refines the direction of the system that the factor solves, the regularised
-  ``(J + μ I) d = -F`` when `μ > 0`. A [`LevenbergMarquardt`](@ref) globalization takes no
-  `Refinement`: a refinement corrects the solve of ``J d = -F``, which the damped step does not
-  take, and the constructor raises an `ArgumentError`. A [`LeastSquaresProblem`](@ref) takes no
-  `Refinement` either: a refinement drives the linear residual ``J d + F`` to zero, which a
-  least-squares step with more residuals than unknowns does not reach, and the refusal raises an
-  `ArgumentError` where the state is built.
+- `refinement::RF`: the refinement setting ([`NoRefinement`](@ref), [`Refinement`](@ref) or
+  [`GMRESRefinement`](@ref)). A `Refinement` refines the direction of the system that the factor
+  solves, the regularised ``(J + μ I) d = -F`` when `μ > 0`; a `GMRESRefinement` runs the same
+  passes and, where they fail on a factorisation below the working precision, a GMRES-IR stage
+  with the promoted factors before the step refactorises in `T`. A
+  [`LevenbergMarquardt`](@ref) globalization takes no refinement: a refinement corrects the solve
+  of ``J d = -F``, which the damped step does not take, and the constructor raises an
+  `ArgumentError`. A [`LeastSquaresProblem`](@ref) takes no refinement either: a refinement drives
+  the linear residual ``J d + F`` to zero, which a least-squares step with more residuals than
+  unknowns does not reach, and the refusal raises an `ArgumentError` where the state is built.
 - `regularization::R`: non-negative finite diagonal shift ``μ ≥ 0`` added as ``J + μ I`` before
   factorisation when `μ > 0`. A [`LeastSquaresProblem`](@ref) with more residuals than unknowns
   takes none, and `μ > 0` raises an `ArgumentError` where the state is built.
 - `reuse::K`: `nothing` (`K = Nothing`, factorise at every step) or `Int32(k)` (`K = Int32`,
   reuse the factor for up to `k` consecutive steps, refreshing early after a `STALLED` step and,
-  within the step, after a failed [`Refinement`](@ref) on a reused factor, which counts one
+  within the step, after a failed refinement of a [`Refinement`](@ref) or a
+  [`GMRESRefinement`](@ref) on a reused factor, which counts one
   step-rule failure). A line search along a reused factor that fails without a step is retried
   once, in the same step, from a fresh factor. A [`DogLeg`](@ref) or
   [`LevenbergMarquardt`](@ref) globalization takes no reuse: its model needs the Jacobian of the
@@ -94,12 +98,12 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32}}
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse"))
         end
-        globalization isa LevenbergMarquardt && refinement isa Refinement &&
+        globalization isa LevenbergMarquardt && is_refining(refinement) &&
             throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no Refinement: a Refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
         if linsolve isa GMRES
             reuse === nothing ||
                 throw(ArgumentError("Newton with GMRES takes no factor reuse: a GMRES step has no factor"))
-            refinement isa Refinement &&
+            is_refining(refinement) &&
                 throw(ArgumentError("Newton with GMRES takes no Refinement: a GMRES step has no factor to refine against"))
             if globalization isa DogLeg
                 linsolve.restart == linsolve.maxiter ||
@@ -183,7 +187,7 @@ end
 @inline jacobian_matrix_jvp(::Static, x, Fx, prob) = nothing
 
 @inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
-    if m.refinement isa Refinement && m.jacobian isa AbstractADType &&
+    if is_refining(m.refinement) && m.jacobian isa AbstractADType &&
        dense_ad(m.jacobian) isa AutoFiniteDiff
         throw(ArgumentError("Refinement requires an exact or forward-mode Jacobian-vector product; AutoFiniteDiff is not supported"))
     end
@@ -205,7 +209,7 @@ end
         jvpprep = if has_J
             if Fx === nothing
                 nothing
-            elseif m.refinement isa Refinement && m.reuse !== nothing
+            elseif is_refining(m.refinement) && m.reuse !== nothing
                 prototype_jvp(x, Fx, prob)
             else
                 jacobian_matrix_jvp(m.globalization, x, Fx, prob)
@@ -393,7 +397,7 @@ end
 # `LevenbergMarquardt` trial loop and a `Refinement` multiply by it.
 @inline function init_newton_J(m::Newton, fac, fac_T, x, Fx = x)
     if !(m.globalization isa Union{DogLeg, LevenbergMarquardt}) &&
-       m.refinement isa NoRefinement
+       !is_refining(m.refinement)
         if factor_eltype(m.linsolve, eltype(x)) === eltype(x)
             return fac.factors
         elseif fac_T !== nothing && m.linsolve isa LUFactorization
@@ -405,6 +409,18 @@ end
     end
     return buffer(x, eltype(x), length(Fx), length(x))
 end
+
+# The working-precision factor slot of a mixed-precision solve starts zeroed, so that
+# [`promoted_factors`](@ref) reads zeros before a GMRES-IR stage or a promotion writes it, rather
+# than the storage that `similar` left. A value iterate, a factorisation in the working precision
+# and a factor that no promotion copies keep no such slot.
+@inline zero_promoted_factors!(::Nothing) = nothing
+@inline zero_promoted_factors!(fac::StaticLU) = nothing
+@inline function zero_promoted_factors!(fac::Union{DenseLU, DeviceLU})
+    fill!(fac.factors, zero(eltype(fac.factors)))
+    return nothing
+end
+@inline zero_promoted_factors!(fac) = nothing
 
 # The workspace of a globalization with the residual `Fx` beside the iterate `x`: the residual-
 # shaped slots take the length of `Fx`, which a `LeastSquaresProblem` makes longer than `x`. A
@@ -708,7 +724,7 @@ end
     end
     # A `Refinement` drives the linear residual `J d + F` to zero, which a least-squares step with
     # more residuals than unknowns does not reach (known issue K80)
-    if prob isa LeastSquaresProblem && m.refinement isa Refinement
+    if prob isa LeastSquaresProblem && is_refining(m.refinement)
         throw(ArgumentError("LeastSquaresProblem does not support Refinement"))
     end
     m.globalization isa LevenbergMarquardt &&
@@ -749,6 +765,7 @@ end
                 init_newton_factor(
             m, promote_linsolve(m.linsolve, eltype(x)), prob, x, p, jacprep) :
                 nothing
+        zero_promoted_factors!(fac_T)
         refbuf = init_refinement(m.refinement, x)
         return NewtonState(
             jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, fac_T, x, Fx),
@@ -758,6 +775,48 @@ end
 end
 
 @inline residual_buffer(state::NewtonState) = state.Fx
+@inline residual_buffer(solver::NonlinearSolver) = residual_buffer(solver.state)
+
+"""
+    stored_factors(solver)
+
+The factors of the factorisation that the last step of `solver` took, in the factorisation
+precision `TF`: [`stored_factors`](@ref) of the factor of the state, the packed `L` and `U` of an
+[`LUFactorization`](@ref) with its `ipiv` in the factor itself. It is `nothing` for a solve that
+holds no factor — a matrix-free [`GMRES`](@ref) solve, and a value iterate whose factor no step
+stored. `stored_factors(state)` reads the state that [`init_state`](@ref) returned instead.
+"""
+@inline stored_factors(state::NewtonState) = stored_factors(state.fac)
+@inline stored_factors(solver::NonlinearSolver) = stored_factors(solver.state)
+
+"""
+    promoted_factors(solver)
+
+The factors of the working-precision copy of [`stored_factors`](@ref) that a [`GMRESRefinement`](@ref)
+promotes, in the element type of the iterate `T`: `Float64.(stored_factors(solver))` while the
+GMRES-IR stage that promoted them is the one that holds them, and the refactorised factors of the
+Jacobian where the step promoted to `T` instead. The storage belongs to the state, and `init`
+leaves it zeroed, so a read before the first promotion reads zeros. It is `nothing` for a solve
+that keeps no working-precision factor slot: a factorisation already in `T`, a value iterate, and
+a matrix-free [`GMRES`](@ref) solve.
+"""
+@inline promoted_factors(state::NewtonState) = promoted_factors(state.fac_T)
+@inline promoted_factors(solver::NonlinearSolver) = promoted_factors(solver.state)
+@inline promoted_factors(::Nothing) = nothing
+@inline promoted_factors(fac::Union{DenseLU, DeviceLU, StaticLU}) = stored_factors(fac)
+
+"""
+    preconditioned_buffer(solver)
+
+The buffer of the preconditioned product ``\\hat{U}^{-1} \\hat{L}^{-1} P (J v)`` that the GMRES-IR
+stage of a [`GMRESRefinement`](@ref) forms for each Krylov vector `v`, in the working precision
+`T`, or `nothing` for a solve that forms none. `preconditioned_buffer(state)` reads the state that
+[`init_state`](@ref) returned instead.
+"""
+@inline preconditioned_buffer(state::NewtonState) = preconditioned_buffer(state.refbuf)
+@inline preconditioned_buffer(solver::NonlinearSolver) = preconditioned_buffer(solver.state)
+@inline preconditioned_buffer(refbuf::GMRESIRBuffer) = refbuf.z
+@inline preconditioned_buffer(refbuf) = nothing
 
 # The per-solve reset that every `Newton` method shares: the rule state, the anchor merit of a
 # line search, the promotion flags and the diagnostics.
@@ -823,7 +882,7 @@ end
     if fresh && (m.jacobian === nothing || m.jacobian isa AbstractADType) &&
        iszero(m.regularization) &&
        (in_working_T ||
-        (factor_eltype(m.linsolve, T) === T && m.refinement isa NoRefinement))
+        (factor_eltype(m.linsolve, T) === T && !is_refining(m.refinement)))
         return ExactStep()
     else
         return MeasuredSlope()
@@ -1059,6 +1118,86 @@ end
     return store ? update_stored_factor(state, fac, promoted) : state
 end
 
+# The preconditioned product of a GMRES-IR stage: `M̂⁻¹ (J v)` in the working precision `T`, where
+# `M̂` is the promoted copy of the low-precision factors and `J` the regularised Jacobian the step
+# holds. A struct and not a closure, so that a step allocates none, and the slot `z` is the
+# preconditioned buffer that [`preconditioned_buffer`](@ref) names.
+struct PromotedProduct{J, F, M, Z}
+    J::J
+    fac::F
+    m::M
+    z::Z
+end
+
+@inline function (p::PromotedProduct)(Jv, v)
+    mul!!(p.m, p.J, v)
+    ldiv!!(p.z, p.fac, p.m)
+    return copy!!(Jv, p.z)
+end
+
+"""
+    gmres_ir!!(d, ref, state, fac, J, Fx, fnorm) -> (d_ir, ok, ran, linrel, state)
+
+Stage 2 of the mixed-precision remedy chain of a [`Newton`](@ref) step, GMRES-IR after the LU-IR
+passes of `d` have failed: a left-preconditioned GMRES in the working precision `T` on
+``\\hat{U}^{-1}\\hat{L}^{-1}P J \\,\\delta d = \\hat{U}^{-1}\\hat{L}^{-1}P r_{\\mathrm{lu}}``, with
+the copy of the `Float32` factors that [`promote_lu_factors!`](@ref) writes into the
+working-precision factor slot, a cap of `min(ref.gmres_maxiter, n)` inner iterations, and the
+tolerance `ref.gmres_tol` on the true linear residual
+``r_{\\mathrm{true}} = -F(x) - J (d + \\delta d)`` recomputed in `T`, which the stage accepts up to
+ten times its tolerance (Amestoy et al. 2024, p. 13; Kelley 2023, p. 7).
+
+`d` is the direction the LU-IR passes reached, `fac` the factorisation in `TF` they solved with,
+`J` the regularised Jacobian the step holds in `T`, and `fnorm` the norm ``\\|F(x)\\|`` the
+tolerance is relative to. It returns the direction (the GMRES-IR one where `ok`, else `d`), whether
+the stage met its bound, whether it ran at all (it does not where the solve keeps no
+working-precision factor slot and no Krylov basis, where the factor is no LU factorisation, and for
+any refinement that is not a [`GMRESRefinement`](@ref)), the relative true residual of the
+direction it returned, and the state that carries the promoted factor slot it wrote.
+"""
+@inline function gmres_ir!!(d, ref, state, fac, J, Fx, fnorm::R) where {R <: Real}
+    return gmres_ir_stage!(d, ref, state.refbuf, state.fac_T, fac, state, J, Fx, fnorm)
+end
+
+@inline function gmres_ir_stage!(
+        d, ref, refbuf, fac_T, fac, state, J, Fx, fnorm::R) where {
+        R <: Real}
+    return d, false, false, zero(R), state
+end
+
+# Whether a GMRES-IR stage accepts the direction whose true relative residual is `linrel`: within ten
+# times its tolerance, the allowance for the rounding between the Arnoldi estimate of the
+# preconditioned system and the true residual of the direction (D3 of the plan).
+@inline function accepts_gmres_ir(linrel::R, tol::R) where {R <: Real}
+    return isfinite(linrel) && linrel <= R(10) * tol
+end
+
+@inline function gmres_ir_stage!(
+        d, ref::GMRESRefinement, refbuf::GMRESIRBuffer,
+        fac_T::Union{DenseLU, DeviceLU}, fac::Union{DenseLU, DeviceLU}, state, J, Fx,
+        fnorm::R) where {R <: Real}
+    T = eltype(Fx)
+    atol = R(ref.gmres_tol) * fnorm
+    fac_promoted = promote_lu_factors!(fac_T, fac)
+    st = with_factor_T(state, fac_promoted)
+    Jv = mul!!(refbuf.tmp, J, d)
+    r = axpby!!(refbuf.r, -one(T), Fx, -one(T), Jv)
+    b = ldiv!!(refbuf.b, fac_promoted, r)
+    bnorm = R(rnorm(b))
+    (isfinite(bnorm) && isfinite(atol)) || return d, false, true, zero(R), st
+    n = length(d)
+    m_cap = min(Int(ref.gmres_maxiter), n)
+    tol = iszero(bnorm) ? zero(R) : atol / bnorm
+    δd, _ = gmres_solve!(
+        refbuf.ws, PromotedProduct(J, fac_promoted, refbuf.tmp, refbuf.z), nothing,
+        refbuf.b, bnorm, tol, m_cap, m_cap)
+    Jδ = mul!!(refbuf.tmp, J, δd)
+    rt = R(rnorm(axpby!!(refbuf.d_try, one(T), r, -one(T), Jδ)))
+    linrel = iszero(fnorm) ? zero(R) : rt / fnorm
+    accepts_gmres_ir(linrel, R(ref.gmres_tol)) || return d, false, true, linrel, st
+    return axpby!!(refbuf.d_try, one(T), d, one(T), δd), true, true, linrel, st
+end
+
 # The mixed-precision half of one Newton step: the solve in `TF`, the promotion to `T` when the
 # factor or the refinement fails there, and the flags of the direction it returns. A reused factor
 # that fails is refactorised at the current iterate before any promotion, so that a stale factor
@@ -1095,11 +1234,21 @@ end
         newton_direction(m, state, prob, x, Fx, p, fac, Jreg)
     end
     if ref_failed || fac.info > Int32(0)
-        fac_T, diag_T = promote_factor!!(state, m, Jreg, x, Fx, fnorm_old, diag)
+        # Stage 2 before Stage 3: a failed refinement asks for GMRES-IR with the promoted factors,
+        # a failed factorisation for the refactorisation, which a singular factor cannot precondition.
+        d_ir, ir_ok, ir_ran, ir_rel, st_ir = if ref_failed && !(fac.info > Int32(0))
+            gmres_ir!!(d, m.refinement, state, fac, Jreg, Fx, fnorm_old)
+        else
+            (d, false, false, zero(R), state)
+        end
         failures += one(Int32)
+        ir_ok && return MixedNewton(
+            d_ir, Jreg, with_diag(st_ir, diag), ir_rel, true, false, true, failures)
+        ir_ran && (failures += one(Int32))
+        fac_T, diag_T = promote_factor!!(st_ir, m, Jreg, x, Fx, fnorm_old, diag)
         st = with_mixed(
-            with_diag(stored_factor(state, fac_T, true, store), diag_T),
-            true, state.slow_steps)
+            with_diag(stored_factor(st_ir, fac_T, true, store), diag_T),
+            true, st_ir.slow_steps)
         if fac_T.info > Int32(0)
             return MixedNewton(
                 Fx, Jreg, st, zero(R), true, exact_solve(fac_T), false, failures)
