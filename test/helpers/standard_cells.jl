@@ -205,10 +205,12 @@ end
 perturbed_direction(::Picard, seed) = nothing
 
 # A left-preconditioned method carries the direction of its outer method: its own outer `Newton`
-# is perturbed, and a `Picard` outer, which solves no linear system for its direction, is not.
+# is perturbed, and a `Picard` outer, which solves no linear system for its direction, gives
+# `nothing`, so a direction run of a preconditioned `Picard` method is no run at all.
 function perturbed_direction(m::LeftPreconditioned, seed)
     outer = perturbed_direction(m.outer, seed)
-    return LeftPreconditioned(outer === nothing ? m.outer : outer, m.inner)
+    outer === nothing && return nothing
+    return LeftPreconditioned(outer, m.inner)
 end
 
 """
@@ -379,11 +381,14 @@ function print_summary(io::IO, cells, iterates, problems = STANDARD_PROBLEMS)
     eltypes = string.(REAL_ELTYPES)
     nstarts = Dict(T => count(c -> c.eltype == T, cells) ÷ length(STANDARD_COLUMNS)
     for T in eltypes)
+    # the header and every row pad their name to the widest column name and one space, so that
+    # the entries of a 45-character column line up with the others
+    width = max(33, maximum(length(first(c)) for c in STANDARD_COLUMNS) + 1)
     away = String[]
     println(
         io, "Standard test set: SUCCESS cells per column, and of those with a stated root ",
         "the number near it")
-    println(io, rpad("column", 32), join((rpad(T, 22) for T in eltypes)))
+    println(io, rpad("column", width), join((rpad(T, 22) for T in eltypes)))
     for (column, _) in STANDARD_COLUMNS
         entries = map(eltypes) do T
             success = 0
@@ -400,7 +405,7 @@ function print_summary(io::IO, cells, iterates, problems = STANDARD_PROBLEMS)
             end
             rpad("$success/$(nstarts[T]), root $near/$rooted", 22)
         end
-        println(io, rpad(column, 32), " ", join(entries))
+        println(io, rpad(column, width), join(entries))
     end
     println(io, "SUCCESS cells away from the stated root: ", length(away))
     foreach(line -> println(io, line), away)

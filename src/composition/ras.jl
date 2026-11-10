@@ -153,9 +153,11 @@ end
 
 Adapt.@adapt_structure RAS
 
-# The block residual with its external couplings frozen at the iterate `x` of a sweep, in the
+# The block residual with its external couplings frozen at the iterate of a sweep, in the
 # three-argument call form of a `NonlinearProblem`'s residual: the block without a Jacobian of its
-# own takes its factor from `AutoForwardDiff()` on this function.
+# own takes its factor from `AutoForwardDiff()` on this function. `x` is the state's coupling
+# buffer, which every sweep fills from its own iterate before its first block, so a state swept
+# from another array differentiates each block at that array's couplings.
 struct FrozenBlockResidual{F, X} <: Function
     f::F
     x::X
@@ -166,9 +168,11 @@ end
 # The counters of a `RASState`, reset by every `start!!`:
 #
 # - `sweeps`: the number of sweeps run.
-# - `block_solves`: the number of block linear solves, summed over the blocks and the sweeps.
+# - `block_solves`: the number of block linear solves, summed over the blocks and the sweeps, and —
+#   on a state whose block factors a RASPEN preparation reads — one more per block and sweep for
+#   the block Jacobian that the sweep forms at the local iterate it returns.
 # - `parallel_block_solves`: the block solves of the parallel schedule, one per inner iteration of
-#   the slowest block, summed over the sweeps.
+#   the slowest block, summed over the sweeps, with the same one per block on such a state.
 mutable struct RASCounter
     sweeps::Int
     block_solves::Int
@@ -179,8 +183,13 @@ RASCounter() = RASCounter(0, 0, 0)
 
 # The workspace of one block: the index sets as arrays of the iterate's storage, the local
 # iterate, residual, Jacobian and step buffers, and — where the problem names no block Jacobian —
-# the residual with its couplings frozen and its AD preparation.
-struct RASBlocks{SI, OI, LI, XL, FL, JL, DL, FP, PP}
+# the residual with its couplings frozen and its AD preparation. `couplings` is the buffer those
+# residuals read, filled from the sweep's own iterate; `swept` is the iterate that the step sweeps,
+# so that a step leaves the iterate it was given unchanged; `raspen` is set where a RASPEN
+# preparation reads the block factors, which is where a sweep forms the factor at the local iterate
+# it returns; and `formed` is set by a complete sweep, so that a Jacobian product on a state that no
+# sweep formed raises instead of reading a factor nothing has written.
+mutable struct RASBlocks{SI, OI, LI, XL, FL, JL, DL, FP, PP, C, X}
     subdomains::SI
     owners::OI
     local_owners::LI
@@ -190,19 +199,24 @@ struct RASBlocks{SI, OI, LI, XL, FL, JL, DL, FP, PP}
     deltas::DL
     problems::FP
     preps::PP
+    couplings::C
+    swept::X
+    raspen::Bool
+    formed::Bool
 end
 
 """
     RASState
 
 The state of a [`RAS`](@ref) method: the workspace of every block, the factors of the block
-Jacobians of the last sweep, which [`raspen_jvp!`](@ref) and [`raspen_jacobian!`](@ref) read, a
-global Jacobian-vector preparation, the composite iterate that a RASPEN Jacobian product forms per
-block, and the counters that [`ras_counts`](@ref) reports. Each block factor is re-formed in every
-inner iteration and once more at the local iterate that the sweep returns, so the factors of the
-last sweep are the block Jacobians at the local solutions.
+Jacobians, which [`raspen_jvp!`](@ref) and [`raspen_jacobian!`](@ref) read, a global
+Jacobian-vector preparation, the composite iterate that a RASPEN Jacobian product forms per
+block, and the counters that [`ras_counts`](@ref) reports. Every block factor is re-formed in
+every inner iteration, and once more at the local iterate that the sweep returns where the block
+factors feed a RASPEN preparation, which is the factor at the local solution. A factor that no
+sweep has written fails closed: the product raises an `ArgumentError` before it reads one.
 """
-mutable struct RASState{B, F, V, JP, JV, ID}
+mutable struct RASState{B, F, V, JP, JV}
     blocks::B
     factors::F
     Fx::V
@@ -212,7 +226,6 @@ mutable struct RASState{B, F, V, JP, JV, ID}
     Jv::JV
     column::V
     composite::V
-    identity::ID
     counts::RASCounter
 end
 
@@ -245,10 +258,12 @@ end
     jacobians = [similar(x, T, length(part.subdomains[i]), length(part.subdomains[i]))
                  for i in 1:nblocks]
     deltas = [similar(x, length(part.subdomains[i])) for i in 1:nblocks]
-    factors = [dense_factor(LUFactorization(), prob, x_locals[i], p) for i in 1:nblocks]
+    factors = [fail_closed!!(dense_factor(LUFactorization(), prob, x_locals[i], p))
+               for i in 1:nblocks]
+    couplings = similar(x)
     jacfuns = block_jacobians(prob)
     if jacfuns === nothing
-        problems = [NonlinearProblem(FrozenBlockResidual(block_residual(prob, i), x))
+        problems = [NonlinearProblem(FrozenBlockResidual(block_residual(prob, i), couplings))
                     for i in 1:nblocks]
         preps = [prepare_ad(AutoForwardDiff(), problems[i], f_locals[i], x_locals[i], p)
                  for i in 1:nblocks]
@@ -259,20 +274,28 @@ end
         preps = nothing
     end
     Fx = similar(x)
-    identity = zeros(T, length(x), length(x))
-    for j in 1:length(x)
-        identity[j, j] = one(T)
-    end
     jvp_prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
     blocks = RASBlocks(subdomains, owners, local_owners, x_locals, f_locals, jacobians,
-        deltas, problems, preps)
+        deltas, problems, preps, couplings, similar(x), false, false)
     return RASState(blocks, factors, Fx, similar(x), similar(x), jvp_prep, similar(x),
-        similar(x), similar(x), identity, RASCounter())
+        similar(x), similar(x), RASCounter())
 end
 
-# Every solve starts the counters again, so that `ras_counts` reports the solve that ended.
+# A block factor that no sweep has formed, with a written pivot vector and zero factors: a read
+# that reached it would solve with a zero matrix and give a non-finite direction, never LAPACK's
+# unset pivot vector, and a pivot of one is an in-range row for every solve. `_ras_sweep!!` writes
+# a formed factor over it in every inner iteration.
+@inline function fail_closed!!(fac)
+    fill!(fac.factors, zero(eltype(fac.factors)))
+    fill!(fac.ipiv, one(eltype(fac.ipiv)))
+    return fac
+end
+
+# Every solve starts the counters again, so that `ras_counts` reports the solve that ended, and
+# leaves no block factor of an earlier solve readable.
 @inline function start!!(state::RASState, m::RAS, prob, x, Fx, p, fnorm₀)
     state.counts = RASCounter()
+    state.blocks.formed = false
     return state
 end
 
@@ -319,9 +342,13 @@ end
 
 # One sweep, and the code it ends with: `SINGULAR` where a block's factor reports a zero pivot,
 # `NONFINITE` where a block residual is not finite. A failed sweep prolongates nothing, so the
-# iterate it was given is unchanged.
+# iterate it was given is unchanged, and leaves no factor readable. The couplings of the frozen
+# block residuals are the iterate of this call, and the factor at the returned local iterate is
+# formed only where a RASPEN preparation reads the block factors.
 function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
     blocks = state.blocks
+    blocks.formed = false
+    blocks.problems === nothing || copyto!(blocks.couplings, x)
     nblocks = length(blocks.subdomains)
     total = 0
     parallel = 0
@@ -345,17 +372,20 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
             x_loc .-= ldiv!!(blocks.deltas[i], fac, f_i)
             k += 1
         end
-        # the block Jacobian that the sweep stores is the one at the local iterate it returns, so
-        # that `raspen_jvp!` reads the block matrix of the RASPEN Jacobian, `R_i J(u⁽ⁱ⁾) P_i`, at
-        # the local solution and not at the iterate one Newton step before it
-        block_jacobian!!(J_i, blocks, prob, i, x_loc, x, p)
-        fac = factorize!!(state.factors[i], LUFactorization(), J_i)
-        iszero(fac.info) || return SINGULAR
-        state.factors[i] = fac
-        total += k
-        parallel = max(parallel, k)
+        # the block Jacobian that RASPEN reads is `R_i J(u⁽ⁱ⁾) P_i` at the local iterate this
+        # sweep returns, not at the iterate one Newton step before it, so it is formed here
+        if blocks.raspen
+            block_jacobian!!(J_i, blocks, prob, i, x_loc, x, p)
+            fac = factorize!!(state.factors[i], LUFactorization(), J_i)
+            iszero(fac.info) || return SINGULAR
+            state.factors[i] = fac
+        end
+        calls = k + (blocks.raspen ? 1 : 0)
+        total += calls
+        parallel = max(parallel, calls)
     end
     ras_prolongate!(x, blocks.x_locals, blocks.owners, blocks.local_owners)
+    blocks.formed = true
     state.counts.sweeps += 1
     state.counts.block_solves += total
     state.counts.parallel_block_solves += parallel
@@ -396,20 +426,25 @@ function ras_balanced(state::RASState, m::RAS, prob, x, Fx, p)
     return largest > ρ * rnorm(Fx)
 end
 
+# One step: the sweep runs on the state's own copy of `x`, so the iterate the step was given is
+# unchanged and the swept iterate it returns is its own buffer. A skipped or failed sweep returns
+# the iterate and its residual as they were.
 @inline function step!!(state::RASState, m::RAS, prob, x, Fx, p)
     R = real(eltype(x))
-    copy!!(state.x₀, x)
+    x₊ = state.blocks.swept
+    copy!!(x₊, x)
     if !ras_balanced(state, m, prob, x, Fx, p)
         return x, Fx, state,
         StepInfo{R}(SUCCESS, rnorm(Fx), zero(R), Int32(0), false, false)
     end
-    code = _ras_sweep!!(state, m, prob, x, p)
+    copy!!(state.x₀, x)
+    code = _ras_sweep!!(state, m, prob, x₊, p)
     if code != SUCCESS
         return x, Fx, state, StepInfo{R}(code, rnorm(Fx), zero(R), Int32(0), false, false)
     end
-    F₊ = residual!!(state.Fx, prob, x, p)
-    stepnorm = rnorm(map!!(-, state.dx, x, state.x₀))
-    return x, F₊, state, StepInfo{R}(SUCCESS, rnorm(F₊), stepnorm, Int32(0), false, false)
+    F₊ = residual!!(state.Fx, prob, x₊, p)
+    stepnorm = rnorm(map!!(-, state.dx, state.x₀, x₊))
+    return x₊, F₊, state, StepInfo{R}(SUCCESS, rnorm(F₊), stepnorm, Int32(0), false, false)
 end
 
 """
@@ -420,9 +455,10 @@ The counters of the last solve of a [`RAS`](@ref) state, as a named tuple:
 - `sweeps`: the sweeps run.
 - `parallel_block_solves`, `parallel_inner_iterations`, `inner_iterations`: the block solves of the
   parallel schedule — one per inner iteration of the slowest block of each sweep, summed over the
-  sweeps.
+  sweeps — and, where a RASPEN preparation reads the block factors of the state, one more per
+  sweep for the block Jacobian that each block forms at the local iterate its sweep returns.
 - `total_inner_iterations`, `block_solves`: every block solve, summed over the blocks and the
-  sweeps.
+  sweeps, with the same one more per block on such a state.
 
 [`start!!`](@ref) resets them, so a second [`solve!`](@ref) on one solver reports its own solve. A
 state of [`LeftPreconditioned`](@ref) with an inner [`RAS`](@ref), and a state of
@@ -448,9 +484,11 @@ The Jacobian-vector product of the left-preconditioned residual
 ``u^{(i)}`` the iterate `x` with the local solve `x_locals[i]` of block `i` written over its
 subdomain ``S_i``. Per block it takes one global Jacobian-vector product at ``u^{(i)}``, keeps the
 rows of ``S_i``, solves with that block's factor, and prolongates through the owner set. `Jv` is
-overwritten and returned.
+overwritten and returned. A state that no complete sweep formed has no block factor to read, so it
+raises an `ArgumentError`.
 """
 function raspen_jvp!(Jv, state::RASState, prob, x, v, p)
+    check_formed(state)
     blocks = state.blocks
     W = state.Jv
     u = state.composite
@@ -467,6 +505,14 @@ function raspen_jvp!(Jv, state::RASState, prob, x, v, p)
     return Jv
 end
 
+# A block factor of a `RASState` is a formed factor only after a complete sweep, so a product that
+# ran before one would hand LAPACK a factor nothing has written.
+@inline function check_formed(state::RASState)
+    state.blocks.formed || throw(ArgumentError(
+        "a RASPEN Jacobian product needs the block factors of a complete RAS sweep: no sweep of this state has formed them, and a sweep that `balance_threshold` skips forms none"))
+    return nothing
+end
+
 """
     raspen_jacobian!(J, state, prob, x, p)
 
@@ -474,8 +520,9 @@ The Jacobian of the left-preconditioned residual ``r^\\ell`` at `x` of the exact
 column per [`raspen_jvp!`](@ref) with a unit direction. It overwrites `J` and returns it.
 """
 function raspen_jacobian!(J, state::RASState, prob, x, p)
+    check_formed(state)
     for j in axes(J, 2)
-        copyto!(state.dx, state.identity[:, j])
+        unit_direction!(state.dx, j)
         raspen_jvp!(state.column, state, prob, x, state.dx, p)
         @views J[:, j] .= state.column
     end

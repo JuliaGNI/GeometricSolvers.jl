@@ -19,6 +19,7 @@ using JLArrays: JLArray
 using GPUArraysCore: allowscalar
 using LinearAlgebra: cond, dot, mul!, norm
 using Random: Xoshiro
+using StaticArrays: SVector
 
 include("../helpers/matrix.jl")
 
@@ -111,6 +112,55 @@ function one_step(prob, method, x, Fx)
     return copy(x₊), copy(Fx₊), info
 end
 
+# A coupled nonlinear problem whose block Jacobian depends on the couplings outside its block,
+# `F_j(u) = u_j + u_j (u_{j-1}² + u_{j+1}²) - 1`, its block residuals and its block Jacobians: the
+# problem that tells a block Jacobian differentiated at the sweep's couplings from one
+# differentiated at a stale array.
+function coupled_block(u, j, n)
+    l = j == 1 ? zero(eltype(u)) : u[j - 1]
+    r = j == n ? zero(eltype(u)) : u[j + 1]
+    return u[j] + u[j] * (l^2 + r^2) - one(eltype(u))
+end
+
+function coupled_problem(::Type{T}, part::BlockPartition; jacobians::Bool) where {T}
+    n = part.n
+    global_ = (r, x, p) -> begin
+        for j in 1:n
+            r[j] = coupled_block(x, j, n)
+        end
+        nothing
+    end
+    residuals = ntuple(length(part.owners)) do i
+        S = part.subdomains[i]
+        (f, x_loc, x, p) -> begin
+            u = Vector{promote_type(eltype(x_loc), eltype(x))}(x)
+            u[S] .= x_loc
+            for (k, j) in enumerate(S)
+                f[k] = coupled_block(u, j, n)
+            end
+            f
+        end
+    end
+    block_jacobians = ntuple(length(part.owners)) do i
+        S = part.subdomains[i]
+        (J, x_loc, x, p) -> begin
+            u = copy(x)
+            u[S] .= x_loc
+            fill!(J, zero(T))
+            for (k, j) in enumerate(S)
+                l = j == 1 ? zero(T) : u[j - 1]
+                r = j == n ? zero(T) : u[j + 1]
+                J[k, k] = one(T) + l^2 + r^2
+                k > 1 && (J[k, k - 1] = 2u[j] * l)
+                k < length(S) && (J[k, k + 1] = 2u[j] * r)
+            end
+            J
+        end
+    end
+    return NonlinearProblem(global_; block_residuals = residuals,
+        block_jacobians = jacobians ? block_jacobians : nothing)
+end
+
 # The direct residual `rˡ(x) = x - N(x)` of the inner map `N`, computed through a `LeftPreconditioned`
 # method's own problem.
 function rl_direct(lprob::LeftPreconditionedProblem, x)
@@ -179,10 +229,13 @@ end
     @test_throws ArgumentError BlockPartition([Int[], [1, 2]], [Int[], [1, 2]])
     @test_throws ArgumentError BlockPartition([[1, 1, 2]], [[1, 2]])
     @test_throws ArgumentError BlockPartition([[0, 1]], [[1]])
-    @test_throws ArgumentError BlockPartition(3, 4)
-    @test_throws ArgumentError BlockPartition(6, 3; overlap = -1)
-    @test_throws ArgumentError BlockPartition(0, 1)
-    @test_throws ArgumentError BlockPartition(3, 0)
+    # Edge 4: each count guard is asserted by its own anchored message, so that a later guard that
+    # refuses the same input cannot stand in for it
+    @test_throws ArgumentError("BlockPartition needs n >= 1") BlockPartition(0, 1)
+    @test_throws ArgumentError("BlockPartition needs nblocks >= 1") BlockPartition(3, 0)
+    @test_throws ArgumentError("BlockPartition needs nblocks <= n") BlockPartition(3, 4)
+    @test_throws ArgumentError("BlockPartition overlap must be >= 0") BlockPartition(6, 3;
+        overlap = -1)
 
     part = BlockPartition(4, 2)
     @test_throws ArgumentError RAS(part; max_iterations = 0)
@@ -259,12 +312,65 @@ end
     @test sort(written) == collect(1:n)
     @test length(unique(written)) == n
 
-    # a step of `RAS` returns `F(x₊)` and evaluates the global residual once
+    # Edge 9: the gather and scatter index arrays have the storage type of the iterate, so that a
+    # device iterate is indexed by device index arrays
+    Ix = similar(x, Int, 2)
+    @test all(I -> I isa typeof(Ix), state.blocks.subdomains)
+    @test all(I -> I isa typeof(Ix), state.blocks.owners)
+    @test all(I -> I isa typeof(Ix), state.blocks.local_owners)
+
+    # a step of `RAS` returns `F(x₊)` and evaluates the global residual exactly once
     Fx = copy(residual!!(similar(x0), prob, x0, nothing))
     xr = copy(x0)
+    global_calls[] = 0
     x₊, Fx₊, info = one_step(prob, ras, xr, Fx)
     @test info.code === SUCCESS
+    @test global_calls[] == 1
     @test Array(Fx₊) == A * Array(x₊) - b
+    # the step leaves the iterate it was given alone: its sweep runs on the state's own copy
+    @test Array(xr) == Array(x0)
+end
+
+# --- the AD block Jacobian of a sweep: the couplings of the sweep's own iterate --------------
+
+@testset "The AD block Jacobian reads the couplings of the sweep's own iterate, $T" for T in REAL_ELTYPES
+    n = 8
+    part = BlockPartition(n, 3; overlap = 1)
+    prob_ad = coupled_problem(T, part; jacobians = false)
+    prob_j = coupled_problem(T, part; jacobians = true)
+    ras = RAS(part; max_iterations = 1)
+    x_init = fill(T(0.1), n)
+    x_step = T[0.9 + j / 5 for j in 1:n]
+
+    # one sweep from `x_step` on a state built at another array is the same map as the one with
+    # explicit block Jacobians, bit for bit to the rounding of the local solve
+    function sweep(prob)
+        s = init_state(ras, prob, copy(x_init), nothing)
+        Fx = residual!!(similar(x_step), prob, x_step, nothing)
+        s = start!!(s, ras, prob, x_step, Fx, nothing, rnorm(Fx))
+        x₊, _, _, info = step!!(s, ras, prob, x_step, Fx, nothing)
+        return copy(x₊), info
+    end
+    ref, ref_info = sweep(prob_j)
+    ad, ad_info = sweep(prob_ad)
+    @test ref_info.code === SUCCESS
+    @test norm(ad - ref) <= 8 * eps(T) * norm(ref)
+
+    # the same of the residual `rˡ` that a line search evaluates, at a point other than the one
+    # the state was built at
+    m = LeftPreconditioned(Newton(), ras)
+    st_ad = init_state(m, prob_ad, copy(x_init), nothing)
+    st_j = init_state(m, prob_j, copy(x_init), nothing)
+    r_ad = residual!!(similar(x_step), st_ad.problem, x_step, nothing)
+    r_j = residual!!(similar(x_step), st_j.problem, x_step, nothing)
+    @test norm(r_ad - r_j) <= 8 * eps(T) * norm(r_j)
+
+    # a solve agrees with the one on explicit block Jacobians: the two sources are one method
+    solve_m = LeftPreconditioned(Newton(; globalization = Backtracking()),
+        RAS(part; max_iterations = 1))
+    _, s_ad = solve(prob_ad, copy(x_init), solve_m; max_iterations = 100)
+    _, s_j = solve(prob_j, copy(x_init), solve_m; max_iterations = 100)
+    @test (s_ad.code, s_ad.iterations) == (s_j.code, s_j.iterations)
 end
 
 # --- Check 3: the exact RASPEN Jacobian product ----------------------------------------------
@@ -305,7 +411,8 @@ end
     atol = 10 * n * κ_max * eps(T) * norm(vh)
     @test norm(Array(Jv) - expected) <= atol
 
-    # the same product one column at a time is the Jacobian of `rˡ`
+    # the same product one column at a time is the Jacobian of `rˡ`: column `j` is the product
+    # along the unit direction `e_j`, so it takes the clause's per-product bound with `‖v‖ = 1`
     J = similar(x0, eltype(x0), n, n)
     jacobian!!(J, prep, lprob, x0, nothing)
     expected_matrix = zeros(T, n, n)
@@ -313,8 +420,10 @@ end
         S = part.subdomains[i]
         expected_matrix[part.owners[i], :] .+= (A[S, S] \ A[S, :])[part.local_owners[i], :]
     end
-    @test norm(Array(J) - expected_matrix) <=
-          10 * n * κ_max * eps(T) * norm(A) * sqrt(n)
+    column_bound = 10 * n * κ_max * eps(T)
+    for j in 1:n
+        @test norm(Array(J)[:, j] - expected_matrix[:, j]) <= column_bound
+    end
 end
 
 # --- Check 4: the merit is on rˡ --------------------------------------------------------------
@@ -483,42 +592,53 @@ end
     b = affine_rhs(T, n)
     part = BlockPartition(n, 3; overlap = 1)
     x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
-    prob, _ = affine_problem(x0, A, b, part)
+    plain, _ = affine_problem(x0, A, b, part)
+    # the balance test reads the global residual it was given and evaluates it no times (C2b)
+    global_calls = Ref(0)
+    F!, J! = affine_global(x0, A, b)
+    prob = NonlinearProblem((r, y, p) -> (global_calls[] += 1; F!(r, y, p)),
+        (J, y, p) -> J!(J, y, p); block_residuals = block_residuals(plain),
+        block_jacobians = block_jacobians(plain))
     Fx = residual!!(similar(x0), prob, x0, nothing)
     # each block residual is smaller than the global residual, so rho = 1 skips the sweep
     skipped = RAS(part; max_iterations = 1, balance_threshold = one(T))
+    global_calls[] = 0
     x, _, info = one_step(prob, skipped, copy(x0), copy(Fx))
     @test Array(x) == x0
     @test info.code === SUCCESS
     @test iszero(info.stepnorm)
-    # a small threshold runs the sweep
+    @test global_calls[] == 0
+    # a small threshold runs the sweep, whose step evaluates the global residual once
     run = RAS(part; max_iterations = 1, balance_threshold = T(1e-8))
+    global_calls[] = 0
     x₂, _, _ = one_step(prob, run, copy(x0), copy(Fx))
     @test Array(x₂) != x0
+    @test global_calls[] == 1
 end
 
-@testset "MU10: start!! resets the counters" begin
+@testset "MU10: start!! resets the counters, $T" for T in REAL_ELTYPES
     n = 6
-    T = Float64
     A = affine_matrix(T, n)
     b = affine_rhs(T, n)
     part = BlockPartition(n, 3; overlap = 1)
     x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
     prob, _ = affine_problem(x0, A, b, part)
-    ras = RAS(part; max_iterations = 2)
-    solver = init(prob, copy(x0), ras)
-    solve!(solver)
-    first = ras_counts(solver.state)
-    @test first.sweeps > 0
-    # the same solve from the same start reports the same counters: start!! reset them
-    solve!(solver, copy(x0), nothing)
-    second = ras_counts(solver.state)
-    @test first == second
+    # a plain `RAS`, and RASPEN, whose inner state is started again at every evaluation of `rˡ`
+    for m in (RAS(part; max_iterations = 2),
+        LeftPreconditioned(Newton(), RAS(part; max_iterations = 2)))
+        solver = init(prob, copy(x0), m)
+        solve!(solver)
+        first = ras_counts(solver.state)
+        @test first.sweeps > 0
+        # the same solve from the same start reports the same counters: start!! reset them
+        solve!(solver, copy(x0), nothing)
+        second = ras_counts(solver.state)
+        @test first == second
+    end
 end
 
-@testset "MU11: the block residuals do not wrap the user's J" begin
+@testset "MU11: the block residuals do not wrap the user's J, $T" for T in REAL_ELTYPES
     n = 4
-    T = Float64
     A = affine_matrix(T, n)
     b = affine_rhs(T, n)
     x0 = T[0.5, -0.5, 0.25, -0.25]
@@ -532,6 +652,57 @@ end
     @test prob.J === J!
     @test prob.F isa BlockResidual
     @test block_residuals(prob) === residuals
+end
+
+# A state that no complete sweep formed holds no block factor, so a RASPEN product raises instead
+# of handing LAPACK a pivot vector nothing has written.
+@testset "A RASPEN product on a state that no sweep formed raises, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
+    prob, _ = affine_problem(x0, A, b, part)
+    ras = RAS(part; max_iterations = 1)
+    state = init_state(ras, prob, copy(x0), nothing)
+    v = T[0.7, -1.2, 0.4, 0.9, -0.3, 0.6]
+    Jv = similar(v)
+    @test_throws "a RASPEN Jacobian product needs" raspen_jvp!(
+        Jv, state, prob, x0, v, nothing)
+    @test_throws "a RASPEN Jacobian product needs" raspen_jacobian!(
+        similar(x0, T, n, n), state, prob, x0, nothing)
+    # the factor a read would have touched fails closed
+    @test all(iszero, state.factors[1].factors)
+    @test all(==(one(eltype(state.factors[1].ipiv))), state.factors[1].ipiv)
+    # one complete sweep forms them, and the product runs
+    ras_sweep!!(state, ras, prob, copy(x0), nothing)
+    @test all(isfinite, raspen_jvp!(Jv, state, prob, x0, v, nothing))
+end
+
+@testset "A sweep skipped inside RASPEN is the zero residual, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    x0 = T[0.5, -0.5, 0.25, -0.25, 0.75, -0.75]
+    prob, _ = affine_problem(x0, A, b, part)
+    m = LeftPreconditioned(Newton(), RAS(part; max_iterations = 1, balance_threshold = one(T)))
+    state = init_state(m, prob, copy(x0), nothing)
+    # the balance test skips the sweep at `x0`, so `rˡ(x0) = x0 - N(x0) = 0`
+    @test all(iszero, rl_direct(state.problem, x0))
+    # a zero preconditioned residual is reported as it is: the solve asks for no block factor
+    x, status = solve(prob, copy(x0), m; max_iterations = 20)
+    @test Array(x) == x0
+    @test status.code === STALLED
+end
+
+@testset "LeftPreconditioned refuses an R1 iterate, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 2 .- 2; nothing))
+    m = LeftPreconditioned(Picard(; damping = one(T) / 2), Newton())
+    @test_throws "LeftPreconditioned takes a mutable vector iterate" init_state(
+        m, prob, SVector(one(T), one(T)), nothing)
+    @test_throws "LeftPreconditioned takes a mutable vector iterate" init_state(
+        m, prob, one(T), nothing)
 end
 
 # --- Check 6: the P8 benchmark counters -------------------------------------------------------
@@ -592,7 +763,8 @@ end
 
 # A member that runs a `RAS` and counts, from the block-Jacobian calls it owns, the sweeps, the
 # block solves of the parallel schedule and every block solve. The sweep forms one block Jacobian
-# per block solve and one more per block at the local iterate it returns.
+# per block solve, and on a state that a RASPEN preparation reads one more per block at the local
+# iterate it returns, so a count with no correction term is the one `ras_counts` reports.
 struct CountingRAS{M, C, R}
     ras::M
     calls::C
@@ -609,7 +781,7 @@ end
 function GeometricSolvers.step!!(state, m::CountingRAS, prob, x, Fx, p)
     before = [c[] for c in m.calls]
     out = step!!(state, m.ras, prob, x, Fx, p)
-    per_block = [c[] for c in m.calls] .- before .- 1
+    per_block = [c[] for c in m.calls] .- before
     sweeps, parallel, total = m.counts[]
     m.counts[] = (sweeps + 1, parallel + maximum(per_block), total + sum(per_block))
     return out
@@ -673,8 +845,7 @@ end
     @test c2.total_inner_iterations == total2
     @test c2.total_inner_iterations < 50 * length(part.owners) * c2.sweeps
 
-    # the counts at one inner step are a measurement, not an assertion: at one inner step the
-    # outer step of RASPEN is Newton's step, so the map is not the restricted one
+    # the counts at one inner step are recorded as a measurement, not asserted
     let
         ras1 = RAS(part; max_iterations = 1)
         counting1 = CountingRAS(ras1, [Ref(0) for _ in 1:length(part.owners)])

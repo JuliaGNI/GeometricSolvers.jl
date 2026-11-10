@@ -738,8 +738,12 @@ so that a compat-only bump can be told apart from an interface change.
   subdomain, solves each block with `dense_factor`, `factorize!!` and `ldiv!!` — so a `JLArray`
   iterate runs on the device factor and the kernels stay non-scalar — prolongates through the
   owner sets only, so each index of `1:n` is written once, and calls the global residual no
-  times. The block factor a sweep leaves stored is the Jacobian at the local iterate it returns,
-  so RASPEN's product reads the block matrix at the local solution. `ras_counts` reports its
+  times. A sweep forms the block factor at the local iterate it returns only where a RASPEN
+  preparation reads the block factors, so RASPEN's product reads the block matrix at the local
+  solution and a `RAS` or NKS-RAS sweep pays for no extra factor. A block factor that no complete
+  sweep has formed fails closed, and a product on such a state raises an `ArgumentError`; an inner
+  step that does not return `SUCCESS` makes `rˡ` non-finite, so a failed inner step is never read
+  as a zero of `rˡ`. `ras_counts` reports its
   sweeps, parallel block solves and inner iterations, and `RAS` takes `max_iterations`, `rtol`,
   `atol` and the balance threshold of Cai and Li. The standard test set gains the column
   `LeftPreconditioned Picard Backtracking Newton`, 134 cells.

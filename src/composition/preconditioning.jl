@@ -16,8 +16,8 @@ costs one inner step, and every merit value it reads is ``\\|r^\\ell\\|_2^2``. T
 
 `LeftPreconditioned(Newton(), RAS(partition))` is RASPEN: the merit is on the restricted additive
 Schwarz map, and the Jacobian of ``r^\\ell`` is the exact form of [`raspen_jvp!`](@ref) built from
-the block factors of the last sweep (`Dolean:2016`, eq. 3.17). RASPEN needs converged local solves,
-and at one inner step its outer step is Newton's step. With any other `inner` the derivative of
+the block factors of the last sweep (`Dolean:2016`, eq. 3.17). RASPEN needs converged local solves.
+With any other `inner` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
 [`prepare_ad`](@ref) prepares at `init_state`; a globalization that reads no slope, such as
 [`Static`](@ref), pays for none.
@@ -100,6 +100,8 @@ struct LeftPreconditionedAD{XP, XM, RP, RM, E}
 end
 
 @inline function init_state(m::LeftPreconditioned, prob::NonlinearProblem, x, p)
+    x isa Union{Number, StaticArray} && throw(ArgumentError(
+        "LeftPreconditioned takes a mutable vector iterate: an R1 iterate (a Number or an SVector) has no workspace for an inner step"))
     inner_state = init_state(m.inner, prob, x, p)
     lprob = LeftPreconditionedProblem(prob, m.inner, inner_state, buffer(x))
     outer_state = init_state(m.outer, lprob, x, p)
@@ -133,8 +135,17 @@ end
     counts = state_counts(st)
     st = start!!(st, prob.inner, prob.prob, xw, Fx, p, rnorm(Fx))
     st = restart_with_counts(st, counts)
-    x₊, _, _, _ = step!!(st, prob.inner, prob.prob, xw, Fx, p)
-    return map!!(-, y, x, x₊)
+    x₊, _, _, info = step!!(st, prob.inner, prob.prob, xw, Fx, p)
+    # a failed inner step returns its input, so `x - x₊` would read as an exact zero of `rˡ`: the
+    # residual is non-finite instead, which makes the outer's merit `NaN` and its line search
+    # reject the trial
+    ok = info.code == SUCCESS
+    if y === nothing
+        r = map!!(-, nothing, x, x₊)
+        return ok ? r : r * real(eltype(x))(NaN)
+    end
+    ok && return map!!(-, y, x, x₊)
+    return fill!(y, real(eltype(y))(NaN))
 end
 
 @inline jacobian_prototype(::LeftPreconditionedProblem) = nothing
@@ -145,36 +156,19 @@ end
     return Fx === nothing ? nothing : prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
 end
 
-# `Picard` on the preconditioned problem: the same fixed-point step as on a `NonlinearProblem`,
-# with the merit of the outer's line search taken on `rˡ` through the problem's residual.
-@inline function init_state(m::Picard, prob::LeftPreconditionedProblem, x, p)
-    Fx = buffer(x)
-    jvpprep = picard_jvpprep(m, prob, Fx, x, p)
-    merit = init_merit(m.globalization, x)
-    if Fx === nothing
-        return PicardState(jvpprep, nothing, nothing, nothing, merit)
-    else
-        return PicardState(
-            jvpprep, Fx, buffer(x), init_globalization(m.globalization, x), merit)
-    end
-end
-
-@inline function step!!(
-        state::PicardState, m::Picard, prob::LeftPreconditionedProblem, x, Fx, p)
-    ω = real(eltype(x))(m.damping)
-    d = map!!(fi -> -ω * fi, state.d, Fx)
-    x₊, F₊, _, info, merit = globalize_merit!!(
-        state.g, m.globalization, prob, x, Fx, d, p, state.jvpprep, MeasuredSlope(),
-        state.merit)
-    return x₊, F₊, with_merit(state, merit), info
-end
+# `Picard` on the preconditioned problem: the state and the step of `picard.jl`, whose
+# `init_state` signature names `NonlinearProblem` alone so that the generic `Reparametrized` and
+# `StationarityProblem` methods of `init_state` keep their precedence.
+@inline init_state(m::Picard, prob::LeftPreconditionedProblem, x, p) = picard_state(m, prob, x, p)
 
 function prepare_ad(
         backend::AutoForwardDiff, prob::LeftPreconditionedProblem, Fx::AbstractArray,
         x::AbstractArray, p)
     # the preparation reads the inner state's block factors, so the state that is a `RASState` —
-    # the state of a [`RAS`](@ref), and of any member that forwards to one — is a RASPEN inner map
+    # the state of a [`RAS`](@ref), and of any member that forwards to one — is a RASPEN inner map,
+    # and the sweeps whose factors it reads form the block factor at the iterate they return
     if prob.state isa RASState
+        prob.state.blocks.raspen = true
         return RASPenPreparation(prob.state)
     end
     return LeftPreconditionedAD(
@@ -217,22 +211,28 @@ end
 
 function jacobian!!(J, prep::LeftPreconditionedAD, prob::LeftPreconditionedProblem, x, p)
     for j in axes(J, 2)
-        copyto!(prep.e, unit_direction(eltype(prep.e), length(prep.e), j))
+        unit_direction!(prep.e, j)
         difference_jvp!(view(J, :, j), prep, prob, x, prep.e, p)
     end
     return J
 end
 
-# The host unit vector of column `j`, which `copyto!` puts into a device direction buffer.
-function unit_direction(::Type{T}, n::Integer, j::Integer) where {T}
-    e = zeros(T, n)
-    e[j] = one(T)
+# `e` set to the `j`-th unit vector in place, without a scalar write, so that a device direction
+# buffer takes it.
+@inline function unit_direction!(e, j)
+    fill!(e, zero(eltype(e)))
+    @views e[j:j] .= one(eltype(e))
     return e
 end
 
 @inline function start!!(
         state::LeftPreconditionedState, m::LeftPreconditioned, prob, x, Fx, p, fnorm₀)
     lprob = state.problem
+    # the inner map is started again at every evaluation of `rˡ`, so its counters survive those
+    # restarts and a solve would otherwise report every earlier solve too: this is the hook that
+    # gives the counters of the solve that `start!!` opens
+    inner = start!!(lprob.state, m.inner, prob, x, Fx, p, rnorm(Fx))
+    lprob = LeftPreconditionedProblem(lprob.prob, lprob.inner, inner, lprob.work)
     Fxˡ = residual!!(residual_buffer(state.outer_state), lprob, x, p)
     outer_state = start!!(
         state.outer_state, m.outer, lprob, x, Fxˡ, p, rnorm(Fxˡ))
@@ -244,6 +244,14 @@ end
     lprob = state.problem
     R = real(eltype(x))
     Fxˡ = residual!!(residual_buffer(state.outer_state), lprob, x, p)
+    if iszero(rnorm(Fxˡ))
+        # `x` is a fixed point of the inner map, so the outer solves `rˡ = 0` here: its step is of
+        # zero length, the iterate and its global residual are unchanged, and a sweep that
+        # `balance_threshold` skipped left no block factor for the outer's Jacobian, which this
+        # step never asks for
+        return x, Fx, state,
+        StepInfo{R}(SUCCESS, rnorm(Fx), zero(R), Int32(0), false, false)
+    end
     x₊, _, outer_state, info = step!!(state.outer_state, m.outer, lprob, x, Fxˡ, p)
     F₊ = residual!!(state.Fx, prob, x₊, p)
     info₊ = StepInfo{R}(
