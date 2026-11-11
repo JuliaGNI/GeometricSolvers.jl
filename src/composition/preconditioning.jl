@@ -100,9 +100,6 @@ end
 @inline function init_state(m::LeftPreconditioned, prob::NonlinearProblem, x, p)
     x isa Union{Number, StaticArray} && throw(ArgumentError(
         "LeftPreconditioned takes a mutable vector iterate: an R1 iterate (a Number or an SVector) has no workspace for an inner step"))
-    m.outer isa Newton && m.outer.linsolve isa GMRES &&
-        throw(ArgumentError(
-            "LeftPreconditioned does not take a Newton with GMRES as its outer method: a Newton with GMRES solves a NonlinearProblem, and the outer method solves the preconditioned residual; use a Newton with a factorization, such as the default LUFactorization(), or a Picard as the outer method, or put the Newton with GMRES in the inner method"))
     m.inner isa RAS && m.inner.balance_threshold !== nothing &&
         throw(ArgumentError(
             "LeftPreconditioned does not take a RAS with a balance_threshold: a skipped sweep returns its input, which reads as a zero of the preconditioned residual at a point that is not a root"))

@@ -848,6 +848,9 @@ end
     @test_throws ArgumentError init_state(m, prob, copy(x0), nothing)
     @test_throws msg init_state(m, prob, copy(x0), nothing)
     @test_throws msg solve(prob, copy(x0), m; max_iterations = 20)
+    # a wrapped outer method reaches the same refusal
+    @test_throws msg init_state(
+        LeftPreconditioned(Repeat(gmres, 2), Newton()), prob, copy(x0), nothing)
     # the same outer on its default factorization, and a GMRES Newton as the inner map, are taken
     @test init_state(
         LeftPreconditioned(Newton(; globalization = Backtracking()), Newton()),

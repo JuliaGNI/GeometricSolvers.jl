@@ -1653,6 +1653,8 @@ end
         prob::AbstractNonlinearProblem, x, p) where {F, P, TJ}
     (x isa AbstractVector && !(x isa StaticArray)) || throw(ArgumentError(
         "a Newton with GMRES solves an array linear system: the iterate must be an AbstractVector and not a value iterate, which is a Number or a StaticArray"))
+    prob isa LeftPreconditionedProblem && throw(ArgumentError(
+        "LeftPreconditioned does not take a Newton with GMRES as its outer method: a Newton with GMRES solves a NonlinearProblem, and the outer method solves the preconditioned residual; use a Newton with a factorization, such as the default LUFactorization(), or a Picard as the outer method, or put the Newton with GMRES in the inner method"))
     prob isa NonlinearProblem || throw(ArgumentError(
         "a Newton with GMRES solves the square system of a NonlinearProblem; a LeastSquaresProblem takes QRFactorization() or SVDFactorization()"))
     T = eltype(x)
