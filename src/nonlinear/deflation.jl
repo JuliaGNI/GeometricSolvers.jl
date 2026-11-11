@@ -673,8 +673,8 @@ function _prepare_deflated_batch(X, def, method, options, kwargs)
 end
 
 """
-    solve_batch!(X, S, def::Deflated, method, p = nothing; order, options, kwargs...)
-    solve_batch!(X, def::Deflated, method, p = nothing; order, options, kwargs...)
+    solve_batch!(X, S, def::Deflated, method, p = nothing; order, options, workgroupsize, kwargs...)
+    solve_batch!(X, def::Deflated, method, p = nothing; order, options, workgroupsize, kwargs...)
 
 Solve a batch of independent small systems under one [`Deflated`](@ref) problem, as
 [`solve_batch!`](@ref) does on a [`NonlinearProblem`](@ref): every system is deflated at the same
@@ -694,6 +694,7 @@ function solve_batch!(
         p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing,
         kwargs...
 ) where {R <: Real}
     _validate_batch(X, p, order)
@@ -710,9 +711,10 @@ function solve_batch!(
         throw(ArgumentError(
             "status vector backend $(get_backend(S)) does not match batch backend $(get_backend(X))"))
     end
+    ws = _validate_workgroupsize(workgroupsize)
     m, opt, state₀ = _prepare_deflated_batch(X, def, method, options, kwargs)
     isempty(X) && return S
-    return _launch!(X, S, def, m, p, opt, state₀, order)
+    return _launch!(X, S, def, m, p, opt, state₀, order, ws)
 end
 
 function solve_batch!(
@@ -722,14 +724,17 @@ function solve_batch!(
         p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing,
         kwargs...
 )
     _validate_batch(X, p, order)
     _check_deflated_batch(def, X)
+    ws = _validate_workgroupsize(workgroupsize)
     m, opt, state₀ = _prepare_deflated_batch(X, def, method, options, kwargs)
     isempty(X) && return _tally_return_codes(ReturnCode[])
     codes = allocate(get_backend(X), ReturnCode, length(X))
-    return _tally_return_codes(Array(_launch!(X, codes, def, m, p, opt, state₀, order)))
+    return _tally_return_codes(Array(_launch!(
+        X, codes, def, m, p, opt, state₀, order, ws)))
 end
 
 # ─── `Deflated(::StationarityProblem)`: a solve on the unknowns ──────────────
@@ -985,13 +990,15 @@ function solve_batch!(
         method = Newton(),
         p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
-        options::Union{Nothing, Options} = nothing, b = nothing, kwargs...
+        options::Union{Nothing, Options} = nothing, b = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing, kwargs...
 )
     b_src = b === nothing ? def.prob.b : b
     _validate_batch(X, p, order)
     _check_deflated_method(method)
     _check_deflated_batch(def, X)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
+    ws = _validate_workgroupsize(workgroupsize)
     T = eltype(eltype(X))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
@@ -1004,7 +1011,8 @@ function solve_batch!(
         m, def, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     codes = allocate(get_backend(X), ReturnCode, length(X))
     sp = _StationarityBatchParams(p, b_src)
-    return _tally_return_codes(Array(_launch!(X, codes, def, m, sp, opt, state₀, order)))
+    return _tally_return_codes(Array(_launch!(
+        X, codes, def, m, sp, opt, state₀, order, ws)))
 end
 
 function solve_batch!(
@@ -1015,6 +1023,7 @@ function solve_batch!(
         p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing, b = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing,
         kwargs...) where {R <: Real}
     b_src = b === nothing ? def.prob.b : b
     _validate_batch(X, p, order)
@@ -1028,6 +1037,7 @@ function solve_batch!(
         "status vector S has length $(length(S)), expected $(length(X)) to match the batch X"))
     get_backend(S) == get_backend(X) || throw(ArgumentError(
         "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
+    ws = _validate_workgroupsize(workgroupsize)
     T = eltype(eltype(X))
     opt = resolve_options(T, options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
@@ -1038,5 +1048,5 @@ function solve_batch!(
     state₀ = init_state(
         m, def, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     sp = _StationarityBatchParams(p, b_src)
-    return _launch!(X, S, def, m, sp, opt, state₀, order)
+    return _launch!(X, S, def, m, sp, opt, state₀, order, ws)
 end

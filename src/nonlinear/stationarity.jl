@@ -560,11 +560,13 @@ _per_system_lengths(data::AbstractArray{<:AbstractVector}) = (length(bi) for bi 
 function solve_batch!(
         X::AbstractArray, prob::StationarityProblem, method = Newton(), p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
-        options::Union{Nothing, Options} = nothing, b = nothing, kwargs...)
+        options::Union{Nothing, Options} = nothing, b = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing, kwargs...)
     b_src = b === nothing ? prob.b : b
     _validate_batch(X, p, order)
     _validate_batch_problem(prob)
     b_src isa PerSystem && _validate_batch(X, b_src, nothing)
+    ws = _validate_workgroupsize(workgroupsize)
     T = eltype(eltype(X))
     R = real(T)
     opt = resolve_options(T, options, kwargs)
@@ -576,7 +578,8 @@ function solve_batch!(
     state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     codes = allocate(get_backend(X), ReturnCode, length(X))
     sp = _StationarityBatchParams(p, b_src)
-    return _tally_return_codes(Array(_launch!(X, codes, prob, m, sp, opt, state₀, order)))
+    return _tally_return_codes(Array(_launch!(
+        X, codes, prob, m, sp, opt, state₀, order, ws)))
 end
 
 function solve_batch!(
@@ -584,6 +587,7 @@ function solve_batch!(
         prob::StationarityProblem, method = Newton(), p = nothing;
         order::Union{Nothing, AbstractVector{<:Integer}} = nothing,
         options::Union{Nothing, Options} = nothing, b = nothing,
+        workgroupsize::Union{Nothing, Integer} = nothing,
         kwargs...) where {R <: Real}
     b_src = b === nothing ? prob.b : b
     _validate_batch(X, p, order)
@@ -596,6 +600,7 @@ function solve_batch!(
         "status vector S has length $(length(S)), expected $(length(X)) to match the batch X"))
     get_backend(S) == get_backend(X) || throw(ArgumentError(
         "status vector S must reside on the same backend as the batch X ($(get_backend(X))), got $(get_backend(S))"))
+    ws = _validate_workgroupsize(workgroupsize)
     opt = resolve_options(eltype(eltype(X)), options, kwargs)
     m = Adapt.adapt(ToReal{R}(), method)
     _validate_stationarity_batch(X, prob, b_src, p)
@@ -604,7 +609,7 @@ function solve_batch!(
     p₀ = _sample_batch_item(p, idx₀)
     state₀ = init_state(m, prob, zero(eltype(X)), p₀; b = _sample_batch_item(b_src, idx₀))
     sp = _StationarityBatchParams(p, b_src)
-    return _launch!(X, S, prob, m, sp, opt, state₀, order)
+    return _launch!(X, S, prob, m, sp, opt, state₀, order, ws)
 end
 
 # `CommonSolve.init` and `CommonSolve.solve` on `StationarityProblem`, the counterparts of the

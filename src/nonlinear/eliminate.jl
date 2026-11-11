@@ -2774,3 +2774,775 @@ function solve(
     x_star, status, _ = solve!!(state, prob_b, x, m_ad, p, opt)
     return x_star, status
 end
+
+# ─── Reduced-space nonlinear elimination: an R2 batch inside the outer residual ───
+#
+# `BatchEliminated` is the reduced-space pattern of the implicit PIC method (`Chen2011`, pp. 7025
+# and 7033; `LanzkronRoseWilkes:1996`): the outer solver works on the field alone, and every
+# evaluation of the outer residual — the Jacobian–vector products of a matrix-free outer Newton
+# included — runs the per-particle solves. The particle unknowns are never part of the outer
+# unknown vector, so nothing of `BlockEliminated`'s inner/outer partition of one vector applies:
+# the whole batch is the eliminated part, and the outer problem is a function of the field only.
+
+"""
+    DepositedMoments(current, density, flux, temperature)
+
+The four moment vectors a batch deposits on the outer grid, each of the outer grid's length and
+element type: the current density `current`, the number density `density`, the momentum flux
+`flux`, and the temperature `temperature`. [`deposit_pic_moments!`](@ref) fills one in place, a
+[`BatchEliminated`](@ref) holds the one its `deposit!` wrote at the last outer evaluation, and
+[`deposited_moments`](@ref) returns it.
+"""
+struct DepositedMoments{V}
+    current::V
+    density::V
+    flux::V
+    temperature::V
+end
+
+"""
+    PIC1DParams(x, v, E)
+
+The per-particle data of one Crank–Nicolson orbit step of the one-dimensional implicit
+electrostatic PIC problem: the position `x`, the velocity `v`, and the field `E` gathered at `x`,
+all of the previous time level and in the batch's element type. It is `isbits`, so a batch kernel
+takes it by value, and [`make_pic_elimination_problem`](@ref) builds one per particle.
+"""
+struct PIC1DParams{T <: AbstractFloat}
+    x::T
+    v::T
+    E::T
+end
+
+# The periodic quadratic B-spline (S₂) weights of the offset `t` of a particle from its nearest
+# grid node, in cells (`|t| ≤ 1/2`), for the nodes `j - 1`, `j` and `j + 1` in that order. The
+# support is 1.5 cells, so no other weight is non-zero, and the three sum to one.
+@inline function _pic_weights(t)
+    half = one(t) / 2
+    wm = (half - t)^2 * half
+    w0 = 3 * half * half - t * t
+    wp = (half + t)^2 * half
+    return wm, w0, wp
+end
+
+# The cell count below which the nearest-node index fits an `Int`: `typemax(Int)` is `2^63 − 1`, so
+# `round(Int, s)` raises `InexactError` at or beyond `9.22e18`, and for a non-finite `s`.
+const _PIC_MAX_CELLS = 9.2e18
+
+# The node index of the grid point nearest `ξ` and the offset from it in cells, on the periodic
+# grid of `n_cells` nodes with spacing `Δx`. A `ξ` that no cell holds — a non-finite one, or one
+# whose cell count is beyond the `Int` range — takes the first node with a `NaN` offset, so its
+# B-spline weights are `NaN` and the gather and the deposit stay in bounds: the moment is
+# non-finite, and an outer solve reports it instead of taking an `InexactError` out of a kernel.
+@inline function _pic_node(ξ, Δx, n_cells)
+    s = ξ / Δx
+    usable = isfinite(s) && abs(s) <= oftype(s, _PIC_MAX_CELLS)
+    r = usable ? round(Int, s) : 0
+    return mod(r, n_cells) + 1, usable ? s - r : oftype(s, NaN)
+end
+
+"""
+    pic_gather(E, ξ, Δx, n_cells)
+
+The field of the periodic grid `E` gathered at `ξ` with the quadratic B-spline weights
+`_pic_weights`, and its derivative with respect to `ξ`, as the pair `(E(ξ), dE/dξ)`. The
+shape function is C¹, so the derivative is continuous across a cell boundary.
+"""
+@inline function pic_gather(E, ξ, Δx, n_cells)
+    j, t = _pic_node(ξ, Δx, n_cells)
+    jm = mod1(j - 1, n_cells)
+    jp = mod1(j + 1, n_cells)
+    wm, w0, wp = _pic_weights(t)
+    half = one(t) / 2
+    @inbounds value = wm * E[jm] + w0 * E[j] + wp * E[jp]
+    @inbounds slope = ((t - half) * E[jm] - 2 * t * E[j] + (half + t) * E[jp]) / Δx
+    return value, slope
+end
+
+"""
+    pic_inner_residual(y, c, Δt, Δx, n_cells)
+
+The residual of one particle's Crank–Nicolson orbit step of the one-dimensional implicit
+electrostatic PIC problem, at the new position and velocity `y = (x^{n+1}, v^{n+1})`:
+
+```math
+g_1(y) = \\begin{pmatrix} x^{n+1} - x^{n} - \\tfrac{\\Delta t}{2}(v^{n} + v^{n+1}) \\\\
+v^{n+1} - v^{n} - \\tfrac{\\Delta t}{2}(E(x^{n}) + E(x^{n+1})) \\end{pmatrix},
+```
+
+with `E(x^{n+1})` gathered from the field the batch shares and `E(x^n)` the value that the
+per-system data [`PIC1DParams`](@ref) holds. `c = (E, ps)` is the pair that
+[`BatchParams`](@ref) passes to system `i`: the shared field `E` and that system's
+[`PIC1DParams`](@ref) `ps`.
+"""
+@inline function pic_inner_residual(y, c, Δt, Δx, n_cells)
+    E, ps = c
+    half = one(Δt) / 2
+    Ep, _ = pic_gather(E, y[1], Δx, n_cells)
+    return SVector(
+        y[1] - ps.x - half * Δt * (ps.v + y[2]),
+        y[2] - ps.v - half * Δt * (ps.E + Ep)
+    )
+end
+
+"""
+    pic_inner_jacobian(y, c, Δt, Δx, n_cells)
+
+The `2 × 2` derivative of [`pic_inner_residual`](@ref) with respect to `y = (x^{n+1}, v^{n+1})`,
+
+```math
+\\frac{\\partial g_1}{\\partial y} = \\begin{pmatrix} 1 & -\\tfrac{\\Delta t}{2} \\\\
+-\\tfrac{\\Delta t}{2} E'(x^{n+1}) & 1 \\end{pmatrix},
+```
+
+with `E′(x^{n+1})` the gathered field's derivative. It is analytic, so the inner solve takes no
+derivative of the gather, whose shape function is piecewise polynomial.
+"""
+@inline function pic_inner_jacobian(y, c, Δt, Δx, n_cells)
+    E, _ = c
+    _, slope = pic_gather(E, y[1], Δx, n_cells)
+    T = eltype(y)
+    half = one(T) / 2
+    # column-major: the first column is the derivative with respect to `x^{n+1}`, the second with
+    # respect to `v^{n+1}`
+    return SMatrix{2, 2, T, 4}(one(T), -half * Δt * slope, -half * Δt, one(T))
+end
+
+"""
+    deposit_pic_moments!(moments, Y, shared, per_system, Δt, Δx, n_cells)
+
+Scatter the moments of the batch `Y` onto the grid of `moments` in the canonical order of the
+batch, and accumulate every sum in the batch's element type `typeof(Δt)`: the number density
+``\\rho_j``, the current ``J_j``, the momentum flux ``F_j``, and the temperature
+``T_j = F_j/\\rho_j - (J_j/\\rho_j)^2`` where ``\\rho_j > 0``. The order and the precision are
+fixed by the loop and by the accumulators, so one batch state deposits one set of moments bit for
+bit, however often it is deposited.
+"""
+function deposit_pic_moments!(
+        moments::DepositedMoments, Y, shared, per_system, Δt, Δx, n_cells)
+    T = typeof(Δt)
+    fill!(moments.current, zero(eltype(moments.current)))
+    fill!(moments.density, zero(eltype(moments.density)))
+    fill!(moments.flux, zero(eltype(moments.flux)))
+    fill!(moments.temperature, zero(eltype(moments.temperature)))
+    @inbounds for i in eachindex(Y)
+        y = Y[i]
+        j, t = _pic_node(y[1], Δx, n_cells)
+        jm = mod1(j - 1, n_cells)
+        jp = mod1(j + 1, n_cells)
+        wm, w0, wp = _pic_weights(T(t))
+        v = T(y[2])
+        moments.density[jm] = T(moments.density[jm]) + wm
+        moments.density[j] = T(moments.density[j]) + w0
+        moments.density[jp] = T(moments.density[jp]) + wp
+        moments.current[jm] = T(moments.current[jm]) + wm * v
+        moments.current[j] = T(moments.current[j]) + w0 * v
+        moments.current[jp] = T(moments.current[jp]) + wp * v
+        moments.flux[jm] = T(moments.flux[jm]) + wm * v * v
+        moments.flux[j] = T(moments.flux[j]) + w0 * v * v
+        moments.flux[jp] = T(moments.flux[jp]) + wp * v * v
+    end
+    @inbounds for j in eachindex(moments.temperature)
+        ρ = T(moments.density[j])
+        J = T(moments.current[j])
+        moments.temperature[j] = ρ > zero(T) ?
+                                 T(T(moments.flux[j]) / ρ - (J / ρ)^2) : zero(T)
+    end
+    return moments
+end
+
+"""
+    pic_outer_residual!(F_out, E, moments, E_previous, Δt)
+
+The Ampère residual of one field update of the one-dimensional implicit electrostatic PIC problem,
+at the new field `E`,
+
+```math
+g_2(E) = \\frac{E - E^{n}}{\\Delta t} + J(E),
+```
+
+with `J(E)` the current that [`deposit_pic_moments!`](@ref) deposited from the particles advanced
+under `E`, and `E^n` the previous field. Both terms and their sum are evaluated in the batch's
+element type `typeof(Δt)`, and the value is converted to the element type of `F_out`: the current
+is known to the batch's precision only, so a residual summed in the outer precision would report a
+distance to the root that the batch cannot resolve. That floor of `F` is a property of `F`, not of
+the outer factorisation, so on the problem of [`make_pic_elimination_problem`](@ref) the outer
+solve at a tolerance below it ends on a stall and never on a factorisation failure (`§1.4`).
+"""
+function pic_outer_residual!(F_out, E, moments::DepositedMoments, E_previous, Δt)
+    T = typeof(Δt)
+    @inbounds for i in eachindex(F_out)
+        F_out[i] = (T(E[i]) - T(E_previous[i])) / Δt + T(moments.current[i])
+    end
+    return F_out
+end
+
+"""
+    make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64, Δt = 1 // 10) -> (prob, E0)
+
+Build the one-dimensional implicit electrostatic PIC test problem of a [`BatchEliminated`](@ref)
+after `Chen2011`, in the batch's element type `T_in` and the outer field's `T_out`, and return it
+with the initial field `E0`.
+
+The problem is one implicit Vlasov–Ampère step on the periodic domain ``[0, 2\\pi)``:
+Crank–Nicolson in the particle orbits, and backward Euler in the field, whose Ampère residual
+reads the current deposited at the new time level rather than the time-centred current of
+`Chen2011`. It has `N_x` field nodes, `N_p` particles, each an `SVector{2, T_in}` of position and
+velocity, and the time step `Δt`. The outer unknown is the field at the new time level; the inner unknown is the
+whole batch, which is solved per particle by [`solve_batch!`](@ref) from the [`PIC1DParams`](@ref)
+of each particle and the shared field. The particle distribution and the previous field are fixed
+by the constructor, so two calls with the same element types build the same problem, and one outer
+evaluation deposits one set of moments bit for bit.
+"""
+function make_pic_elimination_problem(
+        ::Type{T_in}, ::Type{T_out}; N_x::Integer = 16, N_p::Integer = 64,
+        Δt::Real = 1 // 10
+) where {T_in <: AbstractFloat, T_out <: AbstractFloat}
+    N_x >= 4 || throw(ArgumentError("N_x must be at least 4, got $N_x"))
+    N_p >= 1 || throw(ArgumentError("N_p must be at least 1, got $N_p"))
+    h = T_in(Δt)
+    (h > zero(T_in) && isfinite(h)) || throw(ArgumentError(
+        "Δt must be finite and positive in $T_in, got $Δt, which is $h"))
+    L = T_in(2) * T_in(π)
+    Δx = L / T_in(N_x)
+    # The particles: a uniform position train whose offset is not a rational part of the grid, and
+    # a velocity with a drift and a modulation, so that both the current and the temperature are
+    # non-zero across the grid.
+    Y₀ = [SVector{2, T_in}(
+              L * T_in(i - 1) / T_in(N_p) + Δx / T_in(7),
+              T_in(4 // 10) + T_in(2 // 10) * cos(T_in(2) * T_in(π) * T_in(i) / T_in(N_p)))
+          for i in 1:N_p]
+    E0 = [T_out(1 // 10) * cos(T_out(2) * T_out(π) * T_out(j) / T_out(N_x)) for j in 1:N_x]
+    E_in = T_in.(E0)
+    per_system = [begin
+                      x, v = Y₀[i]
+                      E, _ = pic_gather(E_in, x, Δx, N_x)
+                      PIC1DParams(x, v, E)
+                  end
+                  for i in 1:N_p]
+    moments = DepositedMoments(
+        zeros(T_out, N_x), zeros(T_out, N_x), zeros(T_out, N_x), zeros(T_out, N_x))
+    previous = copy(E0)
+    prob = BatchEliminated(
+        (F_out, x, m, shared) -> pic_outer_residual!(F_out, x, m, previous, h),
+        NonlinearProblem(
+            (y, c) -> pic_inner_residual(y, c, h, Δx, N_x),
+            (y, c) -> pic_inner_jacobian(y, c, h, Δx, N_x)),
+        copy(Y₀),
+        (m, Y, shared, ps) -> deposit_pic_moments!(m, Y, shared, ps, h, Δx, N_x),
+        moments;
+        per_system = per_system,
+        inner_method = Newton(),
+        inner_atol_cap = T_in(1 // 100),
+        eliminated_indices = N_x .+ (1:(2 * N_p)),
+        workgroupsize = 64)
+    return prob, E0
+end
+
+"""
+    BatchEliminatedJVPPrep(xa, Fa, xp, Fp, ε, tol)
+
+The Jacobian–vector preparation of a [`BatchEliminated`](@ref) under a matrix-free outer
+[`Newton`](@ref): the anchor-iterate and perturbed-iterate slots `xa` and `xp`, their residual slots
+`Fa` and `Fp`, the relative step `ε = \\sqrt{\\operatorname{eps}(R_{\\text{eff}})}` with `R_eff`
+the coarser of the batch's and the outer iterate's element type, and the inner tolerance `tol` of
+both evaluations. The product is the one-sided difference `(F(x + h v) - F(x))/h` at the step
+`h = ε max(1, ‖x‖)/‖v‖`.
+"""
+struct BatchEliminatedJVPPrep{XA, FA, XP, FP, R <: Real, T <: Real}
+    xa::XA
+    Fa::FA
+    xp::XP
+    Fp::FP
+    ε::R
+    tol::T
+end
+
+"""
+    BatchEliminated(outer_F!, inner_prob, Y₀, deposit!, moments; per_system = nothing,
+                    inner_method = Newton(), inner_options = nothing,
+                    inner_atol_cap = 1e-2, eliminated_indices = nothing,
+                    workgroupsize = 64)
+
+Reduced-space nonlinear elimination with an R2 batch inside the outer residual: the outer solver
+steps on the `m`-vector that `outer_F!` returns, and every evaluation of that residual — the
+Jacobian–vector products of a matrix-free outer [`Newton`](@ref) included — solves the whole batch
+of `length(Y₀)` independent inner systems and deposits its moments.
+
+`inner_prob` is the [`NonlinearProblem`](@ref) of one inner system, solved for every system by
+[`solve_batch!`](@ref) from the batch's warm start `Y`, which the problem keeps in place across
+outer evaluations; `Y₀` is the initial batch state and is never mutated, and `Y` is a host
+`Vector` copy of it, so the batch runs on the CPU backend whatever the array type of `Y₀`;
+`per_system` is the
+indexable per-system data of the batch, or `nothing` for a batch whose systems share all their
+parameters. `deposit!(moments, Y, shared, per_system)` fills `moments` from the batch `Y` and the
+shared parameter, and `outer_F!(F_out, x, moments, shared)` writes the outer residual at `x` —
+where `shared` is the outer iterate converted to `real(eltype(eltype(Y₀)))`, which is what every
+system of the batch gathers. `eliminated_indices` are the indices of the eliminated unknowns in
+the stacked unknown vector, one for each entry of every system, `1:sum(length, Y₀)` by default;
+a set of another length is a `DimensionMismatch`.
+
+The inner tolerance of the batch at one outer evaluation is the adaptive quadratic one of
+`LanzkronRoseWilkes:1996` (Thm 5.4 and Cor 5.5),
+
+```math
+f_{\\text{abstol},p} = \\max\\left(2\\varepsilon(R_{\\text{in}}),
+R_{\\text{in}}\\left(\\tfrac{1}{2}\\min(\\texttt{inner\\_atol\\_cap},
+\\|g_2(\\text{prev})\\|^2) / \\sqrt{N_p}\\right)\\right),
+```
+
+so that the batch residual satisfies ``\\|g_1\\| < \\|g_2(\\text{prev})\\|^2`` wherever
+``\\|g_2(\\text{prev})\\|^2 > 4\\,\\varepsilon(R_{\\text{in}})\\sqrt{N_p}``. Below that bound the
+floor binds: no arithmetic in `R_in` reaches the quadratic, and the batch residual stops at the
+floor of the batch's own precision instead of following the schedule. Each evaluation
+records the pair `(‖g₁‖, ‖g₂(prev)‖)` in the fields `g₁_history` and `g₂_prev_history`, with `Inf`
+before the first outer residual exists, the index set it eliminated in `eliminated_index_log`, and
+accumulates its inner counts in `statuses`. A batch whose systems did not all converge, with a
+residual above the coarse ceiling ``32\\,\\varepsilon(R_{\\text{in}})\\sqrt{N_p}``, has no value to
+deposit: the residual of that evaluation is `NaN` and the outer solve cannot step on it. Under the
+ceiling the batch has stopped at the floor of its own arithmetic instead, and its deposit stands.
+The next evaluation takes the cap as its tolerance when the previous residual is not finite, since
+such a residual narrows nothing. [`reset_batch!`](@ref) returns the batch to `Y₀` and the records
+to empty.
+
+A second evaluation at the same `(x, tolerance)` reports `0` inner iterations for every system: the
+batch state is the root of the first one, and `residual!!(F_out, prob, x, p; repeat_same_tol =
+true)` re-uses the tolerance of the previous evaluation instead of narrowing it.
+
+The outer Jacobian–vector product is a one-sided difference with the step
+``h = \\varepsilon \\max(1, \\|x\\|)/\\|v\\|``, scaled by the iterate and the direction, and the
+relative step ``\\varepsilon = \\sqrt{\\operatorname{eps}(R_{\\text{eff}})}``, `R_eff` the coarser of
+the batch's and the outer iterate's element type (`ChenChaconBarnes:2012`, p. 5384): a `Float32`
+batch inside a `Float64` outer solve converges at the outer tolerance that the batch's accuracy
+supports and stalls, rather than failing, below it. Both evaluations of the difference are solved
+at the batch's own floor `2 eps(R_in)`, so the difference is the field's response and not the
+tolerance's, and the batch returns to `prob.Y_anchor` afterwards. The outer `Newton` takes
+`jacobian = nothing` or `AutoForwardDiff()` for this difference, or a [`JVPFunction`](@ref) of its
+own, and a `GMRES` without a `jvp_eltype`; any other back end, and a `jvp_eltype`, is an
+`ArgumentError`.
+
+`prob.Y`, `prob.Y_anchor`, `prob.statuses`, `prob.moments`, the two history vectors and
+`prob.eliminated_index_log` are the state of the elimination, and a Jacobian–vector product writes
+its per-system statuses to `prob.probe_statuses` rather than to `prob.statuses`;
+[`eliminated_indices`](@ref),
+[`deposited_moments`](@ref), [`batch_summary`](@ref), [`reset_batch!`](@ref) and
+[`make_pic_elimination_problem`](@ref) read and reset it.
+"""
+mutable struct BatchEliminated{P <: AbstractNonlinearProblem, YT, PT, D, M, IM, IO, EI, OF,
+    RIn, ROut} <: AbstractNonlinearProblem
+    inner_prob::P
+    Y::YT
+    Y_init::YT
+    Y_anchor::YT
+    per_system::PT
+    deposit!::D
+    moments::M
+    moments_probe::M
+    inner_method::IM
+    inner_options::IO
+    inner_atol_cap::RIn
+    eliminated::EI
+    outer_F!::OF
+    workgroupsize::Union{Nothing, Int}
+    statuses::Vector{SolverStatus{RIn}}
+    probe_statuses::Vector{SolverStatus{RIn}}
+    shared::Vector{RIn}
+    F_anchor::Vector{ROut}
+    last_inner_tol::RIn
+    g₂_prev::ROut
+    g₁_history::Vector{RIn}
+    g₂_prev_history::Vector{ROut}
+    eliminated_index_log::Vector{EI}
+    outer_evaluations::Int
+end
+
+# The eliminated index set, as a tuple of indices into the stacked unknown vector: one index for
+# each of the `n` unknowns of the batch, which are the entries of every system stacked in turn.
+function _normalize_eliminated_indices(idx, n::Int)
+    idx === nothing && return ntuple(identity, n)
+    v = Int.(idx)
+    _check_unique_positive(v, :eliminated_indices)
+    length(v) == n || throw(DimensionMismatch(
+        "eliminated_indices has $(length(v)) entries, but the batch has $n unknowns"))
+    return Tuple(v)
+end
+
+function BatchEliminated(
+        outer_F!, inner_prob::AbstractNonlinearProblem,
+        Y₀::AbstractVector{<:Union{SVector, Number}},
+        deposit!, moments::DepositedMoments;
+        per_system = nothing,
+        inner_method = Newton(),
+        inner_options::Union{Nothing, Options} = nothing,
+        inner_atol_cap::Real = 1e-2,
+        eliminated_indices = nothing,
+        workgroupsize::Union{Nothing, Integer} = 64
+)
+    isempty(Y₀) && throw(ArgumentError("a batch must hold at least one system"))
+    RIn = real(eltype(eltype(Y₀)))
+    RIn <: AbstractFloat || throw(ArgumentError(
+        "the batch's element type must be a real floating-point type, got $(eltype(eltype(Y₀)))"))
+    ROut = eltype(moments.current)
+    ROut <: Real || throw(ArgumentError(
+        "the moments must have a real element type, got $ROut"))
+    opt = inner_options === nothing ? Options(RIn) : inner_options
+    opt isa Options{RIn} || throw(ArgumentError(
+        "inner_options must be an Options{$RIn}, the tolerance type of a batch of element type " *
+        "$(eltype(eltype(Y₀))); got $(typeof(opt))"))
+    cap = RIn(inner_atol_cap)
+    (cap > zero(RIn) && isfinite(cap)) || throw(ArgumentError(
+        "inner_atol_cap must be finite and positive, got $inner_atol_cap"))
+    n_sys = length(Y₀)
+    ps = per_system === nothing ? fill(nothing, n_sys) : per_system
+    length(ps) == n_sys || throw(DimensionMismatch(
+        "per_system length $(length(ps)) does not match the batch length $n_sys"))
+    Y = Vector{eltype(Y₀)}(Y₀)
+    Y_init = copy(Y)
+    Y_anchor = copy(Y)
+    moments_probe = DepositedMoments(
+        similar(moments.current), similar(moments.density),
+        similar(moments.flux), similar(moments.temperature))
+    n_outer = length(moments.current)
+    statuses = fill(
+        SolverStatus{RIn}(SUCCESS, Int32(0), zero(RIn), zero(RIn), Int32(0), false), n_sys)
+    elim = _normalize_eliminated_indices(eliminated_indices, sum(length, Y₀))
+    return BatchEliminated{
+        typeof(inner_prob), typeof(Y), typeof(ps), typeof(deposit!),
+        typeof(moments), typeof(inner_method), typeof(opt), typeof(elim), typeof(outer_F!),
+        RIn, ROut}(
+        inner_prob, Y, Y_init, Y_anchor, ps, deposit!, moments, moments_probe,
+        inner_method, opt, cap, elim,
+        outer_F!, _validate_workgroupsize(workgroupsize), statuses, copy(statuses),
+        zeros(RIn, n_outer), zeros(ROut, n_outer),
+        cap, ROut(Inf), RIn[], ROut[], Vector{typeof(elim)}(), 0)
+end
+
+"""
+    eliminated_indices(prob::BatchEliminated)
+
+The indices, in the stacked unknown vector of the un-eliminated problem, of the unknowns this
+reduced-space elimination removes: one for each of the batch's `sum(length, prob.Y)` unknowns, the
+entries of every system stacked in turn, `1:sum(length, prob.Y)` unless the constructor was given
+another set. They are fixed for the life of the problem, and
+`prob.eliminated_index_log` records the set at every outer evaluation.
+"""
+@inline eliminated_indices(prob::BatchEliminated) = prob.eliminated
+
+"""
+    deposited_moments(prob::BatchEliminated)
+
+The [`DepositedMoments`](@ref) that `prob.deposit!` wrote at the last outer evaluation of `prob`,
+in place. A Jacobian–vector product deposits into its own slot, so the moments here are those of
+the residual, not of a perturbation.
+"""
+@inline deposited_moments(prob::BatchEliminated) = prob.moments
+
+"""
+    batch_summary(prob::BatchEliminated)
+
+The [`BatchSummary`](@ref) of the inner batch that `prob`'s last outer evaluation solved. A
+Jacobian–vector product solves the batch into a status slot of its own, so it leaves this summary
+as the anchor evaluation recorded it.
+"""
+batch_summary(prob::BatchEliminated) = batch_summary(prob.statuses)
+
+# The batch's and the outer iterate's element types, which the problem's fields are typed by: this
+# is the one spelling of the eleven type parameters, and every method below that needs them reads
+# them here instead of repeating the signature.
+@inline function _batch_real_types(
+        ::BatchEliminated{P, YT, PT, D, M, IM, IO, EI, OF, RIn,
+        ROut}
+) where {P, YT, PT, D, M, IM, IO, EI, OF, RIn, ROut}
+    return RIn, ROut
+end
+
+"""
+    reset_batch!(prob::BatchEliminated) -> prob
+
+Return `prob` to its initial batch state `prob.Y_init` and clear the records of its outer
+evaluations: `prob.g₁_history`, `prob.g₂_prev_history`, `prob.eliminated_index_log`, the previous
+outer residual `prob.g₂_prev` (`Inf` again) and the tolerance of the previous evaluation
+(`inner_atol_cap` again). The statuses become the zero-iteration `SUCCESS` of a batch that has not
+run, and the deposited moments are left as they are, since they belong to the batch state the
+reset discards.
+"""
+function reset_batch!(prob::BatchEliminated)
+    RIn, ROut = _batch_real_types(prob)
+    copyto!(prob.Y, prob.Y_init)
+    copyto!(prob.Y_anchor, prob.Y_init)
+    empty!(prob.g₁_history)
+    empty!(prob.g₂_prev_history)
+    empty!(prob.eliminated_index_log)
+    prob.g₂_prev = ROut(Inf)
+    prob.last_inner_tol = prob.inner_atol_cap
+    prob.outer_evaluations = 0
+    for S in (prob.statuses, prob.probe_statuses)
+        fill!(S, SolverStatus{RIn}(
+            SUCCESS, Int32(0), zero(RIn), zero(RIn), Int32(0), false))
+    end
+    return prob
+end
+
+# The buffers an outer evaluation writes are the problem's own, sized from the moments' grid at
+# construction: an outer iterate of another length would be read past the end of the deposited
+# moments and of the shared field by the `@inbounds` gather and deposit loops.
+@inline function _batch_buffers!(prob::BatchEliminated, x)
+    n = length(x)
+    n == length(prob.shared) || throw(DimensionMismatch(
+        "the outer iterate has length $n, but the problem's field has " *
+        "$(length(prob.shared)) nodes"))
+    return nothing
+end
+
+# The shared parameter of the batch at the outer iterate `x`: the iterate converted to the batch's
+# element type, which is the field every system gathers.
+@inline function _batch_shared!(prob::BatchEliminated, x)
+    sh = prob.shared
+    @inbounds for i in eachindex(sh)
+        sh[i] = x[i]
+    end
+    return sh
+end
+
+# The inner tolerance of one outer evaluation, from the previous outer residual: the quadratic
+# schedule of the reduced-space elimination with the floor of the batch's own unit roundoff. A
+# previous residual that is not finite — `Inf` before the first evaluation exists, `NaN` after one
+# whose batch failed — narrows nothing, and the cap stands alone.
+@inline function _batch_inner_tolerance(prob::BatchEliminated)
+    RIn, ROut = _batch_real_types(prob)
+    n_sys = length(prob.Y)
+    g₂ = prob.g₂_prev
+    quadratic = isfinite(g₂) ? min(ROut(prob.inner_atol_cap), g₂ * g₂) :
+                ROut(prob.inner_atol_cap)
+    tol = RIn(ROut(1 // 2) * quadratic / sqrt(ROut(n_sys)))
+    return max(RIn(2) * eps(RIn), tol)
+end
+
+# The options of the batch's inner solve at the tolerance `tol`: the template of `inner_options` for
+# every field but the residual test, which is `tol` absolutely and not at all relatively, so that a
+# second evaluation at the same tolerance stops at `0` iterations.
+@inline function _batch_inner_options(prob::BatchEliminated, tol)
+    RIn, _ = _batch_real_types(prob)
+    t = prob.inner_options
+    return Options{RIn}(tol, zero(RIn), t.x_abstol, t.x_reltol,
+        t.min_iterations, t.max_iterations, t.max_stalls)
+end
+
+# One inner batch solve from the warm start `prob.Y` at the tolerance `tol`, with the shared
+# parameter of `x`, writing each system's status into `statuses`; returns the shared parameter.
+@inline function _batch_solve!(prob::BatchEliminated, x, tol, statuses)
+    shared = _batch_shared!(prob, x)
+    params = BatchParams(shared, prob.per_system)
+    solve_batch!(prob.Y, statuses, prob.inner_prob, prob.inner_method, params;
+        options = _batch_inner_options(prob, tol), workgroupsize = prob.workgroupsize)
+    return shared
+end
+
+# The coarse ceiling of a batch residual, `32 eps(R_in) √N_p`: the bound that Check 1 states where
+# the floor of the schedule binds, and the largest residual a failed inner solve may leave while
+# its batch is still at the floor of its own arithmetic.
+@inline function _batch_ceiling(prob::BatchEliminated)
+    RIn, _ = _batch_real_types(prob)
+    return RIn(32) * eps(RIn) * sqrt(RIn(length(prob.Y)))
+end
+
+# One outer evaluation, which the histories and the records see: the inner tolerance from the
+# previous outer residual (or the previous tolerance again), the batch solve from `prob.Y` into
+# `prob.statuses`, the deposit, and the residual written into `prob.F_anchor` and, when a slot is
+# given, into it too. A batch that did not converge has no value — its deposit is not the reduced
+# residual at `x` — so the residual is `NaN`, which no outer step accepts and no outer status calls
+# converged. Under the coarse ceiling the batch has stopped at the floor of its own arithmetic
+# instead, and its deposit is the residual to that accuracy.
+function _anchor_residual!!(F_out, prob::BatchEliminated, x, p, repeat_tol::Bool)
+    _, ROut = _batch_real_types(prob)
+    _batch_buffers!(prob, x)
+    tol = repeat_tol ? prob.last_inner_tol : _batch_inner_tolerance(prob)
+    shared = _batch_solve!(prob, x, tol, prob.statuses)
+    summary = batch_summary(prob.statuses)
+    prob.deposit!(prob.moments, prob.Y, shared, prob.per_system)
+    prob.outer_F!(prob.F_anchor, x, prob.moments, shared)
+    summary.all_converged || summary.fnorm <= _batch_ceiling(prob) ||
+        fill!(prob.F_anchor, ROut(NaN))
+    push!(prob.g₁_history, summary.fnorm)
+    push!(prob.g₂_prev_history, prob.g₂_prev)
+    push!(prob.eliminated_index_log, eliminated_indices(prob))
+    copyto!(prob.Y_anchor, prob.Y)
+    prob.last_inner_tol = tol
+    prob.g₂_prev = ROut(rnorm(prob.F_anchor))
+    prob.outer_evaluations += 1
+    F_out === nothing && return prob.F_anchor
+    F_out === prob.F_anchor || copyto!(F_out, prob.F_anchor)
+    return F_out
+end
+
+# One outer evaluation of a Jacobian–vector product: the batch solve at `tol` into
+# `prob.probe_statuses`, the deposit into the probe slot, and no record, so the outcomes of the
+# probe are not the ones [`batch_summary`](@ref) reports for the problem. The caller restores
+# `prob.Y` from `prob.Y_anchor`, so no product disturbs the warm start of the outer iteration.
+function _probe_residual!!(F_out, prob::BatchEliminated, x, p, tol)
+    _batch_buffers!(prob, x)
+    shared = _batch_solve!(prob, x, tol, prob.probe_statuses)
+    prob.deposit!(prob.moments_probe, prob.Y, shared, prob.per_system)
+    prob.outer_F!(F_out, x, prob.moments_probe, shared)
+    return F_out
+end
+
+"""
+    residual!!(F_out, prob::BatchEliminated, x, p; repeat_same_tol = false) -> F_out
+
+The outer residual of the reduced-space elimination at the field `x`: solve the batch from the warm
+start `prob.Y` at the inner tolerance of this evaluation, deposit its moments, and write
+`g_2(x)`. Every call records its `(‖g₁‖, ‖g₂(prev)‖)` in `prob.g₁_history` and
+`prob.g₂_prev_history` and its eliminated set in `prob.eliminated_index_log`, and leaves the batch
+at the root of the system it solved, which the next evaluation warm-starts from. A batch whose
+systems did not all converge, with a residual above `32 eps(R_in) √N_p`, has no value to report:
+the residual it writes is `NaN`, so no outer step accepts it. With
+`repeat_same_tol = true` it re-uses the tolerance of the previous evaluation instead of the
+schedule of [`BatchEliminated`](@ref), so a second evaluation at the same `x` stops every system at
+`0` iterations. The outer iterate's length must be the length of the problem's field: any other is
+a `DimensionMismatch`.
+"""
+@inline function residual!!(
+        F_out::AbstractVector, prob::BatchEliminated,
+        x::AbstractVector, p; repeat_same_tol::Bool = false)
+    return _anchor_residual!!(F_out, prob, x, p, repeat_same_tol)
+end
+
+@inline function residual!!(
+        ::Nothing, prob::BatchEliminated,
+        x::AbstractVector, p; repeat_same_tol::Bool = false)
+    return _anchor_residual!!(nothing, prob, x, p, repeat_same_tol)
+end
+
+"""
+    jvp!!(Jv, prep::BatchEliminatedJVPPrep, prob::BatchEliminated, x, v, p) -> Jv
+
+The outer Jacobian–vector product `J v` of a [`BatchEliminated`](@ref) as the one-sided difference
+`(F(x + h v) - F(x))/h` with the step `h = ε max(1, ‖x‖)/‖v‖`, `ε` the relative step of `prep`, so
+that the perturbation is `ε` relative to the iterate whatever the scale of `x` and `v`; a zero `v`
+gives `J v = 0` without a solve. Both residuals of the difference are formed at
+the batch's own floor `2 eps(R_in)`, and not at the tolerance of the outer evaluation: a difference
+taken at a tolerance that the step does not override is noise, so a product solves the batch twice
+at that floor instead of reading the anchor residual. Its per-system statuses go to a slot of their
+own, so [`batch_summary`](@ref) keeps the outcomes of the last anchor evaluation, and a probe whose
+systems stop above the floor still gives a difference rather than a `NaN`. The batch returns to
+`prob.Y_anchor` afterwards, so no product disturbs the warm start.
+"""
+@inline function jvp!!(
+        Jv::AbstractVector, prep::BatchEliminatedJVPPrep, prob::BatchEliminated,
+        x::AbstractVector, v::AbstractVector, p)
+    ε = prep.ε
+    vnorm = oftype(ε, rnorm(v))
+    # `J 0 = 0` exactly, and the scaled step of a zero direction is not finite
+    if iszero(vnorm)
+        fill!(Jv, zero(eltype(Jv)))
+        return Jv
+    end
+    h = ε * max(one(ε), oftype(ε, rnorm(x))) / vnorm
+    xa = prep.xa
+    xp = prep.xp
+    copyto!(xa, x)
+    @inbounds for i in eachindex(xp, x, v)
+        xp[i] = x[i] + h * v[i]
+    end
+    _probe_residual!!(prep.Fa, prob, xa, p, prep.tol)
+    _probe_residual!!(prep.Fp, prob, xp, p, prep.tol)
+    @inbounds for i in eachindex(Jv, prep.Fp, prep.Fa)
+        Jv[i] = (prep.Fp[i] - prep.Fa[i]) / h
+    end
+    copyto!(prob.Y, prob.Y_anchor)
+    return Jv
+end
+
+# The residual of a batched outer solve as a callable of the problem, which the counting wrapper of
+# an R5 line search reads: one counted anchor evaluation, so the trial points of the globalization
+# record what they evaluated and leave `prob.F_anchor` at the point they evaluated it.
+struct _BatchCountingResidual{P, W}
+    prob::P
+    ws::W
+end
+
+@inline function (c::_BatchCountingResidual)(y::AbstractArray, x, p)
+    c.ws.f_calls += Int32(1)
+    return _anchor_residual!!(y, c.prob, x, p, false)
+end
+
+@inline function (c::_BatchCountingResidual)(x, p)
+    c.ws.f_calls += Int32(1)
+    return _anchor_residual!!(nothing, c.prob, x, p, false)
+end
+
+"""
+    counting_problem(prob::BatchEliminated, ws)
+
+The problem a globalization of an R5 outer step reads: [`prob`](@ref BatchEliminated) with its
+residual counted in the workspace `ws`, so that the trial evaluations of a line search add to the
+`f_calls` of the status. A Jacobian–vector product is not an evaluation of `F`, and
+[`jvp!!`](@ref) of this problem is not counted here.
+"""
+@inline function counting_problem(prob::BatchEliminated, ws)
+    return R5CountingProblem(prob, _BatchCountingResidual(prob, ws))
+end
+
+# The state of an outer `Newton` with `GMRES` on a reduced-space elimination: the same state that a
+# `NonlinearProblem` gets, from the same pieces, with the matrix-free product of the batch in the
+# Jacobian–vector slot and no Jacobian matrix anywhere. Only `GMRES` is a linear method of this
+# problem: a factorising method would need the outer Jacobian as a matrix, which the batch does not
+# form. The product is the batch's own difference, which no AD back end but the default selects,
+# in the precision the difference sets, which no `jvp_eltype` replaces.
+@inline function init_state(m::Newton, prob::BatchEliminated, x::AbstractVector, p)
+    g = m.linsolve
+    g isa GMRES || throw(ArgumentError(
+        "a BatchEliminated problem takes a Newton with GMRES: the outer Jacobian is matrix-free, " *
+        "and its product is the precision-matched directional difference of the batch; got " *
+        "linsolve = $(typeof(g))"))
+    j = m.jacobian
+    (j === nothing || j isa AutoForwardDiff || j isa JVPFunction) || throw(ArgumentError(
+        "a BatchEliminated problem forms its Jacobian–vector product as the directional " *
+        "difference of the batch, so it takes jacobian = nothing, AutoForwardDiff() or a " *
+        "JVPFunction; got jacobian = $(typeof(j))"))
+    g.jvp_eltype === Nothing || throw(ArgumentError(
+        "a BatchEliminated problem takes a GMRES with jvp_eltype = Nothing: the precision of its " *
+        "product is the coarser of the batch's and the outer iterate's; got jvp_eltype = " *
+        "$(g.jvp_eltype)"))
+    R = real(eltype(x))
+    Fx = buffer(x)
+    ws = init_gmres_workspace(g, x)
+    prep = newton_jvp_prep(m, prob, Fx, x, p)
+    iszero(m.regularization) || (prep = RegularizedJVP(prep, m.regularization))
+    return NewtonState(
+        nothing, r5_jvp(prep, ws, g), Fx, ws.d, nothing, nothing,
+        init_globalization(m.globalization, g, x, Fx), newton_rule(m, x),
+        init_merit(m.globalization, x), R(NaN), NewtonDiagnostics(R),
+        init_refinement(m.refinement, x), nothing, false, Int32(0), ws)
+end
+
+# The precision of the directional step: the coarser of the batch's and the outer iterate's, whose
+# unit roundoff sets the smallest difference that the batch's residual resolves.
+@inline function _batch_step_precision(prob::BatchEliminated)
+    RIn, ROut = _batch_real_types(prob)
+    return eps(RIn) > eps(ROut) ? RIn : ROut
+end
+
+# The inner tolerance of a Jacobian–vector product: the batch's own floor `2 eps(R_in)`, which is
+# what a difference over a step of `√eps` needs. A solve may stop above it — the floor of a
+# `Float32` batch is below the residual it reaches on a field of order one — so it is the tolerance
+# of the probe and not a bound on the probe's residual.
+@inline function _batch_probe_tolerance(prob::BatchEliminated)
+    RIn, _ = _batch_real_types(prob)
+    return RIn(2) * eps(RIn)
+end
+
+# The preparation of the outer product of a matrix-free `Newton`: the two iterate slots, their
+# residual slots, the relative step `√eps` of the coarser precision — so that a `Float32` batch
+# inside a `Float64` outer solve is differenced at the step its own residual resolves — and the
+# batch floor `2 eps(R_in)` that both evaluations of the difference are solved to.
+function prepare_jvp(
+        ::AutoForwardDiff, prob::BatchEliminated, r::AbstractArray, x::AbstractArray, p)
+    check_iterate_shape(x)
+    R_out = real(eltype(x))
+    ε = R_out(sqrt(eps(_batch_step_precision(prob))))
+    tol = _batch_probe_tolerance(prob)
+    return BatchEliminatedJVPPrep(
+        similar(x), similar(r), similar(x), similar(r), ε, tol)
+end

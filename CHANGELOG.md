@@ -759,6 +759,65 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **Reduced-space nonlinear elimination: a whole R2 batch inside the residual of an R5 outer
+  Newton (`BatchEliminated`, `BatchSummary`, `batch_summary`, `BatchParams`, `DepositedMoments`).**
+  The outer solver steps on the `m`-vector alone, and every evaluation of that residual — the
+  Jacobian–vector products of a matrix-free `Newton(; linsolve = GMRES())` included — solves the
+  batch of independent inner systems and deposits its moments: the implicit PIC pattern of
+  `Chen2011` (pp. 7025, 7033) and the reduced-space elimination of `LanzkronRoseWilkes:1996`, where
+  the particle unknowns are never part of the outer iterate.
+  `BatchEliminated(outer_F!, inner_prob, Y₀, deposit!, moments; per_system = nothing,
+  inner_method = Newton(), inner_options = nothing, inner_atol_cap = 1e-2,
+  eliminated_indices = nothing, workgroupsize = 64)` keeps the batch state `Y` in place across
+  outer evaluations, so a second evaluation at the same iterate and tolerance reports `0` inner
+  iterations for every system, and records at each evaluation the pair `(‖g₁‖, ‖g₂(prev)‖)` in
+  `g₁_history` and `g₂_prev_history`, the index set it eliminated in `eliminated_index_log`, and its
+  inner counts in `statuses`; `reset_batch!` returns the problem to `Y₀`. `eliminated_indices`
+  holds one index for each unknown of the batch, the entries of every system stacked in turn, so
+  its default is `1:sum(length, Y₀)` and a set of another length is a `DimensionMismatch`; on
+  `make_pic_elimination_problem` it is `N_x .+ (1:2N_p)`. The inner tolerance is
+  the adaptive quadratic
+  ``\max(2\varepsilon(R_{\text{in}}), R_{\text{in}}(\tfrac{1}{2}\min(c, \|g_2(\text{prev})\|^2)/\sqrt{N_p}))``,
+  which satisfies ``\|g_1\| < \|g_2(\text{prev})\|^2`` strictly wherever
+  ``\|g_2(\text{prev})\|^2 > 4\varepsilon(R_{\text{in}})\sqrt{N_p}`` and stops at the floor of
+  the batch's own precision below it, where no arithmetic in the batch's type
+  reaches the quadratic. A batch whose systems did not all converge and whose residual is above the
+  coarse ceiling ``32\varepsilon(R_{\text{in}})\sqrt{N_p}`` leaves no residual: the evaluation
+  returns `NaN` and the outer solve reports `NONFINITE` rather than stepping on a deposit the
+  elimination cannot vouch for. An outer iterate of any length but the field's is a
+  `DimensionMismatch`, and a non-finite `Δt` or `inner_atol_cap` an `ArgumentError`. The outer
+  `Newton` on a `BatchEliminated` takes `jacobian = nothing`, `AutoForwardDiff()` or a
+  `JVPFunction`, and a `GMRES` without a `jvp_eltype`; any other AD back end, and a `jvp_eltype`,
+  is an `ArgumentError`. The outer product is a one-sided difference at the step
+  ``h = \varepsilon \max(1, \|x\|)/\|v\|`` with the relative step
+  ``\varepsilon = \sqrt{\operatorname{eps}(R_{\text{eff}})}`` of the coarser of the two precisions
+  (`ChenChaconBarnes:2012`, p. 5384), and a zero direction gives a zero product without a solve;
+  the difference is solved at the batch's floor on both sides and restored to the anchor's state
+  afterwards, so a `Float32` batch inside a `Float64` outer
+  solve converges at the tolerance its accuracy supports and stalls — never a factorisation
+  failure — below it: on the 16-node, 64-particle problem of
+  `make_pic_elimination_problem(Float32, Float64)` the solve at `2e-4` returns `SUCCESS` with
+  ``\|F\| = 3.8 \times 10^{-6}`` in 2 outer steps, and at `1e-10` returns `STALLED` with
+  ``\|F\| = 3.6 \times 10^{-7}``. `BatchSummary` reduces a status vector to the global residual
+  norm ``\sqrt{\sum_i \|g_i\|^2}``, `all_converged`, `failure_count` and the two iteration counts,
+  on the vector's own backend and without scalar indexing; `batch_summary(prob)` reduces the inner
+  batch that a `BatchEliminated`'s last outer evaluation solved, and a Jacobian–vector product
+  writes its own outcomes to a slot of its own. `BatchParams(shared, per_system)` gives system `i`
+  of a batch the pair `(shared, per_system[i])`, for a batch whose systems agree in one parameter
+  and differ in another, and `solve_batch!` takes a `workgroupsize` keyword and the options as a
+  sixth positional argument.
+  `make_pic_elimination_problem(T_in, T_out; N_x = 16, N_p = 64, Δt = 1 // 10)` builds the
+  one-dimensional implicit electrostatic PIC test problem after `Chen2011`: one implicit
+  Vlasov–Ampère step on ``[0, 2\pi)``, Crank–Nicolson in the particle orbits and backward Euler in
+  the field, whose Ampère residual reads the current deposited at the new time level rather than
+  the time-centred current of `Chen2011`, with a periodic quadratic B-spline field gather, a
+  canonical-order deposit of the current, density, momentum flux and temperature — bit for bit the
+  same over 100 evaluations at one field — and the Ampère residual added in the batch's own
+  precision, so the `Float32` floor of `F` is a property of `F` and the outer solve stalls on it
+  rather than failing.
+  `scripts/verify_nonlinear_elimination.jl` runs the six checks of the elimination and prints their
+  numbers.
+
 - **GMRES-IR: `GMRESRefinement` refines a `Float64` Newton solve whose factorisation is in
   `Float32` with a GMRES in `Float64` preconditioned by a promoted copy of the same factors, so a
   low-precision factorisation buys the iteration history of the working precision without a
