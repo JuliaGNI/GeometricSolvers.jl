@@ -7,10 +7,12 @@
 using Adapt: Adapt
 using ADTypes: AutoForwardDiff
 using GeometricSolvers
-using GeometricSolvers: BlockPartition, BlockResidual, LeftPreconditioned,
+using GeometricSolvers: Additive, Anderson, BlockPartition, BlockResidual, Broyden,
+                        Deflated, LeftPreconditioned,
                         LeftPreconditionedProblem, LeftPreconditionedState,
                         Multiplicative, NONFINITE, Newton, NonlinearProblem, Picard, RAS,
-                        RASState, SINGULAR, SUCCESS, StepInfo, block_jacobians,
+                        RASState, Repeat, SINGULAR, SUCCESS, StationarityProblem, StepInfo,
+                        Switch, block_jacobians,
                         block_residual, block_residuals, init_state, jacobian!!, jvp!!,
                         norm2, prepare_ad, ras_counts,
                         ras_prolongate!, ras_sweep!!, raspen_jacobian!, raspen_jvp!,
@@ -853,6 +855,55 @@ end
     x, status = solve(prob, copy(x0), LeftPreconditioned(Newton(), gmres); max_iterations = 50)
     @test status.code == SUCCESS
     @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
+end
+
+@testset "A Repeat outer method takes count outer steps on rˡ, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    x0 = T[1, 1.5]
+    Fx0 = residual!!(similar(x0), prob, x0, nothing)
+    inner = Picard(; damping = one(T) / 2)
+    # one step of the repeated outer is two steps of the plain one
+    x_rep, _, info = one_step(
+        prob, LeftPreconditioned(Repeat(Newton(), 2), inner), copy(x0), copy(Fx0))
+    plain = LeftPreconditioned(Newton(), inner)
+    x_1, F_1, _ = one_step(prob, plain, copy(x0), copy(Fx0))
+    x_2, _, _ = one_step(prob, plain, x_1, F_1)
+    @test info.code == SUCCESS
+    @test x_rep != x0
+    @test isapprox(x_rep, x_2; rtol = 8 * eps(T))
+    x, status = solve(prob, copy(x0), LeftPreconditioned(Repeat(Newton(), 2), inner);
+        max_iterations = 50)
+    @test status.code == SUCCESS
+    @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
+end
+
+@testset "The other combinators are outer methods on rˡ, $T, $(nameof(typeof(outer)))" for T in REAL_ELTYPES,
+    outer in (Multiplicative(Newton(), Newton()), Additive(Newton(), Picard()),
+        Switch(Newton(), Newton()), Anderson(Picard(), 2), Broyden(2))
+
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    m = LeftPreconditioned(outer, Picard(; damping = one(T) / 2))
+    x, status = solve(prob, T[1, 1.5], m; max_iterations = 50)
+    @test status.code == SUCCESS
+    @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
+end
+
+@testset "LeftPreconditioned refuses a Deflated problem, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    x0 = T[1, 1.5]
+    m = LeftPreconditioned(Newton(), Picard(; damping = one(T) / 2))
+    def = Deflated(prob, (T[1, 1],))
+    msg = "LeftPreconditioned does not take a Deflated problem"
+    @test_throws ArgumentError init_state(m, def, copy(x0), nothing)
+    @test_throws msg init_state(m, def, copy(x0), nothing)
+    @test_throws msg solve(def, copy(x0), m; max_iterations = 20)
+    sp = StationarityProblem((x, p) -> sum(x .^ 4) / 4 - 2 * sum(x))
+    @test_throws msg solve(Deflated(sp, (T[1, 1],)), copy(x0), m; max_iterations = 20)
+    # the reverse composition: a Deflated around the preconditioned problem is refused by its
+    # constructor
+    lprob = init_state(m, prob, copy(x0), nothing).problem
+    @test_throws "Deflated needs a NonlinearProblem or a StationarityProblem" Deflated(
+        lprob, (T[1, 1],))
 end
 
 # --- Check 6: the P8 benchmark counters -------------------------------------------------------

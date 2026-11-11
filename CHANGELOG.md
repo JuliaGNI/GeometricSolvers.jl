@@ -817,8 +817,12 @@ so that a compat-only bump can be told apart from an interface change.
   skipped sweep returns its input and would read as a zero of `rˡ` at a point that is not a
   root. Its `init_state` likewise raises an `ArgumentError` for a `Newton` with `GMRES` as the
   outer method, because that Newton solves a `NonlinearProblem` and the outer method solves the
-  preconditioned residual `rˡ`; a `Newton` with `GMRES` as the inner method is taken. The
-  standard test set gains the column
+  preconditioned residual `rˡ`; a `Newton` with `GMRES` as the inner method is taken. The outer
+  method may be a combinator — `Repeat`, `Multiplicative`, `Additive`, `Switch`, `Anderson` or
+  `Broyden` — whose members step on `rˡ`, so `LeftPreconditioned(Repeat(Newton(), 2), inner)`
+  takes two outer Newton steps per step. A `Deflated` problem, around a `NonlinearProblem` or a
+  `StationarityProblem`, raises an `ArgumentError` at `init_state`, because its stopping test
+  reads the deflation factor from a `Newton` state. The standard test set gains the column
   `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
   `test/verification/standard_reference.csv` holds 1742 (67 problems × 13 columns × 2 element
   types).

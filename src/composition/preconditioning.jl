@@ -24,7 +24,10 @@ a `balance_threshold` is refused at `init_state` with an `ArgumentError`, becaus
 returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root. A
 [`Newton`](@ref) with [`GMRES`](@ref) as `outer` is refused at `init_state` with an
 `ArgumentError`, because it solves a `NonlinearProblem` and `outer` solves ``r^\\ell``; as `inner`
-it is taken. With any other `inner` the derivative of
+it is taken. `outer` may be a combinator, such as [`Repeat`](@ref) or [`Multiplicative`](@ref),
+whose members step on ``r^\\ell``. A [`Deflated`](@ref) problem is refused at `init_state` with an
+`ArgumentError`, because its stopping test reads the deflation factor from a `Newton` state. With
+an `inner` other than a `RAS` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
 [`prepare_ad`](@ref) prepares at `init_state` whatever its globalization reads. With a
 [`RAS`](@ref) inner that preparation is the RASPEN form, so every sweep forms the block factor at
@@ -43,25 +46,6 @@ struct LeftPreconditioned{O, I}
 end
 
 Adapt.@adapt_structure LeftPreconditioned
-
-"""
-    LeftPreconditionedProblem(prob, inner, state, work, code)
-
-The problem that `outer` of a [`LeftPreconditioned`](@ref) method solves: the user's problem
-`prob`, the inner method `inner`, the inner method's state in the iterate's element type, the
-iterate buffer that one inner step runs on — a step of an array iterate writes into its `x`, so the
-residual of this problem steps a copy — and a `Ref` that holds the code of the last inner step.
-Its residual is ``r^\\ell(y) = y - N(y)``, one
-[`step!!`](@ref) of `inner` from `(y, F(y))` subtracted from `y`, so [`residual!!`](@ref) evaluates
-it and a [`LineFunction`](@ref) merits it.
-"""
-struct LeftPreconditionedProblem{P, I, S, W} <: AbstractNonlinearProblem
-    prob::P
-    inner::I
-    state::S
-    work::W
-    code::Base.RefValue{ReturnCode}
-end
 
 """
     LeftPreconditionedState
@@ -124,6 +108,16 @@ end
     lprob = LeftPreconditionedProblem(prob, m.inner, inner_state, buffer(x), Ref(SUCCESS))
     outer_state = init_state(m.outer, lprob, x, p)
     return LeftPreconditionedState(lprob, outer_state, buffer(x))
+end
+
+# A `Deflated` problem converges on the inner residual `‖F‖ = ‖M F‖ / M`, whose factor `M` its
+# stopping test reads from the Jacobian preparation of a `Newton` state, and a `Picard` or a `RAS`
+# inner method has no step on it. The reduced problem is the one a `Deflated(StationarityProblem)`
+# solve builds its method's state for.
+function init_state(
+        m::LeftPreconditioned, ::Deflated{<:Union{NonlinearProblem, ReducedStatProb}}, x, p)
+    throw(ArgumentError(
+        "LeftPreconditioned does not take a Deflated problem: the stopping test of a Deflated problem reads its deflation factor from a Newton state; solve a Deflated problem with Newton()"))
 end
 
 @inline residual_buffer(state::LeftPreconditionedState) = state.Fx

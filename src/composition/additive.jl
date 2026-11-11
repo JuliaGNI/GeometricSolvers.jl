@@ -3,9 +3,32 @@
 
 const WeightRule = Union{OptimalWeights, FixedWeights}
 
-# The problems a combinator state is built for: a `NonlinearProblem`, and the reduced problem that
-# `init_state(m, ::StationarityProblem, x₀, p; b)` builds its method's state for.
-const CombinatorProblem = Union{NonlinearProblem, ReducedStatProb}
+"""
+    LeftPreconditionedProblem(prob, inner, state, work, code)
+
+The problem that `outer` of a [`LeftPreconditioned`](@ref) method solves: the user's problem
+`prob`, the inner method `inner`, the inner method's state in the iterate's element type, the
+iterate buffer that one inner step runs on — a step of an array iterate writes into its `x`, so the
+residual of this problem steps a copy — and a `Ref` that holds the code of the last inner step.
+Its residual is ``r^\\ell(y) = y - N(y)``, one
+[`step!!`](@ref) of `inner` from `(y, F(y))` subtracted from `y`, so [`residual!!`](@ref) evaluates
+it and a [`LineFunction`](@ref) merits it.
+"""
+# The type is defined here, before `CombinatorProblem` names it; its methods are in
+# `src/composition/preconditioning.jl`.
+struct LeftPreconditionedProblem{P, I, S, W} <: AbstractNonlinearProblem
+    prob::P
+    inner::I
+    state::S
+    work::W
+    code::Base.RefValue{ReturnCode}
+end
+
+# The problems a combinator state is built for: a `NonlinearProblem`, the reduced problem that
+# `init_state(m, ::StationarityProblem, x₀, p; b)` builds its method's state for, and the
+# preconditioned problem that the outer method of a `LeftPreconditioned` solves.
+const CombinatorProblem = Union{
+    NonlinearProblem, ReducedStatProb, LeftPreconditionedProblem}
 
 """
     Additive(m₁, m₂, ...; weights = OptimalWeights())
