@@ -45,6 +45,7 @@ if "core" in GROUPS
     @safetestset "Solver loop hooks" include("nonlinear/hooks.jl")
     @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")
     @safetestset "R3 nonlinear" include("nonlinear/r3.jl")
+    @safetestset "R5 matrix-free Newton-GMRES" include("nonlinear/krylov.jl")
     @safetestset "Implicit differentiation" include("nonlinear/implicit.jl")
     @safetestset "Rank-deficient Newton" include("nonlinear/rank_deficient.jl")
     @safetestset "Range and spectrum diagnostics" include("nonlinear/diagnostics.jl")
@@ -79,4 +80,5 @@ if "metal" in GROUPS
     @safetestset "Metal vendor fast paths" include("devices/metal_vendor.jl")
     @safetestset "Metal static SVD and Jacobi eigensolver" include("devices/metal_svd.jl")
     @safetestset "Metal R1 nonlinear" include("devices/metal_nonlinear.jl")
+    @safetestset "Metal R5 Newton-GMRES" include("devices/metal_krylov.jl")
 end

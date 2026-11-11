@@ -91,6 +91,20 @@ end
     return complex(ForwardDiff.partials(real(d), k), ForwardDiff.partials(imag(d), k))
 end
 
+# The preparation of a solve that forms no Jacobian and reads the product alone, such as a
+# [`Newton`](@ref) with [`GMRES`](@ref): one partial, the two dual buffers that `jvp!!` writes, and
+# no Jacobian buffer at all. It is the R3 path of the own chunked forward mode on every array type,
+# the device arrays included, and it allocates nothing per call.
+function prepare_jvp(backend::AutoForwardDiff, prob, r::AbstractArray, x::AbstractArray, p)
+    check_iterate_shape(x)
+    Tg = typeof(tag_of(backend, prob, x))
+    return ChunkedForwardDiff{1, Tg}(
+        nothing, nothing,
+        similar(x, dual_type(eltype(x), Tg, 1)),
+        similar(r, dual_type(eltype(r), Tg, 1))
+    )
+end
+
 function jacobian!!(J::DenseMatrix, prep::ChunkedForwardDiff{N}, prob, x, p) where {N}
     n = length(x)
     for j0 in 0:N:(n - 1)
