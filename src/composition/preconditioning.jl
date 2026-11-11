@@ -53,14 +53,16 @@ Adapt.@adapt_structure LeftPreconditioned
     LeftPreconditionedState
 
 The state of a [`LeftPreconditioned`](@ref) method: the [`LeftPreconditionedProblem`](@ref) it
-runs on, the outer method's state, and the buffer of the global residual that a step returns. The
+runs on, the outer method's state, the buffer of the global residual that a step returns, and the
+parameters `p` of the solve, which [`finish!!`](@ref) evaluates the residuals with. The
 outer state's residual workspace holds ``r^\\ell``; the problem's inner state holds the workspace
 of the inner step, and its counters are the ones [`ras_counts`](@ref) reports.
 """
-struct LeftPreconditionedState{P, S, FX}
+struct LeftPreconditionedState{P, S, FX, PP}
     problem::P
     outer_state::S
     Fx::FX
+    p::PP
 end
 
 """
@@ -106,7 +108,7 @@ end
     inner_state = init_state(m.inner, prob, x, p)
     lprob = LeftPreconditionedProblem(prob, m.inner, inner_state, buffer(x), Ref(SUCCESS))
     outer_state = init_state(m.outer, lprob, x, p)
-    return LeftPreconditionedState(lprob, outer_state, buffer(x))
+    return LeftPreconditionedState(lprob, outer_state, buffer(x), p)
 end
 
 # A `Deflated` problem converges on the inner residual `‖F‖ = ‖M F‖ / M`, whose factor `M` its
@@ -259,7 +261,7 @@ end
     Fxˡ = residual!!(residual_buffer(state.outer_state), lprob, x, p)
     outer_state = start!!(
         state.outer_state, m.outer, lprob, x, Fxˡ, p, rnorm(Fxˡ))
-    return LeftPreconditionedState(lprob, outer_state, state.Fx)
+    return LeftPreconditionedState(lprob, outer_state, state.Fx, p)
 end
 
 @inline function step!!(
@@ -289,7 +291,7 @@ end
     code = info.code == NONFINITE && lprob.code[] == MAXITERS ? MAXITERS : info.code
     info₊ = StepInfo{R}(
         code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited)
-    return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx), info₊
+    return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx, p), info₊
 end
 
 @inline function finish!!(
@@ -297,7 +299,24 @@ end
         status::SolverStatus{R}) where {R}
     x_out, st, outer_state = finish!!(
         state.outer_state, m.outer, state.problem, x, Fx, status)
-    return x_out, st, LeftPreconditionedState(state.problem, outer_state, state.Fx)
+    return x_out, st,
+    LeftPreconditionedState(state.problem, outer_state, state.Fx, state.p)
+end
+
+# `Anderson` and `Broyden` keep the best `rˡ`, and `finish!!` compares its norm with the status and
+# restores that iterate: they end on `rˡ` and its norm at `x`, and the status then reports the
+# global residual at the iterate they return.
+@inline function finish!!(
+        state::LeftPreconditionedState{P, <:AndersonState}, m::LeftPreconditioned, prob, x, Fx,
+        status::SolverStatus{R}) where {P, R}
+    p = state.p
+    Fxˡ = residual!!(residual_buffer(state.outer_state), state.problem, x, p)
+    x_out, st, outer_state = finish!!(
+        state.outer_state, m.outer, state.problem, x, Fxˡ,
+        restored_best_status(status, rnorm(Fxˡ)))
+    F_out = residual!!(state.Fx, prob, x_out, p)
+    return x_out, restored_best_status(st, rnorm(F_out)),
+    LeftPreconditionedState(state.problem, outer_state, state.Fx, p)
 end
 
 """

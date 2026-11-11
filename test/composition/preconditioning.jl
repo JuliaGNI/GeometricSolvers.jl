@@ -909,6 +909,45 @@ end
     @test isapprox(x_add, x_1; rtol = 8 * eps(T))
 end
 
+# The safeguard of an `Additive` replaces the combined point by the best candidate, and the
+# residual evaluation at the combined point left the RAS state there: the next member of the
+# `Multiplicative` outer must step with the factors at the candidate. A tiny `ρ` forces the
+# fallback, and the best candidate is the Newton step, so the result is that of two Newton steps.
+@testset "The Additive safeguard leaves the RASPEN factors at the candidate it returns, $T" for T in REAL_ELTYPES
+    n = 8
+    part = BlockPartition(n, 3; overlap = 1)
+    prob = coupled_problem(T, part; jacobians = true)
+    ras = RAS(part; max_iterations = 30, rtol = sqrt(eps(T)))
+    x0 = T[0.3 + j / 10 for j in 1:n]
+    Fx0 = residual!!(similar(x0), prob, x0, nothing)
+    add = Additive((Newton(), Picard(; damping = T(1) / 2)), OptimalWeights(;
+        ρ = T(1) / 1000))
+    x_add, _, info = one_step(
+        prob, LeftPreconditioned(Multiplicative(add, Newton()), ras), copy(x0), copy(Fx0))
+    x_ref, _, _ = one_step(
+        prob, LeftPreconditioned(Multiplicative(Newton(), Newton()), ras), copy(x0), copy(Fx0))
+    @test info.code == SUCCESS
+    @test info.failures >= 1
+    @test x_add != x0
+    @test isapprox(x_add, x_ref; rtol = 8 * eps(T))
+end
+
+# `Anderson` and `Broyden` as the outer method keep the best preconditioned residual and restore it
+# when a solve ends unconverged: the status reports the global residual at the iterate it returns,
+# not the preconditioned norm, which here is half of it.
+@testset "An unconverged solve reports the global residual, $T, $(nameof(typeof(outer)))" for T in REAL_ELTYPES,
+    outer in (Anderson(Picard(), 2), Broyden(2))
+
+    prob = NonlinearProblem((r, x, p) -> (r .= x; nothing))
+    m = LeftPreconditioned(outer, Picard(; damping = one(T) / 2))
+    for iterations in (0, 1)
+        x, status = solve(prob, T[1], m; max_iterations = iterations)
+        @test status.code == GeometricSolvers.MAXITERS
+        @test (x[1] != 1) == (iterations > 0)
+        @test status.fnorm == abs(x[1])
+    end
+end
+
 @testset "LeftPreconditioned refuses a Deflated problem, $T" for T in REAL_ELTYPES
     prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
     x0 = T[1, 1.5]

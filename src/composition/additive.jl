@@ -377,6 +377,8 @@ function step!!(
             x₊ = state.xs[k_best]
             F₊ = state.Fxs[k_best]
             fnorm₊ = f_best
+            # the evaluation at the combined point left `prob` there: the next step starts at `x₊`
+            resync_point!(prob, state.Fx, x₊, p)
         end
     end
     @. state.d = x₊ - x
