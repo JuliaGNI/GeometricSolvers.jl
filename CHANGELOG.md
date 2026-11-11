@@ -820,10 +820,13 @@ so that a compat-only bump can be told apart from an interface change.
   preconditioned residual `rˡ`; a `Newton` with `GMRES` as the inner method is taken. The outer
   method may be a combinator — `Repeat`, `Multiplicative`, `Additive`, `Switch`, `Anderson` or
   `Broyden` — whose members step on `rˡ`, so `LeftPreconditioned(Repeat(Newton(), 2), inner)`
-  takes two outer Newton steps per step. A `Deflated` problem, around a `NonlinearProblem` or a
-  `StationarityProblem`, raises an `ArgumentError` at `init_state`, because its stopping test
-  reads the deflation factor from a `Newton` state. The standard test set gains the column
-  `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
+  takes two outer Newton steps per step. With a `RAS` inner method, each member of an `Additive`
+  outer method after the first begins with one more sweep at the iterate, counted in `ras_counts`,
+  because the RASPEN Jacobian reads the block factors of the latest sweep, which after the previous
+  member's trial points belong to a different point. A `Deflated` problem, around a
+  `NonlinearProblem` or a `StationarityProblem`, raises an `ArgumentError` at `init_state`,
+  because its stopping test reads the deflation factor from a `Newton` state. The standard test set
+  gains the column `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
   `test/verification/standard_reference.csv` holds 1742 (67 problems × 13 columns × 2 element
   types).
 

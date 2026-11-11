@@ -25,7 +25,9 @@ returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a
 [`Newton`](@ref) with [`GMRES`](@ref) as `outer` is refused at `init_state` with an
 `ArgumentError`, because it solves a `NonlinearProblem` and `outer` solves ``r^\\ell``; as `inner`
 it is taken. `outer` may be a combinator, such as [`Repeat`](@ref) or [`Multiplicative`](@ref),
-whose members step on ``r^\\ell``. A [`Deflated`](@ref) problem is refused at `init_state` with an
+whose members step on ``r^\\ell``; with a `RAS` inner, every member of an [`Additive`](@ref)
+after the first costs one more sweep, at the iterate, because the RASPEN Jacobian reads the block
+factors of the last sweep. A [`Deflated`](@ref) problem is refused at `init_state` with an
 `ArgumentError`, because its stopping test reads the deflation factor from a `Newton` state. With
 an `inner` other than a `RAS` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
@@ -196,6 +198,14 @@ end
 
 function jacobian!!(J, prep::RASPenPreparation, prob::LeftPreconditionedProblem, x, p)
     return raspen_jacobian!(J, prep.ras, prob.prob, x, p)
+end
+
+# The RASPEN product reads the block factors and local iterates of the last sweep, so a member of
+# an `Additive` outer that steps from `x` after another member's trial points needs the sweep at
+# `x` again. A central difference evaluates `rˡ` itself and reads no such state.
+@inline function resync_point!(prob::LeftPreconditionedProblem, F, x, p)
+    prob.state isa RASState && residual!!(F, prob, x, p)
+    return nothing
 end
 
 # The central difference of `rˡ` along `v`, written into `col`: one inner step at each of

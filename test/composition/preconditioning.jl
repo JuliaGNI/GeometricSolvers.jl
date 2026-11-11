@@ -888,6 +888,24 @@ end
     @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
 end
 
+# The members of an `Additive` share the RAS state, and the RASPEN Jacobian reads the block factors
+# of its last sweep: every member steps from the factors at the iterate, not at the trial point of
+# the member before it. All the weight on the second member makes the step its step alone.
+@testset "Every Additive member on RASPEN steps with the factors at the iterate, $T" for T in REAL_ELTYPES
+    n = 8
+    part = BlockPartition(n, 3; overlap = 1)
+    prob = coupled_problem(T, part; jacobians = true)
+    ras = RAS(part; max_iterations = 30, rtol = sqrt(eps(T)))
+    x0 = T[0.3 + j / 10 for j in 1:n]
+    Fx0 = residual!!(similar(x0), prob, x0, nothing)
+    outer = Additive((Newton(), Newton()), FixedWeights(zero(T), one(T)))
+    x_add, _, info = one_step(prob, LeftPreconditioned(outer, ras), copy(x0), copy(Fx0))
+    x_1, _, _ = one_step(prob, LeftPreconditioned(Newton(), ras), copy(x0), copy(Fx0))
+    @test info.code == SUCCESS
+    @test x_add != x0
+    @test isapprox(x_add, x_1; rtol = 8 * eps(T))
+end
+
 @testset "LeftPreconditioned refuses a Deflated problem, $T" for T in REAL_ELTYPES
     prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
     x0 = T[1, 1.5]

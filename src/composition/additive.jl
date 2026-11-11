@@ -210,6 +210,10 @@ end
     return (x1, xs_t...), (F1, Fs_t...), (s1_new, ss_t...), (info1, infos_t...)
 end
 
+# A problem whose derivative reads state that its last residual evaluation left, the
+# preconditioned problem of a `RAS` inner map, evaluates its residual at `x` again, into `F`.
+@inline resync_point!(prob, F, x, p) = nothing
+
 @inline function _step_additive_r3(
         ::Tuple{}, ::Tuple{}, ::Tuple{}, ::Tuple{}, prob, x, Fx, p, merit₀)
     return (), ()
@@ -222,6 +226,9 @@ end
     x1, F1, s1_new, info1 = step!!(s1, first(members), prob, x1_buf, F1_buf, p)
     copy!!(first(xs), x1)
     copy!!(first(Fxs), F1)
+    # the next member steps from `x`, and `prob` may hold state of this member's last trial point:
+    # the next member's residual buffer, which it overwrites with `Fx`, takes the re-evaluation
+    length(members) > 1 && resync_point!(prob, first(Base.tail(Fxs)), x, p)
     ss_t, infos_t = _step_additive_r3(
         Base.tail(states), Base.tail(members), Base.tail(xs), Base.tail(Fxs),
         prob, x, Fx, p, merit₀)
