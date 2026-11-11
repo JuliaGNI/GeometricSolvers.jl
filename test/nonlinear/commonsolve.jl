@@ -59,14 +59,14 @@ end
     # the first positional argument of every method that the package adds is one of the package's
     # own problem or solver types: `init` and `solve` take any `AbstractNonlinearProblem`, so that
     # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem`, a
-    # `Reparametrized` problem and the `BlockEliminated` and `VariableProjection` wrappers have
-    # their own, the last two taking one `Union` arm each
+    # `Reparametrized` and a `Deflated` problem and the `BlockEliminated` and `VariableProjection`
+    # wrappers have their own, the last two taking one `Union` arm each
     for (f, owned) in (
         (CommonSolve.init,
-        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized,
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated,
             BlockEliminated, VariableProjection)),
         (CommonSolve.solve,
-        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized,
+        (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated,
             BlockEliminated, VariableProjection)),
         (CommonSolve.solve!, (NonlinearSolver, ReparametrizedSolver)))
         ours = filter(m -> m.module === GS, collect(methods(f)))
