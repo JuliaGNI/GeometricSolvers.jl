@@ -3,6 +3,8 @@
 
 const WeightRule = Union{OptimalWeights, FixedWeights}
 
+# The type is defined here, before `CombinatorProblem` names it; its methods are in
+# `src/composition/preconditioning.jl`.
 """
     LeftPreconditionedProblem(prob, inner, state, work, code)
 
@@ -14,8 +16,6 @@ Its residual is ``r^\\ell(y) = y - N(y)``, one
 [`step!!`](@ref) of `inner` from `(y, F(y))` subtracted from `y`, so [`residual!!`](@ref) evaluates
 it and a [`LineFunction`](@ref) merits it.
 """
-# The type is defined here, before `CombinatorProblem` names it; its methods are in
-# `src/composition/preconditioning.jl`.
 struct LeftPreconditionedProblem{P, I, S, W} <: AbstractNonlinearProblem
     prob::P
     inner::I
