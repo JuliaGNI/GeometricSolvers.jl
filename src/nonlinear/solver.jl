@@ -129,7 +129,9 @@ with `0` iterations. `options` must be an `Options{real(eltype(x₀))}`; any oth
 evaluation inside a step: [`solve`](@ref) takes dual inputs.
 
 Inside the loop, each trip calls [`step!!`](@ref) and updates `status` via [`record`](@ref).
-`SINGULAR` and `NONFINITE` return immediately. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
+`SINGULAR` and `NONFINITE` return immediately, and so does `MAXITERS`, the code of a step whose
+inner iteration reached its own cap, such as a [`RAS`](@ref) step whose local solve did not
+converge. A `LINESEARCH_FAILED` step whose `stepnorm` is zero
 (meaning the failed line-search trial did not decrease the merit) stops immediately with
 `LINESEARCH_FAILED`, unless the stationarity test below holds, which a nonzero-residual
 least-squares minimum reaches with every step a line search can try; one that decreased the merit
@@ -175,7 +177,7 @@ function solve!!(
     while true
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
         status = converged_status(state, prob, x, record(status, info))
-        if info.code == SINGULAR || info.code == NONFINITE
+        if info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS
             return finish!!(state, method, prob, x, Fx, status)
         end
         if info.code == LINESEARCH_FAILED && iszero(info.stepnorm) &&
@@ -385,8 +387,9 @@ performs no back-substitution and returns primal values at `x*` with `NaN` parti
 `status.code === SINGULAR`. Nested duals, distinct dual tags or partial counts across `x₀` and `p`,
 and custom structs not registered with `Adapt.@adapt_structure` raise an `ArgumentError`. A
 combinator method, [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref),
-[`Switch`](@ref), [`Anderson`](@ref) or [`Broyden`](@ref), has no implicit differentiation: with
-a `ForwardDiff.Dual` in `x₀` or `p`, `solve` raises an `ArgumentError` before the primal solve.
+[`Switch`](@ref), [`Anderson`](@ref) or [`Broyden`](@ref), and a preconditioning method,
+[`LeftPreconditioned`](@ref) or [`RAS`](@ref), has no implicit differentiation: with a
+`ForwardDiff.Dual` in `x₀` or `p`, `solve` raises an `ArgumentError` before the primal solve.
 
 `prob` may capture an object whose type holds a `ForwardDiff.Dual`, such as a
 `ForwardDiff.GradientConfig` or a dual work buffer, and `solve` does not check it. A residual

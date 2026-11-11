@@ -38,6 +38,21 @@ jacobian_prototype
 jacobian_pattern
 ```
 
+A [`NonlinearProblem`](@ref) also carries the local residuals of a [`BlockPartition`](@ref) when
+it is built with the `block_residuals` keyword: its `F` is then a [`BlockResidual`](@ref) that
+forwards every call to the global residual, and the block functions are read with
+[`block_residuals`](@ref), [`block_jacobians`](@ref), [`block_residual`](@ref) and
+[`block_jacobian`](@ref). `J` stays the caller's own Jacobian, so every method that reads it is
+unchanged.
+
+```@docs
+BlockResidual
+block_residuals
+block_jacobians
+block_residual
+block_jacobian
+```
+
 ### Reduced-space elimination with a batch inside the residual
 
 [`BatchEliminated`](@ref) eliminates a whole batch of independent inner systems *from the residual
@@ -388,6 +403,37 @@ Switch
 Anderson
 Broyden
 AndersonHistory
+```
+
+### Nonlinear preconditioning
+
+[`LeftPreconditioned`](@ref)`(outer, inner)` runs `outer` on the residual
+``r^\ell(y) = y - N(y)`` of one step of `inner` instead of on `F`, so every trial point of its
+globalization costs one inner step and every merit value it reads is ``\|r^\ell\|_2^2``. With
+the inner method a one-level [`RAS`](@ref) map over a [`BlockPartition`](@ref) it is RASPEN,
+`LeftPreconditioned(Newton(), RAS(partition))`, whose Jacobian is the exact form from the block
+factors of the last sweep; RASPEN needs converged local solves.
+`Multiplicative(RAS(partition), Newton())` is NKS-RAS, the same map
+followed by one Newton step. A [`RAS`](@ref) sweep restricts each subdomain, solves each block
+with the package's own factor, and prolongates through the owner sets only, so each index of `1:n`
+is written once and the sweep calls the global residual no times; [`ras_counts`](@ref) reports the
+counters of its last solve. A problem with block residuals supplies the block functions, and a
+block without a Jacobian is differentiated by `AutoForwardDiff()`.
+
+```@docs
+LeftPreconditioned
+LeftPreconditionedProblem
+LeftPreconditionedState
+LeftPreconditionedAD
+RASPenPreparation
+RAS
+RASState
+BlockPartition
+ras_sweep!!
+ras_prolongate!
+ras_counts
+raspen_jvp!
+raspen_jacobian!
 ```
 
 ### SciMLBase extension

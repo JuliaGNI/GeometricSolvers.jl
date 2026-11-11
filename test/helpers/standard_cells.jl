@@ -23,11 +23,12 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The twelve columns of the standard test set, each a name and a method: `Newton` with each
+The thirteen columns of the standard test set, each a name and a method: `Newton` with each
 globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
 `LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, `Picard` with
 `Backtracking`, the matrix-free `Newton` with `GMRES` and `Backtracking`, whose column holds no
-Jacobian, and `Broyden()`, whose default `Picard` member is damped by 0.5.
+Jacobian, `Broyden()`, whose default `Picard` member is damped by 0.5, and `Picard` with
+`Backtracking` left-preconditioned by one `Newton()` step.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),
@@ -45,7 +46,9 @@ const STANDARD_COLUMNS = (
     "Picard Backtracking" => Picard(; globalization = Backtracking()),
     "Newton Backtracking GMRES" => Newton(;
         linsolve = GMRES(), globalization = Backtracking()),
-    "Broyden" => Broyden()
+    "Broyden" => Broyden(),
+    "LeftPreconditioned Picard Backtracking Newton" =>
+        LeftPreconditioned(Picard(; globalization = Backtracking()), Newton())
 )
 
 """
@@ -208,6 +211,15 @@ function perturbed_direction(m::Newton, seed)
 end
 perturbed_direction(::Picard, seed) = nothing
 perturbed_direction(::Broyden, seed) = nothing
+
+# A left-preconditioned method carries the direction of its outer method: its own outer `Newton`
+# is perturbed, and a `Picard` outer, which solves no linear system for its direction, gives
+# `nothing`, so a direction run of a preconditioned `Picard` method is no run at all.
+function perturbed_direction(m::LeftPreconditioned, seed)
+    outer = perturbed_direction(m.outer, seed)
+    outer === nothing && return nothing
+    return LeftPreconditioned(outer, m.inner)
+end
 
 """
     perturbed_runs(sp, start, x₀, column, method)
@@ -378,11 +390,14 @@ function print_summary(io::IO, cells, iterates, problems = STANDARD_PROBLEMS)
     eltypes = string.(REAL_ELTYPES)
     nstarts = Dict(T => count(c -> c.eltype == T, cells) ÷ length(STANDARD_COLUMNS)
     for T in eltypes)
+    # the header and every row pad their name to the widest column name and one space, so that
+    # the entries of a 45-character column line up with the others
+    width = max(33, maximum(length(first(c)) for c in STANDARD_COLUMNS) + 1)
     away = String[]
     println(
         io, "Standard test set: SUCCESS cells per column, and of those with a stated root ",
         "the number near it")
-    println(io, rpad("column", 32), join((rpad(T, 22) for T in eltypes)))
+    println(io, rpad("column", width), join((rpad(T, 22) for T in eltypes)))
     for (column, _) in STANDARD_COLUMNS
         entries = map(eltypes) do T
             success = 0
@@ -399,7 +414,7 @@ function print_summary(io::IO, cells, iterates, problems = STANDARD_PROBLEMS)
             end
             rpad("$success/$(nstarts[T]), root $near/$rooted", 22)
         end
-        println(io, rpad(column, 32), join(entries))
+        println(io, rpad(column, width), join(entries))
     end
     println(io, "SUCCESS cells away from the stated root: ", length(away))
     foreach(line -> println(io, line), away)

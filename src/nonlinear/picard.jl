@@ -1,7 +1,8 @@
 """
     Picard(; damping = 1, globalization = Static())
 
-Damped fixed-point (Picard) iteration for [`NonlinearProblem`](@ref), with search direction
+Damped fixed-point (Picard) iteration for a [`NonlinearProblem`](@ref) or a
+[`LeftPreconditionedProblem`](@ref), with search direction
 ``d = -\\mathrm{damping}\\,F(x, p)`` and globalization `globalization` ([`Static`](@ref),
 [`Backtracking`](@ref), [`Bisection`](@ref) or [`StrongWolfe`](@ref)).
 
@@ -58,7 +59,13 @@ struct PicardState{VP, FX, D, G, PH}
     merit::PH
 end
 
-@inline function init_state(m::Picard, prob::NonlinearProblem, x, p)
+@inline init_state(m::Picard, prob::NonlinearProblem, x, p) = picard_state(m, prob, x, p)
+
+# The state of `Picard` on any problem whose derivative it reads through `picard_jvpprep`, so that
+# the problem types of the composition layer reach the same body. The `init_state` signatures stay
+# on `NonlinearProblem` because a `Picard` method on `AbstractNonlinearProblem` ties with the
+# generic `init_state` methods of `Reparametrized` and `StationarityProblem`.
+@inline function picard_state(m::Picard, prob, x, p)
     Fx = buffer(x)
     jvpprep = picard_jvpprep(m, prob, Fx, x, p)
     merit = init_merit(m.globalization, x)
@@ -87,7 +94,8 @@ end
 end
 
 # The damping is real, so that `-ω F` of a complex `F` is the real scaling of each part.
-@inline function step!!(state::PicardState, m::Picard, prob::NonlinearProblem, x, Fx, p)
+@inline function step!!(
+        state::PicardState, m::Picard, prob::AbstractNonlinearProblem, x, Fx, p)
     ω = real(eltype(x))(m.damping)
     d = map!!(fi -> -ω * fi, state.d, Fx)
     x₊, F₊, _, info, merit = globalize_merit!!(

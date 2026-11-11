@@ -759,6 +759,70 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **Nonlinear preconditioning: `LeftPreconditioned(outer, inner)`, the block-residual interface
+  (`BlockResidual`, `BlockPartition`) and the restricted additive Schwarz map `RAS(partition)`
+  (decisions 26 and 31 of the design).** `LeftPreconditioned` runs its outer method on the
+  residual `rˡ(y) = y - N(y)` of one step of its inner method `N`, so every trial point of the
+  outer globalization costs one inner step and every merit value the outer reads is `‖rˡ‖²`;
+  with the inner map a one-level `RAS`, `LeftPreconditioned(Newton(), RAS(partition))` is RASPEN,
+  whose Jacobian-vector product is the exact form
+  `Σᵢ R̃ᵢᵀ (Rᵢ J(u⁽ⁱ⁾) Pᵢ)⁻¹ Rᵢ J(u⁽ⁱ⁾) v` of eq. 3.17 of `Dolean:2016`, built from the
+  block factors of the last sweep and the local solves it reached, and
+  `Multiplicative(RAS(partition), Newton())` is NKS-RAS. The RASPEN product reads the subdomain
+  rows `Rᵢ J(u⁽ⁱ⁾)` of the global Jacobian at each composite iterate `u⁽ⁱ⁾`, `x` with the local
+  solve of block `i` over its subdomain, and applies that block's factor. The global Jacobian is
+  the problem's own `J` where it has one, so a residual `F` that takes no `ForwardDiff.Dual`
+  serves RASPEN, and `AutoForwardDiff()` on `F` where it has none. The Jacobian of `rˡ`
+  evaluates one global Jacobian per block and solves all its columns with that block's one
+  factor, not one product per block per column: on problem P8 of
+  `test/composition/preconditioning.jl` (`n = 20`, 5 blocks, overlap 2,
+  `LeftPreconditioned(Newton(), RAS(part; max_iterations = 50, rtol = 0))`,
+  `x0 = sin(πj/(n+1))`; `rtol = 0` because the local solves of P8 do not all converge, so the
+  benchmark makes no convergence claim for them) the global residual calls, `Dual` evaluations
+  included, are 78 in `Float64` and 63 in `Float32`, against 528 and 423 at 863b278, the head of
+  the pull request before the RASPEN change, with the same outer iteration counts on both trees,
+  5 in `Float64` and 4 in `Float32`. With any other inner method the derivative of `rˡ` is a
+  central difference of the composed residual, because a step of an inner method is not
+  `ForwardDiff.Dual`-generic.
+  `NonlinearProblem(F, J; block_residuals = …, block_jacobians = …)` wraps only `F`: `prob.J`
+  stays the caller's Jacobian, and the block functions are read through `block_residuals`,
+  `block_jacobians`, `block_residual` and `block_jacobian`. `BlockPartition(subdomains, owners)`
+  requires non-empty duplicate-free subdomains and owner sets that are disjoint and cover `1:n`
+  exactly, and `BlockPartition(n, nblocks; overlap)` builds one. A `RAS` sweep restricts each
+  subdomain, solves each block with `dense_factor`, `factorize!!` and `ldiv!!` — so a `JLArray`
+  iterate runs on the device factor and the kernels stay non-scalar — prolongates through the
+  owner sets only, so each index of `1:n` is written once, and calls the global residual no
+  times. A sweep forms the block factor at the local iterate it returns only where a RASPEN
+  preparation reads the block factors, so RASPEN's product reads the block matrix at the local
+  solution and a `RAS` or NKS-RAS sweep pays for no extra factor. A block factor that no complete
+  sweep has formed fails closed, and a product on such a state raises an `ArgumentError`; an inner
+  step that does not return `SUCCESS` makes `rˡ` non-finite, so its merit is `NaN`, the line search
+  rejects the trial, and a failed inner step is never read as a zero of `rˡ`; the step of
+  `LeftPreconditioned` then returns `NONFINITE` and the solve ends, except for an unconverged local
+  solve, which returns `MAXITERS` as below. A `RAS` with a positive tolerance
+  (`atol > 0` or `rtol > 0`) whose local solve takes all `max_iterations` steps and ends above the
+  tolerance makes its step return `MAXITERS` with the iterate unchanged, and
+  `ras_counts(state).failed_block` names the block (`0` otherwise); with `atol = rtol = 0` a local
+  solve takes `max_iterations` steps and makes no claim. A local solve whose last Newton step `δ`
+  satisfies `‖δ‖ ≤ eps(T)·‖xᵢ‖` counts as converged, because its residual can fall no further;
+  without that floor a local solve that starts at a root, where `rtol·f₀` is below rounding, would
+  report a false non-convergence. A step that returns `MAXITERS` ends a solve, like `SINGULAR` and
+  `NONFINITE`, and is a hard failure of a member of `Multiplicative`, `Additive`, `Repeat` and
+  `Anderson`. A `LeftPreconditioned` step that meets an unconverged local solve, at its iterate or
+  at the trial point where its outer step reports `NONFINITE`, returns `MAXITERS`; RASPEN needs
+  converged local solves. `ras_counts` reports its
+  sweeps, parallel block solves and inner iterations, and `RAS` takes `max_iterations`, `rtol`,
+  `atol` and the balance threshold of Cai and Li, which `LeftPreconditioned` refuses: its
+  `init_state` raises an `ArgumentError` for a `RAS` inner with a `balance_threshold`, because a
+  skipped sweep returns its input and would read as a zero of `rˡ` at a point that is not a
+  root. Its `init_state` likewise raises an `ArgumentError` for a `Newton` with `GMRES` as the
+  outer method, because that Newton solves a `NonlinearProblem` and the outer method solves the
+  preconditioned residual `rˡ`; a `Newton` with `GMRES` as the inner method is taken. The
+  standard test set gains the column
+  `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
+  `test/verification/standard_reference.csv` holds 1742 (67 problems × 13 columns × 2 element
+  types).
+
 - **Reduced-space nonlinear elimination: a whole R2 batch inside the residual of an R5 outer
   Newton (`BatchEliminated`, `BatchSummary`, `batch_summary`, `BatchParams`, `DepositedMoments`).**
   The outer solver steps on the `m`-vector alone, and every evaluation of that residual — the

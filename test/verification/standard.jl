@@ -167,6 +167,11 @@ end
         @test a[2] != b[2]
         @test isapprox(a[2], b[2]; rtol = sqrt(eps(T)))
         @test perturbed_direction(Picard(; globalization = Backtracking()), 1) === nothing
+        # a left-preconditioned method takes its outer's direction, and a `Picard` outer has none:
+        # the column's runs are the start and residual ones only
+        @test perturbed_direction(
+            LeftPreconditioned(Picard(; globalization = Backtracking()), Newton()), 1) ===
+              nothing
     end
     sp = STANDARD_PROBLEMS[1]
     method = Newton(; globalization = Static())
@@ -174,6 +179,9 @@ end
     picard = Picard(; globalization = Backtracking())
     @test length(perturbed_runs(sp, "u0", sp.u0(Float64), "Picard Backtracking", picard)) ==
           16
+    @test length(perturbed_runs(sp, "u0", sp.u0(Float64),
+        "LeftPreconditioned Picard Backtracking Newton",
+        LeftPreconditioned(picard, Newton()))) == 16
     # a GMRES step passes no direction through `refine!!`, so the direction family is left out
     gmres = Newton(; linsolve = GMRES(), globalization = Backtracking())
     @test perturbed_direction(gmres, 1) === nothing
@@ -309,7 +317,7 @@ end
 @testset "The reference" begin
     cells, iterates = run_standard_cells()
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
-    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1608
+    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1742
     @test all(c -> c.code in codes, cells)
     # Every cell runs with max_iterations = 200.
     @test any(c -> c.code == "MAXITERS", cells)

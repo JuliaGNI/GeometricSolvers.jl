@@ -41,6 +41,10 @@ export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefineme
 export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
 export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson,
        Broyden
+export BlockResidual, block_residuals, block_jacobians, block_residual, block_jacobian
+export BlockPartition, RAS, RASState, ras_prolongate!, ras_sweep!!, ras_counts
+export LeftPreconditioned, LeftPreconditionedState, LeftPreconditionedProblem,
+       raspen_jvp!, raspen_jacobian!
 export solve_batch!
 export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summary,
        deposited_moments, eliminated_indices, reset_batch!
@@ -106,6 +110,8 @@ include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
 include("composition/anderson.jl")
+include("composition/ras.jl")
+include("composition/preconditioning.jl")
 include("composition/implicit.jl")
 
 # `solve!` asks the type of the problem which path it takes. The predicate is defined below the
