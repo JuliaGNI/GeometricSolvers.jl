@@ -294,21 +294,29 @@ end
     return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx, p), info₊
 end
 
+# Whether an outer state keeps the best `rˡ` and restores it at `finish!!`, as the state of an
+# `Anderson` or a `Broyden` does, itself or as a member of a combinator.
+@inline keeps_best_residual(state) = false
+@inline keeps_best_residual(::AndersonState) = true
+@inline keeps_best_residual(state::RepeatState) = keeps_best_residual(state.state)
+@inline keeps_best_residual(state::SwitchState) = keeps_best_residual(state.s1) ||
+                                                  keeps_best_residual(state.s2)
+@inline keeps_best_residual(state::Union{MultiplicativeState, AdditiveState}) = any(
+    keeps_best_residual, state.states)
+
+# An outer state that keeps the best `rˡ` compares its norm with the status and restores that
+# iterate: it ends on `rˡ` and its norm at `x`, and the status then reports the global residual at
+# the iterate it returns. Every other outer state ends on the global residual, without the extra
+# evaluations, which would add to the counters of a `RAS` inner.
 @inline function finish!!(
         state::LeftPreconditionedState, m::LeftPreconditioned, prob, x, Fx,
         status::SolverStatus{R}) where {R}
-    x_out, st, outer_state = finish!!(
-        state.outer_state, m.outer, state.problem, x, Fx, status)
-    return x_out, st,
-    LeftPreconditionedState(state.problem, outer_state, state.Fx, state.p)
-end
-
-# `Anderson` and `Broyden` keep the best `rˡ`, and `finish!!` compares its norm with the status and
-# restores that iterate: they end on `rˡ` and its norm at `x`, and the status then reports the
-# global residual at the iterate they return.
-@inline function finish!!(
-        state::LeftPreconditionedState{P, <:AndersonState}, m::LeftPreconditioned, prob, x, Fx,
-        status::SolverStatus{R}) where {P, R}
+    if !keeps_best_residual(state.outer_state)
+        x_out, st, outer_state = finish!!(
+            state.outer_state, m.outer, state.problem, x, Fx, status)
+        return x_out, st,
+        LeftPreconditionedState(state.problem, outer_state, state.Fx, state.p)
+    end
     p = state.p
     Fxˡ = residual!!(residual_buffer(state.outer_state), state.problem, x, p)
     x_out, st, outer_state = finish!!(

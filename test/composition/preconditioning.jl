@@ -932,11 +932,43 @@ end
     @test isapprox(x_add, x_ref; rtol = 8 * eps(T))
 end
 
-# `Anderson` and `Broyden` as the outer method keep the best preconditioned residual and restore it
-# when a solve ends unconverged: the status reports the global residual at the iterate it returns,
-# not the preconditioned norm, which here is half of it.
+# An `Anderson` whose trial point fails the residual-growth safeguard returns the member's
+# candidate, and the evaluation at the trial point left the RAS state there: a member after it in a
+# combinator would read the factors of the trial point, or none if that sweep failed. After every
+# outer step, the RASPEN Jacobian at the returned iterate is the one of a fresh sweep there. This
+# start takes the safeguard once in its first steps.
+@testset "An Anderson growth restart leaves the RASPEN factors at the iterate it returns" begin
+    T = Float64
+    n = 8
+    part = BlockPartition(n, 3; overlap = 1)
+    prob = coupled_problem(T, part; jacobians = true)
+    m = LeftPreconditioned(Anderson(Picard(), 2; restart_factor = 3),
+        RAS(part; max_iterations = 30, rtol = 1e-12))
+    x = T[-1.4, -0.3, 2.3, 0.9, 1.4, 0.9, 2.4, 2.7]
+    Fx = residual!!(similar(x), prob, x, nothing)
+    s = init_state(m, prob, x, nothing)
+    s = start!!(s, m, prob, x, Fx, nothing, rnorm(Fx))
+    failures = 0
+    for _ in 1:30
+        x₊, F₊, s, info = step!!(s, m, prob, x, Fx, nothing)
+        x, Fx = copy(x₊), copy(F₊)
+        failures += info.failures
+        J = raspen_jacobian!(zeros(T, n, n), s.problem.state, prob, x, nothing)
+        residual!!(similar(x), s.problem, x, nothing)
+        J_fresh = raspen_jacobian!(zeros(T, n, n), s.problem.state, prob, x, nothing)
+        @test isapprox(J, J_fresh; rtol = 8 * eps(T))
+        (info.code == SUCCESS && rnorm(Fx) > 1e-12) || break
+    end
+    @test failures >= 1
+end
+
+# `Anderson` and `Broyden` as the outer method, or as a member of a combinator outer method, keep
+# the best preconditioned residual and restore it when a solve ends unconverged: the status reports
+# the global residual at the iterate it returns, not the preconditioned norm, which here is half of
+# it.
 @testset "An unconverged solve reports the global residual, $T, $(nameof(typeof(outer)))" for T in REAL_ELTYPES,
-    outer in (Anderson(Picard(), 2), Broyden(2))
+    outer in (Anderson(Picard(), 2), Broyden(2), Repeat(Anderson(Picard(), 2), 1),
+        Multiplicative(Broyden(2), Picard()))
 
     prob = NonlinearProblem((r, x, p) -> (r .= x; nothing))
     m = LeftPreconditioned(outer, Picard(; damping = one(T) / 2))

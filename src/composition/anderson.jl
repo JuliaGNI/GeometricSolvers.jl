@@ -1396,6 +1396,8 @@ function step_multisecant!!(
         copyto!(state.w_prev, work.w_k)
         copyto!(x, work.x_m)
         copyto!(Fx, work.F_m)
+        # the evaluation at the rejected trial point left `prob` there: the next step starts at `x`
+        resync_point!(prob, work.F_trial, x, p)
         if isfinite(fnorm_m) && fnorm_m < fnorm_best
             copyto!(state.x_best, x)
             copyto!(state.Fx_best, Fx)

@@ -823,7 +823,12 @@ so that a compat-only bump can be told apart from an interface change.
   takes two outer Newton steps per step. With a `RAS` inner method, each member of an `Additive`
   outer method after the first begins with one more sweep at the iterate, counted in `ras_counts`,
   because the RASPEN Jacobian reads the block factors of the latest sweep, which after the previous
-  member's trial points belong to a different point. A `Deflated` problem, around a
+  member's trial points belong to a different point. For the same reason, the safeguard of an
+  `Additive` and the residual-growth restart of an `Anderson` or a `Broyden`, which return a
+  candidate other than the point they evaluated last, sweep again at that candidate. An
+  unconverged solve whose outer method is an `Anderson` or a `Broyden`, alone or as a member of a
+  combinator, compares and restores the best `rˡ` and reports the global residual norm at the
+  iterate it returns. A `Deflated` problem, around a
   `NonlinearProblem` or a `StationarityProblem`, raises an `ArgumentError` at `init_state`,
   because its stopping test reads the deflation factor from a `Newton` state. The standard test set
   gains the column `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
