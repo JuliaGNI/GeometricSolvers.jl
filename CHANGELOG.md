@@ -1528,10 +1528,12 @@ so that a compat-only bump can be told apart from an interface change.
   `x₀` or `p` raises an `ArgumentError` before the primal solve, since implicit differentiation
   through a combinator is not implemented (K60); `init`, `solve!` and `solve_batch!` refuse a `Dual`
   input for every method.
-- `Anderson` (exported): `Anderson(member = Picard(),
-  Val(m) = Val(4); c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0,
-  safeguard_cos = nothing, grow_depth = false)` (plus the convenience `Anderson(member, m::Integer;
-  kwargs...)` forwarding to `Val(Int(m))`) accelerates an inner fixed-point or nonlinear step map
+- `Anderson` (exported): `Anderson(member, Val(m); c_s = 0.2, κ_bar = nothing,
+  restart_factor = 10.0, M_alpha = 25.0, safeguard_cos = nothing, grow_depth = false)`, with the
+  convenience forms `Anderson(member, m::Integer = 4; kwargs...)`, which forwards to `Val(Int(m))`,
+  and `Anderson(Val(m); damping = 1, kwargs...)` and `Anderson(m::Integer = 4; damping = 1,
+  kwargs...)`, which take `Picard(; damping)` as the member, so that `Anderson()` is
+  `Anderson(Picard(), Val(4))`, accelerates an inner fixed-point or nonlinear step map
   $g(x) = x_{\mathrm{member}}$ with fixed-point residual $w(x) = x_{\mathrm{member}} - x$ in R1
   ($m \le 4$, `isbits` state on `SVector` and `Number`; the residual may have another type than the
   iterate, so an `MVector` iterate with an `SVector` residual works (K70)), R2 (`solve_batch!`
@@ -1555,6 +1557,27 @@ so that a compat-only bump can be told apart from an interface change.
   raises the same `ArgumentError` as the other combinators, before the primal solve, since implicit
   differentiation through a combinator is not implemented (K60). The method-first
   `solve(prob, method::Anderson, x₀, p, options)` is not provided (K73).
+- **`Broyden` multisecant combinator, and the `AndersonHistory` it shares with `Anderson`.**
+  `Broyden(member, Val(m); c_s = 0.2, κ_bar = nothing, restart_factor = 10.0, M_alpha = 25.0,
+  safeguard_cos = nothing, grow_depth = false)`, with the convenience forms
+  `Broyden(member, m::Integer = 4; kwargs...)`, `Broyden(Val(m); damping = 0.5, kwargs...)` and
+  `Broyden(m::Integer = 4; damping = 0.5, kwargs...)`. The two forms without a member wrap
+  `Picard(; damping)` with damping 0.5 by default, so `Broyden()` wraps a damped `Picard`, whereas
+  the default of `Anderson` stays undamped. `Broyden` accelerates an inner iterator with the
+  Type-II ("bad") Broyden multisecant update of group size one (Fang & Saad, 2009) by forward
+  substitution on the lower-triangular Gram system, `solve_broyden_weights(G, b, kept, p)` in R1
+  and `solve_broyden_weights!(γ, G, b, kept, p)` in R3, over the difference history that `Anderson`
+  stores (`push_history!!`, `step_multisecant!!`). That history is an `AndersonHistory`, reached as
+  `state.history`; the type is documented but not exported, so outside the package it is
+  `GeometricSolvers.AndersonHistory`. `Broyden` shares the length and angle filters, the
+  safeguards, the restarts and the `Union{..., Broyden}` implicit-differentiation and
+  `LeastSquaresProblem` refusals with `Anderson`.
+  `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 12th column
+  `"Broyden" => Broyden()`, and `test/verification/standard_reference.csv` grows by 134 cells to
+  1608 (67 problems × 12 columns × 2 element types). The `Broyden()` column ends 27 `SUCCESS`, 12
+  `MAXITERS` and 95 `NONFINITE` of its 134 cells; with an undamped `Picard` member the same column
+  ended 26, 10 and 98, and the undamped `Picard()` member alone ends 106 `NONFINITE`, so the
+  `NONFINITE` cells come from the member and not from the Broyden update.
 
 - `Reparametrized(prob, g, ∂g = nothing; covariant = prob isa StationarityProblem,
   curvature = true)` and `ReparametrizedSolver` (exported) solve a `NonlinearProblem` or

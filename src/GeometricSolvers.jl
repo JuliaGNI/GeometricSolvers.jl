@@ -39,7 +39,8 @@ export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
        PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
 export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
-export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson,
+       Broyden
 export solve_batch!
 export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summary,
        deposited_moments, eliminated_indices, reset_batch!

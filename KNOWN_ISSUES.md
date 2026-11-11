@@ -282,9 +282,9 @@
   method runs the primal solve and then the implicit-function-theorem tangent solve
   (`solve_implicit` in `src/nonlinear/implicit.jl`). The tangent solve takes its Jacobian
   preparation from `_tangent_jacprep`, which has a method for a `NewtonState` and a `PicardState`
-  only. `solve` with an `Additive`, `Multiplicative`, `Repeat`, `Switch` or `Anderson` method
-  therefore raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the primal
-  solve; `init`, `solve!` and `solve_batch!` refuse a dual input for every method. Implicit
+  only. `solve` with an `Additive`, `Multiplicative`, `Repeat`, `Switch`, `Anderson` or `Broyden`
+  method therefore raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`, before the
+  primal solve; `init`, `solve!` and `solve_batch!` refuse a dual input for every method. Implicit
   differentiation through a combinator, which needs the Jacobian of `F` at `x*` and not the steps
   of the members, is for a later pull request.
 - **kind:** defect
@@ -339,19 +339,26 @@
 - **kind:** defect
 - **found:** PR #62
 
-### K72 · The R1 and R3 `Anderson` code duplicates the filter, the weight solve and the step skeleton
+### K72 · The R1 and R3 `Anderson` code duplicates the filter, the weight solve and the step skeleton, and `Broyden` duplicates the `Anderson` struct
 
 - **location:** `src/composition/anderson.jl` (`filter_history_r1`, `filter_history_r3!`,
-  `solve_weights`, `solve_weights!`, both `step!!` methods)
+  `solve_weights`, `solve_weights!`, `solve_broyden_weights`, `solve_broyden_weights!`, both
+  `step_multisecant!!` methods; the `Anderson` and `Broyden` structs, their outer constructors
+  and their `Adapt.adapt_structure` methods)
 - **evidence:** The history storage and the Gram build differ for a reason (an `isbits` `NTuple`
   in R1; device `n × m` matrices with a `col_idx` permutation and one `mul!!` in R3). The two
   filters differ in 25 of 65 lines and the two Cholesky solves in 19 of 45, mostly `setindex`
-  against `setindex!`, and each `step!!` repeats the "take the member step" fallback 3 times and
-  the best-iterate update 4 times. `Multiplicative` and `Repeat` are one `step!!` each through
-  `copy!!` and `map!!`. A `!!` setter and `copy!!` on the state buffers would leave only the
-  history update and the Gram build per storage; the cost of that change was not measured.
+  against `setindex!`, and each `step_multisecant!!` method repeats the "take the member step"
+  fallback 3 times and the best-iterate update 4 times. `Multiplicative` and `Repeat` are one
+  `step!!` each through `copy!!` and `map!!`. A `!!` setter and `copy!!` on the state buffers
+  would leave only the history update and the Gram build per storage; the cost of that change
+  was not measured. `Broyden` repeats the `Anderson` struct, its inner-constructor validation,
+  its four outer constructors and its `adapt_structure` with only the name changed, about 110
+  lines; the two differ only in the weight solve that `_solve_multisecant_weights` and
+  `_solve_multisecant_weights!` select. One struct with a weight-solve type parameter, with
+  `Anderson` and `Broyden` as aliases, would remove the copy.
 - **kind:** defect
-- **found:** PR #63
+- **found:** PR #63; the `Broyden` copy, PR #74
 
 ### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
 

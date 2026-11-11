@@ -363,18 +363,20 @@ linear_residual_buffer
 
 ### Combinators
 
-[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref) and
-[`Anderson`](@ref) compose nonlinear methods through the same [`init_state`](@ref),
-[`start!!`](@ref), [`step!!`](@ref) and [`finish!!`](@ref) interface as [`Newton`](@ref) and
-[`Picard`](@ref), so a combinator runs in R1, R2 and R3 alike. [`Additive`](@ref) combines member
-steps from the same iterate with [`OptimalWeights`](@ref) or [`FixedWeights`](@ref),
-[`Multiplicative`](@ref) and [`Repeat`](@ref) thread `(x, F(x))` sequentially across sub-steps
-while [`sync_merit`](@ref) updates any active line-search baseline merit, [`Switch`](@ref)
-transitions permanently from `first` to `second` once
-``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``, and [`Anderson`](@ref) accelerates its member
-with filtered Anderson mixing, Tikhonov regularisation, restarts and best-iterate restoration. A
-combinator has no implicit differentiation: [`solve`](@ref) with a combinator method raises an
-`ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`.
+[`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref),
+[`Anderson`](@ref) and [`Broyden`](@ref) compose nonlinear methods through the same
+[`init_state`](@ref), [`start!!`](@ref), [`step!!`](@ref) and [`finish!!`](@ref) interface as
+[`Newton`](@ref) and [`Picard`](@ref), so a combinator runs in R1, R2 and R3 alike.
+[`Additive`](@ref) combines member steps from the same iterate with [`OptimalWeights`](@ref) or
+[`FixedWeights`](@ref), [`Multiplicative`](@ref) and [`Repeat`](@ref) thread `(x, F(x))`
+sequentially across sub-steps while [`sync_merit`](@ref) updates any active line-search baseline
+merit, [`Switch`](@ref) transitions permanently from `first` to `second` once
+``\|F(x)\| \le \text{threshold} \cdot \|F(x_0)\|``, [`Anderson`](@ref) accelerates its member with
+filtered Type-II Anderson mixing, Tikhonov regularisation, restarts and best-iterate restoration,
+and [`Broyden`](@ref) accelerates its member over the same shared [`AndersonHistory`](@ref),
+filters and safeguards by solving the lower-triangular Type-II Broyden multisecant equations by
+forward substitution. A combinator has no implicit differentiation: [`solve`](@ref) with a
+combinator method raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`.
 
 ```@docs
 Additive
@@ -384,6 +386,8 @@ Multiplicative
 Repeat
 Switch
 Anderson
+Broyden
+AndersonHistory
 ```
 
 ### SciMLBase extension
