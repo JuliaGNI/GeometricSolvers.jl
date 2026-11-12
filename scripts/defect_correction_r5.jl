@@ -13,6 +13,10 @@
 # `recompute_and_verify_defect_correction_table` derives every cell again from the raw output alone,
 # compares it with the cell of the table, requires that no cell is empty, and that the second
 # variant alone forms its product in `Float32`.
+#
+# The forward error of the `Float64 JVP` row is `0.0` by construction: the reference is solved with
+# the same method from the same start and stops at the same iterate. It is an identity, not a
+# measured agreement.
 
 using GeometricSolvers
 using LinearAlgebra: Tridiagonal, ldiv!, lu, norm
