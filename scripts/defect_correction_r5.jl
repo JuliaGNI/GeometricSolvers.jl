@@ -14,9 +14,11 @@
 # compares it with the cell of the table, requires that no cell is empty, and that the second
 # variant alone forms its product in `Float32`.
 #
-# The forward error of the `Float64 JVP` row is `0.0` by construction: the reference is solved with
-# the same method from the same start and stops at the same iterate. It is an identity, not a
-# measured agreement.
+# The forward error of the `Float64 JVP` row is `0.0` at `n = 256`, and it is not a measured
+# agreement: the reference is solved with the same method from the same start, so it runs through
+# the same Newton iterates, and at this `n` the step that meets `f_reltol = 1e-10` meets `1e-12`
+# too, so both stop at the same iterate. At an `n` where the reference takes more steps, such as
+# `n = 64`, the error is not `0.0`.
 
 using GeometricSolvers
 using LinearAlgebra: Tridiagonal, ldiv!, lu, norm
@@ -176,8 +178,8 @@ end
 
 `true` where the table is the raw output: it has one row per raw row and three in all, in order,
 every cell equals the one recomputed from its raw row alone (`‖F‖` from the residual at `x`, the
-forward error from `x` and `xref`), no cell is empty, and the variants' methods form the product in
-`Nothing`, `Float32` and `Nothing` in that order. `false` otherwise.
+forward error from `x` and `xref`), no cell is empty, and the variants' methods carry the
+`jvp_eltype` `Nothing`, `Float32` and `Nothing` in that order. `false` otherwise.
 """
 function recompute_and_verify_defect_correction_table(raw, table)
     rows = defect_correction_table_rows(table)
