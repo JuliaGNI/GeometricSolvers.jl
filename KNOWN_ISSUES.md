@@ -471,11 +471,11 @@
   `α = 4.0` with `φ′(0) = φ′(α) = -5.0e-324`; `0.9 * 5.0e-324` rounds to `5.0e-324`. The
   `Float32` case `s = 1.4f-44`, `L = 14.677993f0` does the same with `φ′(0) = -1.0f-45`. A sweep of
   `s` over the subnormal range and `L ∈ [1e-2, 1e2]` from `α₀ = 1` gives 953 `SUCCESS` results in
-  `Float64`, 27 of which fail the exact test, and 912 in `Float32`, 28 of which fail. Found by a
-  property-based test of the strong Wolfe conditions, checked in `BigFloat`. The merit there is
-  far below any practical residual. Reproducer, with a line function `lf` whose `φ` and `φ′` are
-  the merit above and its derivative:
+  `Float64`, 27 of which fail the exact test, and 912 in `Float32`, 28 of which fail. The merit
+  there is far below any practical residual. Reproducer, with a line function `lf` whose `φ` and
+  `φ′` are the merit above and its derivative:
   `r = linesearch(StrongWolfe(), lf, MeasuredSlope(), φ(lf, 0.0), 1.0)` gives `r.code == SUCCESS`
   and `abs(big(φ′(lf, r.α))) ≤ big(0.9) * abs(big(φ′(lf, 0.0)))` is `false`.
 - **kind:** defect
-- **found:** 2026-11-12
+- **found:** 2026-11-12 (a property-based test of the strong Wolfe conditions, checked in
+  `BigFloat`)
