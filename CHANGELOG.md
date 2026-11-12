@@ -759,6 +759,21 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
+  regime (R5) on one nonlinear reaction–diffusion system.** The system is
+  `F(u) = A u + 10 u³ - 1` with `A = tridiag(-1, 2, -1) / h²` on `n = 256` interior points. The
+  variants are the Jacobian–vector product in `Float64`; the product in `Float32` with the
+  residual in `Float64` (`GMRES(; jvp_eltype = Float32)`, the defect correction of Chen, Chacón
+  and Barnes 2012); and a `Float64` outer solve with a right preconditioner that factorises the
+  analytic tridiagonal Jacobian in `Float32` once per Newton step and applies it in `Float32`.
+  Each variant is an unrestarted `GMRES(; maxiter = n)` with the default forcing term, solved
+  from `u₀ = 0` to `f_reltol = 1e-10`. The script prints, per variant, the return code, the Newton
+  and GMRES iteration counts (one Jacobian–vector product per GMRES iteration), the final `‖F‖`
+  and the forward error against a `Float64` reference root solved to `f_reltol = 1e-12`. It
+  throws where the reference does not reach that tolerance, recomputes every cell of the table
+  from the raw output of the solves, and exits with status 1 where a cell does not match. It
+  runs on `Array` only, in a few seconds on the CPU, and times nothing.
+
 - **Nonlinear preconditioning: `LeftPreconditioned(outer, inner)`, the block-residual interface
   (`BlockResidual`, `BlockPartition`) and the restricted additive Schwarz map `RAS(partition)`
   (decisions 26 and 31 of the design).** `LeftPreconditioned` runs its outer method on the
