@@ -769,10 +769,11 @@ so that a compat-only bump can be told apart from an interface change.
   Each variant is an unrestarted `GMRES(; maxiter = n)` with the default forcing term, solved
   from `u₀ = 0` to `f_reltol = 1e-10`. The script prints, per variant, the return code, the Newton
   and GMRES iteration counts (one Jacobian–vector product per GMRES iteration), the final `‖F‖`
-  and the forward error against a `Float64` reference root solved to `f_reltol = 1e-12`. It
-  throws where the reference does not reach that tolerance, recomputes every cell of the table
-  from the raw output of the solves, and exits with status 1 where a cell does not match. It
-  runs on `Array` only, in a few seconds on the CPU, and times nothing.
+  and the forward error against a `BigFloat` reference root at 256 bits, independent of the
+  variants, which Newton's method with the analytic tridiagonal Jacobian solves from `u₀ = 0` to
+  `‖F‖ ≤ 1e-60 ‖F(u₀)‖`. It throws where 100 Newton steps do not reach that, recomputes every cell
+  of the table from the raw output of the solves, and exits with status 1 where a cell does not
+  match. It runs on `Array` only, in a few seconds on the CPU, and times nothing.
 
 - **Nonlinear preconditioning: `LeftPreconditioned(outer, inner)`, the block-residual interface
   (`BlockResidual`, `BlockPartition`) and the restricted additive Schwarz map `RAS(partition)`

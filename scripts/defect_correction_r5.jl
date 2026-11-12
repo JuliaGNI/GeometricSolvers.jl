@@ -6,19 +6,16 @@
 #
 #   julia --startup-file=no --project=. scripts/defect_correction_r5.jl
 #
-# `generate_defect_correction_raw_data` solves a `Float64` reference root, then each variant, and
+# `generate_defect_correction_raw_data` solves a `BigFloat` reference root, then each variant, and
 # returns the raw per-variant output: the return code, the Newton iteration count, the count of
-# Jacobian–vector products, the final iterate and the reference root.
+# Jacobian–vector products, the product's `jvp_eltype`, the final iterate and the reference root.
 # `format_defect_correction_table` renders it as a table.
 # `recompute_and_verify_defect_correction_table` derives every cell again from the raw output alone,
 # compares it with the cell of the table, requires that no cell is empty, and that the second
 # variant alone forms its product in `Float32`.
 #
-# The forward error of the `Float64 JVP` row is `0.0` at `n = 256`, and it is not a measured
-# agreement: the reference is solved with the same method from the same start, so it runs through
-# the same Newton iterates, and at this `n` the step that meets `f_reltol = 1e-10` meets `1e-12`
-# too, so both stop at the same iterate. At an `n` where the reference takes more steps, such as
-# `n = 64`, the error is not `0.0`.
+# The reference root is independent of the variants and resolves errors below the `Float64`
+# rounding of the root: Newton's method with the analytic Jacobian in `BigFloat` at 256 bits.
 
 using GeometricSolvers
 using LinearAlgebra: Tridiagonal, ldiv!, lu, norm
@@ -99,33 +96,50 @@ function defect_correction_methods(n::Integer)
 end
 
 """
+    defect_correction_reference(n)
+
+The root on `n` interior points in `BigFloat` at 256 bits, by Newton's method from `zeros(n)` with
+the analytic tridiagonal Jacobian `A + 3λ diag(u²)`, to `‖F‖ ≤ 1e-60 ‖F(u₀)‖`. It throws an
+`ErrorException` where 100 steps do not reach that.
+"""
+function defect_correction_reference(n::Integer)
+    return setprecision(BigFloat, 256) do
+        u = zeros(BigFloat, n)
+        r = similar(u)
+        h = inv(BigFloat(n + 1))
+        λ = BigFloat(DEFECT_CORRECTION_LAMBDA)
+        off = fill(-1 / h^2, n - 1)
+        f₀ = norm(defect_correction_residual!(r, u, n))
+        for _ in 1:100
+            norm(defect_correction_residual!(r, u, n)) <= 1e-60 * f₀ && return u
+            diag = [2 / h^2 + 3λ * u[i]^2 for i in 1:n]
+            u .-= Tridiagonal(off, diag, copy(off)) \ r
+        end
+        error("the BigFloat reference does not reach ‖F‖ ≤ 1e-60 ‖F(u₀)‖ in 100 steps")
+    end
+end
+
+"""
     generate_defect_correction_raw_data(; n = 256)
 
-The raw output of the comparison. It solves the `Float64` reference root with the first variant's
-method to `‖F‖ ≤ 1e-12 ‖F(u₀)‖` and throws an `ErrorException` where it does not reach that. It then
-solves each variant from `u₀ = zeros(n)` with `f_reltol = 1e-10`, `f_abstol = 0` and
-`max_iterations = 100`, and returns one row per variant with the fields `variant`, `code` and
-`iterations` (from the returned status), `jvp_calls` (from `jvp_calls(solver)`), `x` (the returned
-iterate, converged or not) and `xref` (the reference root).
+The raw output of the comparison. It solves the reference root with
+`defect_correction_reference(n)`. It then solves each variant from `u₀ = zeros(n)` with
+`f_reltol = 1e-10`, `f_abstol = 0` and `max_iterations = 100`, and returns one row per variant with
+the fields `variant`, `code` and `iterations` (from the returned status), `jvp_calls` (from
+`jvp_calls(solver)`), `jvp_eltype` (from the method of the solve), `x` (the returned iterate,
+converged or not) and `xref` (the reference root).
 """
 function generate_defect_correction_raw_data(; n = 256)
     prob = defect_correction_problem(n)
     x₀ = zeros(n)
-    methods = defect_correction_methods(n)
-    sref = init(prob, copy(x₀), methods[1][2]; f_reltol = 1e-12, f_abstol = 0.0,
-        max_iterations = 100)
-    xref, _ = solve!(sref, copy(x₀))
-    fref = defect_correction_fnorm(xref)
-    f₀ = defect_correction_fnorm(x₀)
-    fref <= 1e-12 * f₀ ||
-        error("the Float64 reference reaches ‖F‖ = $fref, above 1e-12 ‖F(u₀)‖ = $(1e-12 * f₀)")
-    xref = copy(xref)
-    return map(methods) do (name, m)
+    xref = defect_correction_reference(n)
+    return map(defect_correction_methods(n)) do (name, m)
         solver = init(
             prob, copy(x₀), m; f_reltol = 1e-10, f_abstol = 0.0, max_iterations = 100)
         x, status = solve!(solver, copy(x₀))
         (; variant = name, code = status.code, iterations = status.iterations,
-            jvp_calls = jvp_calls(solver), x = copy(x), xref = xref)
+            jvp_calls = jvp_calls(solver), jvp_eltype = m.linsolve.jvp_eltype,
+            x = copy(x), xref = xref)
     end
 end
 
@@ -178,16 +192,15 @@ end
 
 `true` where the table is the raw output: it has one row per raw row and three in all, in order,
 every cell equals the one recomputed from its raw row alone (`‖F‖` from the residual at `x`, the
-forward error from `x` and `xref`), no cell is empty, and the variants' methods carry the
-`jvp_eltype` `Nothing`, `Float32` and `Nothing` in that order. `false` otherwise.
+forward error from `x` and `xref`), no cell is empty, and the raw rows carry the `jvp_eltype`
+`Nothing`, `Float32` and `Nothing` in that order. `false` otherwise.
 """
 function recompute_and_verify_defect_correction_table(raw, table)
     rows = defect_correction_table_rows(table)
     length(rows) == length(raw) == 3 || return false
-    methods = defect_correction_methods(length(first(raw).x))
-    [m.linsolve.jvp_eltype for (_, m) in methods] == [Nothing, Float32, Nothing] ||
-        return false
-    for (cells, row, (name, _)) in zip(rows, raw, methods)
+    [row.jvp_eltype for row in raw] == [Nothing, Float32, Nothing] || return false
+    names = first.(defect_correction_methods(length(first(raw).x)))
+    for (cells, row, name) in zip(rows, raw, names)
         length(cells) == 6 || return false
         any(isempty, cells) && return false
         row.variant == name || return false
