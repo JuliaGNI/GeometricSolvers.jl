@@ -459,3 +459,23 @@
   with `check_bounds: auto`, so no CI job runs it with `yes`.
 - **kind:** defect
 - **found:** PR #70
+
+### K86 · `StrongWolfe` returns `SUCCESS` for a step that fails the curvature condition when `φ′(0)` is subnormal
+
+- **location:** `src/globalization/strongwolfe.jl:94`
+- **evidence:** `curvature(dα, c₂, d₀) = abs(dα) ≤ -c₂ * d₀` rounds the product. Where `d₀` is a
+  subnormal of few significant bits, `c₂ * d₀` rounds to `d₀` itself, so a trial with
+  `φ′(α) = φ′(0)` passes the test, although `|φ′(α)| ≤ c₂ |φ′(0)|` is false in exact arithmetic.
+  On `main` (`0c9e130`, Julia 1.13.3), `StrongWolfe()` with `MeasuredSlope()` on
+  `φ(α) = s (1 − α/L)²`, `s = 9.4e-323`, `L = 31.622776601683793`, `α₀ = 1` returns `SUCCESS` at
+  `α = 4.0` with `φ′(0) = φ′(α) = -5.0e-324`; `0.9 * 5.0e-324` rounds to `5.0e-324`. The
+  `Float32` case `s = 1.4f-44`, `L = 14.677993f0` does the same with `φ′(0) = -1.0f-45`. A sweep of
+  `s` over the subnormal range and `L ∈ [1e-2, 1e2]` from `α₀ = 1` gives 953 `SUCCESS` results in
+  `Float64`, 27 of which fail the exact test, and 912 in `Float32`, 28 of which fail. Found by a
+  property-based test of the strong Wolfe conditions, checked in `BigFloat`. The merit there is
+  far below any practical residual. Reproducer, with a line function `lf` whose `φ` and `φ′` are
+  the merit above and its derivative:
+  `r = linesearch(StrongWolfe(), lf, MeasuredSlope(), φ(lf, 0.0), 1.0)` gives `r.code == SUCCESS`
+  and `abs(big(φ′(lf, r.α))) ≤ big(0.9) * abs(big(φ′(lf, 0.0)))` is `false`.
+- **kind:** defect
+- **found:** 2026-11-12
