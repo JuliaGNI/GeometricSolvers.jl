@@ -1626,7 +1626,11 @@ so that a compat-only bump can be told apart from an interface change.
   `state.current_depth` in `1:m` after every step except one that ends in a hard member failure
   (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with no step taken), which leaves it unchanged,
   and best-iterate restoration in `finish!!` when `solve!!` exits with `status.code != SUCCESS` and
-  a strictly smaller historical residual norm was recorded. It solves a `NonlinearProblem` or a
+  a strictly smaller historical residual norm was recorded. The members of an `Additive`, a
+  `Multiplicative` and a `Switch` finish in order, each on the iterate and the residual norm that
+  the member before it returned, so such a combinator returns the best iterate that its `Anderson`
+  and `Broyden` members recorded, also on an `SVector` iterate, and its status reports the residual
+  norm there. It solves a `NonlinearProblem` or a
   `StationarityProblem`, with R1 tested on `SVector` and R3 on `Vector`. An accelerated step reports
   `STALLED` when its member step does and `SUCCESS` otherwise; a fallback or restart step and a hard
   failure keep the member's code. `solve` with `Anderson` and a `ForwardDiff.Dual` in `x₀` or `p`

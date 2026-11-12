@@ -71,11 +71,14 @@ end
 @inline function finish!!(
         state::SwitchState, m::Switch, prob, x, Fx,
         status::SolverStatus{R}) where {R}
-    _, st1, s1 = finish!!(state.s1, m.first, prob, x, Fx, status)
-    _, st2, s2 = finish!!(state.s2, m.second, prob, x, Fx, status)
+    # the second member finishes on the iterate and the residual norm that the first returned, so
+    # it restores its best iterate only where that beats the first member's
+    x1, st1, s1 = finish!!(state.s1, m.first, prob, x, Fx, status)
+    x2, st2, s2 = finish!!(
+        state.s2, m.second, prob, x1, Fx, restored_best_status(status, st1.fnorm))
     # each member counts only its own steps, so `Switch` keeps no count
-    st_out = with_calls(state.switched ? st2 : st1, 0, 0)
-    return x, st_out, SwitchState(s1, s2, state.Fx, R(NaN), state.switched)
+    st_out = with_calls(restored_best_status(state.switched ? st2 : st1, st2.fnorm), 0, 0)
+    return x2, st_out, SwitchState(s1, s2, state.Fx, R(NaN), state.switched)
 end
 
 function step!!(

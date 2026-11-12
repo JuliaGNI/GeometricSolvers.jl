@@ -105,12 +105,18 @@ end
     return (s1, s_tail...)
 end
 
-@inline _finish_member_states(::Tuple{}, ::Tuple{}, prob, x, Fx, status) = ()
+# The members finish in order, each on the iterate and the residual norm that the member before it
+# returned: an `Anderson` or `Broyden` member restores its best iterate only where that beats the
+# one an earlier member restored. Returns the states, the iterate and that norm.
+@inline function _finish_member_states(::Tuple{}, ::Tuple{}, prob, x, Fx, status)
+    return (), x, status.fnorm
+end
 @inline function _finish_member_states(states::Tuple, members::Tuple, prob, x, Fx, status)
-    _, _, s1 = finish!!(first(states), first(members), prob, x, Fx, status)
-    s_tail = _finish_member_states(
-        Base.tail(states), Base.tail(members), prob, x, Fx, status)
-    return (s1, s_tail...)
+    x1, st1, s1 = finish!!(first(states), first(members), prob, x, Fx, status)
+    s_tail, x_out, fnorm = _finish_member_states(
+        Base.tail(states), Base.tail(members), prob,
+        x1, Fx, restored_best_status(status, st1.fnorm))
+    return (s1, s_tail...), x_out, fnorm
 end
 
 @inline function init_state(m::Additive, prob::CombinatorProblem, x, p)
@@ -136,13 +142,14 @@ end
 @inline function finish!!(
         state::AdditiveState, m::Additive, prob, x, Fx,
         status::SolverStatus{R}) where {R}
-    states = _finish_member_states(state.states, m.members, prob, x, Fx, status)
+    states, x_out, fnorm = _finish_member_states(
+        state.states, m.members, prob, x, Fx, status)
     st = SolverStatus{R}(
-        status.code, status.iterations, status.fnorm, status.stepnorm,
+        status.code, status.iterations, fnorm, status.stepnorm,
         status.step_failures, status.promoted, Int32(-1), R(NaN), R(NaN))
     new_state = AdditiveState(
         states, state.Fx, state.xs, state.Fxs, state.d, state.xt, state.work)
-    return x, st, new_state
+    return x_out, st, new_state
 end
 
 @inline function is_hard_failure(info::StepInfo)
