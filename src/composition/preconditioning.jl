@@ -24,7 +24,12 @@ a `balance_threshold` is refused at `init_state` with an `ArgumentError`, becaus
 returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root. A
 [`Newton`](@ref) with [`GMRES`](@ref) as `outer` is refused at `init_state` with an
 `ArgumentError`, because it solves a `NonlinearProblem` and `outer` solves ``r^\\ell``; as `inner`
-it is taken. With any other `inner` the derivative of
+it is taken. `outer` may be a combinator, such as [`Repeat`](@ref) or [`Multiplicative`](@ref),
+whose members step on ``r^\\ell``; with a `RAS` inner, every member of an [`Additive`](@ref)
+after the first costs one more sweep, at the iterate, because the RASPEN Jacobian reads the block
+factors of the last sweep. A [`Deflated`](@ref) problem is refused at `init_state` with an
+`ArgumentError`, because its stopping test reads the deflation factor from a `Newton` state. With
+an `inner` other than a `RAS` the derivative of
 ``r^\\ell`` is a central difference, one inner step at each of ``x \\pm h v``, which
 [`prepare_ad`](@ref) prepares at `init_state` whatever its globalization reads. With a
 [`RAS`](@ref) inner that preparation is the RASPEN form, so every sweep forms the block factor at
@@ -45,36 +50,19 @@ end
 Adapt.@adapt_structure LeftPreconditioned
 
 """
-    LeftPreconditionedProblem(prob, inner, state, work, code)
-
-The problem that `outer` of a [`LeftPreconditioned`](@ref) method solves: the user's problem
-`prob`, the inner method `inner`, the inner method's state in the iterate's element type, the
-iterate buffer that one inner step runs on — a step of an array iterate writes into its `x`, so the
-residual of this problem steps a copy — and a `Ref` that holds the code of the last inner step.
-Its residual is ``r^\\ell(y) = y - N(y)``, one
-[`step!!`](@ref) of `inner` from `(y, F(y))` subtracted from `y`, so [`residual!!`](@ref) evaluates
-it and a [`LineFunction`](@ref) merits it.
-"""
-struct LeftPreconditionedProblem{P, I, S, W} <: AbstractNonlinearProblem
-    prob::P
-    inner::I
-    state::S
-    work::W
-    code::Base.RefValue{ReturnCode}
-end
-
-"""
     LeftPreconditionedState
 
 The state of a [`LeftPreconditioned`](@ref) method: the [`LeftPreconditionedProblem`](@ref) it
-runs on, the outer method's state, and the buffer of the global residual that a step returns. The
+runs on, the outer method's state, the buffer of the global residual that a step returns, and the
+parameters `p` of the solve, which [`finish!!`](@ref) evaluates the residuals with. The
 outer state's residual workspace holds ``r^\\ell``; the problem's inner state holds the workspace
 of the inner step, and its counters are the ones [`ras_counts`](@ref) reports.
 """
-struct LeftPreconditionedState{P, S, FX}
+struct LeftPreconditionedState{P, S, FX, PP}
     problem::P
     outer_state::S
     Fx::FX
+    p::PP
 end
 
 """
@@ -114,16 +102,23 @@ end
 @inline function init_state(m::LeftPreconditioned, prob::NonlinearProblem, x, p)
     x isa Union{Number, StaticArray} && throw(ArgumentError(
         "LeftPreconditioned takes a mutable vector iterate: an R1 iterate (a Number or an SVector) has no workspace for an inner step"))
-    m.outer isa Newton && m.outer.linsolve isa GMRES &&
-        throw(ArgumentError(
-            "LeftPreconditioned does not take a Newton with GMRES as its outer method: a Newton with GMRES solves a NonlinearProblem, and the outer method solves the preconditioned residual; use a Newton with a factorization, such as the default LUFactorization(), or a Picard as the outer method, or put the Newton with GMRES in the inner method"))
     m.inner isa RAS && m.inner.balance_threshold !== nothing &&
         throw(ArgumentError(
             "LeftPreconditioned does not take a RAS with a balance_threshold: a skipped sweep returns its input, which reads as a zero of the preconditioned residual at a point that is not a root"))
     inner_state = init_state(m.inner, prob, x, p)
     lprob = LeftPreconditionedProblem(prob, m.inner, inner_state, buffer(x), Ref(SUCCESS))
     outer_state = init_state(m.outer, lprob, x, p)
-    return LeftPreconditionedState(lprob, outer_state, buffer(x))
+    return LeftPreconditionedState(lprob, outer_state, buffer(x), p)
+end
+
+# A `Deflated` problem converges on the inner residual `‖F‖ = ‖M F‖ / M`, whose factor `M` its
+# stopping test reads from the Jacobian preparation of a `Newton` state, and a `Picard` or a `RAS`
+# inner method has no step on it. The reduced problem is the one a `Deflated(StationarityProblem)`
+# solve builds its method's state for.
+function init_state(
+        m::LeftPreconditioned, ::Deflated{<:Union{NonlinearProblem, ReducedStatProb}}, x, p)
+    throw(ArgumentError(
+        "LeftPreconditioned does not take a Deflated problem: the stopping test of a Deflated problem reads its deflation factor from a Newton state; solve a Deflated problem with Newton()"))
 end
 
 @inline residual_buffer(state::LeftPreconditionedState) = state.Fx
@@ -204,6 +199,14 @@ function jacobian!!(J, prep::RASPenPreparation, prob::LeftPreconditionedProblem,
     return raspen_jacobian!(J, prep.ras, prob.prob, x, p)
 end
 
+# The RASPEN product reads the block factors and local iterates of the last sweep, so a member of
+# an `Additive` outer that steps from `x` after another member's trial points needs the sweep at
+# `x` again. A central difference evaluates `rˡ` itself and reads no such state.
+@inline function resync_point!(prob::LeftPreconditionedProblem, F, x, p)
+    prob.state isa RASState && residual!!(F, prob, x, p)
+    return nothing
+end
+
 # The central difference of `rˡ` along `v`, written into `col`: one inner step at each of
 # `x ± h v`, with ``h = \\sqrt[3]{\\varepsilon} \\max(1, \\|x\\|) / \\|v\\|``, the step whose
 # truncation and rounding errors balance.
@@ -258,7 +261,7 @@ end
     Fxˡ = residual!!(residual_buffer(state.outer_state), lprob, x, p)
     outer_state = start!!(
         state.outer_state, m.outer, lprob, x, Fxˡ, p, rnorm(Fxˡ))
-    return LeftPreconditionedState(lprob, outer_state, state.Fx)
+    return LeftPreconditionedState(lprob, outer_state, state.Fx, p)
 end
 
 @inline function step!!(
@@ -288,15 +291,40 @@ end
     code = info.code == NONFINITE && lprob.code[] == MAXITERS ? MAXITERS : info.code
     info₊ = StepInfo{R}(
         code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited)
-    return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx), info₊
+    return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx, p), info₊
 end
 
+# Whether an outer state keeps the best `rˡ` and restores it at `finish!!`, as the state of an
+# `Anderson` or a `Broyden` does, itself or as a member of a combinator.
+@inline keeps_best_residual(state) = false
+@inline keeps_best_residual(::AndersonState) = true
+@inline keeps_best_residual(state::RepeatState) = keeps_best_residual(state.state)
+@inline keeps_best_residual(state::SwitchState) = keeps_best_residual(state.s1) ||
+                                                  keeps_best_residual(state.s2)
+@inline keeps_best_residual(state::Union{MultiplicativeState, AdditiveState}) = any(
+    keeps_best_residual, state.states)
+
+# An outer state that keeps the best `rˡ` compares its norm with the status and restores that
+# iterate: it ends on `rˡ` and its norm at `x`, and the status then reports the global residual at
+# the iterate it returns. Every other outer state ends on the global residual, without the extra
+# evaluations, which would add to the counters of a `RAS` inner.
 @inline function finish!!(
         state::LeftPreconditionedState, m::LeftPreconditioned, prob, x, Fx,
         status::SolverStatus{R}) where {R}
+    if !keeps_best_residual(state.outer_state)
+        x_out, st, outer_state = finish!!(
+            state.outer_state, m.outer, state.problem, x, Fx, status)
+        return x_out, st,
+        LeftPreconditionedState(state.problem, outer_state, state.Fx, state.p)
+    end
+    p = state.p
+    Fxˡ = residual!!(residual_buffer(state.outer_state), state.problem, x, p)
     x_out, st, outer_state = finish!!(
-        state.outer_state, m.outer, state.problem, x, Fx, status)
-    return x_out, st, LeftPreconditionedState(state.problem, outer_state, state.Fx)
+        state.outer_state, m.outer, state.problem, x, Fxˡ,
+        restored_best_status(status, rnorm(Fxˡ)))
+    F_out = residual!!(state.Fx, prob, x_out, p)
+    return x_out, restored_best_status(st, rnorm(F_out)),
+    LeftPreconditionedState(state.problem, outer_state, state.Fx, p)
 end
 
 """

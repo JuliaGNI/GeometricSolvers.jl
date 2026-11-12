@@ -817,9 +817,21 @@ so that a compat-only bump can be told apart from an interface change.
   skipped sweep returns its input and would read as a zero of `rˡ` at a point that is not a
   root. Its `init_state` likewise raises an `ArgumentError` for a `Newton` with `GMRES` as the
   outer method, because that Newton solves a `NonlinearProblem` and the outer method solves the
-  preconditioned residual `rˡ`; a `Newton` with `GMRES` as the inner method is taken. The
-  standard test set gains the column
-  `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
+  preconditioned residual `rˡ`; a `Newton` with `GMRES` as the inner method is taken. The outer
+  method may be a combinator — `Repeat`, `Multiplicative`, `Additive`, `Switch`, `Anderson` or
+  `Broyden` — whose members step on `rˡ`, so `LeftPreconditioned(Repeat(Newton(), 2), inner)`
+  takes two outer Newton steps per step. With a `RAS` inner method, each member of an `Additive`
+  outer method after the first begins with one more sweep at the iterate, counted in `ras_counts`,
+  because the RASPEN Jacobian reads the block factors of the latest sweep, which after the previous
+  member's trial points belong to a different point. For the same reason, the safeguard of an
+  `Additive` and the residual-growth restart of an `Anderson` or a `Broyden`, which return a
+  candidate other than the point they evaluated last, sweep again at that candidate. An
+  unconverged solve whose outer method is an `Anderson` or a `Broyden`, alone or as a member of a
+  combinator, compares and restores the best `rˡ` and reports the global residual norm at the
+  iterate it returns. A `Deflated` problem, around a
+  `NonlinearProblem` or a `StationarityProblem`, raises an `ArgumentError` at `init_state`,
+  because its stopping test reads the deflation factor from a `Newton` state. The standard test set
+  gains the column `LeftPreconditioned Picard Backtracking Newton`, 134 cells, so
   `test/verification/standard_reference.csv` holds 1742 (67 problems × 13 columns × 2 element
   types).
 
@@ -1614,7 +1626,11 @@ so that a compat-only bump can be told apart from an interface change.
   `state.current_depth` in `1:m` after every step except one that ends in a hard member failure
   (`SINGULAR`, `NONFINITE`, or `LINESEARCH_FAILED` with no step taken), which leaves it unchanged,
   and best-iterate restoration in `finish!!` when `solve!!` exits with `status.code != SUCCESS` and
-  a strictly smaller historical residual norm was recorded. It solves a `NonlinearProblem` or a
+  a strictly smaller historical residual norm was recorded. The members of an `Additive`, a
+  `Multiplicative` and a `Switch` finish in order, each on the iterate and the residual norm that
+  the member before it returned, so such a combinator returns the best iterate that its `Anderson`
+  and `Broyden` members recorded, also on an `SVector` iterate, and its status reports the residual
+  norm there. It solves a `NonlinearProblem` or a
   `StationarityProblem`, with R1 tested on `SVector` and R3 on `Vector`. An accelerated step reports
   `STALLED` when its member step does and `SUCCESS` otherwise; a fallback or restart step and a hard
   failure keep the member's code. `solve` with `Anderson` and a `ForwardDiff.Dual` in `x₀` or `p`

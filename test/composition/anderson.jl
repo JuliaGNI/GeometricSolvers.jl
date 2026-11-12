@@ -1140,4 +1140,43 @@ end
         @test st.code === SUCCESS
         @test isapprox(Array(x), fill(0.6823278038280193, 2); rtol = 1e-12)
     end
+
+    # Picard does not converge on F(x) = x - 5/2 sin(x), so the residual goes up and down and each
+    # Anderson member of a combinator stores another best iterate. An unconverged finish returns the
+    # best of them, and the status reports the residual there. A `Switch` that has not switched has
+    # stepped only its first member, whose best beats the start point that the second one stores.
+    @testset "A combinator finish returns the best iterate of its Anderson members, $label, $(nameof(typeof(x₀)))" for (
+            label, m, a₀, steps) in (
+            ("Additive",
+            Additive((Anderson(Picard(), 1), Anderson(Picard(), 2)), FixedWeights(0.5, 0.5)),
+            (-6.0, -5.5), 4),
+            ("Multiplicative",
+            Multiplicative(Anderson(Picard(), 1), Picard(), Anderson(Picard(), 2)),
+            (-6.0, -5.5), 1),
+            ("Switch",
+            Switch(Anderson(Picard(), 1), Anderson(Picard(), 2); threshold = 1e-8),
+            (-6.0, -1.0), 3)),
+        x₀ in (collect(a₀), SVector(a₀))
+
+        F(x) = x .- 5 .* sin.(x) ./ 2
+        prob = x₀ isa SVector ? NonlinearProblem((x, p) -> F(x)) :
+               NonlinearProblem((r, x, p) -> (r .= F(x); r))
+        x, Fx = copy(x₀), F(x₀)
+        s = start!!(init_state(m, prob, x, nothing), m, prob, x, Fx, nothing, rnorm(Fx))
+        for _ in 1:steps
+            x₊, F₊, s, info = step!!(s, m, prob, x, Fx, nothing)
+            @test info.code === SUCCESS
+            x, Fx = copy(x₊), copy(F₊)
+        end
+        anderson_states = m isa Switch ? (s.s1, s.s2) :
+                          filter(t -> t isa AndersonState, s.states)
+        f_best = minimum(t -> t.fnorm_best, anderson_states)
+        @test f_best < rnorm(Fx)
+        status = SolverStatus{Float64}(
+            MAXITERS, Int32(steps), rnorm(Fx), 0.0, Int32(0), false, Int32(-1), NaN, NaN)
+        x_out, st, _ = finish!!(s, m, prob, x, Fx, status)
+        @test isapprox(rnorm(F(x_out)), f_best; rtol = 8 * eps(Float64))
+        @test isapprox(st.fnorm, f_best; rtol = 8 * eps(Float64))
+        @test st.code === MAXITERS
+    end
 end

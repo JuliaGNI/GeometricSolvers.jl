@@ -92,20 +92,22 @@ end
     return st.rank != Int32(-1) || isfinite(st.nullnorm) || isfinite(st.gradratio)
 end
 
+# As `_finish_member_states` of `Additive`, and the status is the last member's that carries
+# diagnostics, with the residual norm at the iterate returned.
 @inline function _finish_multiplicative_states(
         ::Tuple{}, ::Tuple{}, prob, x, Fx, status::SolverStatus{R},
         st_diag::SolverStatus{R}) where {R}
-    return (), st_diag
+    return (), x, restored_best_status(st_diag, status.fnorm)
 end
 
 @inline function _finish_multiplicative_states(
         states::Tuple, members::Tuple, prob, x, Fx, status::SolverStatus{R},
         st_diag::SolverStatus{R}) where {R}
-    _, st1, s1 = finish!!(first(states), first(members), prob, x, Fx, status)
+    x1, st1, s1 = finish!!(first(states), first(members), prob, x, Fx, status)
     st_next = has_diagnostics(st1) ? st1 : st_diag
-    ss_tail, st_final = _finish_multiplicative_states(
-        Base.tail(states), Base.tail(members), prob, x, Fx, status, st_next)
-    return (s1, ss_tail...), st_final
+    ss_tail, x_out, st_final = _finish_multiplicative_states(Base.tail(states),
+        Base.tail(members), prob, x1, Fx, restored_best_status(status, st1.fnorm), st_next)
+    return (s1, ss_tail...), x_out, st_final
 end
 
 @inline function finish!!(
@@ -114,10 +116,10 @@ end
     st_init = SolverStatus{R}(
         status.code, status.iterations, status.fnorm, status.stepnorm,
         status.step_failures, status.promoted, Int32(-1), R(NaN), R(NaN))
-    states, st_out = _finish_multiplicative_states(
+    states, x_out, st_out = _finish_multiplicative_states(
         state.states, m.members, prob, x, Fx, status, st_init)
     # each member counts only its own sub-steps, so `Multiplicative` keeps no count
-    return x, with_calls(st_out, 0, 0), MultiplicativeState(states, state.Fx, state.x₀)
+    return x_out, with_calls(st_out, 0, 0), MultiplicativeState(states, state.Fx, state.x₀)
 end
 
 @inline function _step_multiplicative_tail(

@@ -3,9 +3,32 @@
 
 const WeightRule = Union{OptimalWeights, FixedWeights}
 
-# The problems a combinator state is built for: a `NonlinearProblem`, and the reduced problem that
-# `init_state(m, ::StationarityProblem, x₀, p; b)` builds its method's state for.
-const CombinatorProblem = Union{NonlinearProblem, ReducedStatProb}
+# The type is defined here, before `CombinatorProblem` names it; its methods are in
+# `src/composition/preconditioning.jl`.
+"""
+    LeftPreconditionedProblem(prob, inner, state, work, code)
+
+The problem that `outer` of a [`LeftPreconditioned`](@ref) method solves: the user's problem
+`prob`, the inner method `inner`, the inner method's state in the iterate's element type, the
+iterate buffer that one inner step runs on — a step of an array iterate writes into its `x`, so the
+residual of this problem steps a copy — and a `Ref` that holds the code of the last inner step.
+Its residual is ``r^\\ell(y) = y - N(y)``, one
+[`step!!`](@ref) of `inner` from `(y, F(y))` subtracted from `y`, so [`residual!!`](@ref) evaluates
+it and a [`LineFunction`](@ref) merits it.
+"""
+struct LeftPreconditionedProblem{P, I, S, W} <: AbstractNonlinearProblem
+    prob::P
+    inner::I
+    state::S
+    work::W
+    code::Base.RefValue{ReturnCode}
+end
+
+# The problems a combinator state is built for: a `NonlinearProblem`, the reduced problem that
+# `init_state(m, ::StationarityProblem, x₀, p; b)` builds its method's state for, and the
+# preconditioned problem that the outer method of a `LeftPreconditioned` solves.
+const CombinatorProblem = Union{
+    NonlinearProblem, ReducedStatProb, LeftPreconditionedProblem}
 
 """
     Additive(m₁, m₂, ...; weights = OptimalWeights())
@@ -82,12 +105,18 @@ end
     return (s1, s_tail...)
 end
 
-@inline _finish_member_states(::Tuple{}, ::Tuple{}, prob, x, Fx, status) = ()
+# The members finish in order, each on the iterate and the residual norm that the member before it
+# returned: an `Anderson` or `Broyden` member restores its best iterate only where that beats the
+# one an earlier member restored. Returns the states, the iterate and that norm.
+@inline function _finish_member_states(::Tuple{}, ::Tuple{}, prob, x, Fx, status)
+    return (), x, status.fnorm
+end
 @inline function _finish_member_states(states::Tuple, members::Tuple, prob, x, Fx, status)
-    _, _, s1 = finish!!(first(states), first(members), prob, x, Fx, status)
-    s_tail = _finish_member_states(
-        Base.tail(states), Base.tail(members), prob, x, Fx, status)
-    return (s1, s_tail...)
+    x1, st1, s1 = finish!!(first(states), first(members), prob, x, Fx, status)
+    s_tail, x_out, fnorm = _finish_member_states(
+        Base.tail(states), Base.tail(members), prob,
+        x1, Fx, restored_best_status(status, st1.fnorm))
+    return (s1, s_tail...), x_out, fnorm
 end
 
 @inline function init_state(m::Additive, prob::CombinatorProblem, x, p)
@@ -113,13 +142,14 @@ end
 @inline function finish!!(
         state::AdditiveState, m::Additive, prob, x, Fx,
         status::SolverStatus{R}) where {R}
-    states = _finish_member_states(state.states, m.members, prob, x, Fx, status)
+    states, x_out, fnorm = _finish_member_states(
+        state.states, m.members, prob, x, Fx, status)
     st = SolverStatus{R}(
-        status.code, status.iterations, status.fnorm, status.stepnorm,
+        status.code, status.iterations, fnorm, status.stepnorm,
         status.step_failures, status.promoted, Int32(-1), R(NaN), R(NaN))
     new_state = AdditiveState(
         states, state.Fx, state.xs, state.Fxs, state.d, state.xt, state.work)
-    return x, st, new_state
+    return x_out, st, new_state
 end
 
 @inline function is_hard_failure(info::StepInfo)
@@ -187,6 +217,10 @@ end
     return (x1, xs_t...), (F1, Fs_t...), (s1_new, ss_t...), (info1, infos_t...)
 end
 
+# A problem whose derivative reads state that its last residual evaluation left, the
+# preconditioned problem of a `RAS` inner map, evaluates its residual at `x` again, into `F`.
+@inline resync_point!(prob, F, x, p) = nothing
+
 @inline function _step_additive_r3(
         ::Tuple{}, ::Tuple{}, ::Tuple{}, ::Tuple{}, prob, x, Fx, p, merit₀)
     return (), ()
@@ -199,6 +233,9 @@ end
     x1, F1, s1_new, info1 = step!!(s1, first(members), prob, x1_buf, F1_buf, p)
     copy!!(first(xs), x1)
     copy!!(first(Fxs), F1)
+    # the next member steps from `x`, and `prob` may hold state of this member's last trial point:
+    # the next member's residual buffer, which it overwrites with `Fx`, takes the re-evaluation
+    length(members) > 1 && resync_point!(prob, first(Base.tail(Fxs)), x, p)
     ss_t, infos_t = _step_additive_r3(
         Base.tail(states), Base.tail(members), Base.tail(xs), Base.tail(Fxs),
         prob, x, Fx, p, merit₀)
@@ -347,6 +384,8 @@ function step!!(
             x₊ = state.xs[k_best]
             F₊ = state.Fxs[k_best]
             fnorm₊ = f_best
+            # the evaluation at the combined point left `prob` there: the next step starts at `x₊`
+            resync_point!(prob, state.Fx, x₊, p)
         end
     end
     @. state.d = x₊ - x

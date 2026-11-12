@@ -7,10 +7,12 @@
 using Adapt: Adapt
 using ADTypes: AutoForwardDiff
 using GeometricSolvers
-using GeometricSolvers: BlockPartition, BlockResidual, LeftPreconditioned,
+using GeometricSolvers: Additive, Anderson, BlockPartition, BlockResidual, Broyden,
+                        Deflated, LeftPreconditioned,
                         LeftPreconditionedProblem, LeftPreconditionedState,
                         Multiplicative, NONFINITE, Newton, NonlinearProblem, Picard, RAS,
-                        RASState, SINGULAR, SUCCESS, StepInfo, block_jacobians,
+                        RASState, Repeat, SINGULAR, SUCCESS, StationarityProblem, StepInfo,
+                        Switch, block_jacobians,
                         block_residual, block_residuals, init_state, jacobian!!, jvp!!,
                         norm2, prepare_ad, ras_counts,
                         ras_prolongate!, ras_sweep!!, raspen_jacobian!, raspen_jvp!,
@@ -846,6 +848,9 @@ end
     @test_throws ArgumentError init_state(m, prob, copy(x0), nothing)
     @test_throws msg init_state(m, prob, copy(x0), nothing)
     @test_throws msg solve(prob, copy(x0), m; max_iterations = 20)
+    # a wrapped outer method reaches the same refusal
+    @test_throws msg init_state(
+        LeftPreconditioned(Repeat(gmres, 2), Newton()), prob, copy(x0), nothing)
     # the same outer on its default factorization, and a GMRES Newton as the inner map, are taken
     @test init_state(
         LeftPreconditioned(Newton(; globalization = Backtracking()), Newton()),
@@ -853,6 +858,144 @@ end
     x, status = solve(prob, copy(x0), LeftPreconditioned(Newton(), gmres); max_iterations = 50)
     @test status.code == SUCCESS
     @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
+end
+
+@testset "A Repeat outer method takes count outer steps on rˡ, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    x0 = T[1, 1.5]
+    Fx0 = residual!!(similar(x0), prob, x0, nothing)
+    inner = Picard(; damping = one(T) / 2)
+    # one step of the repeated outer is two steps of the plain one
+    x_rep, _, info = one_step(
+        prob, LeftPreconditioned(Repeat(Newton(), 2), inner), copy(x0), copy(Fx0))
+    plain = LeftPreconditioned(Newton(), inner)
+    x_1, F_1, _ = one_step(prob, plain, copy(x0), copy(Fx0))
+    x_2, _, _ = one_step(prob, plain, x_1, F_1)
+    @test info.code == SUCCESS
+    @test x_rep != x0
+    @test isapprox(x_rep, x_2; rtol = 8 * eps(T))
+    x, status = solve(prob, copy(x0), LeftPreconditioned(Repeat(Newton(), 2), inner);
+        max_iterations = 50)
+    @test status.code == SUCCESS
+    @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
+end
+
+@testset "The other combinators are outer methods on rˡ, $T, $(nameof(typeof(outer)))" for T in REAL_ELTYPES,
+    outer in (Multiplicative(Newton(), Newton()), Additive(Newton(), Picard()),
+        Switch(Newton(), Newton()), Anderson(Picard(), 2), Broyden(2))
+
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    m = LeftPreconditioned(outer, Picard(; damping = one(T) / 2))
+    x, status = solve(prob, T[1, 1.5], m; max_iterations = 50)
+    @test status.code == SUCCESS
+    @test x ≈ fill(cbrt(T(2)), 2) rtol = sqrt(eps(T))
+end
+
+# The members of an `Additive` share the RAS state, and the RASPEN Jacobian reads the block factors
+# of its last sweep: every member steps from the factors at the iterate, not at the trial point of
+# the member before it. All the weight on the second member makes the step its step alone.
+@testset "Every Additive member on RASPEN steps with the factors at the iterate, $T" for T in REAL_ELTYPES
+    n = 8
+    part = BlockPartition(n, 3; overlap = 1)
+    prob = coupled_problem(T, part; jacobians = true)
+    ras = RAS(part; max_iterations = 30, rtol = sqrt(eps(T)))
+    x0 = T[0.3 + j / 10 for j in 1:n]
+    Fx0 = residual!!(similar(x0), prob, x0, nothing)
+    outer = Additive((Newton(), Newton()), FixedWeights(zero(T), one(T)))
+    x_add, _, info = one_step(prob, LeftPreconditioned(outer, ras), copy(x0), copy(Fx0))
+    x_1, _, _ = one_step(prob, LeftPreconditioned(Newton(), ras), copy(x0), copy(Fx0))
+    @test info.code == SUCCESS
+    @test x_add != x0
+    @test isapprox(x_add, x_1; rtol = 8 * eps(T))
+end
+
+# The safeguard of an `Additive` replaces the combined point by the best candidate, and the
+# residual evaluation at the combined point left the RAS state there: the next member of the
+# `Multiplicative` outer must step with the factors at the candidate. A tiny `ρ` forces the
+# fallback, and the best candidate is the Newton step, so the result is that of two Newton steps.
+@testset "The Additive safeguard leaves the RASPEN factors at the candidate it returns, $T" for T in REAL_ELTYPES
+    n = 8
+    part = BlockPartition(n, 3; overlap = 1)
+    prob = coupled_problem(T, part; jacobians = true)
+    ras = RAS(part; max_iterations = 30, rtol = sqrt(eps(T)))
+    x0 = T[0.3 + j / 10 for j in 1:n]
+    Fx0 = residual!!(similar(x0), prob, x0, nothing)
+    add = Additive((Newton(), Picard(; damping = T(1) / 2)), OptimalWeights(;
+        ρ = T(1) / 1000))
+    x_add, _, info = one_step(
+        prob, LeftPreconditioned(Multiplicative(add, Newton()), ras), copy(x0), copy(Fx0))
+    x_ref, _, _ = one_step(
+        prob, LeftPreconditioned(Multiplicative(Newton(), Newton()), ras), copy(x0), copy(Fx0))
+    @test info.code == SUCCESS
+    @test info.failures >= 1
+    @test x_add != x0
+    @test isapprox(x_add, x_ref; rtol = 8 * eps(T))
+end
+
+# An `Anderson` whose trial point fails the residual-growth safeguard returns the member's
+# candidate, and the evaluation at the trial point left the RAS state there: a member after it in a
+# combinator would read the factors of the trial point, or none if that sweep failed. After every
+# outer step, the RASPEN Jacobian at the returned iterate is the one of a fresh sweep there. This
+# start takes the safeguard once in its first steps.
+@testset "An Anderson growth restart leaves the RASPEN factors at the iterate it returns" begin
+    T = Float64
+    n = 8
+    part = BlockPartition(n, 3; overlap = 1)
+    prob = coupled_problem(T, part; jacobians = true)
+    m = LeftPreconditioned(Anderson(Picard(), 2; restart_factor = 3),
+        RAS(part; max_iterations = 30, rtol = 1e-12))
+    x = T[-1.4, -0.3, 2.3, 0.9, 1.4, 0.9, 2.4, 2.7]
+    Fx = residual!!(similar(x), prob, x, nothing)
+    s = init_state(m, prob, x, nothing)
+    s = start!!(s, m, prob, x, Fx, nothing, rnorm(Fx))
+    failures = 0
+    for _ in 1:30
+        x₊, F₊, s, info = step!!(s, m, prob, x, Fx, nothing)
+        x, Fx = copy(x₊), copy(F₊)
+        failures += info.failures
+        J = raspen_jacobian!(zeros(T, n, n), s.problem.state, prob, x, nothing)
+        residual!!(similar(x), s.problem, x, nothing)
+        J_fresh = raspen_jacobian!(zeros(T, n, n), s.problem.state, prob, x, nothing)
+        @test isapprox(J, J_fresh; rtol = 8 * eps(T))
+        (info.code == SUCCESS && rnorm(Fx) > 1e-12) || break
+    end
+    @test failures >= 1
+end
+
+# `Anderson` and `Broyden` as the outer method, or as a member of a combinator outer method, keep
+# the best preconditioned residual and restore it when a solve ends unconverged: the status reports
+# the global residual at the iterate it returns, not the preconditioned norm, which here is half of
+# it.
+@testset "An unconverged solve reports the global residual, $T, $(nameof(typeof(outer)))" for T in REAL_ELTYPES,
+    outer in (Anderson(Picard(), 2), Broyden(2), Repeat(Anderson(Picard(), 2), 1),
+        Multiplicative(Broyden(2), Picard()))
+
+    prob = NonlinearProblem((r, x, p) -> (r .= x; nothing))
+    m = LeftPreconditioned(outer, Picard(; damping = one(T) / 2))
+    for iterations in (0, 1)
+        x, status = solve(prob, T[1], m; max_iterations = iterations)
+        @test status.code == GeometricSolvers.MAXITERS
+        @test (x[1] != 1) == (iterations > 0)
+        @test status.fnorm == abs(x[1])
+    end
+end
+
+@testset "LeftPreconditioned refuses a Deflated problem, $T" for T in REAL_ELTYPES
+    prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    x0 = T[1, 1.5]
+    m = LeftPreconditioned(Newton(), Picard(; damping = one(T) / 2))
+    def = Deflated(prob, (T[1, 1],))
+    msg = "LeftPreconditioned does not take a Deflated problem"
+    @test_throws ArgumentError init_state(m, def, copy(x0), nothing)
+    @test_throws msg init_state(m, def, copy(x0), nothing)
+    @test_throws msg solve(def, copy(x0), m; max_iterations = 20)
+    sp = StationarityProblem((x, p) -> sum(x .^ 4) / 4 - 2 * sum(x))
+    @test_throws msg solve(Deflated(sp, (T[1, 1],)), copy(x0), m; max_iterations = 20)
+    # the reverse composition: a Deflated around the preconditioned problem is refused by its
+    # constructor
+    lprob = init_state(m, prob, copy(x0), nothing).problem
+    @test_throws "Deflated needs a NonlinearProblem or a StationarityProblem" Deflated(
+        lprob, (T[1, 1],))
 end
 
 # --- Check 6: the P8 benchmark counters -------------------------------------------------------
