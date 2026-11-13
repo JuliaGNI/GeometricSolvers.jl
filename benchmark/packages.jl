@@ -630,7 +630,7 @@ const N_RUNS = 5
     MIN_RUN
 
 The shortest timed run, in seconds: a run solves `k` times, with `k` the smallest power of two
-for which it lasts at least this long.
+for which two successive runs each last at least this long.
 """
 const MIN_RUN = 1e-3
 
@@ -653,15 +653,14 @@ end
 """
     time_cell(row, invoke)
 
-The times of a cell after its warm-up solve: the batch `k`, the smallest power of two with a run
-of at least `MIN_RUN`, found once, and the time per solve of each of the `N_RUNS` runs of `k`
-solves. A first run of one solve, whose time is not read, compiles `timed_run` for the call, so
-that no compilation enters the run that decides `k`.
+The times of a cell after its warm-up solve: the batch `k`, the smallest power of two for which
+two successive runs each last at least `MIN_RUN`, found once, and the time per solve of each of
+the `N_RUNS` runs of `k` solves. Two runs, so that one run slowed by a pause, such as a garbage
+collection or the compilation of `timed_run` for the call, does not decide `k`.
 """
 function time_cell(row::Row, invoke)
-    timed_run(row, invoke, 1)
     k = 1
-    while k * timed_run(row, invoke, k) < MIN_RUN
+    while k * min(timed_run(row, invoke, k), timed_run(row, invoke, k)) < MIN_RUN
         k *= 2
     end
     return (; k, times = [timed_run(row, invoke, k) for _ in 1:N_RUNS])
@@ -701,6 +700,44 @@ end
 Run `worker_cmd(script, args...)` and wait for it.
 """
 spawn_worker(script, args...) = run(worker_cmd(script, args...))
+
+"""
+    eltype_named(name)
+
+The element type `Float32` or `Float64` that `name` names.
+"""
+function eltype_named(name)
+    name == "Float32" ? Float32 :
+    name == "Float64" ? Float64 :
+    error("no element type $name")
+end
+
+"""
+    merge_part_files(out, header, cells, group, key, part)
+
+Write `header` to `out`, then, for each cell `c` of `cells` in order, the next line of the part
+file `part(group(c))`, which must start with `key(c) * ","`. Throw an error when a line is
+another cell's or a part has a line left over; remove the parts after the merge.
+"""
+function merge_part_files(out, header, cells, group, key, part)
+    gs = unique(group.(cells))
+    lines = Dict(g => readlines(part(g)) for g in gs)
+    next = Dict(g => 0 for g in gs)
+    open(out, "w") do io
+        println(io, header)
+        for c in cells
+            g = group(c)
+            line = lines[g][next[g] += 1]
+            startswith(line, key(c) * ",") ||
+                error("$(part(g)): line $(next[g]) is not the cell $(key(c))")
+            println(io, line)
+        end
+    end
+    for g in gs
+        next[g] == length(lines[g]) || error("$(part(g)): lines left over")
+        rm(part(g))
+    end
+end
 
 """
     start_worker(label)

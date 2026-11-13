@@ -4,7 +4,8 @@
 # `<dir>/mixed.csv`, `stage.csv`, `anderson.csv` and `sparse.csv`.
 #
 # Usage: julia --project=benchmark benchmark/blocks.jl <dir>
-#        julia --project=benchmark benchmark/blocks.jl <dir> --worker <block> <package> <eltype>
+#        julia --threads=1 --project=benchmark benchmark/blocks.jl <dir> \
+#            --worker <block> <package> <eltype>
 #        julia --project=benchmark benchmark/blocks.jl <dir> --merge
 #
 # The first form runs every worker, then merges. A worker writes the cells of one block, package
@@ -192,9 +193,7 @@ block_part_path(dir, block, package, eltype) = joinpath(dir, "$block-$package-$e
 
 function block_worker(dir, block, package, eltype)
     start_worker("blocks $block $package $eltype")
-    T = eltype == "Float32" ? Float32 :
-        eltype == "Float64" ? Float64 :
-        error("no element type $eltype")
+    T = eltype_named(eltype)
     rows = Dict(rowkey(r) => r for r in benchmark_rows(T))
     cells = filter(b -> b.package == package && b.eltype == eltype, block_cells(block))
     open(block_part_path(dir, block, package, eltype), "w") do io
@@ -211,25 +210,10 @@ block_groups(block) = unique([(b.package, b.eltype) for b in block_cells(block)]
 function block_merge_parts(dir)
     for block in BLOCKS
         cells = block_cells(block)
-        parts = Dict(g => readlines(block_part_path(dir, block, g...))
-        for g in block_groups(block))
-        next = Dict(g => 0 for g in keys(parts))
-        open(joinpath(dir, "$block.csv"), "w") do io
-            println(io, BLOCK_HEADER)
-            for b in cells
-                g = (b.package, b.eltype)
-                line = parts[g][next[g] += 1]
-                key = join([b.block; collect(b.key); b.eltype; b.variant; b.package], ",")
-                startswith(line, key * ",") ||
-                    error("$(block_part_path(dir, block, g...)): line $(next[g]) is not the cell $key")
-                println(io, line)
-            end
-        end
-        for g in keys(parts)
-            next[g] == length(parts[g]) ||
-                error("$(block_part_path(dir, block, g...)): lines left over")
-            rm(block_part_path(dir, block, g...))
-        end
+        merge_part_files(joinpath(dir, "$block.csv"), BLOCK_HEADER, cells,
+            b -> (b.package, b.eltype),
+            b -> join([b.block; collect(b.key); b.eltype; b.variant; b.package], ","),
+            g -> block_part_path(dir, block, g...))
         println("$block.csv: $(length(cells)) cells")
     end
 end

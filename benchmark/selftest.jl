@@ -338,6 +338,16 @@ end
         compiles = c -> (; passed = (;),
             call = () -> busy(first[] ? (first[] = false; 2e-3) : 2e-4))
         @test time_cell(row, compiles).k == 8
+        # One slow run in the search, as a pause for garbage collection gives, does not decide
+        # the batch: the second call, the second run of the search at k = 1, takes 2 ms.
+        calls = Ref(0)
+        pauses = c -> (; passed = (;),
+            call = () -> busy((calls[] += 1) == 2 ? 2e-3 : 2e-4))
+        @test time_cell(row, pauses).k == 8
+        # The call and its copy of the start are made before the timer starts: a call that takes
+        # 1 ms to make does not enter the time of its solve of 0.2 ms.
+        makes = c -> (busy(1e-3); (; passed = (;), call = () -> busy(2e-4)))
+        @test all(t -> t < 4e-4, time_cell(row, makes).times)
         # Each solve takes its own copy of the start, and the row's start stays as it was.
         invoke = adapter(
             "GeometricSolvers", PAIRING["Newton Backtracking LU"][1].build(Float64),
@@ -367,6 +377,8 @@ end
             @test_throws r"a timing process runs" start_worker("selftest")
         end
         @test BLAS.get_num_threads() == 1
+        @test eltype_named("Float32") === Float32 && eltype_named("Float64") === Float64
+        @test_throws r"no element type" eltype_named("Float16")
     end
 
     @testset "the note of a timed cell" begin
@@ -375,6 +387,10 @@ end
         @test timing_note(c, c.code, c.iterations, string(c.f_evals)) == ""
         note = timing_note(c, c.code, "99", string(c.f_evals))
         @test note == "differs from correctness.csv: iterations 99 → $(c.iterations)"
+        @test timing_note(c, c.code, c.iterations, "999") ==
+              "differs from correctness.csv: f_evals 999 → $(c.f_evals)"
+        @test timing_note(c, "-7", c.iterations, string(c.f_evals)) ==
+              "differs from correctness.csv: code -7 → $(c.code)"
         boom(y, x, p) = throw(DomainError(x[1], "boom"))
         e = run_cell(Row{Float64}("selftest", "boom", "x0", boom, [1.0, 2.0]),
             "Newton Static LU", "GeometricSolvers")
@@ -402,6 +418,13 @@ end
         line = split(block_line(stage, rows32), ",")
         @test length(line) == 23 && line[8] == "ran" && line[15] == "0.0009765625f0"
         @test all(t -> parse(Float64, t) > 0, line[16:20])
+        # The package receives the stage tolerance: this cell stops above √eps(Float32).
+        loose = BlockCell(
+            "stage", "Float32", ("midpoint", "HarmonicOscillator h=0.1", "V0"),
+            "Broyden", "GeometricSolvers")
+        run = block_run(loose, rows32)
+        c = run_invoked(run.row, loose.variant, loose.package, run.invoke; run.tol, run.p)
+        @test c.success && sqrt(eps(Float32)) < c.fnorm ≤ STAGE_TOL
         # The stage cells that do not run: NLsolve's, and a pair without a method.
         for (package, column, status) in (
             ("NLsolve", "Newton Backtracking LU", "no Float32"),
@@ -519,6 +542,13 @@ end
                 @test c.success && norm(c.x - sp.z_star, Inf) ≤ sqrt(eps(T))
                 @test run.p === sp.p && run.tol === sqrt(eps(T))
             end
+        end
+        # The size of a cell's problem follows the N of its key.
+        for N in SPARSE_SIZES
+            b = BlockCell(
+                "sparse", "Float64", ("sparse", "bracket N=$N", "z0"), "gs-sparse",
+                "GeometricSolvers")
+            @test length(block_run(b, Dict()).row.x0) == 2N
         end
         sp = sparse_row(125, Float64)
         @test size(sp.prototype) == (250, 250)

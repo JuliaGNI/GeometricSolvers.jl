@@ -4,7 +4,7 @@
 # cell, in the order of `correctness.csv`, to `<dir>/timings.csv`.
 #
 # Usage: julia --project=benchmark benchmark/timing.jl <dir>
-#        julia --project=benchmark benchmark/timing.jl <dir> --worker <package> <eltype>
+#        julia --threads=1 --project=benchmark benchmark/timing.jl <dir> --worker <package> <eltype>
 #        julia --project=benchmark benchmark/timing.jl <dir> --merge
 #
 # The first form runs every worker, then merges. A worker times the ran cells of one package and
@@ -65,9 +65,7 @@ end
 
 function worker(dir, package, eltype)
     start_worker("timing $package $eltype")
-    T = eltype == "Float32" ? Float32 :
-        eltype == "Float64" ? Float64 :
-        error("no element type $eltype")
+    T = eltype_named(eltype)
     rows = Dict((r.set, r.problem, r.start) => r for r in benchmark_rows(T))
     cells = filter(f -> f[6] == package && f[4] == eltype, ran_cells(dir))
     open(part_path(dir, package, eltype), "w") do io
@@ -83,22 +81,8 @@ groups(cells) = unique([(String(f[6]), String(f[4])) for f in cells])
 
 function merge_parts(dir)
     cells = ran_cells(dir)
-    parts = Dict(g => readlines(part_path(dir, g...)) for g in groups(cells))
-    next = Dict(g => 0 for g in keys(parts))
-    open(joinpath(dir, "timings.csv"), "w") do io
-        println(io, TIMINGS_HEADER)
-        for f in cells
-            g = (String(f[6]), String(f[4]))
-            line = parts[g][next[g] += 1]
-            startswith(line, join(f[1:6], ",") * ",") ||
-                error("$(part_path(dir, g...)): line $(next[g]) is not the cell $(join(f[1:6], ","))")
-            println(io, line)
-        end
-    end
-    for g in keys(parts)
-        next[g] == length(parts[g]) || error("$(part_path(dir, g...)): lines left over")
-        rm(part_path(dir, g...))
-    end
+    merge_part_files(joinpath(dir, "timings.csv"), TIMINGS_HEADER, cells,
+        f -> (String(f[6]), String(f[4])), f -> join(f[1:6], ","), g -> part_path(dir, g...))
     println("timings.csv: $(length(cells)) cells")
 end
 

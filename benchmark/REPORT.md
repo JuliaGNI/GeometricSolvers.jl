@@ -3,9 +3,8 @@
 This benchmark runs GeometricSolvers and three other Julia packages for nonlinear systems on one
 set of problems: SimpleSolvers, SimpleNonlinearSolve and NLsolve. It reports which package solves
 which system, and whether the solutions agree. Each package runs with its own method that is
-closest to each column of GeometricSolvers' standard test set. The mixed-precision block of Y2
-adds SIAMFANLEquations' `nsol`, with MultiPrecisionArrays' `mplu`, as a baseline. The report
-states the conditions of each comparison; it ranks no package.
+closest to each column of GeometricSolvers' standard test set. The report states the conditions of
+each comparison; it ranks no package.
 
 Three packages are left out:
 
@@ -20,11 +19,8 @@ Three packages are left out:
 | script | what it does |
 |:--|:--|
 | `correctness.jl [outdir]` | runs every cell, writes `correctness.csv` and `rows.csv` (by default to `benchmark/results/`), and prints the tables of this report |
-| `timing.jl <dir>` | times every ran cell of `<dir>/correctness.csv` and writes `<dir>/timings.csv` |
-| `blocks.jl <dir>` | runs and times the four blocks of Y2 and writes `<dir>/mixed.csv`, `stage.csv`, `anderson.csv` and `sparse.csv` |
-| `profiles.jl <dir>` | prints the tables of the Y2 section from the tables of `<dir>` |
 | `verify.jl <dir> [--structure]` | checks the tables of `<dir>`, this report and the traces with code of its own |
-| `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows; and the timed runs, the note of a timed cell, the tolerance of each adapter, the variant labels, the `nsol` adapter, the sparse variants and the profiles |
+| `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows |
 | `check_midpoint.jl` | checks each midpoint residual against one step of `ImplicitMidpoint` |
 | `trace.jl <set> <problem> <start> <eltype> <column> [outfile]` | writes the iteration trace of one row |
 
@@ -376,7 +372,16 @@ This section times every cell of Y1 that ran, reads the timings and Y1's counts 
 profiles, and adds four blocks of cells: mixed precision, a looser stage tolerance, Anderson
 acceleration over Newton, and a sparse problem. Each table states the conditions of its
 comparison. A time is a measurement under the load stated below, not a gate, and a second run
-gives other times.
+gives other times. The mixed-precision block adds SIAMFANLEquations' `nsol`, with
+MultiPrecisionArrays' `mplu`, as a baseline.
+
+| script | what it does |
+|:--|:--|
+| `timing.jl <dir>` | times every ran cell of `<dir>/correctness.csv` and writes `<dir>/timings.csv` |
+| `blocks.jl <dir>` | runs and times the four blocks and writes `<dir>/mixed.csv`, `stage.csv`, `anderson.csv` and `sparse.csv` |
+| `profiles.jl <dir>` | prints the tables of this section from the tables of `<dir>` |
+| `verify.jl <dir> [--structure]` | checks the tables of this section too |
+| `selftest.jl` | tests the timed runs and the batch, the note of a timed cell, the tolerance of each adapter, the variant labels, the `nsol` adapter, the sparse variants, the merge of the parts and the profiles too |
 
 ### Y2 · Method
 
@@ -384,13 +389,14 @@ gives other times.
   `status = ran`, in one fresh Julia process per package and precision, seven in all. Each
   process starts with `--startup-file=no` and `--threads=1`, and calls `BLAS.set_num_threads(1)`
   before any solve. Per cell it makes one warm-up solve, then finds the batch `k`, the smallest
-  power of two for which a run of `k` solves lasts at least 1 ms, and then makes five runs of `k`
-  solves. Before the search, one run of one solve, whose time is not read, compiles the timing
-  loop for the cell's call, so that no compilation decides `k`. Each solve gets its own counting wrapper of the residual and its own copy of the start,
-  made before the timer starts; the timed call builds the package's problem object and solves, so
-  a time includes the work of the counting wrapper. A run's time per solve is its elapsed time
-  divided by `k`. `median_s` is the
-  median of the five runs, and `spread` is `(max − min) / median`. A solve that throws is timed to
+  power of two for which two successive runs of `k` solves each last at least 1 ms, and then makes
+  five runs of `k` solves. Two runs, so that one run slowed by a pause, such as a garbage
+  collection or the compilation of the timing loop for the cell's call, does not decide `k`. Each
+  solve gets its own counting wrapper of the residual and its own copy of the start, made before
+  the timer starts; the timed call builds the package's problem object and solves, so a time
+  includes the work of the counting wrapper. A run's time per solve is its elapsed time divided by
+  `k`. `median_s` is the median of the five runs, and `spread` is `(max − min) / median`. A solve
+  that throws is timed to
   the throw; the 45 cells of `correctness.csv` with the code `ERROR` have the note `throws`.
 - **The warm-up against Y1.** The warm-up solve of a cell gives its code, iterations and
   `f_evals` again. A cell whose values differ from `correctness.csv` is timed all the same, and its
@@ -407,11 +413,11 @@ gives other times.
   `m` as `Anderson{m}(<member>)`, and `nsol` as `nsol(sham=<sham>)+FPS{<eltype of its Jacobian
   store>}` or `nsol(sham=<sham>)+mplu`.
 - **The machine.** Apple M4 Max, aarch64 macOS 27.2, Julia 1.13.3. The machine runs other work, so
-  each process prints the `uptime` load at its start. The 1-minute load averages were between 7.18
-  and 12.74 for the seven timing processes and between 3.09 and 11.26 for the 16 block processes.
-  Over the cells of the timed sweep, the median of `spread` is 0.076 and its 90th percentile is
-  0.84. In 278 of the 4661 timed cells, `k` times `median_s` is below 1 ms: the run that decided
-  `k` was slower than the median of the five runs.
+  each process prints the `uptime` load at its start. The 1-minute load averages were between 2.37
+  and 2.73 for the seven timing processes and between 2.23 and 3.39 for the 16 block processes.
+  Over the cells of the timed sweep, the median of `spread` is 0.036 and its 90th percentile is
+  0.56. In 34 of the 4661 timed cells, `k` times `median_s` is below 1 ms: both runs that decided
+  `k` were slower than the median of the five runs.
 - **The versions.** GeometricSolvers from `..`, whose `src/` is that of `301f366`, and the
   packages of Y1 at the versions of Y1. The new packages are pinned in `Project.toml` and resolve
   to MultiPrecisionArrays 0.1.4, SIAMFANLEquations 1.0.3, Sparspak 0.3.15, SparseMatrixColorings
@@ -419,29 +425,29 @@ gives other times.
 
 | process | 1-minute load at its start |
 |:--|--:|
-| timing GeometricSolvers Float32 | 8.19 |
-| timing GeometricSolvers Float64 | 12.74 |
-| timing SimpleSolvers Float32 | 10.33 |
-| timing SimpleSolvers Float64 | 8.89 |
-| timing SimpleNonlinearSolve Float32 | 8.27 |
-| timing SimpleNonlinearSolve Float64 | 7.51 |
-| timing NLsolve Float64 | 7.18 |
-| blocks mixed GeometricSolvers Float64 | 7.14 |
-| blocks mixed SIAMFANLEquations Float64 | 9.37 |
-| blocks stage GeometricSolvers Float32 | 11.06 |
-| blocks stage SimpleSolvers Float32 | 11.26 |
-| blocks stage SimpleNonlinearSolve Float32 | 10.23 |
-| blocks stage NLsolve Float32 | 8.87 |
-| blocks anderson GeometricSolvers Float32 | 8.27 |
-| blocks anderson GeometricSolvers Float64 | 6.93 |
-| blocks sparse GeometricSolvers Float32 | 5.29 |
-| blocks sparse GeometricSolvers Float64 | 4.87 |
-| blocks sparse NLsolve Float32 | 4.30 |
-| blocks sparse NLsolve Float64 | 4.10 |
-| blocks sparse SimpleSolvers Float32 | 3.72 |
-| blocks sparse SimpleSolvers Float64 | 3.43 |
-| blocks sparse SimpleNonlinearSolve Float32 | 3.22 |
-| blocks sparse SimpleNonlinearSolve Float64 | 3.09 |
+| timing GeometricSolvers Float32 | 2.51 |
+| timing GeometricSolvers Float64 | 2.59 |
+| timing SimpleSolvers Float32 | 2.37 |
+| timing SimpleSolvers Float64 | 2.44 |
+| timing SimpleNonlinearSolve Float32 | 2.61 |
+| timing SimpleNonlinearSolve Float64 | 2.73 |
+| timing NLsolve Float64 | 2.59 |
+| blocks mixed GeometricSolvers Float64 | 2.32 |
+| blocks mixed SIAMFANLEquations Float64 | 2.23 |
+| blocks stage GeometricSolvers Float32 | 2.24 |
+| blocks stage SimpleSolvers Float32 | 2.28 |
+| blocks stage SimpleNonlinearSolve Float32 | 2.35 |
+| blocks stage NLsolve Float32 | 2.56 |
+| blocks anderson GeometricSolvers Float32 | 2.36 |
+| blocks anderson GeometricSolvers Float64 | 2.74 |
+| blocks sparse GeometricSolvers Float32 | 3.39 |
+| blocks sparse GeometricSolvers Float64 | 2.77 |
+| blocks sparse NLsolve Float32 | 3.29 |
+| blocks sparse NLsolve Float64 | 2.88 |
+| blocks sparse SimpleSolvers Float32 | 3.17 |
+| blocks sparse SimpleSolvers Float64 | 3.05 |
+| blocks sparse SimpleNonlinearSolve Float32 | 2.91 |
+| blocks sparse SimpleNonlinearSolve Float64 | 2.97 |
 
 ### Y2 · Performance profiles
 
@@ -486,9 +492,9 @@ each table from `correctness.csv` and `timings.csv`.
 
 | solver | τ = 1 | τ = 2 | τ = 4 | τ = 8 | τ = 16 | τ = ∞ |
 |:--|--:|--:|--:|--:|--:|--:|
-| GeometricSolvers | 0.608 | 0.696 | 0.740 | 0.748 | 0.750 | 0.750 |
-| SimpleSolvers | 0.112 | 0.501 | 0.520 | 0.533 | 0.534 | 0.534 |
-| SimpleNonlinearSolve | 0.105 | 0.186 | 0.214 | 0.222 | 0.224 | 0.224 |
+| GeometricSolvers | 0.639 | 0.710 | 0.742 | 0.748 | 0.750 | 0.750 |
+| SimpleSolvers | 0.089 | 0.497 | 0.520 | 0.532 | 0.534 | 0.534 |
+| SimpleNonlinearSolve | 0.097 | 0.179 | 0.211 | 0.220 | 0.224 | 0.224 |
 
 #### Profile · Float64 · iterations
 
@@ -517,10 +523,10 @@ each table from `correctness.csv` and `timings.csv`.
 
 | solver | τ = 1 | τ = 2 | τ = 4 | τ = 8 | τ = 16 | τ = ∞ |
 |:--|--:|--:|--:|--:|--:|--:|
-| GeometricSolvers | 0.578 | 0.689 | 0.726 | 0.731 | 0.734 | 0.736 |
-| SimpleSolvers | 0.079 | 0.474 | 0.518 | 0.526 | 0.529 | 0.529 |
-| SimpleNonlinearSolve | 0.087 | 0.189 | 0.214 | 0.223 | 0.225 | 0.225 |
-| NLsolve | 0.081 | 0.392 | 0.441 | 0.445 | 0.449 | 0.451 |
+| GeometricSolvers | 0.576 | 0.690 | 0.727 | 0.733 | 0.734 | 0.736 |
+| SimpleSolvers | 0.071 | 0.460 | 0.518 | 0.526 | 0.529 | 0.529 |
+| SimpleNonlinearSolve | 0.090 | 0.189 | 0.214 | 0.223 | 0.225 | 0.225 |
+| NLsolve | 0.088 | 0.376 | 0.441 | 0.447 | 0.449 | 0.451 |
 
 ### Y2 · DogLeg against Backtracking
 
@@ -533,11 +539,11 @@ the ratios DogLeg / Backtracking are over the rows where both succeed, with a co
 
 | package | eltype | DogLeg successes | Backtracking successes | both | iterations | f_evals | median_s |
 |:--|:--|--:|--:|--:|--:|--:|--:|
-| GeometricSolvers | Float32 | 70 | 68 | 66 | 1.00 | 1.00 | 1.16 |
-| GeometricSolvers | Float64 | 63 | 69 | 61 | 1.00 | 1.00 | 1.15 |
-| SimpleSolvers | Float32 | 64 | 68 | 62 | 1.00 | 0.667 | 0.897 |
-| SimpleSolvers | Float64 | 64 | 69 | 61 | 1.00 | 0.639 | 0.809 |
-| NLsolve | Float64 | 69 | 69 | 66 | 1.00 | 1.00 | 0.998 |
+| GeometricSolvers | Float32 | 70 | 68 | 66 | 1.00 | 1.00 | 1.14 |
+| GeometricSolvers | Float64 | 63 | 69 | 61 | 1.00 | 1.00 | 1.16 |
+| SimpleSolvers | Float32 | 64 | 68 | 62 | 1.00 | 0.667 | 0.849 |
+| SimpleSolvers | Float64 | 64 | 69 | 61 | 1.00 | 0.639 | 0.782 |
+| NLsolve | Float64 | 69 | 69 | 66 | 1.00 | 1.00 | 0.982 |
 
 ### Y2 · Mixed precision
 
@@ -563,9 +569,9 @@ the variant and `gs-f64` both succeed, with a count of 0 taken as 1.
 |:--|:--|--:|--:|--:|--:|
 | gs-f64 | `Newton+Backtracking+LUFactorization` | 69 | 69 | 1.00 | 1.00 |
 | gs-f32 | `Newton+Backtracking+LUFactorization{Float32}` | 67 | 67 | 1.00 | 1.84 |
-| gs-f32-refine | `Newton+Backtracking+LUFactorization{Float32}+Refinement` | 68 | 68 | 1.00 | 1.99 |
-| nsol-f32 | `nsol(sham=1)+FPS{Float32}` | 62 | 62 | 1.00 | 1.02 |
-| nsol-mplu | `nsol(sham=1)+mplu` | 60 | 60 | 1.00 | 3.41 |
+| gs-f32-refine | `Newton+Backtracking+LUFactorization{Float32}+Refinement` | 68 | 68 | 1.00 | 1.97 |
+| nsol-f32 | `nsol(sham=1)+FPS{Float32}` | 62 | 62 | 1.00 | 0.987 |
+| nsol-mplu | `nsol(sham=1)+mplu` | 60 | 60 | 1.00 | 3.31 |
 
 Eight `nsol` cells end in `ERROR`, four per variant: the three starts of problem 20, the one
 system of dimension 1, throw a `MethodError` in `nsol`, and problem 12 from `100u0` throws a
@@ -585,9 +591,9 @@ strict times are those of the timed sweep, from other processes.
 
 | package | successes at eps(Float16) | successes at √eps(Float32) | both | iterations | f_evals | median_s |
 |:--|--:|--:|--:|--:|--:|--:|
-| GeometricSolvers | 143 | 143 | 143 | 1.00 | 1.00 | 0.987 |
-| SimpleSolvers | 98 | 98 | 98 | 1.00 | 1.00 | 1.00 |
-| SimpleNonlinearSolve | 41 | 41 | 41 | — | 1.00 | 0.976 |
+| GeometricSolvers | 143 | 143 | 143 | 1.00 | 1.00 | 0.993 |
+| SimpleSolvers | 98 | 98 | 98 | 1.00 | 1.00 | 0.979 |
+| SimpleNonlinearSolve | 41 | 41 | 41 | — | 1.00 | 0.988 |
 
 ### Y2 · Anderson
 
@@ -601,12 +607,12 @@ of 0 taken as 1.
 | eltype | k | anderson-k successes | newton-k successes | both | iterations | f_evals | median_s |
 |:--|--:|--:|--:|--:|--:|--:|--:|
 | Float32 | 1 | 58 | 68 | 57 | 1.00 | 1.50 | 1.36 |
-| Float32 | 2 | 61 | 68 | 61 | 1.20 | 1.72 | 1.71 |
-| Float32 | 3 | 66 | 67 | 65 | 1.08 | 1.56 | 1.64 |
-| Float32 | 5 | 65 | 67 | 63 | 0.905 | 1.25 | 1.32 |
-| Float64 | 1 | 63 | 69 | 62 | 1.11 | 1.84 | 1.69 |
-| Float64 | 2 | 63 | 71 | 63 | 1.22 | 1.93 | 1.70 |
-| Float64 | 3 | 66 | 70 | 66 | 1.12 | 1.66 | 1.78 |
+| Float32 | 2 | 61 | 68 | 61 | 1.20 | 1.72 | 1.79 |
+| Float32 | 3 | 66 | 67 | 65 | 1.08 | 1.56 | 1.71 |
+| Float32 | 5 | 65 | 67 | 63 | 0.905 | 1.25 | 1.33 |
+| Float64 | 1 | 63 | 69 | 62 | 1.11 | 1.84 | 1.61 |
+| Float64 | 2 | 63 | 71 | 63 | 1.22 | 1.93 | 1.74 |
+| Float64 | 3 | 66 | 70 | 66 | 1.12 | 1.66 | 1.76 |
 | Float64 | 5 | 67 | 69 | 66 | 0.963 | 1.27 | 1.34 |
 
 ### Y2 · The sparse problem
@@ -630,23 +636,23 @@ differ in the Jacobian source and the linear solver:
 
 | variant | N | eltype | status | code | iterations | f_evals | median_s |
 |:--|--:|:--|:--|:--|--:|--:|--:|
-| gs-sparse | 125 | Float32 | ran | SUCCESS | 2 | 3 | 0.000291 |
-| gs-dense | 125 | Float32 | ran | SUCCESS | 2 | 3 | 0.000764 |
+| gs-sparse | 125 | Float32 | ran | SUCCESS | 2 | 3 | 0.000274 |
+| gs-dense | 125 | Float32 | ran | SUCCESS | 2 | 3 | 0.000774 |
 | nlsolve-sparse | 125 | Float32 | no Float32 |  |  |  |  |
 | simplesolvers | 125 | Float32 | no sparse path |  |  |  |  |
 | simplenonlinearsolve | 125 | Float32 | no sparse path |  |  |  |  |
-| gs-sparse | 125 | Float64 | ran | SUCCESS | 3 | 4 | 0.000417 |
-| gs-dense | 125 | Float64 | ran | SUCCESS | 3 | 4 | 0.00177 |
-| nlsolve-sparse | 125 | Float64 | ran | converged | 3 | 4 | 0.000473 |
+| gs-sparse | 125 | Float64 | ran | SUCCESS | 3 | 4 | 0.000420 |
+| gs-dense | 125 | Float64 | ran | SUCCESS | 3 | 4 | 0.00174 |
+| nlsolve-sparse | 125 | Float64 | ran | converged | 3 | 4 | 0.000441 |
 | simplesolvers | 125 | Float64 | no sparse path |  |  |  |  |
 | simplenonlinearsolve | 125 | Float64 | no sparse path |  |  |  |  |
-| gs-sparse | 768 | Float32 | ran | SUCCESS | 2 | 3 | 0.00169 |
-| gs-dense | 768 | Float32 | ran | SUCCESS | 2 | 3 | 0.0659 |
+| gs-sparse | 768 | Float32 | ran | SUCCESS | 2 | 3 | 0.00164 |
+| gs-dense | 768 | Float32 | ran | SUCCESS | 2 | 3 | 0.0638 |
 | nlsolve-sparse | 768 | Float32 | no Float32 |  |  |  |  |
 | simplesolvers | 768 | Float32 | no sparse path |  |  |  |  |
 | simplenonlinearsolve | 768 | Float32 | no sparse path |  |  |  |  |
-| gs-sparse | 768 | Float64 | ran | SUCCESS | 3 | 4 | 0.00252 |
+| gs-sparse | 768 | Float64 | ran | SUCCESS | 3 | 4 | 0.00246 |
 | gs-dense | 768 | Float64 | ran | SUCCESS | 3 | 4 | 0.175 |
-| nlsolve-sparse | 768 | Float64 | ran | converged | 3 | 4 | 0.00260 |
+| nlsolve-sparse | 768 | Float64 | ran | converged | 3 | 4 | 0.00241 |
 | simplesolvers | 768 | Float64 | no sparse path |  |  |  |  |
 | simplenonlinearsolve | 768 | Float64 | no sparse path |  |  |  |  |
