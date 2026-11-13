@@ -217,6 +217,10 @@ if !STRUCTURE
             # Each block is a package that ran on the row: its `#` line gives the cell's method,
             # code, success and counts, and one line `k ‖F‖∞` follows for each of its f_evals.
             ran = haskey(cellsof, key) ? [c for c in cellsof[key] if c[7] == "ran"] : []
+            # `trace.jl` writes one block for each package that ran, in the order of `PKGS`.
+            check([l[4:end] for l in tr[starts]] == [c[6] for c in ran],
+                "traces/$id.txt: the blocks " * join([l[4:end] for l in tr[starts]], " ") *
+                " are not the packages that ran, " * join([c[6] for c in ran], " "))
             for (j, s) in enumerate(starts)
                 stop = j < length(starts) ? starts[j + 1] - 1 : length(tr)
                 k = findfirst(c -> c[6] == tr[s][4:end], ran)
