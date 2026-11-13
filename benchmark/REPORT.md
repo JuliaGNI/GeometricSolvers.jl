@@ -217,8 +217,8 @@ at `(-0.577, 0.577)` and `(0.577, -0.577)`; problem 8, Brown's almost linear fun
 `(1, …, 1)` and at `(0.979, …, 0.979, 1.21)`; problem 11, the trigonometric function, at roots
 that differ by multiples of about `2π` in some components; problem 17 at `(0, 3)` and `(3, 0)`;
 problem 22 at `(-0.707, 1.5)` and `(-1, 2)`; and problem 23 at two roots. In the traced row
-(problem 8, `u0`, `Float64`, `Newton Backtracking LU`) GeometricSolvers and NLsolve reach one root
-in 10 and 14 iterations, SimpleSolvers the other in 77.
+(problem 8, `u0`, `Float64`, `Newton Backtracking LU`) GeometricSolvers and NLsolve reach the root
+`(0.979, …, 0.979, 1.21)` in 10 and 14 iterations, SimpleSolvers the root `(1, …, 1)` in 77.
 
 ### E4 · The Picard column pairs three different fixed-point methods
 
@@ -231,7 +231,7 @@ GeometricSolvers fails, `Fᵀ J F ≤ 0` in 54, all `LINESEARCH_FAILED`; one mor
 `LINESEARCH_FAILED` at `Fᵀ J F / (‖F‖² ‖J‖) = 3.3e-6`; the other 10 reach the iteration cap with
 `Fᵀ J F > 0`, among them problem 19, `F = x ‖x‖²`, on which the step contracts slowly. The
 midpoint residuals of the ODE and HODE scenarios are written as `F(V) = v(…) − V`, so their
-Jacobian is near `−I` for small steps: at the start `Fᵀ J F / ‖F‖²` lies between −1.32 and −1.0,
+Jacobian is near `−I` for small steps: at the start `Fᵀ J F / ‖F‖²` lies between −1.31 and −1.0,
 and `-F` is a direction of increase. SimpleSolvers' `Picard` steps along the same direction and
 halves the step until `‖F‖₂` does not increase; it fails in 67 rows, by its own stop rules or at
 the cap. SimpleNonlinearSolve's `SimpleDFSane` is a spectral residual method: it tries both
@@ -240,8 +240,8 @@ the cap. SimpleNonlinearSolve's `SimpleDFSane` is a spectral residual method: it
 SimpleSolvers fail and SimpleDFSane succeeds, 10 where only SimpleSolvers fails, 10 where only
 GeometricSolvers fails, 1 where only SimpleDFSane fails, and 2 where SimpleSolvers and
 SimpleDFSane fail. In the traced row (pendulum, `Δt = 1.0`, `Float64`) GeometricSolvers ends
-`LINESEARCH_FAILED` after one iteration and SimpleSolvers after two, both at `‖F‖∞ = 0.458`, and
-SimpleDFSane succeeds after 13 calls.
+`LINESEARCH_FAILED` after one iteration and SimpleSolvers stops after two, both at
+`‖F‖∞ = 0.458`, and SimpleDFSane succeeds after 13 calls.
 
 ### E5 · GeometricSolvers' Broyden diverges or reaches the iteration cap
 
@@ -266,8 +266,8 @@ and `ErrorException` has no such method.
 `SimpleBroyden` reaches its iteration cap in all 6 rows. In three midpoint rows (the two
 Lotka–Volterra systems at `Δt = 0.01` in `Float32`, the Toda lattice at `Δt = 1.0` in `Float64`)
 its residual becomes `NaN` and stays `NaN` until the cap: it tests its tolerance only after a step,
-and it scales its first inverse Jacobian by `max(‖x‖, 1) / (2 ‖F‖)`, so from a start with a small
-residual its first step is long. In the two Lotka–Volterra rows the start already meets
+and where `‖F‖₂ ≥ 1e-5` it scales its first inverse Jacobian by `max(‖x‖, 1) / (2 ‖F‖₂)`, so from
+a start with a small residual its first step is long. In the two Lotka–Volterra rows the start already meets
 `τ = 3.45e-4`, and GeometricSolvers ends `SUCCESS` with 0 iterations. In the traced row (Toda
 lattice, `Δt = 1.0`, `Float64`) `‖F‖∞` grows from 0.109 to above 1 within ten calls and ends at
 `NaN`. In the three rows of problem 18 it ends at `‖F‖∞` between 2.4e3 and 1.5e4.
@@ -281,8 +281,9 @@ The four packages take a dogleg step, but each with its own initial radius, acce
 radius update. GeometricSolvers reaches the cap in 12 rows (problems 1, 15, 16 and 22); in problem
 1 its `‖F‖∞` decreases by about 1 % per iteration at the cap. It ends `LINESEARCH_FAILED` in 4
 rows of problem 11, where it rejects a trial at its smallest radius `1e-6`. SimpleSolvers fails in
-14 rows at the cap or by its stop rules, and throws "non-finite direction₂ vector!"
-(`NonlinearSolverException`) in 7 `Float32` rows from `10u0` or `100u0`. NLsolve reaches the cap
+14 rows at the cap or by its stop rules, and throws a `NonlinearSolverException` in 7 `Float32`
+rows from `10u0` or `100u0`, at its second call ("non-finite direction₂ vector!" in problem 3 from
+`100u0`). NLsolve reaches the cap
 in 5 rows. `SimpleTrustRegion` reaches the cap in 19 rows, ends `ShrinkThresholdExceeded` in 3,
 and throws in 2. Its steepest-descent point is `-g`, `g = Jᵀ F`, scaled to the radius, without the
 Cauchy step length `gᵀg / gᵀ Jᵀ J g`; where the radius exceeds the model's minimiser along `-g`,

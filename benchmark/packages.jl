@@ -442,8 +442,8 @@ code_of(cells, package) = cells[findfirst(c -> c.package == package, cells)].cod
 """
     polish(F, x)
 
-`x` refined by GeometricSolvers' `Newton()` in `Float64` with no tolerance, for 200 iterations
-or until its step test stops it: the root that a solution `x` approximates.
+`x` refined by GeometricSolvers' `Newton()` in `Float64` with no tolerance, for at most 200
+iterations: the root that a solution `x` approximates.
 """
 function polish(F, x)
     y, _ = GS.solve(GS.NonlinearProblem(F), Float64.(x), GS.Newton(); f_abstol = 0,

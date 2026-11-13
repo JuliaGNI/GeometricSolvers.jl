@@ -762,7 +762,8 @@ so that a compat-only bump can be told apart from an interface change.
 - **`benchmark/` compares the correctness of GeometricSolvers, SimpleSolvers,
   SimpleNonlinearSolve and NLsolve on the standard test set and on twelve implicit-midpoint stage
   residuals.** It is an environment of its own, with exact `[compat]` versions of the three other
-  solver packages, GeometricProblems and GeometricIntegrators, and GeometricSolvers from `..`.
+  solver packages, LineSearches, GeometricProblems, GeometricIntegrators and ForwardDiff, and
+  GeometricSolvers from `..`.
   `benchmark/correctness.jl` runs the 67 standard starts and the first-step residuals of twelve
   implicit-midpoint scenarios of SolverBenchmark, each in `Float32` and `Float64` with each of
   the 13 columns of the standard test set, by the method of each package that the pairing table
@@ -770,10 +771,10 @@ so that a compat-only bump can be told apart from an interface change.
   `max_iterations = 200` and one ForwardDiff Jacobian. A cell succeeds when its package reports
   success and the harness measures `‖F(x)‖∞ ≤ sqrt(eps(T))`; a row's verdict compares its
   successes and solutions. The results, the iteration traces of the twelve explanations of the
-  434 disagreeing rows, and the report `benchmark/REPORT.md` are committed;
-  `benchmark/verify.jl` checks them with code of its own, `benchmark/selftest.jl` tests the
-  harness, and `benchmark/check_midpoint.jl` checks the midpoint residuals against one step of
-  `ImplicitMidpoint`. The sweep takes about a minute. No source file changes.
+  434 rows whose packages disagree or reach different roots, and the report `benchmark/REPORT.md`
+  are committed; `benchmark/verify.jl` checks them with code of its own, `benchmark/selftest.jl`
+  tests the harness, and `benchmark/check_midpoint.jl` checks the midpoint residuals against one
+  step of `ImplicitMidpoint`. The sweep takes about a minute. No source file changes.
 
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is
