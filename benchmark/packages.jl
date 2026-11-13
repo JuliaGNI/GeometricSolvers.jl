@@ -293,9 +293,7 @@ end
 
 function call_package(::Val{:SimpleSolvers}, objs, c, J!, x0::Vector{T}) where {T}
     x = copy(x0)
-    prob = objs.method isa SS.Picard ? SS.NonlinearProblem(c, x) :
-           SS.NonlinearProblem(c, J!, x)
-    st = SS.solve_with_status!(x, prob, objs.method, nothing;
+    st = SS.solve_with_status!(x, SS.NonlinearProblem(c, J!, x), objs.method, nothing;
         Base.structdiff(objs, NamedTuple{(:method,)})..., f_abstol = tolerance(T),
         f_reltol = 0, max_iterations = MAX_ITERATIONS, verbosity = 0)
     ok = SS.isconverged(st)

@@ -202,8 +202,15 @@ if !STRUCTURE
             key = startswith(tr[1], "key: ") ? tr[1][6:end] : ""
             i = findfirst(r -> join(r[1:5], ",") == key, rows)
             check(i !== nothing && rows[i][7] == id, "traces/$id.txt: key '$key' is no row of $id")
-            blocks = count(l -> startswith(l, "== "), tr)
-            check(blocks ≥ 2, "traces/$id.txt: $blocks package blocks")
+            starts = findall(l -> startswith(l, "== "), tr)
+            check(length(starts) ≥ 2, "traces/$id.txt: $(length(starts)) package blocks")
+            # Each block is a package that ran on the row, and holds at least one call.
+            ran = haskey(cellsof, key) ? [c[6] for c in cellsof[key] if c[7] == "ran"] : []
+            for (j, s) in enumerate(starts)
+                stop = j < length(starts) ? starts[j + 1] - 1 : length(tr)
+                check(tr[s][4:end] in ran && any(l -> occursin(r"^\d+ ", l), tr[s:stop]),
+                    "traces/$id.txt: the block $(tr[s]) is no package that ran, or has no call")
+            end
             check(
                 all(l -> startswith(l, r"key: |== |# ") || occursin(r"^\d+ \S+$", l), tr),
                 "traces/$id.txt: a line that is no call")

@@ -45,6 +45,9 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         @test PAIRING["Newton reuse 3 Backtracking LU"][1].label ==
               "Newton(3)+Backtracking+LUFactorization"
         @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 13 + 20
+        # The nine `Newton` columns with a factorisation take the shared Jacobian.
+        @test [column for (column, m) in STANDARD_COLUMNS if gs_takes_jacobian(m)] ==
+              COLUMNS[1:9]
     end
 
     @testset "every paired method solves the Rosenbrock system" begin
