@@ -227,6 +227,23 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         for package in PACKAGES
             @test_throws InterruptException run_cell(row, "Newton Static LU", package)
         end
+        # A residual that throws only at the harness's own evaluation of the returned iterate:
+        # the first run counts the calls, and the second throws at the call after the solve's.
+        calls = Ref(0)
+        limit = Ref(typemax(Int))
+        function late!(y, x, p)
+            (calls[] += 1) > limit[] && throw(DomainError(x[1], "late"))
+            return rosenbrock!(y, x, p)
+        end
+        row = Row{Float64}("selftest", "late", "x0", late!, [-1.2, 1])
+        for package in PACKAGES
+            calls[], limit[] = 0, typemax(Int)
+            @test run_cell(row, "Newton Static LU", package).code != "ERROR"
+            calls[], limit[] = 0, calls[] - 1
+            c = run_cell(row, "Newton Static LU", package)
+            @test c.code == "ERROR" && !c.success && c.comment == "DomainError"
+            @test c.x === nothing && c.fnorm === nothing
+        end
     end
 
     @testset "the rows" begin

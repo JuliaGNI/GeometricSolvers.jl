@@ -72,7 +72,10 @@ Three packages are left out:
 
 Julia 1.13.3 on aarch64 macOS. GeometricSolvers at `301f366`, from `..`; SimpleSolvers 0.14.3,
 SimpleNonlinearSolve 2.14.6, NLsolve 5.0.2, LineSearches 7.8.2, GeometricProblems 0.10.0,
-GeometricIntegrators 0.19.0, ForwardDiff 1.4.7 and SciMLBase 3.58.0.
+GeometricIntegrators 0.19.0, ForwardDiff 1.4.7 and SciMLBase 3.58.0, each pinned in
+`Project.toml`. No manifest is committed, so the other dependencies resolve afresh; the ones that
+the solvers run are NonlinearSolveBase 2.55.1, LineSearch 0.1.20, DifferentiationInterface 0.7.22
+and NLSolversBase 8.0.1.
 
 ### Pairing
 

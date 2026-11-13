@@ -169,8 +169,8 @@ struct NoMethod
 end
 
 function gs_entry(column)
-    Paired(method_label((; method = Dict(STANDARD_COLUMNS)[column])),
-        "the column itself", T -> (; method = Dict(STANDARD_COLUMNS)[column]))
+    method = Dict(STANDARD_COLUMNS)[column]
+    Paired(method_label((; method)), "the column itself", T -> (; method))
 end
 
 """
@@ -410,9 +410,9 @@ end
     run_cell(row, column, package)
 
 Run `package` on `row` with its method for `column`, and return the cell, whose `method` is the
-label that the adapter gives for the objects it passes. A solve that throws an exception gives
-the code `ERROR` and the exception's type in the comment, and the sweep goes on; an
-`InterruptException` is rethrown, so that Ctrl-C stops a run.
+label that the adapter gives for the objects it passes. A solve, or the residual at its iterate,
+that throws an exception gives the code `ERROR` and the exception's type in the comment, and the
+sweep goes on; an `InterruptException` is rethrown, so that Ctrl-C stops a run.
 """
 function run_cell(row::Row{T}, column::AbstractString, package::AbstractString) where {T}
     package == "NLsolve" && T === Float32 &&
@@ -425,15 +425,20 @@ function run_cell(row::Row{T}, column::AbstractString, package::AbstractString) 
     cell(code, success, iterations, fnorm, x, comment) = Cell{T}(row.set, row.problem,
         row.start, column, package, "ran", method, code, success, iterations,
         c.primal, c.dual, fnorm, x, comment, c.trace)
-    r = result
-    r isa Thrown &&
+    result isa Thrown &&
         return cell(
-            "ERROR", false, "", nothing, nothing, string(nameof(typeof(r.exception))))
-    x = Vector{T}(r.x)
+            "ERROR", false, "", nothing, nothing, string(nameof(typeof(result.exception))))
+    x = Vector{T}(result.x)
     y = similar(x)
-    row.F(y, x, nothing)
+    try
+        row.F(y, x, nothing)
+    catch e
+        e isa InterruptException && rethrow()
+        return cell("ERROR", false, "", nothing, nothing, string(nameof(typeof(e))))
+    end
     fnorm = norm(y, Inf)
-    return cell(r.code, cell_success(r.ok, x, fnorm, T), r.iterations, fnorm, x, "")
+    return cell(
+        result.code, cell_success(result.ok, x, fnorm, T), result.iterations, fnorm, x, "")
 end
 
 """
