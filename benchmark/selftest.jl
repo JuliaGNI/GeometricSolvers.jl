@@ -333,6 +333,11 @@ end
         @test length(times) == 5
         @test k == 8
         @test all(t -> 2e-4 ≤ t < 4e-4, times)
+        # A first call that takes 2 ms, as one that compiles does, does not decide the batch.
+        first = Ref(true)
+        compiles = c -> (; passed = (;),
+            call = () -> busy(first[] ? (first[] = false; 2e-3) : 2e-4))
+        @test time_cell(row, compiles).k == 8
         # Each solve takes its own copy of the start, and the row's start stays as it was.
         invoke = adapter(
             "GeometricSolvers", PAIRING["Newton Backtracking LU"][1].build(Float64),

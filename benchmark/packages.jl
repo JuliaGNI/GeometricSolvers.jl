@@ -655,9 +655,11 @@ end
 
 The times of a cell after its warm-up solve: the batch `k`, the smallest power of two with a run
 of at least `MIN_RUN`, found once, and the time per solve of each of the `N_RUNS` runs of `k`
-solves.
+solves. A first run of one solve, whose time is not read, compiles `timed_run` for the call, so
+that no compilation enters the run that decides `k`.
 """
 function time_cell(row::Row, invoke)
+    timed_run(row, invoke, 1)
     k = 1
     while k * timed_run(row, invoke, k) < MIN_RUN
         k *= 2
