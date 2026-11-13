@@ -116,8 +116,13 @@ struct BackslashSolve end
 struct PivotedQRSolve end
 (::PivotedQRSolve)(p, A, b) = copyto!(p, qr(A, ColumnNorm()) \ b)
 
+# A non-finite matrix never reaches LAPACK's iterative SVD, which need not return on such input
+# (OpenBLAS 0.3.30 on x86); the solve throws an `ArgumentError` in its place.
 struct SVDSolve end
-(::SVDSolve)(p, A, b) = copyto!(p, svd(A) \ b)
+function (::SVDSolve)(p, A, b)
+    all(isfinite, A) || throw(ArgumentError("the matrix has a non-finite entry"))
+    return copyto!(p, svd(A) \ b)
+end
 
 # The label part of an object that an adapter passes to its package: its type name, a method
 # symbol as it is, and the parts of a GeometricSolvers method.
@@ -279,43 +284,83 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
 # without it and keep their own Jacobian source.
 gs_takes_jacobian(m) = m isa GS.Newton && !(m.linsolve isa GS.GMRES)
 
-# Each adapter solves from `x0` with the residual `c`, the Jacobian `J!` and the objects `objs`,
-# and returns the iterate, the package's own code, whether the package reports success, and the
-# package's iteration count.
+"""
+    Thrown(exception)
+
+The exception that a package call threw, in place of its result.
+"""
+struct Thrown
+    exception::Any
+end
+
+"""
+    labelled(call, passed)
+
+Run the package call `call()` and return the label of the objects `passed` that it hands to the
+package, as `method`, and its result, or the exception that it throws as a `Thrown`, as `result`.
+An `InterruptException` is rethrown, so that Ctrl-C stops a run.
+"""
+function labelled(call, passed::NamedTuple)
+    result = try
+        call()
+    catch e
+        e isa InterruptException && rethrow()
+        Thrown(e)
+    end
+    return (; method = method_label(passed), result)
+end
+
+# Each adapter solves from `x0` with the residual `c`, the Jacobian `J!` and the objects `objs`.
+# It names the objects that it hands to the package, `passed`, passes exactly those, and returns
+# `labelled` of the call: the label of `passed`, and the iterate, the package's own code, whether
+# the package reports success, and the package's iteration count.
 function call_package(::Val{:GeometricSolvers}, objs, c, J!, x0::Vector{T}) where {T}
-    m = objs.method
-    prob = gs_takes_jacobian(m) ? GS.NonlinearProblem(c, J!) : GS.NonlinearProblem(c)
-    x, st = GS.solve(prob, copy(x0), m; f_abstol = tolerance(T), f_reltol = 0,
-        max_iterations = MAX_ITERATIONS)
-    return (; x, code = string(st.code), ok = st.code == GS.SUCCESS,
-        iterations = string(st.iterations))
+    passed = (; method = objs.method)
+    prob = gs_takes_jacobian(passed.method) ? GS.NonlinearProblem(c, J!) :
+           GS.NonlinearProblem(c)
+    return labelled(passed) do
+        x, st = GS.solve(prob, copy(x0), passed.method; f_abstol = tolerance(T),
+            f_reltol = 0, max_iterations = MAX_ITERATIONS)
+        (; x, code = string(st.code), ok = st.code == GS.SUCCESS,
+            iterations = string(st.iterations))
+    end
 end
 
 function call_package(::Val{:SimpleSolvers}, objs, c, J!, x0::Vector{T}) where {T}
-    x = copy(x0)
-    st = SS.solve_with_status!(x, SS.NonlinearProblem(c, J!, x), objs.method, nothing;
-        Base.structdiff(objs, NamedTuple{(:method,)})..., f_abstol = tolerance(T),
-        f_reltol = 0, max_iterations = MAX_ITERATIONS, verbosity = 0)
-    ok = SS.isconverged(st)
-    return (; x, code = ok ? "converged" : "not converged", ok,
-        iterations = string(st.iterations))
+    passed = objs
+    keywords = Base.structdiff(passed, NamedTuple{(:method,)})
+    return labelled(passed) do
+        x = copy(x0)
+        st = SS.solve_with_status!(
+            x, SS.NonlinearProblem(c, J!, x), passed.method, nothing;
+            keywords..., f_abstol = tolerance(T), f_reltol = 0,
+            max_iterations = MAX_ITERATIONS, verbosity = 0)
+        ok = SS.isconverged(st)
+        (; x, code = ok ? "converged" : "not converged", ok,
+            iterations = string(st.iterations))
+    end
 end
 
 function call_package(::Val{:SimpleNonlinearSolve}, objs, c, J!, x0::Vector{T}) where {T}
-    f = SciMLBase.NonlinearFunction{true}(c; jac = J!)
-    sol = SciMLBase.solve(SciMLBase.NonlinearProblem(f, copy(x0), nothing), objs.alg;
-        abstol = tolerance(T), maxiters = MAX_ITERATIONS)
-    return (;
-        x = sol.u, code = string(sol.retcode), ok = SciMLBase.successful_retcode(sol),
-        iterations = "n/a")
+    passed = (; alg = objs.alg)
+    return labelled(passed) do
+        f = SciMLBase.NonlinearFunction{true}(c; jac = J!)
+        sol = SciMLBase.solve(SciMLBase.NonlinearProblem(f, copy(x0), nothing), passed.alg;
+            abstol = tolerance(T), maxiters = MAX_ITERATIONS)
+        (; x = sol.u, code = string(sol.retcode), ok = SciMLBase.successful_retcode(sol),
+            iterations = "n/a")
+    end
 end
 
 function call_package(::Val{:NLsolve}, objs, c, J!, x0::Vector{T}) where {T}
-    r = NLsolve.nlsolve(NLResidual(c), NLJacobian(J!), copy(x0); objs...,
-        ftol = tolerance(T), xtol = zero(T), iterations = MAX_ITERATIONS)
-    ok = NLsolve.converged(r)
-    return (; x = r.zero, code = ok ? "converged" : "not converged", ok,
-        iterations = string(r.iterations))
+    passed = objs
+    return labelled(passed) do
+        r = NLsolve.nlsolve(NLResidual(c), NLJacobian(J!), copy(x0); passed...,
+            ftol = tolerance(T), xtol = zero(T), iterations = MAX_ITERATIONS)
+        ok = NLsolve.converged(r)
+        (; x = r.zero, code = ok ? "converged" : "not converged", ok,
+            iterations = string(r.iterations))
+    end
 end
 
 """
@@ -364,27 +409,26 @@ end
 """
     run_cell(row, column, package)
 
-Run `package` on `row` with its method for `column`, and return the cell. A solve that throws an
-exception gives the code `ERROR` and the exception's type in the comment, and the sweep goes on;
-an `InterruptException` is rethrown, so that Ctrl-C stops a run.
+Run `package` on `row` with its method for `column`, and return the cell, whose `method` is the
+label that the adapter gives for the objects it passes. A solve that throws an exception gives
+the code `ERROR` and the exception's type in the comment, and the sweep goes on; an
+`InterruptException` is rethrown, so that Ctrl-C stops a run.
 """
 function run_cell(row::Row{T}, column::AbstractString, package::AbstractString) where {T}
     package == "NLsolve" && T === Float32 &&
         return not_run(row, column, package, "no Float32", "NLsolve runs in Float64 only")
     entry = PAIRING[column][findfirst(==(package), PACKAGES)]
     entry isa NoMethod && return not_run(row, column, package, "no method", entry.reason)
-    objs = entry.build(T)
     c = Counted(row.F)
     J! = SharedJacobian(c)
+    (; method, result) = call_package(Val(Symbol(package)), entry.build(T), c, J!, row.x0)
     cell(code, success, iterations, fnorm, x, comment) = Cell{T}(row.set, row.problem,
-        row.start, column, package, "ran", method_label(objs), code, success, iterations,
+        row.start, column, package, "ran", method, code, success, iterations,
         c.primal, c.dual, fnorm, x, comment, c.trace)
-    r = try
-        call_package(Val(Symbol(package)), objs, c, J!, row.x0)
-    catch e
-        e isa InterruptException && rethrow()
-        return cell("ERROR", false, "", nothing, nothing, string(nameof(typeof(e))))
-    end
+    r = result
+    r isa Thrown &&
+        return cell(
+            "ERROR", false, "", nothing, nothing, string(nameof(typeof(r.exception))))
     x = Vector{T}(r.x)
     y = similar(x)
     row.F(y, x, nothing)

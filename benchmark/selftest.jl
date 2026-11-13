@@ -1,6 +1,7 @@
-# Self-test of the benchmark harness: the pairing, the counting wrapper, the shared Jacobian, the
-# success rule, the agreement bound, the verdict, a throwing residual, and the element type of
-# the midpoint rows.
+# Self-test of the benchmark harness: the pairing, the label and the method of each call, the
+# options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the
+# success rule, the agreement bound, the verdict, a throwing residual, the SVD solve on a
+# non-finite matrix, and the element type and the start of the midpoint rows.
 #
 # Usage: julia --project=benchmark benchmark/selftest.jl
 
@@ -45,9 +46,17 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         @test PAIRING["Newton reuse 3 Backtracking LU"][1].label ==
               "Newton(3)+Backtracking+LUFactorization"
         @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 13 + 20
-        # The nine `Newton` columns with a factorisation take the shared Jacobian.
+        # The nine `Newton` columns with a factorisation take the shared Jacobian, and the
+        # GeometricSolvers adapter hands it to no other column: a Jacobian that throws reaches
+        # the solve on those nine alone.
         @test [column for (column, m) in STANDARD_COLUMNS if gs_takes_jacobian(m)] ==
               COLUMNS[1:9]
+        nojac(J, x, p) = error("the Jacobian is called")
+        for (k, column) in enumerate(COLUMNS)
+            out = call_package(Val(:GeometricSolvers), PAIRING[column][1].build(Float64),
+                Counted(rosenbrock!), nojac, [-1.2, 1.0])
+            @test (out.result isa Thrown) == (k ≤ 9)
+        end
     end
 
     @testset "every paired method solves the Rosenbrock system" begin
@@ -69,6 +78,74 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             c = run_cell(rosenbrock_row(Float64), "Newton Backtracking LU", package)
             @test c.success && agrees(c.x, [1.0, 1.0], Float64)
         end
+    end
+
+    @testset "the label is the adapter's: it names the objects that the call passes" begin
+        for T in (Float32, Float64)
+            objs = PAIRING["Newton Backtracking LU"][2].build(T)
+            out = call_package(Val(:SimpleSolvers), objs, Counted(rosenbrock!),
+                SharedJacobian(Counted(rosenbrock!)), T[-1.2, 1])
+            @test out.method == "Newton+Backtracking+LapackLU"
+        end
+        # The method that each package runs shows in its result: from this start the full Newton
+        # steps of `atan` diverge, and every globalised or derivative-free method of the table
+        # reaches the root. A call that passes a plain Newton step in place of its method fails.
+        far(y, x, p) = (y[1] = atan(x[1]); nothing)
+        row = Row{Float64}("selftest", "atan", "x0", far, [2.0])
+        for column in COLUMNS, package in PACKAGES
+
+            c = run_cell(row, column, package)
+            c.status == "ran" || continue
+            @test c.success == (column != "Newton Static LU")
+        end
+    end
+
+    @testset "the options of each package: the absolute tolerance alone stops a solve" begin
+        # A double root: Newton's error halves at each step, so ‖F‖ falls by 4 per step, and
+        # GeometricSolvers' default relative tolerance, sqrt(eps) times ‖F(x₀)‖ = 8.1e5, would
+        # end its solve as a success at a ‖F‖ near 0.01, far above τ.
+        double(y, x, p) = (y[1] = 1e4 * (x[1] - 1)^2; nothing)
+        row = Row{Float64}("selftest", "double", "x0", double, [10.0])
+        for package in PACKAGES
+            c = run_cell(row, "Newton Backtracking LU", package)
+            c.status == "ran" || continue
+            @test c.success && c.fnorm ≤ tolerance(Float64)
+        end
+        @test count(p -> run_cell(row, "Newton Backtracking LU", p).status == "ran",
+            PACKAGES) == 3
+        # A round-off floor: ‖F‖∞ cannot fall below about 4e-6 > τ near √2, while a relative
+        # tolerance of sqrt(eps) on ‖F(x₀)‖ = 9.8e11 accepts it. GeometricSolvers and
+        # SimpleSolvers report no success there, and no cell succeeds.
+        floored(y, x, p) = (y[1] = 1e10 * (x[1]^2 - 2); nothing)
+        row = Row{Float64}("selftest", "floor", "x0", floored, [10.0])
+        cells = [run_cell(row, "Newton Backtracking LU", p) for p in PACKAGES]
+        @test cells[1].code != "SUCCESS"
+        @test cells[2].code == "not converged"
+        @test !any(c -> c.success, cells)
+    end
+
+    @testset "fnorm is ‖F(x)‖∞ at the returned iterate" begin
+        # No root, and ‖F‖₂ ≠ ‖F‖∞ at every x.
+        noroot(y, x, p) = (y[1] = x[1]^2 + 1; y[2] = 2 * (x[2]^2 + 1); nothing)
+        row = Row{Float64}("selftest", "noroot", "x0", noroot, [0.5, 0.5])
+        for package in PACKAGES
+            c = run_cell(row, "Newton Backtracking LU", package)
+            c.status == "ran" && c.x !== nothing || continue
+            y = zeros(2)
+            noroot(y, c.x, nothing)
+            @test norm(y) != norm(y, Inf)
+            @test c.fnorm == norm(y, Inf)
+        end
+    end
+
+    @testset "the SVD solve keeps a non-finite matrix from LAPACK" begin
+        # LAPACK on Apple silicon throws an `ArgumentError` of its own on such a matrix, so the
+        # message tells which one threw.
+        p = fill(7.0, 2)
+        @test_throws ArgumentError("the matrix has a non-finite entry") SVDSolve()(p,
+            [NaN 1.0; 1.0 1.0], [1.0, 1.0])
+        @test p == [7.0, 7.0]
+        @test SVDSolve()(p, [2.0 0.0; 0.0 4.0], [1.0, 1.0]) ≈ [0.5, 0.25]
     end
 
     @testset "counting wrapper and shared Jacobian" begin
@@ -173,6 +250,32 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             @test all(v -> eltype(v) === T, values(prob.parameters))
             @test all(v -> eltype(collect(v)) === T, values(prob.ics))
             @test typeof(prob.timestep) === T
+        end
+    end
+
+    @testset "the start of each midpoint row is the vector field at the initial state" begin
+        for (name, h) in MIDPOINT_SCENARIOS, T in (Float32, Float64)
+
+            prob = midpoint_problem(name, h, T)
+            fs, par, t₀ = prob.functions, prob.parameters, prob.timespan[1]
+            q₀ = collect(prob.ics.q)
+            x0 = midpoint_system(prob).x0
+            if haskey(fs, :ϑ)
+                v̄ = similar(q₀)
+                prob.initialguess.v(v̄, t₀, q₀, collect(prob.ics.p), par)
+                @test x0 == v̄
+            elseif haskey(fs, :f)
+                p₀ = collect(prob.ics.p)
+                v, f = similar(q₀), similar(q₀)
+                fs.v(v, t₀, q₀, p₀, par)
+                fs.f(f, t₀, q₀, p₀, par)
+                @test x0 == [v; f]
+            else
+                v = similar(q₀)
+                fs.v(v, t₀, q₀, par)
+                @test x0 == v
+            end
+            @test any(!iszero, x0)
         end
     end
 end

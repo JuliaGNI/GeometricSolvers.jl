@@ -20,7 +20,7 @@ Three packages are left out:
 |:--|:--|
 | `correctness.jl [outdir]` | runs every cell, writes `correctness.csv` and `rows.csv` (by default to `benchmark/results/`), and prints the tables of this report |
 | `verify.jl <dir> [--structure]` | checks the tables of `<dir>`, this report and the traces with code of its own |
-| `selftest.jl` | tests the harness: the pairing, the counting wrapper, the success rule, the agreement bound, the verdict, a throwing residual and the element types of the midpoint rows |
+| `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows |
 | `check_midpoint.jl` | checks each midpoint residual against one step of `ImplicitMidpoint` |
 | `trace.jl <set> <problem> <start> <eltype> <column> [outfile]` | writes the iteration trace of one row |
 
@@ -330,7 +330,7 @@ GeometricSolvers' `QRFactorization` and NLsolve reach `1.1e-16`.
 In each of these rows SimpleSolvers succeeds and GeometricSolvers ends `LINESEARCH_FAILED` (16),
 `STALLED` (8), `SINGULAR` (1) or `NONFINITE` (1), in the `Bisection`, `StrongWolfe`, reuse, QR and
 SVD columns. The line searches of the two packages are different implementations, so the iterates
-differ from the first step on. In six rows of problem 21, the Freudenstein–Roth function,
+differ from the first step on. In seven rows of problem 21, the Freudenstein–Roth function,
 GeometricSolvers ends at `‖F‖∞` between 6.9 and 7.7. In the traced row (`u0`, `Float64`,
 `Newton StrongWolfe LU`) it ends at `(13.5, -0.897)` with `‖F‖∞ = 7.06`; SimpleSolvers' trace
 returns to `‖F‖∞ ≈ 7.08` many times, moves to `‖F‖∞ ≈ 3.6e24` near its 1040th call and from there
