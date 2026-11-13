@@ -1,8 +1,11 @@
 using SafeTestsets
 
 const GROUPS = isempty(ARGS) ?
-               (Sys.isapple() && Sys.ARCH === :aarch64 ? ["core", "slow", "metal"] :
-                ["core", "slow"]) : ARGS
+               (Sys.isapple() && Sys.ARCH === :aarch64 ?
+                [
+    "core", "nonlinear", "leastsquares", "composition", "denselarge", "slow", "metal"] :
+                [
+    "core", "nonlinear", "leastsquares", "composition", "denselarge", "slow"]) : ARGS
 
 if "core" in GROUPS
     @safetestset "Aqua Quality Assurance" include("quality/aqua.jl")
@@ -28,6 +31,13 @@ if "core" in GROUPS
     @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
     @safetestset "Factor status and rank" include("linear/status.jl")
     @safetestset "Linear and spectral stability" include("linear/stability.jl")
+    @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
+    @safetestset "R3 Jacobian" include("ad/jacobian.jl")
+    @safetestset "Jacobian-vector product" include("ad/jvp.jl")
+    @safetestset "Sparse LU and AutoSparse" include("linear/sparspak.jl")
+    @safetestset "Sparse AD sparsity detection" include("ad/sparse_ad.jl")
+end
+if "nonlinear" in GROUPS
     @safetestset "Line searches" include("globalization/linesearch.jl")
     @safetestset "Line function and globalization" include("globalization/linefunction.jl")
     @safetestset "Merit passes and search trips" include("globalization/passes.jl")
@@ -44,6 +54,8 @@ if "core" in GROUPS
     @safetestset "Picard" include("nonlinear/picard.jl")
     @safetestset "Solver loop hooks" include("nonlinear/hooks.jl")
     @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")
+end
+if "leastsquares" in GROUPS
     @safetestset "R3 nonlinear" include("nonlinear/r3.jl")
     @safetestset "R5 matrix-free Newton-GMRES" include("nonlinear/krylov.jl")
     @safetestset "GMRES-IR" include("nonlinear/gmres_ir.jl")
@@ -52,6 +64,8 @@ if "core" in GROUPS
     @safetestset "Range and spectrum diagnostics" include("nonlinear/diagnostics.jl")
     @safetestset "Nonlinear least squares" include("nonlinear/leastsquares.jl")
     @safetestset "CommonSolve interface" include("nonlinear/commonsolve.jl")
+end
+if "composition" in GROUPS
     @safetestset "Composition weights" include("composition/weights.jl")
     @safetestset "Additive combinator" include("composition/additive.jl")
     @safetestset "Multiplicative combinator" include("composition/multiplicative.jl")
@@ -60,15 +74,12 @@ if "core" in GROUPS
     @safetestset "Anderson acceleration" include("composition/anderson.jl")
     @safetestset "Combinators refuse ForwardDiff.Dual inputs" include("composition/implicit.jl")
     @safetestset "Left preconditioning and RAS" include("composition/preconditioning.jl")
-    @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
-    @safetestset "R3 Jacobian" include("ad/jacobian.jl")
-    @safetestset "Jacobian-vector product" include("ad/jvp.jl")
-    @safetestset "Sparse LU and AutoSparse" include("linear/sparspak.jl")
-    @safetestset "Sparse AD sparsity detection" include("ad/sparse_ad.jl")
     @safetestset "Standard test set" include("verification/standard.jl")
 end
-if "slow" in GROUPS
+if "denselarge" in GROUPS
     @safetestset "Dense linear solvers (large)" include("linear/dense_large.jl")
+end
+if "slow" in GROUPS
     @safetestset "KA dense linear solvers (large)" include("linear/ka_large.jl")
     @safetestset "Static SVD" include("linear/static/svd.jl")
     @safetestset "Broyden multisecant" include("composition/broyden.jl")

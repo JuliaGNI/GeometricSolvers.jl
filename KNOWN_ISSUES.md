@@ -320,16 +320,6 @@
 - **kind:** dead code
 - **found:** PR #62
 
-### K68 · `test/nonlinear/leastsquares.jl` may exceed the 60 s budget of a `core` file
-
-- **location:** `test/runtests.jl` (`nonlinear/leastsquares.jl` in `core`)
-- **evidence:** Cold `run-tests.jl <repository> test/nonlinear/leastsquares.jl` on Julia 1.13.3:
-  `PASS in 121 s`, `Test Summary` 1m49.7s, at a load average of 15.3 at the start; the review of
-  PR #62 measured `PASS in 110 s` at a load average of 9.95. Both runs were on a loaded machine,
-  so whether the file stays above 60 s on a quiet one, and moves to `slow`, is open.
-- **kind:** not verified
-- **found:** PR #62
-
 ### K69 · A static `LeastSquaresProblem` evaluates its residual at `x₀` twice in a cold `solve`
 
 - **location:** `src/nonlinear/newton.jl` (`init_state`)
