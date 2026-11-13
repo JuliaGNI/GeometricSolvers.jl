@@ -1,7 +1,9 @@
 # Self-test of the benchmark harness: the pairing, the label and the method of each call, the
 # options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the
 # success rule, the agreement bound, the verdict, a throwing residual, the SVD solve on a
-# non-finite matrix, and the element type and the start of the midpoint rows.
+# non-finite matrix, and the element type and the start of the midpoint rows; and for the
+# timings and the blocks: the timed runs and the batch, the note of a timed cell, the tolerance
+# of each adapter, the variant labels, the `nsol` adapter, the sparse variants and the profiles.
 #
 # Usage: julia --project=benchmark benchmark/selftest.jl
 
@@ -9,6 +11,9 @@ using Test
 
 include(joinpath(@__DIR__, "problems.jl"))
 include(joinpath(@__DIR__, "packages.jl"))
+include(joinpath(@__DIR__, "timing.jl"))
+include(joinpath(@__DIR__, "blocks.jl"))
+include(joinpath(@__DIR__, "profiles.jl"))
 
 # The 2-d Rosenbrock system, with its root (1, 1).
 function rosenbrock!(y, x, p)
@@ -294,5 +299,341 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             end
             @test any(!iszero, x0)
         end
+    end
+end
+
+# A system on which `nsol` with its default `sham = 5` skips a Jacobian: (x₁² + x₂² − 2,
+# exp(x₁ − 1) + x₂³ − 2), with the root (1, 1), from (2, 0.5).
+function skips!(y, x, p)
+    y[1] = x[1]^2 + x[2]^2 - 2
+    y[2] = exp(x[1] - 1) + x[2]^3 - 2
+    return nothing
+end
+
+# A double root in the first component: Newton's error halves at each step, so ‖F‖∞ falls by 4
+# per step. Two components, because `nsol` takes no system of dimension 1.
+double!(y, x, p) = (y[1] = 1e4 * (x[1] - 1)^2; y[2] = x[2] - 1; nothing)
+
+# A call that busy-waits `t` seconds.
+function busy(t)
+    t0 = time_ns()
+    while time_ns() - t0 < t * 1e9
+    end
+    return nothing
+end
+
+@testset "Y2" begin
+    @testset "run count: five timed runs, and the batch reaches MIN_RUN" begin
+        @test N_RUNS == 5 && MIN_RUN == 1e-3
+        row = rosenbrock_row(Float64)
+        # A solve of 0.2 ms: 4 solves last 0.8 ms, 8 solves 1.6 ms, and 5 solves, which no
+        # power of two gives, 1.0 ms.
+        slow = c -> (; passed = (;), call = () -> busy(2e-4))
+        (; k, times) = time_cell(row, slow)
+        @test length(times) == 5
+        @test k == 8
+        @test all(t -> 2e-4 ≤ t < 4e-4, times)
+        # Each solve takes its own copy of the start, and the row's start stays as it was.
+        invoke = adapter(
+            "GeometricSolvers", PAIRING["Newton Backtracking LU"][1].build(Float64),
+            row; tol = tolerance(Float64))
+        (; k, times) = time_cell(row, invoke)
+        @test ispow2(k) && length(times) == 5 && all(t -> 0 < t < 1e-3, times)
+        @test row.x0 == [-1.2, 1.0]
+        # A throw ends a solve, and the run goes on.
+        boom(y, x, p) = throw(DomainError(x[1], "boom"))
+        brow = Row{Float64}("selftest", "boom", "x0", boom, [1.0, 2.0])
+        binvoke = adapter(
+            "GeometricSolvers", PAIRING["Newton Static LU"][1].build(Float64),
+            brow; tol = tolerance(Float64))
+        @test length(time_cell(brow, binvoke).times) == 5
+        @test run_median([1.0, 2.0, 3.0, 4.0, 100.0]) == 3.0
+        @test run_spread([1.0, 2.0, 3.0, 4.0, 100.0]) == 33.0
+        @test run_median([4.0, 1.0, 3.0, 2.0]) == 2.5
+        # A worker is a fresh process of this environment, with no startup file and one thread;
+        # it sets one BLAS thread, and refuses to time with more than one Julia thread.
+        cmd = worker_cmd("w.jl", "a", "b")
+        @test "--startup-file=no" in cmd.exec && "--threads=1" in cmd.exec
+        @test "--project=$(@__DIR__)" in cmd.exec &&
+              cmd.exec[(end - 2):end] == ["w.jl", "a", "b"]
+        if Threads.nthreads() == 1
+            start_worker("selftest")
+        else
+            @test_throws r"a timing process runs" start_worker("selftest")
+        end
+        @test BLAS.get_num_threads() == 1
+    end
+
+    @testset "the note of a timed cell" begin
+        row = rosenbrock_row(Float64)
+        c = run_cell(row, "Newton Backtracking LU", "GeometricSolvers")
+        @test timing_note(c, c.code, c.iterations, string(c.f_evals)) == ""
+        note = timing_note(c, c.code, "99", string(c.f_evals))
+        @test note == "differs from correctness.csv: iterations 99 → $(c.iterations)"
+        boom(y, x, p) = throw(DomainError(x[1], "boom"))
+        e = run_cell(Row{Float64}("selftest", "boom", "x0", boom, [1.0, 2.0]),
+            "Newton Static LU", "GeometricSolvers")
+        @test timing_note(e, "ERROR", "", string(e.f_evals)) == "throws"
+    end
+
+    @testset "tol reaches every adapter and the success rule" begin
+        row = Row{Float64}("selftest", "double", "x0", double!, [10.0, 3.0])
+        for package in PACKAGES
+            c = run_cell(row, "Newton Static LU", package; tol = 1e-2)
+            @test c.success && tolerance(Float64) < c.fnorm ≤ 1e-2
+        end
+        for (v, (package, objs)) in MIXED_VARIANTS
+            c = run_invoked(row, v, package, adapter(package, objs, row; tol = 1e-2);
+                tol = 1e-2)
+            @test c.success && tolerance(Float64) < c.fnorm ≤ 1e-2
+        end
+        @test cell_success(true, [1.0], 1e-3, Float64; tol = 1e-2)
+        @test !cell_success(true, [1.0], 1e-3, Float64)
+        @test STAGE_TOL === 0.0009765625f0
+        stage = BlockCell("stage", "Float32", ("midpoint", "Pendulum h=0.1", "V0"),
+            "Newton Backtracking LU", "GeometricSolvers")
+        rows32 = Dict(rowkey(r) => r for r in benchmark_rows(Float32))
+        @test block_run(stage, rows32).tol === 0.0009765625f0
+        line = split(block_line(stage, rows32), ",")
+        @test length(line) == 23 && line[8] == "ran" && line[15] == "0.0009765625f0"
+        @test all(t -> parse(Float64, t) > 0, line[16:20])
+        # The stage cells that do not run: NLsolve's, and a pair without a method.
+        for (package, column, status) in (
+            ("NLsolve", "Newton Backtracking LU", "no Float32"),
+            ("SimpleNonlinearSolve", "Newton Backtracking LU", "no method"))
+            b = BlockCell("stage", "Float32", ("midpoint", "Pendulum h=0.1", "V0"), column,
+                package)
+            @test block_run(b, rows32).status == status
+            line = split(block_line(b, rows32), ",")
+            @test length(line) == 23 && line[8] == status
+            @test all(isempty, line[9:22]) && !isempty(line[23])
+        end
+    end
+
+    @testset "variant labels" begin
+        labels = Dict(v => method_label(objs) for (v, (_, objs)) in MIXED_VARIANTS)
+        @test labels == Dict(
+            "gs-f64" => "Newton+Backtracking+LUFactorization",
+            "gs-f32" => "Newton+Backtracking+LUFactorization{Float32}",
+            "gs-f32-refine" => "Newton+Backtracking+LUFactorization{Float32}+Refinement",
+            "nsol-f32" => "nsol(sham=1)+FPS{Float32}",
+            "nsol-mplu" => "nsol(sham=1)+mplu")
+        @test [v => method_label(objs) for (v, (_, objs)) in ANDERSON_VARIANTS] == [
+            "anderson-1" => "Anderson{4}(Newton(1)+Backtracking+LUFactorization)",
+            "newton-1" => "Newton(1)+Backtracking+LUFactorization",
+            "anderson-2" => "Anderson{4}(Newton(2)+Backtracking+LUFactorization)",
+            "newton-2" => "Newton(2)+Backtracking+LUFactorization",
+            "anderson-3" => "Anderson{4}(Newton(3)+Backtracking+LUFactorization)",
+            "newton-3" => "Newton(3)+Backtracking+LUFactorization",
+            "anderson-5" => "Anderson{4}(Newton(5)+Backtracking+LUFactorization)",
+            "newton-5" => "Newton(5)+Backtracking+LUFactorization"]
+        # The labels name the objects that the solve takes: the factor precision and the
+        # refinement of a GeometricSolvers `Newton`, the depth and the reuse of `Anderson`.
+        for (_, (package, objs)) in MIXED_VARIANTS
+            package == "GeometricSolvers" || continue
+            m = objs.method
+            @test (m.linsolve isa GS.LUFactorization{Float32}) ==
+                  occursin("{Float32}", method_label(objs))
+            @test (m.refinement isa GS.Refinement) ==
+                  occursin("Refinement", method_label(objs))
+        end
+        for (v, (_, objs)) in ANDERSON_VARIANTS
+            m = objs.method isa GS.Anderson ? objs.method.member : objs.method
+            @test v[end] == only(string(m.reuse))
+        end
+        # Every Anderson variant takes the shared Jacobian: a Jacobian that throws ends its solve.
+        nojac(J, x, p) = error("the Jacobian is called")
+        for (_, (_, objs)) in ANDERSON_VARIANTS
+            @test gs_takes_jacobian(objs.method)
+            out = call_package(Val(:GeometricSolvers), objs, Counted(rosenbrock!), nojac,
+                [-1.2, 1.0])
+            @test out.result isa Thrown
+        end
+        # The block tables' counts.
+        @test length.(block_cells.(BLOCKS)) == (395, 624, 1264, 20)
+    end
+
+    @testset "nsol: a Jacobian at every iteration, and a start that meets the test" begin
+        row = Row{Float64}("selftest", "skips", "x0", skips!, [2.0, 0.5])
+        for v in ("nsol-f32", "nsol-mplu")
+            package, objs = Dict(MIXED_VARIANTS)[v]
+            invoke = adapter(package, objs, row; tol = tolerance(Float64))
+            c = run_invoked(row, v, package, invoke; tol = tolerance(Float64))
+            @test c.success && c.code == "0"
+            # The shared Jacobian of a 2-d residual takes one dual call.
+            @test parse(Int, c.iterations) > 2 && c.dual_evals == parse(Int, c.iterations)
+            @test agrees(c.x, [1.0, 1.0], Float64)
+        end
+        # The control: with `sham = 5` the same solve skips a Jacobian.
+        invoke = adapter("SIAMFANLEquations", (; nsol = Nsol(Float32, 5)), row;
+            tol = tolerance(Float64))
+        c = run_invoked(
+            row, "sham 5", "SIAMFANLEquations", invoke; tol = tolerance(Float64))
+        @test c.dual_evals < parse(Int, c.iterations)
+        # From the root, nsol returns errcode -1 with idid = false: a reported success, 0
+        # iterations.
+        root = Row{Float64}("selftest", "skips", "root", skips!, [1.0, 1.0])
+        for v in ("nsol-f32", "nsol-mplu")
+            package, objs = Dict(MIXED_VARIANTS)[v]
+            invoke = adapter(package, objs, root; tol = tolerance(Float64))
+            c = run_invoked(root, v, package, invoke; tol = tolerance(Float64))
+            @test c.code == "-1" && c.success && c.iterations == "0"
+        end
+        # The adapter passes the method's `jfact` to `nsol`, and none for `nothing`.
+        calls = Ref(0)
+        spy(A) = (calls[] += 1; MultiPrecisionArrays.mplu(A))
+        invoke = adapter("SIAMFANLEquations", (; nsol = Nsol(Float64, 1, spy)), row;
+            tol = tolerance(Float64))
+        c = run_invoked(row, "spy", "SIAMFANLEquations", invoke; tol = tolerance(Float64))
+        @test c.success && calls[] == parse(Int, c.iterations)
+        @test c.method == "nsol(sham=1)+spy"
+        # The nsol wrappers return their first argument.
+        y, J = zeros(2), zeros(2, 2)
+        @test NsolResidual(Counted(rosenbrock!))(y, [2.0, 3.0]) === y
+        @test NsolJacobian(SharedJacobian(Counted(rosenbrock!)))(J, y, [2.0, 3.0]) === J
+        @test J == [-1.0 0.0; -40.0 10.0]
+    end
+
+    @testset "the sparse variants" begin
+        want = Dict(
+            "gs-sparse" => "Newton+Static+LUFactorization+AutoSparse+SparseMatrixCSC",
+            "gs-dense" => "Newton+Static+LUFactorization+SharedJacobian",
+            "nlsolve-sparse" => "newton+AnalyticJacobian+SparseMatrixCSC")
+        for (v, p) in SPARSE_VARIANTS, T in (Float32, Float64)
+
+            b = BlockCell("sparse", string(T), ("sparse", "bracket N=125", "z0"), v, p)
+            run = block_run(b, Dict())
+            if v in ("simplesolvers", "simplenonlinearsolve")
+                @test run.status == "no sparse path"
+            elseif v == "nlsolve-sparse" && T === Float32
+                @test run.status == "no Float32"
+            else
+                sp = sparse_row(125, T)
+                c = run_invoked(run.row, v, p, run.invoke; run.tol, run.p)
+                @test c.method == want[v]
+                @test c.success && norm(c.x - sp.z_star, Inf) ≤ sqrt(eps(T))
+                @test run.p === sp.p && run.tol === sqrt(eps(T))
+            end
+        end
+        sp = sparse_row(125, Float64)
+        @test size(sp.prototype) == (250, 250)
+        # NLsolve's residual and analytic Jacobian are the problem's at its parameter: the
+        # Jacobian equals the dense ForwardDiff one at a point off the root.
+        z = sp.row.x0 .+ 0.3
+        J, Jd = copy(sp.prototype), zeros(250, 250)
+        AnalyticJacobian(sp.J, sp.p)(J, z)
+        SharedJacobian(sp.row.F)(Jd, z, sp.p)
+        @test isapprox(Matrix(J), Jd; rtol = 8 * eps(Float64))
+        y, yd = zeros(250), zeros(250)
+        ResidualAt(sp.row.F, sp.p)(y, z)
+        sp.row.F(yd, z, sp.p)
+        @test y == yd && norm(y) > 0
+    end
+
+    @testset "the merge of the parts keeps the order of the cells, and checks it" begin
+        # The key of a cell of problem 1 from u0, and the line of a cell that holds `rest`.
+        key(pkg, el) = "standard,1,u0,$el,Newton Static LU,$pkg"
+        line(pkg, el, rest) = key(pkg, el) * "," * rest
+        mktempdir() do dir
+            cells = [line("NLsolve", "Float64", "ran"),
+                line("GeometricSolvers", "Float32", "ran"),
+                line("SimpleSolvers", "Float32", "no method"),
+                line("GeometricSolvers", "Float64", "ran")]
+            write(joinpath(dir, "correctness.csv"),
+                join([CELLS_HEADER; cells .* repeat(",", 9)], "\n") * "\n")
+            @test groups(ran_cells(dir)) == [("NLsolve", "Float64"),
+                ("GeometricSolvers", "Float32"), ("GeometricSolvers", "Float64")]
+            function parts(gs64)
+                write(part_path(dir, "NLsolve", "Float64"), line("NLsolve", "Float64", "a\n"))
+                write(part_path(dir, "GeometricSolvers", "Float32"),
+                    line("GeometricSolvers", "Float32", "b\n"))
+                write(part_path(dir, "GeometricSolvers", "Float64"), gs64)
+            end
+            parts(line("GeometricSolvers", "Float64", "c\n"))
+            merge_parts(dir)
+            @test readlines(joinpath(dir, "timings.csv")) == [TIMINGS_HEADER,
+                line("NLsolve", "Float64", "a"), line("GeometricSolvers", "Float32", "b"),
+                line("GeometricSolvers", "Float64", "c")]
+            @test !isfile(part_path(dir, "NLsolve", "Float64"))
+            # A part whose line is another cell's, or that has a line left over, stops the merge.
+            parts(line("GeometricSolvers", "Float32", "c\n"))
+            @test_throws r"is not the cell" merge_parts(dir)
+            parts(line("GeometricSolvers", "Float64", "c\n") *
+                  line("GeometricSolvers", "Float64", "d\n"))
+            @test_throws r"lines left over" merge_parts(dir)
+        end
+        bkey(b) = join([b.block; collect(b.key); b.eltype; b.variant; b.package], ",")
+        mktempdir() do dir
+            keys = Dict(block => bkey.(block_cells(block)) for block in BLOCKS)
+            function blockparts(swap)
+                for block in BLOCKS, g in block_groups(block)
+
+                    ks = [bkey(b) for b in block_cells(block) if (b.package, b.eltype) == g]
+                    swap && block == "sparse" && g == ("GeometricSolvers", "Float32") &&
+                        reverse!(ks)
+                    write(block_part_path(dir, block, g...), join(ks .* ",x", "\n") * "\n")
+                end
+            end
+            blockparts(false)
+            block_merge_parts(dir)
+            for block in BLOCKS
+                @test readlines(joinpath(dir, "$block.csv")) ==
+                      [BLOCK_HEADER; keys[block] .* ",x"]
+            end
+            blockparts(true)
+            @test_throws r"is not the cell" block_merge_parts(dir)
+        end
+    end
+
+    @testset "profile: the ratio to the smallest metric, a failure is Inf" begin
+        t = [1.0 2.0 Inf; 4.0 2.0 8.0; Inf Inf Inf]
+        r = profile_ratios(t)
+        @test isequal(r, [1.0 2.0 Inf; 2.0 1.0 4.0; Inf Inf Inf])
+        @test profile(r, 1) == [1, 1, 0] ./ 3
+        @test profile(r, 2) == [2, 2, 0] ./ 3
+        @test profile(r, 4) == [2, 2, 1] ./ 3
+        @test profile(r, Inf) == [2, 2, 1] ./ 3
+        @test profile_metric(false, 3.0, true) == Inf
+        @test profile_metric(false, 3e-6, false) == Inf
+        @test profile_metric(true, 3.0, true) == 3.0
+        @test profile_metric(true, 3e-6, false) == 3e-6
+    end
+
+    @testset "profile: a zero metric counts as 1" begin
+        @test profile_metric(true, 0.0, true) == 1.0
+        r = profile_ratios([profile_metric(true, 0.0, true) profile_metric(true, 2.0, true)
+                            ])
+        @test r == [1.0 2.0]
+        @test profile(r, 1) == [1.0, 0.0]
+    end
+
+    @testset "the block tables count the rows where both succeed" begin
+        bcell(variant, problem, success, iterations) = (;
+            block = "mixed", set = "standard",
+            problem, start = "u0", eltype = "Float64", variant,
+            package = "GeometricSolvers", status = "ran", method = "m-$variant",
+            code = "SUCCESS", success, iterations, f_evals = iterations, median_s = "1.0")
+        # gs-f64 fails on problem 1, where gs-f32 succeeds: that row is in no ratio.
+        mixed = [bcell("gs-f64", "1", "false", "9"), bcell("gs-f32", "1", "true", "4"),
+            bcell("gs-f64", "2", "true", "2"), bcell("gs-f32", "2", "true", "3")]
+        out = split(sprint(print_mixed, mixed), "\n")
+        @test out[3] == "| gs-f64 | `m-gs-f64` | 1 | 1 | 1.00 | 1.00 |"
+        @test out[4] == "| gs-f32 | `m-gs-f32` | 2 | 1 | 1.50 | 1.00 |"
+        # The strict cell fails where the loose one succeeds: that pair is in no ratio.
+        stage = [merge(bcell("Newton Static LU", p, "true", it), (; block = "stage"))
+                 for (p, it) in (("1", "5"), ("2", "6"))]
+        cells = [(; set = "standard", problem = p, start = "u0", eltype = "Float64",
+                     column = "Newton Static LU", package = "GeometricSolvers",
+                     status = "ran", success = s, iterations = "3", f_evals = "3")
+                 for (p, s) in (("1", "false"), ("2", "true"))]
+        timings = Dict(cellkey(c) => (; median_s = "2.0") for c in cells)
+        out = split(sprint(print_stage, stage, cells, timings), "\n")
+        @test out[3] == "| GeometricSolvers | 2 | 1 | 1 | 2.00 | 2.00 | 0.500 |"
+    end
+
+    @testset "formats" begin
+        @test dec3(1 / 3) == "0.333" && dec3(1.0) == "1.000"
+        @test sig3(1.0) == "1.00" && sig3(0.5) == "0.500" && sig3(123.4) == "123"
+        @test sig3(1234.0) == "1.23e+03" && sig3(1.234e-5) == "1.23e-05" && sig3(NaN) == "—"
     end
 end
