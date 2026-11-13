@@ -1,14 +1,17 @@
-# The verifier of the correctness results. It reads `<dir>/correctness.csv`, `<dir>/rows.csv`,
-# `benchmark/REPORT.md` and `benchmark/traces/`, and checks them with code of its own: it loads
-# no file of the harness and no solver package.
+# The verifier of the results. It reads `<dir>/correctness.csv`, `<dir>/rows.csv`,
+# `<dir>/timings.csv`, the four block tables `<dir>/mixed.csv`, `stage.csv`, `anderson.csv` and
+# `sparse.csv`, `benchmark/REPORT.md` and `benchmark/traces/`, and checks them with code of its
+# own: it loads no file of the harness and no solver package.
 #
 # Usage: julia benchmark/verify.jl <dir> [--structure]
 #
-# With `--structure` it checks everything but the explanations and the report's counts, for the
-# output of a new run.
+# With `--structure` it checks everything but the explanations and the report's counts and
+# tables, for the output of a new run.
 
 const DIR = ARGS[1]
 const STRUCTURE = "--structure" in ARGS[2:end]
+
+using Printf: @sprintf
 const REPORT = joinpath(@__DIR__, "REPORT.md")
 const TRACES = joinpath(@__DIR__, "traces")
 
@@ -256,9 +259,333 @@ if !STRUCTURE
     end
 end
 
+# --- Y2: the timings -------------------------------------------------------------------------
+
+const TIMINGS_HEAD = "set,problem,start,eltype,column,package,t1,t2,t3,t4,t5,median_s,spread,solves_per_run,note"
+const N_RAN = 4661
+
+# The median of the five run times, and their spread, recomputed.
+function median5(ts)
+    s = sort(ts)
+    return s[3]
+end
+spread5(ts) = (maximum(ts) - minimum(ts)) / median5(ts)
+
+# Whether the five times, their median and their spread, as `repr` writes them, are consistent.
+function check_times(where, f)
+    length(f) == 7 || return check(false, "$where: $(length(f)) time fields, not 7")
+    ts = [tryparse(Float64, s) for s in f[1:5]]
+    check(all(t -> t !== nothing && isfinite(t) && t > 0, ts),
+        "$where: a time that is not finite and positive: $(join(f[1:5], " "))") ||
+        return false
+    check(f[6] == repr(median5(ts)), "$where: median_s $(f[6]), recomputed $(repr(median5(ts)))")
+    check(f[7] == repr(spread5(ts)), "$where: spread $(f[7]), recomputed $(repr(spread5(ts)))")
+end
+
+ranlines = [c for c in cells if c[7] == "ran"]
+check(length(ranlines) == N_RAN, "correctness.csv: $(length(ranlines)) ran cells, not $N_RAN")
+tpath = joinpath(DIR, "timings.csv")
+tlines = readlines(tpath)
+check(tlines[1] == TIMINGS_HEAD, "timings.csv: header is $(tlines[1])")
+timings = [split(l, ",") for l in tlines[2:end]]
+check(length(timings) == length(ranlines),
+    "timings.csv: $(length(timings)) lines, not one per ran cell, $(length(ranlines))")
+check([join(t[1:6], ",") for t in timings] == [join(c[1:6], ",") for c in ranlines],
+    "timings.csv: the keys are not those of the ran cells in their order")
+median_s = Dict{String, Float64}()
+for t in timings
+    where = "timings.csv: $(join(t[1:min(6, end)], ","))"
+    check(length(t) == 15, "$where: $(length(t)) fields, not 15") || continue
+    check_times(where, t[7:13])
+    k = tryparse(Int, t[14])
+    check(k !== nothing && k ≥ 1 && ispow2(k), "$where: solves_per_run $(t[14])")
+    median_s[join(t[1:6], ",")] = something(tryparse(Float64, t[12]), NaN)
+end
+
+# --- Y2: the block tables --------------------------------------------------------------------
+
+const BLOCK_HEAD = "block,set,problem,start,eltype,variant,package,status,method,code,success,iterations,f_evals,fnorm_inf,tol,t1,t2,t3,t4,t5,median_s,spread,comment"
+const BLOCK_COUNTS = Dict("mixed" => 395, "stage" => 624, "anderson" => 1264, "sparse" =>
+    20)
+const BLOCK_OK = Dict(OK_CODES..., "SIAMFANLEquations" => ["0", "-1"])
+const TOL64 = repr(sqrt(eps(Float64)))
+const TOL32 = repr(sqrt(eps(Float32)))
+const STAGE = repr(Float32(eps(Float16)))
+
+# The label of each variant of the mixed, Anderson and sparse blocks.
+const LABELS = Dict(
+    "gs-f64" => "Newton+Backtracking+LUFactorization",
+    "gs-f32" => "Newton+Backtracking+LUFactorization{Float32}",
+    "gs-f32-refine" => "Newton+Backtracking+LUFactorization{Float32}+Refinement",
+    "nsol-f32" => "nsol(sham=1)+FPS{Float32}",
+    "nsol-mplu" => "nsol(sham=1)+mplu",
+    "gs-sparse" => "Newton+Static+LUFactorization+AutoSparse+SparseMatrixCSC",
+    "gs-dense" => "Newton+Static+LUFactorization+SharedJacobian",
+    "nlsolve-sparse" => "newton+AnalyticJacobian+SparseMatrixCSC",
+    ("anderson-$k" => "Anderson{4}(Newton($k)+Backtracking+LUFactorization)"
+    for k in 1:5)...,
+    ("newton-$k" => "Newton($k)+Backtracking+LUFactorization" for k in 1:5)...)
+
+# The rows `(set, problem, start)` of a precision, and the columns, in the order of the cells.
+rows_of(el) = unique([String.(c[1:3]) for c in cells if c[4] == el])
+const COLS = unique([String(c[5]) for c in cells])
+
+# The keys of each block, in the order of its table.
+function block_keys(block)
+    if block == "mixed"
+        return [["mixed"; r; "Float64"; v; p] for r in rows_of("Float64")
+                for (v, p) in (("gs-f64", "GeometricSolvers"), (
+            "gs-f32", "GeometricSolvers"),
+            ("gs-f32-refine", "GeometricSolvers"), ("nsol-f32", "SIAMFANLEquations"),
+            ("nsol-mplu", "SIAMFANLEquations"))]
+    elseif block == "stage"
+        return [["stage"; r; "Float32"; col; p]
+                for r in rows_of("Float32")
+                if r[1] == "midpoint" for col in COLS for p in PKGS]
+    elseif block == "anderson"
+        return [["anderson"; r; el; "$v-$k"; "GeometricSolvers"]
+                for el in ("Float32", "Float64") for r in rows_of(el) for k in (1, 2, 3, 5)
+                for v in ("anderson", "newton")]
+    end
+    return [["sparse", "sparse", "bracket N=$N", "z0", el, v, p]
+            for N in (125, 768) for el in ("Float32", "Float64")
+            for (v, p) in (("gs-sparse", "GeometricSolvers"), (
+        "gs-dense", "GeometricSolvers"),
+        ("nlsolve-sparse", "NLsolve"), ("simplesolvers", "SimpleSolvers"),
+        ("simplenonlinearsolve", "SimpleNonlinearSolve"))]
+end
+
+# The tolerance of a block cell.
+block_tol(block, el) = block == "stage" ? STAGE : el == "Float32" ? TOL32 : TOL64
+
+# The status of a block cell that does not run, or "ran".
+function block_status(block, el, v, p)
+    block == "stage" && p == "NLsolve" && return "no Float32"
+    block == "stage" && get(pairing, (v, p), nothing) === nothing && return "no method"
+    v in ("simplesolvers", "simplenonlinearsolve") && return "no sparse path"
+    v == "nlsolve-sparse" && el == "Float32" && return "no Float32"
+    return "ran"
+end
+
+btables = Dict{String, Vector{Vector{SubString{String}}}}()
+for block in ("mixed", "stage", "anderson", "sparse")
+    path = joinpath(DIR, "$block.csv")
+    check(isfile(path), "$block.csv: missing") || continue
+    bl = readlines(path)
+    check(bl[1] == BLOCK_HEAD, "$block.csv: header is $(bl[1])")
+    bc = [split(l, ",") for l in bl[2:end]]
+    check(all(c -> length(c) == 23, bc), "$block.csv: a line without 23 fields")
+    bc = filter(c -> length(c) == 23, bc)
+    btables[block] = bc
+    check(length(bc) == BLOCK_COUNTS[block],
+        "$block.csv: $(length(bc)) cells, not $(BLOCK_COUNTS[block])")
+    check([String.(c[1:7]) for c in bc] == block_keys(block),
+        "$block.csv: the keys are not the block's, each once, in order")
+    for c in bc
+        where = "$block.csv: $(join(c[1:7], ","))"
+        _, set, problem, start, el, v, p, status, method,
+        code, succ, iters, fe, fn, tol = c[1:15]
+        expected = block_status(block, el, v, p)
+        check(status == expected, "$where: status $status, not $expected")
+        if status != "ran"
+            check(all(isempty, c[9:22]) && !isempty(c[23]),
+                "$where: a cell that did not run has fields or no reason")
+            continue
+        end
+        label = block == "stage" ? something(get(pairing, (v, p), nothing), "") : LABELS[v]
+        check(method == label, "$where: method $method, not $label")
+        check(tol == block_tol(block, el), "$where: tol $tol, not $(block_tol(block, el))")
+        check(
+            iscount(fe) && (code == "ERROR" ? isempty(iters) :
+             p == "SimpleNonlinearSolve" ? iters == "n/a" : iscount(iters)),
+            "$where: iterations '$iters', f_evals '$fe'")
+        T = eltype_of(el)
+        ok = if code == "ERROR"
+            check(isempty(fn) && !isempty(c[23]), "$where: an ERROR with a result")
+            false
+        else
+            code in BLOCK_OK[p] && number(fn, T) ≤ number(tol, T)
+        end
+        check(succ == string(ok), "$where: success $succ, recomputed $ok")
+        check_times(where, c[16:22])
+    end
+end
+
+# --- Y2: the report's tables -------------------------------------------------------------------
+
+# The rows of the Markdown table under the line `heading`, without its head line, each the vector
+# of its fields.
+function y2_table(heading)
+    i = findfirst(==(heading), report)
+    i === nothing && (push!(failures, "REPORT.md: no heading $heading"); return [])
+    out = []
+    for l in report[(i + 1):end]
+        startswith(l, "#") && break
+        startswith(l, "|") || continue
+        fields = strip.(split(strip(l, '|'), "|"))
+        all(f -> occursin(r"^:?-+:?$", f), fields) && continue
+        push!(out, String.(fields))
+    end
+    return isempty(out) ? out : out[2:end]
+end
+
+function compare_table(name, got, want)
+    check(length(got) == length(want),
+        "REPORT.md: $name has $(length(got)) lines, recomputed $(length(want))") || return
+    for (g, w) in zip(got, want)
+        check(g == w, "REPORT.md: $name has '$(join(g, " | "))', recomputed '$(join(w, " | "))'")
+    end
+end
+
+# A share with three decimals, and a positive `x` with three significant digits, trailing zeros
+# kept and a trailing point dropped; `—` for `NaN`, the median of no ratio.
+d3(x) = @sprintf("%.3f", x)
+function s3(x)
+    isnan(x) && return "—"
+    s = @sprintf("%#.3g", x)
+    return endswith(s, ".") ? chop(s) : s
+end
+
+function median_any(v)
+    isempty(v) ? NaN :
+    (s = sort(v); n = length(s); isodd(n) ? s[(n + 1) ÷ 2] : (s[n ÷ 2] + s[n ÷ 2 + 1]) / 2)
+end
+
+# A cell as a named view: `success`, `iterations`, `f_evals` and `median_s`.
+function corr_view(c)
+    (; ok = c[10] == "true", iterations = String(c[11]), f_evals = String(c[12]),
+        median_s = get(median_s, join(c[1:6], ","), NaN))
+end
+function block_view(c)
+    (; ok = c[11] == "true", iterations = String(c[12]), f_evals = String(c[13]),
+        median_s = something(tryparse(Float64, c[21]), NaN))
+end
+
+function ratio_median(pairs, metric)
+    v = Float64[]
+    for (a, b) in pairs
+        x, y = getfield(a, metric), getfield(b, metric)
+        if metric == :median_s
+            push!(v, x / y)
+        else
+            (x == "n/a" || y == "n/a") && return NaN
+            push!(v, max(parse(Float64, x), 1) / max(parse(Float64, y), 1))
+        end
+    end
+    return median_any(v)
+end
+const MS = (:iterations, :f_evals, :median_s)
+
+!STRUCTURE && length(btables) == 4 &&
+    let
+        bykey = Dict(join(c[1:6], ",") => c for c in cells)
+        want = []
+        # The profiles.
+        for el in ("Float32", "Float64"), metric in MS
+
+            solvers = filter(
+                p -> !(p == "NLsolve" && el == "Float32") &&
+                     !(p == "SimpleNonlinearSolve" && metric == :iterations),
+                PKGS)
+            pairs = unique([join(c[1:5], ",") for c in cells if c[4] == el])
+            check(length(pairs) == 1027, "correctness.csv: $(length(pairs)) pairs in $el, not 1027")
+            t = fill(Inf, length(pairs), length(solvers))
+            for (i, pr) in enumerate(pairs), (j, s) in enumerate(solvers)
+
+                c = bykey["$pr,$s"]
+                (c[7] == "ran" && c[10] == "true") || continue
+                v = getfield(corr_view(c), metric)
+                t[i, j] = metric == :median_s ? v : max(parse(Float64, v), 1)
+            end
+            want = [[s;
+                     [begin
+                          r = [isinf(t[i, j]) ? Inf : t[i, j] / minimum(t[i, :])
+                               for i in axes(t, 1)]
+                          d3(count(x -> isfinite(x) && x ≤ τ, r) / length(pairs))
+                      end
+                      for τ in (1, 2, 4, 8, 16, Inf)]] for (j, s) in enumerate(solvers)]
+            compare_table("the profile $el $metric", y2_table("#### Profile · $el · $metric"), want)
+        end
+        # DogLeg against Backtracking.
+        want = []
+        for p in ("GeometricSolvers", "SimpleSolvers", "NLsolve"),
+            el in ("Float32", "Float64")
+
+            p == "NLsolve" && el == "Float32" && continue
+            dl = [bykey[join([r; el; "Newton DogLeg LU"; p], ",")] for r in rows_of(el)]
+            bt = [bykey[join([r; el; "Newton Backtracking LU"; p], ",")]
+                  for r in rows_of(el)]
+            both = [(corr_view(a), corr_view(b))
+                    for (a, b) in zip(dl, bt)
+                    if a[10] == "true" && b[10] == "true"]
+            push!(want,
+                [p, el, string(count(c -> c[10] == "true", dl)),
+                    string(count(c -> c[10] == "true", bt)), string(length(both)),
+                    (s3(ratio_median(both, m)) for m in MS)...])
+        end
+        compare_table("the DogLeg table", y2_table("### Y2 · DogLeg against Backtracking"), want)
+        # Mixed precision.
+        mixed = btables["mixed"]
+        base = Dict(join(c[2:4], ",") => c for c in mixed if c[6] == "gs-f64")
+        want = []
+        for v in ("gs-f64", "gs-f32", "gs-f32-refine", "nsol-f32", "nsol-mplu")
+            cs = [c for c in mixed if c[6] == v]
+            both = [(block_view(c), block_view(base[join(c[2:4], ",")]))
+                    for c in cs
+                    if c[11] == "true" && base[join(c[2:4], ",")][11] == "true"]
+            push!(want,
+                [v, "`$(LABELS[v])`", string(count(c -> c[11] == "true", cs)),
+                    string(length(both)), s3(ratio_median(both, :iterations)),
+                    s3(ratio_median(both, :median_s))])
+        end
+        compare_table("the mixed-precision table", y2_table("### Y2 · Mixed precision"), want)
+        # The stage tolerance.
+        want = []
+        for p in ("GeometricSolvers", "SimpleSolvers", "SimpleNonlinearSolve")
+            loose = [c for c in btables["stage"] if c[7] == p]
+            tight = [bykey[join([c[2:5]; c[6]; p], ",")] for c in loose]
+            both = [(block_view(a), corr_view(b))
+                    for (a, b) in zip(loose, tight)
+                    if a[11] == "true" && b[10] == "true"]
+            push!(want,
+                [p, string(count(c -> c[11] == "true", loose)),
+                    string(count(c -> c[10] == "true", tight)), string(length(both)),
+                    (s3(ratio_median(both, m)) for m in MS)...])
+        end
+        compare_table("the stage-tolerance table", y2_table("### Y2 · Stage tolerance"), want)
+        # Anderson.
+        want = []
+        for el in ("Float32", "Float64"), k in (1, 2, 3, 5)
+
+            a = [c for c in btables["anderson"] if c[5] == el && c[6] == "anderson-$k"]
+            n = [c for c in btables["anderson"] if c[5] == el && c[6] == "newton-$k"]
+            both = [(block_view(x), block_view(y))
+                    for (x, y) in zip(a, n)
+                    if x[11] == "true" && y[11] == "true"]
+            push!(want,
+                [el, string(k), string(count(c -> c[11] == "true", a)),
+                    string(count(c -> c[11] == "true", n)), string(length(both)),
+                    (s3(ratio_median(both, m)) for m in MS)...])
+        end
+        compare_table("the Anderson table", y2_table("### Y2 · Anderson"), want)
+        # The sparse problem.
+        want = [[c[6], last(split(c[3], "=")), c[5], c[8], c[10], c[12], c[13],
+                    isempty(c[21]) ? "" : s3(parse(Float64, c[21]))]
+                for c in btables["sparse"]]
+        compare_table("the sparse table", y2_table("### Y2 · The sparse problem"), want)
+        # The count of timed cells whose warm-up differs from correctness.csv.
+        nd = count(t -> occursin("differs from correctness.csv", last(t)), timings)
+        check(any(l -> occursin("$nd of the $N_RAN timed cells", l), report),
+            "REPORT.md: no line states '$nd of the $N_RAN timed cells'")
+    end
+
 if isempty(failures)
-    println("VERIFY OK: $(length(cells)) cells, $(length(rows)) rows",
-        STRUCTURE ? " (structure)" : "")
+    println("VERIFY OK: $(length(cells)) cells, $(length(rows)) rows, ",
+        "$(length(timings)) timings, ",
+        join(
+            ("$(length(get(btables, b, []))) $b"
+            for b in ("mixed", "stage", "anderson", "sparse")),
+            ", "), " block cells", STRUCTURE ? " (structure)" : "")
 else
     foreach(f -> println("FAIL ", f), first(failures, 50))
     length(failures) > 50 && println("… and $(length(failures) - 50) more")

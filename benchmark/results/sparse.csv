@@ -1,0 +1,21 @@
+block,set,problem,start,eltype,variant,package,status,method,code,success,iterations,f_evals,fnorm_inf,tol,t1,t2,t3,t4,t5,median_s,spread,comment
+sparse,sparse,bracket N=125,z0,Float32,gs-sparse,GeometricSolvers,ran,Newton+Static+LUFactorization+AutoSparse+SparseMatrixCSC,SUCCESS,true,2,3,7.390976f-6,0.00034526698f0,0.000336875,0.000320042,0.000281083,0.000276084,0.000263708,0.000281083,0.2603038960022485,
+sparse,sparse,bracket N=125,z0,Float32,gs-dense,GeometricSolvers,ran,Newton+Static+LUFactorization+SharedJacobian,SUCCESS,true,2,3,7.1525574f-6,0.00034526698f0,0.000799333,0.000763375,0.000714709,0.000753167,0.000726875,0.000753167,0.11235755151248003,
+sparse,sparse,bracket N=125,z0,Float32,nlsolve-sparse,NLsolve,no Float32,,,,,,,,,,,,,,,NLsolve runs in Float64 only
+sparse,sparse,bracket N=125,z0,Float32,simplesolvers,SimpleSolvers,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleSolvers
+sparse,sparse,bracket N=125,z0,Float32,simplenonlinearsolve,SimpleNonlinearSolve,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleNonlinearSolve
+sparse,sparse,bracket N=125,z0,Float64,gs-sparse,GeometricSolvers,ran,Newton+Static+LUFactorization+AutoSparse+SparseMatrixCSC,SUCCESS,true,3,4,9.166001291305292e-13,1.4901161193847656e-8,0.000477167,0.000447167,0.000398083,0.000401083,0.000396042,0.000401083,0.20226486787024142,
+sparse,sparse,bracket N=125,z0,Float64,gs-dense,GeometricSolvers,ran,Newton+Static+LUFactorization+SharedJacobian,SUCCESS,true,3,4,9.170442183403793e-13,1.4901161193847656e-8,0.0017515,0.001761958,0.001762583,0.001753042,0.0017805,0.001761958,0.016458962131900956,
+sparse,sparse,bracket N=125,z0,Float64,nlsolve-sparse,NLsolve,ran,newton+AnalyticJacobian+SparseMatrixCSC,converged,true,3,4,9.161560399206792e-13,1.4901161193847656e-8,0.0004795,0.000450375,0.000433334,0.0004435,0.00041775,0.0004435,0.13923337091319055,
+sparse,sparse,bracket N=125,z0,Float64,simplesolvers,SimpleSolvers,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleSolvers
+sparse,sparse,bracket N=125,z0,Float64,simplenonlinearsolve,SimpleNonlinearSolve,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleNonlinearSolve
+sparse,sparse,bracket N=768,z0,Float32,gs-sparse,GeometricSolvers,ran,Newton+Static+LUFactorization+AutoSparse+SparseMatrixCSC,SUCCESS,true,2,3,7.390976f-6,0.00034526698f0,0.001527333,0.001630375,0.001681708,0.001670666,0.001683625,0.001670666,0.09355071570260001,
+sparse,sparse,bracket N=768,z0,Float32,gs-dense,GeometricSolvers,ran,Newton+Static+LUFactorization+SharedJacobian,SUCCESS,true,2,3,6.914139f-6,0.00034526698f0,0.063571416,0.063598875,0.064724083,0.063894583,0.06385975,0.06385975,0.0180499767067675,
+sparse,sparse,bracket N=768,z0,Float32,nlsolve-sparse,NLsolve,no Float32,,,,,,,,,,,,,,,NLsolve runs in Float64 only
+sparse,sparse,bracket N=768,z0,Float32,simplesolvers,SimpleSolvers,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleSolvers
+sparse,sparse,bracket N=768,z0,Float32,simplenonlinearsolve,SimpleNonlinearSolve,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleNonlinearSolve
+sparse,sparse,bracket N=768,z0,Float64,gs-sparse,GeometricSolvers,ran,Newton+Static+LUFactorization+AutoSparse+SparseMatrixCSC,SUCCESS,true,3,4,8.5087492607272e-13,1.4901161193847656e-8,0.065432625,0.002281375,0.002303791,0.002341583,0.002321666,0.002321666,27.200833367073468,
+sparse,sparse,bracket N=768,z0,Float64,gs-dense,GeometricSolvers,ran,Newton+Static+LUFactorization+SharedJacobian,SUCCESS,true,3,4,8.5087492607272e-13,1.4901161193847656e-8,0.1774755,0.171019209,0.171094083,0.172527417,0.172398917,0.172398917,0.037449719014186165,
+sparse,sparse,bracket N=768,z0,Float64,nlsolve-sparse,NLsolve,ran,newton+AnalyticJacobian+SparseMatrixCSC,converged,true,3,4,8.499867476530198e-13,1.4901161193847656e-8,0.002476583,0.068572875,0.002397833,0.002365958,0.002383042,0.002397833,27.611145980558284,
+sparse,sparse,bracket N=768,z0,Float64,simplesolvers,SimpleSolvers,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleSolvers
+sparse,sparse,bracket N=768,z0,Float64,simplenonlinearsolve,SimpleNonlinearSolve,no sparse path,,,,,,,,,,,,,,,the benchmark has no sparse adapter for SimpleNonlinearSolve
