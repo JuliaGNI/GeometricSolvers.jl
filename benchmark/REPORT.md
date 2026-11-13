@@ -20,7 +20,7 @@ Three packages are left out:
 |:--|:--|
 | `correctness.jl [outdir]` | runs every cell, writes `correctness.csv` and `rows.csv` (by default to `benchmark/results/`), and prints the tables of this report |
 | `verify.jl <dir> [--structure]` | checks the tables of `<dir>`, this report and the traces with code of its own |
-| `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows |
+| `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows |
 | `check_midpoint.jl` | checks each midpoint residual against one step of `ImplicitMidpoint` |
 | `trace.jl <set> <problem> <start> <eltype> <column> [outfile]` | writes the iteration trace of one row |
 
@@ -267,10 +267,10 @@ and `ErrorException` has no such method.
 Lotka–Volterra systems at `Δt = 0.01` in `Float32`, the Toda lattice at `Δt = 1.0` in `Float64`)
 its residual becomes `NaN` and stays `NaN` until the cap: it tests its tolerance only after a step,
 and where `‖F‖₂ ≥ 1e-5` it scales its first inverse Jacobian by `max(‖x‖, 1) / (2 ‖F‖₂)`, so from
-a start with a small residual its first step is long. In the two Lotka–Volterra rows the start already meets
-`τ = 3.45e-4`, and GeometricSolvers ends `SUCCESS` with 0 iterations. In the traced row (Toda
-lattice, `Δt = 1.0`, `Float64`) `‖F‖∞` grows from 0.109 to above 1 within ten calls and ends at
-`NaN`. In the three rows of problem 18 it ends at `‖F‖∞` between 2.4e3 and 1.5e4.
+a start with a small residual its first step is long. In the two Lotka–Volterra rows the start
+already meets `τ = 3.45e-4`, and GeometricSolvers ends `SUCCESS` with 0 iterations. In the traced
+row (Toda lattice, `Δt = 1.0`, `Float64`) `‖F‖∞` grows from 0.109 to above 1 within ten calls and
+ends at `NaN`. In the three rows of problem 18 it ends at `‖F‖∞` between 2.4e3 and 1.5e4.
 
 ### E7 · Four dogleg trust regions with different radius updates
 
@@ -283,15 +283,14 @@ radius update. GeometricSolvers reaches the cap in 12 rows (problems 1, 15, 16 a
 rows of problem 11, where it rejects a trial at its smallest radius `1e-6`. SimpleSolvers fails in
 14 rows at the cap or by its stop rules, and throws a `NonlinearSolverException` in 7 `Float32`
 rows from `10u0` or `100u0`, at its second call ("non-finite direction₂ vector!" in problem 3 from
-`100u0`). NLsolve reaches the cap
-in 5 rows. `SimpleTrustRegion` reaches the cap in 19 rows, ends `ShrinkThresholdExceeded` in 3,
-and throws in 2. Its steepest-descent point is `-g`, `g = Jᵀ F`, scaled to the radius, without the
-Cauchy step length `gᵀg / gᵀ Jᵀ J g`; where the radius exceeds the model's minimiser along `-g`,
-the model predicts an increase of `‖F‖₂²`, the actual change is an increase too, and its ratio
-test accepts the step. In the traced row (problem 9, `u0`, `Float64`) the other three packages
-reach the root in 3 iterations; `SimpleTrustRegion`'s first step goes along `-g` with radius
-0.0150, where the model predicts a change of `+3.0e-4` in `‖F‖₂²/2` and the actual change is
-`+3.0e-4`, and its `‖F‖∞` grows from 0.0123 to 0.140 over 401 calls.
+`100u0`). NLsolve reaches the cap in 5 rows. `SimpleTrustRegion` reaches the cap in 19 rows, ends
+`ShrinkThresholdExceeded` in 3, and throws in 2. Its steepest-descent point is `-g`, `g = Jᵀ F`,
+scaled to the radius, without the Cauchy step length `gᵀg / gᵀ Jᵀ J g`; where the radius exceeds the
+model's minimiser along `-g`, the model predicts an increase of `‖F‖₂²`, the actual change is an
+increase too, and its ratio test accepts the step. In the traced row (problem 9, `u0`, `Float64`)
+the other three packages reach the root in 3 iterations; `SimpleTrustRegion`'s first step goes along
+`-g` with radius 0.0150, where the model predicts a change of `+3.0e-4` in `‖F‖₂²/2` and the actual
+change is `+3.0e-4`, and its `‖F‖∞` grows from 0.0123 to 0.140 over 401 calls.
 
 ### E8 · The undamped Newton step and the stop rules of each package
 
