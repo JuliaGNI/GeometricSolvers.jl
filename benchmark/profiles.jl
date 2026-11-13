@@ -1,6 +1,6 @@
-# The tables of the report's Y2 section, from the tables of `<dir>`: the performance profiles of
-# Dolan and Moré over `correctness.csv` and `timings.csv`, DogLeg against Backtracking, and the
-# tables of the four blocks. It prints them as the Markdown that `benchmark/REPORT.md` holds.
+# The tables of the report's Y2 section, from the tables of `<dir>`: the performance profiles
+# over `correctness.csv` and `timings.csv`, DogLeg against Backtracking, and the tables of the
+# four blocks. It prints them as the Markdown that `benchmark/REPORT.md` holds.
 #
 # Usage: julia --project=benchmark benchmark/profiles.jl <dir>
 

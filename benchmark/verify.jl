@@ -383,8 +383,7 @@ for block in ("mixed", "stage", "anderson", "sparse")
         "$block.csv: the keys are not the block's, each once, in order")
     for c in bc
         where = "$block.csv: $(join(c[1:7], ","))"
-        _, set, problem, start, el, v, p, status, method,
-        code, succ, iters, fe, fn, tol = c[1:15]
+        el, v, p, status, method, code, succ, iters, fe, fn, tol = c[5:15]
         expected = block_status(block, el, v, p)
         check(status == expected, "$where: status $status, not $expected")
         if status != "ran"
