@@ -26,7 +26,8 @@ zero pivot block (or `1` for a non-finite entry), and
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 The SVD records its numerical rank in `rank`, the number of singular values above the cutoff
-`√m · eps(TF) · σ₁`, `m` the number of rows of `J`, and a rank deficiency gives `info == 0` and
+`rtol · σ₁` of [`SVDFactorization`](@ref), by default `√m · eps(TF) · σ₁`, `m` the number of rows
+of `J`, and a rank deficiency gives `info == 0` and
 `SUCCESS`; its `info` is nonzero
 only where the sweep did not converge or a singular value is not finite, and `rank` is then 0. The
 SVD is prescaled at the working precision too, because the sweep squares the entries.
@@ -144,7 +145,8 @@ the one-sided Jacobi iteration of `src/linear/static/svd.jl`. `factors` holds `U
 right singular vectors as columns, and `σ̂` holds the `N` singular values of the matrix divided by
 `2^e`, the ones the sweep computed and the solve divides by, in non-increasing order in
 `R = real(TF)`; [`singular_values`](@ref) gives those of the matrix as it was passed. `rank` is
-the number of singular values above the rank cutoff `√N · eps(TF) · σ̂₁`; the directions past it
+the number of singular values above the rank cutoff `rtol · σ̂₁` of [`SVDFactorization`](@ref),
+by default `√N · eps(TF) · σ̂₁`; the directions past it
 are zeroed in `U`, and the solve of [`ldiv!!`](@ref) leaves their coordinates out. `info` is 1
 where the sweep reached its cap of 30 sweeps before the columns were orthogonal or a singular
 value is not finite, and `rank` is then 0; it is 0 otherwise, also for a rank-deficient matrix,
@@ -255,7 +257,8 @@ vector workspace buffer, `rhs` the right-hand-side buffer of the factor element 
 `nothing` only where the working element type is the factor's and the problem is not a
 `LeastSquaresProblem`, `info` `1` where the matrix has a non-finite entry, which is refused before
 `gesvd`, `gesvd`'s non-convergence code, `1` where a `σ̂` is not finite, or `0`, `rank` the number
-of singular values above the cutoff `√m · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and
+of singular values above the cutoff `rtol · σ̂₁` of [`SVDFactorization`](@ref), by default
+`√m · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and
 `scale_exponent` the exponent `e` of the power of two `2^e` that the matrix was divided by.
 """
 struct DenseSVD{A <: AbstractMatrix, S <: AbstractVector, W <: AbstractVector,
@@ -287,8 +290,8 @@ during the sweep), `flag` the 1-element `Int32` rotation-flag buffer, `tmp` the 
 buffer, `rhs` the right-hand-side buffer of the factor element type, which is `nothing` only
 where the working element type is the factor's and the problem is not a `LeastSquaresProblem`,
 `info` `1` where the Jacobi sweep reaches its sweep cap without converging or meets a non-finite
-entry, or `0`, `rank` the number of singular values above the cutoff `√m · eps(real(TF)) · σ̂₁`,
-and 0 where `info ≠ 0`, and `scale_exponent` the exponent `e` of the power of two `2^e` that the
+entry, or `0`, `rank` the number of singular values above the cutoff `rtol · σ̂₁` of
+[`SVDFactorization`](@ref), by default `√m · eps(real(TF)) · σ̂₁`, and 0 where `info ≠ 0`, and `scale_exponent` the exponent `e` of the power of two `2^e` that the
 matrix was divided by.
 """
 struct DeviceSVD{A <: AbstractMatrix, S <: AbstractVector, F <: AbstractVector{Int32},

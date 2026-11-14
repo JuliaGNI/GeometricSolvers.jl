@@ -11,6 +11,22 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
+  value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
+  counts as zero: the factor's `rank`, `SolverStatus.rank` and the truncation of the solve follow
+  it, on the R1 square and rectangular SVDs, the host `DenseSVD`, the KernelAbstractions
+  `DeviceSVD` and the CUDA `gesvdj!` path with its Jacobi fallback. The default `rtol = nothing`
+  keeps the cutoff `√m · eps(R) · σ̂₁` bit for bit, and `SVDFactorization()` stays an `isbits`
+  value of size 0, `=== SVDFactorization{Nothing}()`. The Jacobi sweep keeps `√m · eps(R)` as its
+  tolerance whatever `rtol` is. `rtol` is stored in `real(TF)` for a float `TF` and in `Float64`
+  for `TF = Nothing` and a precision marker, and the constructor refuses a stored value outside
+  `[0, 1)` or not finite with an `ArgumentError`; the factor converts `rtol` to its own real type.
+  `promote_linsolve` carries `rtol`, and `ToReal{R}` converts it to `R` and keeps `TF`, so that a
+  `Newton` with a `Float64` `rtol` enters a `Float32` kernel. `SVDFactorization` gains a second
+  type parameter, the type of `rtol`; `SVDFactorization{TF}` is now a `UnionAll`. The internal
+  `svd_rank`, `ka_svd!` and the CUDA extension's `_cusolver_svd_finish!` take the cutoff, and
+  `ka_factorize_svd!(fac, J, method)` takes the method as an optional third argument.
+
 - **`BlockEliminated` and `VariableProjection` for single-system block elimination and separable
   least-squares variable projection.** Both problem wrappers are exported and subtype
   `AbstractNonlinearProblem`. `BlockEliminated(prob::Union{NonlinearProblem, StationarityProblem},

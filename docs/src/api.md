@@ -166,7 +166,8 @@ with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufma
 Householder QR without column pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a
 one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
 `√n · eps(TF) · σ₁` for a square matrix and `√m · eps(TF) · σ₁` for a rectangular one, `m` its row
-count, which is what makes a rank-revealing solve finite. For a vector state (R3) with no sparse
+count, which is what makes a rank-revealing solve finite. `SVDFactorization(; rtol)` sets the
+cutoff to `rtol · σ₁` on every route, R1 and R3. For a vector state (R3) with no sparse
 pattern (`jacobian_pattern(prob, jacprep) === nothing`),
 [`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
 [`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref),
