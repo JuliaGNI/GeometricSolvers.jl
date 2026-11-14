@@ -408,10 +408,11 @@ MultiPrecisionArrays' `mplu`, as a baseline.
   all. A cell succeeds when its package reports success, its iterate is finite and the harness
   measures `‖F(x)‖∞ ≤ tol`.
 - **The labels.** The `method` of a block cell is read from the objects that its adapter passes: a
-  GeometricSolvers LU that factors in `Float32` shows as `LUFactorization{Float32}`, a
-  `Refinement` as `+Refinement`, a factor reuse of `k` steps as `Newton(k)`, an `Anderson` of depth
-  `m` as `Anderson{m}(<member>)`, and `nsol` as `nsol(sham=<sham>)+FPS{<eltype of its Jacobian
-  store>}` or `nsol(sham=<sham>)+mplu`.
+  GeometricSolvers `LUFactorization(Float32)` shows as `LUFactorization{Float32}`, and
+  `LUFactorization()`, which factors in the element type of the problem, as `LUFactorization` in
+  both precisions; a `Refinement` shows as `+Refinement`, a factor reuse of `k` steps as
+  `Newton(k)`, an `Anderson` of depth `m` as `Anderson{m}(<member>)`, and `nsol` as
+  `nsol(sham=<sham>)+FPS{<eltype of its Jacobian store>}` or `nsol(sham=<sham>)+mplu`.
 - **The machine.** Apple M4 Max, aarch64 macOS 27.2, Julia 1.13.3. The machine runs other work, so
   each process prints the `uptime` load at its start. The 1-minute load averages were between 2.37
   and 2.73 for the seven timing processes and between 2.23 and 3.39 for the 16 block processes.

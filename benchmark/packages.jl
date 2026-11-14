@@ -170,8 +170,8 @@ end
 
 # The label part of an object that an adapter passes to its package: its type name, a method
 # symbol as it is, and the parts of a GeometricSolvers method. A GeometricSolvers `Newton` shows
-# a factor in `Float32` as `LUFactorization{Float32}`, a `Refinement` as `+Refinement` and a
-# Jacobian selector other than the default `nothing` by its type name; an `Anderson` shows its
+# `LUFactorization(Float32)` as `LUFactorization{Float32}`, a `Refinement` as `+Refinement` and
+# a Jacobian selector other than the default `nothing` by its type name; an `Anderson` shows its
 # depth and its member.
 part(obj) = string(nameof(typeof(obj)))
 part(s::Symbol) = string(s)
