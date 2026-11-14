@@ -403,7 +403,7 @@ for block in ("mixed", "stage", "anderson", "sparse")
             check(isempty(fn) && !isempty(c[23]), "$where: an ERROR with a result")
             false
         else
-            code in BLOCK_OK[p] && number(fn, T) ≤ number(tol, T)
+            code in BLOCK_OK[p] && 0 ≤ number(fn, T) ≤ number(tol, T)
         end
         check(succ == string(ok), "$where: success $succ, recomputed $ok")
         check_times(where, c[16:22])

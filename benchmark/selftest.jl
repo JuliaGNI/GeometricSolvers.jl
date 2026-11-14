@@ -590,12 +590,20 @@ end
                 line("NLsolve", "Float64", "a"), line("GeometricSolvers", "Float32", "b"),
                 line("GeometricSolvers", "Float64", "c")]
             @test !isfile(part_path(dir, "NLsolve", "Float64"))
-            # A part whose line is another cell's, or that has a line left over, stops the merge.
+            # A part whose line is another cell's, that has no line for a cell, or that has a line
+            # left over, stops the merge, and leaves the table and the parts as they were.
+            table = read(joinpath(dir, "timings.csv"), String)
             parts(line("GeometricSolvers", "Float32", "c\n"))
             @test_throws r"is not the cell" merge_parts(dir)
+            @test read(joinpath(dir, "timings.csv"), String) == table
+            parts("")
+            @test_throws r"no line for the cell" merge_parts(dir)
+            @test read(joinpath(dir, "timings.csv"), String) == table
             parts(line("GeometricSolvers", "Float64", "c\n") *
                   line("GeometricSolvers", "Float64", "d\n"))
             @test_throws r"lines left over" merge_parts(dir)
+            @test read(joinpath(dir, "timings.csv"), String) == table
+            @test isfile(part_path(dir, "NLsolve", "Float64"))
         end
         bkey(b) = join([b.block; collect(b.key); b.eltype; b.variant; b.package], ",")
         mktempdir() do dir

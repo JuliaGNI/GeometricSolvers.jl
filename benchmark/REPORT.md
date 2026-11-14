@@ -405,7 +405,9 @@ MultiPrecisionArrays' `mplu`, as a baseline.
   success rule of Y1, with the block's tolerance `tol`, 200 iterations and the shared ForwardDiff
   Jacobian, unless the block says otherwise. That solve is the warm-up of the cell, which is then
   timed as a cell of the timed sweep, in one fresh process per block, package and precision, 16 in
-  all. A cell succeeds when its package reports success, its iterate is finite and the harness
+  all. Six of them run no solve and write only the status lines of their cells: stage NLsolve,
+  sparse NLsolve `Float32`, and sparse SimpleSolvers and SimpleNonlinearSolve in both precisions.
+  A cell succeeds when its package reports success, its iterate is finite and the harness
   measures `‖F(x)‖∞ ≤ tol`.
 - **The labels.** The `method` of a block cell is read from the objects that its adapter passes: a
   GeometricSolvers `LUFactorization(Float32)` shows as `LUFactorization{Float32}`, and
@@ -625,7 +627,9 @@ differ in the Jacobian source and the linear solver:
 
 - `gs-sparse`: GeometricSolvers' `Newton(; jacobian = AutoSparse(AutoForwardDiff();
   coloring_algorithm = GreedyColoringAlgorithm()))` on a problem with the sparsity prototype, which
-  factors with Sparspak's LU through the package extension;
+  factors with Sparspak's LU through the package extension; each timed solve includes the
+  colouring and the sparse-AD preparation of `prepare_ad`, which the Jacobian functions that the
+  other two variants pass do not need;
 - `gs-dense`: GeometricSolvers' `Newton()` on a problem with the shared dense ForwardDiff
   Jacobian;
 - `nlsolve-sparse`: NLsolve's `:newton` on a `OnceDifferentiable` with the problem's analytic

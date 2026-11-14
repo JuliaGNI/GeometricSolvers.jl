@@ -161,7 +161,7 @@ function sparse_run(b::BlockCell)
             comment = "the benchmark has no sparse adapter for $(b.package)")
     b.package == "NLsolve" && b.eltype == "Float32" &&
         return (; status = "no Float32", comment = "NLsolve runs in Float64 only")
-    T = b.eltype == "Float32" ? Float32 : Float64
+    T = eltype_named(b.eltype)
     sp = sparse_row(parse(Int, last(split(b.key[2], "="))), T)
     tol = tolerance(T)
     invoke = c -> sparse_call(Val(Symbol(b.variant)), sp, c, copy(sp.row.x0); tol)

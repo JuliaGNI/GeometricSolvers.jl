@@ -716,27 +716,27 @@ end
     merge_part_files(out, header, cells, group, key, part)
 
 Write `header` to `out`, then, for each cell `c` of `cells` in order, the next line of the part
-file `part(group(c))`, which must start with `key(c) * ","`. Throw an error when a line is
-another cell's or a part has a line left over; remove the parts after the merge.
+file `part(group(c))`, which must start with `key(c) * ","`. Throw an error, and leave `out` and
+the parts as they are, when a part has no line for a cell or a line left over, or a line is
+another cell's; remove the parts after the merge.
 """
 function merge_part_files(out, header, cells, group, key, part)
     gs = unique(group.(cells))
     lines = Dict(g => readlines(part(g)) for g in gs)
     next = Dict(g => 0 for g in gs)
-    open(out, "w") do io
-        println(io, header)
-        for c in cells
-            g = group(c)
-            line = lines[g][next[g] += 1]
-            startswith(line, key(c) * ",") ||
-                error("$(part(g)): line $(next[g]) is not the cell $(key(c))")
-            println(io, line)
-        end
+    merged = map(cells) do c
+        g = group(c)
+        next[g] < length(lines[g]) || error("$(part(g)): no line for the cell $(key(c))")
+        line = lines[g][next[g] += 1]
+        startswith(line, key(c) * ",") ||
+            error("$(part(g)): line $(next[g]) is not the cell $(key(c))")
+        line
     end
     for g in gs
         next[g] == length(lines[g]) || error("$(part(g)): lines left over")
-        rm(part(g))
     end
+    write(out, join([header; merged], "\n") * "\n")
+    foreach(g -> rm(part(g)), gs)
 end
 
 """
