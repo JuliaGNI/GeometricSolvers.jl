@@ -14,13 +14,13 @@ own kernels.
 | object | holds | example |
 |:--|:--|:--|
 | **problem** | functions | [`NonlinearProblem`](@ref) |
-| **method** | numbers, types and sub-methods, never arrays | [`Newton`](@ref), [`LUFactorization`](@ref), [`Backtracking`](@ref) |
+| **method** | numbers, types and sub-methods, and no buffer of the solve | [`Newton`](@ref), [`LUFactorization`](@ref), [`Backtracking`](@ref) |
 | **state** | everything that is allocated or that changes during a solve | the result of [`init_state`](@ref) |
 | **status** | the result | [`SolverStatus`](@ref) |
 
-A problem holds no parameters and no iterate, and a method holds no array. For an `isbits`
-residual both are `isbits`, so a kernel takes them by value. The state of an R1 solve is `isbits`
-too: every buffer slot is `nothing`.
+A problem holds no parameters and no iterate, and a method holds no buffer of the solve. For an
+`isbits` residual the problem and every method that runs in R1 are `isbits`, so a kernel takes them
+by value. The state of an R1 solve is `isbits` too: every buffer slot is `nothing`.
 
 ## KernelAbstractions backends
 
@@ -53,7 +53,8 @@ the same in both regimes. The seam consists of [`buffer`](@ref), [`residual!!`](
 [`update_iterate!!`](@ref), [`map!!`](@ref), [`mul!!`](@ref), [`copy!!`](@ref), [`scale!!`](@ref),
 [`axpby!!`](@ref) and [`regularize!!`](@ref), together with [`jacobian!!`](@ref), [`jvp!!`](@ref),
 [`factorize!!`](@ref) and [`ldiv!!`](@ref). A backend or a library adds methods to these
-functions, never a new function.
+functions, and a vendor library to the back substitution `backsolve!` of its factor, never a new
+function.
 
 The `!!` convention is that of BangBang.jl; the package defines its own methods and does not
 depend on BangBang.
@@ -121,9 +122,9 @@ scaling by a power of two, the mixed-precision solve and the status handling are
 every backend.
 
 R1 and R2 use the static factorisations on every backend, because they run in one thread. The
-sparse LU of Sparspak runs on a host `Vector` only. The stacked [`LevenbergMarquardt`](@ref) path of
-the factorisations other than SVD indexes scalars and runs on a host array only, and an AD back
-end other than `AutoForwardDiff()` needs a host array.
+sparse LU of Sparspak runs on a host `Vector` only. The stacked [`LevenbergMarquardt`](@ref) path,
+that of every factorisation other than SVD and of `scaling = :diagonal`, indexes scalars and runs
+on a host array only, and an AD back end other than `AutoForwardDiff()` needs a host array.
 
 ## Device precision
 
@@ -137,9 +138,9 @@ end other than `AutoForwardDiff()` needs a host array.
 Metal has no `Float64`, so a Metal solve runs in `Float32` throughout: the iterate, the residual,
 the tolerances, the factorisation and the status. This needs no setting: the keywords build the
 [`Options`](@ref) in `real(eltype(x))`, and [`ToReal`](@ref) converts every float of the method to
-that type, so no `Float64` value reaches a Metal kernel. With `T = Float32` there is no lower factorisation
-precision on Metal, so the mixed-precision pairs of [Mixed precision](@ref mixed) apply on the CPU,
-CUDA and ROCm.
+that type, so no `Float64` value reaches a Metal kernel. With `T = Float32`, the pair
+`T = Float64`, `TF = Float32` of [Mixed precision](@ref mixed) does not apply on Metal; it applies
+on the CPU, CUDA and ROCm.
 
 The markers [`TF32`](@ref), [`FP16`](@ref) and [`BF16`](@ref) name tensor-core precisions as a
 type only. No factorisation method takes a marker, so a marker selects no code path.

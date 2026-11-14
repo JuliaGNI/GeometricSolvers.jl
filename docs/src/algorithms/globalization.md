@@ -114,10 +114,11 @@ cycle without a preconditioner.
 computes the trial step from the damped model
 ``(J^\mathsf{H} J + \mu D^\mathsf{T} D)\, \delta = -J^\mathsf{H} F`` and adapts ``\mu`` from the
 gain ratio of the actual and the predicted reduction. A rejected trial raises ``\mu`` and solves
-again, without a new Jacobian. With [`SVDFactorization`](@ref) each trial reuses one SVD of ``J``;
-with the other factorisations, `[J | -F]` is reduced once per step and each trial eliminates only
-its own damping rows by Givens rotations, so ``J^\mathsf{H} J`` is never formed. It serves a
-[`NonlinearProblem`](@ref), a [`StationarityProblem`](@ref) and a [`LeastSquaresProblem`](@ref).
+again, without a new Jacobian. With [`SVDFactorization`](@ref) and `scaling = :none` each trial
+reuses one SVD of ``J``; with the other factorisations, or with `scaling = :diagonal`, the stacked
+path reduces `[J | -F]` once per step and each trial eliminates only its own damping rows by Givens
+rotations, so ``J^\mathsf{H} J`` is never formed. It serves a [`NonlinearProblem`](@ref), a
+[`StationarityProblem`](@ref) and a [`LeastSquaresProblem`](@ref).
 
 ```jldoctest globalization
 julia> x, status = solve(prob, 3.0, Newton(; globalization = LevenbergMarquardt()));
@@ -126,9 +127,9 @@ julia> status.code === SUCCESS && abs(x) < 1e-8
 true
 ```
 
-`scaling = :diagonal` scales the damping by the column norms of ``J``. The stacked path of the
-factorisations other than SVD indexes scalars and runs on a host array only. `LevenbergMarquardt`
-takes no refinement and no factor reuse.
+`scaling = :diagonal` scales the damping by the column norms of ``J``. The stacked path indexes
+scalars and runs on a host array only. `LevenbergMarquardt` takes no refinement and no factor
+reuse.
 
 ## How to choose
 
@@ -139,8 +140,8 @@ takes no refinement and no factor reuse.
   [`LevenbergMarquardt`](@ref) change the direction and continue where the Jacobian is singular or
   ill-conditioned.
 - For a least-squares problem, [`LevenbergMarquardt`](@ref) damps the Gauss–Newton step.
-- On a device array, the stacked `LevenbergMarquardt` path of the factorisations other than SVD
-  is refused with an `ArgumentError`, because it indexes scalars.
+- On a device array, the stacked `LevenbergMarquardt` path is refused with an `ArgumentError`,
+  because it indexes scalars: only [`SVDFactorization`](@ref) with `scaling = :none` runs there.
 
 `KNOWN_ISSUES.md` in the repository lists the problems where a globalization is known to fail.
 

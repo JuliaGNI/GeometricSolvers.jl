@@ -39,10 +39,10 @@ The type of the iterate selects the factor:
   LDLT, and parallel one-sided Jacobi sweeps for the SVD. On CUDA and Metal, vendor libraries
   replace some of them; see [CPU and GPU backends](@ref backends).
 
-A factorisation never throws. A zero pivot gives the status `SINGULAR`, and the SVD truncates at
-the rank cutoff ``\sqrt{n}\,\varepsilon(T_F)\,\sigma_1``, so its solve is the minimum-norm step on
-the numerical range. The bounds that the test suite verifies for each factor are on the page
-[Numerical Stability and Backward-Error Bounds](@ref stability).
+A factorisation never throws. A zero pivot gives the status `SINGULAR`, and the SVD of an
+``m \times n`` matrix truncates at the rank cutoff ``\sqrt{m}\,\varepsilon(T_F)\,\sigma_1``, so its
+solve is the minimum-norm step on the numerical range. The bounds that the test suite verifies for
+each factor are on the page [Numerical Stability and Backward-Error Bounds](@ref stability).
 
 ```jldoctest linear
 julia> using GeometricSolvers, StaticArrays
@@ -168,12 +168,11 @@ The **forcing term** sets ``\eta_k``. [`EisenstatWalkerChoice2`](@ref) is the de
 root and tightly near it, which saves inner iterations where a tight solve buys nothing.
 
 A **right preconditioner** `M` is any object with methods of [`refresh!`](@ref), called once per
-Newton step, and [`apply_preconditioner!`](@ref), called before every product. A frozen Jacobian
-factor is a common choice:
+Newton step, and [`apply_preconditioner!`](@ref), called before every product. A stored Jacobian
+factor that `ldiv!` applies is the frozen-Jacobian preconditioner of a Newton–Krylov method. The
+example below takes the diagonal of the Jacobian instead:
 
 ```jldoctest linear
-julia> using LinearAlgebra
-
 julia> struct Jacobi
            d::Vector{Float64}
        end

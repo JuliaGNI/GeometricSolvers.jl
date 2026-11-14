@@ -144,9 +144,10 @@ in `R = real(eltype(x₀))`:
 | `max_stalls` | `2` | consecutive stalled steps before the solve stops |
 | `g_tol` | `√eps(R)` | stationarity tolerance of a [`LeastSquaresProblem`](@ref) |
 
-The residual test is ``\|F(x)\| \le \max(f_{abstol}, f_{reltol} \|F(x_0)\|)``, and it is the only
-test that returns `SUCCESS`. The default test is relative, because no default can know the scale
-of `F`; a caller who knows the scale sets `f_abstol`.
+The residual test is ``\|F(x)\| \le \max(f_{abstol}, f_{reltol} \|F(x_0)\|)``. It returns
+`SUCCESS`, and so does the stationarity test of a [`LeastSquaresProblem`](@ref); the step test of
+`x_abstol` and `x_reltol` returns `STALLED`. The default test is relative, because no default can
+know the scale of `F`; a caller who knows the scale sets `f_abstol`.
 
 ```jldoctest getting_started
 julia> x, status = solve(prob, 1.0, Newton(), 2.0; f_abstol = 1e-12, max_iterations = 20);

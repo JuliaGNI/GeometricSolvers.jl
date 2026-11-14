@@ -15,7 +15,8 @@ and on CUDA, ROCm and Metal devices through KernelAbstractions. One solver loop 
 regimes, which the storage of the initial iterate selects:
 
 - **R1**: a `Number` or an `SVector`, with value semantics, on the host or in one GPU thread,
-- **R2**: a batch of small systems, one GPU thread per system, through [`solve_batch!`](@ref),
+- **R2**: a batch of small systems, one work-item per system on the CPU or a GPU, through
+  [`solve_batch!`](@ref),
 - **R3**: an in-place `AbstractVector`, on the CPU or on a device array.
 
 ```jldoctest

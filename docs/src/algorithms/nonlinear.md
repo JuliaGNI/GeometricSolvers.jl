@@ -6,8 +6,8 @@ CurrentModule = GeometricSolvers
 
 A nonlinear method holds its configuration and nothing about the problem or the iterate. It
 enters the loop of [`solve!!`](@ref) through [`init_state`](@ref), [`start!!`](@ref),
-[`step!!`](@ref) and [`finish!!`](@ref), so every method runs in R1, R2 and R3, and the
-[combinators](@ref composition) can compose any of them.
+[`step!!`](@ref) and [`finish!!`](@ref), so one method object serves each regime that its state
+supports, and the [combinators](@ref composition) can compose any of them.
 
 ## `Newton`
 

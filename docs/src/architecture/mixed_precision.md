@@ -138,8 +138,8 @@ and the linear residuals of `Refinement` and `GMRESRefinement` over a range of c
 
 The pairs `T = Float64` with `TF = Float32` (and their complex forms) run on the CPU, on CUDA and on
 ROCm. On CUDA, a `Float32` factor of a `Float64` problem reaches the cuSOLVER method for
-`Float32`. Metal has no `Float64`, so `T = Float32` there and no lower factorisation precision
-exists; see [Device precision](@ref "Device precision").
+`Float32`. Metal has no `Float64`, so `T = Float32` there and the pair with `TF = Float32` does not
+apply; see [Device precision](@ref "Device precision").
 
 A residual can itself be less accurate than `T`, for instance when it calls a `Float32`
 computation inside a `Float64` solve. The limit of the solve is then the accuracy of `F`, and the

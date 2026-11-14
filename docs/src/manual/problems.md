@@ -22,7 +22,7 @@ only. The wrappers take a base problem and change the system that the solver see
 
 `NonlinearProblem(F)` and `NonlinearProblem(F, J)` hold the residual and, optionally, its
 Jacobian. The call forms are those of [Getting started](@ref "Call forms"). Without `J`, the
-Jacobian comes from the `jacobian` field of [`Newton`](@ref), which defaults to
+Jacobian comes from the `jacobian` field of [`Newton`](@ref), whose default `nothing` takes
 `AutoForwardDiff()`.
 
 Two keywords add structure:

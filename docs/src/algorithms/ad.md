@@ -39,8 +39,8 @@ the action.
 
 Any other ADTypes back end goes through
 [DifferentiationInterface](https://github.com/JuliaDiff/DifferentiationInterface.jl) on a host
-`Array` ([`DIJacobian`](@ref), and [`DIStationarity`](@ref) for a stationarity problem). The
-package of the back end must be loaded:
+`Array` ([`DIJacobian`](@ref), and [`DIStationarity`](@ref) for a stationarity problem). A back end
+is named with ADTypes, and an explicit `AutoForwardDiff()` takes the chunked path above:
 
 ```jldoctest ad
 julia> using GeometricSolvers, ADTypes
@@ -52,6 +52,8 @@ julia> x, status = solve(NonlinearProblem(F!), ones(3), Newton(; jacobian = Auto
 julia> x ≈ [1.0, 2.0, 3.0]
 true
 ```
+
+Another back end goes through DifferentiationInterface, and its package must be loaded:
 
 ```julia
 using FiniteDiff

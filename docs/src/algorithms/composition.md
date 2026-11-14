@@ -6,8 +6,10 @@ CurrentModule = GeometricSolvers
 
 A combinator is a nonlinear method whose members are nonlinear methods. It enters the loop through
 the same [`init_state`](@ref), [`start!!`](@ref), [`step!!`](@ref) and [`finish!!`](@ref) as
-[`Newton`](@ref) and [`Picard`](@ref), so a combinator runs in R1, R2 and R3, and combinators nest.
-The composition follows Brune, Knepley, Smith and Tu (2015).
+[`Newton`](@ref) and [`Picard`](@ref), so a combinator runs in each regime that its members run
+in, and combinators nest. The composition follows Brune, Knepley, Smith and Tu (2015). The last two
+rows of the table are the preconditioning methods: [`RAS`](@ref) and [`LeftPreconditioned`](@ref)
+take a [`NonlinearProblem`](@ref) with a mutable vector iterate, so they run in R3 only.
 
 | combinator | one outer step |
 |:--|:--|
@@ -21,9 +23,9 @@ The composition follows Brune, Knepley, Smith and Tu (2015).
 | [`LeftPreconditioned`](@ref)`(outer, inner)` | `outer` on the residual ``y - N(y)`` of one step `N` of `inner` |
 
 A combinator takes a [`NonlinearProblem`](@ref) or a [`StationarityProblem`](@ref) and refuses a
-[`LeastSquaresProblem`](@ref). It has no implicit differentiation. A combinator other than
-[`Repeat`](@ref) reports `0` in `f_calls` and `jvp_calls`, because its members count only their own
-steps.
+[`LeastSquaresProblem`](@ref). A combinator and a preconditioning method have no implicit
+differentiation. A combinator other than [`Repeat`](@ref) reports `0` in `f_calls` and
+`jvp_calls`, because its members count only their own steps.
 
 The examples of this page use the fixed-point problem ``x = \cos x``:
 

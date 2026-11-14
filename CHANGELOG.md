@@ -774,11 +774,13 @@ so that a compat-only bump can be told apart from an interface change.
   algorithm pages (`docs/src/algorithms/`) cover the nonlinear methods with factor reuse and
   implicit differentiation, the globalizations, the static, dense, device and sparse
   factorisations, `GMRES` with its forcing terms and preconditioner, automatic differentiation,
-  and the combinators, `Anderson`, `Broyden`, `RAS` and `LeftPreconditioned`. The architecture
+  the combinators with `Anderson` and `Broyden`, and the preconditioning methods `RAS` and
+  `LeftPreconditioned`. The architecture
   pages (`docs/src/architecture/`) cover the storage and reduction seams, dispatch in place of
   checks, kernel-safe types, the vendor paths of CUDA and Metal, device precision, and mixed
-  precision with refinement. Every CPU example is a `jldoctest`; device examples are plain code
-  blocks that do not run. The documentation environment gains `ADTypes`, `ForwardDiff`,
+  precision with refinement. The CPU examples are `jldoctest`s, except the SciML,
+  FiniteDiff and AutoSparse examples; these and the device examples are plain code blocks that do
+  not run. The documentation environment gains `ADTypes`, `ForwardDiff`,
   `SparseArrays`, `Sparspak` and `StaticArrays`, which the examples load, and which the test
   environment of `test/quality/doctests.jl` already has.
 
