@@ -130,7 +130,7 @@ for c in cells
     else
         xs = number.(split(x, ";"), T)
         r = number(fn, T)
-        code in OK_CODES[pkg] && all(isfinite, xs) && r ≤ sqrt(eps(T))
+        code in OK_CODES[pkg] && all(isfinite, xs) && 0 ≤ r ≤ sqrt(eps(T))
     end
     check(succ == string(ok), "$where: success $succ, recomputed $ok")
     push!(get!(success, (String(column), String(pkg), String(el)), Bool[]), ok)
