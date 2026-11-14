@@ -20,7 +20,23 @@ makedocs(;
     ),
     pages = [
         "Home" => "index.md",
-        "Stability" => "stability.md",
+        "Manual" => [
+            "Getting started" => "manual/getting_started.md",
+            "The three regimes" => "manual/regimes.md",
+            "Problem types" => "manual/problems.md"
+        ],
+        "Algorithms" => [
+            "Nonlinear methods" => "algorithms/nonlinear.md",
+            "Globalization" => "algorithms/globalization.md",
+            "Linear solvers" => "algorithms/linear.md",
+            "Automatic differentiation" => "algorithms/ad.md",
+            "Composition and preconditioning" => "algorithms/composition.md"
+        ],
+        "Architecture" => [
+            "CPU and GPU backends" => "architecture/backends.md",
+            "Mixed precision" => "architecture/mixed_precision.md",
+            "Stability" => "stability.md"
+        ],
         "API" => "api.md"
     ]
 )

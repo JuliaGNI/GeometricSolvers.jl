@@ -767,6 +767,21 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **A user guide in the documentation, beside the stability and API pages.** The manual
+  (`docs/src/manual/`) covers the problem types, the call forms `F(x, p)` and `F!(y, x, p)`,
+  `solve`, `init` and `solve!`, the options, the status and its return codes, parameters at solve
+  time, the SciML extension, and the three regimes R1, R2 and R3 with how to choose one. The
+  algorithm pages (`docs/src/algorithms/`) cover the nonlinear methods with factor reuse and
+  implicit differentiation, the globalizations, the static, dense, device and sparse
+  factorisations, `GMRES` with its forcing terms and preconditioner, automatic differentiation,
+  and the combinators, `Anderson`, `Broyden`, `RAS` and `LeftPreconditioned`. The architecture
+  pages (`docs/src/architecture/`) cover the storage and reduction seams, dispatch in place of
+  checks, kernel-safe types, the vendor paths of CUDA and Metal, device precision, and mixed
+  precision with refinement. Every CPU example is a `jldoctest`; device examples are plain code
+  blocks that do not run. The documentation environment gains `ADTypes`, `ForwardDiff`,
+  `SparseArrays`, `Sparspak` and `StaticArrays`, which the examples load, and which the test
+  environment of `test/quality/doctests.jl` already has.
+
 - **`benchmark/` compares the correctness of GeometricSolvers, SimpleSolvers,
   SimpleNonlinearSolve and NLsolve on the standard test set and on twelve implicit-midpoint stage
   residuals.** It is an environment of its own, with exact `[compat]` versions of the three other
