@@ -304,7 +304,7 @@ end
 
 # --- Y2: the block tables --------------------------------------------------------------------
 
-const BLOCK_HEAD = "block,set,problem,start,eltype,variant,package,status,method,code,success,iterations,f_evals,fnorm_inf,tol,t1,t2,t3,t4,t5,median_s,spread,comment"
+const BLOCK_HEAD = "block,set,problem,start,eltype,variant,package,status,method,code,success,iterations,f_evals,fnorm_inf,tol,t1,t2,t3,t4,t5,median_s,spread,solves_per_run,comment"
 const BLOCK_COUNTS = Dict("mixed" => 395, "stage" => 624, "anderson" => 1264, "sparse" =>
     20)
 const BLOCK_OK = Dict(OK_CODES..., "SIAMFANLEquations" => ["0", "-1"])
@@ -374,8 +374,8 @@ for block in ("mixed", "stage", "anderson", "sparse")
     bl = readlines(path)
     check(bl[1] == BLOCK_HEAD, "$block.csv: header is $(bl[1])")
     bc = [split(l, ",") for l in bl[2:end]]
-    check(all(c -> length(c) == 23, bc), "$block.csv: a line without 23 fields")
-    bc = filter(c -> length(c) == 23, bc)
+    check(all(c -> length(c) == 24, bc), "$block.csv: a line without 24 fields")
+    bc = filter(c -> length(c) == 24, bc)
     btables[block] = bc
     check(length(bc) == BLOCK_COUNTS[block],
         "$block.csv: $(length(bc)) cells, not $(BLOCK_COUNTS[block])")
@@ -387,7 +387,7 @@ for block in ("mixed", "stage", "anderson", "sparse")
         expected = block_status(block, el, v, p)
         check(status == expected, "$where: status $status, not $expected")
         if status != "ran"
-            check(all(isempty, c[9:22]) && !isempty(c[23]),
+            check(all(isempty, c[9:23]) && !isempty(c[24]),
                 "$where: a cell that did not run has fields or no reason")
             continue
         end
@@ -400,13 +400,15 @@ for block in ("mixed", "stage", "anderson", "sparse")
             "$where: iterations '$iters', f_evals '$fe'")
         T = eltype_of(el)
         ok = if code == "ERROR"
-            check(isempty(fn) && !isempty(c[23]), "$where: an ERROR with a result")
+            check(isempty(fn) && !isempty(c[24]), "$where: an ERROR with a result")
             false
         else
             code in BLOCK_OK[p] && 0 ≤ number(fn, T) ≤ number(tol, T)
         end
         check(succ == string(ok), "$where: success $succ, recomputed $ok")
         check_times(where, c[16:22])
+        k = tryparse(Int, c[23])
+        check(k !== nothing && k ≥ 1 && ispow2(k), "$where: solves_per_run $(c[23])")
     end
 end
 
