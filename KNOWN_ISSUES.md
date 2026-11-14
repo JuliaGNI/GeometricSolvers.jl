@@ -320,16 +320,6 @@
 - **kind:** dead code
 - **found:** PR #62
 
-### K68 · `test/nonlinear/leastsquares.jl` may exceed the 60 s budget of a `core` file
-
-- **location:** `test/runtests.jl` (`nonlinear/leastsquares.jl` in `core`)
-- **evidence:** Cold `run-tests.jl <repository> test/nonlinear/leastsquares.jl` on Julia 1.13.3:
-  `PASS in 121 s`, `Test Summary` 1m49.7s, at a load average of 15.3 at the start; the review of
-  PR #62 measured `PASS in 110 s` at a load average of 9.95. Both runs were on a loaded machine,
-  so whether the file stays above 60 s on a quiet one, and moves to `slow`, is open.
-- **kind:** not verified
-- **found:** PR #62
-
 ### K69 · A static `LeastSquaresProblem` evaluates its residual at `x₀` twice in a cold `solve`
 
 - **location:** `src/nonlinear/newton.jl` (`init_state`)
@@ -479,3 +469,15 @@
 - **kind:** defect
 - **found:** 2026-11-12 (a property-based test of the strong Wolfe conditions, checked in
   `BigFloat`)
+
+### K87 · `JET.report_package` errors on Julia pre and nightly, so those CI jobs fail in `test/quality/jet.jl`
+
+- **location:** `test/quality/jet.jl:13`
+- **evidence:** JET 0.12.3 (`JET = "0.12"` in `test/Project.toml`, marked `⌅`, held back) warns
+  "Full JET functionality is not available on Julia 1.14.0-beta1." and `JET report_package`
+  then ends in an `Error During Test at test/quality/jet.jl:13` with the same message:
+  "0 passed, 0 failed, 1 errored". The same on 1.15.0-DEV.729 (nightly). `main` fails the same
+  way (run 43532996461, job 132255039570, 2026-11-14). The pre and nightly jobs are no required
+  checks.
+- **kind:** upstream
+- **found:** PR #84

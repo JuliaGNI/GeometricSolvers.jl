@@ -632,6 +632,34 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
         end
     end
 
+    @testset "the verifier checks the residual of a failed block cell" begin
+        # A failed cell of stage.csv, `LINESEARCH_FAILED` with ‖F‖∞ = 0.0125f0, given another
+        # residual in a copy of the results; the output and exit code of verify.jl on that copy.
+        cell = "stage,midpoint,HarmonicOscillator h=0.1,V0,Float32,Picard Backtracking,GeometricSolvers,"
+        function verify_with(fn)
+            mktempdir() do dir
+                for f in readdir(joinpath(@__DIR__, "results"))
+                    cp(joinpath(@__DIR__, "results", f), joinpath(dir, f))
+                end
+                path = joinpath(dir, "stage.csv")
+                ls = readlines(path)
+                i = only(findall(l -> startswith(l, cell), ls))
+                @test occursin(",0.0125f0,", ls[i])
+                ls[i] = replace(ls[i], ",0.0125f0," => ",$fn,")
+                write(path, join(ls, "\n") * "\n")
+                cmd = `$(Base.julia_cmd()) --startup-file=no $(joinpath(@__DIR__, "verify.jl")) $dir`
+                out = IOBuffer()
+                p = run(pipeline(ignorestatus(cmd); stdout = out, stderr = out))
+                return String(take!(out)), p
+            end
+        end
+        out, p = verify_with("NaN32")
+        @test success(p) && startswith(out, "VERIFY OK")
+        out, p = verify_with("-0.0125f0")
+        @test p.termsignal == 0 && p.exitcode == 1 &&
+              occursin("FAIL stage.csv: $(chop(cell)): fnorm_inf -0.0125f0", out)
+    end
+
     @testset "profile: the ratio to the smallest metric, a failure is Inf" begin
         t = [1.0 2.0 Inf; 4.0 2.0 8.0; Inf Inf Inf]
         r = profile_ratios(t)
