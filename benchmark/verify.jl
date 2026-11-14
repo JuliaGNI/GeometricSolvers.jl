@@ -403,7 +403,10 @@ for block in ("mixed", "stage", "anderson", "sparse")
             check(isempty(fn) && !isempty(c[23]), "$where: an ERROR with a result")
             false
         else
-            code in BLOCK_OK[p] && 0 ≤ number(fn, T) ≤ number(tol, T)
+            # Every cell that ran has a residual: a failure may record NaN, never a negative.
+            r = number(fn, T)
+            check(isnan(r) || r ≥ 0, "$where: fnorm_inf $fn")
+            code in BLOCK_OK[p] && 0 ≤ r ≤ number(tol, T)
         end
         check(succ == string(ok), "$where: success $succ, recomputed $ok")
         check_times(where, c[16:22])
