@@ -469,3 +469,15 @@
 - **kind:** defect
 - **found:** 2026-11-12 (a property-based test of the strong Wolfe conditions, checked in
   `BigFloat`)
+
+### K87 · `JET.report_package` errors on Julia pre and nightly, so those CI jobs fail in `test/quality/jet.jl`
+
+- **location:** `test/quality/jet.jl:13`
+- **evidence:** JET 0.12.3 (`JET = "0.12"` in `test/Project.toml`, marked `⌅`, held back) warns
+  "Full JET functionality is not available on Julia 1.14.0-beta1." and `JET report_package`
+  then ends in an `Error During Test at test/quality/jet.jl:13` with the same message:
+  "0 passed, 0 failed, 1 errored". The same on 1.15.0-DEV.729 (nightly). `main` fails the same
+  way (run 43532996461, job 132255039570, 2026-11-14). The pre and nightly jobs are no required
+  checks.
+- **kind:** upstream
+- **found:** PR #84
