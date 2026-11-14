@@ -1,6 +1,7 @@
 # The rows of the correctness benchmark: the 67 starts of the standard test set, read from
 # `test/helpers/standard_problems.jl`, and the first-step stage residuals of twelve
-# implicit-midpoint scenarios of SolverBenchmark, built from GeometricProblems.
+# implicit-midpoint scenarios of SolverBenchmark, built from GeometricProblems; and the sparse
+# rows of `test/helpers/sparse_problems.jl`.
 #
 # A row is one nonlinear system `F(y, x, p) = 0` and one start `x0` in the element type `T`.
 
@@ -169,3 +170,26 @@ end
 Every row of the benchmark in the element type `T`: the standard rows, then the midpoint rows.
 """
 benchmark_rows(::Type{T}) where {T} = [standard_rows(T); midpoint_rows(T)]
+
+include(joinpath(@__DIR__, "..", "test", "helpers", "sparse_problems.jl"))
+
+"""
+    SPARSE_SIZES
+
+The block sizes `N` of the sparse rows: systems of dimension `2N`.
+"""
+const SPARSE_SIZES = (125, 768)
+
+"""
+    sparse_row(N, T)
+
+The sparse row of `sparse_bracket_problem(N, T)` with its seed 1, as a named tuple: the `row`,
+whose residual `F(y, x, p)` and start `z0` are the problem's, the analytic sparse Jacobian
+`J(J, x, p)`, the `prototype` of its sparsity, the parameter `p` and the planted solution
+`z_star`.
+"""
+function sparse_row(N::Integer, ::Type{T}) where {T}
+    prob, _, z0, p, z_star = sparse_bracket_problem(N, T)
+    row = Row{T}("sparse", "bracket N=$N", "z0", prob.F, z0)
+    return (; row, J = prob.J, prototype = prob.jacobian_prototype, p, z_star)
+end
