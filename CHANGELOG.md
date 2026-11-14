@@ -607,6 +607,14 @@ so that a compat-only bump can be told apart from an interface change.
 - CI uploads coverage from the `Julia 1 - ubuntu-latest` job instead of `Julia min`, and a test
   job saves the Julia cache only when it succeeds.
 
+- CI runs the tests as the groups `core`, `nonlinear`, `leastsquares`, `composition`,
+  `denselarge` and `slow`, one job each, listed in `test/ci-groups.toml`. The `metal` group runs
+  only in the Metal workflow, whose jobs are now required checks. `test/nonlinear/leastsquares.jl`
+  moves from `core` to `leastsquares`, where the 60 s budget of a `core` file does not apply.
+  This closes `K68` in `KNOWN_ISSUES.md`. `.github/workflows/CI.yml`, `codecov.yml` and the git
+  hooks in `.githooks/` follow the Harness template, which runs one CI job per group and checks
+  the group files.
+
 - Raised lower bounds, so that the CI Downgrade job, which resolves `Project.toml` and
   `test/Project.toml` together at their lower bounds on Julia 1.13 and runs the tests there,
   reaches every floor and passes. `KernelAbstractions` goes from 0.9.15 to 0.9.38: the test
