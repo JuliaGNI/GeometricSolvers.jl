@@ -27,9 +27,16 @@
 # merely slow. A sweep that reaches it gives `info = 1`: a kernel cannot throw.
 const JACOBI_MAX_SWEEPS = 30
 
-# The relative tolerance of the sweep and the rank cutoff of `factorize!!`: `√n · eps(R)`, where
-# `R = real(TF)`. `√n` and not a constant, because `n` roundings accumulate along a column.
+# The relative tolerance of the sweep, and the rank cutoff of `factorize!!` where `rtol` is
+# `nothing`: `√n · eps(R)`, where `R = real(TF)`. `√n` and not a constant, because `n` roundings
+# accumulate along a column.
 jacobi_tolerance(n, ::Type{R}) where {R <: Real} = sqrt(R(n)) * eps(R)
+
+# The relative rank cutoff of an SVD factor in `R` of a matrix of `m` rows: a singular value at or
+# below it times `σ̂₁` counts as zero. `rtol` is converted to `R` here, and not by the caller,
+# because a direct `factorize!!` gets the method as it was built, with `rtol` in another type.
+rank_tolerance(::Nothing, m, ::Type{R}) where {R <: Real} = jacobi_tolerance(m, R)
+rank_tolerance(rtol::Real, m, ::Type{R}) where {R <: Real} = R(rtol)
 
 """
     jacobi_rotation(α, β, γ)
@@ -203,11 +210,12 @@ function factorize!!(::Union{Nothing, StaticSVD},
     end
 
     # `info` reports a failed factorisation alone: a sweep that reached its cap, or a singular
-    # value that is not finite. The rank cutoff `σᵢ ≤ √n · eps(TF) · σ₁`, the tolerance of the
-    # sweep, counts a singular value as zero; `σ` is non-increasing, so the rank is a leading run.
+    # value that is not finite. The rank cutoff `σ̂ᵢ ≤ rtol · σ̂₁`, by default `√n · eps(TF) · σ̂₁`,
+    # the tolerance of the sweep, counts a singular value as zero; `σ` is non-increasing, so the
+    # rank is a leading run.
     ok = converged && all(isfinite, σ)
     info = ok ? Int32(0) : Int32(1)
-    cutoff = tol * σ[1]
+    cutoff = rank_tolerance(method.rtol, N, real(F)) * σ[1]
     rank = Int32(0)
     if ok
         for j in 1:N

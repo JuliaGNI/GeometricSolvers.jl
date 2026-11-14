@@ -8,7 +8,8 @@ matrix (`M ≥ N`), in element type `TF`, computed by one-sided Jacobi sweeps. `
 `M × N` left singular vectors, `V` the `N × N` right singular vectors, `S` the `N` singular
 values of the matrix in `R = real(TF)`, `σ̂` the `N` singular values of the matrix divided by
 `2^e`, `info` is 0 on convergence and 1 otherwise, `rank` is the numerical rank above
-`√M · eps(R) · σ̂₁`, and `scale_exponent` is `e`.
+`rtol · σ̂₁` of [`SVDFactorization`](@ref), by default `√M · eps(R) · σ̂₁`, and `scale_exponent`
+is `e`.
 """
 struct StaticRectSVD{M, N, TF, L, LN, R}
     U::SMatrix{M, N, TF, L}
@@ -144,7 +145,7 @@ function factorize!!(::Union{Nothing, StaticSVD, StaticRectSVD},
 
     ok = converged && all(isfinite, σ)
     info = ok ? Int32(0) : Int32(1)
-    cutoff = jacobi_tolerance(M, R) * σ[1]
+    cutoff = rank_tolerance(method.rtol, M, R) * σ[1]
     rank = Int32(0)
     if ok
         for j in 1:N
