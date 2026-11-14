@@ -1,0 +1,2055 @@
+set,problem,start,eltype,column,verdict,explanation
+standard,1,u0,Float32,Newton Static LU,all fail,
+standard,1,u0,Float32,Newton Backtracking LU,agree,
+standard,1,u0,Float32,Newton Bisection LU,different root,E2
+standard,1,u0,Float32,Newton StrongWolfe LU,agree,
+standard,1,u0,Float32,Newton DogLeg LU,disagree,E7
+standard,1,u0,Float32,Newton Backtracking QR,disagree,E9
+standard,1,u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,1,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,1,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,1,u0,Float32,Picard Backtracking,all fail,
+standard,1,u0,Float32,Newton Backtracking GMRES,single,
+standard,1,u0,Float32,Broyden,all fail,
+standard,1,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,1,10u0,Float32,Newton Static LU,all fail,
+standard,1,10u0,Float32,Newton Backtracking LU,all fail,
+standard,1,10u0,Float32,Newton Bisection LU,all fail,
+standard,1,10u0,Float32,Newton StrongWolfe LU,all fail,
+standard,1,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,1,10u0,Float32,Newton Backtracking QR,all fail,
+standard,1,10u0,Float32,Newton Backtracking SVD,all fail,
+standard,1,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,1,10u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,1,10u0,Float32,Picard Backtracking,all fail,
+standard,1,10u0,Float32,Newton Backtracking GMRES,single,
+standard,1,10u0,Float32,Broyden,all fail,
+standard,1,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,1,100u0,Float32,Newton Static LU,all fail,
+standard,1,100u0,Float32,Newton Backtracking LU,all fail,
+standard,1,100u0,Float32,Newton Bisection LU,all fail,
+standard,1,100u0,Float32,Newton StrongWolfe LU,all fail,
+standard,1,100u0,Float32,Newton DogLeg LU,all fail,
+standard,1,100u0,Float32,Newton Backtracking QR,all fail,
+standard,1,100u0,Float32,Newton Backtracking SVD,all fail,
+standard,1,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,1,100u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,1,100u0,Float32,Picard Backtracking,all fail,
+standard,1,100u0,Float32,Newton Backtracking GMRES,single,
+standard,1,100u0,Float32,Broyden,all fail,
+standard,1,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,2,u0,Float32,Newton Static LU,different root,E2
+standard,2,u0,Float32,Newton Backtracking LU,agree,
+standard,2,u0,Float32,Newton Bisection LU,different root,E2
+standard,2,u0,Float32,Newton StrongWolfe LU,agree,
+standard,2,u0,Float32,Newton DogLeg LU,different root,E2
+standard,2,u0,Float32,Newton Backtracking QR,agree,
+standard,2,u0,Float32,Newton Backtracking SVD,agree,
+standard,2,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,2,u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,2,u0,Float32,Picard Backtracking,all fail,
+standard,2,u0,Float32,Newton Backtracking GMRES,single,
+standard,2,u0,Float32,Broyden,disagree,E5
+standard,2,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,2,10u0,Float32,Newton Static LU,different root,E2
+standard,2,10u0,Float32,Newton Backtracking LU,agree,
+standard,2,10u0,Float32,Newton Bisection LU,different root,E2
+standard,2,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,2,10u0,Float32,Newton DogLeg LU,different root,E2
+standard,2,10u0,Float32,Newton Backtracking QR,agree,
+standard,2,10u0,Float32,Newton Backtracking SVD,agree,
+standard,2,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,2,10u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,2,10u0,Float32,Picard Backtracking,all fail,
+standard,2,10u0,Float32,Newton Backtracking GMRES,single,
+standard,2,10u0,Float32,Broyden,all fail,
+standard,2,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,2,100u0,Float32,Newton Static LU,different root,E2
+standard,2,100u0,Float32,Newton Backtracking LU,agree,
+standard,2,100u0,Float32,Newton Bisection LU,different root,E2
+standard,2,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,2,100u0,Float32,Newton DogLeg LU,different root,E2
+standard,2,100u0,Float32,Newton Backtracking QR,agree,
+standard,2,100u0,Float32,Newton Backtracking SVD,agree,
+standard,2,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,2,100u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,2,100u0,Float32,Picard Backtracking,all fail,
+standard,2,100u0,Float32,Newton Backtracking GMRES,single,
+standard,2,100u0,Float32,Broyden,all fail,
+standard,2,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,3,u0,Float32,Newton Static LU,different root,E2
+standard,3,u0,Float32,Newton Backtracking LU,agree,
+standard,3,u0,Float32,Newton Bisection LU,agree,
+standard,3,u0,Float32,Newton StrongWolfe LU,different root,E2
+standard,3,u0,Float32,Newton DogLeg LU,disagree,E7
+standard,3,u0,Float32,Newton Backtracking QR,disagree,E9
+standard,3,u0,Float32,Newton Backtracking SVD,all fail,
+standard,3,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,3,u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,3,u0,Float32,Picard Backtracking,all fail,
+standard,3,u0,Float32,Newton Backtracking GMRES,single,
+standard,3,u0,Float32,Broyden,disagree,E5
+standard,3,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,3,10u0,Float32,Newton Static LU,different root,E2
+standard,3,10u0,Float32,Newton Backtracking LU,agree,
+standard,3,10u0,Float32,Newton Bisection LU,agree,
+standard,3,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,3,10u0,Float32,Newton DogLeg LU,different root,E2
+standard,3,10u0,Float32,Newton Backtracking QR,different root,E2
+standard,3,10u0,Float32,Newton Backtracking SVD,agree,
+standard,3,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,3,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,3,10u0,Float32,Picard Backtracking,disagree,E4
+standard,3,10u0,Float32,Newton Backtracking GMRES,single,
+standard,3,10u0,Float32,Broyden,disagree,E5
+standard,3,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,3,100u0,Float32,Newton Static LU,all fail,
+standard,3,100u0,Float32,Newton Backtracking LU,all fail,
+standard,3,100u0,Float32,Newton Bisection LU,all fail,
+standard,3,100u0,Float32,Newton StrongWolfe LU,all fail,
+standard,3,100u0,Float32,Newton DogLeg LU,disagree,E7
+standard,3,100u0,Float32,Newton Backtracking QR,disagree,E10
+standard,3,100u0,Float32,Newton Backtracking SVD,agree,
+standard,3,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,3,100u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,3,100u0,Float32,Picard Backtracking,disagree,E4
+standard,3,100u0,Float32,Newton Backtracking GMRES,single,
+standard,3,100u0,Float32,Broyden,disagree,E5
+standard,3,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,4,u0,Float32,Newton Static LU,agree,
+standard,4,u0,Float32,Newton Backtracking LU,agree,
+standard,4,u0,Float32,Newton Bisection LU,agree,
+standard,4,u0,Float32,Newton StrongWolfe LU,agree,
+standard,4,u0,Float32,Newton DogLeg LU,agree,
+standard,4,u0,Float32,Newton Backtracking QR,disagree,E9
+standard,4,u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,4,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,4,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,4,u0,Float32,Picard Backtracking,all fail,
+standard,4,u0,Float32,Newton Backtracking GMRES,single,
+standard,4,u0,Float32,Broyden,disagree,E5
+standard,4,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,4,10u0,Float32,Newton Static LU,agree,
+standard,4,10u0,Float32,Newton Backtracking LU,agree,
+standard,4,10u0,Float32,Newton Bisection LU,all fail,
+standard,4,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,4,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,4,10u0,Float32,Newton Backtracking QR,disagree,E9
+standard,4,10u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,4,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,4,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,4,10u0,Float32,Picard Backtracking,disagree,E4
+standard,4,10u0,Float32,Newton Backtracking GMRES,single,
+standard,4,10u0,Float32,Broyden,all fail,
+standard,4,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,4,100u0,Float32,Newton Static LU,agree,
+standard,4,100u0,Float32,Newton Backtracking LU,all fail,
+standard,4,100u0,Float32,Newton Bisection LU,disagree,E10
+standard,4,100u0,Float32,Newton StrongWolfe LU,all fail,
+standard,4,100u0,Float32,Newton DogLeg LU,disagree,E7
+standard,4,100u0,Float32,Newton Backtracking QR,all fail,
+standard,4,100u0,Float32,Newton Backtracking SVD,all fail,
+standard,4,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,4,100u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,4,100u0,Float32,Picard Backtracking,all fail,
+standard,4,100u0,Float32,Newton Backtracking GMRES,single,
+standard,4,100u0,Float32,Broyden,all fail,
+standard,4,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,5,u0,Float32,Newton Static LU,agree,
+standard,5,u0,Float32,Newton Backtracking LU,agree,
+standard,5,u0,Float32,Newton Bisection LU,agree,
+standard,5,u0,Float32,Newton StrongWolfe LU,agree,
+standard,5,u0,Float32,Newton DogLeg LU,agree,
+standard,5,u0,Float32,Newton Backtracking QR,agree,
+standard,5,u0,Float32,Newton Backtracking SVD,agree,
+standard,5,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,5,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,5,u0,Float32,Picard Backtracking,all fail,
+standard,5,u0,Float32,Newton Backtracking GMRES,single,
+standard,5,u0,Float32,Broyden,all fail,
+standard,5,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,5,10u0,Float32,Newton Static LU,agree,
+standard,5,10u0,Float32,Newton Backtracking LU,agree,
+standard,5,10u0,Float32,Newton Bisection LU,agree,
+standard,5,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,5,10u0,Float32,Newton DogLeg LU,agree,
+standard,5,10u0,Float32,Newton Backtracking QR,agree,
+standard,5,10u0,Float32,Newton Backtracking SVD,agree,
+standard,5,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,5,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,5,10u0,Float32,Picard Backtracking,all fail,
+standard,5,10u0,Float32,Newton Backtracking GMRES,single,
+standard,5,10u0,Float32,Broyden,all fail,
+standard,5,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,5,100u0,Float32,Newton Static LU,agree,
+standard,5,100u0,Float32,Newton Backtracking LU,agree,
+standard,5,100u0,Float32,Newton Bisection LU,agree,
+standard,5,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,5,100u0,Float32,Newton DogLeg LU,agree,
+standard,5,100u0,Float32,Newton Backtracking QR,agree,
+standard,5,100u0,Float32,Newton Backtracking SVD,agree,
+standard,5,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,5,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,5,100u0,Float32,Picard Backtracking,all fail,
+standard,5,100u0,Float32,Newton Backtracking GMRES,single,
+standard,5,100u0,Float32,Broyden,all fail,
+standard,5,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,6,u0,Float32,Newton Static LU,agree,
+standard,6,u0,Float32,Newton Backtracking LU,agree,
+standard,6,u0,Float32,Newton Bisection LU,all fail,
+standard,6,u0,Float32,Newton StrongWolfe LU,agree,
+standard,6,u0,Float32,Newton DogLeg LU,agree,
+standard,6,u0,Float32,Newton Backtracking QR,agree,
+standard,6,u0,Float32,Newton Backtracking SVD,agree,
+standard,6,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,6,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,6,u0,Float32,Picard Backtracking,disagree,E4
+standard,6,u0,Float32,Newton Backtracking GMRES,single,
+standard,6,u0,Float32,Broyden,disagree,E5
+standard,6,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,7,u0,Float32,Newton Static LU,agree,
+standard,7,u0,Float32,Newton Backtracking LU,agree,
+standard,7,u0,Float32,Newton Bisection LU,agree,
+standard,7,u0,Float32,Newton StrongWolfe LU,agree,
+standard,7,u0,Float32,Newton DogLeg LU,agree,
+standard,7,u0,Float32,Newton Backtracking QR,agree,
+standard,7,u0,Float32,Newton Backtracking SVD,agree,
+standard,7,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,7,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,7,u0,Float32,Picard Backtracking,different root,E2
+standard,7,u0,Float32,Newton Backtracking GMRES,single,
+standard,7,u0,Float32,Broyden,agree,
+standard,7,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,7,10u0,Float32,Newton Static LU,agree,
+standard,7,10u0,Float32,Newton Backtracking LU,agree,
+standard,7,10u0,Float32,Newton Bisection LU,agree,
+standard,7,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,7,10u0,Float32,Newton DogLeg LU,agree,
+standard,7,10u0,Float32,Newton Backtracking QR,agree,
+standard,7,10u0,Float32,Newton Backtracking SVD,agree,
+standard,7,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,7,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,7,10u0,Float32,Picard Backtracking,disagree,E4
+standard,7,10u0,Float32,Newton Backtracking GMRES,single,
+standard,7,10u0,Float32,Broyden,disagree,E5
+standard,7,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,7,100u0,Float32,Newton Static LU,agree,
+standard,7,100u0,Float32,Newton Backtracking LU,agree,
+standard,7,100u0,Float32,Newton Bisection LU,different root,E3
+standard,7,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,7,100u0,Float32,Newton DogLeg LU,agree,
+standard,7,100u0,Float32,Newton Backtracking QR,agree,
+standard,7,100u0,Float32,Newton Backtracking SVD,agree,
+standard,7,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,7,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,7,100u0,Float32,Picard Backtracking,disagree,E4
+standard,7,100u0,Float32,Newton Backtracking GMRES,single,
+standard,7,100u0,Float32,Broyden,disagree,E5
+standard,7,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,8,u0,Float32,Newton Static LU,disagree,E8
+standard,8,u0,Float32,Newton Backtracking LU,different root,E3
+standard,8,u0,Float32,Newton Bisection LU,different root,E2
+standard,8,u0,Float32,Newton StrongWolfe LU,different root,E2
+standard,8,u0,Float32,Newton DogLeg LU,different root,E3
+standard,8,u0,Float32,Newton Backtracking QR,different root,E3
+standard,8,u0,Float32,Newton Backtracking SVD,disagree,E10
+standard,8,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,8,u0,Float32,Newton reuse 3 Backtracking LU,different root,E3
+standard,8,u0,Float32,Picard Backtracking,different root,E2
+standard,8,u0,Float32,Newton Backtracking GMRES,single,
+standard,8,u0,Float32,Broyden,all fail,
+standard,8,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,8,10u0,Float32,Newton Static LU,disagree,E8
+standard,8,10u0,Float32,Newton Backtracking LU,agree,
+standard,8,10u0,Float32,Newton Bisection LU,different root,E3
+standard,8,10u0,Float32,Newton StrongWolfe LU,different root,E3
+standard,8,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,8,10u0,Float32,Newton Backtracking QR,different root,E3
+standard,8,10u0,Float32,Newton Backtracking SVD,different root,E2
+standard,8,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,8,10u0,Float32,Newton reuse 3 Backtracking LU,disagree,E10
+standard,8,10u0,Float32,Picard Backtracking,disagree,E4
+standard,8,10u0,Float32,Newton Backtracking GMRES,single,
+standard,8,10u0,Float32,Broyden,all fail,
+standard,8,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,8,100u0,Float32,Newton Static LU,disagree,E8
+standard,8,100u0,Float32,Newton Backtracking LU,different root,E2
+standard,8,100u0,Float32,Newton Bisection LU,different root,E3
+standard,8,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,8,100u0,Float32,Newton DogLeg LU,disagree,E7
+standard,8,100u0,Float32,Newton Backtracking QR,disagree,E10
+standard,8,100u0,Float32,Newton Backtracking SVD,different root,E3
+standard,8,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,8,100u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,8,100u0,Float32,Picard Backtracking,all fail,
+standard,8,100u0,Float32,Newton Backtracking GMRES,single,
+standard,8,100u0,Float32,Broyden,all fail,
+standard,8,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,9,u0,Float32,Newton Static LU,different root,E2
+standard,9,u0,Float32,Newton Backtracking LU,agree,
+standard,9,u0,Float32,Newton Bisection LU,different root,E2
+standard,9,u0,Float32,Newton StrongWolfe LU,agree,
+standard,9,u0,Float32,Newton DogLeg LU,disagree,E7
+standard,9,u0,Float32,Newton Backtracking QR,agree,
+standard,9,u0,Float32,Newton Backtracking SVD,agree,
+standard,9,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,9,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,9,u0,Float32,Picard Backtracking,different root,E2
+standard,9,u0,Float32,Newton Backtracking GMRES,single,
+standard,9,u0,Float32,Broyden,different root,E2
+standard,9,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,9,10u0,Float32,Newton Static LU,agree,
+standard,9,10u0,Float32,Newton Backtracking LU,agree,
+standard,9,10u0,Float32,Newton Bisection LU,different root,E2
+standard,9,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,9,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,9,10u0,Float32,Newton Backtracking QR,agree,
+standard,9,10u0,Float32,Newton Backtracking SVD,agree,
+standard,9,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,9,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,9,10u0,Float32,Picard Backtracking,different root,E2
+standard,9,10u0,Float32,Newton Backtracking GMRES,single,
+standard,9,10u0,Float32,Broyden,different root,E2
+standard,9,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,9,100u0,Float32,Newton Static LU,agree,
+standard,9,100u0,Float32,Newton Backtracking LU,agree,
+standard,9,100u0,Float32,Newton Bisection LU,agree,
+standard,9,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,9,100u0,Float32,Newton DogLeg LU,agree,
+standard,9,100u0,Float32,Newton Backtracking QR,agree,
+standard,9,100u0,Float32,Newton Backtracking SVD,agree,
+standard,9,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,9,100u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,9,100u0,Float32,Picard Backtracking,different root,E2
+standard,9,100u0,Float32,Newton Backtracking GMRES,single,
+standard,9,100u0,Float32,Broyden,different root,E2
+standard,9,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,10,u0,Float32,Newton Static LU,agree,
+standard,10,u0,Float32,Newton Backtracking LU,agree,
+standard,10,u0,Float32,Newton Bisection LU,agree,
+standard,10,u0,Float32,Newton StrongWolfe LU,agree,
+standard,10,u0,Float32,Newton DogLeg LU,agree,
+standard,10,u0,Float32,Newton Backtracking QR,agree,
+standard,10,u0,Float32,Newton Backtracking SVD,agree,
+standard,10,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,10,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,10,u0,Float32,Picard Backtracking,agree,
+standard,10,u0,Float32,Newton Backtracking GMRES,single,
+standard,10,u0,Float32,Broyden,agree,
+standard,10,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,10,10u0,Float32,Newton Static LU,agree,
+standard,10,10u0,Float32,Newton Backtracking LU,agree,
+standard,10,10u0,Float32,Newton Bisection LU,agree,
+standard,10,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,10,10u0,Float32,Newton DogLeg LU,agree,
+standard,10,10u0,Float32,Newton Backtracking QR,agree,
+standard,10,10u0,Float32,Newton Backtracking SVD,agree,
+standard,10,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,10,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,10,10u0,Float32,Picard Backtracking,agree,
+standard,10,10u0,Float32,Newton Backtracking GMRES,single,
+standard,10,10u0,Float32,Broyden,agree,
+standard,10,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,10,100u0,Float32,Newton Static LU,agree,
+standard,10,100u0,Float32,Newton Backtracking LU,agree,
+standard,10,100u0,Float32,Newton Bisection LU,agree,
+standard,10,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,10,100u0,Float32,Newton DogLeg LU,agree,
+standard,10,100u0,Float32,Newton Backtracking QR,agree,
+standard,10,100u0,Float32,Newton Backtracking SVD,agree,
+standard,10,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,10,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,10,100u0,Float32,Picard Backtracking,agree,
+standard,10,100u0,Float32,Newton Backtracking GMRES,single,
+standard,10,100u0,Float32,Broyden,disagree,E5
+standard,10,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,11,u0,Float32,Newton Static LU,agree,
+standard,11,u0,Float32,Newton Backtracking LU,agree,
+standard,11,u0,Float32,Newton Bisection LU,agree,
+standard,11,u0,Float32,Newton StrongWolfe LU,agree,
+standard,11,u0,Float32,Newton DogLeg LU,disagree,E7
+standard,11,u0,Float32,Newton Backtracking QR,agree,
+standard,11,u0,Float32,Newton Backtracking SVD,agree,
+standard,11,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,11,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,11,u0,Float32,Picard Backtracking,disagree,E4
+standard,11,u0,Float32,Newton Backtracking GMRES,single,
+standard,11,u0,Float32,Broyden,all fail,
+standard,11,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,11,10u0,Float32,Newton Static LU,all fail,
+standard,11,10u0,Float32,Newton Backtracking LU,all fail,
+standard,11,10u0,Float32,Newton Bisection LU,all fail,
+standard,11,10u0,Float32,Newton StrongWolfe LU,all fail,
+standard,11,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,11,10u0,Float32,Newton Backtracking QR,all fail,
+standard,11,10u0,Float32,Newton Backtracking SVD,all fail,
+standard,11,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,11,10u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,11,10u0,Float32,Picard Backtracking,disagree,E4
+standard,11,10u0,Float32,Newton Backtracking GMRES,single,
+standard,11,10u0,Float32,Broyden,all fail,
+standard,11,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,11,100u0,Float32,Newton Static LU,all fail,
+standard,11,100u0,Float32,Newton Backtracking LU,all fail,
+standard,11,100u0,Float32,Newton Bisection LU,all fail,
+standard,11,100u0,Float32,Newton StrongWolfe LU,all fail,
+standard,11,100u0,Float32,Newton DogLeg LU,different root,E3
+standard,11,100u0,Float32,Newton Backtracking QR,all fail,
+standard,11,100u0,Float32,Newton Backtracking SVD,all fail,
+standard,11,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,11,100u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,11,100u0,Float32,Picard Backtracking,all fail,
+standard,11,100u0,Float32,Newton Backtracking GMRES,single,
+standard,11,100u0,Float32,Broyden,all fail,
+standard,11,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,12,u0,Float32,Newton Static LU,agree,
+standard,12,u0,Float32,Newton Backtracking LU,agree,
+standard,12,u0,Float32,Newton Bisection LU,agree,
+standard,12,u0,Float32,Newton StrongWolfe LU,agree,
+standard,12,u0,Float32,Newton DogLeg LU,agree,
+standard,12,u0,Float32,Newton Backtracking QR,agree,
+standard,12,u0,Float32,Newton Backtracking SVD,agree,
+standard,12,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,12,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,12,u0,Float32,Picard Backtracking,agree,
+standard,12,u0,Float32,Newton Backtracking GMRES,single,
+standard,12,u0,Float32,Broyden,disagree,E5
+standard,12,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,12,10u0,Float32,Newton Static LU,agree,
+standard,12,10u0,Float32,Newton Backtracking LU,agree,
+standard,12,10u0,Float32,Newton Bisection LU,agree,
+standard,12,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,12,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,12,10u0,Float32,Newton Backtracking QR,agree,
+standard,12,10u0,Float32,Newton Backtracking SVD,agree,
+standard,12,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,12,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,12,10u0,Float32,Picard Backtracking,disagree,E4
+standard,12,10u0,Float32,Newton Backtracking GMRES,single,
+standard,12,10u0,Float32,Broyden,all fail,
+standard,12,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,12,100u0,Float32,Newton Static LU,all fail,
+standard,12,100u0,Float32,Newton Backtracking LU,all fail,
+standard,12,100u0,Float32,Newton Bisection LU,all fail,
+standard,12,100u0,Float32,Newton StrongWolfe LU,all fail,
+standard,12,100u0,Float32,Newton DogLeg LU,disagree,E7
+standard,12,100u0,Float32,Newton Backtracking QR,disagree,E10
+standard,12,100u0,Float32,Newton Backtracking SVD,agree,
+standard,12,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,12,100u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,12,100u0,Float32,Picard Backtracking,disagree,E4
+standard,12,100u0,Float32,Newton Backtracking GMRES,single,
+standard,12,100u0,Float32,Broyden,all fail,
+standard,12,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,13,u0,Float32,Newton Static LU,agree,
+standard,13,u0,Float32,Newton Backtracking LU,agree,
+standard,13,u0,Float32,Newton Bisection LU,agree,
+standard,13,u0,Float32,Newton StrongWolfe LU,agree,
+standard,13,u0,Float32,Newton DogLeg LU,agree,
+standard,13,u0,Float32,Newton Backtracking QR,agree,
+standard,13,u0,Float32,Newton Backtracking SVD,agree,
+standard,13,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,13,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,13,u0,Float32,Picard Backtracking,all fail,
+standard,13,u0,Float32,Newton Backtracking GMRES,single,
+standard,13,u0,Float32,Broyden,agree,
+standard,13,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,13,10u0,Float32,Newton Static LU,agree,
+standard,13,10u0,Float32,Newton Backtracking LU,agree,
+standard,13,10u0,Float32,Newton Bisection LU,disagree,E11
+standard,13,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,13,10u0,Float32,Newton DogLeg LU,agree,
+standard,13,10u0,Float32,Newton Backtracking QR,agree,
+standard,13,10u0,Float32,Newton Backtracking SVD,agree,
+standard,13,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,13,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,13,10u0,Float32,Picard Backtracking,disagree,E4
+standard,13,10u0,Float32,Newton Backtracking GMRES,single,
+standard,13,10u0,Float32,Broyden,disagree,E5
+standard,13,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,13,100u0,Float32,Newton Static LU,agree,
+standard,13,100u0,Float32,Newton Backtracking LU,agree,
+standard,13,100u0,Float32,Newton Bisection LU,disagree,E11
+standard,13,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,13,100u0,Float32,Newton DogLeg LU,agree,
+standard,13,100u0,Float32,Newton Backtracking QR,agree,
+standard,13,100u0,Float32,Newton Backtracking SVD,agree,
+standard,13,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,13,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,13,100u0,Float32,Picard Backtracking,disagree,E4
+standard,13,100u0,Float32,Newton Backtracking GMRES,single,
+standard,13,100u0,Float32,Broyden,disagree,E5
+standard,13,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,14,u0,Float32,Newton Static LU,agree,
+standard,14,u0,Float32,Newton Backtracking LU,agree,
+standard,14,u0,Float32,Newton Bisection LU,agree,
+standard,14,u0,Float32,Newton StrongWolfe LU,agree,
+standard,14,u0,Float32,Newton DogLeg LU,agree,
+standard,14,u0,Float32,Newton Backtracking QR,agree,
+standard,14,u0,Float32,Newton Backtracking SVD,agree,
+standard,14,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,14,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,14,u0,Float32,Picard Backtracking,disagree,E4
+standard,14,u0,Float32,Newton Backtracking GMRES,single,
+standard,14,u0,Float32,Broyden,disagree,E5
+standard,14,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,14,10u0,Float32,Newton Static LU,agree,
+standard,14,10u0,Float32,Newton Backtracking LU,agree,
+standard,14,10u0,Float32,Newton Bisection LU,all fail,
+standard,14,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,14,10u0,Float32,Newton DogLeg LU,agree,
+standard,14,10u0,Float32,Newton Backtracking QR,agree,
+standard,14,10u0,Float32,Newton Backtracking SVD,agree,
+standard,14,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,14,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,14,10u0,Float32,Picard Backtracking,agree,
+standard,14,10u0,Float32,Newton Backtracking GMRES,single,
+standard,14,10u0,Float32,Broyden,disagree,E5
+standard,14,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,14,100u0,Float32,Newton Static LU,agree,
+standard,14,100u0,Float32,Newton Backtracking LU,agree,
+standard,14,100u0,Float32,Newton Bisection LU,all fail,
+standard,14,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,14,100u0,Float32,Newton DogLeg LU,agree,
+standard,14,100u0,Float32,Newton Backtracking QR,agree,
+standard,14,100u0,Float32,Newton Backtracking SVD,agree,
+standard,14,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,14,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,14,100u0,Float32,Picard Backtracking,disagree,E4
+standard,14,100u0,Float32,Newton Backtracking GMRES,single,
+standard,14,100u0,Float32,Broyden,all fail,
+standard,14,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,15,u0,Float32,Newton Static LU,agree,
+standard,15,u0,Float32,Newton Backtracking LU,agree,
+standard,15,u0,Float32,Newton Bisection LU,different root,E2
+standard,15,u0,Float32,Newton StrongWolfe LU,agree,
+standard,15,u0,Float32,Newton DogLeg LU,different root,E2
+standard,15,u0,Float32,Newton Backtracking QR,disagree,E9
+standard,15,u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,15,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,15,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,15,u0,Float32,Picard Backtracking,disagree,E4
+standard,15,u0,Float32,Newton Backtracking GMRES,single,
+standard,15,u0,Float32,Broyden,all fail,
+standard,15,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,15,10u0,Float32,Newton Static LU,agree,
+standard,15,10u0,Float32,Newton Backtracking LU,agree,
+standard,15,10u0,Float32,Newton Bisection LU,agree,
+standard,15,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,15,10u0,Float32,Newton DogLeg LU,different root,E2
+standard,15,10u0,Float32,Newton Backtracking QR,disagree,E9
+standard,15,10u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,15,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,15,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,15,10u0,Float32,Picard Backtracking,disagree,E4
+standard,15,10u0,Float32,Newton Backtracking GMRES,single,
+standard,15,10u0,Float32,Broyden,all fail,
+standard,15,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,15,100u0,Float32,Newton Static LU,agree,
+standard,15,100u0,Float32,Newton Backtracking LU,agree,
+standard,15,100u0,Float32,Newton Bisection LU,different root,E2
+standard,15,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,15,100u0,Float32,Newton DogLeg LU,different root,E2
+standard,15,100u0,Float32,Newton Backtracking QR,disagree,E9
+standard,15,100u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,15,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,15,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,15,100u0,Float32,Picard Backtracking,disagree,E4
+standard,15,100u0,Float32,Newton Backtracking GMRES,single,
+standard,15,100u0,Float32,Broyden,all fail,
+standard,15,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,16,u0,Float32,Newton Static LU,agree,
+standard,16,u0,Float32,Newton Backtracking LU,agree,
+standard,16,u0,Float32,Newton Bisection LU,agree,
+standard,16,u0,Float32,Newton StrongWolfe LU,agree,
+standard,16,u0,Float32,Newton DogLeg LU,disagree,E7
+standard,16,u0,Float32,Newton Backtracking QR,disagree,E9
+standard,16,u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,16,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,16,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,16,u0,Float32,Picard Backtracking,disagree,E4
+standard,16,u0,Float32,Newton Backtracking GMRES,single,
+standard,16,u0,Float32,Broyden,disagree,E5
+standard,16,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,16,10u0,Float32,Newton Static LU,agree,
+standard,16,10u0,Float32,Newton Backtracking LU,agree,
+standard,16,10u0,Float32,Newton Bisection LU,different root,E2
+standard,16,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,16,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,16,10u0,Float32,Newton Backtracking QR,disagree,E9
+standard,16,10u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,16,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,16,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,16,10u0,Float32,Picard Backtracking,disagree,E4
+standard,16,10u0,Float32,Newton Backtracking GMRES,single,
+standard,16,10u0,Float32,Broyden,all fail,
+standard,16,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,16,100u0,Float32,Newton Static LU,agree,
+standard,16,100u0,Float32,Newton Backtracking LU,agree,
+standard,16,100u0,Float32,Newton Bisection LU,different root,E2
+standard,16,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,16,100u0,Float32,Newton DogLeg LU,different root,E2
+standard,16,100u0,Float32,Newton Backtracking QR,disagree,E9
+standard,16,100u0,Float32,Newton Backtracking SVD,disagree,E9
+standard,16,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,16,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,16,100u0,Float32,Picard Backtracking,disagree,E4
+standard,16,100u0,Float32,Newton Backtracking GMRES,single,
+standard,16,100u0,Float32,Broyden,all fail,
+standard,16,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,17,u0,Float32,Newton Static LU,agree,
+standard,17,u0,Float32,Newton Backtracking LU,agree,
+standard,17,u0,Float32,Newton Bisection LU,agree,
+standard,17,u0,Float32,Newton StrongWolfe LU,agree,
+standard,17,u0,Float32,Newton DogLeg LU,agree,
+standard,17,u0,Float32,Newton Backtracking QR,agree,
+standard,17,u0,Float32,Newton Backtracking SVD,agree,
+standard,17,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,17,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,17,u0,Float32,Picard Backtracking,disagree,E4
+standard,17,u0,Float32,Newton Backtracking GMRES,single,
+standard,17,u0,Float32,Broyden,different root,E3
+standard,17,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,17,10u0,Float32,Newton Static LU,agree,
+standard,17,10u0,Float32,Newton Backtracking LU,agree,
+standard,17,10u0,Float32,Newton Bisection LU,agree,
+standard,17,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,17,10u0,Float32,Newton DogLeg LU,agree,
+standard,17,10u0,Float32,Newton Backtracking QR,agree,
+standard,17,10u0,Float32,Newton Backtracking SVD,agree,
+standard,17,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,17,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,17,10u0,Float32,Picard Backtracking,disagree,E4
+standard,17,10u0,Float32,Newton Backtracking GMRES,single,
+standard,17,10u0,Float32,Broyden,disagree,E5
+standard,17,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,17,100u0,Float32,Newton Static LU,agree,
+standard,17,100u0,Float32,Newton Backtracking LU,agree,
+standard,17,100u0,Float32,Newton Bisection LU,agree,
+standard,17,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,17,100u0,Float32,Newton DogLeg LU,agree,
+standard,17,100u0,Float32,Newton Backtracking QR,agree,
+standard,17,100u0,Float32,Newton Backtracking SVD,agree,
+standard,17,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,17,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,17,100u0,Float32,Picard Backtracking,all fail,
+standard,17,100u0,Float32,Newton Backtracking GMRES,single,
+standard,17,100u0,Float32,Broyden,all fail,
+standard,17,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,18,u0,Float32,Newton Static LU,different root,E1
+standard,18,u0,Float32,Newton Backtracking LU,agree,
+standard,18,u0,Float32,Newton Bisection LU,different root,E1
+standard,18,u0,Float32,Newton StrongWolfe LU,different root,E1
+standard,18,u0,Float32,Newton DogLeg LU,different root,E1
+standard,18,u0,Float32,Newton Backtracking QR,agree,
+standard,18,u0,Float32,Newton Backtracking SVD,agree,
+standard,18,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,18,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,18,u0,Float32,Picard Backtracking,agree,
+standard,18,u0,Float32,Newton Backtracking GMRES,single,
+standard,18,u0,Float32,Broyden,different root,E1
+standard,18,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,18,10u0,Float32,Newton Static LU,disagree,E8
+standard,18,10u0,Float32,Newton Backtracking LU,agree,
+standard,18,10u0,Float32,Newton Bisection LU,disagree,E10
+standard,18,10u0,Float32,Newton StrongWolfe LU,different root,E1
+standard,18,10u0,Float32,Newton DogLeg LU,different root,E1
+standard,18,10u0,Float32,Newton Backtracking QR,different root,E1
+standard,18,10u0,Float32,Newton Backtracking SVD,different root,E1
+standard,18,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,18,10u0,Float32,Newton reuse 3 Backtracking LU,different root,E1
+standard,18,10u0,Float32,Picard Backtracking,disagree,E4
+standard,18,10u0,Float32,Newton Backtracking GMRES,single,
+standard,18,10u0,Float32,Broyden,all fail,
+standard,18,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,18,100u0,Float32,Newton Static LU,disagree,E8
+standard,18,100u0,Float32,Newton Backtracking LU,agree,
+standard,18,100u0,Float32,Newton Bisection LU,disagree,E10
+standard,18,100u0,Float32,Newton StrongWolfe LU,different root,E1
+standard,18,100u0,Float32,Newton DogLeg LU,different root,E1
+standard,18,100u0,Float32,Newton Backtracking QR,different root,E1
+standard,18,100u0,Float32,Newton Backtracking SVD,agree,
+standard,18,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,18,100u0,Float32,Newton reuse 3 Backtracking LU,different root,E1
+standard,18,100u0,Float32,Picard Backtracking,disagree,E4
+standard,18,100u0,Float32,Newton Backtracking GMRES,single,
+standard,18,100u0,Float32,Broyden,disagree,E6
+standard,18,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,19,u0,Float32,Newton Static LU,agree,
+standard,19,u0,Float32,Newton Backtracking LU,agree,
+standard,19,u0,Float32,Newton Bisection LU,different root,E2
+standard,19,u0,Float32,Newton StrongWolfe LU,agree,
+standard,19,u0,Float32,Newton DogLeg LU,different root,E2
+standard,19,u0,Float32,Newton Backtracking QR,agree,
+standard,19,u0,Float32,Newton Backtracking SVD,agree,
+standard,19,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,19,u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,19,u0,Float32,Picard Backtracking,different root,E2
+standard,19,u0,Float32,Newton Backtracking GMRES,single,
+standard,19,u0,Float32,Broyden,disagree,E5
+standard,19,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,19,10u0,Float32,Newton Static LU,different root,E2
+standard,19,10u0,Float32,Newton Backtracking LU,agree,
+standard,19,10u0,Float32,Newton Bisection LU,different root,E2
+standard,19,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,19,10u0,Float32,Newton DogLeg LU,different root,E2
+standard,19,10u0,Float32,Newton Backtracking QR,agree,
+standard,19,10u0,Float32,Newton Backtracking SVD,agree,
+standard,19,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,19,10u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,19,10u0,Float32,Picard Backtracking,different root,E2
+standard,19,10u0,Float32,Newton Backtracking GMRES,single,
+standard,19,10u0,Float32,Broyden,disagree,E5
+standard,19,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,19,100u0,Float32,Newton Static LU,different root,E2
+standard,19,100u0,Float32,Newton Backtracking LU,agree,
+standard,19,100u0,Float32,Newton Bisection LU,different root,E2
+standard,19,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,19,100u0,Float32,Newton DogLeg LU,disagree,E7
+standard,19,100u0,Float32,Newton Backtracking QR,agree,
+standard,19,100u0,Float32,Newton Backtracking SVD,agree,
+standard,19,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,19,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,19,100u0,Float32,Picard Backtracking,different root,E2
+standard,19,100u0,Float32,Newton Backtracking GMRES,single,
+standard,19,100u0,Float32,Broyden,disagree,E5
+standard,19,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,20,u0,Float32,Newton Static LU,agree,
+standard,20,u0,Float32,Newton Backtracking LU,agree,
+standard,20,u0,Float32,Newton Bisection LU,agree,
+standard,20,u0,Float32,Newton StrongWolfe LU,agree,
+standard,20,u0,Float32,Newton DogLeg LU,agree,
+standard,20,u0,Float32,Newton Backtracking QR,agree,
+standard,20,u0,Float32,Newton Backtracking SVD,agree,
+standard,20,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,20,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,20,u0,Float32,Picard Backtracking,agree,
+standard,20,u0,Float32,Newton Backtracking GMRES,single,
+standard,20,u0,Float32,Broyden,disagree,E5
+standard,20,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,20,10u0,Float32,Newton Static LU,different root,E2
+standard,20,10u0,Float32,Newton Backtracking LU,agree,
+standard,20,10u0,Float32,Newton Bisection LU,agree,
+standard,20,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,20,10u0,Float32,Newton DogLeg LU,different root,E2
+standard,20,10u0,Float32,Newton Backtracking QR,agree,
+standard,20,10u0,Float32,Newton Backtracking SVD,agree,
+standard,20,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,20,10u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,20,10u0,Float32,Picard Backtracking,disagree,E4
+standard,20,10u0,Float32,Newton Backtracking GMRES,single,
+standard,20,10u0,Float32,Broyden,disagree,E5
+standard,20,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,20,100u0,Float32,Newton Static LU,different root,E2
+standard,20,100u0,Float32,Newton Backtracking LU,agree,
+standard,20,100u0,Float32,Newton Bisection LU,agree,
+standard,20,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,20,100u0,Float32,Newton DogLeg LU,agree,
+standard,20,100u0,Float32,Newton Backtracking QR,agree,
+standard,20,100u0,Float32,Newton Backtracking SVD,agree,
+standard,20,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,20,100u0,Float32,Newton reuse 3 Backtracking LU,different root,E2
+standard,20,100u0,Float32,Picard Backtracking,disagree,E4
+standard,20,100u0,Float32,Newton Backtracking GMRES,single,
+standard,20,100u0,Float32,Broyden,disagree,E5
+standard,20,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,21,u0,Float32,Newton Static LU,agree,
+standard,21,u0,Float32,Newton Backtracking LU,all fail,
+standard,21,u0,Float32,Newton Bisection LU,all fail,
+standard,21,u0,Float32,Newton StrongWolfe LU,disagree,E10
+standard,21,u0,Float32,Newton DogLeg LU,all fail,
+standard,21,u0,Float32,Newton Backtracking QR,all fail,
+standard,21,u0,Float32,Newton Backtracking SVD,all fail,
+standard,21,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,21,u0,Float32,Newton reuse 3 Backtracking LU,disagree,E10
+standard,21,u0,Float32,Picard Backtracking,all fail,
+standard,21,u0,Float32,Newton Backtracking GMRES,single,
+standard,21,u0,Float32,Broyden,all fail,
+standard,21,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,21,10u0,Float32,Newton Static LU,agree,
+standard,21,10u0,Float32,Newton Backtracking LU,all fail,
+standard,21,10u0,Float32,Newton Bisection LU,all fail,
+standard,21,10u0,Float32,Newton StrongWolfe LU,disagree,E10
+standard,21,10u0,Float32,Newton DogLeg LU,all fail,
+standard,21,10u0,Float32,Newton Backtracking QR,all fail,
+standard,21,10u0,Float32,Newton Backtracking SVD,all fail,
+standard,21,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,21,10u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,21,10u0,Float32,Picard Backtracking,all fail,
+standard,21,10u0,Float32,Newton Backtracking GMRES,single,
+standard,21,10u0,Float32,Broyden,all fail,
+standard,21,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,21,100u0,Float32,Newton Static LU,agree,
+standard,21,100u0,Float32,Newton Backtracking LU,all fail,
+standard,21,100u0,Float32,Newton Bisection LU,all fail,
+standard,21,100u0,Float32,Newton StrongWolfe LU,disagree,E10
+standard,21,100u0,Float32,Newton DogLeg LU,all fail,
+standard,21,100u0,Float32,Newton Backtracking QR,all fail,
+standard,21,100u0,Float32,Newton Backtracking SVD,all fail,
+standard,21,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,21,100u0,Float32,Newton reuse 3 Backtracking LU,disagree,E10
+standard,21,100u0,Float32,Picard Backtracking,all fail,
+standard,21,100u0,Float32,Newton Backtracking GMRES,single,
+standard,21,100u0,Float32,Broyden,disagree,E5
+standard,21,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,22,u0,Float32,Newton Static LU,agree,
+standard,22,u0,Float32,Newton Backtracking LU,agree,
+standard,22,u0,Float32,Newton Bisection LU,disagree,E10
+standard,22,u0,Float32,Newton StrongWolfe LU,agree,
+standard,22,u0,Float32,Newton DogLeg LU,different root,E2
+standard,22,u0,Float32,Newton Backtracking QR,agree,
+standard,22,u0,Float32,Newton Backtracking SVD,agree,
+standard,22,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,22,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,22,u0,Float32,Picard Backtracking,disagree,E4
+standard,22,u0,Float32,Newton Backtracking GMRES,single,
+standard,22,u0,Float32,Broyden,disagree,E5
+standard,22,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,22,10u0,Float32,Newton Static LU,all fail,
+standard,22,10u0,Float32,Newton Backtracking LU,agree,
+standard,22,10u0,Float32,Newton Bisection LU,all fail,
+standard,22,10u0,Float32,Newton StrongWolfe LU,all fail,
+standard,22,10u0,Float32,Newton DogLeg LU,agree,
+standard,22,10u0,Float32,Newton Backtracking QR,different root,E3
+standard,22,10u0,Float32,Newton Backtracking SVD,agree,
+standard,22,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,22,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,22,10u0,Float32,Picard Backtracking,all fail,
+standard,22,10u0,Float32,Newton Backtracking GMRES,single,
+standard,22,10u0,Float32,Broyden,disagree,E5
+standard,22,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,22,100u0,Float32,Newton Static LU,agree,
+standard,22,100u0,Float32,Newton Backtracking LU,all fail,
+standard,22,100u0,Float32,Newton Bisection LU,all fail,
+standard,22,100u0,Float32,Newton StrongWolfe LU,disagree,E10
+standard,22,100u0,Float32,Newton DogLeg LU,disagree,E7
+standard,22,100u0,Float32,Newton Backtracking QR,disagree,E10
+standard,22,100u0,Float32,Newton Backtracking SVD,disagree,E10
+standard,22,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,22,100u0,Float32,Newton reuse 3 Backtracking LU,all fail,
+standard,22,100u0,Float32,Picard Backtracking,all fail,
+standard,22,100u0,Float32,Newton Backtracking GMRES,single,
+standard,22,100u0,Float32,Broyden,all fail,
+standard,22,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,23,u0,Float32,Newton Static LU,agree,
+standard,23,u0,Float32,Newton Backtracking LU,agree,
+standard,23,u0,Float32,Newton Bisection LU,agree,
+standard,23,u0,Float32,Newton StrongWolfe LU,agree,
+standard,23,u0,Float32,Newton DogLeg LU,agree,
+standard,23,u0,Float32,Newton Backtracking QR,agree,
+standard,23,u0,Float32,Newton Backtracking SVD,agree,
+standard,23,u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,23,u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,23,u0,Float32,Picard Backtracking,agree,
+standard,23,u0,Float32,Newton Backtracking GMRES,single,
+standard,23,u0,Float32,Broyden,agree,
+standard,23,u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,23,10u0,Float32,Newton Static LU,agree,
+standard,23,10u0,Float32,Newton Backtracking LU,agree,
+standard,23,10u0,Float32,Newton Bisection LU,disagree,E10
+standard,23,10u0,Float32,Newton StrongWolfe LU,agree,
+standard,23,10u0,Float32,Newton DogLeg LU,disagree,E7
+standard,23,10u0,Float32,Newton Backtracking QR,agree,
+standard,23,10u0,Float32,Newton Backtracking SVD,agree,
+standard,23,10u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,23,10u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,23,10u0,Float32,Picard Backtracking,agree,
+standard,23,10u0,Float32,Newton Backtracking GMRES,single,
+standard,23,10u0,Float32,Broyden,agree,
+standard,23,10u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,23,100u0,Float32,Newton Static LU,agree,
+standard,23,100u0,Float32,Newton Backtracking LU,agree,
+standard,23,100u0,Float32,Newton Bisection LU,different root,E3
+standard,23,100u0,Float32,Newton StrongWolfe LU,agree,
+standard,23,100u0,Float32,Newton DogLeg LU,agree,
+standard,23,100u0,Float32,Newton Backtracking QR,agree,
+standard,23,100u0,Float32,Newton Backtracking SVD,agree,
+standard,23,100u0,Float32,Newton LevenbergMarquardt SVD,single,
+standard,23,100u0,Float32,Newton reuse 3 Backtracking LU,agree,
+standard,23,100u0,Float32,Picard Backtracking,agree,
+standard,23,100u0,Float32,Newton Backtracking GMRES,single,
+standard,23,100u0,Float32,Broyden,agree,
+standard,23,100u0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton Static LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton Backtracking LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton Bisection LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton DogLeg LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton Backtracking QR,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,Broyden,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton Static LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton Backtracking LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton Bisection LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton DogLeg LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton Backtracking QR,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,Broyden,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,Pendulum h=0.1,V0,Float32,Newton Static LU,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Newton Backtracking LU,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Newton Bisection LU,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Newton DogLeg LU,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Newton Backtracking QR,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,Pendulum h=0.1,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,Pendulum h=0.1,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,Pendulum h=0.1,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,Pendulum h=0.1,V0,Float32,Broyden,agree,
+midpoint,Pendulum h=0.1,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,Pendulum h=1.0,V0,Float32,Newton Static LU,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Newton Backtracking LU,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Newton Bisection LU,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Newton DogLeg LU,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Newton Backtracking QR,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,Pendulum h=1.0,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,Pendulum h=1.0,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,Pendulum h=1.0,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,Pendulum h=1.0,V0,Float32,Broyden,agree,
+midpoint,Pendulum h=1.0,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton Static LU,different root,E2
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton Bisection LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton DogLeg LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Picard Backtracking,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,Broyden,disagree,E6
+midpoint,LotkaVolterra2d h=0.01,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton Static LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton Bisection LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton DogLeg LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Picard Backtracking,all fail,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,Broyden,all fail,
+midpoint,LotkaVolterra2d h=0.1,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton Static LU,different root,E2
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton Bisection LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton DogLeg LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Picard Backtracking,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,Broyden,disagree,E6
+midpoint,LotkaVolterra4d h=0.01,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton Static LU,different root,E2
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton Bisection LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton DogLeg LU,different root,E2
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Picard Backtracking,all fail,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,Broyden,all fail,
+midpoint,LotkaVolterra4d h=0.1,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton Static LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton Backtracking LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton Bisection LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton DogLeg LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton Backtracking QR,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,DoublePendulum h=0.01,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,DoublePendulum h=0.01,V0,Float32,Broyden,agree,
+midpoint,DoublePendulum h=0.01,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton Static LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton Backtracking LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton Bisection LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton DogLeg LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton Backtracking QR,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,DoublePendulum h=0.1,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,DoublePendulum h=0.1,V0,Float32,Broyden,agree,
+midpoint,DoublePendulum h=0.1,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton Static LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton Backtracking LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton Bisection LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton DogLeg LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton Backtracking QR,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,TodaLattice h=0.1,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,TodaLattice h=0.1,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,TodaLattice h=0.1,V0,Float32,Broyden,agree,
+midpoint,TodaLattice h=0.1,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton Static LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton Backtracking LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton Bisection LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton StrongWolfe LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton DogLeg LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton Backtracking QR,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton Backtracking SVD,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton LevenbergMarquardt SVD,single,
+midpoint,TodaLattice h=1.0,V0,Float32,Newton reuse 3 Backtracking LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float32,Picard Backtracking,disagree,E4
+midpoint,TodaLattice h=1.0,V0,Float32,Newton Backtracking GMRES,single,
+midpoint,TodaLattice h=1.0,V0,Float32,Broyden,all fail,
+midpoint,TodaLattice h=1.0,V0,Float32,LeftPreconditioned Picard Backtracking Newton,single,
+standard,1,u0,Float64,Newton Static LU,disagree,E8
+standard,1,u0,Float64,Newton Backtracking LU,agree,
+standard,1,u0,Float64,Newton Bisection LU,agree,
+standard,1,u0,Float64,Newton StrongWolfe LU,agree,
+standard,1,u0,Float64,Newton DogLeg LU,disagree,E7
+standard,1,u0,Float64,Newton Backtracking QR,agree,
+standard,1,u0,Float64,Newton Backtracking SVD,agree,
+standard,1,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,1,u0,Float64,Newton reuse 3 Backtracking LU,disagree,E11
+standard,1,u0,Float64,Picard Backtracking,all fail,
+standard,1,u0,Float64,Newton Backtracking GMRES,single,
+standard,1,u0,Float64,Broyden,all fail,
+standard,1,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,1,10u0,Float64,Newton Static LU,all fail,
+standard,1,10u0,Float64,Newton Backtracking LU,all fail,
+standard,1,10u0,Float64,Newton Bisection LU,all fail,
+standard,1,10u0,Float64,Newton StrongWolfe LU,all fail,
+standard,1,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,1,10u0,Float64,Newton Backtracking QR,all fail,
+standard,1,10u0,Float64,Newton Backtracking SVD,all fail,
+standard,1,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,1,10u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,1,10u0,Float64,Picard Backtracking,all fail,
+standard,1,10u0,Float64,Newton Backtracking GMRES,single,
+standard,1,10u0,Float64,Broyden,all fail,
+standard,1,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,1,100u0,Float64,Newton Static LU,all fail,
+standard,1,100u0,Float64,Newton Backtracking LU,all fail,
+standard,1,100u0,Float64,Newton Bisection LU,all fail,
+standard,1,100u0,Float64,Newton StrongWolfe LU,all fail,
+standard,1,100u0,Float64,Newton DogLeg LU,all fail,
+standard,1,100u0,Float64,Newton Backtracking QR,all fail,
+standard,1,100u0,Float64,Newton Backtracking SVD,all fail,
+standard,1,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,1,100u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,1,100u0,Float64,Picard Backtracking,all fail,
+standard,1,100u0,Float64,Newton Backtracking GMRES,single,
+standard,1,100u0,Float64,Broyden,all fail,
+standard,1,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,2,u0,Float64,Newton Static LU,different root,E2
+standard,2,u0,Float64,Newton Backtracking LU,agree,
+standard,2,u0,Float64,Newton Bisection LU,different root,E2
+standard,2,u0,Float64,Newton StrongWolfe LU,agree,
+standard,2,u0,Float64,Newton DogLeg LU,different root,E2
+standard,2,u0,Float64,Newton Backtracking QR,agree,
+standard,2,u0,Float64,Newton Backtracking SVD,agree,
+standard,2,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,2,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,2,u0,Float64,Picard Backtracking,all fail,
+standard,2,u0,Float64,Newton Backtracking GMRES,single,
+standard,2,u0,Float64,Broyden,disagree,E5
+standard,2,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,2,10u0,Float64,Newton Static LU,different root,E2
+standard,2,10u0,Float64,Newton Backtracking LU,agree,
+standard,2,10u0,Float64,Newton Bisection LU,different root,E2
+standard,2,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,2,10u0,Float64,Newton DogLeg LU,different root,E2
+standard,2,10u0,Float64,Newton Backtracking QR,agree,
+standard,2,10u0,Float64,Newton Backtracking SVD,agree,
+standard,2,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,2,10u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,2,10u0,Float64,Picard Backtracking,all fail,
+standard,2,10u0,Float64,Newton Backtracking GMRES,single,
+standard,2,10u0,Float64,Broyden,all fail,
+standard,2,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,2,100u0,Float64,Newton Static LU,different root,E2
+standard,2,100u0,Float64,Newton Backtracking LU,agree,
+standard,2,100u0,Float64,Newton Bisection LU,different root,E2
+standard,2,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,2,100u0,Float64,Newton DogLeg LU,different root,E2
+standard,2,100u0,Float64,Newton Backtracking QR,agree,
+standard,2,100u0,Float64,Newton Backtracking SVD,agree,
+standard,2,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,2,100u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,2,100u0,Float64,Picard Backtracking,all fail,
+standard,2,100u0,Float64,Newton Backtracking GMRES,single,
+standard,2,100u0,Float64,Broyden,all fail,
+standard,2,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,3,u0,Float64,Newton Static LU,agree,
+standard,3,u0,Float64,Newton Backtracking LU,agree,
+standard,3,u0,Float64,Newton Bisection LU,different root,E2
+standard,3,u0,Float64,Newton StrongWolfe LU,different root,E2
+standard,3,u0,Float64,Newton DogLeg LU,disagree,E7
+standard,3,u0,Float64,Newton Backtracking QR,disagree,E9
+standard,3,u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,3,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,3,u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,3,u0,Float64,Picard Backtracking,all fail,
+standard,3,u0,Float64,Newton Backtracking GMRES,single,
+standard,3,u0,Float64,Broyden,disagree,E5
+standard,3,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,3,10u0,Float64,Newton Static LU,agree,
+standard,3,10u0,Float64,Newton Backtracking LU,agree,
+standard,3,10u0,Float64,Newton Bisection LU,different root,E2
+standard,3,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,3,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,3,10u0,Float64,Newton Backtracking QR,disagree,E9
+standard,3,10u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,3,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,3,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,3,10u0,Float64,Picard Backtracking,disagree,E4
+standard,3,10u0,Float64,Newton Backtracking GMRES,single,
+standard,3,10u0,Float64,Broyden,disagree,E5
+standard,3,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,3,100u0,Float64,Newton Static LU,all fail,
+standard,3,100u0,Float64,Newton Backtracking LU,all fail,
+standard,3,100u0,Float64,Newton Bisection LU,all fail,
+standard,3,100u0,Float64,Newton StrongWolfe LU,all fail,
+standard,3,100u0,Float64,Newton DogLeg LU,all fail,
+standard,3,100u0,Float64,Newton Backtracking QR,all fail,
+standard,3,100u0,Float64,Newton Backtracking SVD,all fail,
+standard,3,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,3,100u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,3,100u0,Float64,Picard Backtracking,all fail,
+standard,3,100u0,Float64,Newton Backtracking GMRES,single,
+standard,3,100u0,Float64,Broyden,all fail,
+standard,3,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,4,u0,Float64,Newton Static LU,agree,
+standard,4,u0,Float64,Newton Backtracking LU,agree,
+standard,4,u0,Float64,Newton Bisection LU,agree,
+standard,4,u0,Float64,Newton StrongWolfe LU,agree,
+standard,4,u0,Float64,Newton DogLeg LU,agree,
+standard,4,u0,Float64,Newton Backtracking QR,agree,
+standard,4,u0,Float64,Newton Backtracking SVD,agree,
+standard,4,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,4,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,4,u0,Float64,Picard Backtracking,all fail,
+standard,4,u0,Float64,Newton Backtracking GMRES,single,
+standard,4,u0,Float64,Broyden,all fail,
+standard,4,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,4,10u0,Float64,Newton Static LU,agree,
+standard,4,10u0,Float64,Newton Backtracking LU,agree,
+standard,4,10u0,Float64,Newton Bisection LU,all fail,
+standard,4,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,4,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,4,10u0,Float64,Newton Backtracking QR,agree,
+standard,4,10u0,Float64,Newton Backtracking SVD,agree,
+standard,4,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,4,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,4,10u0,Float64,Picard Backtracking,disagree,E4
+standard,4,10u0,Float64,Newton Backtracking GMRES,single,
+standard,4,10u0,Float64,Broyden,all fail,
+standard,4,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,4,100u0,Float64,Newton Static LU,agree,
+standard,4,100u0,Float64,Newton Backtracking LU,all fail,
+standard,4,100u0,Float64,Newton Bisection LU,disagree,E10
+standard,4,100u0,Float64,Newton StrongWolfe LU,all fail,
+standard,4,100u0,Float64,Newton DogLeg LU,disagree,E7
+standard,4,100u0,Float64,Newton Backtracking QR,all fail,
+standard,4,100u0,Float64,Newton Backtracking SVD,all fail,
+standard,4,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,4,100u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,4,100u0,Float64,Picard Backtracking,all fail,
+standard,4,100u0,Float64,Newton Backtracking GMRES,single,
+standard,4,100u0,Float64,Broyden,all fail,
+standard,4,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,5,u0,Float64,Newton Static LU,agree,
+standard,5,u0,Float64,Newton Backtracking LU,agree,
+standard,5,u0,Float64,Newton Bisection LU,agree,
+standard,5,u0,Float64,Newton StrongWolfe LU,agree,
+standard,5,u0,Float64,Newton DogLeg LU,agree,
+standard,5,u0,Float64,Newton Backtracking QR,agree,
+standard,5,u0,Float64,Newton Backtracking SVD,agree,
+standard,5,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,5,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,5,u0,Float64,Picard Backtracking,all fail,
+standard,5,u0,Float64,Newton Backtracking GMRES,single,
+standard,5,u0,Float64,Broyden,disagree,E5
+standard,5,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,5,10u0,Float64,Newton Static LU,agree,
+standard,5,10u0,Float64,Newton Backtracking LU,agree,
+standard,5,10u0,Float64,Newton Bisection LU,agree,
+standard,5,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,5,10u0,Float64,Newton DogLeg LU,agree,
+standard,5,10u0,Float64,Newton Backtracking QR,agree,
+standard,5,10u0,Float64,Newton Backtracking SVD,agree,
+standard,5,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,5,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,5,10u0,Float64,Picard Backtracking,all fail,
+standard,5,10u0,Float64,Newton Backtracking GMRES,single,
+standard,5,10u0,Float64,Broyden,disagree,E5
+standard,5,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,5,100u0,Float64,Newton Static LU,agree,
+standard,5,100u0,Float64,Newton Backtracking LU,agree,
+standard,5,100u0,Float64,Newton Bisection LU,agree,
+standard,5,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,5,100u0,Float64,Newton DogLeg LU,agree,
+standard,5,100u0,Float64,Newton Backtracking QR,agree,
+standard,5,100u0,Float64,Newton Backtracking SVD,agree,
+standard,5,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,5,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,5,100u0,Float64,Picard Backtracking,all fail,
+standard,5,100u0,Float64,Newton Backtracking GMRES,single,
+standard,5,100u0,Float64,Broyden,disagree,E5
+standard,5,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,6,u0,Float64,Newton Static LU,agree,
+standard,6,u0,Float64,Newton Backtracking LU,agree,
+standard,6,u0,Float64,Newton Bisection LU,all fail,
+standard,6,u0,Float64,Newton StrongWolfe LU,agree,
+standard,6,u0,Float64,Newton DogLeg LU,agree,
+standard,6,u0,Float64,Newton Backtracking QR,agree,
+standard,6,u0,Float64,Newton Backtracking SVD,agree,
+standard,6,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,6,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,6,u0,Float64,Picard Backtracking,all fail,
+standard,6,u0,Float64,Newton Backtracking GMRES,single,
+standard,6,u0,Float64,Broyden,disagree,E5
+standard,6,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,7,u0,Float64,Newton Static LU,agree,
+standard,7,u0,Float64,Newton Backtracking LU,agree,
+standard,7,u0,Float64,Newton Bisection LU,agree,
+standard,7,u0,Float64,Newton StrongWolfe LU,agree,
+standard,7,u0,Float64,Newton DogLeg LU,agree,
+standard,7,u0,Float64,Newton Backtracking QR,agree,
+standard,7,u0,Float64,Newton Backtracking SVD,agree,
+standard,7,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,7,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,7,u0,Float64,Picard Backtracking,disagree,E4
+standard,7,u0,Float64,Newton Backtracking GMRES,single,
+standard,7,u0,Float64,Broyden,agree,
+standard,7,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,7,10u0,Float64,Newton Static LU,agree,
+standard,7,10u0,Float64,Newton Backtracking LU,agree,
+standard,7,10u0,Float64,Newton Bisection LU,agree,
+standard,7,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,7,10u0,Float64,Newton DogLeg LU,agree,
+standard,7,10u0,Float64,Newton Backtracking QR,agree,
+standard,7,10u0,Float64,Newton Backtracking SVD,agree,
+standard,7,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,7,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,7,10u0,Float64,Picard Backtracking,disagree,E4
+standard,7,10u0,Float64,Newton Backtracking GMRES,single,
+standard,7,10u0,Float64,Broyden,disagree,E5
+standard,7,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,7,100u0,Float64,Newton Static LU,agree,
+standard,7,100u0,Float64,Newton Backtracking LU,agree,
+standard,7,100u0,Float64,Newton Bisection LU,different root,E3
+standard,7,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,7,100u0,Float64,Newton DogLeg LU,agree,
+standard,7,100u0,Float64,Newton Backtracking QR,agree,
+standard,7,100u0,Float64,Newton Backtracking SVD,agree,
+standard,7,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,7,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,7,100u0,Float64,Picard Backtracking,disagree,E4
+standard,7,100u0,Float64,Newton Backtracking GMRES,single,
+standard,7,100u0,Float64,Broyden,disagree,E5
+standard,7,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,8,u0,Float64,Newton Static LU,agree,
+standard,8,u0,Float64,Newton Backtracking LU,different root,E3
+standard,8,u0,Float64,Newton Bisection LU,agree,
+standard,8,u0,Float64,Newton StrongWolfe LU,disagree,E12
+standard,8,u0,Float64,Newton DogLeg LU,different root,E3
+standard,8,u0,Float64,Newton Backtracking QR,agree,
+standard,8,u0,Float64,Newton Backtracking SVD,agree,
+standard,8,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,8,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,8,u0,Float64,Picard Backtracking,disagree,E4
+standard,8,u0,Float64,Newton Backtracking GMRES,single,
+standard,8,u0,Float64,Broyden,disagree,E5
+standard,8,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,8,10u0,Float64,Newton Static LU,agree,
+standard,8,10u0,Float64,Newton Backtracking LU,agree,
+standard,8,10u0,Float64,Newton Bisection LU,different root,E3
+standard,8,10u0,Float64,Newton StrongWolfe LU,disagree,E12
+standard,8,10u0,Float64,Newton DogLeg LU,different root,E3
+standard,8,10u0,Float64,Newton Backtracking QR,agree,
+standard,8,10u0,Float64,Newton Backtracking SVD,agree,
+standard,8,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,8,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,8,10u0,Float64,Picard Backtracking,all fail,
+standard,8,10u0,Float64,Newton Backtracking GMRES,single,
+standard,8,10u0,Float64,Broyden,all fail,
+standard,8,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,8,100u0,Float64,Newton Static LU,different root,E2
+standard,8,100u0,Float64,Newton Backtracking LU,agree,
+standard,8,100u0,Float64,Newton Bisection LU,different root,E3
+standard,8,100u0,Float64,Newton StrongWolfe LU,different root,E3
+standard,8,100u0,Float64,Newton DogLeg LU,disagree,E7
+standard,8,100u0,Float64,Newton Backtracking QR,different root,E2
+standard,8,100u0,Float64,Newton Backtracking SVD,different root,E3
+standard,8,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,8,100u0,Float64,Newton reuse 3 Backtracking LU,different root,E3
+standard,8,100u0,Float64,Picard Backtracking,all fail,
+standard,8,100u0,Float64,Newton Backtracking GMRES,single,
+standard,8,100u0,Float64,Broyden,all fail,
+standard,8,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,9,u0,Float64,Newton Static LU,agree,
+standard,9,u0,Float64,Newton Backtracking LU,agree,
+standard,9,u0,Float64,Newton Bisection LU,agree,
+standard,9,u0,Float64,Newton StrongWolfe LU,agree,
+standard,9,u0,Float64,Newton DogLeg LU,disagree,E7
+standard,9,u0,Float64,Newton Backtracking QR,agree,
+standard,9,u0,Float64,Newton Backtracking SVD,agree,
+standard,9,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,9,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,9,u0,Float64,Picard Backtracking,disagree,E4
+standard,9,u0,Float64,Newton Backtracking GMRES,single,
+standard,9,u0,Float64,Broyden,different root,E2
+standard,9,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,9,10u0,Float64,Newton Static LU,agree,
+standard,9,10u0,Float64,Newton Backtracking LU,agree,
+standard,9,10u0,Float64,Newton Bisection LU,agree,
+standard,9,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,9,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,9,10u0,Float64,Newton Backtracking QR,agree,
+standard,9,10u0,Float64,Newton Backtracking SVD,agree,
+standard,9,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,9,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,9,10u0,Float64,Picard Backtracking,disagree,E4
+standard,9,10u0,Float64,Newton Backtracking GMRES,single,
+standard,9,10u0,Float64,Broyden,different root,E2
+standard,9,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,9,100u0,Float64,Newton Static LU,agree,
+standard,9,100u0,Float64,Newton Backtracking LU,agree,
+standard,9,100u0,Float64,Newton Bisection LU,agree,
+standard,9,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,9,100u0,Float64,Newton DogLeg LU,agree,
+standard,9,100u0,Float64,Newton Backtracking QR,agree,
+standard,9,100u0,Float64,Newton Backtracking SVD,agree,
+standard,9,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,9,100u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,9,100u0,Float64,Picard Backtracking,disagree,E4
+standard,9,100u0,Float64,Newton Backtracking GMRES,single,
+standard,9,100u0,Float64,Broyden,different root,E2
+standard,9,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,10,u0,Float64,Newton Static LU,agree,
+standard,10,u0,Float64,Newton Backtracking LU,agree,
+standard,10,u0,Float64,Newton Bisection LU,agree,
+standard,10,u0,Float64,Newton StrongWolfe LU,agree,
+standard,10,u0,Float64,Newton DogLeg LU,agree,
+standard,10,u0,Float64,Newton Backtracking QR,agree,
+standard,10,u0,Float64,Newton Backtracking SVD,agree,
+standard,10,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,10,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,10,u0,Float64,Picard Backtracking,agree,
+standard,10,u0,Float64,Newton Backtracking GMRES,single,
+standard,10,u0,Float64,Broyden,agree,
+standard,10,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,10,10u0,Float64,Newton Static LU,agree,
+standard,10,10u0,Float64,Newton Backtracking LU,agree,
+standard,10,10u0,Float64,Newton Bisection LU,agree,
+standard,10,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,10,10u0,Float64,Newton DogLeg LU,agree,
+standard,10,10u0,Float64,Newton Backtracking QR,agree,
+standard,10,10u0,Float64,Newton Backtracking SVD,agree,
+standard,10,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,10,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,10,10u0,Float64,Picard Backtracking,agree,
+standard,10,10u0,Float64,Newton Backtracking GMRES,single,
+standard,10,10u0,Float64,Broyden,agree,
+standard,10,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,10,100u0,Float64,Newton Static LU,agree,
+standard,10,100u0,Float64,Newton Backtracking LU,agree,
+standard,10,100u0,Float64,Newton Bisection LU,agree,
+standard,10,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,10,100u0,Float64,Newton DogLeg LU,agree,
+standard,10,100u0,Float64,Newton Backtracking QR,agree,
+standard,10,100u0,Float64,Newton Backtracking SVD,agree,
+standard,10,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,10,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,10,100u0,Float64,Picard Backtracking,agree,
+standard,10,100u0,Float64,Newton Backtracking GMRES,single,
+standard,10,100u0,Float64,Broyden,disagree,E5
+standard,10,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,11,u0,Float64,Newton Static LU,agree,
+standard,11,u0,Float64,Newton Backtracking LU,agree,
+standard,11,u0,Float64,Newton Bisection LU,agree,
+standard,11,u0,Float64,Newton StrongWolfe LU,agree,
+standard,11,u0,Float64,Newton DogLeg LU,disagree,E7
+standard,11,u0,Float64,Newton Backtracking QR,agree,
+standard,11,u0,Float64,Newton Backtracking SVD,agree,
+standard,11,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,11,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,11,u0,Float64,Picard Backtracking,all fail,
+standard,11,u0,Float64,Newton Backtracking GMRES,single,
+standard,11,u0,Float64,Broyden,all fail,
+standard,11,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,11,10u0,Float64,Newton Static LU,all fail,
+standard,11,10u0,Float64,Newton Backtracking LU,all fail,
+standard,11,10u0,Float64,Newton Bisection LU,disagree,E10
+standard,11,10u0,Float64,Newton StrongWolfe LU,all fail,
+standard,11,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,11,10u0,Float64,Newton Backtracking QR,all fail,
+standard,11,10u0,Float64,Newton Backtracking SVD,all fail,
+standard,11,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,11,10u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,11,10u0,Float64,Picard Backtracking,disagree,E4
+standard,11,10u0,Float64,Newton Backtracking GMRES,single,
+standard,11,10u0,Float64,Broyden,all fail,
+standard,11,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,11,100u0,Float64,Newton Static LU,all fail,
+standard,11,100u0,Float64,Newton Backtracking LU,all fail,
+standard,11,100u0,Float64,Newton Bisection LU,all fail,
+standard,11,100u0,Float64,Newton StrongWolfe LU,all fail,
+standard,11,100u0,Float64,Newton DogLeg LU,different root,E3
+standard,11,100u0,Float64,Newton Backtracking QR,all fail,
+standard,11,100u0,Float64,Newton Backtracking SVD,all fail,
+standard,11,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,11,100u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,11,100u0,Float64,Picard Backtracking,all fail,
+standard,11,100u0,Float64,Newton Backtracking GMRES,single,
+standard,11,100u0,Float64,Broyden,all fail,
+standard,11,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,12,u0,Float64,Newton Static LU,agree,
+standard,12,u0,Float64,Newton Backtracking LU,agree,
+standard,12,u0,Float64,Newton Bisection LU,agree,
+standard,12,u0,Float64,Newton StrongWolfe LU,agree,
+standard,12,u0,Float64,Newton DogLeg LU,agree,
+standard,12,u0,Float64,Newton Backtracking QR,agree,
+standard,12,u0,Float64,Newton Backtracking SVD,agree,
+standard,12,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,12,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,12,u0,Float64,Picard Backtracking,agree,
+standard,12,u0,Float64,Newton Backtracking GMRES,single,
+standard,12,u0,Float64,Broyden,disagree,E5
+standard,12,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,12,10u0,Float64,Newton Static LU,agree,
+standard,12,10u0,Float64,Newton Backtracking LU,agree,
+standard,12,10u0,Float64,Newton Bisection LU,agree,
+standard,12,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,12,10u0,Float64,Newton DogLeg LU,agree,
+standard,12,10u0,Float64,Newton Backtracking QR,agree,
+standard,12,10u0,Float64,Newton Backtracking SVD,agree,
+standard,12,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,12,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,12,10u0,Float64,Picard Backtracking,disagree,E4
+standard,12,10u0,Float64,Newton Backtracking GMRES,single,
+standard,12,10u0,Float64,Broyden,disagree,E5
+standard,12,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,12,100u0,Float64,Newton Static LU,agree,
+standard,12,100u0,Float64,Newton Backtracking LU,agree,
+standard,12,100u0,Float64,Newton Bisection LU,agree,
+standard,12,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,12,100u0,Float64,Newton DogLeg LU,agree,
+standard,12,100u0,Float64,Newton Backtracking QR,agree,
+standard,12,100u0,Float64,Newton Backtracking SVD,agree,
+standard,12,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,12,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,12,100u0,Float64,Picard Backtracking,disagree,E4
+standard,12,100u0,Float64,Newton Backtracking GMRES,single,
+standard,12,100u0,Float64,Broyden,disagree,E5
+standard,12,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,13,u0,Float64,Newton Static LU,agree,
+standard,13,u0,Float64,Newton Backtracking LU,agree,
+standard,13,u0,Float64,Newton Bisection LU,agree,
+standard,13,u0,Float64,Newton StrongWolfe LU,agree,
+standard,13,u0,Float64,Newton DogLeg LU,agree,
+standard,13,u0,Float64,Newton Backtracking QR,agree,
+standard,13,u0,Float64,Newton Backtracking SVD,agree,
+standard,13,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,13,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,13,u0,Float64,Picard Backtracking,disagree,E4
+standard,13,u0,Float64,Newton Backtracking GMRES,single,
+standard,13,u0,Float64,Broyden,agree,
+standard,13,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,13,10u0,Float64,Newton Static LU,agree,
+standard,13,10u0,Float64,Newton Backtracking LU,agree,
+standard,13,10u0,Float64,Newton Bisection LU,disagree,E11
+standard,13,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,13,10u0,Float64,Newton DogLeg LU,agree,
+standard,13,10u0,Float64,Newton Backtracking QR,agree,
+standard,13,10u0,Float64,Newton Backtracking SVD,agree,
+standard,13,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,13,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,13,10u0,Float64,Picard Backtracking,disagree,E4
+standard,13,10u0,Float64,Newton Backtracking GMRES,single,
+standard,13,10u0,Float64,Broyden,disagree,E5
+standard,13,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,13,100u0,Float64,Newton Static LU,agree,
+standard,13,100u0,Float64,Newton Backtracking LU,agree,
+standard,13,100u0,Float64,Newton Bisection LU,disagree,E11
+standard,13,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,13,100u0,Float64,Newton DogLeg LU,agree,
+standard,13,100u0,Float64,Newton Backtracking QR,agree,
+standard,13,100u0,Float64,Newton Backtracking SVD,agree,
+standard,13,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,13,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,13,100u0,Float64,Picard Backtracking,disagree,E4
+standard,13,100u0,Float64,Newton Backtracking GMRES,single,
+standard,13,100u0,Float64,Broyden,all fail,
+standard,13,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,14,u0,Float64,Newton Static LU,agree,
+standard,14,u0,Float64,Newton Backtracking LU,agree,
+standard,14,u0,Float64,Newton Bisection LU,agree,
+standard,14,u0,Float64,Newton StrongWolfe LU,agree,
+standard,14,u0,Float64,Newton DogLeg LU,agree,
+standard,14,u0,Float64,Newton Backtracking QR,agree,
+standard,14,u0,Float64,Newton Backtracking SVD,agree,
+standard,14,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,14,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,14,u0,Float64,Picard Backtracking,disagree,E4
+standard,14,u0,Float64,Newton Backtracking GMRES,single,
+standard,14,u0,Float64,Broyden,disagree,E5
+standard,14,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,14,10u0,Float64,Newton Static LU,agree,
+standard,14,10u0,Float64,Newton Backtracking LU,agree,
+standard,14,10u0,Float64,Newton Bisection LU,all fail,
+standard,14,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,14,10u0,Float64,Newton DogLeg LU,agree,
+standard,14,10u0,Float64,Newton Backtracking QR,agree,
+standard,14,10u0,Float64,Newton Backtracking SVD,agree,
+standard,14,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,14,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,14,10u0,Float64,Picard Backtracking,agree,
+standard,14,10u0,Float64,Newton Backtracking GMRES,single,
+standard,14,10u0,Float64,Broyden,all fail,
+standard,14,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,14,100u0,Float64,Newton Static LU,agree,
+standard,14,100u0,Float64,Newton Backtracking LU,agree,
+standard,14,100u0,Float64,Newton Bisection LU,all fail,
+standard,14,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,14,100u0,Float64,Newton DogLeg LU,agree,
+standard,14,100u0,Float64,Newton Backtracking QR,agree,
+standard,14,100u0,Float64,Newton Backtracking SVD,agree,
+standard,14,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,14,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,14,100u0,Float64,Picard Backtracking,disagree,E4
+standard,14,100u0,Float64,Newton Backtracking GMRES,single,
+standard,14,100u0,Float64,Broyden,all fail,
+standard,14,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,15,u0,Float64,Newton Static LU,agree,
+standard,15,u0,Float64,Newton Backtracking LU,agree,
+standard,15,u0,Float64,Newton Bisection LU,different root,E2
+standard,15,u0,Float64,Newton StrongWolfe LU,agree,
+standard,15,u0,Float64,Newton DogLeg LU,disagree,E7
+standard,15,u0,Float64,Newton Backtracking QR,disagree,E9
+standard,15,u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,15,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,15,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,15,u0,Float64,Picard Backtracking,disagree,E4
+standard,15,u0,Float64,Newton Backtracking GMRES,single,
+standard,15,u0,Float64,Broyden,disagree,E5
+standard,15,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,15,10u0,Float64,Newton Static LU,agree,
+standard,15,10u0,Float64,Newton Backtracking LU,agree,
+standard,15,10u0,Float64,Newton Bisection LU,different root,E2
+standard,15,10u0,Float64,Newton StrongWolfe LU,different root,E2
+standard,15,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,15,10u0,Float64,Newton Backtracking QR,disagree,E9
+standard,15,10u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,15,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,15,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,15,10u0,Float64,Picard Backtracking,disagree,E4
+standard,15,10u0,Float64,Newton Backtracking GMRES,single,
+standard,15,10u0,Float64,Broyden,all fail,
+standard,15,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,15,100u0,Float64,Newton Static LU,agree,
+standard,15,100u0,Float64,Newton Backtracking LU,agree,
+standard,15,100u0,Float64,Newton Bisection LU,different root,E2
+standard,15,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,15,100u0,Float64,Newton DogLeg LU,disagree,E7
+standard,15,100u0,Float64,Newton Backtracking QR,disagree,E9
+standard,15,100u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,15,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,15,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,15,100u0,Float64,Picard Backtracking,disagree,E4
+standard,15,100u0,Float64,Newton Backtracking GMRES,single,
+standard,15,100u0,Float64,Broyden,disagree,E5
+standard,15,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,16,u0,Float64,Newton Static LU,agree,
+standard,16,u0,Float64,Newton Backtracking LU,agree,
+standard,16,u0,Float64,Newton Bisection LU,different root,E2
+standard,16,u0,Float64,Newton StrongWolfe LU,agree,
+standard,16,u0,Float64,Newton DogLeg LU,disagree,E7
+standard,16,u0,Float64,Newton Backtracking QR,disagree,E9
+standard,16,u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,16,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,16,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,16,u0,Float64,Picard Backtracking,disagree,E4
+standard,16,u0,Float64,Newton Backtracking GMRES,single,
+standard,16,u0,Float64,Broyden,disagree,E5
+standard,16,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,16,10u0,Float64,Newton Static LU,agree,
+standard,16,10u0,Float64,Newton Backtracking LU,agree,
+standard,16,10u0,Float64,Newton Bisection LU,different root,E2
+standard,16,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,16,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,16,10u0,Float64,Newton Backtracking QR,disagree,E9
+standard,16,10u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,16,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,16,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,16,10u0,Float64,Picard Backtracking,disagree,E4
+standard,16,10u0,Float64,Newton Backtracking GMRES,single,
+standard,16,10u0,Float64,Broyden,disagree,E5
+standard,16,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,16,100u0,Float64,Newton Static LU,agree,
+standard,16,100u0,Float64,Newton Backtracking LU,agree,
+standard,16,100u0,Float64,Newton Bisection LU,disagree,E11
+standard,16,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,16,100u0,Float64,Newton DogLeg LU,disagree,E7
+standard,16,100u0,Float64,Newton Backtracking QR,disagree,E9
+standard,16,100u0,Float64,Newton Backtracking SVD,disagree,E9
+standard,16,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,16,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,16,100u0,Float64,Picard Backtracking,disagree,E4
+standard,16,100u0,Float64,Newton Backtracking GMRES,single,
+standard,16,100u0,Float64,Broyden,all fail,
+standard,16,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,17,u0,Float64,Newton Static LU,agree,
+standard,17,u0,Float64,Newton Backtracking LU,agree,
+standard,17,u0,Float64,Newton Bisection LU,agree,
+standard,17,u0,Float64,Newton StrongWolfe LU,agree,
+standard,17,u0,Float64,Newton DogLeg LU,agree,
+standard,17,u0,Float64,Newton Backtracking QR,agree,
+standard,17,u0,Float64,Newton Backtracking SVD,agree,
+standard,17,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,17,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,17,u0,Float64,Picard Backtracking,disagree,E4
+standard,17,u0,Float64,Newton Backtracking GMRES,single,
+standard,17,u0,Float64,Broyden,different root,E3
+standard,17,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,17,10u0,Float64,Newton Static LU,agree,
+standard,17,10u0,Float64,Newton Backtracking LU,agree,
+standard,17,10u0,Float64,Newton Bisection LU,agree,
+standard,17,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,17,10u0,Float64,Newton DogLeg LU,agree,
+standard,17,10u0,Float64,Newton Backtracking QR,agree,
+standard,17,10u0,Float64,Newton Backtracking SVD,agree,
+standard,17,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,17,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,17,10u0,Float64,Picard Backtracking,disagree,E4
+standard,17,10u0,Float64,Newton Backtracking GMRES,single,
+standard,17,10u0,Float64,Broyden,disagree,E5
+standard,17,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,17,100u0,Float64,Newton Static LU,agree,
+standard,17,100u0,Float64,Newton Backtracking LU,agree,
+standard,17,100u0,Float64,Newton Bisection LU,agree,
+standard,17,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,17,100u0,Float64,Newton DogLeg LU,agree,
+standard,17,100u0,Float64,Newton Backtracking QR,agree,
+standard,17,100u0,Float64,Newton Backtracking SVD,agree,
+standard,17,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,17,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,17,100u0,Float64,Picard Backtracking,all fail,
+standard,17,100u0,Float64,Newton Backtracking GMRES,single,
+standard,17,100u0,Float64,Broyden,disagree,E5
+standard,17,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,18,u0,Float64,Newton Static LU,different root,E1
+standard,18,u0,Float64,Newton Backtracking LU,agree,
+standard,18,u0,Float64,Newton Bisection LU,different root,E1
+standard,18,u0,Float64,Newton StrongWolfe LU,different root,E1
+standard,18,u0,Float64,Newton DogLeg LU,different root,E1
+standard,18,u0,Float64,Newton Backtracking QR,agree,
+standard,18,u0,Float64,Newton Backtracking SVD,agree,
+standard,18,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,18,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,18,u0,Float64,Picard Backtracking,different root,E1
+standard,18,u0,Float64,Newton Backtracking GMRES,single,
+standard,18,u0,Float64,Broyden,different root,E1
+standard,18,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,18,10u0,Float64,Newton Static LU,all fail,
+standard,18,10u0,Float64,Newton Backtracking LU,agree,
+standard,18,10u0,Float64,Newton Bisection LU,disagree,E10
+standard,18,10u0,Float64,Newton StrongWolfe LU,different root,E1
+standard,18,10u0,Float64,Newton DogLeg LU,different root,E1
+standard,18,10u0,Float64,Newton Backtracking QR,agree,
+standard,18,10u0,Float64,Newton Backtracking SVD,agree,
+standard,18,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,18,10u0,Float64,Newton reuse 3 Backtracking LU,different root,E1
+standard,18,10u0,Float64,Picard Backtracking,disagree,E4
+standard,18,10u0,Float64,Newton Backtracking GMRES,single,
+standard,18,10u0,Float64,Broyden,disagree,E6
+standard,18,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,18,100u0,Float64,Newton Static LU,all fail,
+standard,18,100u0,Float64,Newton Backtracking LU,different root,E1
+standard,18,100u0,Float64,Newton Bisection LU,disagree,E10
+standard,18,100u0,Float64,Newton StrongWolfe LU,different root,E1
+standard,18,100u0,Float64,Newton DogLeg LU,different root,E1
+standard,18,100u0,Float64,Newton Backtracking QR,different root,E1
+standard,18,100u0,Float64,Newton Backtracking SVD,different root,E1
+standard,18,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,18,100u0,Float64,Newton reuse 3 Backtracking LU,different root,E1
+standard,18,100u0,Float64,Picard Backtracking,disagree,E4
+standard,18,100u0,Float64,Newton Backtracking GMRES,single,
+standard,18,100u0,Float64,Broyden,disagree,E6
+standard,18,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,19,u0,Float64,Newton Static LU,different root,E2
+standard,19,u0,Float64,Newton Backtracking LU,agree,
+standard,19,u0,Float64,Newton Bisection LU,different root,E2
+standard,19,u0,Float64,Newton StrongWolfe LU,agree,
+standard,19,u0,Float64,Newton DogLeg LU,different root,E2
+standard,19,u0,Float64,Newton Backtracking QR,agree,
+standard,19,u0,Float64,Newton Backtracking SVD,agree,
+standard,19,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,19,u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,19,u0,Float64,Picard Backtracking,disagree,E4
+standard,19,u0,Float64,Newton Backtracking GMRES,single,
+standard,19,u0,Float64,Broyden,disagree,E5
+standard,19,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,19,10u0,Float64,Newton Static LU,different root,E2
+standard,19,10u0,Float64,Newton Backtracking LU,different root,E2
+standard,19,10u0,Float64,Newton Bisection LU,different root,E2
+standard,19,10u0,Float64,Newton StrongWolfe LU,different root,E2
+standard,19,10u0,Float64,Newton DogLeg LU,different root,E2
+standard,19,10u0,Float64,Newton Backtracking QR,different root,E2
+standard,19,10u0,Float64,Newton Backtracking SVD,different root,E2
+standard,19,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,19,10u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,19,10u0,Float64,Picard Backtracking,disagree,E4
+standard,19,10u0,Float64,Newton Backtracking GMRES,single,
+standard,19,10u0,Float64,Broyden,disagree,E5
+standard,19,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,19,100u0,Float64,Newton Static LU,different root,E2
+standard,19,100u0,Float64,Newton Backtracking LU,agree,
+standard,19,100u0,Float64,Newton Bisection LU,different root,E2
+standard,19,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,19,100u0,Float64,Newton DogLeg LU,different root,E2
+standard,19,100u0,Float64,Newton Backtracking QR,agree,
+standard,19,100u0,Float64,Newton Backtracking SVD,agree,
+standard,19,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,19,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,19,100u0,Float64,Picard Backtracking,disagree,E4
+standard,19,100u0,Float64,Newton Backtracking GMRES,single,
+standard,19,100u0,Float64,Broyden,disagree,E5
+standard,19,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,20,u0,Float64,Newton Static LU,agree,
+standard,20,u0,Float64,Newton Backtracking LU,agree,
+standard,20,u0,Float64,Newton Bisection LU,agree,
+standard,20,u0,Float64,Newton StrongWolfe LU,agree,
+standard,20,u0,Float64,Newton DogLeg LU,agree,
+standard,20,u0,Float64,Newton Backtracking QR,agree,
+standard,20,u0,Float64,Newton Backtracking SVD,agree,
+standard,20,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,20,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,20,u0,Float64,Picard Backtracking,agree,
+standard,20,u0,Float64,Newton Backtracking GMRES,single,
+standard,20,u0,Float64,Broyden,disagree,E5
+standard,20,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,20,10u0,Float64,Newton Static LU,different root,E2
+standard,20,10u0,Float64,Newton Backtracking LU,agree,
+standard,20,10u0,Float64,Newton Bisection LU,agree,
+standard,20,10u0,Float64,Newton StrongWolfe LU,agree,
+standard,20,10u0,Float64,Newton DogLeg LU,different root,E2
+standard,20,10u0,Float64,Newton Backtracking QR,agree,
+standard,20,10u0,Float64,Newton Backtracking SVD,agree,
+standard,20,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,20,10u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,20,10u0,Float64,Picard Backtracking,disagree,E4
+standard,20,10u0,Float64,Newton Backtracking GMRES,single,
+standard,20,10u0,Float64,Broyden,disagree,E5
+standard,20,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,20,100u0,Float64,Newton Static LU,different root,E2
+standard,20,100u0,Float64,Newton Backtracking LU,agree,
+standard,20,100u0,Float64,Newton Bisection LU,different root,E2
+standard,20,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,20,100u0,Float64,Newton DogLeg LU,different root,E2
+standard,20,100u0,Float64,Newton Backtracking QR,agree,
+standard,20,100u0,Float64,Newton Backtracking SVD,agree,
+standard,20,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,20,100u0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+standard,20,100u0,Float64,Picard Backtracking,disagree,E4
+standard,20,100u0,Float64,Newton Backtracking GMRES,single,
+standard,20,100u0,Float64,Broyden,disagree,E5
+standard,20,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,21,u0,Float64,Newton Static LU,agree,
+standard,21,u0,Float64,Newton Backtracking LU,all fail,
+standard,21,u0,Float64,Newton Bisection LU,all fail,
+standard,21,u0,Float64,Newton StrongWolfe LU,disagree,E10
+standard,21,u0,Float64,Newton DogLeg LU,all fail,
+standard,21,u0,Float64,Newton Backtracking QR,all fail,
+standard,21,u0,Float64,Newton Backtracking SVD,all fail,
+standard,21,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,21,u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,21,u0,Float64,Picard Backtracking,all fail,
+standard,21,u0,Float64,Newton Backtracking GMRES,single,
+standard,21,u0,Float64,Broyden,disagree,E5
+standard,21,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,21,10u0,Float64,Newton Static LU,agree,
+standard,21,10u0,Float64,Newton Backtracking LU,all fail,
+standard,21,10u0,Float64,Newton Bisection LU,all fail,
+standard,21,10u0,Float64,Newton StrongWolfe LU,disagree,E10
+standard,21,10u0,Float64,Newton DogLeg LU,all fail,
+standard,21,10u0,Float64,Newton Backtracking QR,all fail,
+standard,21,10u0,Float64,Newton Backtracking SVD,all fail,
+standard,21,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,21,10u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,21,10u0,Float64,Picard Backtracking,disagree,E4
+standard,21,10u0,Float64,Newton Backtracking GMRES,single,
+standard,21,10u0,Float64,Broyden,all fail,
+standard,21,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,21,100u0,Float64,Newton Static LU,agree,
+standard,21,100u0,Float64,Newton Backtracking LU,all fail,
+standard,21,100u0,Float64,Newton Bisection LU,all fail,
+standard,21,100u0,Float64,Newton StrongWolfe LU,all fail,
+standard,21,100u0,Float64,Newton DogLeg LU,all fail,
+standard,21,100u0,Float64,Newton Backtracking QR,all fail,
+standard,21,100u0,Float64,Newton Backtracking SVD,all fail,
+standard,21,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,21,100u0,Float64,Newton reuse 3 Backtracking LU,all fail,
+standard,21,100u0,Float64,Picard Backtracking,all fail,
+standard,21,100u0,Float64,Newton Backtracking GMRES,single,
+standard,21,100u0,Float64,Broyden,all fail,
+standard,21,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,22,u0,Float64,Newton Static LU,agree,
+standard,22,u0,Float64,Newton Backtracking LU,agree,
+standard,22,u0,Float64,Newton Bisection LU,disagree,E10
+standard,22,u0,Float64,Newton StrongWolfe LU,agree,
+standard,22,u0,Float64,Newton DogLeg LU,agree,
+standard,22,u0,Float64,Newton Backtracking QR,agree,
+standard,22,u0,Float64,Newton Backtracking SVD,agree,
+standard,22,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,22,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,22,u0,Float64,Picard Backtracking,disagree,E4
+standard,22,u0,Float64,Newton Backtracking GMRES,single,
+standard,22,u0,Float64,Broyden,disagree,E5
+standard,22,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,22,10u0,Float64,Newton Static LU,agree,
+standard,22,10u0,Float64,Newton Backtracking LU,agree,
+standard,22,10u0,Float64,Newton Bisection LU,all fail,
+standard,22,10u0,Float64,Newton StrongWolfe LU,all fail,
+standard,22,10u0,Float64,Newton DogLeg LU,different root,E2
+standard,22,10u0,Float64,Newton Backtracking QR,agree,
+standard,22,10u0,Float64,Newton Backtracking SVD,agree,
+standard,22,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,22,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,22,10u0,Float64,Picard Backtracking,all fail,
+standard,22,10u0,Float64,Newton Backtracking GMRES,single,
+standard,22,10u0,Float64,Broyden,disagree,E5
+standard,22,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,22,100u0,Float64,Newton Static LU,all fail,
+standard,22,100u0,Float64,Newton Backtracking LU,all fail,
+standard,22,100u0,Float64,Newton Bisection LU,all fail,
+standard,22,100u0,Float64,Newton StrongWolfe LU,all fail,
+standard,22,100u0,Float64,Newton DogLeg LU,disagree,E7
+standard,22,100u0,Float64,Newton Backtracking QR,all fail,
+standard,22,100u0,Float64,Newton Backtracking SVD,all fail,
+standard,22,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,22,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,22,100u0,Float64,Picard Backtracking,all fail,
+standard,22,100u0,Float64,Newton Backtracking GMRES,single,
+standard,22,100u0,Float64,Broyden,disagree,E5
+standard,22,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,23,u0,Float64,Newton Static LU,agree,
+standard,23,u0,Float64,Newton Backtracking LU,agree,
+standard,23,u0,Float64,Newton Bisection LU,agree,
+standard,23,u0,Float64,Newton StrongWolfe LU,agree,
+standard,23,u0,Float64,Newton DogLeg LU,agree,
+standard,23,u0,Float64,Newton Backtracking QR,agree,
+standard,23,u0,Float64,Newton Backtracking SVD,agree,
+standard,23,u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,23,u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,23,u0,Float64,Picard Backtracking,agree,
+standard,23,u0,Float64,Newton Backtracking GMRES,single,
+standard,23,u0,Float64,Broyden,agree,
+standard,23,u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,23,10u0,Float64,Newton Static LU,agree,
+standard,23,10u0,Float64,Newton Backtracking LU,agree,
+standard,23,10u0,Float64,Newton Bisection LU,disagree,E10
+standard,23,10u0,Float64,Newton StrongWolfe LU,disagree,E12
+standard,23,10u0,Float64,Newton DogLeg LU,disagree,E7
+standard,23,10u0,Float64,Newton Backtracking QR,agree,
+standard,23,10u0,Float64,Newton Backtracking SVD,agree,
+standard,23,10u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,23,10u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,23,10u0,Float64,Picard Backtracking,agree,
+standard,23,10u0,Float64,Newton Backtracking GMRES,single,
+standard,23,10u0,Float64,Broyden,agree,
+standard,23,10u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+standard,23,100u0,Float64,Newton Static LU,agree,
+standard,23,100u0,Float64,Newton Backtracking LU,agree,
+standard,23,100u0,Float64,Newton Bisection LU,different root,E3
+standard,23,100u0,Float64,Newton StrongWolfe LU,agree,
+standard,23,100u0,Float64,Newton DogLeg LU,agree,
+standard,23,100u0,Float64,Newton Backtracking QR,agree,
+standard,23,100u0,Float64,Newton Backtracking SVD,agree,
+standard,23,100u0,Float64,Newton LevenbergMarquardt SVD,single,
+standard,23,100u0,Float64,Newton reuse 3 Backtracking LU,agree,
+standard,23,100u0,Float64,Picard Backtracking,agree,
+standard,23,100u0,Float64,Newton Backtracking GMRES,single,
+standard,23,100u0,Float64,Broyden,agree,
+standard,23,100u0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton Static LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton Backtracking LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton Bisection LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton DogLeg LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton Backtracking QR,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,Broyden,agree,
+midpoint,HarmonicOscillator h=0.1,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton Static LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton Backtracking LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton Bisection LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton DogLeg LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton Backtracking QR,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,Broyden,agree,
+midpoint,HarmonicOscillator h=1.0,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,Pendulum h=0.1,V0,Float64,Newton Static LU,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Newton Backtracking LU,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Newton Bisection LU,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Newton DogLeg LU,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Newton Backtracking QR,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,Pendulum h=0.1,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,Pendulum h=0.1,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,Pendulum h=0.1,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,Pendulum h=0.1,V0,Float64,Broyden,agree,
+midpoint,Pendulum h=0.1,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,Pendulum h=1.0,V0,Float64,Newton Static LU,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Newton Backtracking LU,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Newton Bisection LU,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Newton DogLeg LU,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Newton Backtracking QR,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,Pendulum h=1.0,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,Pendulum h=1.0,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,Pendulum h=1.0,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,Pendulum h=1.0,V0,Float64,Broyden,agree,
+midpoint,Pendulum h=1.0,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton Static LU,different root,E2
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton Bisection LU,different root,E2
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton DogLeg LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Picard Backtracking,all fail,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,Broyden,all fail,
+midpoint,LotkaVolterra2d h=0.01,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton Static LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton Bisection LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton DogLeg LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Picard Backtracking,all fail,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,Broyden,disagree,E5
+midpoint,LotkaVolterra2d h=0.1,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton Static LU,different root,E2
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton Bisection LU,different root,E2
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton DogLeg LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Picard Backtracking,all fail,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,Broyden,disagree,E5
+midpoint,LotkaVolterra4d h=0.01,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton Static LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton Backtracking LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton Bisection LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton DogLeg LU,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton Backtracking QR,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton reuse 3 Backtracking LU,different root,E2
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Picard Backtracking,all fail,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,Broyden,disagree,E5
+midpoint,LotkaVolterra4d h=0.1,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton Static LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton Backtracking LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton Bisection LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton DogLeg LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton Backtracking QR,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,DoublePendulum h=0.01,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,DoublePendulum h=0.01,V0,Float64,Broyden,agree,
+midpoint,DoublePendulum h=0.01,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton Static LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton Backtracking LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton Bisection LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton DogLeg LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton Backtracking QR,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,DoublePendulum h=0.1,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,DoublePendulum h=0.1,V0,Float64,Broyden,agree,
+midpoint,DoublePendulum h=0.1,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton Static LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton Backtracking LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton Bisection LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton DogLeg LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton Backtracking QR,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,TodaLattice h=0.1,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,TodaLattice h=0.1,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,TodaLattice h=0.1,V0,Float64,Broyden,agree,
+midpoint,TodaLattice h=0.1,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton Static LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton Backtracking LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton Bisection LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton StrongWolfe LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton DogLeg LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton Backtracking QR,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton Backtracking SVD,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton LevenbergMarquardt SVD,single,
+midpoint,TodaLattice h=1.0,V0,Float64,Newton reuse 3 Backtracking LU,agree,
+midpoint,TodaLattice h=1.0,V0,Float64,Picard Backtracking,disagree,E4
+midpoint,TodaLattice h=1.0,V0,Float64,Newton Backtracking GMRES,single,
+midpoint,TodaLattice h=1.0,V0,Float64,Broyden,disagree,E6
+midpoint,TodaLattice h=1.0,V0,Float64,LeftPreconditioned Picard Backtracking Newton,single,
