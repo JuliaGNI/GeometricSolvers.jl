@@ -635,35 +635,37 @@ for which two successive runs each last at least this long.
 const MIN_RUN = 1e-3
 
 """
-    timed_run(row, invoke, k)
+    timed_run(row, invoke, k; clock = time_ns)
 
 The time per solve, in seconds, of one run of `k` solves of `row`: each solve calls a call of
 `invoke` on its own counting residual and its own copy of the start, all made before the timer
-starts, and a throw ends that solve and not the run.
+starts, and a throw ends that solve and not the run. `clock()` gives the time in nanoseconds.
 """
-function timed_run(row::Row, invoke, k::Integer)
+function timed_run(row::Row, invoke, k::Integer; clock = time_ns)
     calls = [invoke(Counted(row.F)).call for _ in 1:k]
-    t0 = time_ns()
+    t0 = clock()
     for call in calls
         guarded(call)
     end
-    return (time_ns() - t0) / 1e9 / k
+    return (clock() - t0) / 1e9 / k
 end
 
 """
-    time_cell(row, invoke)
+    time_cell(row, invoke; clock = time_ns)
 
 The times of a cell after its warm-up solve: the batch `k`, the smallest power of two for which
 two successive runs each last at least `MIN_RUN`, found once, and the time per solve of each of
 the `N_RUNS` runs of `k` solves. Two runs, so that one run slowed by a pause, such as a garbage
-collection or the compilation of `timed_run` for the call, does not decide `k`.
+collection or the compilation of `timed_run` for the call, does not decide `k`. `clock` goes to
+`timed_run`.
 """
-function time_cell(row::Row, invoke)
+function time_cell(row::Row, invoke; clock = time_ns)
+    one_run(k) = timed_run(row, invoke, k; clock)
     k = 1
-    while k * min(timed_run(row, invoke, k), timed_run(row, invoke, k)) < MIN_RUN
+    while k * min(one_run(k), one_run(k)) < MIN_RUN
         k *= 2
     end
-    return (; k, times = [timed_run(row, invoke, k) for _ in 1:N_RUNS])
+    return (; k, times = [one_run(k) for _ in 1:N_RUNS])
 end
 
 """

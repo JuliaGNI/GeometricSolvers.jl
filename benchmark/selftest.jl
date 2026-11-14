@@ -314,13 +314,13 @@ end
 # per step. Two components, because `nsol` takes no system of dimension 1.
 double!(y, x, p) = (y[1] = 1e4 * (x[1] - 1)^2; y[2] = x[2] - 1; nothing)
 
-# A call that busy-waits `t` seconds.
-function busy(t)
-    t0 = time_ns()
-    while time_ns() - t0 < t * 1e9
-    end
-    return nothing
+# A clock in nanoseconds that only `elapse!` moves, so that every time the self-test checks is
+# exact and no check depends on the wall clock.
+mutable struct FakeClock
+    ns::UInt64
 end
+(c::FakeClock)() = c.ns
+elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
 
 @testset "Y2" begin
     @testset "run count: five timed runs, and the batch reaches MIN_RUN" begin
@@ -328,32 +328,34 @@ end
         row = rosenbrock_row(Float64)
         # A solve of 0.2 ms: 4 solves last 0.8 ms, 8 solves 1.6 ms, and 5 solves, which no
         # power of two gives, 1.0 ms.
-        slow = c -> (; passed = (;), call = () -> busy(2e-4))
-        (; k, times) = time_cell(row, slow)
-        @test length(times) == 5
+        clock = FakeClock(0)
+        slow = c -> (; passed = (;), call = () -> elapse!(clock, 2e-4))
+        (; k, times) = time_cell(row, slow; clock)
         @test k == 8
-        @test all(t -> 2e-4 ≤ t < 4e-4, times)
+        @test times == fill(2e-4, 5)
         # A first call that takes 2 ms, as one that compiles does, does not decide the batch.
         first = Ref(true)
         compiles = c -> (; passed = (;),
-            call = () -> busy(first[] ? (first[] = false; 2e-3) : 2e-4))
-        @test time_cell(row, compiles).k == 8
+            call = () -> elapse!(clock, first[] ? (first[] = false; 2e-3) : 2e-4))
+        @test time_cell(row, compiles; clock).k == 8
         # One slow run in the search, as a pause for garbage collection gives, does not decide
         # the batch: the second call, the second run of the search at k = 1, takes 2 ms.
         calls = Ref(0)
         pauses = c -> (; passed = (;),
-            call = () -> busy((calls[] += 1) == 2 ? 2e-3 : 2e-4))
-        @test time_cell(row, pauses).k == 8
+            call = () -> elapse!(clock, (calls[] += 1) == 2 ? 2e-3 : 2e-4))
+        @test time_cell(row, pauses; clock).k == 8
         # The call and its copy of the start are made before the timer starts: a call that takes
         # 1 ms to make does not enter the time of its solve of 0.2 ms.
-        makes = c -> (busy(1e-3); (; passed = (;), call = () -> busy(2e-4)))
-        @test all(t -> t < 4e-4, time_cell(row, makes).times)
-        # Each solve takes its own copy of the start, and the row's start stays as it was.
+        makes = c -> (
+            elapse!(clock, 1e-3); (; passed = (;), call = () -> elapse!(clock, 2e-4)))
+        @test time_cell(row, makes; clock).times == fill(2e-4, 5)
+        # A smoke test on the real clock, with no bound on the time. Each solve takes its own
+        # copy of the start, and the row's start stays as it was.
         invoke = adapter(
             "GeometricSolvers", PAIRING["Newton Backtracking LU"][1].build(Float64),
             row; tol = tolerance(Float64))
         (; k, times) = time_cell(row, invoke)
-        @test ispow2(k) && length(times) == 5 && all(t -> 0 < t < 1e-3, times)
+        @test ispow2(k) && length(times) == 5
         @test row.x0 == [-1.2, 1.0]
         # A throw ends a solve, and the run goes on.
         boom(y, x, p) = throw(DomainError(x[1], "boom"))
@@ -417,7 +419,8 @@ end
         @test block_run(stage, rows32).tol === 0.0009765625f0
         line = split(block_line(stage, rows32), ",")
         @test length(line) == 23 && line[8] == "ran" && line[15] == "0.0009765625f0"
-        @test all(t -> parse(Float64, t) > 0, line[16:20])
+        # The five times are numbers; their values are the real clock's, and no check reads them.
+        @test all(t -> tryparse(Float64, t) !== nothing, line[16:20])
         # The package receives the stage tolerance: this cell stops above √eps(Float32).
         loose = BlockCell(
             "stage", "Float32", ("midpoint", "HarmonicOscillator h=0.1", "V0"),
