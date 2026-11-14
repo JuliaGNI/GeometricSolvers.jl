@@ -789,7 +789,8 @@ so that a compat-only bump can be told apart from an interface change.
   midpoint rows in `Float32` at the tolerance `eps(Float16)`; `Anderson` over `Newton` with factor
   reuse `k = 1, 2, 3, 5` against that `Newton` alone; and `sparse_bracket_problem` at `N = 125` and
   `768` with a sparse ForwardDiff Jacobian and Sparspak's LU, a dense Jacobian, and NLsolve with
-  the analytic sparse Jacobian. `benchmark/profiles.jl` prints the performance profiles of
+  the analytic sparse Jacobian. Each line of `timings.csv` and of a block table records its batch
+  of solves per run in `solves_per_run`. `benchmark/profiles.jl` prints the performance profiles of
   iterations, residual evaluations and median time per precision, a DogLeg against Backtracking
   table and the tables of the blocks, which `benchmark/REPORT.md` holds and `benchmark/verify.jl`
   recomputes. The environment adds MultiPrecisionArrays, SIAMFANLEquations, Sparspak,

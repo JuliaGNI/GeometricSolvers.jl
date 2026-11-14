@@ -17,7 +17,7 @@
 @isdefined(run_invoked) || include(joinpath(@__DIR__, "packages.jl"))
 import MultiPrecisionArrays
 
-const BLOCK_HEADER = "block,set,problem,start,eltype,variant,package,status,method,code,success,iterations,f_evals,fnorm_inf,tol,t1,t2,t3,t4,t5,median_s,spread,comment"
+const BLOCK_HEADER = "block,set,problem,start,eltype,variant,package,status,method,code,success,iterations,f_evals,fnorm_inf,tol,t1,t2,t3,t4,t5,median_s,spread,solves_per_run,comment"
 
 const BLOCKS = ("mixed", "stage", "anderson", "sparse")
 
@@ -173,19 +173,19 @@ end
 
 The line of the cell `b`: its key, status, method, code, success, iterations, `f_evals`, `‖F‖∞`
 and `tol` from one solve, as `run_invoked` gives them, then the times of `time_cell`, their
-median and spread, and the comment. A cell that does not run has empty fields from `code` on and
-its reason in `comment`.
+median and spread, the batch `k` of solves per run, and the comment. A cell that does not run has
+empty fields from `method` on and its reason in `comment`.
 """
 function block_line(b::BlockCell, rows)
     key = [b.block; collect(b.key); b.eltype; b.variant; b.package]
     run = block_run(b, rows)
     haskey(run, :status) &&
-        return join([key; run.status; ""; fill("", 13); run.comment], ",")
+        return join([key; run.status; fill("", 15); run.comment], ",")
     c = run_invoked(run.row, b.variant, b.package, run.invoke; run.tol, run.p)
-    (; times) = time_cell(run.row, run.invoke)
+    (; k, times) = time_cell(run.row, run.invoke)
     fields = [c.method, c.code, string(c.success), c.iterations, string(c.f_evals),
         c.fnorm === nothing ? "" : repr(c.fnorm), repr(run.tol), repr.(times)...,
-        repr(run_median(times)), repr(run_spread(times)), c.comment]
+        repr(run_median(times)), repr(run_spread(times)), string(k), c.comment]
     return join([key; "ran"; fields], ",")
 end
 
