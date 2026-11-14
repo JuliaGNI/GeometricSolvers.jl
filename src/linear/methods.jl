@@ -55,12 +55,68 @@ Householder QR factorisation, with the factorisation precision of [`LUFactorizat
 struct QRFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
 """
-    SVDFactorization()
-    SVDFactorization(TF)
+    SVDFactorization(; rtol = nothing)
+    SVDFactorization(TF; rtol = nothing)
 
 Singular value decomposition, with the factorisation precision of [`LUFactorization`](@ref).
+
+The factor counts a singular value at or below `rtol · σ₁` as zero: its `rank` is the number of
+singular values above that cutoff, and its solve is the pseudo-inverse truncated at that rank.
+`rtol = nothing` is the cutoff `√m · eps(R) · σ₁`, with `m` the number of rows of the matrix and
+`R` the real type of the factor; it is the tolerance of the Jacobi sweep, and the only cutoff at
+the level of the rounding noise. `rtol = 0` keeps every nonzero singular value, also one of
+rounding noise.
+
+`rtol` is stored in `real(TF)` for a float `TF`, and in `Float64` for `TF = Nothing` and for a
+precision marker; the factor converts it to its own real type, so that a `Float64` `rtol` that
+rounds to `1` there gives rank 0 and the zero step. [`ToReal`](@ref) converts `rtol` to its type
+and keeps `TF`. A stored `rtol` outside `[0, 1)`, or not finite, raises an `ArgumentError`.
 """
-struct SVDFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
+struct SVDFactorization{TF <: FactorisationPrecision, R <: Union{Nothing, AbstractFloat}} <:
+       LinearMethod{TF}
+    rtol::R
+    function SVDFactorization{
+            TF, R}(rtol) where {
+            TF <: FactorisationPrecision, R <: Union{Nothing, AbstractFloat}}
+        r = convert(R, rtol)
+        # the stored value, after the conversion: a value that rounds to 1 is refused. The
+        # comparison is false for `NaN`, so the guard refuses it too.
+        r === nothing || zero(r) <= r < one(r) ||
+            throw(ArgumentError(
+                "SVDFactorization: rtol must be finite and lie in [0, 1), got $r"))
+        return new{TF, R}(r)
+    end
+end
+
+# The storage type of `rtol`: `real(TF)` for a float `TF`, `Float64` for `Nothing` and a marker.
+svd_rtol_type(::Type, ::Nothing) = Nothing
+svd_rtol_type(::Type{TF}, ::Real) where {TF <: AbstractFloat} = real(TF)
+svd_rtol_type(::Type, ::Real) = Float64
+
+function SVDFactorization{TF}(;
+        rtol::Union{Nothing, Real} = nothing) where {TF <: FactorisationPrecision}
+    return SVDFactorization{TF, svd_rtol_type(TF, rtol)}(rtol)
+end
+SVDFactorization(; rtol::Union{Nothing, Real} = nothing) = SVDFactorization{Nothing}(; rtol)
+function SVDFactorization(::Type{TF}; rtol::Union{
+        Nothing, Real} = nothing) where {
+        TF <: AbstractFloat}
+    return SVDFactorization{TF}(; rtol)
+end
+function SVDFactorization(::TF; rtol::Union{Nothing, Real} = nothing) where {
+        TF <: PrecisionMarker}
+    return SVDFactorization{TF}(; rtol)
+end
+@inline function promote_linsolve(m::SVDFactorization, ::Type{T}) where {T}
+    return SVDFactorization(real(T); rtol = m.rtol)
+end
+
+# `TF` is a type parameter and no field, so `Adapt.@adapt_structure`, which rebuilds through the
+# bare name, would lose it: `ToReal` converts `rtol` and keeps `TF`.
+function Adapt.adapt_structure(to::ToReal, m::SVDFactorization{TF}) where {TF}
+    rtol = Adapt.adapt(to, m.rtol)
+    return SVDFactorization{TF, typeof(rtol)}(rtol)
+end
 
 """
     LDLTFactorization()
@@ -76,7 +132,7 @@ symmetric mismatch `|A[i, j] - A[j, i]|`, and as the complex symmetric `L D Lᵀ
 """
 struct LDLTFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
-for M in (:LUFactorization, :QRFactorization, :SVDFactorization, :LDLTFactorization)
+for M in (:LUFactorization, :QRFactorization, :LDLTFactorization)
     @eval begin
         $M() = $M{Nothing}()
         $M(::Type{TF}) where {TF <: AbstractFloat} = $M{TF}()
