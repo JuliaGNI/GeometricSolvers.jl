@@ -1108,5 +1108,101 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         @test !ok && occursin("devices-cpu.csv is missing", out)
         out, ok = verify_devices((ls, _) -> nothing, "--all-cards")
         @test !ok && occursin("devices-mac.csv is missing (--all-cards)", out)
+        out, ok = verify_devices((ls, _) -> (ls[3] = join(split(ls[3], ",")[1:30], ",")),
+            "--structure")
+        @test !ok && occursin("a line without 33 fields", out)
+        out, ok = verify_devices((ls, _) -> pop!(ls); file = "devices-cpu.txt")
+        @test !ok && occursin("devices-cpu.txt: 87 lines, not 88", out)
+
+        # One copy with a corruption of each field on a line of its own, and of the .txt, and a
+        # file of no machine: each check reports its own line.
+        out, ok = verify_devices("--structure") do ls, dir
+            r2(problem, start, column, package) = at(
+                ls, "r2", problem, start, column, package)
+            grid(n, ns, v) = findfirst(ls) do l
+                f = split(l, ",")
+                f[1] == "grid" && f[8] == string(n) && f[9] == string(ns) && f[12] == v
+            end
+            r3(kind, n, v) = findfirst(ls) do l
+                f = split(l, ",")
+                f[1] == kind && f[8] == string(n) && f[12] == v
+            end
+            setcell!(ls, r2("2", "u0", "Newton Static LU", gs...), 23, "65")
+            setcell!(ls, r2("2", "u0", "Newton Static LU", "SimpleNonlinearSolve"), 17, "5")
+            setcell!(ls, r2("2", "10u0", "Newton Static LU", gs...), 2, "mac")
+            setcell!(ls, r2("2", "100u0", "Newton Static LU", gs...), 33, "-")
+            setcell!(ls, r2("2", "u0", "Newton Backtracking LU", gs...), 21, "-")
+            setcell!(ls, r2("3", "u0", "Picard Backtracking", "NLsolve"), 12, "Broyden")
+            setcell!(ls, grid(2, 1000, "gs-newton"), 31, "3")
+            setcell!(ls, grid(2, 1000, "gs-reuse4"), 32, "x")
+            setcell!(ls, grid(2, 1000, "gs-backtracking"), 15, "SUCCESS=999")
+            setcell!(ls, grid(2, 1000, "sns"), 16, "999")
+            setcell!(ls, grid(2, 1000, "host-r1"), 18, "SUCCESS")
+            i = grid(4, 10000, "gs-newton")
+            setcell!(ls, i, 14, "not run: time cap")
+            foreach(k -> setcell!(ls, i, k, "-"), 15:32)
+            setcell!(ls, grid(6, 1000, "gs-newton"), 15, "SUCCESS=1")
+            setcell!(ls, r3("r3", 256, "host"), 33, "-")
+            setcell!(ls, r3("r3", 256, "device"), 18, "MAXITERS")
+            setcell!(ls, r3("r3", 256, "device-f64"), 33, "-")
+            setcell!(ls, r3("r3", 1024, "device-mixed"), 14, "weird")
+            ls[1] = replace(ls[1], "comment" => "note")
+            txt = joinpath(dir, "devices-cpu.txt")
+            t = readlines(txt)
+            t[7], t[8] = "driver: x", "band: 8"
+            t[3] = replace(t[3], "julia: " => "julia ")
+            t[9] = replace(t[9], ", JLArrays 0.5.0" => "")
+            t[10] = "heap: standard,1,u0,1,2"
+            write(txt, join(t, "\n") * "\n")
+            cp(joinpath(dir, "devices-cpu.csv"), joinpath(dir, "devices-foo.csv"))
+        end
+        @test !ok
+        for msg in ["copies_same 65", "SimpleNonlinearSolve): iterations 5",
+            "machine mac and backend cpu", "no ref_xnorm and ref_fnorm in the comment",
+            "dx_host - with a reference that succeeded",
+            "the keys are not those of the device rows in their order",
+            "solves_per_run 3", "compile_s x", "code SUCCESS=999", "success 999 of 1000",
+            "a grid cell has a reference",
+            "grid n = 4 gs-newton at 10000 is not run: time cap", "header is",
+            "a cell that did not run has measured fields",
+            "a reference line has a reference or no ‖x‖∞", "host fields MAXITERS",
+            "device-f64 GeometricSolvers): comment -", "status 'weird'",
+            "devices-cpu.txt: driver x on cpu", "devices-cpu.txt: band 8",
+            "devices-cpu.txt: the line 'julia 1", "devices-cpu.txt: packages lack JLArrays",
+            "the heap line 'heap: standard,1,u0,1,2'", "devices-foo.csv: no machine foo"]
+            @test (msg, occursin(msg, out)) == (msg, true)
+        end
+
+        # The report's Y3 tables, in a copy of the verifier, the report and the traces.
+        mktempdir() do dir
+            for f in ("verify.jl", "REPORT.md")
+                cp(joinpath(@__DIR__, f), joinpath(dir, f))
+            end
+            cp(joinpath(@__DIR__, "traces"), joinpath(dir, "traces"))
+            cp(joinpath(@__DIR__, "results"), joinpath(dir, "results"))
+            path = joinpath(dir, "REPORT.md")
+            r = read(path, String)
+            for (a, b) in ("| cpu | cpu | host apple-m4 | none | 1.13" => "| cpu | cpu | x | none | 1.13",
+                "| GeometricSolvers | 59 | 53 | 53 |" => "| GeometricSolvers | 59 | 52 | 53 |",
+                "| cpu | 2 | gs-newton | " => "| cpu | 2 | gs-newton | 1 ",
+                "| cpu | 256 | host | ran | 2 | true | " => "| cpu | 256 | host | ran | 2 | true | 1",
+                "| cpu | 256 | 0.00252 |" => "| cpu | 256 | 0.00253 |",
+                "on device cpu | 81 |" => "on device cpu | 80 |",
+                "| device fails | The undamped" => "| device fails | |")
+                @test occursin(a, r)
+                r = replace(r, a => b)
+            end
+            write(path, r)
+            cmd = `$(Base.julia_cmd()) --startup-file=no $(joinpath(dir, "verify.jl")) $(joinpath(dir, "results"))`
+            out = IOBuffer()
+            p = run(pipeline(ignorestatus(cmd); stdout = out, stderr = out))
+            out = String(take!(out))
+            @test !success(p)
+            for msg in ["the Y3 cards has", "the Y3 R2 correctness has",
+                "the Y3 R2 throughput has", "the Y3 R3 rows has", "the Y3 LU rows has",
+                "the Y3 not-run table has", "a Y3 explanation without its text"]
+                @test (msg, occursin(msg, out)) == (msg, true)
+            end
+        end
     end
 end

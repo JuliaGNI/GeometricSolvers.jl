@@ -690,8 +690,8 @@ function device_of(backend, machine, vendor)
         backend, machine, vendor, x -> A(x), x -> A(x), csv_text(repr(vendor.device())))
 end
 
-# The driver of the device, for the `.txt`; it is not checked, so a vendor package whose
-# function is missing or throws records the exception's type.
+# The driver of the device, for the `.txt`. The verifier checks only that the cpu mode has none,
+# so a vendor package whose function is missing or throws records the exception's type.
 function driver(dev::Device)
     v = dev.vendor
     v === nothing && return "none"

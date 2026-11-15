@@ -689,8 +689,9 @@ measurement of one run on one machine, and it names no package or method as fast
   mode loads none. The cpu mode runs the R2 rows and the grid with KernelAbstractions' `CPU()`
   backend on host arrays, which compiles each kernel through POCL, so a kernel that allocates on
   the heap fails there as on a device; it runs the R3 and LU rows on `JLArray`s.
-- **The process.** Each machine runs in one cold process with `--startup-file=no` and
-  `--threads=auto`, and `devices.jl` calls `BLAS.set_num_threads(1)` first. The `.txt` records the
+- **The process.** Each machine runs in a cold process with `--startup-file=no` and
+  `--threads=auto`, and `devices.jl` calls `BLAS.set_num_threads(1)` first; on Metal, further
+  processes continue the R2 rows (*The Metal heap* below). The `.txt` records the
   date, the `uptime` with the load of the machine, the Julia version, the threads of the run, the
   BLAS threads, the device, the driver, the band and the versions of the packages.
 - **The R2 rows.** Each of Y1's 79 `Float32` rows runs as one batch of 64 copies of its start.
@@ -843,7 +844,7 @@ host.
 
 Per machine and `n`: `median_s` of one factorisation and one solve by each path, and their ratio
 `own-ka / dispatched`. On `cpu` both paths run the package's own KernelAbstractions LU on a
-`JLArray`, and `dispatched` adds the scaling of the right-hand side of `ldiv!!`.
+`JLArray`; `dispatched` adds the steps of `ldiv!!` around the backsolve.
 
 | machine | n | own-ka | dispatched | own-ka / dispatched |
 |:--|--:|--:|--:|--:|
