@@ -688,7 +688,7 @@ measurement of one run on one machine, and it names no package or method as fast
   `JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib"`, and only its backend loads it; the cpu
   mode loads none. The cpu mode runs the R2 rows and the grid with KernelAbstractions' `CPU()`
   backend on host arrays, which compiles each kernel through POCL, so a kernel that allocates on
-  the heap fails there as on a device; it runs the R3 and LU rows on `JLArray`s.
+  the heap fails there; it runs the R3 and LU rows on `JLArray`s.
 - **The process.** Each machine runs in a cold process with `--startup-file=no` and
   `--threads=auto`, and `devices.jl` calls `BLAS.set_num_threads(1)` first; on Metal, further
   processes continue the R2 rows (*The Metal heap* below). The `.txt` records the
@@ -872,9 +872,9 @@ Each status other than `ran`, per machine and kind, with its count of cells and 
 ### Y3 · Explanations
 
 One line per `different root`, `device fails` and `host fails` verdict, from a host replay of the
-cell with `max_iterations = j` for `j` from 1 to 200 beside the device's batch with the same
-limit, and the device's iterations and status.
+cell with `max_iterations = j`, `j` = 1, 2, 3, 5, 10, 20, 40, 67, 100 and 200, beside the
+device's batch of one system with the same limit, and the device's iterations and status.
 
 | machine | kind | set | problem | start | variant | package | verdict | explanation |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| cpu | r2 | standard | 11 | 10u0 | Newton Static LU | GeometricSolvers | device fails | The undamped Newton step amplifies a rounding difference between the kernel, which POCL compiles, and the host solve: after one step the iterates differ by 4.2e-7, after three by 2.9e-3, and after ten by 314, the size of the root. The host reaches the root, `‖x‖∞ = 314`, with `SUCCESS` in 67 iterations; the device stops with `MAXITERS` after 200 iterations at `‖F‖∞ = 1.52`. |
+| cpu | r2 | standard | 11 | 10u0 | Newton Static LU | GeometricSolvers | device fails | The undamped Newton step amplifies a rounding difference between the kernel and the host solve: after one step the iterates differ by 4.2e-7, after three by 2.9e-3, and after ten by 314, the size of the root. The host reaches the root, `‖x‖∞ = 314`, with `SUCCESS` in 67 iterations; the device stops with `MAXITERS` after 200 iterations at `‖F‖∞ = 1.52`. |
