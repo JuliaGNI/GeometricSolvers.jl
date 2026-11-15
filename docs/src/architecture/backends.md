@@ -107,8 +107,8 @@ The factor that a dense R3 solve uses:
 
 | factorisation | host `Array` | `CuArray` (CUDA) | `MtlArray` (Metal) | `ROCArray` (ROCm), other GPU arrays |
 |:--|:--|:--|:--|:--|
-| [`LUFactorization`](@ref) | LAPACK `getrf`/`getrs` | cuSOLVER `getrf`/`getrs` for BLAS element types | MPS `lu!` for `Float32`; own kernel otherwise | own kernel |
-| [`QRFactorization`](@ref) | LAPACK `geqrf`/`ormqr` | cuSOLVER `geqrf`/`ormqr` and cuBLAS `trsv` for BLAS element types | own kernel | own kernel |
+| [`LUFactorization`](@ref) | LAPACK `getrf`/`getrs` | cuSOLVER `getrf`/`getrs` for BLAS element types | MPS `lu!` for `Float32`; own kernel otherwise | rocSOLVER `getrf`/`getrs` on `ROCArray` for BLAS element types; own kernel otherwise |
+| [`QRFactorization`](@ref) | LAPACK `geqrf`/`ormqr` | cuSOLVER `geqrf`/`ormqr` and cuBLAS `trsv` for BLAS element types | own kernel | rocSOLVER `geqrf`/`ormqr` and rocBLAS `trsv` on `ROCArray` for BLAS element types; own kernel otherwise |
 | [`SVDFactorization`](@ref) | LAPACK `gesvd` | cuSOLVER `gesvdj`, own kernel where it does not converge | own kernel | own kernel |
 | [`LDLTFactorization`](@ref) | LAPACK `sytrf`/`hetrf` | own kernel | own kernel | own kernel |
 | [`GMRES`](@ref) | no factor | no factor | no factor | no factor |
@@ -119,7 +119,9 @@ The factor that a dense R3 solve uses:
 - The **Metal** extension `GeometricSolversMetalExt` adds the Metal Performance Shaders LU and
   triangular solve for `MtlMatrix{Float32}`. Every MPS failure status gives a singular factor.
   `ComplexF32` and the other factorisations stay on the own kernels.
-- **ROCm** has no extension: every factorisation runs on the own KernelAbstractions kernels.
+- The **ROCm** extension `GeometricSolversAMDGPUExt` adds the rocSOLVER and rocBLAS methods for
+  `DeviceLU` and `DeviceQR` on `ROCMatrix{T}` with `T <: LinearAlgebra.BlasFloat`. Other element
+  types and the other factorisations stay on the own kernels.
 
 A vendor method replaces only `factorize!!` and the back substitution of its factor type. The
 scaling by a power of two, the mixed-precision solve and the status handling are the same on

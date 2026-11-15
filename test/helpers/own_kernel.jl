@@ -1,8 +1,8 @@
 # The reference solve of the vendor fast-path tests, `own_kernel_ldiv!`, and the matrix they run
 # it on, `cuda_well_conditioned`.
 #
-# Every agreement row of `test/devices/metal_vendor.jl` and of `test/gpu/cuda/runtests.jl` takes
-# its reference from `own_kernel_ldiv!`. `test/devices/own_kernel.jl` checks it against the host
+# Every agreement row of `test/devices/metal_vendor.jl`, `test/gpu/cuda/runtests.jl` and
+# `test/gpu/rocm/runtests.jl` takes its reference from `own_kernel_ldiv!`. `test/devices/own_kernel.jl` checks it against the host
 # solve on a `JLArray`, in an ordinary run: both of its branches and all three backsolves, through
 # the mixed LU and QR rows and the real SVD rows. The same-type LU and QR rows and the complex SVD
 # rows run it on a device only.
