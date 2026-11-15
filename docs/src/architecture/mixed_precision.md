@@ -48,8 +48,10 @@ whose element type differs from that of the right-hand side (`src/linear/mixed.j
    scaling adds no rounding error, and the largest entries of a `Float64` matrix stay in the
    `Float32` range. One factor of scale does not cover an arbitrary dynamic range: an entry far
    below the largest one underflows in `TF`, and the factor can then be singular, as for
-   ``\operatorname{diag}(2^{128}, 2^{-128})``. The [remedy chain](@ref "The remedy chain") then
-   refactorises in `T`.
+   ``\operatorname{diag}(2^{128}, 2^{-128})``. An LU, LDLᵀ or QR factor records the zero pivot,
+   and the [remedy chain](@ref "The remedy chain") then refactorises in `T`. An SVD factor drops
+   the direction and records no failure, so the chain refactorises in `T` only after a failed
+   refinement or two slow steps, and the solve can end on `STALLED` before that.
 2. `ldiv!!` scales the right-hand side by ``s = \|b\|_\infty``, converts it to `TF`, and solves.
    The triangular solve in `TF` can overflow where the solution in `T` is finite: for
    ``\operatorname{diag}(1, 2^{-128})`` and ``b = (0, 1)``, the step ``2^{128}`` exceeds
@@ -58,7 +60,8 @@ whose element type differs from that of the right-hand side (`src/linear/mixed.j
    then converted to `T`, so this rescaling adds no overflow or underflow beyond that of the
    solution itself.
 
-The bound that the test suite verifies for this solve is on the page [Numerical Stability and Backward-Error Bounds](@ref stability).
+The bound that the test suite verifies for this solve is on the page
+[Numerical Stability and Backward-Error Bounds](@ref stability).
 
 ```jldoctest mixed
 julia> F!(y, x, p) = (y[1] = x[1]^2 + x[2]^2 - p; y[2] = x[1] - x[2]; y);
@@ -108,10 +111,11 @@ SUCCESS true
 
 ### The remedy chain
 
-A step whose refinement fails, or two consecutive steps whose linear model is inaccurate in `TF`
-and which lower the residual by less than half, make the solve refactorise the Jacobian in `T`.
-With [`GMRESRefinement`](@ref), a failed refinement first runs GMRES-IR, and the solve refactorises
-in `T` only when that stage fails too. The chain of a step is therefore
+A step whose factorisation in `TF` fails, a step whose refinement stages all fail, or two
+consecutive steps whose linear model is inaccurate in `TF` and which lower the residual by less
+than half, make the solve refactorise the Jacobian in `T`. The stages of [`Refinement`](@ref) are
+the LU-IR passes; [`GMRESRefinement`](@ref) runs GMRES-IR after them, so it refactorises in `T`
+only when GMRES-IR fails too. The chain of a step is therefore
 
 ```
 LU-IR  →  GMRES-IR (with GMRESRefinement)  →  refactorisation in T

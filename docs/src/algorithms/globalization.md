@@ -58,8 +58,11 @@ true
 ``-`` to ``+`` and bisects it, so a bracketed search returns a minimiser of the merit along the
 line, never a maximiser. Where ``\varphi'`` stays negative up to `αmax`, it returns the step
 `αmax`, and after `maxiter` trials it ends with `LINESEARCH_FAILED`. It costs one ``\varphi'``
-per trial, and the number of trials grows with ``\log_2 \log_2`` of the ratio of the trial step to the step floor. It can take a step longer than
-the trial step.
+per trial: one for each doubling of the trial step while ``\varphi'`` stays negative, then one
+for each bisection. While the lower end of the bracket is ``0``, the bisections grow with
+``\log_2 \log_2`` of the ratio of the trial step to the step floor; a bracket with a positive
+lower end is bisected to a relative width of ``\sqrt{\varepsilon}``. It can take a step longer
+than the trial step.
 
 ```jldoctest globalization
 julia> x, status = solve(prob, 3.0, Newton(; globalization = Bisection()));
@@ -79,9 +82,8 @@ satisfies the strong Wolfe conditions
 ```
 
 in a bracketing phase, which doubles the trial step, and a zoom phase, which interpolates inside
-the bracket. A trial that
-fails the first condition costs one ``\varphi``, and a trial that passes it one ``\varphi`` and one
-``\varphi'``.
+the bracket. A trial that fails the first condition costs one ``\varphi``, and a trial that
+passes it one ``\varphi`` and one ``\varphi'``.
 
 ```jldoctest globalization
 julia> x, status = solve(prob, 3.0, Newton(; globalization = StrongWolfe()));

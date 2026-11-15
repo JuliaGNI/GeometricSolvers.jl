@@ -18,7 +18,7 @@ its globalization. Its keywords are:
 |:--|:--|:--|
 | `linsolve` | `LUFactorization()` | the [linear solver](@ref linear): a factorisation or [`GMRES`](@ref) |
 | `globalization` | `Static()` | the [globalization](@ref globalization): a line search, [`DogLeg`](@ref) or [`LevenbergMarquardt`](@ref) |
-| `jacobian` | `nothing` | the Jacobian source: `nothing` (the problem's `J`, else `AutoForwardDiff()`), an ADTypes back end, a callable `J(x, p)`, or a [`JVPFunction`](@ref) for `GMRES` |
+| `jacobian` | `nothing` | the Jacobian source: `nothing` (the problem's `J`, else `AutoForwardDiff()`), an ADTypes back end, a callable (`J(x, p)` on a value iterate, `J!(J, x, p)` on an array) except with `GMRES`, or a [`JVPFunction`](@ref) for `GMRES` |
 | `refinement` | `NoRefinement()` | iterative refinement of the direction: [`Refinement`](@ref) or [`GMRESRefinement`](@ref), see [Mixed precision](@ref mixed) |
 | `regularization` | `0` | the diagonal shift ``\mu`` of ``J + \mu I`` |
 | `reuse` | `nothing` | the factor-reuse period `k` |

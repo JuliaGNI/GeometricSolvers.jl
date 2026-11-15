@@ -159,8 +159,8 @@ true
 
 An [`Options`](@ref) object can also be passed as `options`. It must have the real type of the
 iterate: [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one for the
-element type `T`. A `Float32` solve therefore takes `Options(Float32; …)`, because the default
-tolerances of `Float64` lie below what a `Float32` solve can reach.
+element type `T`. A `Float32` solve therefore takes `Options(Float32; …)`; an `Options{Float64}`
+raises an `ArgumentError` there.
 
 ```jldoctest getting_started
 julia> opt = Options(Float32; f_reltol = 1e-5);

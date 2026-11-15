@@ -132,11 +132,13 @@ With `regularization = μ ≠ 0`, `rank` and `nullnorm` describe ``J(x_k) + μ I
 describes ``J(x_k)``, so the classification below holds for `μ = 0` only.
 For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1`, and `rank = 1`
 with an SVD factor), they classify the outcome and a `STALLED` or `MAXITERS` return:
-a consistent rank-deficient system that converged has a small residual (`fnorm` small) and nothing outside the range
-(`rank < n`, `nullnorm ≈ 0`); a least-squares point with no root has `gradratio ≈ 0` (`fnorm > 0`)
-and the residual outside the range (`rank < n`, ``\text{nullnorm} \approx \|F(x_k)\| > 0``); a
-stall in nearly singular directions has the residual inside the range (`nullnorm ≈ 0`) at a fine
-SVD cutoff and outside it (`rank < n`, ``\text{nullnorm} \approx \|F(x_k)\|``) at a coarse one;
+a consistent rank-deficient system that converged has a small residual (`fnorm` small) and
+nothing outside the range (`rank < n`, `nullnorm ≈ 0`); a least-squares point with no root has
+`gradratio ≈ 0` (`fnorm > 0`) and the residual outside the range
+(``\text{nullnorm} \approx \|F(x_k)\| > 0``, and `rank < n` for a square system; a
+[`LeastSquaresProblem`](@ref) with more residuals than unknowns can have full rank there); a stall
+in nearly singular directions has the residual inside the range (`nullnorm ≈ 0`) at a fine SVD
+cutoff and outside it (`rank < n`, ``\text{nullnorm} \approx \|F(x_k)\|``) at a coarse one;
 and an in-range stall from conditioning or step acceptance has `gradratio` bounded away from zero
 with `nullnorm ≈ 0`.
 

@@ -13,7 +13,7 @@ Jacobian–vector products. The `jacobian` field of [`Newton`](@ref) selects the
 | `AutoForwardDiff()` | ForwardDiff, in the forms below |
 | another ADTypes back end | DifferentiationInterface, on a host `Array` iterate |
 | `AutoSparse(...)` | DifferentiationInterface with a sparsity pattern and a colouring |
-| a callable `J(x, p)` | the caller's Jacobian operator |
+| a callable, `J(x, p)` on a value iterate and `J!(J, x, p)` on an array | the caller's Jacobian operator; a [`GMRES`](@ref) solve refuses it with an `ArgumentError` |
 | [`JVPFunction`](@ref)`(jvp!)` | the caller's product, for a [`GMRES`](@ref) solve |
 
 [`prepare_ad`](@ref) builds the preparation once, at [`init`](@ref), from the back end and the
@@ -98,7 +98,9 @@ The extension `GeometricSolversSparseADExt` then reads the detected pattern thro
 [`jacobian_pattern`](@ref). With Sparspak loaded, a detected pattern gives the sparse LU (see
 [Sparse direct solves](@ref sparse)) only for an [`LUFactorization`](@ref) whose factor element
 type is that of a real `Vector` iterate; any other method keeps the dense factor (see
-[`has_sparse_factor`](@ref)). An explicit prototype takes precedence over a detected pattern.
+[`has_sparse_factor`](@ref)). A [`LevenbergMarquardt`](@ref) step, and a nonzero
+`regularization` on a detected pattern without the whole diagonal, keep the dense factor too. An
+explicit prototype takes precedence over a detected pattern.
 
 ## The parameters
 

@@ -94,7 +94,9 @@ Inside a kernel nothing throws: a numerical failure is a [`ReturnCode`](@ref).
 
 [`ReturnCode`](@ref) is one byte, and the counters of [`SolverStatus`](@ref), [`StepInfo`](@ref)
 and [`Options`](@ref) are `Int32` or `Int16`, because 64-bit integers cost registers on a GPU.
-Every real field is in `R = real(T)`, so a `Float32` kernel never meets a `Float64`. A
+Every real field is in `R = real(T)`, so these types bring no `Float64` into a `Float32` kernel;
+the parameters and the factorisation precision are the caller's (see
+[Device precision](@ref "Device precision")). A
 factorisation precision is a type parameter of the method (`LUFactorization{Float32}`) and not a
 field, because a type stored in a field is not `isbits`. Verbosity, traces and warnings do not
 exist in the core; a caller reads the status.

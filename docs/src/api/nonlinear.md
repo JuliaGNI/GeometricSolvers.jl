@@ -25,8 +25,10 @@ GMRESRefinement
 
 A [`Newton`](@ref) step whose factorisation runs in a precision `TF` below the working precision
 `T` of the iterate — `linsolve = LUFactorization(Float32)` on a `Float64` problem — corrects its
-linear direction in `T`. [`Refinement`](@ref) is the LU-IR loop of Kelley 2023 (*Newton's Method in Three
-Precisions*, [doi:10.61208/pjo-2023-030](https://doi.org/10.61208/pjo-2023-030)): the factor's
+linear direction in `T` only with `refinement = Refinement()` or `GMRESRefinement()`; the default
+[`NoRefinement`](@ref) takes the direction of the solve in `TF` as it is. [`Refinement`](@ref)
+is the LU-IR loop of Kelley 2023 (*Newton's Method in Three Precisions*,
+[doi:10.61208/pjo-2023-030](https://doi.org/10.61208/pjo-2023-030)): the factor's
 `TF` solve, the residual `-F(x) - J d` in `T`, and the correction that solve gives, to the
 tolerance `max(η, √eps(T)) ‖F(x)‖`. [`GMRESRefinement`](@ref) adds the SDD variant of Amestoy et
 al. 2024 in front of the refactorisation of the Jacobian in `T`: where the LU-IR passes fail, a

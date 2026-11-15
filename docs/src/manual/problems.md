@@ -25,7 +25,7 @@ Jacobian. The call forms are those of [Getting started](@ref "Call forms"). With
 Jacobian comes from the `jacobian` field of [`Newton`](@ref), whose default `nothing` takes
 `AutoForwardDiff()`.
 
-Two keywords add structure:
+Three keywords add structure:
 
 - `jacobian_prototype`: a matrix that gives the storage type and the sparsity pattern of the R3
   Jacobian. A `SparseMatrixCSC` prototype on a host `Vector`, with Sparspak loaded, gives a sparse
