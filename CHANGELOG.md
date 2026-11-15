@@ -777,6 +777,12 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **A manual page on the methods of each regime (`docs/src/guide.md`, "Methods by regime").** For
+  R1, R2, R3 and the matrix-free R5, it lists the exported methods that run there and the
+  conditions under which each one applies, and names no method above another. Each regime has one
+  `jldoctest` on the CPU; the device paths are named with their conditions and do not
+  run.
+
 - **A user guide in the documentation, beside the stability and API pages.** The manual
   (`docs/src/manual/`) covers the problem types, the call forms `F(x, p)` and `F!(y, x, p)`,
   `solve`, `init` and `solve!`, the options, the status and its return codes, parameters at solve
