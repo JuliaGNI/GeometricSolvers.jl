@@ -39,7 +39,9 @@ The type of the iterate selects the factor:
   LDLT, and parallel one-sided Jacobi sweeps for the SVD. On CUDA and Metal, vendor libraries
   replace some of them; see [CPU and GPU backends](@ref backends).
 
-A factorisation never throws. A zero pivot gives the status `SINGULAR`, and the SVD of an
+A numerical failure of a factorisation does not throw: a zero pivot gives the status `SINGULAR`.
+A configuration or pattern error can throw an `ArgumentError`, for example a sparse factor whose
+pattern the regularisation changes. The SVD of an
 ``m \times n`` matrix truncates at the rank cutoff ``\sqrt{m}\,\varepsilon(T_F)\,\sigma_1``, so its
 solve is the minimum-norm step on the numerical range. The bounds that the test suite verifies for
 each factor are on the page [Numerical Stability and Backward-Error Bounds](@ref stability).
@@ -136,7 +138,7 @@ julia> nameof(typeof(solver.state.fac))
 
 [`QRFactorization`](@ref), [`SVDFactorization`](@ref), a factorisation precision other than the
 element type of the iterate, a complex iterate and a device iterate have no sparse factor. The
-section [Factorisation and solve](@ref) of the API page lists which configurations take a detected
+section [Factorisation and solve](@ref) of the API lists which configurations take a detected
 pattern and which raise an error.
 
 ## Matrix-free Newton–Krylov: `GMRES`

@@ -8,8 +8,8 @@ A solve has up to three precisions:
 
 | precision | holds | set by |
 |:--|:--|:--|
-| working precision `T` | the iterate, the residual, the stopping test and the status | the element type of `x₀` |
-| factorisation precision `TF` | the Jacobian buffer, the factorisation and the triangular solves | the type parameter of the linear method |
+| working precision `T` | the iterate, the residual, the Jacobian buffer, the stopping test and the status | the element type of `x₀` |
+| factorisation precision `TF` | the factorisation and the triangular solves | the type parameter of the linear method |
 | refinement residual | ``-F(x) - J d`` in a refinement pass | `T` |
 
 The working precision sets the attainable accuracy of Newton's method, because the residual and
@@ -45,11 +45,18 @@ whose element type differs from that of the right-hand side (`src/linear/mixed.j
 
 1. [`factorize!!`](@ref) divides the matrix by a power of two ``2^e`` near its largest entry,
    converts it to `TF`, and factorises. A power of two is exact in every binary format, so the
-   scaling adds no rounding error, and it keeps a `Float64` matrix whose entries lie outside the
-   `Float32` range factorisable.
+   scaling adds no rounding error, and the largest entries of a `Float64` matrix stay in the
+   `Float32` range. One factor of scale does not cover an arbitrary dynamic range: an entry far
+   below the largest one underflows in `TF`, and the factor can then be singular, as for
+   ``\operatorname{diag}(2^{128}, 2^{-128})``. The [remedy chain](@ref "The remedy chain") then
+   refactorises in `T`.
 2. `ldiv!!` scales the right-hand side by ``s = \|b\|_\infty``, converts it to `TF`, and solves.
+   The triangular solve in `TF` can overflow where the solution in `T` is finite: for
+   ``\operatorname{diag}(1, 2^{-128})`` and ``b = (0, 1)``, the step ``2^{128}`` exceeds
+   `floatmax(Float32)`.
 3. The solution is multiplied by ``s \cdot 2^{-e}`` in the wider of the two precisions and only
-   then converted to `T`, so it overflows or underflows only where the solution itself does.
+   then converted to `T`, so this rescaling adds no overflow or underflow beyond that of the
+   solution itself.
 
 The bound that the test suite verifies for this solve is on the page [Numerical Stability and Backward-Error Bounds](@ref stability).
 
@@ -103,7 +110,8 @@ SUCCESS true
 
 A step whose refinement fails, or two consecutive steps whose linear model is inaccurate in `TF`
 and which lower the residual by less than half, make the solve refactorise the Jacobian in `T`.
-The chain of a step is therefore
+With [`GMRESRefinement`](@ref), a failed refinement first runs GMRES-IR, and the solve refactorises
+in `T` only when that stage fails too. The chain of a step is therefore
 
 ```
 LU-IR  →  GMRES-IR (with GMRESRefinement)  →  refactorisation in T

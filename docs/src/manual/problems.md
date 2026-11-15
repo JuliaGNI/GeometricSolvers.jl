@@ -30,9 +30,11 @@ Two keywords add structure:
 - `jacobian_prototype`: a matrix that gives the storage type and the sparsity pattern of the R3
   Jacobian. A `SparseMatrixCSC` prototype on a host `Vector`, with Sparspak loaded, gives a sparse
   LU factorisation (see [Sparse direct solves](@ref sparse)).
-- `block_residuals` and `block_jacobians`: the local residuals `F_i!(f_i, x_i, x, p)` of a
+- `block_residuals`: the local residuals `F_i!(f_i, x_i, x, p)` of a
   [`BlockPartition`](@ref), which the restricted additive Schwarz method [`RAS`](@ref) reads (see
   [Composition and preconditioning](@ref composition)).
+- `block_jacobians`: optionally, with `block_residuals`, the block Jacobians
+  `J_i!(J_i, x_i, x, p)`, one per block, which fill the Jacobian of block `i`.
 
 ## `LeastSquaresProblem`
 
@@ -105,9 +107,10 @@ For a [`StationarityProblem`](@ref) the residual is pulled back covariantly,
 ## `Deflated`
 
 [`Deflated`](@ref)`(prob, roots)` multiplies the residual by the deflation factor
-``M(x) = \prod_i (\|x - r_i\|^{-p} + \sigma)`` of Farrell, Birkisson and Funke (2015), so a solve
-from the same start converges to a root other than the known ones. The stopping test reads the
-undeflated residual.
+``M(x) = \prod_i (\|x - r_i\|^{-p} + \sigma)`` of Farrell, Birkisson and Funke (2015), so the known
+roots repel the solve, and a solve from the same start can converge to another root. Deflation
+does not guarantee that another root exists or that the solve converges to it, so read the
+status. The stopping test reads the undeflated residual.
 
 ```jldoctest problems
 julia> cubic = NonlinearProblem((x, p) -> x^3 - x);
@@ -149,7 +152,7 @@ outer solver steps on the reduced residual with Kaufman's reduced Jacobian
 [`BatchEliminated`](@ref) eliminates a whole batch of independent inner systems inside the
 residual of an outer matrix-free [`Newton`](@ref): every evaluation of the outer residual runs
 [`solve_batch!`](@ref) on the inner systems and deposits their moments. The section
-[Reduced-space elimination with a batch inside the residual](@ref) of the API page describes it.
+[Reduced-space elimination with a batch inside the residual](@ref) of the API describes it.
 
 ## References
 

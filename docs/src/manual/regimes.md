@@ -4,8 +4,10 @@ CurrentModule = GeometricSolvers
 
 # [The three regimes](@id regimes)
 
-One solver loop serves three regimes. The storage of the iterate selects the regime, and the
-same problem and the same method object work in each of them.
+One solver loop serves three regimes. The storage of the iterate selects the regime. Most problems
+and methods work in each of them, but not all: [`solve_batch!`](@ref) takes no
+[`LeastSquaresProblem`](@ref), and a [`Newton`](@ref) with [`GMRES`](@ref) needs an R3 iterate.
+Check the docstrings of the problem and the method for the regimes that they support.
 
 | regime | iterate | entry point | where it runs |
 |:--|:--|:--|:--|

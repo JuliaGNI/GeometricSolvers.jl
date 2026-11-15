@@ -60,7 +60,7 @@ true
 - [Numerical Stability and Backward-Error Bounds](@ref stability): the bounds of each
   factorisation that the test suite verifies.
 
-The [API](@ref) page documents every name.
+The API section documents every name, starting with [Problems and solves](@ref).
 
 ```@index
 ```

@@ -9,7 +9,7 @@ Jacobian–vector products. The `jacobian` field of [`Newton`](@ref) selects the
 
 | `jacobian` | source |
 |:--|:--|
-| `nothing` (default) | the problem's own `J` when it has one, else `AutoForwardDiff()` |
+| `nothing` (default) | the problem's own `J` when it has one, else `AutoForwardDiff()`; with a [`GMRES`](@ref) solve, always `AutoForwardDiff()` |
 | `AutoForwardDiff()` | ForwardDiff, in the forms below |
 | another ADTypes back end | DifferentiationInterface, on a host `Array` iterate |
 | `AutoSparse(...)` | DifferentiationInterface with a sparsity pattern and a colouring |
@@ -63,7 +63,7 @@ solve(NonlinearProblem(F!), ones(3), Newton(; jacobian = AutoFiniteDiff()), [1.0
 On a device array only `AutoForwardDiff()` applies; another back end raises an `ArgumentError` in
 [`prepare_ad`](@ref), because DifferentiationInterface indexes scalars there. `AutoEnzyme` needs
 runtime activity for the parameter context, as the section
-[Automatic differentiation](@ref "Automatic differentiation") of the API page explains.
+[Automatic differentiation](@ref "Automatic differentiation") of the API explains.
 
 ## Jacobian–vector products
 
@@ -71,6 +71,8 @@ runtime activity for the parameter context, as the section
 `J!(J, x, p)` on the problem, [`JacobianMatrixJVP`](@ref) evaluates `J!` into a buffer of its own
 and multiplies. A product is prepared only where a step reads one: a line search other than
 [`Static`](@ref), a [`Refinement`](@ref) along a reused factor, and every [`GMRES`](@ref) step.
+A [`GMRES`](@ref) step does not read `J!`: with `jacobian = nothing` its product comes from
+`AutoForwardDiff()`, so its residual must accept dual numbers.
 
 ## Sparse Jacobians
 
@@ -89,13 +91,14 @@ ad = AutoSparse(AutoForwardDiff();
     sparsity_detector = TracerSparsityDetector(),
     coloring_algorithm = GreedyColoringAlgorithm())
 
-solve(NonlinearProblem(F!), x₀, Newton(; jacobian = ad), p)
+solve(NonlinearProblem(F!), ones(3), Newton(; jacobian = ad), [1.0, 4.0, 9.0])
 ```
 
 The extension `GeometricSolversSparseADExt` then reads the detected pattern through
-[`jacobian_pattern`](@ref), and with Sparspak loaded the solve takes the sparse LU (see
-[Sparse direct solves](@ref sparse)). An explicit prototype takes precedence over a detected
-pattern.
+[`jacobian_pattern`](@ref). With Sparspak loaded, a detected pattern gives the sparse LU (see
+[Sparse direct solves](@ref sparse)) only for an [`LUFactorization`](@ref) whose factor element
+type is that of a real `Vector` iterate; any other method keeps the dense factor (see
+[`has_sparse_factor`](@ref)). An explicit prototype takes precedence over a detected pattern.
 
 ## The parameters
 

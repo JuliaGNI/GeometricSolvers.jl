@@ -55,9 +55,10 @@ true
 ## `Bisection`
 
 [`Bisection`](@ref)`(; αmax = 65536.0, maxiter = 100)` brackets a sign change of ``\varphi'`` from
-``-`` to ``+`` and bisects it, so it returns a minimiser of the merit along the line, never a
-maximiser. It costs one ``\varphi'`` per trial, and the number of trials grows with
-``\log_2 \log_2`` of the ratio of the trial step to the step floor. It can take a step longer than
+``-`` to ``+`` and bisects it, so a bracketed search returns a minimiser of the merit along the
+line, never a maximiser. Where ``\varphi'`` stays negative up to `αmax`, it returns the step
+`αmax`, and after `maxiter` trials it ends with `LINESEARCH_FAILED`. It costs one ``\varphi'``
+per trial, and the number of trials grows with ``\log_2 \log_2`` of the ratio of the trial step to the step floor. It can take a step longer than
 the trial step.
 
 ```jldoctest globalization

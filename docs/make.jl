@@ -14,8 +14,8 @@ makedocs(;
         canonical = "https://JuliaGNI.github.io/GeometricSolvers.jl",
         edit_link = "main",
         assets = String[],
-        # The API page documents every solver on one page and renders to about 200 KiB, which is
-        # Documenter's default hard limit; the warning limit stays at its default of 100 KiB.
+        # The largest page, api/problems.md, renders to about 121 KiB; the warning limit stays at
+        # its default of 100 KiB.
         size_threshold = 400 * 2^10
     ),
     pages = [
@@ -37,7 +37,15 @@ makedocs(;
             "Mixed precision" => "architecture/mixed_precision.md",
             "Stability" => "stability.md"
         ],
-        "API" => "api.md"
+        "API" => [
+            "Problems and solves" => "api/problems.md",
+            "Nonlinear solvers" => "api/nonlinear.md",
+            "Line searches" => "api/globalization.md",
+            "Linear solvers" => "api/linear.md",
+            "Automatic differentiation" => "api/ad.md",
+            "Combinators and preconditioning" => "api/composition.md",
+            "Internals" => "api/internals.md"
+        ]
     ]
 )
 

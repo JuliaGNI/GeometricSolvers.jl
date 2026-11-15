@@ -18,9 +18,11 @@ own kernels.
 | **state** | everything that is allocated or that changes during a solve | the result of [`init_state`](@ref) |
 | **status** | the result | [`SolverStatus`](@ref) |
 
-A problem holds no parameters and no iterate, and a method holds no buffer of the solve. For an
-`isbits` residual the problem and every method that runs in R1 are `isbits`, so a kernel takes them
-by value. The state of an R1 solve is `isbits` too: every buffer slot is `nothing`.
+A problem holds no parameters and no iterate, and a method holds no buffer of the solve. When every
+field of the problem is `isbits` (the residual, the Jacobian function and the prototype, if any),
+the problem and every method that runs in R1 are `isbits`, so a kernel takes them by value. A
+`Matrix` prototype, for example, makes the problem non-`isbits`, and [`solve_batch!`](@ref) rejects
+it. The state of an R1 solve is `isbits` too: every buffer slot is `nothing`.
 
 ## KernelAbstractions backends
 
@@ -136,9 +138,11 @@ on a host array only, and an AD back end other than `AutoForwardDiff()` needs a 
 | Metal | no | yes | `ComplexF32` |
 
 Metal has no `Float64`, so a Metal solve runs in `Float32` throughout: the iterate, the residual,
-the tolerances, the factorisation and the status. This needs no setting: the keywords build the
-[`Options`](@ref) in `real(eltype(x))`, and [`ToReal`](@ref) converts every float of the method to
-that type, so no `Float64` value reaches a Metal kernel. With `T = Float32`, the pair
+the tolerances, the factorisation and the status. The keywords build the [`Options`](@ref) in
+`real(eltype(x))`, and [`ToReal`](@ref) converts every float value of the method to that type.
+`ToReal` does not change a type parameter or the parameters `p`: a
+factorisation precision such as `LUFactorization(Float64)` and a `Float64` parameter keep their
+types, so the caller chooses them in `Float32`. With `T = Float32`, the pair
 `T = Float64`, `TF = Float32` of [Mixed precision](@ref mixed) does not apply on Metal; it applies
 on the CPU, CUDA and ROCm.
 

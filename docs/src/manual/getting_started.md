@@ -90,7 +90,8 @@ true
 ## Parameters at solve time
 
 The parameters `p` are the fourth positional argument of [`solve`](@ref), [`init`](@ref) and
-[`solve_batch!`](@ref), and the last argument of every function of the problem. They can be any
+[`solve_batch!`](@ref)`(X, prob, method, p)`, the fifth of `solve_batch!(X, S, prob, method, p)`
+with a status vector `S`, and the last argument of every function of the problem. They can be any
 value: a number, a tuple, a named tuple, an array or a struct. The default is `nothing`. Because
 `p` is not part of the problem, the same problem solves for other parameters without a rebuild:
 
@@ -201,7 +202,7 @@ The return codes are:
 | `NONFINITE` | a residual, a step or a norm is not finite |
 | `LINESEARCH_FAILED` | the globalization found no acceptable step |
 
-A solve never throws for a numerical failure. It returns the code instead:
+A solve does not throw for a failure that it detects. It returns the code instead:
 
 ```jldoctest getting_started
 julia> x, status = solve(NonlinearProblem((x, p) -> x^2 + 1), 0.0, Newton());
@@ -209,6 +210,9 @@ julia> x, status = solve(NonlinearProblem((x, p) -> x^2 + 1), 0.0, Newton());
 julia> status.code === SINGULAR
 true
 ```
+
+An exception that a function of the problem raises, such as a `DomainError` of `sqrt` at a
+negative trial iterate, propagates to the caller.
 
 [`stopping_test`](@ref) names the test that ended a converged solve, and
 `GeometricSolvers.isconverged` and `GeometricSolvers.isstalled` read the code:
@@ -218,7 +222,7 @@ julia> stopping_test(solve(prob, 1.0, Newton(), 2.0)[2])
 :residual
 ```
 
-The section [Status and stopping test](@ref) of the API page explains how `rank`, `nullnorm` and
+The section [Status and stopping test](@ref) of the API explains how `rank`, `nullnorm` and
 `gradratio` classify a `STALLED` or `MAXITERS` return.
 
 ## The SciML `NonlinearProblem` extension
@@ -241,7 +245,7 @@ GeometricSolvers.sciml_retcode(status.code)   # SciMLBase.ReturnCode.Success
 The call form follows `SciMLBase.isinplace(prob)` and the type of `prob.u0`. The keywords
 `abstol`, `reltol`, `maxiters` and `options` map to the native [`Options`](@ref), and
 [`sciml_retcode`](@ref) maps a [`ReturnCode`](@ref) to a `SciMLBase.ReturnCode.T`. The section
-[SciMLBase extension](@ref) of the API page gives the complete rules.
+[SciMLBase extension](@ref) of the API gives the complete rules.
 
 ## Where to go next
 

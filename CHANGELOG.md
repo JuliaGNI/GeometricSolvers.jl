@@ -277,8 +277,8 @@ so that a compat-only bump can be told apart from an interface change.
   `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
 
 - **The documentation build allows HTML pages up to 400 KiB** (`size_threshold` in
-  `docs/make.jl`). The API page renders to about 200 KiB, Documenter's default hard limit, and the
-  open pull requests add docstrings to it; the warning limit stays at 100 KiB.
+  `docs/make.jl`). The largest page of the API section renders to about 121 KiB; the warning
+  limit stays at 100 KiB.
 
 - **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
   `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
@@ -778,7 +778,8 @@ so that a compat-only bump can be told apart from an interface change.
   `LeftPreconditioned`. The architecture
   pages (`docs/src/architecture/`) cover the storage and reduction seams, dispatch in place of
   checks, kernel-safe types, the vendor paths of CUDA and Metal, device precision, and mixed
-  precision with refinement. The CPU examples are `jldoctest`s, except the SciML,
+  precision with refinement. The single API page becomes an API section of seven pages
+  (`docs/src/api/`), grouped by topic. The CPU examples are `jldoctest`s, except the SciML,
   FiniteDiff and AutoSparse examples; these and the device examples are plain code blocks that do
   not run. The documentation environment gains `ADTypes`, `ForwardDiff`,
   `SparseArrays`, `Sparspak` and `StaticArrays`, which the examples load, and which the test
