@@ -35,7 +35,7 @@ Throughout this page:
 | SVD (one-sided Jacobi and LAPACK) | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \varepsilon_R`` for ``A`` of numerical rank ``n``, ``\;\dfrac{\max_i \lvert \hat{\sigma}_i - \sigma_i \rvert}{\sigma_1} \le c \cdot n \cdot \varepsilon_R`` | Demmel and Veselić (1992); Higham (2002) |
 | Hermitian Jacobi eigensolver | [`jacobi_eigen`](@ref) | ``\dfrac{\lVert H \hat{V} - \hat{V} \operatorname{Diagonal}(\hat{\lambda}) \rVert_2}{\lVert H \rVert_2} \le c \cdot n \cdot \varepsilon_R``, ``\;\lVert \hat{V}^* \hat{V} - I \rVert_2 \le c \cdot n \cdot \varepsilon_R``, ``\;\dfrac{\max_i \lvert \hat{\lambda}_i - \lambda_i \rvert}{\lambda_1} \le c \cdot n \cdot \varepsilon_R`` | Demmel and Veselić (1992) |
 | Rank-deficient SVD minimum-norm solve (`TF = T`) | [`StaticSVD`](@ref), [`DenseSVD`](@ref), [`DeviceSVD`](@ref) | ``\dfrac{\lVert \hat{x} - x_{\min} \rVert_2}{\lVert x_{\min} \rVert_2} \le c \cdot n \cdot \varepsilon_R \cdot \bigl(\kappa_2(A) + \kappa_2(A)^2 \tan\theta\bigr)``, ``\;\tan\theta = \dfrac{\lVert b - A x_{\min} \rVert_2}{\lVert A x_{\min} \rVert_2}`` | Demmel and Veselić (1992); Higham (2002), §20.4 |
-| Mixed-precision scaled solve (`TF ≠ T`) | [`ldiv!!`](@ref) on [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref) of numerical rank ``n`` | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \max(\varepsilon_R, \varepsilon_{\operatorname{real}(F)})`` in the tested cases | Kelley (2023), eqs. 2.17–2.18 |
+| Mixed-precision scaled solve (`TF ≠ T`) | [`ldiv!!`](@ref) on [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref) of numerical rank ``n`` | ``\dfrac{\lVert A \hat{x} - b \rVert_2}{\lVert A \rVert_2 \lVert \hat{x} \rVert_2 + \lVert b \rVert_2} \le c \cdot n \cdot \max(\varepsilon_R, \varepsilon_{\operatorname{real}(F)})`` in the tested cases | Kelley (2022), eqs. 2.17–2.18 |
 
 ---
 
@@ -168,7 +168,7 @@ of two ``2^{-e}``, converts the scaled matrix into precision ``F``, and computes
 in ``F``.
 
 During [`ldiv!!`](@ref), `GeometricSolvers` implements the scaled mixed-precision solve of
-Kelley (2023, eqs. 2.17–2.18):
+Kelley (2022, eqs. 2.17–2.18):
 
 1. Compute the right-hand side scale ``s = \max_i |b_i| = \|b\|_\infty`` in working precision ``T``
    (returning ``0`` immediately if ``s = 0``).
@@ -229,9 +229,12 @@ distributed singular values or eigenvalues:
 
 - **Demmel, J. and Veselić, K.** (1992). *Jacobi's Method is More Accurate than QR*. SIAM
   Journal on Matrix Analysis and Applications, 13(4), 1204–1245.
+  [doi:10.1137/0613074](https://doi.org/10.1137/0613074)
 - **Higham, N. J.** (2002). *Accuracy and Stability of Numerical Algorithms*, 2nd ed. Society
   for Industrial and Applied Mathematics (SIAM), Philadelphia. (§9.3–9.4 for LU with partial
   pivoting; §19.3 for Householder QR; §20.4 for rank-deficient least squares.)
-- **Kelley, C. T.** (2023). *Solving Nonlinear Equations with Iterative Methods: Solvers and
+  [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027)
+- **Kelley, C. T.** (2022). *Solving Nonlinear Equations with Iterative Methods: Solvers and
   Examples in Julia*. Society for Industrial and Applied Mathematics (SIAM), Philadelphia.
   (Eqs. 2.17–2.18 for scaled mixed-precision linear solves.)
+  [doi:10.1137/1.9781611977271](https://doi.org/10.1137/1.9781611977271)

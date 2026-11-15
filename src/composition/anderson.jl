@@ -1,5 +1,5 @@
 # Type-II Anderson acceleration and Type-II Broyden multisecant acceleration over an inner
-# nonlinear method, with the length and angle history filters of Pollock and Rebholz (2022),
+# nonlinear method, with the length and angle history filters of Pollock and Rebholz (2023),
 # precision-scaled Tikhonov regularisation, affine-weight and model-decrease safeguards,
 # residual-growth and stagnation restarts, optional growing depth, and best-iterate tracking.
 
@@ -16,7 +16,7 @@ Type-II Anderson acceleration of history depth `m` wrapping an inner nonlinear m
 `Anderson` runs one step of `member` from `(x, Fx)` to obtain the candidate `x_m` and
 correction `w_k = x_m - x`, updates the history of consecutive iterate differences
 `Δx_j` and correction differences `Δw_j`, filters the history by the length and angle
-filters of Pollock and Rebholz (2022) from the Gram matrix `G_{ij} = Re⟨Δw_i, Δw_j⟩`,
+filters of Pollock and Rebholz (2023) from the Gram matrix `G_{ij} = Re⟨Δw_i, Δw_j⟩`,
 solves the `eps(R)`-regularised normal equations `(G_K + λI) γ = b_K` with
 `b_i = Re⟨Δw_i, w_k⟩`, and forms the accelerated iterate
 `x₊ = x_m - ∑_j γ_j (Δx_{K[j]} + Δw_{K[j]})`.
@@ -48,6 +48,12 @@ Keywords:
     corrections `w_k` exceeds it in modulus.
   - `grow_depth`: when `true`, the depth is capped at `ceil(-log10(‖w_k‖))` clamped to
     `1:m`, so the cap grows as the corrections shrink.
+
+# References
+
+  - S. Pollock and L. G. Rebholz (2023). Filtering for Anderson acceleration. SIAM Journal on
+    Scientific Computing 45(4), A1571–A1590.
+    [doi:10.1137/22M1536741](https://doi.org/10.1137/22M1536741)
 """
 struct Anderson{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
     member::M
@@ -145,7 +151,7 @@ end
 
 Type-II Broyden (bad Broyden) multisecant acceleration of history depth `m` wrapping an
 inner nonlinear method `member` ([`Picard`](@ref), [`Newton`](@ref), or a combinator).
-Shares the difference history, length and angle filters of Pollock and Rebholz (2022),
+Shares the difference history, length and angle filters of Pollock and Rebholz (2023),
 extrapolation safeguards, restarts, and best-iterate restoration of [`Anderson`](@ref),
 differing in the weight solve: instead of the full Gram normal equations, `Broyden` solves
 the lower-triangular multisecant system `(L_G + λI) γ = b_K` by forward substitution, where
@@ -162,6 +168,12 @@ In R1 (`StaticVector` or `Number`), `m` must satisfy `1 <= m <= 4`, and the stat
 Keywords are identical to [`Anderson`](@ref). The constructors without a `member` wrap
 `Picard(; damping)` with `damping = 0.5` by default, so `Broyden()` wraps a damped `Picard`,
 while `Anderson()` wraps the undamped `Picard()`.
+
+# References
+
+  - S. Pollock and L. G. Rebholz (2023). Filtering for Anderson acceleration. SIAM Journal on
+    Scientific Computing 45(4), A1571–A1590.
+    [doi:10.1137/22M1536741](https://doi.org/10.1137/22M1536741)
 """
 struct Broyden{m, M, R <: Real, K <: Union{Nothing, R}, S <: Union{Nothing, R}}
     member::M
@@ -789,7 +801,7 @@ end
     return Δmodel <= eps(R) * max(wnorm2, floatmin(R))
 end
 
-# Pollock & Rebholz (2022) Algorithm 2.5 (length filter, Prop. 1.2 eqs. 1.6–1.8) followed by
+# Pollock & Rebholz (2023) Algorithm 2.5 (length filter, Prop. 1.2 eqs. 1.6–1.8) followed by
 # Algorithm 2.4 (greedy Cholesky angle filter) in R1 (`SMatrix` / `SVector`).
 @inline function filter_history_r1(
         a::MultisecantMethod{m}, G::SMatrix{m, m, R}, d::Int) where {m, R <: Real}
@@ -857,7 +869,7 @@ end
     return kept, p
 end
 
-# Pollock & Rebholz (2022) length and angle filters in R3 (preallocated host buffers).
+# Pollock & Rebholz (2023) length and angle filters in R3 (preallocated host buffers).
 function filter_history_r3!(
         kept::Vector{Int}, B::Vector{R}, L::Matrix{R},
         a::MultisecantMethod{m}, G::Matrix{R}, d::Int) where {m, R <: Real}

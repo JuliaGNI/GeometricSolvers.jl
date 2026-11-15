@@ -206,7 +206,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 - **Package extensions `GeometricSolversMetalExt` and `GeometricSolversCUDAExt` dispatch dense
   device factorisations and solves to vendor libraries on supported GPU element types** (decision 48
-  of the design). `Project.toml` adds `CUDA` (`5.5, 6`) and `Metal` (`1.10.3 - 1.11`) under
+  of the design). `Project.toml` adds `CUDA` (`6.5.1 - 6`) and `Metal` (`1.12`) under
   `[weakdeps]` and `[compat]` with `GeometricSolversCUDAExt` and `GeometricSolversMetalExt` under
   `[extensions]`. When `Metal` is loaded, `factorize!!` and `backsolve!` on
   `DeviceLU{<:MtlMatrix{Float32}}` and `MtlVector{Float32}` dispatch to Metal Performance Shaders
@@ -553,7 +553,7 @@ so that a compat-only bump can be told apart from an interface change.
   `4n · eps(R) · σ₁`.
 
 - **A line-search step of `Newton` and `Picard` reduces the residual no more to get its merit at
-  `α = 0`** (audit F13). `NewtonState` and `PicardState` have a ninth and a fifth field, `merit`:
+  `α = 0`** (audit F14). `NewtonState` and `PicardState` have a ninth and a fifth field, `merit`:
   `norm2(Fx)` of the current residual for a line search, which `start!!` sets once per solve and
   each step sets from the merit that its search computed for the residual it returns; `nothing`
   for `Static`, `DogLeg` and any other globalization. `init_state` and `finish!!` set it to `NaN`,
@@ -564,7 +564,7 @@ so that a compat-only bump can be told apart from an interface change.
   form and its results; the solvers call the internal `globalize_merit!!`.
 
 - **`Backtracking`, `Bisection` and `StrongWolfe` loop while they have no result**, for at most
-  `maxiter` trips, in place of `maxiter` trips with a done flag (audit F14). They evaluate the same
+  `maxiter` trips, in place of `maxiter` trips with a done flag (audit F13). They evaluate the same
   trials and return the same results, and no cell of `test/verification/standard_reference.csv`
   changes. `scripts/r2_throughput.jl` reports a row of `Newton(; globalization = Backtracking())`,
   which runs a line search in the kernel.
@@ -1379,7 +1379,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 - Internal: R3 dense `KernelAbstractions` linear solvers on `AbstractGPUArray`
   (`src/linear/ka/lu.jl` and `src/linear/ka/qr.jl`). For a device vector iterate `x isa
-  AbstractGPUArray`, `GeometricSolvers.dense_factor(m, prob, x, p)` builds `DenseLU` or `DenseQR` with `Int32` pivot and
+  AbstractGPUArray`, `GeometricSolvers.dense_factor(m, prob, x, p)` builds `DeviceLU` or `DeviceQR` with `Int32` pivot and
   status buffers on the same device (`similar(x, Int32, n)` and `similar(x, Int32, 1)`), and
   `factorize!!` and `ldiv!!` run column-stepped `KernelAbstractions` kernels in place of the host
   `LAPACK` / `LinearAlgebra` methods, with zero host scalar indexing
@@ -1388,14 +1388,14 @@ so that a compat-only bump can be told apart from an interface change.
   abs(imag(z))` (as LAPACK's `ixamax` does) and divides subdiagonal entries through the
   overflow-safe `multiplier(num, den)`. Unpivoted Householder QR scales each subcolumn by its
   largest entry magnitude `amax = maximum(abs, A[k:n, k])` before forming the reflector norm and
-  records the first zero diagonal entry of `R` in `info`. Triangular backsolves (`L`, `U` and `R`)
-  and the application of `Qᴴ` to the right-hand side run in one work-item (`ndrange = 1`) on the
-  device; the factorisations' column updates are parallel over the trailing matrix. In mixed
+  records the first zero diagonal entry of `R` in `info`. The row permutation and `L⁻¹` of LU and
+  the application of `Qᴴ` to the right-hand side run in one workgroup kernel, and `U⁻¹` and `R⁻¹`
+  in one `ndrange = k - 1` column update per column plus a final diagonal divide; the
+  factorisations' column updates are parallel over the trailing matrix. In mixed
   precision (`TF !== T`), `ldiv!!` converts and scales the right-hand side and the step by
-  broadcasts without host scalar indexing. The public `solve` does not reach these kernels: its
-  `init` for `Newton` builds no dense factor from the iterate, and its step factorises with
-  `nothing`, which has methods for static matrices only. The device path is reached only through
-  the internal `dense_factor`, `factorize!!` and `ldiv!!`, which a device-resident R3 `solve` would call.
+  broadcasts without host scalar indexing. The public `solve` reaches these kernels: `init` for
+  `Newton` builds its factor with `dense_factor` from the iterate, so a device vector iterate
+  gives a `DeviceLU` or `DeviceQR`.
   `norm2(a)` and `rdot(a, b)` call `sum` without an `init` keyword (`isempty(a) ? zero(R) :
   R(sum(...))`), so `Array` and `Broadcasted` reductions use Base's pairwise `_mapreduce` rather
   than sequential `mapfoldl_impl`. `scripts/spikes/metal_reductions/run.jl` measures `norm2` and
@@ -1787,3 +1787,15 @@ so that a compat-only bump can be told apart from an interface change.
   comes from `b`, shared or `PerSystem`, or from the problem's own; `init` and `solve!` serve R1
   and R3, and the keyword datum `b` of an `init`, a `solve` or a `solve!` reaches a wrapped
   `StationarityProblem`.
+
+### Bug Fixes
+
+- **Documentation corrections.** The `Picard` docstring names `StationarityProblem` among the
+  problems it solves, as its methods do. The `Anderson` and `Broyden` docstrings date Pollock and
+  Rebholz to 2023, the year of their Crossref record, and give the full reference with its DOI
+  (10.1137/22M1536741). The references of the stability page carry their DOIs, and Kelley's
+  *Solving Nonlinear Equations with Iterative Methods* is dated 2022, the print year of its record.
+  In this section, the vendor-extension entry states the `[compat]` bounds of `Project.toml`
+  (`CUDA = "6.5.1 - 6"`, `Metal = "1.12"`), the entry of the R3 `KernelAbstractions` linear
+  solvers states that the public `solve` reaches them and how their triangular solves run, and
+  the two line-search entries carry the audit labels F14 and F13 in the right order.
