@@ -3,7 +3,11 @@
 # success rule, the agreement bound, the verdict, a throwing residual, the SVD solve on a
 # non-finite matrix, and the element type and the start of the midpoint rows; and for the
 # timings and the blocks: the timed runs and the batch, the note of a timed cell, the tolerance
-# of each adapter, the variant labels, the `nsol` adapter, the sparse variants and the profiles.
+# of each adapter, the variant labels, the `nsol` adapter, the sparse variants and the profiles;
+# and for the device rows: the machine–backend pairs, the inline adapter in a `CPU()` kernel, the
+# verdict, the band, the classifier of a launch that throws, the Metal heap restart, the order of
+# the clock and `synchronize` in a timed run, the time cap, the two LU paths, and the R2 and R3
+# lines.
 #
 # Usage: julia --project=benchmark benchmark/selftest.jl
 
@@ -710,5 +714,399 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
         @test dec3(1 / 3) == "0.333" && dec3(1.0) == "1.000"
         @test sig3(1.0) == "1.00" && sig3(0.5) == "0.500" && sig3(123.4) == "123"
         @test sig3(1234.0) == "1.23e+03" && sig3(1.234e-5) == "1.23e-05" && sig3(NaN) == "—"
+    end
+end
+
+include(joinpath(@__DIR__, "devices.jl"))
+
+# Exceptions with the names of the vendor packages' own, for the classifier, which reads the name
+# of the type and the message.
+module VendorErrors
+struct KernelException <: Exception end
+struct InvalidIRError <: Exception end
+Base.showerror(io::IO, ::KernelException) = print(io, "KernelException: on device")
+Base.showerror(io::IO, ::InvalidIRError) = print(io, "InvalidIRError: unsupported call")
+end
+
+# A factor that records which function of GeometricSolvers' LU each path calls.
+struct RecordedMatrix end
+struct RecordedLU
+    factors::RecordedMatrix
+    ipiv::Vector{Int32}
+    info::Int
+    scale_exponent::Int
+end
+const LU_CALLS = Symbol[]
+function GeometricSolvers.ka_factorize_lu!(f::RecordedLU, J)
+    (push!(LU_CALLS, :ka_factorize_lu!); f)
+end
+function GeometricSolvers.ka_lu_backsolve!(::RecordedMatrix, ipiv, d)
+    (push!(
+            LU_CALLS, :ka_lu_backsolve!); d)
+end
+function GeometricSolvers.factorize!!(f::RecordedLU, ::LUFactorization, J)
+    (push!(
+            LU_CALLS, :factorize!!); f)
+end
+GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!(d, b))
+
+@testset "Y3" begin
+    T = Float32
+    tol = sqrt(eps(T))
+    cpu = Device("cpu", "cpu", nothing, identity, JLArray, "selftest card")
+    jl = Device("cuda", "spark", nothing, identity, JLArray, "selftest card")
+
+    @testset "the machine and the backend are a pair" begin
+        for (b, m) in (("cpu", "cpu"), ("metal", "mac"), ("cuda", "spark"),
+            ("cuda", "rtx4090"), ("rocm", "rx7900xtx"))
+            @test check_pair(b, m) === nothing
+        end
+        for (b, m) in (("metal", "spark"), ("cuda", "mac"), ("rocm", "cpu"), ("cpu", "mac"))
+            e = try
+                check_pair(b, m)
+            catch e
+                e
+            end
+            @test e isa ArgumentError && occursin(b, e.msg) && occursin(m, e.msg)
+        end
+        # The refusal comes before a vendor package loads or a file is written.
+        dir = mktempdir()
+        @test_throws ArgumentError run_device("metal", "spark", dir)
+        @test isempty(readdir(dir)) && !isdefined(Main, :Metal)
+    end
+
+    @testset "the inline adapter runs a standard row in a CPU() kernel" begin
+        rows = device_rows(T)
+        @test length(rows) == 79 && count(r -> r.set == "standard", rows) == 67
+        @test all(r -> isbits(r.p), rows)
+        row = rows[findfirst(r -> r.problem == "2" && r.start == "u0", rows)]
+        X = fill(row.x0, 4)
+        S = KernelAbstractions.allocate(CPU(), SolverStatus{T}, 4)
+        solve_batch!(X, S, NonlinearProblem(row.F), Newton(), row.p; f_abstol = tol,
+            f_reltol = 0, max_iterations = 200)
+        @test all(s -> s.code == SUCCESS, S)
+        @test norm(row.F(X[1], row.p), Inf) ≤ tol
+    end
+
+    @testset "the verdict: Y-2's bound scales with the host root" begin
+        @test device_verdict(true, true, 5tol, 10, T) == "agree"
+        @test device_verdict(true, true, 11tol, 10, T) == "different root"
+        @test device_verdict(true, true, 0.5tol, 0.1, T) == "agree"
+        @test device_verdict(true, true, 2tol, 0.1, T) == "different root"
+        @test device_verdict(false, true, 0, 1, T) == "device fails"
+        @test device_verdict(true, false, 0, 1, T) == "host fails"
+        @test device_verdict(false, false, 0, 1, T) == "both fail"
+        @test device_verdict(true, true, 1e-7, 1, Float64) == "different root"
+        @test device_verdict(true, true, 1e-8, 1, Float64) == "agree"
+        @test success_of("SUCCESS", "GeometricSolvers", tol, T)
+        @test !success_of("SUCCESS", "GeometricSolvers", 2tol, T)
+        @test !success_of("SUCCESS", "GeometricSolvers", T(NaN), T)
+        @test !success_of("MAXITERS", "GeometricSolvers", 0, T)
+        @test success_of("Success", "SimpleNonlinearSolve", 0, T)
+        @test success_of("info=0", "GeometricSolvers", 0, T) &&
+              !success_of("info=3", "GeometricSolvers", 0, T)
+        # The bound itself agrees.
+        @test device_verdict(true, true, 10tol, 10, T) == "agree"
+        # A reference that failed gives no distance, and its `‖x‖∞` and `‖F‖∞` go to the comment.
+        ref = (; x = T[NaN, 1], code = "MAXITERS",
+            iterations = "200", fnorm = T(NaN), ok = false)
+        c = compared(true, T[1, 1], ref, T)
+        @test c.dx_host == "-" && c.verdict == "host fails" && c.host_code == "MAXITERS" &&
+              c.host_iterations == "200" && c.ref == "ref_xnorm=NaN32;ref_fnorm=NaN32"
+        ref = (; x = T[10, 1], code = "SUCCESS", iterations = "3", fnorm = T(0), ok = true)
+        c = compared(true, T[10, 1 + 5tol], ref, T)
+        @test isapprox(c.dx_host, 5tol; rtol = 1e-3) && c.verdict == "agree"
+    end
+
+    @testset "the band: a row above it is not launched" begin
+        @test band_status("rocm", 10) == "above band 8" &&
+              band_status("rocm", 8) === nothing
+        @test band_status("metal", 25) == "above band 24" &&
+              band_status("cuda", 24) === nothing
+        @test band_status("cpu", 32) === nothing
+        launched = Ref(false)
+        F(x, p) = (launched[] = true; x)
+        row = (;
+            set = "selftest", problem = "n10", start = "x0", x0 = zero(SVector{10, T}),
+            F, p = nothing)
+        rocm = Device("rocm", "rx7900xtx", nothing, identity, identity, "selftest card")
+        lines, failed = r2_row_lines(rocm, row)
+        @test length(lines) == 16 && !failed && !launched[]
+        f = [split(l, ","; limit = 33) for l in lines]
+        @test all(c -> c[1:4] == ["r2", "rx7900xtx", "rocm", "selftest card"], f)
+        @test [c[14] for c in f] ==
+              vcat(["above band 8", "no device path", "above band 8", "no device path"],
+            repeat(["above band 8", "no device path", NO_METHOD_SNS, "no device path"], 3))
+        @test all(c -> all(==("-"), c[15:33]), f)
+        # The grid: the cpu mode, the band of every variant but host-r1, and the system counts.
+        @test grid_status("cpu", 6, "gs-newton") == "not run: cpu mode"
+        @test grid_status("cpu", 6, "host-r1") == "not run: cpu mode"
+        @test grid_status("cpu", 8, "sns") === nothing
+        @test grid_status("rocm", 12, "sns") == "above band 8"
+        @test grid_status("rocm", 12, "host-r1") === nothing
+        @test grid_status("rocm", 8, "gs-newton") === nothing
+        @test grid_status("metal", 16, "gs-reuse4") === nothing
+        @test grid_nsys("cpu") == (10^3, 10^4) && grid_nsys("cuda") == GRID_NSYS
+    end
+
+    @testset "the classifier of a launch that throws" begin
+        @test startswith(launch_status(ErrorException("Failed to compile program")),
+            "no compile: ")
+        @test startswith(launch_status(VendorErrors.InvalidIRError()), "no compile: ")
+        @test launch_status(VendorErrors.KernelException()) ==
+              "kernel error: KernelException: on device"
+        @test startswith(launch_status(ErrorException("GPU Kernel Exception:")),
+            "kernel error: ")
+        @test startswith(
+            launch_status(ErrorException("exception thrown during kernel execution")),
+            "kernel error: ")
+        @test launch_status(DomainError(1.0)) === nothing
+        @test launch_status(ErrorException("a, \"b\"\nc")) === nothing
+        @test !occursin(',', launch_status(ErrorException("Failed to compile program, a")))
+        t = Threads.@spawn throw(ErrorException("GPU Kernel Exception: x"))
+        e = try
+            wait(t)
+        catch e
+            e
+        end
+        @test startswith(launch_status(e), "kernel error: ErrorException: GPU Kernel")
+    end
+
+    @testset "the Metal heap: where a run continues" begin
+        L = 2^20
+        # A failure on a heap that earlier rows used runs the row again on an empty heap.
+        @test heap_next(5, 100, L + 8, L, 4, true) == 5
+        @test heap_next(5, 100, 200, L, 4, true) == 5
+        # A failure on the empty heap keeps its outcome; a full heap continues at the next row.
+        @test heap_next(5, 4, L + 8, L, 4, true) == 6
+        @test heap_next(5, 4, 200, L, 4, true) === nothing
+        @test heap_next(5, 100, L, L, 4, false) == 6
+        @test heap_next(5, 100, L - 1, L, 4, false) === nothing
+        @test heap_next(5, nothing, nothing, nothing, nothing, true) === nothing
+    end
+
+    @testset "a timed run: fresh starts, then synchronize, then the clock" begin
+        log = Symbol[]
+        clock = FakeClock(0)
+        tick() = (push!(log, :clock); clock())
+        fresh() = (push!(log, :fresh); 1)
+        launch!(_) = (push!(log, :launch); elapse!(clock, 0.6e-3); 2)
+        sync() = (push!(log, :sync); elapse!(clock, 0.1e-3))
+        m = measure_cell(fresh, launch!, sync; clock = tick)
+        @test m.result == 2
+        # The warm-up, then runs of 1 launch (0.7 ms) and of 2 launches (1.3 ms, 0.65 ms each).
+        @test log[1:5] == [:fresh, :clock, :launch, :sync, :clock]
+        @test log[6:10] == [:fresh, :clock, :launch, :sync, :clock]
+        @test log[16:22] == [:fresh, :fresh, :clock, :launch, :launch, :sync, :clock]
+        @test m.k == 2 && length(m.times) == 5 && all(≈(0.65e-3), m.times)
+        @test m.warm ≈ 0.7e-3
+        @test count(==(:sync), log) == 1 + 2 + 2 + 5
+        # The fields of a measured cell: compile_s is the warm-up's time minus the median.
+        t = time_fields((; warm = 5.0, k = 4, times = [3.0, 1.0, 2.0, 5.0, 4.0]))
+        @test (t.t1, t.t5, t.median_s, t.spread, t.solves_per_run, t.compile_s) ==
+              (3.0, 4.0, 3.0, 4 / 3, 4, 2.0)
+    end
+
+    @testset "the time cap: a projection above 1800 s stops the series" begin
+        clock = FakeClock(0)
+        measured = Int[]
+        measure(n_sys) = begin
+            push!(measured, n_sys)
+            t = n_sys == 10^5 ? 400.0 : 1e-3
+            measure_cell(() -> nothing, _ -> elapse!(clock, t), () -> nothing; clock)
+        end
+        out = grid_series(measure, GRID_NSYS)
+        @test measured == [10^3, 10^4, 10^5]
+        @test out[1].k == 1 && run_median(out[3].times) == 400
+        @test out[4] == "not run: time cap" && out[5] == "not run: time cap"
+        @test projected(29.0) < 1800 < projected(31.0)
+        # A series below the cap runs every cell.
+        clock2 = FakeClock(0)
+        out = grid_series(GRID_NSYS) do n_sys
+            measure_cell(() -> nothing, _ -> elapse!(clock2, 1e-3), () -> nothing;
+                clock = clock2)
+        end
+        @test all(o -> o isa NamedTuple, out)
+        # A projection of exactly 1800 s runs the cell.
+        clock3 = FakeClock(0)
+        out = grid_series(GRID_NSYS) do n_sys
+            measure_cell(() -> nothing, _ -> elapse!(clock3, n_sys == 10^4 ? 30.0 : 1e-3),
+                () -> nothing; clock = clock3)
+        end
+        @test out[3] isa NamedTuple
+        # Each variant on 100 systems of dimension 2 on CPU(): every system succeeds, and the
+        # factor reuse of gs-reuse4 takes one more step than Newton.
+        for (v, it) in zip(GRID_VARIANTS, ("2", "3", "2", "-", "2"))
+            c = grid_cell(cpu, 2, 100, v)
+            @test c.ok == 100 && c.fnorm ≤ tol && string(c.iterations) == it
+            @test c.code == (v == "sns" ? "Success=100" : "SUCCESS=100")
+            @test c.k ≥ 1 && length(c.times) == 5
+        end
+    end
+
+    @testset "the .txt of a run" begin
+        BLAS.set_num_threads(1)
+        ls = txt_lines(cpu, ["heap: standard,1,u0,-,-"])
+        names = ["date", "uptime", "julia", "threads", "blas threads", "device", "driver",
+            "band", "packages", "heap"]
+        @test length(ls) == 10 && all(((l, n),) -> startswith(l, "$n: "), zip(ls, names))
+        @test ls[5] == "blas threads: 1" && ls[6] == "device: selftest card"
+        @test ls[7] == "driver: none" && ls[8] == "band: none"
+        @test occursin("KernelAbstractions 0.10.7", ls[9]) &&
+              occursin("JLArrays 0.5.0", ls[9])
+    end
+
+    @testset "the LU paths: own-ka calls the internal functions, dispatched those of solve" begin
+        fac = RecordedLU(RecordedMatrix(), Int32[], 0, 0)
+        empty!(LU_CALLS)
+        lu_once!("own-ka", fac, nothing, T[1, 2])
+        @test LU_CALLS == [:ka_factorize_lu!, :ka_lu_backsolve!]
+        empty!(LU_CALLS)
+        lu_once!("dispatched", fac, nothing, T[1, 2])
+        @test LU_CALLS == [:factorize!!, :ldiv!!]
+        # own-ka scales the backsolve by 2^(-e).
+        _, d = lu_once!("own-ka", RecordedLU(RecordedMatrix(), Int32[], 0, 1), nothing, T[1, 2])
+        @test d == T[0.5, 1]
+        # Both paths solve J d = b on a JLArray to Y-2's bound of the host LAPACK solution; the
+        # device is named `cuda` so that n = 32 is no cpu-mode cell.
+        @test split(lu_line(cpu, 4096, "own-ka"), ",")[14] == "not run: cpu mode"
+        for v in LU_VARIANTS
+            line = lu_line(jl, 32, v)
+            c = split(line, ","; limit = 33)
+            @test c[14] == "ran" && c[15] == "info=0" && c[16] == "true" && c[22] == "agree"
+            # J, b and the solution are Float32: `repr` writes the residual with an `f`.
+            @test occursin(r"f-?\d+$", c[20]) && occursin(r"f-?\d+$", c[21])
+            @test (v == "own-ka") == startswith(c[33], "\"internal, not user-selectable")
+        end
+    end
+
+    @testset "the R3 rows on a JLArray" begin
+        @test all(l -> split(l, ",")[14] == "not run: cpu mode", r3_lines(cpu, 4096))
+        metal = Device("metal", "mac", nothing, identity, JLArray, "selftest card")
+        @test [split(l, ",")[14] for l in r3_lines(metal, 8)] ==
+              ["ran", "ran", METAL_F64, METAL_F64, METAL_F64, "ran"]
+        lines = r3_lines(jl, 16)
+        @test length(lines) == 6
+        f = [split(l, ","; limit = 33) for l in lines]
+        @test [c[12] for c in f] == collect(R3_VARIANTS)
+        @test all(c -> c[14] == "ran" && c[15] == "SUCCESS" && c[16] == "true", f)
+        @test [c[22] for c in f] == ["agree", "-", "agree", "agree", "agree", "-"]
+        # device compares with host, the Float64 device variants with host-f64.
+        @test f[1][18:19] == f[2][[15, 17]] && all(c -> c[18:19] == f[6][[15, 17]], f[3:5])
+        @test startswith(f[2][33], "xnorm=") && startswith(f[6][33], "xnorm=")
+        @test [c[10] for c in f] == ["Float32", "Float32", "Float64", "Float64", "Float64",
+            "Float64"]
+        @test [c[11] for c in f] == ["Float32", "Float32", "Float32", "Float32", "Float64",
+            "Float64"]
+        d64 = f[5]
+        @test all(==("-"), d64[24:32]) &&
+              d64[33] == "device Float64: not timed (decision 6)"
+        @test all(c -> all(s -> tryparse(Float64, s) !== nothing, c[24:30]), f[[1:4; 6]])
+    end
+
+    @testset "an R2 row: sixteen lines in order, and the host solve fills its fields" begin
+        rows = device_rows(T)
+        row = rows[findfirst(r -> r.problem == "2" && r.start == "u0", rows)]
+        lines, failed = r2_row_lines(cpu, row)
+        f = [split(l, ","; limit = 33) for l in lines]
+        @test !failed && length(f) == 16 && all(c -> length(c) == 33, f)
+        @test [c[12] for c in f] == repeat(collect(R2_COLUMNS); inner = 4)
+        @test [c[13] for c in f] == repeat(collect(PACKAGES), 4)
+        gs = f[1]
+        @test gs[14] == "ran" && gs[15] == "SUCCESS" && gs[16] == "true" &&
+              gs[22] == "agree"
+        @test gs[17] == gs[19] && gs[18] == "SUCCESS" && gs[23] == "64"
+        @test f[3][14] == "ran" && f[3][17] == "-"
+        @test all(c -> !any(isempty, c), f)
+        # A row that throws in the kernel keeps its host fields.
+        bad = rows[findfirst(r -> r.problem == "1" && r.start == "u0", rows)]
+        lines, failed = r2_row_lines(cpu, bad)
+        c = split(lines[1], ","; limit = 33)
+        @test failed && startswith(c[14], "kernel error: ") && c[18] != "-"
+        @test c[15] == "-" && c[22] == "-"
+    end
+
+    @testset "the verifier checks the device lines" begin
+        # verify.jl on a copy of the results whose devices-cpu.csv or .txt `edit!` changes, its
+        # output and whether it passed.
+        function verify_devices(edit!, args...; file = "devices-cpu.csv")
+            mktempdir() do dir
+                for f in readdir(joinpath(@__DIR__, "results"))
+                    cp(joinpath(@__DIR__, "results", f), joinpath(dir, f))
+                end
+                path = joinpath(dir, file)
+                ls = readlines(path)
+                edit!(ls, dir)
+                isfile(path) && write(path, join(ls, "\n") * "\n")
+                cmd = `$(Base.julia_cmd()) --startup-file=no $(joinpath(@__DIR__, "verify.jl")) $dir $args`
+                out = IOBuffer()
+                p = run(pipeline(ignorestatus(cmd); stdout = out, stderr = out))
+                return String(take!(out)), success(p)
+            end
+        end
+        # The first line of a cell by its kind, problem, start, variant and package: its smallest
+        # n for the R3 and LU rows.
+        function at(ls, kind, problem, start, variant, package)
+            return first(findall(ls) do l
+                f = split(l, ",")
+                f[1] == kind && f[6] == problem && f[7] == start && f[12] == variant &&
+                    f[13] == package
+            end)
+        end
+        setcell!(ls, i, k, v) = (
+            f = split(ls[i], ","; limit = 33); f[k] = v; ls[i] = join(f, ","))
+        gs = ("GeometricSolvers",)
+        out, ok = verify_devices((ls, _) -> nothing, "--structure")
+        @test ok && occursin("device lines: cpu 1438 (1264 r2, 150 grid, 18 r3, 6 lu)", out)
+        # A root of norm 10 at 5 √eps from the device's iterate agrees.
+        out, ok = verify_devices("--structure") do ls, _
+            i = at(ls, "r2", "2", "u0", "Newton Static LU", gs...)
+            setcell!(ls, i, 21, "0.0017263349f0")
+            setcell!(ls, i, 33, "ref_xnorm=10.0f0;ref_fnorm=0.0f0")
+        end
+        @test ok
+        bad = [
+            (ls -> deleteat!(ls, 2), "lines, not 1438"),
+            (
+                ls -> setcell!(ls, at(ls, "r3", "10.E", "zero", "device-f64", gs...), 24,
+                    "0.5"),
+                "a cell that is not timed has a time field"),
+            (
+                ls -> setcell!(ls, at(ls, "r2", "2", "u0", "Newton Static LU", gs...), 22,
+                    "different root"),
+                "verdict different root, recomputed agree"),
+            (
+                ls -> setcell!(ls, at(ls, "r2", "2", "u0", "Newton Static LU", gs...), 16,
+                    "false"),
+                "success false, recomputed true"),
+            (ls -> setcell!(ls, 2, 4, "another card"), "card another card"),
+            (
+                ls -> setcell!(
+                    ls, at(ls, "r2", "2", "u0", "Newton Static LU",
+                        "SimpleSolvers"), 14, "ran"),
+                "the cell is 'no device path'"),
+            (
+                ls -> setcell!(
+                    ls, findfirst(l -> startswith(l, "grid,") && occursin(",ran,", l), ls),
+                    29, "1.0"),
+                "median_s 1.0"),
+            (ls -> setcell!(ls, 2, 17, ""), "an empty field"),
+            (ls -> setcell!(ls, at(ls, "lu", "10.E", "-", "own-ka", gs...), 33, "-"),
+                "comment -"),
+            (
+                ls -> setcell!(ls, at(ls, "r2", "2", "u0", "Newton Static LU", gs...), 33,
+                    "ref_xnorm=1.0f0;ref_fnorm=1.0f0"),
+                "verdict agree, recomputed host fails")]
+        for (edit!, msg) in bad
+            out, ok = verify_devices((ls, _) -> edit!(ls), "--structure")
+            @test (msg, !ok && occursin(msg, out)) == (msg, true)
+        end
+        out, ok = verify_devices((ls, _) -> (ls[5] = "blas threads: 2");
+            file = "devices-cpu.txt")
+        @test !ok && occursin("devices-cpu.txt: blas threads 2", out)
+        out, ok = verify_devices((ls, dir) -> rm(joinpath(dir, "devices-cpu.csv")))
+        @test !ok && occursin("devices-cpu.csv is missing", out)
+        out, ok = verify_devices((ls, _) -> nothing, "--all-cards")
+        @test !ok && occursin("devices-mac.csv is missing (--all-cards)", out)
     end
 end
