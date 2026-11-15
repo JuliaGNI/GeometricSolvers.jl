@@ -1,6 +1,11 @@
 [deps]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 GeometricSolvers = "3a2b8526-dde5-4630-ad43-3d2dcd69f118"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Sparspak = "e56a9233-b9d6-4f03-8d0f-1825330902ac"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [sources]
 GeometricSolvers = {path = ".."}

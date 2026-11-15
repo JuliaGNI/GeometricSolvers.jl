@@ -276,10 +276,6 @@ so that a compat-only bump can be told apart from an interface change.
   `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 10th column
   `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
 
-- **The documentation build allows HTML pages up to 400 KiB** (`size_threshold` in
-  `docs/make.jl`). The API page renders to about 200 KiB, Documenter's default hard limit, and the
-  open pull requests add docstrings to it; the warning limit stays at 100 KiB.
-
 - **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
   `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
   extension `GeometricSolversSparspakExt`** (decision 53 of the design). `NonlinearProblem{F, J, P
@@ -766,6 +762,24 @@ so that a compat-only bump can be told apart from an interface change.
   iterations. 138 cells are flagged `unstable`, 133 before.
 
 ### New Features
+
+- **A user guide in the documentation, beside the stability and API pages.** The manual
+  (`docs/src/manual/`) covers the problem types, the call forms `F(x, p)` and `F!(y, x, p)`,
+  `solve`, `init` and `solve!`, the options, the status and its return codes, parameters at solve
+  time, the SciML extension, and the three regimes R1, R2 and R3 with how to choose one. The
+  algorithm pages (`docs/src/algorithms/`) cover the nonlinear methods with factor reuse and
+  implicit differentiation, the globalizations, the static, dense, device and sparse
+  factorisations, `GMRES` with its forcing terms and preconditioner, automatic differentiation,
+  the combinators with `Anderson` and `Broyden`, and the preconditioning methods `RAS` and
+  `LeftPreconditioned`. The architecture
+  pages (`docs/src/architecture/`) cover the storage and reduction seams, dispatch in place of
+  checks, kernel-safe types, the vendor paths of CUDA and Metal, device precision, and mixed
+  precision with refinement. The single API page becomes an API section of seven pages
+  (`docs/src/api/`), grouped by topic. The CPU examples are `jldoctest`s, except the SciML,
+  FiniteDiff and AutoSparse examples; these and the device examples are plain code blocks that do
+  not run. The documentation environment gains `ADTypes`, `ForwardDiff`,
+  `SparseArrays`, `Sparspak` and `StaticArrays`, which the examples load, and which the test
+  environment of `test/quality/doctests.jl` already has.
 
 - **`benchmark/` compares the correctness of GeometricSolvers, SimpleSolvers,
   SimpleNonlinearSolve and NLsolve on the standard test set and on twelve implicit-midpoint stage
