@@ -114,7 +114,12 @@ per block in that test, and the global residual costs none. [`LeftPreconditioned
 The counters of the last [`start!!`](@ref) are read with [`ras_counts`](@ref). A problem without
 block residuals, a partition whose block count or index count differs from the problem's, and an
 iterate that is not a vector raise an `ArgumentError` at [`init_state`](@ref); the partition's
-validation raises one at construction.
+validation raises one at construction. A `jacobian_prototype` sizes the global Jacobian only: the
+block factors are dense. Only a RASPEN product reads the global Jacobian, so on a sparse
+`jacobian_prototype` without an analytic `J` a sweep, and a [`Picard`](@ref) outer under
+[`Static`](@ref), solve without one, and a reader of the RASPEN product — a [`Newton`](@ref) outer,
+or a `Picard` outer with a line search — raises an `ArgumentError` at `init_state`: the ForwardDiff
+Jacobian of the global residual writes a dense Jacobian only.
 """
 struct RAS{P, R <: Real, B <: Union{Nothing, Real}}
     partition::P
@@ -225,7 +230,8 @@ end
 The state of a [`RAS`](@ref) method: the workspace of every block, the factors of the block
 Jacobians, which [`raspen_jvp!`](@ref) and [`raspen_jacobian!`](@ref) read, the global Jacobian
 buffer and its preparation — `nothing` where the problem has its own `J`, and `AutoForwardDiff()`
-on `F` where it has none — the composite iterate that a RASPEN Jacobian product forms per block,
+on `F` where it has none; both `nothing` on a sparse `jacobian_prototype` without `J`, where no
+global Jacobian is built — the composite iterate that a RASPEN Jacobian product forms per block,
 and the counters that [`ras_counts`](@ref) reports. Every block factor is re-formed in
 every inner iteration, and once more at the local iterate that the sweep returns where the block
 factors feed a RASPEN preparation, which is the factor at the local solution. A factor that no
@@ -273,7 +279,9 @@ end
                  for i in 1:nblocks]
     deltas = [similar(x, length(part.subdomains[i])) for i in 1:nblocks]
     rows = [similar(x, T, length(part.subdomains[i]), part.n) for i in 1:nblocks]
-    factors = [fail_closed!!(dense_factor(LUFactorization(), prob, x_locals[i], p))
+    # The block Jacobians are dense and of block size, so their factors take no prototype: the
+    # problem's `jacobian_prototype` is the global Jacobian's.
+    factors = [fail_closed!!(init_linear(LUFactorization(), nothing, x_locals[i], nothing))
                for i in 1:nblocks]
     couplings = similar(x)
     jacfuns = block_jacobians(prob)
@@ -290,9 +298,17 @@ end
     end
     Fx = similar(x)
     P = jacobian_prototype(prob)
-    G = P === nothing ? similar(x, T, part.n, part.n) : similar(P, T)
-    jac_prep = _has_analytic_jacobian(prob) ? nothing :
-               prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+    # Only a RASPEN product reads the global Jacobian, and the ForwardDiff form of it fills a
+    # dense Jacobian only: on a sparse prototype without `J` the state builds neither, and a
+    # RASPEN preparation of it is refused.
+    if raspen_refused(prob)
+        G = nothing
+        jac_prep = nothing
+    else
+        G = P === nothing ? similar(x, T, part.n, part.n) : similar(P, T)
+        jac_prep = _has_analytic_jacobian(prob) ? nothing :
+                   prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+    end
     blocks = RASBlocks(subdomains, owners, local_owners, x_locals, f_locals, jacobians,
         deltas, rows, problems, preps, couplings, similar(x), false, false)
     return RASState(blocks, factors, Fx, similar(x), similar(x), jac_prep, G, similar(x),
@@ -547,6 +563,7 @@ end
 # at the composite iterate, `x` with block `i`'s local solve over its subdomain, restricted to the
 # subdomain's rows. They hold the couplings outside the block, which the block Jacobian does not.
 function raspen_rows!(state::RASState, prob, x, p, i)
+    check_raspen(prob)
     blocks = state.blocks
     u = copy!!(state.composite, x)
     u[blocks.subdomains[i]] .= blocks.x_locals[i]
@@ -554,6 +571,20 @@ function raspen_rows!(state::RASState, prob, x, p, i)
     B = blocks.rows[i]
     B .= view(G, blocks.subdomains[i], :)
     return B
+end
+
+# A RASPEN product reads the global Jacobian, whose ForwardDiff form writes a dense Jacobian only,
+# so a problem with a sparse prototype and no analytic `J` has none: its preparation is refused at
+# `init_state` of the reader, and a product raises before it reads one.
+@inline function raspen_refused(prob)
+    return jacobian_prototype(prob) isa SparseArrays.AbstractSparseMatrix &&
+           !_has_analytic_jacobian(prob)
+end
+
+@inline function check_raspen(prob)
+    raspen_refused(prob) && throw(ArgumentError(
+        "a RASPEN Jacobian on a problem with a sparse jacobian_prototype needs an analytic Jacobian J: its ForwardDiff Jacobian of the global residual writes a dense Jacobian only. Give the problem an analytic Jacobian J, or solve without the jacobian_prototype, or use a plain RAS sweep or a Picard outer under Static, which read no global Jacobian"))
+    return nothing
 end
 
 # A block factor of a `RASState` is a formed factor only after a complete sweep, so a product that

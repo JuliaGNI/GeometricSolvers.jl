@@ -229,9 +229,12 @@ distributed singular values or eigenvalues:
 
 - **Demmel, J. and Veselić, K.** (1992). *Jacobi's Method is More Accurate than QR*. SIAM
   Journal on Matrix Analysis and Applications, 13(4), 1204–1245.
+  [doi:10.1137/0613074](https://doi.org/10.1137/0613074)
 - **Higham, N. J.** (2002). *Accuracy and Stability of Numerical Algorithms*, 2nd ed. Society
   for Industrial and Applied Mathematics (SIAM), Philadelphia. (§9.3–9.4 for LU with partial
   pivoting; §19.3 for Householder QR; §20.4 for rank-deficient least squares.)
-- **Kelley, C. T.** (2023). *Solving Nonlinear Equations with Iterative Methods: Solvers and
-  Examples in Julia*. Society for Industrial and Applied Mathematics (SIAM), Philadelphia.
-  (Eqs. 2.17–2.18 for scaled mixed-precision linear solves.)
+  [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027)
+- **Kelley, C. T.** (2023). *Newton's Method in Three Precisions*. Pacific Journal of
+  Optimization. (Eqs. 2.17–2.18 of arXiv:2307.16051v4 for scaled mixed-precision linear solves.)
+  [doi:10.61208/pjo-2023-030](https://doi.org/10.61208/pjo-2023-030),
+  [arXiv:2307.16051](https://arxiv.org/abs/2307.16051)

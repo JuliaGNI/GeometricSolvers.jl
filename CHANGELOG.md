@@ -206,7 +206,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 - **Package extensions `GeometricSolversMetalExt` and `GeometricSolversCUDAExt` dispatch dense
   device factorisations and solves to vendor libraries on supported GPU element types** (decision 48
-  of the design). `Project.toml` adds `CUDA` (`5.5, 6`) and `Metal` (`1.10.3 - 1.11`) under
+  of the design). `Project.toml` adds `CUDA` (`6.5.1 - 6`) and `Metal` (`1.12`) under
   `[weakdeps]` and `[compat]` with `GeometricSolversCUDAExt` and `GeometricSolversMetalExt` under
   `[extensions]`. When `Metal` is loaded, `factorize!!` and `backsolve!` on
   `DeviceLU{<:MtlMatrix{Float32}}` and `MtlVector{Float32}` dispatch to Metal Performance Shaders
@@ -303,14 +303,24 @@ so that a compat-only bump can be told apart from an interface change.
   `ADTypes.KnownJacobianSparsityDetector(P)` for column-coloured sparse AD, replacing any detector
   it carries, while `ChunkedForwardDiff`'s `jacobian!!` is restricted to `J::DenseMatrix`.
   `SparseArrays` joins `[deps]` and `Sparspak` joins `[weakdeps]` with the `[extensions]` entry
-  `GeometricSolversSparspakExt`.
+  `GeometricSolversSparspakExt`. The chunked ForwardDiff Jacobian writes only a dense matrix, so
+  `init` of a `Newton` with `jacobian = nothing` or an explicit `jacobian = AutoForwardDiff()`
+  raises an `ArgumentError` for a `NonlinearProblem` with a `SparseMatrixCSC` prototype and no
+  analytic `J` (with an explicit `AutoForwardDiff()` also beside an analytic `J`). The message
+  names the `jacobian` keyword and the working sources: an analytic `J`, or `jacobian =
+  AutoSparse(...)` with `SparseMatrixColorings` loaded. An analytic `J` with `jacobian = nothing`,
+  an `AutoSparse` back end, the other DifferentiationInterface back ends and `GMRES` are not
+  refused.
 
 - **Numerical stability documentation (`docs/src/stability.md`) and backward-error test suite
   (`test/linear/stability.jl`, `test/helpers/randsvd.jl`).** `docs/src/stability.md` states the
   normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
   `StaticSVD`, `jacobi_eigen`, `DenseLU`, `DenseQR`, `DenseSVD`, `DeviceLU`, `DeviceQR`,
   `DeviceSVD`, rank-deficient SVD minimum-norm `ldiv!!`, and scaled mixed-precision `ldiv!!`
-  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
+  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023), whose eqs.
+  2.17–2.18 the scaled mixed-precision solve follows (*Newton's Method in Three Precisions*,
+  Pacific Journal of Optimization, 10.61208/pjo-2023-030, arXiv:2307.16051); the references of the
+  page carry their DOIs.
   `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
   `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
   group by group: the full-rank LU, QR and SVD solves and their singular values over `ELTYPES`,
@@ -549,7 +559,7 @@ so that a compat-only bump can be told apart from an interface change.
   `4n · eps(R) · σ₁`.
 
 - **A line-search step of `Newton` and `Picard` reduces the residual no more to get its merit at
-  `α = 0`** (audit F13). `NewtonState` and `PicardState` have a ninth and a fifth field, `merit`:
+  `α = 0`** (audit F14). `NewtonState` and `PicardState` have a ninth and a fifth field, `merit`:
   `norm2(Fx)` of the current residual for a line search, which `start!!` sets once per solve and
   each step sets from the merit that its search computed for the residual it returns; `nothing`
   for `Static`, `DogLeg` and any other globalization. `init_state` and `finish!!` set it to `NaN`,
@@ -560,7 +570,7 @@ so that a compat-only bump can be told apart from an interface change.
   form and its results; the solvers call the internal `globalize_merit!!`.
 
 - **`Backtracking`, `Bisection` and `StrongWolfe` loop while they have no result**, for at most
-  `maxiter` trips, in place of `maxiter` trips with a done flag (audit F14). They evaluate the same
+  `maxiter` trips, in place of `maxiter` trips with a done flag (audit F13). They evaluate the same
   trials and return the same results, and no cell of `test/verification/standard_reference.csv`
   changes. `scripts/r2_throughput.jl` reports a row of `Newton(; globalization = Backtracking())`,
   which runs a line search in the kernel.
@@ -866,10 +876,20 @@ so that a compat-only bump can be told apart from an interface change.
   `block_jacobians`, `block_residual` and `block_jacobian`. `BlockPartition(subdomains, owners)`
   requires non-empty duplicate-free subdomains and owner sets that are disjoint and cover `1:n`
   exactly, and `BlockPartition(n, nblocks; overlap)` builds one. A `RAS` sweep restricts each
-  subdomain, solves each block with `dense_factor`, `factorize!!` and `ldiv!!` — so a `JLArray`
+  subdomain, solves each block with a dense factor from `init_linear`, `factorize!!` and `ldiv!!`
+  — so a `JLArray`
   iterate runs on the device factor and the kernels stay non-scalar — prolongates through the
   owner sets only, so each index of `1:n` is written once, and calls the global residual no
-  times. A sweep forms the block factor at the local iterate it returns only where a RASPEN
+  times. The block factors are dense and of block size and take no `jacobian_prototype`, which
+  sizes the global Jacobian only: with an analytic `J`, `RAS` solves a problem with a sparse
+  `jacobian_prototype` as it solves the problem without one. Without an analytic `J`, a plain `RAS`
+  sweep and `LeftPreconditioned(Picard(), RAS(...))` under the `Static` globalization solve such a
+  problem too, because they read no global Jacobian, so the state builds neither the global
+  Jacobian buffer nor its ForwardDiff preparation. A reader of the RASPEN product,
+  `LeftPreconditioned(Newton(), RAS(...))` or a `Picard` outer with a line search, raises an
+  `ArgumentError` at `init` on such a problem, because the ForwardDiff Jacobian of the global
+  residual writes a dense matrix only, and a RASPEN product called directly on such a state raises
+  the same error. A sweep forms the block factor at the local iterate it returns only where a RASPEN
   preparation reads the block factors, so RASPEN's product reads the block matrix at the local
   solution and a `RAS` or NKS-RAS sweep pays for no extra factor. A block factor that no complete
   sweep has formed fails closed, and a product on such a state raises an `ArgumentError`; an inner
@@ -1379,7 +1399,8 @@ so that a compat-only bump can be told apart from an interface change.
   `AbstractMatrix` element types (`BigFloat`), `DenseLU` and `DenseQR` use `LinearAlgebra.lu!` (with
   `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
   In mixed precision (`TF !== T`), `ldiv!!` also scales the right-hand side by its infinity norm
-  before converting to the factor precision, and returns zero directly on a zero right-hand side.
+  before converting to the factor precision, and returns zero directly on a zero right-hand side;
+  that scaling is the one of Kelley (2023, eqs. 2.17–2.18, *Newton's Method in Three Precisions*).
   The scale `s` of the right-hand side is split as `s = frac · 2^ex` with `frac` in `[0.5, 1)`. The
   step is multiplied by `frac` and then by `2^(ex - e)` in one `ldexp`, so a right-hand side near
   `floatmax(T)` makes the step overflow only where the solution itself does.
@@ -1393,7 +1414,7 @@ so that a compat-only bump can be told apart from an interface change.
 
 - Internal: R3 dense `KernelAbstractions` linear solvers on `AbstractGPUArray`
   (`src/linear/ka/lu.jl` and `src/linear/ka/qr.jl`). For a device vector iterate `x isa
-  AbstractGPUArray`, `GeometricSolvers.dense_factor(m, prob, x, p)` builds `DenseLU` or `DenseQR` with `Int32` pivot and
+  AbstractGPUArray`, `GeometricSolvers.dense_factor(m, prob, x, p)` builds `DeviceLU` or `DeviceQR` with `Int32` pivot and
   status buffers on the same device (`similar(x, Int32, n)` and `similar(x, Int32, 1)`), and
   `factorize!!` and `ldiv!!` run column-stepped `KernelAbstractions` kernels in place of the host
   `LAPACK` / `LinearAlgebra` methods, with zero host scalar indexing
@@ -1402,14 +1423,14 @@ so that a compat-only bump can be told apart from an interface change.
   abs(imag(z))` (as LAPACK's `ixamax` does) and divides subdiagonal entries through the
   overflow-safe `multiplier(num, den)`. Unpivoted Householder QR scales each subcolumn by its
   largest entry magnitude `amax = maximum(abs, A[k:n, k])` before forming the reflector norm and
-  records the first zero diagonal entry of `R` in `info`. Triangular backsolves (`L`, `U` and `R`)
-  and the application of `Qᴴ` to the right-hand side run in one work-item (`ndrange = 1`) on the
-  device; the factorisations' column updates are parallel over the trailing matrix. In mixed
+  records the first zero diagonal entry of `R` in `info`. The row permutation and `L⁻¹` of LU and
+  the application of `Qᴴ` to the right-hand side run in one workgroup kernel, and `U⁻¹` and `R⁻¹`
+  in one `ndrange = k - 1` column update per column plus a final diagonal divide; the
+  factorisations' column updates are parallel over the trailing matrix. In mixed
   precision (`TF !== T`), `ldiv!!` converts and scales the right-hand side and the step by
-  broadcasts without host scalar indexing. The public `solve` does not reach these kernels: its
-  `init` for `Newton` builds no dense factor from the iterate, and its step factorises with
-  `nothing`, which has methods for static matrices only. The device path is reached only through
-  the internal `dense_factor`, `factorize!!` and `ldiv!!`, which a device-resident R3 `solve` would call.
+  broadcasts without host scalar indexing. The public `solve` reaches these kernels: `init` for
+  `Newton` builds its factor from the iterate with `init_linear`, which `dense_factor` also calls,
+  so a device vector iterate gives a `DeviceLU` or `DeviceQR`.
   `norm2(a)` and `rdot(a, b)` call `sum` without an `init` keyword (`isempty(a) ? zero(R) :
   R(sum(...))`), so `Array` and `Broadcasted` reductions use Base's pairwise `_mapreduce` rather
   than sequential `mapfoldl_impl`. `scripts/spikes/metal_reductions/run.jl` measures `norm2` and
@@ -1692,7 +1713,8 @@ so that a compat-only bump can be told apart from an interface change.
   iterate, so an `MVector` iterate with an `SVector` residual works (K70)), R2 (`solve_batch!`
   kernel), and R3 (no upper bound on `m`, zero heap allocations in `step!!` and `solve!` after
   warm-up on `Array`, and a `JLArray` step with no scalar indexing under `allowscalar(false)`).
-  Implements Pollock and Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`,
+  Implements the length filter and Gram–Schmidt angle filter of Pollock and Rebholz (2023,
+  10.1137/22M1536741) (`c_s`, `κ_bar`,
   defaulting to `1 / sqrt(eps(R))` per iterate element type via `effective_kappa_bar`), trace-scaled
   Tikhonov regularisation on the Gram normal equations $\Delta W^H \Delta W \gamma = \Delta W^H w_k$,
   extrapolation weight and model-decrease safeguards ($\sum_j |\alpha_j| \le M_\alpha$ over the
@@ -1757,20 +1779,25 @@ so that a compat-only bump can be told apart from an interface change.
   without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.
 
 - `Deflated(prob, roots; power = 2, shift = 1)` (exported) wraps a `NonlinearProblem` or a
-  `StationarityProblem` in a shifted norm deflation of the given roots, so that a solve from the
-  same start converges to a root other than those (Farrell, Birkisson and Funke 2015). The
-  residual is `M(x) F(x)` with `M(x) = prod_i (norm(x - r_i)^(-power) + shift)`, the deflated
-  Jacobian is the product-rule exact `M(x) J(x) + F(x) transpose(grad M(x))`, and `jvp!!` reads
-  the same two terms, so no new linear method and no factorisation type is needed; the `Number`,
-  `SVector`, `Array` and `JLArray` storages all run, with an `isbits` R1 wrapper and `0`
-  allocations per solve in R1 and after `init` in R3. `power` and `shift` are stored in
-  `float(real(eltype(first(roots))))`, so `Float32` roots give an all-`Float32` product; a solve
-  needs an iterate of that element type, real, as long as every root, with number roots for a
-  number iterate and, for an array iterate, roots that are arrays of the iterate's own type, and a
-  root with a non-finite entry, a root set of mixed element type, a root set of numbers and
-  vectors mixed, a `power` or `shift` that is not finite and positive, an empty root set, or an
-  inner problem that is neither a `NonlinearProblem` nor a `StationarityProblem` raises an
-  `ArgumentError` at construction, while a `solve_batch!` whose kernel would take a non-`isbits`
+  `StationarityProblem` in a shifted norm deflation of the given roots (Farrell, Birkisson and
+  Funke 2015), so that, for `power > 1/2`, the known simple roots repel the full steps of `Newton`
+  started from the same `x₀`, in R1, R2 and R3 alike. A known root that is not simple, or a simple
+  one under a line search, can still attract the solve, and deflation guarantees neither that
+  another root exists nor that the solve reaches one, so the caller reads the returned status and
+  compares the solution with the known roots. The residual is `M(x) F(x)` with `M(x) = prod_i
+  (norm(x - r_i)^(-power) + shift)`, the deflated Jacobian is the product-rule exact `M(x) J(x) +
+  F(x) transpose(grad M(x))`, and `jvp!!` reads the same two terms, so no new linear method and no
+  factorisation type is needed; the `Number`, `SVector`, `Array` and `JLArray` storages all run,
+  with an `isbits` R1 wrapper and `0` allocations per solve in R1 and after `init` in R3. `power`
+  and `shift` are stored in `float(real(eltype(first(roots))))`, so `Float32` roots give an
+  all-`Float32` product; a solve needs an iterate of that element type, real, as long as every root,
+  with number roots for a number iterate and, for an array iterate, roots that are arrays of the
+  iterate's own type, and a root with a non-finite entry, a root set of mixed element type, a root
+  set of numbers and vectors mixed, a `power` that is not finite and greater than `1/2` (at or below
+  `1/2` a deflated solve can return `SUCCESS` at a known simple root under full steps), a `shift`
+  that is not finite and positive, an empty root set, or an inner problem that is neither a
+  `NonlinearProblem` nor a `StationarityProblem` raises an `ArgumentError` at construction, while a
+  `solve_batch!` whose kernel would take a non-`isbits`
   wrapper by value — the `AbstractVector` root storage of an R3 iterate, for one — raises one at
   the call. A solve on an array iterate raises an `ArgumentError` too when a root is on another
   back end than the iterate — a host `Array` root with a `JLArray` or `MtlArray` iterate, a device

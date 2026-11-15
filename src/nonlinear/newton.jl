@@ -33,7 +33,12 @@ trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), 
   `NONFINITE` and keeps its iterate, and so does a [`LevenbergMarquardt`](@ref) step, whose
   damping parameter that state holds as `NaN`.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
-  `AbstractADType`, or a custom Jacobian callable `J(x, p)`. Adapting `Newton` with
+  `AbstractADType`, or a custom Jacobian callable: `J(x, p)`, which returns the Jacobian, on a
+  value iterate (a `Number` or a `StaticArray`), and `J!(J, x, p)`, which writes it into `J`, on
+  an array. A `Newton` with [`GMRES`](@ref) refuses a callable with an `ArgumentError`, because a
+  GMRES solve forms no Jacobian matrix. `AutoForwardDiff()` writes a dense
+  Jacobian only, so with a sparse `jacobian_prototype` it raises an `ArgumentError` where the state
+  is built; such a problem takes an analytic `J` or an `AutoSparse` back end. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
   `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
 - `refinement::RF`: the refinement setting ([`NoRefinement`](@ref), [`Refinement`](@ref) or
@@ -186,6 +191,16 @@ end
 @inline jacobian_matrix_jvp(::LineSearch, x, Fx, prob) = prototype_jvp(x, Fx, prob)
 @inline jacobian_matrix_jvp(::Static, x, Fx, prob) = nothing
 
+# The own chunked forward mode writes a dense Jacobian only, so a Jacobian preparation of it on a
+# problem with a sparse prototype, whose Jacobian buffer is sparse, is refused here, at `init`.
+@inline function check_jacobian_prep(prep, prob)
+    prep isa ChunkedForwardDiff &&
+        jacobian_prototype(prob) isa SparseArrays.AbstractSparseMatrix &&
+        throw(ArgumentError(
+            "a sparse jacobian_prototype takes no Jacobian from AutoForwardDiff(), the default of Newton's jacobian keyword without an analytic J: it writes a dense Jacobian only. Give the problem an analytic Jacobian J, or set jacobian = AutoSparse(...), which needs SparseMatrixColorings loaded (the GeometricSolversSparseADExt extension), or solve without the jacobian_prototype"))
+    return prep
+end
+
 @inline function newton_ad_preps(m::Newton, prob::AbstractNonlinearProblem, Fx, x, p)
     if is_refining(m.refinement) && m.jacobian isa AbstractADType &&
        dense_ad(m.jacobian) isa AutoFiniteDiff
@@ -193,16 +208,16 @@ end
     end
     has_J = _has_analytic_jacobian(prob)
     if m.jacobian === nothing && !has_J
-        prep = prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+        prep = check_jacobian_prep(prepare_ad(AutoForwardDiff(), prob, Fx, x, p), prob)
         return prep, prep
     elseif m.jacobian isa AbstractADType && !has_J
-        prep = prepare_ad(m.jacobian, prob, Fx, x, p)
+        prep = check_jacobian_prep(prepare_ad(m.jacobian, prob, Fx, x, p), prob)
         return prep, prep
     else
         jacprep = if m.jacobian === nothing
             nothing
         elseif m.jacobian isa AbstractADType
-            prepare_ad(m.jacobian, prob, Fx, x, p)
+            check_jacobian_prep(prepare_ad(m.jacobian, prob, Fx, x, p), prob)
         else
             JacobianFunction(m.jacobian)
         end

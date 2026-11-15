@@ -1,8 +1,8 @@
 """
     Picard(; damping = 1, globalization = Static())
 
-Damped fixed-point (Picard) iteration for a [`NonlinearProblem`](@ref) or a
-[`LeftPreconditionedProblem`](@ref), with search direction
+Damped fixed-point (Picard) iteration for a [`NonlinearProblem`](@ref), a
+[`StationarityProblem`](@ref) or a [`LeftPreconditionedProblem`](@ref), with search direction
 ``d = -\\mathrm{damping}\\,F(x, p)`` and globalization `globalization` ([`Static`](@ref),
 [`Backtracking`](@ref), [`Bisection`](@ref) or [`StrongWolfe`](@ref)).
 
