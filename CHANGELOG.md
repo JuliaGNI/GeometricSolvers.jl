@@ -787,6 +787,24 @@ so that a compat-only bump can be told apart from an interface change.
   harness, and `benchmark/check_midpoint.jl` checks the midpoint residuals against one step of
   `ImplicitMidpoint`. The sweep takes about a minute. No source file changes.
 
+- **`benchmark/` times the comparison and adds four blocks of further cells on the CPU.**
+  `benchmark/timing.jl` times each of the 4661 cells of `correctness.csv` that ran, in one fresh
+  process per package and precision with one Julia thread and `BLAS.set_num_threads(1)`: a
+  warm-up solve, then five runs of a batch of solves that lasts at least 1 ms, with their median
+  and spread. `benchmark/blocks.jl` runs and times four blocks: GeometricSolvers' `Newton` with an
+  LU in `Float32`, with and without `Refinement`, against SIAMFANLEquations' `nsol` with a
+  `Float32` Jacobian store and with MultiPrecisionArrays' `mplu` on the 79 `Float64` rows; the
+  midpoint rows in `Float32` at the tolerance `eps(Float16)`; `Anderson` over `Newton` with factor
+  reuse `k = 1, 2, 3, 5` against that `Newton` alone; and `sparse_bracket_problem` at `N = 125` and
+  `768` with a sparse ForwardDiff Jacobian and Sparspak's LU, a dense Jacobian, and NLsolve with
+  the analytic sparse Jacobian. `benchmark/profiles.jl` prints the performance profiles of
+  iterations, residual evaluations and median time per precision, a DogLeg against Backtracking
+  table and the tables of the blocks, which `benchmark/REPORT.md` holds and `benchmark/verify.jl`
+  recomputes. The environment adds MultiPrecisionArrays, SIAMFANLEquations, Sparspak,
+  SparseMatrixColorings and ADTypes with exact `[compat]` versions, and SparseArrays. `run_cell`
+  takes a keyword `tol`, by default `sqrt(eps(T))`, so the correctness sweep gives the same cells.
+  No source file changes.
+
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is
   `F(u) = A u + 10 u³ - 1` with `A = tridiag(-1, 2, -1) / h²` on `n = 256` interior points. The
