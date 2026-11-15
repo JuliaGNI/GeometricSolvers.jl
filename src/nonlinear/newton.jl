@@ -33,7 +33,10 @@ trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), 
   `NONFINITE` and keeps its iterate, and so does a [`LevenbergMarquardt`](@ref) step, whose
   damping parameter that state holds as `NaN`.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
-  `AbstractADType`, or a custom Jacobian callable `J(x, p)`. `AutoForwardDiff()` writes a dense
+  `AbstractADType`, or a custom Jacobian callable: `J(x, p)`, which returns the Jacobian, on a
+  value iterate (a `Number` or a `StaticArray`), and `J!(J, x, p)`, which writes it into `J`, on
+  an array. A `Newton` with [`GMRES`](@ref) refuses a callable with an `ArgumentError`, because a
+  GMRES solve forms no Jacobian matrix. `AutoForwardDiff()` writes a dense
   Jacobian only, so with a sparse `jacobian_prototype` it raises an `ArgumentError` where the state
   is built; such a problem takes an analytic `J` or an `AutoSparse` back end. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a

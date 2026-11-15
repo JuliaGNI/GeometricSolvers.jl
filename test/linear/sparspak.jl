@@ -3,8 +3,9 @@
 using ADTypes: AutoForwardDiff, AutoSparse, NoSparsityDetector
 using ForwardDiff: ForwardDiff
 using GeometricSolvers
-using GeometricSolvers: Backtracking, Bisection, BlockPartition, DogLeg, LUFactorization,
-                        Newton, NonlinearProblem, Picard, QRFactorization, RAS, SINGULAR,
+using GeometricSolvers: Backtracking, Bisection, BlockPartition, DogLeg, LeftPreconditioned,
+                        LUFactorization, Newton, NonlinearProblem, Picard, QRFactorization,
+                        RAS, RASState, SINGULAR,
                         SUCCESS, SVDFactorization, init, returncode, solve, solve!,
                         solve_batch!
 using LinearAlgebra: Tridiagonal, norm, transpose
@@ -620,14 +621,36 @@ end
     P = sparse(Tridiagonal(ones(n - 1), ones(n), ones(n - 1)))
     x0 = [0.3, 0.5, 0.7, 0.4, 0.6, 0.2]
 
-    # Without an analytic J, the ForwardDiff Jacobian of the global residual cannot fill P
     prob_ad = NonlinearProblem(F!; jacobian_prototype = P, block_residuals = residuals)
-    @test_throws r"^ArgumentError: RAS on a problem with a sparse jacobian_prototype needs an analytic Jacobian J" init(
-        prob_ad, copy(x0), RAS(part), nothing)
-
-    # With an analytic J, the solve matches the solve of the problem without the prototype
     prob_sp = NonlinearProblem(F!, J!; jacobian_prototype = P, block_residuals = residuals)
     prob_dense = NonlinearProblem(F!, J!; block_residuals = residuals)
+    x_ref, st_ref = solve(prob_dense, copy(x0), RAS(part))
+    @test st_ref.code === SUCCESS
+
+    # Without an analytic J, a RAS sweep and a Picard outer under `Static` read no global Jacobian,
+    # so neither builds one: both solve the problem as they solve it without the prototype
+    for m in (RAS(part), LeftPreconditioned(Picard(), RAS(part)))
+        solver = init(prob_ad, copy(x0), m, nothing)
+        ras = solver.state isa RASState ? solver.state : solver.state.problem.state
+        @test ras isa RASState
+        @test ras.G === nothing
+        @test ras.jac_prep === nothing
+        x_ad, st_ad = solve!(solver)
+        @test st_ad.code === SUCCESS
+        @test norm(x_ad - x0, Inf) > 0.1
+        @test norm(F!(similar(x_ad), x_ad, nothing), Inf) < 1e-6
+        @test isapprox(x_ad, x_ref; rtol = 1e-6)
+    end
+
+    # RASPEN, and a Picard outer whose line search reads the slope, read the global Jacobian, whose
+    # ForwardDiff form cannot fill P
+    for m in (LeftPreconditioned(Newton(), RAS(part)),
+        LeftPreconditioned(Picard(; globalization = Backtracking()), RAS(part)))
+        @test_throws r"^ArgumentError: a RASPEN Jacobian on a problem with a sparse jacobian_prototype needs an analytic Jacobian J" init(
+            prob_ad, copy(x0), m, nothing)
+    end
+
+    # With an analytic J, the solve matches the solve of the problem without the prototype
     x_sp, st_sp = solve(prob_sp, copy(x0), RAS(part))
     x_dense, st_dense = solve(prob_dense, copy(x0), RAS(part))
     @test st_sp.code === SUCCESS

@@ -167,9 +167,15 @@ end
 # A preconditioned problem has no analytic Jacobian of `rˡ`, so a `Picard` outer prepares its
 # derivative through `prepare_ad` here, at `init_state`, whatever its globalization reads: with a
 # `RAS` inner that sets the RASPEN flag of the inner state, and every sweep then forms the block
-# factor at the local iterate it returns.
+# factor at the local iterate it returns. The one exception is a `RAS` inner on a problem without a
+# global Jacobian under `Static`, which reads no derivative.
 @inline function picard_jvpprep(m::Picard, prob::LeftPreconditionedProblem, Fx, x, p)
-    return Fx === nothing ? nothing : prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+    Fx === nothing && return nothing
+    # a `Static` step reads no slope, so a `RAS` inner whose problem has no global Jacobian takes
+    # no RASPEN preparation, which would be refused
+    m.globalization isa Static && prob.state isa RASState && raspen_refused(prob.prob) &&
+        return nothing
+    return prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
 end
 
 # `Picard` on the preconditioned problem: the state and the step of `picard.jl`, whose
@@ -184,6 +190,7 @@ function prepare_ad(
     # the state of a [`RAS`](@ref), and of any member that forwards to one — is a RASPEN inner map,
     # and the sweeps whose factors it reads form the block factor at the iterate they return
     if prob.state isa RASState
+        check_raspen(prob.prob)
         prob.state.blocks.raspen = true
         return RASPenPreparation(prob.state)
     end

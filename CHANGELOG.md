@@ -868,9 +868,14 @@ so that a compat-only bump can be told apart from an interface change.
   owner sets only, so each index of `1:n` is written once, and calls the global residual no
   times. The block factors are dense and of block size and take no `jacobian_prototype`, which
   sizes the global Jacobian only: with an analytic `J`, `RAS` solves a problem with a sparse
-  `jacobian_prototype` as it solves the problem without one, and without an analytic `J`, `init`
-  raises an `ArgumentError`, because the ForwardDiff Jacobian of the global residual writes a dense
-  matrix only. A sweep forms the block factor at the local iterate it returns only where a RASPEN
+  `jacobian_prototype` as it solves the problem without one. Without an analytic `J`, a plain `RAS`
+  sweep and `LeftPreconditioned(Picard(), RAS(...))` under the `Static` globalization solve such a
+  problem too, because they read no global Jacobian, so the state builds neither the global
+  Jacobian buffer nor its ForwardDiff preparation. A reader of the RASPEN product,
+  `LeftPreconditioned(Newton(), RAS(...))` or a `Picard` outer with a line search, raises an
+  `ArgumentError` at `init` on such a problem, because the ForwardDiff Jacobian of the global
+  residual writes a dense matrix only, and a RASPEN product called directly on such a state raises
+  the same error. A sweep forms the block factor at the local iterate it returns only where a RASPEN
   preparation reads the block factors, so RASPEN's product reads the block matrix at the local
   solution and a `RAS` or NKS-RAS sweep pays for no extra factor. A block factor that no complete
   sweep has formed fails closed, and a product on such a state raises an `ArgumentError`; an inner
