@@ -314,7 +314,7 @@ so that a compat-only bump can be told apart from an interface change.
   normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
   `StaticSVD`, `jacobi_eigen`, `DenseLU`, `DenseQR`, `DenseSVD`, `DeviceLU`, `DeviceQR`,
   `DeviceSVD`, rank-deficient SVD minimum-norm `ldiv!!`, and scaled mixed-precision `ldiv!!`
-  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
+  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2022).
   `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
   `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
   group by group: the full-rank LU, QR and SVD solves and their singular values over `ELTYPES`,
@@ -1394,8 +1394,8 @@ so that a compat-only bump can be told apart from an interface change.
   factorisations' column updates are parallel over the trailing matrix. In mixed
   precision (`TF !== T`), `ldiv!!` converts and scales the right-hand side and the step by
   broadcasts without host scalar indexing. The public `solve` reaches these kernels: `init` for
-  `Newton` builds its factor with `dense_factor` from the iterate, so a device vector iterate
-  gives a `DeviceLU` or `DeviceQR`.
+  `Newton` builds its factor from the iterate with `init_linear`, which `dense_factor` also calls,
+  so a device vector iterate gives a `DeviceLU` or `DeviceQR`.
   `norm2(a)` and `rdot(a, b)` call `sum` without an `init` keyword (`isempty(a) ? zero(R) :
   R(sum(...))`), so `Array` and `Broadcasted` reductions use Base's pairwise `_mapreduce` rather
   than sequential `mapfoldl_impl`. `scripts/spikes/metal_reductions/run.jl` measures `norm2` and
@@ -1794,8 +1794,7 @@ so that a compat-only bump can be told apart from an interface change.
   problems it solves, as its methods do. The `Anderson` and `Broyden` docstrings date Pollock and
   Rebholz to 2023, the year of their Crossref record, and give the full reference with its DOI
   (10.1137/22M1536741). The references of the stability page carry their DOIs, and Kelley's
-  *Solving Nonlinear Equations with Iterative Methods* is dated 2022, the print year of its record.
-  In this section, the vendor-extension entry states the `[compat]` bounds of `Project.toml`
-  (`CUDA = "6.5.1 - 6"`, `Metal = "1.12"`), the entry of the R3 `KernelAbstractions` linear
-  solvers states that the public `solve` reaches them and how their triangular solves run, and
-  the two line-search entries carry the audit labels F14 and F13 in the right order.
+  *Solving Nonlinear Equations with Iterative Methods* is dated 2022, the print year of its
+  record, there and in the `ldiv!!` docstring. The `Deflated` docstring says that the known roots
+  repel `Newton`, not that it converges to another root: deflation guarantees neither that
+  another root exists nor that the solve reaches one, so the caller reads the status.

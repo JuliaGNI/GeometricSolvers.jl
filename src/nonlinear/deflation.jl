@@ -29,10 +29,12 @@ and whose Jacobian is the product rule of that product,
 J_{\\mathrm{def}}(x) = M(x) J(x) + F(x) \\nabla M(x)^\\top,
 ```
 
-so that [`Newton`](@ref) started from the same `x₀` converges to a root other than `r₁, …, r_k`
+so that the known roots `r₁, …, r_k` repel [`Newton`](@ref) started from the same `x₀`
 (Farrell, Birkisson and Funke 2015, *Deflation techniques for finding distinct solutions of
 nonlinear partial differential equations*). Near a simple root `‖M(x) F(x)‖` grows like
-`‖x - rᵢ‖^{1-p}`, which is what pushes the iterate away from it.
+`‖x - rᵢ‖^{1-p}`, which is what pushes the iterate away from it. Deflation does not guarantee
+that another root exists or that the solve reaches one: `F(x) = x - 1` deflated at `1` from
+`x₀ = 0.6` ends with `MAXITERS`. The caller reads the returned status.
 
 The steps and the line search take the deflated residual, but the stopping test of
 [`Options`](@ref) reads the inner one: `status.fnorm` is `‖F(x)‖`, `f_abstol` bounds it, and
