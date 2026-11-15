@@ -23,6 +23,7 @@ Three packages are left out:
 | `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows |
 | `check_midpoint.jl` | checks each midpoint residual against one step of `ImplicitMidpoint` |
 | `trace.jl <set> <problem> <start> <eltype> <column> [outfile]` | writes the iteration trace of one row |
+| `devices.jl <backend> <machine> <dir>` | runs the device rows of one machine and writes `<dir>/devices-<machine>.csv` and `.txt` (section Y3) |
 
 ## Y1 · Correctness on the CPU
 
@@ -667,3 +668,212 @@ differ in the Jacobian source and the linear solver:
 | nlsolve-sparse | 768 | Float64 | ran | converged | 3 | 4 | 0.00246 |
 | simplesolvers | 768 | Float64 | no sparse path |  |  |  |  |
 | simplenonlinearsolve | 768 | Float64 | no sparse path |  |  |  |  |
+
+## Y3 · Device rows
+
+This section runs Y1's rows in the batched R2 solver on a device, times R2 throughput on the §10.E
+problem, and runs the §10.E problem in R3 form with the device LU and a mixed-precision Newton
+step. `devices.jl <backend> <machine> <dir>` runs one machine and writes
+`devices-<machine>.csv`, one line per cell, and `devices-<machine>.txt`, the conditions of the run.
+The machines are the host in the cpu mode (`cpu cpu`) and four cards, each run by hand: the M4
+Max's GPU (`metal mac`), the DGX Spark (`cuda spark`), the RTX 4090 (`cuda rtx4090`) and the
+RX 7900 XTX (`rocm rx7900xtx`). Each table states the conditions of its comparison; a time is a
+measurement of one run on one machine, and it names no package or method as faster.
+
+### Y3 · Method
+
+- **The environment.** `benchmark/Project.toml` adds KernelAbstractions, StaticArrays and
+  JLArrays with the exact versions 0.10.7, 1.9.25 and 0.5.0. The vendor package comes only from
+  the environment `test/gpu/<backend>`, stacked under `benchmark/` by
+  `JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib"`, and only its backend loads it; the cpu
+  mode loads none. The cpu mode runs the R2 rows and the grid with KernelAbstractions' `CPU()`
+  backend on host arrays, which compiles each kernel through POCL, so a kernel that allocates on
+  the heap fails there as on a device; it runs the R3 and LU rows on `JLArray`s.
+- **The process.** Each machine runs in one cold process with `--startup-file=no` and
+  `--threads=auto`, and `devices.jl` calls `BLAS.set_num_threads(1)` first. The `.txt` records the
+  date, the `uptime` with the load of the machine, the Julia version, the threads of the run, the
+  BLAS threads, the device, the driver, the band and the versions of the packages.
+- **The R2 rows.** Each of Y1's 79 `Float32` rows runs as one batch of 64 copies of its start.
+  The residual runs out of place on an `SVector` through an adapter that copies the iterate into
+  an `MVector`, calls the row's in-place residual with `@inline` at the call site, and returns an
+  `SVector`; without the inlined call the `MVector` reaches the heap, which a kernel cannot
+  allocate on `CPU()`. The midpoint rows use residuals that hold the initial state as `SVector`s
+  and take GeometricProblems' parameters as `p`. GeometricSolvers runs `solve_batch!` with a
+  status vector in the columns `Newton Static LU`, `Newton Backtracking LU`, `Newton DogLeg LU` and
+  `Picard Backtracking`, with `f_abstol = √eps(Float32)`, `f_reltol = 0` and
+  `max_iterations = 200`. SimpleNonlinearSolve runs `SimpleNewtonRaphson` in a KernelAbstractions
+  kernel, one work-item per system, with `abstol = √eps(Float32)` and `maxiters = 200`, in
+  `Newton Static LU` only; its other cells are `no method`. SimpleSolvers and NLsolve have no
+  device path. Each cell has a reference: the host R1 `solve` of the same adapter, method and
+  start, or SimpleNonlinearSolve's host `solve` on an `SVector`. `success` is the package's code of
+  success with `‖F(x)‖∞ ≤ √eps(Float32)`, measured on the host at system 1's iterate. The verdict is
+  `agree` when both succeed and `‖x − x_host‖∞ ≤ √eps(T) · max(1, ‖x_host‖∞)`, `different root`
+  when both succeed beyond it, and otherwise `device fails`, `host fails` or `both fail`.
+  `copies_same` counts the copies within that bound of system 1. The comment holds the host's
+  `‖x‖∞` and `‖F‖∞`, from which `verify.jl` recomputes the verdict.
+- **The band.** A row whose dimension is above the R1 size band of its backend, 24 on Metal and
+  CUDA and 8 on ROCm, is not launched: `above band <band>`. The cpu mode has no band.
+- **A launch that throws.** A kernel that does not compile (an `InvalidIRError`, a `KernelError`
+  or POCL's `Failed to compile program`) is `no compile: <first line>`; a kernel that throws (a
+  `KernelException`, or AMDGPU's `GPU Kernel Exception`) is `kernel error: <first line>`. The host
+  solve still runs for both. Any other exception ends the run with the cell named.
+- **The Metal heap.** Metal.jl gives a kernel's `malloc` a heap of 1 MiB per process with no free.
+  On Metal the `.txt` records the heap counter before and after each R2 row, and the run continues
+  in a new process when the counter passes the size, from the same row when the row failed on a
+  heap that earlier rows used and from the next row otherwise. The other backends record `-`.
+- **The grid.** The §10.E problem in R1 form, `F(x) = A x + sin.(x) / 10 − b` with
+  `A = 2I + R`, off-diagonal row sums of `R` at most 1/2, one `A` per `n`, a per-system `x*` in
+  `[-1, 1]ⁿ` from a fixed seed, `b` built in `Float32` on the host and passed as `PerSystem(B)`,
+  from `x₀ = 0`, for `n_sys` from 10³ to 10⁷ systems and `n` from 2 to 16. The variants are
+  `gs-newton` (`Newton()`), `gs-reuse4` (`Newton(; reuse = 4)`), `gs-backtracking`
+  (`Newton(; globalization = Backtracking())`), `sns` (`SimpleNewtonRaphson` in a kernel) and
+  `host-r1` (a `Threads.@threads` loop over the host R1 `solve` with `Newton()`). `success` counts
+  the systems that succeed, and `fnorm_inf` is the largest `‖F(x)‖∞`.
+- **The timing.** Each timed cell makes one warm-up launch, then five runs. Each launch starts from
+  a fresh copy of the starts, made before the clock starts, and each run ends with
+  `KernelAbstractions.synchronize` before the clock stops. Where one launch lasts less than 1 ms, a
+  run repeats it `k` times, `k` the smallest power of two for which two successive runs each last
+  at least 1 ms, and a time is the run's time divided by `k`. `median_s` is the median of the five
+  runs, `spread` is `(max − min) / median`, and `compile_s` is the warm-up launch's time minus the
+  median, the time of compilation apart from the runs. A grid cell whose time, projected as ten
+  times the median of the cell at a tenth of its systems for each of six launches, exceeds 30
+  minutes is `not run: time cap`, and so is every larger `n_sys` of its `n` and variant. The
+  throughput is `n_sys / median_s`, solves per second.
+- **The R3 rows.** The §10.E residual `y .= A*x .+ sin.(x)./10 .- b` and its Jacobian
+  `A + diag(cos.(x))/10`, with broadcasts only, for `n = 256`, 1024 and 4096, solved with
+  `Newton(; globalization = Backtracking())`, `f_abstol = √eps(T)`, `f_reltol = 0` and
+  `max_iterations = 200` from `x₀ = 0`. `device` is `Float32` on the device with
+  `LUFactorization()` as `solve` dispatches it: MPS on Metal, cuSOLVER on CUDA, and the package's
+  own KernelAbstractions LU on ROCm and on `JLArray`. `host` is `Float32` with LAPACK.
+  `device-mixed` is a `Float64` solve on the device with `LUFactorization(Float32)` and
+  `NoRefinement()`, `device-mixed-refine` the same with `Refinement()`, `device-f64` a `Float64`
+  solve with `LUFactorization()`, and `host-f64` a `Float64` solve on the host. `device` is
+  compared with `host`, and the three `Float64` device variants with `host-f64`. Device `Float64`
+  is never timed (decision 6): `device-f64` is a correctness row. On Metal the three `Float64`
+  device variants are not run, because Metal has no `Float64` and the package has no Metal
+  hybrid (decision 15).
+- **The LU rows.** One factorisation and one solve, timed together, of `J = A + I/10` and `b` of
+  the §10.E problem in `Float32` on the device, from `init_linear(LUFactorization(), nothing, b)`.
+  `dispatched` is the path of `solve`, `factorize!!` and `ldiv!!`; `own-ka` calls the package's
+  internal `ka_factorize_lu!` and `ka_lu_backsolve!`, which no option of `solve` selects while a
+  vendor extension's LU applies: the path is internal, not user-selectable. Both are compared with
+  the host LAPACK solution of `J d = b`.
+- **The cpu mode.** The R2 rows run in full, the grid runs `n_sys ∈ {10³, 10⁴}` × `n ∈ {2, 4, 8}`,
+  and the R3 and LU rows `n = 256` and 1024; every other cell is `not run: cpu mode`.
+
+### Y3 · Cards and versions
+
+One line per machine, from its `.txt`.
+
+| machine | backend | device | driver | julia | threads | packages |
+|:--|:--|:--|:--|:--|--:|:--|
+| cpu | cpu | host apple-m4 | none | 1.13.4 | 16 | GeometricSolvers 0.1.0, KernelAbstractions 0.10.7, StaticArrays 1.9.25, SimpleNonlinearSolve 2.14.6, JLArrays 0.5.0 |
+| mac | metal | pending: no CSV | — | — | — | — |
+| spark | cuda | pending: no CSV | — | — | — | — |
+| rtx4090 | cuda | pending: no CSV | — | — | — | — |
+| rx7900xtx | rocm | pending: no CSV | — | — | — | — |
+
+The cpu run's `.txt` records the load averages 6.84, 5.55 and 4.91 at its start.
+
+### Y3 · R2 correctness
+
+Per machine, column and package: the cells that ran, the device successes, and the count of each
+verdict against the host R1 solve.
+
+| machine | column | package | ran | successes | agree | different root | device fails | host fails | both fail |
+|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|
+| cpu | Newton Static LU | GeometricSolvers | 59 | 53 | 53 | 0 | 1 | 0 | 5 |
+| cpu | Newton Static LU | SimpleNonlinearSolve | 58 | 52 | 52 | 0 | 0 | 0 | 6 |
+| cpu | Newton Backtracking LU | GeometricSolvers | 59 | 50 | 50 | 0 | 0 | 0 | 9 |
+| cpu | Newton DogLeg LU | GeometricSolvers | 59 | 53 | 53 | 0 | 0 | 0 | 6 |
+| cpu | Picard Backtracking | GeometricSolvers | 59 | 18 | 18 | 0 | 0 | 0 | 41 |
+
+### Y3 · R2 throughput
+
+Per machine, `n` and variant: solves per second, `n_sys / median_s`, at each `n_sys`; `—` for a
+cell that did not run. The cpu mode runs the grid on the host's cores through `CPU()`, so its
+throughput is no device throughput.
+
+| machine | n | variant | 10³ | 10⁴ | 10⁵ | 10⁶ | 10⁷ |
+|:--|--:|:--|--:|--:|--:|--:|--:|
+| cpu | 2 | gs-newton | 2.60e+07 | 5.40e+07 | — | — | — |
+| cpu | 2 | gs-reuse4 | 2.44e+07 | 6.39e+07 | — | — | — |
+| cpu | 2 | gs-backtracking | 2.77e+07 | 5.58e+07 | — | — | — |
+| cpu | 2 | sns | 2.42e+07 | 5.47e+07 | — | — | — |
+| cpu | 2 | host-r1 | 7.46e+06 | 4.10e+07 | — | — | — |
+| cpu | 4 | gs-newton | 1.83e+07 | 2.69e+07 | — | — | — |
+| cpu | 4 | gs-reuse4 | 1.94e+07 | 2.61e+07 | — | — | — |
+| cpu | 4 | gs-backtracking | 1.75e+07 | 2.92e+07 | — | — | — |
+| cpu | 4 | sns | 1.84e+07 | 3.19e+07 | — | — | — |
+| cpu | 4 | host-r1 | 6.84e+06 | 2.45e+07 | — | — | — |
+| cpu | 8 | gs-newton | 6.87e+06 | 9.98e+06 | — | — | — |
+| cpu | 8 | gs-reuse4 | 9.49e+06 | 1.21e+07 | — | — | — |
+| cpu | 8 | gs-backtracking | 9.37e+06 | 1.00e+07 | — | — | — |
+| cpu | 8 | sns | 9.87e+06 | 1.11e+07 | — | — | — |
+| cpu | 8 | host-r1 | 5.81e+06 | 9.78e+06 | — | — | — |
+
+### Y3 · R3 rows
+
+Per machine, `n` and variant: the status, the iterations, the success and `median_s`, in seconds;
+`—` for a cell that is not timed. On `cpu` the device is a `JLArray`, whose kernels run on the
+host.
+
+| machine | n | variant | status | iterations | success | median_s |
+|:--|--:|:--|:--|--:|:--|--:|
+| cpu | 256 | device | ran | 2 | true | 0.00685 |
+| cpu | 256 | host | ran | 2 | true | 0.000501 |
+| cpu | 256 | device-mixed | ran | 3 | true | 0.0134 |
+| cpu | 256 | device-mixed-refine | ran | 3 | true | 0.0115 |
+| cpu | 256 | device-f64 | ran | 3 | true | — |
+| cpu | 256 | host-f64 | ran | 3 | true | 0.00118 |
+| cpu | 1024 | device | ran | 2 | true | 0.0795 |
+| cpu | 1024 | host | ran | 2 | true | 0.0174 |
+| cpu | 1024 | device-mixed | ran | 3 | true | 0.132 |
+| cpu | 1024 | device-mixed-refine | ran | 3 | true | 0.115 |
+| cpu | 1024 | device-f64 | ran | 3 | true | — |
+| cpu | 1024 | host-f64 | ran | 3 | true | 0.0467 |
+| cpu | 4096 | device | not run: cpu mode | - | - | — |
+| cpu | 4096 | host | not run: cpu mode | - | - | — |
+| cpu | 4096 | device-mixed | not run: cpu mode | - | - | — |
+| cpu | 4096 | device-mixed-refine | not run: cpu mode | - | - | — |
+| cpu | 4096 | device-f64 | not run: cpu mode | - | - | — |
+| cpu | 4096 | host-f64 | not run: cpu mode | - | - | — |
+
+#### Y3 · LU rows
+
+Per machine and `n`: `median_s` of one factorisation and one solve by each path, and their ratio
+`own-ka / dispatched`. On `cpu` both paths run the package's own KernelAbstractions LU on a
+`JLArray`, and `dispatched` adds the scaling of the right-hand side of `ldiv!!`.
+
+| machine | n | own-ka | dispatched | own-ka / dispatched |
+|:--|--:|--:|--:|--:|
+| cpu | 256 | 0.00252 | 0.00389 | 0.648 |
+| cpu | 1024 | 0.0370 | 0.0374 | 0.989 |
+
+### Y3 · Not run
+
+Each status other than `ran`, per machine and kind, with its count of cells and its cause.
+
+| machine | kind | status | count | cause |
+|:--|:--|:--|--:|:--|
+| cpu | r2 | kernel error: KernelException: exception thrown during kernel execution on device cpu | 81 | the residual allocates on the heap in the kernel: standard problems 1, 8, 10 and 14 at all three starts and the four Lotka–Volterra midpoint rows, 16 rows in five launched cells each; and SimpleNewtonRaphson's `SingularException` at the singular start of standard problem 12 at `100u0`, where GeometricSolvers returns `SINGULAR` |
+| cpu | r2 | no device path | 632 | SimpleSolvers and NLsolve have no device path |
+| cpu | r2 | no method: SimpleNewtonRaphson runs in Newton Static LU only | 237 | SimpleNonlinearSolve has one device method, paired with `Newton Static LU` |
+| cpu | r2 | no compile: KernelError: GPU compilation of MethodInstance for GeometricSolvers.gpu__solve_kernel!(::KernelAbstractions.CompilerMetadata{KernelAbstractions.NDIteration.Dyna… | 8 | the two DoublePendulum rows: GeometricProblems' vector fields are closures that are not `isbits` |
+| cpu | r2 | no compile: KernelError: GPU compilation of MethodInstance for gpu_sns_kernel!(::KernelAbstractions.CompilerMetadata{KernelAbstractions.NDIteration.DynamicSize; KernelAbstr… | 2 | the two DoublePendulum rows, as above |
+| cpu | r2 | no compile: InvalidIRError: compiling MethodInstance for GeometricSolvers.gpu__solve_kernel!(::KernelAbstractions.CompilerMetadata{KernelAbstractions.NDIteration.DynamicSiz… | 6 | the two TodaLattice rows (n = 32) in the three Newton columns |
+| cpu | r2 | no compile: InvalidIRError: compiling MethodInstance for gpu_sns_kernel!(::KernelAbstractions.CompilerMetadata{KernelAbstractions.NDIteration.DynamicSize; KernelAbstraction… | 2 | the two TodaLattice rows (n = 32) |
+| cpu | r2 | no compile: ErrorException: Failed to compile program | 2 | the two TodaLattice rows (n = 32) in `Picard Backtracking`: POCL's compile failure |
+| cpu | grid | not run: cpu mode | 120 | the cpu mode runs 30 of the 150 grid cells |
+| cpu | r3 | not run: cpu mode | 6 | the cpu mode runs `n = 256` and 1024 |
+| cpu | lu | not run: cpu mode | 2 | the cpu mode runs `n = 256` and 1024 |
+
+### Y3 · Explanations
+
+One line per `different root`, `device fails` and `host fails` verdict, from a host replay of the
+cell with `max_iterations = j` for `j` from 1 to 200 beside the device's batch with the same
+limit, and the device's iterations and status.
+
+| machine | kind | set | problem | start | variant | package | verdict | explanation |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| cpu | r2 | standard | 11 | 10u0 | Newton Static LU | GeometricSolvers | device fails | The undamped Newton step amplifies a rounding difference between the kernel, which POCL compiles, and the host solve: after one step the iterates differ by 4.2e-7, after three by 2.9e-3, and after ten by 314, the size of the root. The host reaches the root, `‖x‖∞ = 314`, with `SUCCESS` in 67 iterations; the device stops with `MAXITERS` after 200 iterations at `‖F‖∞ = 1.52`. |
