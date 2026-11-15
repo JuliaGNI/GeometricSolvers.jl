@@ -6,9 +6,19 @@
 #   P3  which dense LU runs for `LUFactorization()` on a device array with the vendor extension
 #       loaded, whether a seam selects the own KA LU, and the §10.E residual in R3 form, n = 256
 #
-# Usage, from the repository root, with <backend> one of cpu, metal, cuda, rocm:
+# Usage, from the repository root, with <backend> one of cpu, metal, cuda, rocm and <pass> one of
+# p1-plain, p1-inline, p2, p3, and optionally `first:last`, the row lines of a pass by their
+# position among its 79 lines (1-based, in the order of the output):
 #   JULIA_LOAD_PATH="@:$PWD/test/gpu/<backend>:@stdlib" \
-#       julia --startup-file=no --threads=1 --project=benchmark benchmark/y3_premises.jl <backend>
+#       julia --startup-file=no --threads=1 --project=benchmark benchmark/y3_premises.jl <backend> <pass> [first:last]
+#
+# Run each pass in a process of its own. A kernel that allocates draws on the device malloc heap,
+# and on Metal (Metal.jl 1.12) that heap is 1 MiB per device and process, with no `free` and no
+# reset: once it is full, every later allocating kernel of the process fails. On Metal each row
+# line records the heap counter before and after the row, and when a row fills the heap the script
+# continues the pass in a new process with an empty heap, from that row again if it failed on a
+# heap that earlier rows had used, else from the next row. A row that fails on an empty heap keeps
+# its outcome.
 #
 # The vendor package comes only from the stacked `test/gpu/<backend>` environment (decision Y3-11)
 # and is loaded only for its backend; `cpu` needs none and runs KA's `CPU()` on host arrays, which
@@ -160,17 +170,40 @@ function sns_batch!(X, f, p)
     return Dict(k => count(==(k), names) for k in unique(names))
 end
 
-# P1 and P2: one batch of `COPIES` copies of each row's start.
-function probe_rows!(label, solver, inline, rows, todevice, band)
+# The device malloc heap of the backend: its counter in bytes and its size, or `nothing` where the
+# backend's heap has no counter to read. Metal.jl keeps the counter in the first 4 bytes of a
+# shared buffer, and the counter grows past the size once an allocation fails.
+function heap_counter(vendor)
+    (vendor === nothing || nameof(vendor) !== :Metal) && return nothing
+    buf = vendor.malloc_buffer(vendor.device())
+    return Int(unsafe_load(convert(Ptr{UInt32}, vendor.MTL.contents(buf))))
+end
+
+function heap_size(vendor)
+    vendor === nothing || nameof(vendor) !== :Metal ? nothing : vendor.MALLOC_BUF_SIZE
+end
+
+# P1 and P2: one batch of `COPIES` copies of each row's start. `lines` are the positions of `rows`
+# among the 79. Where the backend's heap has a counter, a row that fills the heap ends the process's
+# share of the pass, and the function returns the line to continue from in a fresh process: the
+# same line when the row failed on a heap that earlier rows had used, so that it runs again on an
+# empty heap, else the next line. Otherwise it returns `nothing`.
+function probe_rows!(label, solver, inline, rows, lines, todevice, band, vendor)
     adapter = inline ? "inline" : "plain"
     println(label,
-        ",adapter,set,problem,start,n,above_band,params_isbits,adapter_isbits,rowF_isbits,outcome,detail,max_Finf")
+        ",adapter,set,problem,start,n,above_band,params_isbits,adapter_isbits,rowF_isbits,outcome,detail,max_Finf,heap_before,heap_after")
     tally = Dict("ran" => 0, "no compile" => 0, "error" => 0)
-    for (set, problem, start, x0, f!, p, rowF_isbits) in rows
+    limit = heap_size(vendor)
+    fresh = heap_counter(vendor)
+    show_heap(h) = h === nothing ? "-" : string(h)
+    next = nothing
+    done = 0
+    for (k, (set, problem, start, x0, f!, p, rowF_isbits)) in enumerate(rows)
         n = length(x0)
         F = MAdapter{inline}(f!)
         above = band === nothing ? "-" : string(n > band)
         kind, detail, res = "ran", "", ""
+        before = heap_counter(vendor)
         try
             X = todevice(fill(SVector{n, T}(x0), COPIES))
             detail = solver(X, F, p)
@@ -178,13 +211,27 @@ function probe_rows!(label, solver, inline, rows, todevice, band)
         catch e
             kind, detail = outcome(e)
         end
+        after = heap_counter(vendor)
+        if limit !== nothing && after >= limit && kind != "ran" && before > fresh
+            next = lines[k]
+            break
+        end
         tally[kind] += 1
+        done += 1
         println(label, ",", adapter, ",", set, ",\"", problem, "\",", start, ",", n, ",",
             above, ",", isbits(p), ",", isbits(F), ",", rowF_isbits, ",", kind, ",", detail,
-            ",", res)
+            ",", res, ",", show_heap(before), ",", show_heap(after))
+        if limit !== nothing && after >= limit && k < length(rows)
+            next = lines[k + 1]
+            break
+        end
     end
-    println(label, " (", adapter, " adapter): ", length(rows), " rows, ", tally["ran"],
-        " ran, ", tally["no compile"], " no compile, ", tally["error"], " error")
+    span = done == 0 ? "no lines" : "lines $(first(lines)):$(lines[done])"
+    println(label, " (", adapter, " adapter): ", span, ", ", tally["ran"], " ran, ",
+        tally["no compile"], " no compile, ", tally["error"], " error",
+        next === nothing ? "" :
+        "; the device heap is full, the pass continues in a new process from line $next")
+    return next
 end
 
 function p1_solver(X, F, p)
@@ -268,7 +315,9 @@ function probe_lu(name, todevice, vendor)
         mf.module, " (", mf.file, ":", mf.line, "); ", seam)
 end
 
-function probe_all(name, vendor, todevice, band)
+const PASSES = ("p1-plain", "p1-inline", "p2", "p3")
+
+function probe_all(name, vendor, todevice, band, pass, selection)
     sh(cmd) =
         try
             strip(read(cmd, String))
@@ -281,7 +330,8 @@ function probe_all(name, vendor, todevice, band)
     catch e
         "unknown: $(nameof(typeof(e)))"
     end
-    println("Y3 premises -- backend = ", name)
+    println("Y3 premises -- backend = ", name, ", pass = ", pass,
+        selection === nothing ? "" : ", rows $(first(selection)):$(last(selection))")
     println("date: ", sh(`date -u`))
     println("uptime: ", sh(`uptime`))
     println("Julia ", VERSION, ", threads ", Threads.nthreads())
@@ -291,26 +341,43 @@ function probe_all(name, vendor, todevice, band)
     println("packages: ", join(("$(nameof(m)) $(pkgversion(m))" for m in mods), ", "),
         vendor === nothing ? ", no vendor package" :
         ", $(nameof(vendor)) $(pkgversion(vendor))")
+    pass == "p3" && return probe_lu(name, todevice, vendor)
     rows = probe_rows()
     count(r -> r[1] == "standard", rows) == 67 &&
     count(r -> r[1] == "midpoint", rows) == 12 ||
         error("expected 67 standard and 12 midpoint rows")
-    probe_rows!("P1", p1_solver, false, rows, todevice, band)
-    probe_rows!("P1", p1_solver, true, rows, todevice, band)
-    probe_rows!("P2", p2_solver, true, rows, todevice, band)
-    probe_lu(name, todevice, vendor)
+    lines = selection === nothing ? (1:length(rows)) : selection
+    label, solver, inline = pass == "p1-plain" ? ("P1", p1_solver, false) :
+                            pass == "p1-inline" ? ("P1", p1_solver, true) :
+                            ("P2", p2_solver, true)
+    next = probe_rows!(label, solver, inline, rows[lines], lines, todevice, band, vendor)
+    next === nothing && return nothing
+    # A fresh process gets an empty device heap; it inherits stdout and JULIA_LOAD_PATH.
+    flush(stdout)
+    run(`$(Base.julia_cmd()) --startup-file=no --threads=1 --project=$(Base.active_project()) $(@__FILE__) $name $pass $next:$(last(lines))`)
+    return nothing
 end
 
-function main(name)
+function parse_selection(s)
+    parts = split(s, ':')
+    length(parts) == 2 || error("rows must be first:last; got $s")
+    a, b = parse.(Int, parts)
+    1 <= a <= b <= 79 || error("rows must lie in 1:79; got $s")
+    return a:b
+end
+
+function main(name, pass, selection)
     haskey(BACKENDS, name) ||
         error("backend must be one of $(join(sort!(collect(keys(BACKENDS))), ", ")); got $name")
+    pass in PASSES || error("pass must be one of $(join(PASSES, ", ")); got $pass")
     package, array, band = BACKENDS[name]
-    package === nothing && return probe_all(name, nothing, identity, band)
+    package === nothing && return probe_all(name, nothing, identity, band, pass, selection)
     Core.eval(Main, Expr(:using, Expr(:., package)))
     vendor = Base.invokelatest(getfield, Main, package)
     A = Base.invokelatest(getfield, vendor, array)
-    Base.invokelatest(probe_all, name, vendor, x -> A(x), band)
+    Base.invokelatest(probe_all, name, vendor, x -> A(x), band, pass, selection)
 end
 
-length(ARGS) == 1 || error("usage: y3_premises.jl <cpu|metal|cuda|rocm>")
-main(ARGS[1])
+length(ARGS) in (2, 3) ||
+    error("usage: y3_premises.jl <cpu|metal|cuda|rocm> <p1-plain|p1-inline|p2|p3> [first:last]")
+main(ARGS[1], ARGS[2], length(ARGS) == 3 ? parse_selection(ARGS[3]) : nothing)
