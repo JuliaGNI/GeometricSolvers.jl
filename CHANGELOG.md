@@ -11,6 +11,10 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **The header of `.github/workflows/Metal.yml` names the command that installs `CI.yml`.** It
+  pointed to an installer script that does not exist, and to the directories of a local checkout.
+  The workflow itself is unchanged.
+
 - **`BlockEliminated` and `VariableProjection` for single-system block elimination and separable
   least-squares variable projection.** Both problem wrappers are exported and subtype
   `AbstractNonlinearProblem`. `BlockEliminated(prob::Union{NonlinearProblem, StationarityProblem},
