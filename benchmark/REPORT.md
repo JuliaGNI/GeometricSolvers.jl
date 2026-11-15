@@ -691,9 +691,10 @@ measurement of one run on one machine, and it names no package or method as fast
   the heap fails there; it runs the R3 and LU rows on `JLArray`s.
 - **The process.** Each machine runs in a cold process with `--startup-file=no` and
   `--threads=auto`, and `devices.jl` calls `BLAS.set_num_threads(1)` first; on Metal, further
-  processes continue the R2 rows (*The Metal heap* below). The `.txt` records the
-  date, the `uptime` with the load of the machine, the Julia version, the threads of the run, the
-  BLAS threads, the device, the driver, the band and the versions of the packages.
+  processes continue the R2 rows (*The Metal heap* below). The `.txt` records, read before the
+  first row, the date, the `uptime` with the load of the machine, the Julia version, the threads
+  of the run, the BLAS threads, the device (on a card, the name that the vendor package gives),
+  the driver, the band and the versions of the packages.
 - **The R2 rows.** Each of Y1's 79 `Float32` rows runs as one batch of 64 copies of its start.
   The residual runs out of place on an `SVector` through an adapter that copies the iterate into
   an `MVector`, calls the row's in-place residual with `@inline` at the call site, and returns an
@@ -710,10 +711,12 @@ measurement of one run on one machine, and it names no package or method as fast
   success with `‖F(x)‖∞ ≤ √eps(Float32)`, measured on the host at system 1's iterate. The verdict is
   `agree` when both succeed and `‖x − x_host‖∞ ≤ √eps(T) · max(1, ‖x_host‖∞)`, `different root`
   when both succeed beyond it, and otherwise `device fails`, `host fails` or `both fail`.
-  `copies_same` counts the copies within that bound of system 1. The comment holds the host's
+  `copies_same` counts the copies within that bound of system 1; no copy is within the bound of an
+  iterate that holds a `NaN`, so such a batch counts 0. The comment holds the host's
   `‖x‖∞` and `‖F‖∞`, from which `verify.jl` recomputes the verdict.
 - **The band.** A row whose dimension is above the R1 size band of its backend, 24 on Metal and
-  CUDA and 8 on ROCm, is not launched: `above band <band>`. The cpu mode has no band.
+  CUDA and 8 on ROCm, is not launched: `above band <band>`. The cpu mode has no band. In the grid
+  the band limits the device variants; `host-r1` runs on the host and has no band.
 - **A launch that throws.** A kernel that does not compile (an `InvalidIRError`, a `KernelError`
   or POCL's `Failed to compile program`) is `no compile: <first line>`; a kernel that throws (a
   `KernelException`, or AMDGPU's `GPU Kernel Exception`) is `kernel error: <first line>`. The host
@@ -738,7 +741,8 @@ measurement of one run on one machine, and it names no package or method as fast
   runs, `spread` is `(max − min) / median`, and `compile_s` is the warm-up launch's time minus the
   median, the time of compilation apart from the runs. A grid cell whose time, projected as ten
   times the median of the cell at a tenth of its systems for each of six launches, exceeds 30
-  minutes is `not run: time cap`, and so is every larger `n_sys` of its `n` and variant. The
+  minutes is `not run: time cap`, and so is every larger `n_sys` of its `n` and variant; a cell
+  after one whose launch threw has no projection and runs. The
   throughput is `n_sys / median_s`, solves per second.
 - **The R3 rows.** The §10.E residual `y .= A*x .+ sin.(x)./10 .- b` and its Jacobian
   `A + diag(cos.(x))/10`, with broadcasts only, for `n = 256`, 1024 and 4096, solved with

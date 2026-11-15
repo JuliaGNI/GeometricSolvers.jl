@@ -160,6 +160,25 @@ function compared(ok, x, ref, T)
         ref = "ref_xnorm=$(field(norm(ref.x, Inf)));ref_fnorm=$(field(ref.fnorm))")
 end
 
+"""
+    copies_same(X)
+
+The copies of a batch whose iterate lies within Y-2's bound of system 1's, `agrees(X[1], y, DT)`.
+A distance to an iterate that is not finite is within no bound, so the count is 0 when system 1's
+iterate holds a `NaN`.
+"""
+copies_same(X) = count(y -> agrees(X[1], y, DT), X)
+
+"""
+    successes(codes, package, fnorms)
+
+The count of systems that succeed by Y-4's rule, from their codes and their `‖F‖∞`.
+"""
+function successes(codes, package, fnorms)
+    count(
+        i -> success_of(codes[i], package, fnorms[i], DT), eachindex(codes, fnorms))
+end
+
 # --- R2: Y1's rows --------------------------------------------------------------------------
 
 @kernel function sns_kernel!(X, codes, f, P, tol, maxiters)
@@ -272,13 +291,11 @@ function r2_row_lines(dev::Device, row)
         x = X[1]
         fnorm = norm(row.F(x, row.p), Inf)
         ok = success_of(code, package, fnorm, DT)
-        bound = sqrt(eps(DT)) * max(1, norm(x, Inf))
-        same = count(y -> norm(y - x, Inf) ≤ bound, X)
         c = compared(ok, x, ref, DT)
         push!(lines,
             csv_line(; key..., status, code, success = ok, iterations, c.host_code,
                 c.host_iterations, fnorm_inf = fnorm, c.dx_host, c.verdict,
-                copies_same = same, comment = c.ref))
+                copies_same = copies_same(X), comment = c.ref))
     end
     return lines, failed
 end
@@ -310,13 +327,13 @@ The R2 row from which the run continues in a new process after row `k`, or `noth
 this one, from the heap counter `before` and `after` the row, the heap size `limit` and the
 counter `fresh` of an empty heap; `failed` is whether a launch of the row ended in a kernel
 error. A row that failed on a heap that earlier rows used runs again on an empty heap (`k`); a
-row after which the counter reached the size leaves a full heap (`k + 1`). Without a counter
+row after which the counter exceeds the size leaves a full heap (`k + 1`). Without a counter
 (`limit === nothing`) a run never continues elsewhere.
 """
 function heap_next(k, before, after, limit, fresh, failed)
     limit === nothing && return nothing
     failed && before > fresh && return k
-    after ≥ limit && return k + 1
+    after > limit && return k + 1
     return nothing
 end
 
@@ -398,8 +415,9 @@ projected(median) = 10 * median * (1 + N_RUNS)
     grid_series(measure, nsys)
 
 The cells of one `n` and variant of the grid at the system counts `nsys`, in order: each
-`measure(n_sys)`, a measured cell or a status, until the projection from the last measured cell
-exceeds `TIME_CAP`; that cell and every later one is `not run: time cap`.
+`measure(n_sys)`, a measured cell or a status, until the projection from the cell before it
+exceeds `TIME_CAP`; that cell and every later one is `not run: time cap`. A cell after one whose
+launch threw has no projection and runs.
 """
 function grid_series(measure, nsys)
     out = Any[]
@@ -411,7 +429,7 @@ function grid_series(measure, nsys)
             continue
         end
         m = measure(n_sys)
-        m isa NamedTuple && (prev = m)
+        prev = m isa NamedTuple ? m : nothing
         push!(out, m)
     end
     return out
@@ -468,7 +486,7 @@ function grid_cell(dev::Device, n, n_sys, variant)
     fnorms = [norm(F(X[i], Bh[i]), Inf) for i in eachindex(X)]
     package = variant == "sns" ? "SimpleNonlinearSolve" : "GeometricSolvers"
     codes = variant == "sns" ? sns_code.(S) : [string(s.code) for s in S]
-    ok = count(i -> success_of(codes[i], package, fnorms[i], DT), eachindex(X))
+    ok = successes(codes, package, fnorms)
     tally = Dict(c => count(==(c), codes) for c in unique(codes))
     code = join(("$c=$(tally[c])" for c in sort!(collect(keys(tally)))), ";")
     iterations = variant == "sns" ? "-" : maximum(s -> s.iterations, S)
@@ -687,42 +705,48 @@ function device_of(backend, machine, vendor)
     end
     A = getfield(vendor, last(VENDORS[backend]))
     return Device(
-        backend, machine, vendor, x -> A(x), x -> A(x), csv_text(repr(vendor.device())))
+        backend, machine, vendor, x -> A(x), x -> A(x), csv_text(card_name(vendor)))
 end
 
-# The driver of the device, for the `.txt`. The verifier checks only that the cpu mode has none,
-# so a vendor package whose function is missing or throws records the exception's type.
+"""
+    card_name(vendor)
+
+The name of the vendor package's current device, as its driver gives it: CUDA's `name`, the
+`name` of a Metal device, and HIP's `name` on AMDGPU.
+"""
+function card_name(vendor)
+    d = vendor.device()
+    nameof(vendor) === :CUDA && return vendor.CUDACore.name(d)
+    nameof(vendor) === :Metal && return String(d.name)
+    return vendor.HIP.name(d)
+end
+
+# The driver of the device, for the `.txt`.
 function driver(dev::Device)
     v = dev.vendor
     v === nothing && return "none"
-    try
-        nameof(v) === :CUDA ? "CUDA driver $(v.driver_version())" :
-        nameof(v) === :Metal ? "macOS $(v.macos_version())" :
-        "HIP runtime $(v.HIP.runtime_version())"
-    catch e
-        "unknown: $(nameof(typeof(e)))"
-    end
+    nameof(v) === :CUDA && return "CUDA driver $(v.driver_version())"
+    nameof(v) === :Metal && return "macOS $(v.macos_version())"
+    return "HIP runtime $(v.HIP.runtime_version())"
 end
 
-function shell(cmd)
-    try
-        strip(read(cmd, String))
-    catch e
-        "unavailable: $(nameof(typeof(e)))"
-    end
-end
+"""
+    txt_head(dev)
 
-function txt_lines(dev::Device, heap)
+The lines of the `.txt` before the heap lines: the date, the `uptime`, the Julia version, the
+threads, the BLAS threads, the device, its driver, the band and the versions of the packages.
+"""
+function txt_head(dev::Device)
     mods = Any[
         GeometricSolvers, KernelAbstractions, StaticArrays, SimpleNonlinearSolve, JLArrays]
     dev.vendor === nothing || push!(mods, dev.vendor)
     band = BANDS[dev.backend]
-    return ["date: $(shell(`date -u`))", "uptime: $(shell(`uptime`))", "julia: $VERSION",
+    return ["date: $(strip(read(`date -u`, String)))",
+        "uptime: $(strip(read(`uptime`, String)))", "julia: $VERSION",
         "threads: $(Threads.nthreads())", "blas threads: $(BLAS.get_num_threads())",
         "device: $(dev.card)", "driver: $(driver(dev))",
         "band: $(band === nothing ? "none" : band)",
-        "packages: " * join(("$(nameof(m)) $(pkgversion(m))" for m in mods), ", "),
-        heap...]
+        "packages: " * join(("$(nameof(m)) $(pkgversion(m))" for m in mods), ", ")]
 end
 
 # The R2 lines from row `from` on in new processes, one after another, each from where the last
@@ -754,6 +778,8 @@ function run_device(backend, machine, dir; r2_from = nothing)
     BLAS.set_num_threads(1)
     vendor = load_vendor(backend)
     dev = Base.invokelatest(device_of, backend, machine, vendor)
+    # The conditions of the run, read before the first row, so that a call that fails stops it.
+    head = Base.invokelatest(txt_head, dev)
     rows = device_rows(DT)
     lines, heap = String[], String[]
     next = Base.invokelatest(r2_lines!, lines, heap, dev, rows, something(r2_from, 1))
@@ -775,8 +801,7 @@ function run_device(backend, machine, dir; r2_from = nothing)
         push!(lines, Base.invokelatest(lu_line, dev, n, v))
     end
     write(joinpath(dir, "devices-$machine.csv"), join([DEVICE_HEADER; lines], "\n") * "\n")
-    write(joinpath(dir, "devices-$machine.txt"),
-        join(Base.invokelatest(txt_lines, dev, heap), "\n") * "\n")
+    write(joinpath(dir, "devices-$machine.txt"), join([head; heap], "\n") * "\n")
     return nothing
 end
 

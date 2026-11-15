@@ -728,6 +728,39 @@ Base.showerror(io::IO, ::KernelException) = print(io, "KernelException: on devic
 Base.showerror(io::IO, ::InvalidIRError) = print(io, "InvalidIRError: unsupported call")
 end
 
+# Modules with the names of the vendor packages, and the calls of theirs that `card_name` and
+# `driver` make; `Broken.CUDA` throws on its driver call.
+module FakeVendors
+struct MetalDevice
+    name::String
+end
+module CUDA
+module CUDACore
+name(d) = d == 0 ? "NVIDIA GB10" : "another card"
+end
+const CuArray = Array
+device() = 0
+driver_version() = v"13.0.0"
+end
+module Metal
+import ..FakeVendors: MetalDevice
+device() = MetalDevice("Apple M4 Max")
+macos_version() = v"26.1.0"
+end
+module AMDGPU
+module HIP
+name(d) = d == 0 ? "AMD Radeon RX 7900 XTX" : "another card"
+runtime_version() = v"7.1.0"
+end
+device() = 0
+end
+module Broken
+module CUDA
+driver_version() = error("no driver")
+end
+end
+end
+
 # A factor that records which function of GeometricSolvers' LU each path calls.
 struct RecordedMatrix end
 struct RecordedLU
@@ -771,7 +804,12 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         end
         # The refusal comes before a vendor package loads or a file is written.
         dir = mktempdir()
-        @test_throws ArgumentError run_device("metal", "spark", dir)
+        e = try
+            run_device("metal", "spark", dir)
+        catch e
+            e
+        end
+        @test e isa ArgumentError && occursin("metal", e.msg) && occursin("spark", e.msg)
         @test isempty(readdir(dir)) && !isdefined(Main, :Metal)
     end
 
@@ -880,8 +918,8 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         # A failure on the empty heap keeps its outcome; a full heap continues at the next row.
         @test heap_next(5, 4, L + 8, L, 4, true) == 6
         @test heap_next(5, 4, 200, L, 4, true) === nothing
-        @test heap_next(5, 100, L, L, 4, false) == 6
-        @test heap_next(5, 100, L - 1, L, 4, false) === nothing
+        @test heap_next(5, 100, L + 1, L, 4, false) == 6
+        @test heap_next(5, 100, L, L, 4, false) === nothing
         @test heap_next(5, nothing, nothing, nothing, nothing, true) === nothing
     end
 
@@ -901,10 +939,11 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         @test m.k == 2 && length(m.times) == 5 && all(≈(0.65e-3), m.times)
         @test m.warm ≈ 0.7e-3
         @test count(==(:sync), log) == 1 + 2 + 2 + 5
-        # The fields of a measured cell: compile_s is the warm-up's time minus the median.
-        t = time_fields((; warm = 5.0, k = 4, times = [3.0, 1.0, 2.0, 5.0, 4.0]))
+        # The fields of a measured cell: compile_s is the warm-up's time minus the median; the
+        # times have the median 3 and the mean 5.
+        t = time_fields((; warm = 5.0, k = 4, times = [3.0, 1.0, 2.0, 15.0, 4.0]))
         @test (t.t1, t.t5, t.median_s, t.spread, t.solves_per_run, t.compile_s) ==
-              (3.0, 4.0, 3.0, 4 / 3, 4, 2.0)
+              (3.0, 4.0, 3.0, 14 / 3, 4, 2.0)
     end
 
     @testset "the time cap: a projection above 1800 s stops the series" begin
@@ -934,6 +973,15 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
                 () -> nothing; clock = clock3)
         end
         @test out[3] isa NamedTuple
+        # A cell after one whose launch threw has no projection and runs.
+        clock4 = FakeClock(0)
+        out = grid_series(GRID_NSYS) do n_sys
+            n_sys == 10^4 && return "kernel error: selftest"
+            measure_cell(() -> nothing, _ -> elapse!(clock4, 1e-3), () -> nothing;
+                clock = clock4)
+        end
+        @test out[2] == "kernel error: selftest" &&
+              all(o -> o isa NamedTuple, out[[1, 3, 4, 5]])
         # Each variant on 100 systems of dimension 2 on CPU(): every system succeeds, and the
         # factor reuse of gs-reuse4 takes one more step than Newton.
         for (v, it) in zip(GRID_VARIANTS, ("2", "3", "2", "-", "2"))
@@ -946,14 +994,27 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
 
     @testset "the .txt of a run" begin
         BLAS.set_num_threads(1)
-        ls = txt_lines(cpu, ["heap: standard,1,u0,-,-"])
+        ls = txt_head(cpu)
         names = ["date", "uptime", "julia", "threads", "blas threads", "device", "driver",
-            "band", "packages", "heap"]
-        @test length(ls) == 10 && all(((l, n),) -> startswith(l, "$n: "), zip(ls, names))
+            "band", "packages"]
+        @test length(ls) == 9 && all(((l, n),) -> startswith(l, "$n: "), zip(ls, names))
+        @test all(l -> length(l) > length("uptime: "), ls[1:2])
         @test ls[5] == "blas threads: 1" && ls[6] == "device: selftest card"
         @test ls[7] == "driver: none" && ls[8] == "band: none"
         @test occursin("KernelAbstractions 0.10.7", ls[9]) &&
               occursin("JLArrays 0.5.0", ls[9])
+        # The card and the driver as each vendor package names them, and a vendor call that
+        # throws stops the run.
+        for (vendor, card, drv) in (
+            (FakeVendors.CUDA, "NVIDIA GB10", "CUDA driver 13.0.0"),
+            (FakeVendors.Metal, "Apple M4 Max", "macOS 26.1.0"),
+            (FakeVendors.AMDGPU, "AMD Radeon RX 7900 XTX", "HIP runtime 7.1.0"))
+            @test card_name(vendor) == card
+            @test driver(Device("x", "y", vendor, identity, identity, card)) == drv
+        end
+        @test device_of("cuda", "spark", FakeVendors.CUDA).card == "NVIDIA GB10"
+        @test_throws ErrorException driver(Device(
+            "x", "y", FakeVendors.Broken.CUDA, identity, identity, "card"))
     end
 
     @testset "the LU paths: own-ka calls the internal functions, dispatched those of solve" begin
@@ -977,10 +1038,24 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
             # J, b and the solution are Float32: `repr` writes the residual with an `f`.
             @test occursin(r"f-?\d+$", c[20]) && occursin(r"f-?\d+$", c[21])
             @test (v == "own-ka") == startswith(c[33], "\"internal, not user-selectable")
+            # The matrix is J = A + I/10: the host solution's ‖d‖∞ is that of (A + I/10) \ b.
+            A, b = tenE_r3(32, T)
+            xnorm = match(r"ref_xnorm=([^;]+);", c[33]).captures[1]
+            @test parse(Float64, replace(xnorm, "f" => "e")) ≈ norm((A + I / 10) \ b, Inf) rtol = 1e-5
         end
     end
 
     @testset "the R3 rows on a JLArray" begin
+        # The Jacobian is ForwardDiff's of the residual, A + diag(cos.(x))/10.
+        A, b = tenE_r3(8, Float64)
+        p = (; A, b, Id = Matrix{Float64}(I, 8, 8))
+        x = collect(range(-1.0, 1.0; length = 8))
+        J = zeros(8, 8)
+        r3_J!(J, x, p)
+        @test J ≈ ForwardDiff.jacobian((y, z) -> r3_F!(y, z, p), zeros(8), x)
+        y = zeros(8)
+        r3_F!(y, x, p)
+        @test y ≈ A * x + sin.(x) / 10 - b
         @test all(l -> split(l, ",")[14] == "not run: cpu mode", r3_lines(cpu, 4096))
         metal = Device("metal", "mac", nothing, identity, JLArray, "selftest card")
         @test [split(l, ",")[14] for l in r3_lines(metal, 8)] ==
@@ -1024,6 +1099,25 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         c = split(lines[1], ","; limit = 33)
         @test failed && startswith(c[14], "kernel error: ") && c[18] != "-"
         @test c[15] == "-" && c[22] == "-"
+        # The copies within Y-2's bound of system 1: a copy one bound away counts, one twice the
+        # bound away does not, and a system 1 that holds a NaN has no copy within its bound.
+        x = SVector{2, T}(10, 1)
+        X = fill(x, 64)
+        X[2] = x + SVector{2, T}(5tol, 0)
+        X[3] = x + SVector{2, T}(30tol, 0)
+        @test copies_same(X) == 63
+        # Below norm 1 the bound is √eps itself.
+        y = SVector{2, T}(0.1, 0.05)
+        Y = fill(y, 64)
+        Y[2] = y + SVector{2, T}(0.5tol, 0)
+        Y[3] = y + SVector{2, T}(2tol, 0)
+        @test copies_same(Y) == 63
+        X[1] = SVector{2, T}(NaN, 1)
+        @test copies_same(X) == 0
+        @test copies_same(fill(SVector{2, T}(NaN, 1), 64)) == 0
+        # A system succeeds with a code of success and ‖F‖∞ within √eps.
+        @test successes(["SUCCESS", "SUCCESS", "MAXITERS", "SUCCESS"], "GeometricSolvers",
+            T[0, 2tol, 0, tol]) == 2
     end
 
     @testset "the verifier checks the device lines" begin
@@ -1113,6 +1207,38 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         @test !ok && occursin("a line without 33 fields", out)
         out, ok = verify_devices((ls, _) -> pop!(ls); file = "devices-cpu.txt")
         @test !ok && occursin("devices-cpu.txt: 87 lines, not 88", out)
+        # The band limits the device variants of the grid, and host-r1 has none: on rocm a
+        # host-r1 cell at n = 12 is launched, an sns cell is above the band.
+        out, ok = verify_devices("--structure") do ls, dir
+            # The R2 rows above the band as on rocm, so that the grid's lines are among the
+            # first 50 failures that verify.jl prints.
+            rocm = map(ls[2:end]) do l
+                f = split(l, ","; limit = 33)
+                f[2], f[3] = "rx7900xtx", "rocm"
+                if f[1] == "r2" && parse(Int, f[8]) > 8 &&
+                   (f[14] == "ran" || startswith(f[14], "kernel error") ||
+                    startswith(f[14], "no compile"))
+                    f[14] = "above band 8"
+                    f[15:33] .= "-"
+                end
+                join(f, ",")
+            end
+            for v in ("host-r1", "sns")
+                i = findfirst(rocm) do l
+                    f = split(l, ",")
+                    f[1] == "grid" && f[8] == "12" && f[9] == "1000" && f[12] == v
+                end
+                setcell!(rocm, i, 14, "above band 8")
+            end
+            write(joinpath(dir, "devices-rx7900xtx.csv"), join([ls[1]; rocm], "\n") * "\n")
+        end
+        @test !ok
+        @test occursin(
+            "(grid - 10.E zero host-r1 GeometricSolvers): status 'above band 8', the cell is 'launched'",
+            out)
+        @test !occursin(
+            "(grid - 10.E zero sns SimpleNonlinearSolve): status 'above band 8'",
+            out)
 
         # One copy with a corruption of each field on a line of its own, and of the .txt, and a
         # file of no machine: each check reports its own line.
@@ -1142,6 +1268,7 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
             setcell!(ls, i, 14, "not run: time cap")
             foreach(k -> setcell!(ls, i, k, "-"), 15:32)
             setcell!(ls, grid(6, 1000, "gs-newton"), 15, "SUCCESS=1")
+            setcell!(ls, grid(8, 1000, "gs-newton"), 29, "40.0")
             setcell!(ls, r3("r3", 256, "host"), 33, "-")
             setcell!(ls, r3("r3", 256, "device"), 18, "MAXITERS")
             setcell!(ls, r3("r3", 256, "device-f64"), 33, "-")
@@ -1163,7 +1290,8 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
             "the keys are not those of the device rows in their order",
             "solves_per_run 3", "compile_s x", "code SUCCESS=999", "success 999 of 1000",
             "a grid cell has a reference",
-            "grid n = 4 gs-newton at 10000 is not run: time cap", "header is",
+            "grid n = 4 gs-newton at 10000 is not run: time cap",
+            "grid n = 8 gs-newton at 10000 is ran, projected 2400.0 s", "header is",
             "a cell that did not run has measured fields",
             "a reference line has a reference or no ‖x‖∞", "host fields MAXITERS",
             "device-f64 GeometricSolvers): comment -", "status 'weird'",
