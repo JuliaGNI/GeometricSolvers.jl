@@ -418,7 +418,8 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
         rows32 = Dict(rowkey(r) => r for r in benchmark_rows(Float32))
         @test block_run(stage, rows32).tol === 0.0009765625f0
         line = split(block_line(stage, rows32), ",")
-        @test length(line) == 23 && line[8] == "ran" && line[15] == "0.0009765625f0"
+        @test length(line) == 24 && line[8] == "ran" && line[15] == "0.0009765625f0"
+        @test ispow2(parse(Int, line[23]))
         # The five times are numbers; their values are the real clock's, and no check reads them.
         @test all(t -> tryparse(Float64, t) !== nothing, line[16:20])
         # The package receives the stage tolerance: this cell stops above √eps(Float32).
@@ -436,8 +437,8 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
                 package)
             @test block_run(b, rows32).status == status
             line = split(block_line(b, rows32), ",")
-            @test length(line) == 23 && line[8] == status
-            @test all(isempty, line[9:22]) && !isempty(line[23])
+            @test length(line) == 24 && line[8] == status
+            @test all(isempty, line[9:23]) && !isempty(line[24])
         end
     end
 
