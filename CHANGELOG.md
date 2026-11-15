@@ -11,9 +11,9 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
-- **The header of `.github/workflows/Metal.yml` names the command that installs `CI.yml`.** It
-  pointed to an installer script that does not exist, and to the directories of a local checkout.
-  The workflow itself is unchanged.
+- **The headers of `.github/workflows/Metal.yml` and `Enzyme.yml` name the command that installs
+  `CI.yml`.** They pointed to an installer script that does not exist, and to the directories of a
+  local checkout. The workflows themselves are unchanged.
 
 - **`BlockEliminated` and `VariableProjection` for single-system block elimination and separable
   least-squares variable projection.** Both problem wrappers are exported and subtype
