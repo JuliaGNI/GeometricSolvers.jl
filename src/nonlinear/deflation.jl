@@ -29,12 +29,12 @@ and whose Jacobian is the product rule of that product,
 J_{\\mathrm{def}}(x) = M(x) J(x) + F(x) \\nabla M(x)^\\top,
 ```
 
-so that the known roots `r₁, …, r_k` repel [`Newton`](@ref) started from the same `x₀`
-(Farrell, Birkisson and Funke 2015, *Deflation techniques for finding distinct solutions of
-nonlinear partial differential equations*). Near a simple root `‖M(x) F(x)‖` grows like
-`‖x - rᵢ‖^{1-p}`, which is what pushes the iterate away from it. Deflation does not guarantee
-that another root exists or that the solve reaches one: `F(x) = x - 1` deflated at `1` from
-`x₀ = 0.6` ends with `MAXITERS`. The caller reads the returned status.
+so that, for `p > 1/2`, the known roots `r₁, …, r_k` repel [`Newton`](@ref) started from the
+same `x₀` (Farrell, Birkisson and Funke 2015, *Deflation techniques for finding distinct
+solutions of nonlinear partial differential equations*). Near a simple root `‖M(x) F(x)‖`
+grows like `‖x - rᵢ‖^{1-p}`, which is what pushes the iterate away from it. Deflation does not
+guarantee that another root exists or that the solve reaches one: `F(x) = x - 1` deflated at
+`1` from `x₀ = 0.6` ends with `MAXITERS`. The caller reads the returned status.
 
 The steps and the line search take the deflated residual, but the stopping test of
 [`Options`](@ref) reads the inner one: `status.fnorm` is `‖F(x)‖`, `f_abstol` bounds it, and
@@ -86,7 +86,7 @@ an `ArgumentError`, as a [`StationarityProblem`](@ref) does.
 # R2
 
 [`solve_batch!`](@ref) solves every system of a batch under one `Deflated`, so each system is
-deflated at the same roots and ends at a root distinct from them. The batch of a wrapped
+deflated at the same roots. The batch of a wrapped
 [`StationarityProblem`](@ref) takes the datum of its solves from the keyword `b`, shared or
 [`PerSystem`](@ref), or from the problem's own `b`.
 

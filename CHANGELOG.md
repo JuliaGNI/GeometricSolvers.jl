@@ -1795,6 +1795,7 @@ so that a compat-only bump can be told apart from an interface change.
   Rebholz to 2023, the year of their Crossref record, and give the full reference with its DOI
   (10.1137/22M1536741). The references of the stability page carry their DOIs, and Kelley's
   *Solving Nonlinear Equations with Iterative Methods* is dated 2022, the print year of its
-  record, there and in the `ldiv!!` docstring. The `Deflated` docstring says that the known roots
-  repel `Newton`, not that it converges to another root: deflation guarantees neither that
-  another root exists nor that the solve reaches one, so the caller reads the status.
+  record, there and in the `ldiv!!` docstring. The `Deflated` docstring says that, for
+  `power > 1/2`, the known roots repel `Newton`, not that it converges to another root, in R1, R2
+  and R3 alike: deflation guarantees neither that another root exists nor that the solve reaches
+  one, so the caller reads the status.
