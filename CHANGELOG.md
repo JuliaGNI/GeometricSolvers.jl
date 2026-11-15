@@ -307,14 +307,24 @@ so that a compat-only bump can be told apart from an interface change.
   `ADTypes.KnownJacobianSparsityDetector(P)` for column-coloured sparse AD, replacing any detector
   it carries, while `ChunkedForwardDiff`'s `jacobian!!` is restricted to `J::DenseMatrix`.
   `SparseArrays` joins `[deps]` and `Sparspak` joins `[weakdeps]` with the `[extensions]` entry
-  `GeometricSolversSparspakExt`.
+  `GeometricSolversSparspakExt`. The chunked ForwardDiff Jacobian writes only a dense matrix, so
+  `init` of a `Newton` with `jacobian = nothing` or an explicit `jacobian = AutoForwardDiff()`
+  raises an `ArgumentError` for a `NonlinearProblem` with a `SparseMatrixCSC` prototype and no
+  analytic `J` (with an explicit `AutoForwardDiff()` also beside an analytic `J`). The message
+  names the `jacobian` keyword and the working sources: an analytic `J`, or `jacobian =
+  AutoSparse(...)` with `SparseMatrixColorings` loaded. An analytic `J` with `jacobian = nothing`,
+  an `AutoSparse` back end, the other DifferentiationInterface back ends and `GMRES` are not
+  refused.
 
 - **Numerical stability documentation (`docs/src/stability.md`) and backward-error test suite
   (`test/linear/stability.jl`, `test/helpers/randsvd.jl`).** `docs/src/stability.md` states the
   normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
   `StaticSVD`, `jacobi_eigen`, `DenseLU`, `DenseQR`, `DenseSVD`, `DeviceLU`, `DeviceQR`,
   `DeviceSVD`, rank-deficient SVD minimum-norm `ldiv!!`, and scaled mixed-precision `ldiv!!`
-  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
+  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023), whose eqs.
+  2.17–2.18 the scaled mixed-precision solve follows (*Newton's Method in Three Precisions*,
+  Pacific Journal of Optimization, 10.61208/pjo-2023-030, arXiv:2307.16051); the references of the
+  page carry their DOIs.
   `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
   `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
   group by group: the full-rank LU, QR and SVD solves and their singular values over `ELTYPES`,
@@ -856,7 +866,11 @@ so that a compat-only bump can be told apart from an interface change.
   — so a `JLArray`
   iterate runs on the device factor and the kernels stay non-scalar — prolongates through the
   owner sets only, so each index of `1:n` is written once, and calls the global residual no
-  times. A sweep forms the block factor at the local iterate it returns only where a RASPEN
+  times. The block factors are dense and of block size and take no `jacobian_prototype`, which
+  sizes the global Jacobian only: with an analytic `J`, `RAS` solves a problem with a sparse
+  `jacobian_prototype` as it solves the problem without one, and without an analytic `J`, `init`
+  raises an `ArgumentError`, because the ForwardDiff Jacobian of the global residual writes a dense
+  matrix only. A sweep forms the block factor at the local iterate it returns only where a RASPEN
   preparation reads the block factors, so RASPEN's product reads the block matrix at the local
   solution and a `RAS` or NKS-RAS sweep pays for no extra factor. A block factor that no complete
   sweep has formed fails closed, and a product on such a state raises an `ArgumentError`; an inner
@@ -1366,7 +1380,8 @@ so that a compat-only bump can be told apart from an interface change.
   `AbstractMatrix` element types (`BigFloat`), `DenseLU` and `DenseQR` use `LinearAlgebra.lu!` (with
   `RowMaximum()` and `check = false`) and `LinearAlgebra.qr!`; `DenseSVD` has no `BigFloat` method.
   In mixed precision (`TF !== T`), `ldiv!!` also scales the right-hand side by its infinity norm
-  before converting to the factor precision, and returns zero directly on a zero right-hand side.
+  before converting to the factor precision, and returns zero directly on a zero right-hand side;
+  that scaling is the one of Kelley (2023, eqs. 2.17–2.18, *Newton's Method in Three Precisions*).
   The scale `s` of the right-hand side is split as `s = frac · 2^ex` with `frac` in `[0.5, 1)`. The
   step is multiplied by `frac` and then by `2^(ex - e)` in one `ldexp`, so a right-hand side near
   `floatmax(T)` makes the step overflow only where the solution itself does.
@@ -1679,7 +1694,8 @@ so that a compat-only bump can be told apart from an interface change.
   iterate, so an `MVector` iterate with an `SVector` residual works (K70)), R2 (`solve_batch!`
   kernel), and R3 (no upper bound on `m`, zero heap allocations in `step!!` and `solve!` after
   warm-up on `Array`, and a `JLArray` step with no scalar indexing under `allowscalar(false)`).
-  Implements Pollock and Rebholz's length filter and Gram–Schmidt angle filter (`c_s`, `κ_bar`,
+  Implements the length filter and Gram–Schmidt angle filter of Pollock and Rebholz (2023,
+  10.1137/22M1536741) (`c_s`, `κ_bar`,
   defaulting to `1 / sqrt(eps(R))` per iterate element type via `effective_kappa_bar`), trace-scaled
   Tikhonov regularisation on the Gram normal equations $\Delta W^H \Delta W \gamma = \Delta W^H w_k$,
   extrapolation weight and model-decrease safeguards ($\sum_j |\alpha_j| \le M_\alpha$ over the
@@ -1744,20 +1760,25 @@ so that a compat-only bump can be told apart from an interface change.
   without a chart, so a range such as `E = U = 1:2` raises an `ArgumentError` there.
 
 - `Deflated(prob, roots; power = 2, shift = 1)` (exported) wraps a `NonlinearProblem` or a
-  `StationarityProblem` in a shifted norm deflation of the given roots, so that a solve from the
-  same start converges to a root other than those (Farrell, Birkisson and Funke 2015). The
-  residual is `M(x) F(x)` with `M(x) = prod_i (norm(x - r_i)^(-power) + shift)`, the deflated
-  Jacobian is the product-rule exact `M(x) J(x) + F(x) transpose(grad M(x))`, and `jvp!!` reads
-  the same two terms, so no new linear method and no factorisation type is needed; the `Number`,
-  `SVector`, `Array` and `JLArray` storages all run, with an `isbits` R1 wrapper and `0`
-  allocations per solve in R1 and after `init` in R3. `power` and `shift` are stored in
-  `float(real(eltype(first(roots))))`, so `Float32` roots give an all-`Float32` product; a solve
-  needs an iterate of that element type, real, as long as every root, with number roots for a
-  number iterate and, for an array iterate, roots that are arrays of the iterate's own type, and a
-  root with a non-finite entry, a root set of mixed element type, a root set of numbers and
-  vectors mixed, a `power` or `shift` that is not finite and positive, an empty root set, or an
-  inner problem that is neither a `NonlinearProblem` nor a `StationarityProblem` raises an
-  `ArgumentError` at construction, while a `solve_batch!` whose kernel would take a non-`isbits`
+  `StationarityProblem` in a shifted norm deflation of the given roots (Farrell, Birkisson and
+  Funke 2015), so that, for `power > 1/2`, the known simple roots repel the full steps of `Newton`
+  started from the same `x₀`, in R1, R2 and R3 alike. A known root that is not simple, or a simple
+  one under a line search, can still attract the solve, and deflation guarantees neither that
+  another root exists nor that the solve reaches one, so the caller reads the returned status and
+  compares the solution with the known roots. The residual is `M(x) F(x)` with `M(x) = prod_i
+  (norm(x - r_i)^(-power) + shift)`, the deflated Jacobian is the product-rule exact `M(x) J(x) +
+  F(x) transpose(grad M(x))`, and `jvp!!` reads the same two terms, so no new linear method and no
+  factorisation type is needed; the `Number`, `SVector`, `Array` and `JLArray` storages all run,
+  with an `isbits` R1 wrapper and `0` allocations per solve in R1 and after `init` in R3. `power`
+  and `shift` are stored in `float(real(eltype(first(roots))))`, so `Float32` roots give an
+  all-`Float32` product; a solve needs an iterate of that element type, real, as long as every root,
+  with number roots for a number iterate and, for an array iterate, roots that are arrays of the
+  iterate's own type, and a root with a non-finite entry, a root set of mixed element type, a root
+  set of numbers and vectors mixed, a `power` that is not finite and greater than `1/2` (at or below
+  `1/2` a deflated solve can return `SUCCESS` at a known simple root under full steps), a `shift`
+  that is not finite and positive, an empty root set, or an inner problem that is neither a
+  `NonlinearProblem` nor a `StationarityProblem` raises an `ArgumentError` at construction, while a
+  `solve_batch!` whose kernel would take a non-`isbits`
   wrapper by value — the `AbstractVector` root storage of an R3 iterate, for one — raises one at
   the call. A solve on an array iterate raises an `ArgumentError` too when a root is on another
   back end than the iterate — a host `Array` root with a `JLArray` or `MtlArray` iterate, a device
@@ -1788,40 +1809,3 @@ so that a compat-only bump can be told apart from an interface change.
   comes from `b`, shared or `PerSystem`, or from the problem's own; `init` and `solve!` serve R1
   and R3, and the keyword datum `b` of an `init`, a `solve` or a `solve!` reaches a wrapped
   `StationarityProblem`.
-
-### Bug Fixes
-
-- **Documentation corrections.** The `Picard` docstring names `StationarityProblem` among the
-  problems it solves, as its methods do. The `Anderson` and `Broyden` docstrings date Pollock and
-  Rebholz to 2023, the year of their Crossref record, and give the full reference with its DOI
-  (10.1137/22M1536741). The references of the stability page carry their DOIs, and the reference
-  for the scaled mixed-precision solve, there and in the `ldiv!!` docstring, names the work that
-  holds its eqs. 2.17–2.18: Kelley (2023), *Newton's Method in Three Precisions*, Pacific Journal
-  of Optimization (10.61208/pjo-2023-030, arXiv:2307.16051). The `Deflated` docstring says that,
-  for `power > 1/2`, the known roots repel `Newton`, not that it converges to another root, in R1,
-  R2 and R3 alike: deflation guarantees neither that another root exists nor that the solve
-  reaches one, so the caller reads the status.
-
-- **`Newton` refuses a sparse `jacobian_prototype` with the `AutoForwardDiff()` Jacobian at
-  `init`.** The chunked ForwardDiff Jacobian writes only a dense matrix, so a `NonlinearProblem`
-  with a `SparseMatrixCSC` prototype and no analytic `J`, solved with `Newton()` (`jacobian =
-  nothing`), raised a `MethodError` from `jacobian!!` at the first step with Sparspak loaded, and
-  from `init_linear` without it. `init` now raises an `ArgumentError` that names the `jacobian`
-  keyword and the working sources: an analytic `J`, or `jacobian = AutoSparse(...)` with
-  `SparseMatrixColorings` loaded. An explicit `jacobian = AutoForwardDiff()` with a sparse
-  prototype is refused the same way, beside an analytic `J` too. An analytic `J`, an `AutoSparse`
-  back end, the other DifferentiationInterface back ends and `GMRES` are unchanged.
-
-- **`RAS` on a problem with a sparse `jacobian_prototype`.** The block factors took the problem's
-  global prototype, so `init` raised `jacobian_prototype has size (n, n), expected (k, k)` with
-  Sparspak loaded and a `MethodError` from `init_linear` without it, with or without an analytic
-  `J`. The block factors are now dense factors of block size, which take no prototype, and the
-  prototype sizes the global Jacobian only: with an analytic `J`, `RAS` solves such a problem as it
-  solves the problem without the prototype. Without an analytic `J`, `init` raises an
-  `ArgumentError`, because the ForwardDiff Jacobian of the global residual writes a dense matrix
-  only.
-
-- **`Deflated` refuses `power ≤ 1/2`.** The known roots repel `Newton` only for `power > 1/2`; at
-  or below it a deflated solve can return `SUCCESS` at a known root. Both constructors raise an
-  `ArgumentError` for such a `power`, as for a non-positive one before; the default `power = 2` is
-  unchanged.

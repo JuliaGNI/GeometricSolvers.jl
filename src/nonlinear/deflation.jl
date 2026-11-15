@@ -29,20 +29,25 @@ and whose Jacobian is the product rule of that product,
 J_{\\mathrm{def}}(x) = M(x) J(x) + F(x) \\nabla M(x)^\\top,
 ```
 
-so that, for `p > 1/2`, the known roots `r₁, …, r_k` repel [`Newton`](@ref) started from the
-same `x₀` (Farrell, Birkisson and Funke 2015, *Deflation techniques for finding distinct
-solutions of nonlinear partial differential equations*). Near a simple root `rᵢ`, a Newton step
-on the deflated residual multiplies `x - rᵢ` by about `-p/(1-p)`, whose modulus exceeds one for
-`p > 1/2`, which is what pushes the iterate away from it. Deflation does not
-guarantee that another root exists or that the solve reaches one: `F(x) = x - 1` deflated at
-`1` from `x₀ = 0.6` ends with `MAXITERS`. The caller reads the returned status.
+so that, for `p > 1/2`, the known simple roots `r₁, …, r_k` repel the full steps of
+[`Newton`](@ref) started from the same `x₀` (Farrell, Birkisson and Funke 2015, *Deflation
+techniques for finding distinct solutions of nonlinear partial differential equations*). Near a
+simple root `rᵢ`, a Newton step on the deflated residual multiplies `x - rᵢ` by about
+`-p/(1-p)` for `p ≠ 1`, whose modulus exceeds one for `p > 1/2`, and leaves the neighbourhood of
+`rᵢ` for `p = 1`, which is what pushes the iterate away from it. A known root that is not simple can still attract the solve, and so can a simple one under a
+line search, which shortens the step that overshoots it: with `p = 3/4`, `F(x) = x^2` deflated at
+`0` from `x₀ = 1/2`, and `F(x) = x` deflated at `0` from `x₀ = 0.1` with
+[`Backtracking`](@ref), both return `SUCCESS` near `0`. Deflation does not guarantee that another
+root exists or that the solve reaches one either: `F(x) = x - 1` deflated at `1` from `x₀ = 0.6`
+ends with `MAXITERS`. The caller reads the returned status and compares the solution with the
+known roots.
 
 The steps and the line search take the deflated residual, but the stopping test of
 [`Options`](@ref) reads the inner one: `status.fnorm` is `‖F(x)‖`, `f_abstol` bounds it, and
 `f_reltol` is relative to `‖F(x₀)‖`, so a deflated root meets the tolerance of a solve of `prob`.
 
 `power` (`p > 1/2`; `p ≤ 1/2` raises an `ArgumentError`, because a solve with it can return
-`SUCCESS` at a known root) and `shift` (`σ > 0`) are stored in
+`SUCCESS` even at a known simple root under full steps) and `shift` (`σ > 0`) are stored in
 `T = float(real(eltype(first(roots))))`, so `Float32` roots give `power::Float32` and a `Float32`
 product; a solve needs an iterate of that element type and a real one.
 

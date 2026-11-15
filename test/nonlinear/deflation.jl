@@ -551,8 +551,8 @@ end
     @test_throws ArgumentError Deflated(prob, (r,); power = -2.0)
     @test_throws ArgumentError Deflated(prob, (r,); power = Inf)
     @test_throws ArgumentError Deflated(prob, (r,); power = NaN)
-    # the known roots repel Newton only for power > 1/2: 1/2 and below are refused, in each
-    # constructor and in Float32, and a power just above 1/2 is taken
+    # the known simple roots repel Newton's full steps only for power > 1/2: 1/2 and below are
+    # refused, in each constructor and in Float32, and a power just above 1/2 is taken
     msg_power = r"^ArgumentError: Deflated power must be finite and > 1/2"
     for pw in (0.5, 0.3)
         @test_throws msg_power Deflated(prob, (r,); power = pw)
