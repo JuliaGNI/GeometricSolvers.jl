@@ -112,9 +112,10 @@ per block in that test, and the global residual costs none. [`LeftPreconditioned
 `RAS` with a `balance_threshold`.
 
 The counters of the last [`start!!`](@ref) are read with [`ras_counts`](@ref). A problem without
-block residuals, a partition whose block count or index count differs from the problem's, and an
-iterate that is not a vector raise an `ArgumentError` at [`init_state`](@ref); the partition's
-validation raises one at construction.
+block residuals, a partition whose block count or index count differs from the problem's, an
+iterate that is not a vector, and a sparse `jacobian_prototype` without an analytic `J` raise an
+`ArgumentError` at [`init_state`](@ref); the partition's validation raises one at construction.
+A `jacobian_prototype` sizes the global Jacobian only: the block factors are dense.
 """
 struct RAS{P, R <: Real, B <: Union{Nothing, Real}}
     partition::P
@@ -262,6 +263,10 @@ end
         "the BlockPartition and the problem must have one block residual per block"))
     part.n == length(x) || throw(ArgumentError(
         "the BlockPartition's index count must equal the length of the iterate"))
+    jacobian_prototype(prob) isa SparseArrays.AbstractSparseMatrix &&
+        !_has_analytic_jacobian(prob) &&
+        throw(ArgumentError(
+            "RAS on a problem with a sparse jacobian_prototype needs an analytic Jacobian J: its ForwardDiff Jacobian of the global residual writes a dense Jacobian only. Give the problem an analytic Jacobian J, or solve without the jacobian_prototype"))
     T = eltype(x)
     T <: Number || throw(ArgumentError("RAS needs an iterate of numbers"))
     subdomains = [device_indices(x, part.subdomains[i]) for i in 1:nblocks]
@@ -273,7 +278,9 @@ end
                  for i in 1:nblocks]
     deltas = [similar(x, length(part.subdomains[i])) for i in 1:nblocks]
     rows = [similar(x, T, length(part.subdomains[i]), part.n) for i in 1:nblocks]
-    factors = [fail_closed!!(dense_factor(LUFactorization(), prob, x_locals[i], p))
+    # The block Jacobians are dense and of block size, so their factors take no prototype: the
+    # problem's `jacobian_prototype` is the global Jacobian's.
+    factors = [fail_closed!!(init_linear(LUFactorization(), nothing, x_locals[i], nothing))
                for i in 1:nblocks]
     couplings = similar(x)
     jacfuns = block_jacobians(prob)

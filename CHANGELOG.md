@@ -852,7 +852,8 @@ so that a compat-only bump can be told apart from an interface change.
   `block_jacobians`, `block_residual` and `block_jacobian`. `BlockPartition(subdomains, owners)`
   requires non-empty duplicate-free subdomains and owner sets that are disjoint and cover `1:n`
   exactly, and `BlockPartition(n, nblocks; overlap)` builds one. A `RAS` sweep restricts each
-  subdomain, solves each block with `dense_factor`, `factorize!!` and `ldiv!!` — so a `JLArray`
+  subdomain, solves each block with a dense factor from `init_linear`, `factorize!!` and `ldiv!!`
+  — so a `JLArray`
   iterate runs on the device factor and the kernels stay non-scalar — prolongates through the
   owner sets only, so each index of `1:n` is written once, and calls the global residual no
   times. A sweep forms the block factor at the local iterate it returns only where a RASPEN
@@ -1810,6 +1811,15 @@ so that a compat-only bump can be told apart from an interface change.
   `SparseMatrixColorings` loaded. An explicit `jacobian = AutoForwardDiff()` with a sparse
   prototype is refused the same way, beside an analytic `J` too. An analytic `J`, an `AutoSparse`
   back end, the other DifferentiationInterface back ends and `GMRES` are unchanged.
+
+- **`RAS` on a problem with a sparse `jacobian_prototype`.** The block factors took the problem's
+  global prototype, so `init` raised `jacobian_prototype has size (n, n), expected (k, k)` with
+  Sparspak loaded and a `MethodError` from `init_linear` without it, with or without an analytic
+  `J`. The block factors are now dense factors of block size, which take no prototype, and the
+  prototype sizes the global Jacobian only: with an analytic `J`, `RAS` solves such a problem as it
+  solves the problem without the prototype. Without an analytic `J`, `init` raises an
+  `ArgumentError`, because the ForwardDiff Jacobian of the global residual writes a dense matrix
+  only.
 
 - **`Deflated` refuses `power ≤ 1/2`.** The known roots repel `Newton` only for `power > 1/2`; at
   or below it a deflated solve can return `SUCCESS` at a known root. Both constructors raise an

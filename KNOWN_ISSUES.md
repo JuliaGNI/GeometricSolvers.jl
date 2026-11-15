@@ -481,3 +481,34 @@
   checks.
 - **kind:** upstream
 - **found:** PR #84
+
+### K88 · On Metal, a residual that broadcasts over overlapping `@views` of an `MVector` reads wrong values, and `solve_batch!` returns `SUCCESS` at a point that is no root
+
+- **location:** —
+- **evidence:** The residual is the caller's (R2 `solve_batch!` on an `MtlArray`, Metal.jl
+  1.12.0, Apple M4 Max). The generalized Rosenbrock residual (n = 10) with
+  `@views @. out[2:n] = 10 * (x[2:n] - x[1:n-1] * x[1:n-1])` on `MVector`s, through the inline
+  out-of-place adapter of the Y3 premises probe, returns `SUCCESS` at iteration 2 at
+  `X = (1, 0, 1, 0, …)` from all three starts. The device residual there reads
+  `F = (0, 0, 10, 0, …)`, the host residual `F = (0, -10, 10, -10, …)`: the `x[k-1]` terms read as
+  0. The same kernel allocates 80 B per thread on the device heap. On CUDA (GB10, RTX 4090) and
+  ROCm (RX 7900 XTX), where the kernel also allocates, the same rows end `SINGULAR` or
+  `NONFINITE`, as the host R1 `solve` does from the same start. The same residual as a loop, or as
+  a broadcast on views of an `SVector`, is correct on Metal and allocates nothing. The cause of
+  the wrong read (an `unalias` copy of the view is suspected) is not established. A caller on
+  Metal writes such a residual as a loop.
+- **kind:** upstream
+- **found:** 2026-11-15 (Y3 premises probe on four cards)
+
+### K89 · SimpleNonlinearSolve's `SimpleNewtonRaphson` in a KernelAbstractions kernel returns `Success` with a NaN residual, so a comparison with it reads its status and its residual
+
+- **location:** `benchmark/`
+- **evidence:** With SimpleNonlinearSolve 2.14.6: sample problem 18 (`test/helpers/standard_problems.jl`) at `10u0`, in `Float32`,
+  solved with `SimpleNewtonRaphson` in a KA kernel, returns `Success` with host ‖F‖∞ = NaN on Metal
+  (M4 Max), CUDA (GB10, RTX 4090) and ROCm (RX 7900 XTX); at `100u0` it does the same on CUDA and
+  ROCm. On Metal the returned iterate is `u = (-Inf, NaN)`. GeometricSolvers' `Newton` on the
+  same rows returns `SUCCESS` with a finite residual (CUDA and ROCm about 1e-27; on Metal at
+  `10u0` a false root of the cancelling form `1 - exp(-x²)`). A benchmark that counts statuses
+  only counts these rows as solved.
+- **kind:** upstream
+- **found:** 2026-11-15 (Y3 premises probe on four cards)
