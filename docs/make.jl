@@ -13,10 +13,7 @@ makedocs(;
         prettyurls = get(ENV, "CI", "false") == "true",
         canonical = "https://JuliaGNI.github.io/GeometricSolvers.jl",
         edit_link = "main",
-        assets = String[],
-        # The largest page, api/problems.md, renders to about 121 KiB; the warning limit stays at
-        # its default of 100 KiB.
-        size_threshold = 400 * 2^10
+        assets = String[]
     ),
     pages = [
         "Home" => "index.md",

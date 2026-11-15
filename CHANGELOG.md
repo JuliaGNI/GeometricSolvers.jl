@@ -276,10 +276,6 @@ so that a compat-only bump can be told apart from an interface change.
   `STANDARD_COLUMNS` in `test/helpers/standard_cells.jl` gains the 10th column
   `"Newton LevenbergMarquardt SVD" => Newton(; linsolve = SVDFactorization(), globalization = LevenbergMarquardt())`.
 
-- **The documentation build allows HTML pages up to 400 KiB** (`size_threshold` in
-  `docs/make.jl`). The largest page of the API section renders to about 121 KiB; the warning
-  limit stays at 100 KiB.
-
 - **Sparse R3 nonlinear solves through `NonlinearProblem(...; jacobian_prototype)`, compressed
   `AutoSparse` Jacobian evaluation with `KnownJacobianSparsityDetector`, and the `Sparspak` package
   extension `GeometricSolversSparspakExt`** (decision 53 of the design). `NonlinearProblem{F, J, P
