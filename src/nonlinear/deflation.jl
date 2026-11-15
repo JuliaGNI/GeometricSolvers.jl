@@ -31,8 +31,9 @@ J_{\\mathrm{def}}(x) = M(x) J(x) + F(x) \\nabla M(x)^\\top,
 
 so that, for `p > 1/2`, the known roots `r₁, …, r_k` repel [`Newton`](@ref) started from the
 same `x₀` (Farrell, Birkisson and Funke 2015, *Deflation techniques for finding distinct
-solutions of nonlinear partial differential equations*). Near a simple root `‖M(x) F(x)‖`
-grows like `‖x - rᵢ‖^{1-p}`, which is what pushes the iterate away from it. Deflation does not
+solutions of nonlinear partial differential equations*). Near a simple root `rᵢ`, a Newton step
+on the deflated residual multiplies `x - rᵢ` by about `-p/(1-p)`, whose modulus exceeds one for
+`p > 1/2`, which is what pushes the iterate away from it. Deflation does not
 guarantee that another root exists or that the solve reaches one: `F(x) = x - 1` deflated at
 `1` from `x₀ = 0.6` ends with `MAXITERS`. The caller reads the returned status.
 
@@ -40,9 +41,10 @@ The steps and the line search take the deflated residual, but the stopping test 
 [`Options`](@ref) reads the inner one: `status.fnorm` is `‖F(x)‖`, `f_abstol` bounds it, and
 `f_reltol` is relative to `‖F(x₀)‖`, so a deflated root meets the tolerance of a solve of `prob`.
 
-`power` (`p > 0`) and `shift` (`σ > 0`) are stored in `T = float(real(eltype(first(roots))))`, so
-`Float32` roots give `power::Float32` and a `Float32` product; a solve needs an iterate of that
-element type and a real one.
+`power` (`p > 1/2`; `p ≤ 1/2` raises an `ArgumentError`, because a solve with it can return
+`SUCCESS` at a known root) and `shift` (`σ > 0`) are stored in
+`T = float(real(eltype(first(roots))))`, so `Float32` roots give `power::Float32` and a `Float32`
+product; a solve needs an iterate of that element type and a real one.
 
 # Roots
 
@@ -115,8 +117,8 @@ struct Deflated{P <: AbstractNonlinearProblem, RTs, T <: AbstractFloat} <:
             shift::T) where {
             P <: AbstractNonlinearProblem, RTs, T <: AbstractFloat}
         _check_deflated_problem(prob)
-        (power > zero(T) && isfinite(power)) ||
-            throw(ArgumentError("Deflated power must be finite and > 0"))
+        (power > inv(T(2)) && isfinite(power)) ||
+            throw(ArgumentError("Deflated power must be finite and > 1/2: at or below 1/2 the known roots do not repel Newton"))
         (shift > zero(T) && isfinite(shift)) ||
             throw(ArgumentError("Deflated shift must be finite and > 0"))
         _check_deflated_roots(roots)
@@ -680,7 +682,7 @@ end
 
 Solve a batch of independent small systems under one [`Deflated`](@ref) problem, as
 [`solve_batch!`](@ref) does on a [`NonlinearProblem`](@ref): every system is deflated at the same
-roots, so each ends at a root distinct from them. The batch of a wrapped
+roots, and, as for one solve, no system is guaranteed to reach another root. The batch of a wrapped
 [`StationarityProblem`](@ref) is deflated on the unknowns of the same full-state roots, and its
 datum comes from the keyword `b`, shared or [`PerSystem`](@ref), or from the problem's own `b`.
 The kernel takes the problem by value, so a `Deflated` whose roots or inner problem are not

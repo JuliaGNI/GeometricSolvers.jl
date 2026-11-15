@@ -314,7 +314,7 @@ so that a compat-only bump can be told apart from an interface change.
   normwise backward-error and spectral-accuracy bounds (`c = 16`) for `StaticLU`, `StaticQR`,
   `StaticSVD`, `jacobi_eigen`, `DenseLU`, `DenseQR`, `DenseSVD`, `DeviceLU`, `DeviceQR`,
   `DeviceSVD`, rank-deficient SVD minimum-norm `ldiv!!`, and scaled mixed-precision `ldiv!!`
-  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2022).
+  (`TF ≠ T`), citing Higham (2002), Demmel and Veselić (1992), and Kelley (2023).
   `test/helpers/randsvd.jl` provides Haar-distributed `randsvd`, `randhermitian`, and
   `minnorm_solution` constructors, and `test/linear/stability.jl` verifies every documented bound
   group by group: the full-rank LU, QR and SVD solves and their singular values over `ELTYPES`,
@@ -1793,9 +1793,25 @@ so that a compat-only bump can be told apart from an interface change.
 - **Documentation corrections.** The `Picard` docstring names `StationarityProblem` among the
   problems it solves, as its methods do. The `Anderson` and `Broyden` docstrings date Pollock and
   Rebholz to 2023, the year of their Crossref record, and give the full reference with its DOI
-  (10.1137/22M1536741). The references of the stability page carry their DOIs, and Kelley's
-  *Solving Nonlinear Equations with Iterative Methods* is dated 2022, the print year of its
-  record, there and in the `ldiv!!` docstring. The `Deflated` docstring says that, for
-  `power > 1/2`, the known roots repel `Newton`, not that it converges to another root, in R1, R2
-  and R3 alike: deflation guarantees neither that another root exists nor that the solve reaches
-  one, so the caller reads the status.
+  (10.1137/22M1536741). The references of the stability page carry their DOIs, and the reference
+  for the scaled mixed-precision solve, there and in the `ldiv!!` docstring, names the work that
+  holds its eqs. 2.17–2.18: Kelley (2023), *Newton's Method in Three Precisions*, Pacific Journal
+  of Optimization (10.61208/pjo-2023-030, arXiv:2307.16051). The `Deflated` docstring says that,
+  for `power > 1/2`, the known roots repel `Newton`, not that it converges to another root, in R1,
+  R2 and R3 alike: deflation guarantees neither that another root exists nor that the solve
+  reaches one, so the caller reads the status.
+
+- **`Newton` refuses a sparse `jacobian_prototype` with the `AutoForwardDiff()` Jacobian at
+  `init`.** The chunked ForwardDiff Jacobian writes only a dense matrix, so a `NonlinearProblem`
+  with a `SparseMatrixCSC` prototype and no analytic `J`, solved with `Newton()` (`jacobian =
+  nothing`), raised a `MethodError` from `jacobian!!` at the first step with Sparspak loaded, and
+  from `init_linear` without it. `init` now raises an `ArgumentError` that names the `jacobian`
+  keyword and the working sources: an analytic `J`, or `jacobian = AutoSparse(...)` with
+  `SparseMatrixColorings` loaded. An explicit `jacobian = AutoForwardDiff()` with a sparse
+  prototype is refused the same way, beside an analytic `J` too. An analytic `J`, an `AutoSparse`
+  back end, the other DifferentiationInterface back ends and `GMRES` are unchanged.
+
+- **`Deflated` refuses `power ≤ 1/2`.** The known roots repel `Newton` only for `power > 1/2`; at
+  or below it a deflated solve can return `SUCCESS` at a known root. Both constructors raise an
+  `ArgumentError` for such a `power`, as for a non-positive one before; the default `power = 2` is
+  unchanged.

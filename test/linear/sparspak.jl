@@ -520,8 +520,23 @@ end
     # Device iterate (JLArray) with sparse prototype raises MethodError
     @test_throws MethodError init(prob_analytic, JLArray(z0), Newton(), p_val)
 
-    # Default Newton() (ChunkedForwardDiff) with sparse prototype and no analytic J raises MethodError
-    @test_throws MethodError solve(prob_ad, copy(z0), Newton(), p_val)
+    # AutoForwardDiff() (ChunkedForwardDiff), the default of Newton() without an analytic J, with a
+    # sparse prototype is refused at init, before the first step, on a host and a device iterate;
+    # explicitly selected, it is refused also beside an analytic J, which it replaces
+    msg_fd = r"^ArgumentError: a sparse jacobian_prototype takes no Jacobian from AutoForwardDiff\(\)"
+    @test_throws msg_fd init(prob_ad, copy(z0), Newton(), p_val)
+    @test_throws msg_fd init(prob_ad, JLArray(z0), Newton(), p_val)
+    @test_throws msg_fd init(prob_ad, copy(z0), Newton(; jacobian = AutoForwardDiff()), p_val)
+    @test_throws msg_fd init(
+        prob_analytic, copy(z0), Newton(; jacobian = AutoForwardDiff()), p_val)
+    err_fd = try
+        init(prob_ad, copy(z0), Newton(), p_val)
+        nothing
+    catch e
+        e
+    end
+    @test occursin("analytic Jacobian J", sprint(showerror, err_fd))
+    @test occursin("jacobian = AutoSparse(...)", sprint(showerror, err_fd))
 
     # Analytic J! that mutates rowvals raises ArgumentError
     prob_mut_row = NonlinearProblem(
