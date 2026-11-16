@@ -13,7 +13,8 @@ so that a compat-only bump can be told apart from an interface change.
 
 - **The user guide's method table (`docs/src/guide.md`) corrects two conditions.** A complex
   Jacobian for `LDLTFactorization` is read in full, and `Refinement` and `GMRESRefinement` do not
-  take a `LeastSquaresProblem`.
+  take a `LeastSquaresProblem`. The factorisation table of `docs/src/algorithms/linear.md` states
+  the same triangle rule for `LDLTFactorization`.
 
 - **The headers of `.github/workflows/Metal.yml` and `Enzyme.yml` name the command that installs
   `CI.yml`.** They pointed to an installer script that does not exist, and to the directories of a
