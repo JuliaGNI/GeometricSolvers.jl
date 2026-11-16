@@ -28,8 +28,8 @@ so that a compat-only bump can be told apart from an interface change.
   names its commit, the Julia, KernelAbstractions and device package versions, the device and the
   load. A script asked for a device that is not present prints one line and no rows; it never runs
   on another device instead. Where a split's phases do not sum to within 10 % of the measured
-  total, the row says so. The new test file `test/integration/hardware_scripts.jl` (group `slow`) runs
-  `ka_lu_large.jl` on `JLArray` and `sync_cost.jl` on the CPU and on `JLArray` at `n = 64`,
+  total, the row says so. The new test file `test/integration/hardware_scripts.jl` (group `slow`)
+  runs `ka_lu_large.jl` on `JLArray` and `sync_cost.jl` on the CPU and on `JLArray` at `n = 64`,
   `r3_lu_blas.jl` with OpenBLAS at `n = 64`, and `r2_throughput.jl` on the CPU at 1000 systems
   and `n = 2`, with scalar indexing disallowed; it adds `Printf` to the test environment.
 
