@@ -134,7 +134,7 @@ end
 function median_phases(fac, J; reps::Int)
     ka_phases!(fac, J)
     p = [ka_phases!(fac, J) for _ in 1:reps]
-    return middle(first.(p)), middle(last.(p))
+    return sample_median(first.(p)), sample_median(last.(p))
 end
 
 function relative_residual(A::Matrix, x::Vector, b::Vector)

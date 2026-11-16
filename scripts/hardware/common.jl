@@ -99,11 +99,11 @@ function time_calls(f, sync; reps::Int = 5)
         sync()
         ts[r] = (time_ns() - t0) / 1e9
     end
-    return (median = middle(ts), min = minimum(ts))
+    return (median = sample_median(ts), min = minimum(ts))
 end
 
 # The median of the values `ts`, which must not be empty.
-function middle(ts::AbstractVector{<:Real})
+function sample_median(ts::AbstractVector{<:Real})
     s = sort(ts)
     h = (length(s) + 1) ÷ 2
     return isodd(length(s)) ? s[h] : (s[h] + s[h + 1]) / 2

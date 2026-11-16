@@ -252,21 +252,23 @@ function run_tables(io, dev, nsys_list, n_list)
         "SoA-AoS root difference | Backtracking converged |")
     println(io, "|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
     rows = NamedTuple[]
+    crossovers = String[]
     for n_sys in nsys_list
         rows_n = NamedTuple[]
         for n in n_list
             push!(rows_n, measure_row(Val(n), n_sys, dev.name, dev.array; io))
         end
-        # Report R4 crossover n where R2 Newton throughput drops below CPU threaded R1 loop
+        # R4 crossover n where R2 Newton throughput drops below CPU threaded R1 loop, printed
+        # after the table so that its rows stay one Markdown table
         crossover = findfirst(r -> r.rate_r2 < r.rate_cpu, rows_n)
-        if crossover === nothing
-            println(io, "R4 crossover (N_sys=$n_sys): none in n=$(n_list) ",
-                "(R2 >= CPU-thr across all tested n)")
-        else
-            println(io, "R4 crossover (N_sys=$n_sys): n=$(rows_n[crossover].n)")
-        end
+        push!(crossovers,
+            crossover === nothing ?
+            "R4 crossover (N_sys=$n_sys): none in n=$(n_list) (R2 >= CPU-thr across all tested n)" :
+            "R4 crossover (N_sys=$n_sys): n=$(rows_n[crossover].n)")
         append!(rows, rows_n)
     end
+    println(io)
+    foreach(l -> println(io, l), crossovers)
     return rows
 end
 

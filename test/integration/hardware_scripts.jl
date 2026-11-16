@@ -33,9 +33,9 @@ include(joinpath(@__DIR__, "..", "..", "scripts", "hardware", "cusolver_getrf.jl
 end
 
 @testset "the median of the timed calls" begin
-    @test KALULarge.middle([3.0, 1.0, 2.0]) == 2.0
-    @test KALULarge.middle([4.0, 1.0, 3.0, 2.0]) == 2.5
-    @test KALULarge.middle([7.0]) == 7.0
+    @test KALULarge.sample_median([3.0, 1.0, 2.0]) == 2.0
+    @test KALULarge.sample_median([4.0, 1.0, 3.0, 2.0]) == 2.5
+    @test KALULarge.sample_median([7.0]) == 7.0
     calls = Ref(0)
     t = KALULarge.time_calls(() -> (calls[] += 1), () -> nothing; reps = 4)
     @test calls[] == 5

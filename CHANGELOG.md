@@ -17,19 +17,19 @@ so that a compat-only bump can be told apart from an interface change.
   into its two kernels (pivot-swap-scale against the trailing update for LU, reflector against its
   application for QR). The KA solve runs the steps of `ldiv!!` with the KA backsolve kernels, the
   host read of the right-hand side's scale included, also on a device whose `backsolve!` is a
-  vendor library's. `sync_cost.jl` splits one R3 `Newton()` step into its phases and counts the
-  host waits and the device launches of each, so that the time of the step divides into
-  synchronisations and arithmetic. `cusolver_getrf.jl` times cuSOLVER `getrf` in `Float64` under
-  CUDA.jl's default math mode and its `Float64` fixed-point emulation mode, with the relative
-  residual of each. `r3_lu_blas.jl` times the R3 LU on the CPU with OpenBLAS and with
-  AppleAccelerate. Each table names its commit, the Julia, KernelAbstractions and device package
-  versions, the device and the load. A script asked for a device that is not present prints one
-  line and no rows; it never runs on another device instead. Where a split's phases do not sum to
-  within 10 % of the measured total, the row says so. The new test file
-  `test/integration/hardware_scripts.jl` (group `slow`) runs `ka_lu_large.jl` on `JLArray` and
-  `sync_cost.jl` on the CPU and on `JLArray` at `n = 64`, `r3_lu_blas.jl` with OpenBLAS at
-  `n = 64`, and `r2_throughput.jl` on the CPU at 1000 systems and `n = 2`, with scalar indexing
-  disallowed; it adds `Printf` to the test environment.
+  vendor library's. `sync_cost.jl` splits one R3 `Newton()` step into its phases and lists the
+  host waits and the device launches of each, counted from the source of the step and not
+  measured, so that the time of the step divides into synchronisations and arithmetic.
+  `cusolver_getrf.jl` times cuSOLVER `getrf` in `Float64` under CUDA.jl's default math mode and
+  its `Float64` fixed-point emulation mode, with the relative residual of each. `r3_lu_blas.jl`
+  times the R3 LU on the CPU with OpenBLAS and with AppleAccelerate. Each table names its commit,
+  the Julia, KernelAbstractions and device package versions, the device and the load. A script
+  asked for a device that is not present prints one line and no rows; it never runs on another
+  device instead. Where a split's phases do not sum to within 10 % of the measured total, the row
+  says so. The new test file `test/integration/hardware_scripts.jl` (group `slow`) runs
+  `ka_lu_large.jl` on `JLArray` and `sync_cost.jl` on the CPU and on `JLArray` at `n = 64`,
+  `r3_lu_blas.jl` with OpenBLAS at `n = 64`, and `r2_throughput.jl` on the CPU at 1000 systems
+  and `n = 2`, with scalar indexing disallowed; it adds `Printf` to the test environment.
 
 - **`scripts/r2_throughput.jl` gains a structure-of-arrays variant of its right-hand sides and a
   second CPU baseline.** The SoA row passes one array per component through `PerSystem`, and the

@@ -191,9 +191,9 @@ function measure_size(io, dev, n::Int; reps::Int)
     counts = phase_counts(path, n, dev.name)
     t_wait = path === :host ? 0.0 : wait_time(dev; reps)
     # one warm-up call of each, then `reps` timed ones
-    t_step = middle([step_time(m, prob, x0, p, sync) for _ in 1:(reps + 1)][2:end])
+    t_step = sample_median([step_time(m, prob, x0, p, sync) for _ in 1:(reps + 1)][2:end])
     phase_list = [step_phases(m, prob, x0, p, sync) for _ in 1:(reps + 1)][2:end]
-    phases = [middle([pl[k] for pl in phase_list]) for k in 1:5]
+    phases = [sample_median([pl[k] for pl in phase_list]) for k in 1:5]
     for k in 1:5
         launches, waits = counts[k]
         @printf(io, "| %d | %s | %s | %s | %d | %d | %s |\n", n, path, PHASES[k],
@@ -218,7 +218,8 @@ function run_tables(io, dev, ns, reps)
         "(scripts/hardware/sync_cost.jl)",
         dev;
         extra = ["reps" => string(reps)])
-    println(io, "| n | path | phase | ms (median) | launches | waits | note |")
+    println(io,
+        "| n | path | phase | ms (median) | launches (from src/) | waits (from src/) | note |")
     println(io, "|--:|:--|:--|--:|--:|--:|:--|")
     return [measure_size(io, dev, n; reps) for n in ns]
 end
