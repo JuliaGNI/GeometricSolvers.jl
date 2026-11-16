@@ -12,8 +12,6 @@ using Test
 
 allowscalar(false)
 
-const SCRIPTS = joinpath(@__DIR__, "..", "..", "scripts")
-
 module KALULarge
 include(joinpath(@__DIR__, "..", "..", "scripts", "hardware", "ka_lu_large.jl"))
 end

@@ -137,7 +137,7 @@ function step_time(m, prob, x0, p, sync)
     return t
 end
 
-# The waits and the launches of each phase on the path of `fac`: the host (`cpu`), the KA kernels,
+# The launches and the waits of each phase on the path of `fac`: the host (`cpu`), the KA kernels,
 # or the vendor library of the device `device`.
 function phase_counts(path::Symbol, n::Int, device::AbstractString)
     path === :host && return fill((0, 0), 5)
