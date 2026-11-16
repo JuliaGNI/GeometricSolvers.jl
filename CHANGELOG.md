@@ -12,10 +12,12 @@ so that a compat-only bump can be told apart from an interface change.
 ### Changed
 
 - **Measurement scripts for the device and CPU back ends, in `scripts/hardware/`.**
-  `ka_lu_large.jl` times `factorize!!` and the solve of the KernelAbstractions LU and QR in
+  `ka_lu_large.jl` times `factorize!!` and `ldiv!!` of the KernelAbstractions LU and QR in
   `Float32`, and of the vendor path where an extension defines one, with the KA factorisation split
   into its two kernels (pivot-swap-scale against the trailing update for LU, reflector against its
-  application for QR). `sync_cost.jl` splits one R3 `Newton()` step into its phases and counts the
+  application for QR). The KA solve runs the steps of `ldiv!!` with the KA backsolve kernels, the
+  host read of the right-hand side's scale included, also on a device whose `backsolve!` is a
+  vendor library's. `sync_cost.jl` splits one R3 `Newton()` step into its phases and counts the
   host waits and the device launches of each, so that the time of the step divides into
   synchronisations and arithmetic. `cusolver_getrf.jl` times cuSOLVER `getrf` in `Float64` under
   CUDA.jl's default math mode and its `Float64` fixed-point emulation mode, with the relative

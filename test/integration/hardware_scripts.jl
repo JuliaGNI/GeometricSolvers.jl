@@ -6,6 +6,8 @@
 # reads a device array entry by entry fails here.
 
 using GPUArraysCore: allowscalar
+using LinearAlgebra: I, norm
+using Random: Xoshiro
 using Test
 
 allowscalar(false)
@@ -72,7 +74,8 @@ end
         end
     end
     metal_id = Base.identify_package("Metal")
-    if metal_id !== nothing && !Base.invokelatest(Base.require(metal_id).functional)
+    if Sys.isapple() && metal_id !== nothing &&
+       !Base.invokelatest(Base.require(metal_id).functional)
         buf = IOBuffer()
         @test KALULarge.main(["metal", "64"]; io = buf) === nothing
         @test String(take!(buf)) ==
@@ -121,6 +124,51 @@ end
     vendor_lines = filter(l -> occursin("| vendor | 64 | no extension method", l),
         split(out, '\n'))
     @test length(vendor_lines) == 2
+end
+
+@testset "the KA solve of ka_lu_large.jl is the solve of ldiv!!" begin
+    G = KALULarge.GeometricSolvers
+    jl = KALULarge.select_device("jlarray"; io = devnull)
+    n = 8
+    rng = Xoshiro(1)
+    # `J` in `Float64` into `Float32` factors: the factorisation divides it by `2^e`, `e ≠ 0`
+    J_host = 1024 .* (ones(n, n) + I)
+    J = jl.array(J_host)
+    x = jl.array(zeros(Float32, n))
+    prob = G.NonlinearProblem(x, KALULarge.ka_noop)
+    # `r` along the first column of `J`, near `floatmax`: `Qᴴ r` has an entry of `‖r‖₂`, about
+    # `1.5 floatmax`, which overflows unless `ldiv!!` scales `r` (`k > 0`); and an `r` that it
+    # copies (`k = 0`). The solution `0.9 floatmax / 2048 e₁` is finite.
+    r_big = Float32.(0.9 * floatmax(Float32) .* J_host[:, 1] ./ maximum(J_host[:, 1]))
+    @test norm(Float64.(r_big)) > floatmax(Float32)
+    for r_host in (r_big, randn(rng, Float32, n))
+        r = jl.array(r_host)
+        @test (G.rhs_exponent(r) > 0) == (r_host === r_big)
+        for M in (G.LUFactorization(), G.QRFactorization())
+            fac = G.factorize!!(G.dense_factor(M, prob, x, nothing), M, J)
+            @test fac.scale_exponent != 0
+            d_ka = Array(KALULarge.ka_solve!(similar(x), fac, r))
+            d_ldiv = Array(G.ldiv!!(similar(x), fac, r))
+            @test d_ka == d_ldiv
+            @test all(isfinite, d_ka)
+        end
+    end
+end
+
+@testset "script_commit outside a git checkout is unknown and writes no stderr" begin
+    dir = mktempdir()
+    log = joinpath(mktempdir(), "stderr.txt")
+    c = open(log, "w") do f
+        redirect_stderr(() -> KALULarge.script_commit(dir), f)
+    end
+    @test c == "unknown"
+    @test isempty(read(log, String))
+end
+
+@testset "the vendor counts of sync_cost.jl name the device" begin
+    @test SyncCost.phase_counts(:vendor, 64, "metal")[3] == (2, 1)
+    @test SyncCost.phase_counts(:vendor, 64, "cuda")[3] == (1, 1)
+    @test SyncCost.phase_counts(:ka, 64, "metal")[3] == (128, 2)
 end
 
 @testset "sync_cost.jl runs on $dev at n = 64" for dev in ("cpu", "jlarray")

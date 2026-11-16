@@ -138,8 +138,8 @@ function step_time(m, prob, x0, p, sync)
 end
 
 # The waits and the launches of each phase on the path of `fac`: the host (`cpu`), the KA kernels,
-# or a vendor library.
-function phase_counts(path::Symbol, n::Int)
+# or the vendor library of the device `device`.
+function phase_counts(path::Symbol, n::Int, device::AbstractString)
     path === :host && return fill((0, 0), 5)
     # The Jacobian buffer of a `Newton` state on a device array is the factor's own storage, so
     # `factorize!!` copies nothing before it factorises.
@@ -150,9 +150,11 @@ function phase_counts(path::Symbol, n::Int)
         fac = (2n, 2)
         dir = (n + 3, 2)
     else
-        # factorize: the library factorisation, whose status the host reads.
+        # factorize: the library factorisation, whose status the host reads; on Metal also the
+        # broadcast of the pivots that MPS returns in a new array into the factor's own
+        # (`_mps_lu_finish!` of the Metal extension).
         # direction: `rhs_exponent`'s maximum; copy, the library solve, sign change.
-        fac = (1, 1)
+        fac = device == "metal" ? (2, 1) : (1, 1)
         dir = (3, 1)
     end
     return [
@@ -186,7 +188,7 @@ function measure_size(io, dev, n::Int; reps::Int)
     sync = () -> device_sync(x0)
     state0 = init_state(m, prob, x0, p)
     path = factor_path(state0.fac, m, state0.J)
-    counts = phase_counts(path, n)
+    counts = phase_counts(path, n, dev.name)
     t_wait = path === :host ? 0.0 : wait_time(dev; reps)
     # one warm-up call of each, then `reps` timed ones
     t_step = middle([step_time(m, prob, x0, p, sync) for _ in 1:(reps + 1)][2:end])

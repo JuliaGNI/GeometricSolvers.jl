@@ -11,12 +11,14 @@
 # package (JLArrays, Metal or CUDA), such as `test/` for `jlarray` or `.` with Metal.jl in the
 # default `@v1.x` environment. A device that is not present prints one line and no rows.
 #
-# Each row names its method (`LU` or `QR`) and its path. The `KA` path runs the kernels that
-# `factorize!!` and `ldiv!!` run where no extension method applies: `ka_factorize_lu!` and
-# `ka_lu_backsolve!`, or `ka_factorize_qr!` and `ka_qr_backsolve!`, so that it is measured on a
-# device whose `factorize!!` dispatches to a vendor library as well. The `vendor` path calls
-# `factorize!!` and `ldiv!!`, and is measured only where their methods for the device's arrays are
-# defined in an extension module; where none is, the script prints one line that says so.
+# Each row names its method (`LU` or `QR`) and its path. The `KA` path runs what `factorize!!` and
+# `ldiv!!` run where no extension method applies: `ka_factorize_lu!`, or `ka_factorize_qr!`, and
+# the solve of `ldiv!!` with `ka_lu_backsolve!`, or `ka_qr_backsolve!`, in place of `backsolve!`,
+# the scaling of the right-hand side by `rhs_exponent` and its host read included, so that it is
+# measured on a device whose `factorize!!` dispatches to a vendor library as well. The `vendor`
+# path calls `factorize!!` and `ldiv!!`, and is measured only where their methods for the device's
+# arrays are defined in an extension module; where none is, the script prints one line that says
+# so.
 #
 # Columns: `factorize` and `solve` are the median and the minimum wall time in ms of one call,
 # each followed by a device synchronisation. `phase 1` and `phase 2` split the KA factorisation:
@@ -29,7 +31,8 @@
 
 using GeometricSolvers
 using GeometricSolvers: DeviceLU, DeviceQR, LUFactorization, NonlinearProblem,
-                        QRFactorization, dense_factor, factorize!!, ldiv!!
+                        QRFactorization, dense_factor, factorize!!, ldexp2, ldiv!!,
+                        rhs_exponent
 using KernelAbstractions: KernelAbstractions, get_backend
 using LinearAlgebra
 using Printf
@@ -48,14 +51,27 @@ is_vendor(f, argtypes) = parentmodule(which(f, argtypes)) !== GeometricSolvers
 ka_factorize(fac::DeviceLU, J) = GeometricSolvers.ka_factorize_lu!(fac, J)
 ka_factorize(fac::DeviceQR, J) = GeometricSolvers.ka_factorize_qr!(fac, J)
 
-function ka_solve!(d, fac::DeviceLU, b)
-    copyto!(d, b)
-    return GeometricSolvers.ka_lu_backsolve!(fac.factors, fac.ipiv, d)
+function ka_backsolve!(fac::DeviceLU, d)
+    GeometricSolvers.ka_lu_backsolve!(fac.factors, fac.ipiv, d)
 end
+ka_backsolve!(fac::DeviceQR, d) = GeometricSolvers.ka_qr_backsolve!(fac.factors, fac.τ, d)
 
-function ka_solve!(d, fac::DeviceQR, b)
-    copyto!(d, b)
-    return GeometricSolvers.ka_qr_backsolve!(fac.factors, fac.τ, d)
+# The solve that `ldiv!!` runs for a square factor, with the KA backsolve kernels in place of
+# `backsolve!`, which an extension can define for the device's arrays: `rhs_exponent(r)`, a
+# device-wide maximum that the host reads, gives `k`; `d` takes `r / 2^k`; the kernels solve in
+# place; and `d` is multiplied by `2^(k - e)`, with `e` the exponent that the factorisation divided
+# `J` by.
+function ka_solve!(d, fac, r)
+    k = rhs_exponent(r)
+    if iszero(k)
+        copyto!(d, r)
+    else
+        d .= ldexp2.(r, -k)
+    end
+    ka_backsolve!(fac, d)
+    e = k - fac.scale_exponent
+    iszero(e) || map!(a -> ldexp2(a, e), d, d)
+    return d
 end
 
 # The two phases of `ka_lu!`, timed kernel by kernel: the pivot-swap-scale kernel of each column

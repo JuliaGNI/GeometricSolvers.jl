@@ -47,11 +47,13 @@ function device_label(dev)
 end
 
 # The commit of the checkout that holds this script, with `-dirty` for uncommitted changes, or
-# `unknown` where `git` cannot read it, such as in a copy of the files without the repository.
-function script_commit()
-    dir = @__DIR__
+# `unknown` where `git` cannot read it, such as in a copy of the files without the repository;
+# `git`'s own message then goes to `devnull`, not around the table. `dir` is the directory of
+# the checkout, this script's by default.
+function script_commit(dir::AbstractString = @__DIR__)
     try
-        return readchomp(`git -C $dir describe --always --dirty --abbrev=7`)
+        return readchomp(pipeline(`git -C $dir describe --always --dirty --abbrev=7`;
+            stderr = devnull))
     catch
         return "unknown"
     end
