@@ -1,7 +1,7 @@
 # The tests of `GeometricSolversAMDGPUExt`, run by hand on a machine with a ROCm device:
-# `julia --project=test/gpu/rocm test/gpu/rocm/runtests.jl`. The extension loading, dispatch and
-# JET rows, and the `JLArray` row of the `m × n` QR factor, run without a device; every row that
-# factorises on a ROCm array runs where `AMDGPU.functional()`.
+# `julia --startup-file=no --project=test/gpu/rocm test/gpu/rocm/runtests.jl`. The extension
+# loading, dispatch and JET rows, and the `JLArray` row of the `m × n` QR factor, run without a
+# device; every row that factorises on a ROCm array runs where `AMDGPU.functional()`.
 
 using AMDGPU
 using GPUArraysCore: allowscalar
