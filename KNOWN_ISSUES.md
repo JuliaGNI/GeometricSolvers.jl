@@ -513,7 +513,7 @@
 - **kind:** upstream
 - **found:** 2026-11-15 (Y3 premises probe on four cards)
 
-### K90 · The CUDA `backsolve!` for an `m × n` `DeviceQR`, `m > n`, throws `DimensionMismatch`
+### K91 · The CUDA `backsolve!` for an `m × n` `DeviceQR`, `m > n`, throws `DimensionMismatch`
 
 - **location:** `ext/GeometricSolversCUDAExt.jl:60–61`
 - **evidence:** the method calls `CUDA.CUBLAS.trsv!('U', 'N', 'N', fac.factors, d)` on the whole
@@ -530,4 +530,4 @@
   (critic round 2 probe of the ROCm extension). The ROCm extension conjugates `τ` of an `m × n`
   factor and sends it to `ka_qr_backsolve!`.
 - **kind:** defect
-- **found:** critic round 1 of the ROCm extension, 2026-11-16
+- **found:** 2026-11-16 (critic round 1 of the ROCm extension)
