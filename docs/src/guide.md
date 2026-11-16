@@ -2,7 +2,7 @@
 CurrentModule = GeometricSolvers
 ```
 
-# [User guide: methods by regime](@id guide)
+# [Methods by regime](@id guide)
 
 This page lists, for each regime, the methods that run in it and the conditions under which each
 one applies. It names no method as the right one: the choice depends on the problem, its size, the
@@ -31,7 +31,7 @@ gives others (see [Nonlinear methods](@ref nonlinear)).
 | [`Newton`](@ref) with [`LUFactorization`](@ref) | a square Jacobian |
 | [`Newton`](@ref) with [`LDLTFactorization`](@ref) | a symmetric or Hermitian Jacobian; it reads the lower triangle only |
 | [`Newton`](@ref) with [`QRFactorization`](@ref) | a square Jacobian, or a [`LeastSquaresProblem`](@ref) |
-| [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian; the status reports the numerical rank |
+| [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian, or a [`LeastSquaresProblem`](@ref); the status reports the numerical rank |
 | [`Newton`](@ref) with `regularization = μ` | a singular or nearly singular Jacobian, where the step of ``J + \mu I`` is acceptable |
 | [`QuasiNewton`](@ref)`(k)`, or [`Newton`](@ref) with `reuse = k` | the Jacobian and its factorisation dominate the cost of a step; the rate is then linear |
 | [`Refinement`](@ref), [`GMRESRefinement`](@ref) | a factorisation precision below the working type; in R1 a `GMRESRefinement` runs the LU-IR passes alone |
@@ -51,7 +51,8 @@ the compile time and the register use grow with it. A [`GMRES`](@ref) solve and
 [`LeftPreconditioned`](@ref) need an array iterate and raise an `ArgumentError` here. A
 factorisation precision below the working type saves registers and memory, not operations.
 [`solve`](@ref) differentiates through the solve when `x₀` or `p` carries a `ForwardDiff.Dual`
-(see [Implicit differentiation](@ref)).
+(see [Implicit differentiation](@ref)); a [`LeastSquaresProblem`](@ref) raises an
+`ArgumentError` there.
 
 ```jldoctest guide_r1
 julia> using GeometricSolvers, StaticArrays
