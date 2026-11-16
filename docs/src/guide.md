@@ -107,7 +107,7 @@ true
 
 | method | condition |
 |:--|:--|
-| [`LUFactorization`](@ref) on a sparse `jacobian_prototype` | a host `Vector` iterate of a real element type, Sparspak loaded, and the element type of the iterate as the factorisation precision (see [Sparse direct solves](@ref sparse)) |
+| [`LUFactorization`](@ref) on a sparse `jacobian_prototype` | a host `Vector` iterate of a real element type, Sparspak loaded, the element type of the iterate as the factorisation precision, and a Jacobian from an analytic `J!` that writes the nonzeros of the prototype or from `jacobian = AutoSparse(...)` (see [Sparse direct solves](@ref sparse)) |
 | [`RAS`](@ref) | local nonlinearities that a [`BlockPartition`](@ref) isolates, and one local residual per block |
 | [`LeftPreconditioned`](@ref) | an inner step `N` whose fixed points are the wanted roots; each trial point of the outer globalization costs one inner step, and with [`RAS`](@ref) it needs converged local solves |
 
@@ -158,8 +158,10 @@ differentiation or from a [`JVPFunction`](@ref).
 **Conditions of the regime.** R5 applies to a large system whose Jacobian no array can hold. A
 `GMRES` solve takes no factor reuse, no [`Refinement`](@ref), no [`LevenbergMarquardt`](@ref) and
 no [`LeastSquaresProblem`](@ref), and it has no implicit differentiation; each of them raises an
-`ArgumentError`. On a device array no factor is formed. [`f_calls`](@ref) and
-[`jvp_calls`](@ref) count the evaluations of the last solve.
+`ArgumentError`. A `Newton` with `GMRES` is not the outer method of a
+[`LeftPreconditioned`](@ref), and raises an `ArgumentError` there; it can be the inner method.
+On a device array no factor is formed. [`f_calls`](@ref) and [`jvp_calls`](@ref) count the
+evaluations of the last solve.
 
 ```jldoctest guide_r5
 julia> using GeometricSolvers
