@@ -11,6 +11,33 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **Measurement scripts for the device and CPU back ends, in `scripts/hardware/`.**
+  `ka_lu_large.jl` times `factorize!!` and the solve of the KernelAbstractions LU and QR in
+  `Float32`, and of the vendor path where an extension defines one, with the KA factorisation split
+  into its two kernels (pivot-swap-scale against the trailing update for LU, reflector against its
+  application for QR). `sync_cost.jl` splits one R3 `Newton()` step into its phases and counts the
+  host waits and the device launches of each, so that the time of the step divides into
+  synchronisations and arithmetic. `cusolver_getrf.jl` times cuSOLVER `getrf` in `Float64` under
+  CUDA.jl's default math mode and its `Float64` fixed-point emulation mode, with the relative
+  residual of each. `r3_lu_blas.jl` times the R3 LU on the CPU with OpenBLAS and with
+  AppleAccelerate. Each table names its commit, the Julia, KernelAbstractions and device package
+  versions, the device and the load. A script asked for a device that is not present prints one
+  line and no rows; it never runs on another device instead. Where a split's phases do not sum to
+  within 10 % of the measured total, the row says so. The new test file
+  `test/integration/hardware_scripts.jl` (group `slow`) runs `ka_lu_large.jl` on `JLArray` and
+  `sync_cost.jl` on the CPU and on `JLArray` at `n = 64`, `r3_lu_blas.jl` with OpenBLAS at
+  `n = 64`, and `r2_throughput.jl` on the CPU at 1000 systems and `n = 2`, with scalar indexing
+  disallowed; it adds `Printf` to the test environment.
+
+- **`scripts/r2_throughput.jl` gains a structure-of-arrays variant of its right-hand sides and a
+  second CPU baseline.** The SoA row passes one array per component through `PerSystem`, and the
+  script stops with an error where its roots differ from those of the array-of-structures row by
+  more than `sqrt(eps(Float32))`, relatively. The second baseline runs the R1 `solve!!` loop on one
+  thread beside the `Threads.@threads` loop. The default grid is `10³ … 10⁷` systems at
+  `n = 2, 4, 8, 12, 16`, and each argument takes a comma-separated list. The `Backtracking` row
+  called the batched `solve!`, which the rename to `solve_batch!` had removed, so the script
+  stopped with a `MethodError`; it calls `solve_batch!`.
+
 - **The headers of `.github/workflows/Metal.yml` and `Enzyme.yml` name the command that installs
   `CI.yml`.** They pointed to an installer script that does not exist, and to the directories of a
   local checkout. The workflows themselves are unchanged.

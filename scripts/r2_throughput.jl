@@ -3,11 +3,23 @@
 # for diagonally dominant A in Float32 across batch sizes and system dimensions n.
 #
 # Usage:
-#   julia --startup-file=no --threads=auto --project=. scripts/r2_throughput.jl [backend] [N_sys] [n]
+#   julia --startup-file=no --threads=auto --project=. scripts/r2_throughput.jl [device] [N_sys,…] [n,…]
 #
-# `backend` is `cpu` (the default), `metal` or `cuda`. The package depends on neither Metal.jl nor
-# CUDA.jl: install the one you select in an environment on the load path, such as the default
-# `@v1.x` environment, or `import Metal` / `import CUDA` fails before the benchmark starts.
+# `N_sys,…` is a comma-separated list of batch sizes, `10³, 10⁴, …, 10⁷` by default, and `n,…` one of
+# system dimensions, `2,4,8,12,16` by default.
+# `device` is `cpu` (the default), `jlarray`, `metal` or `cuda`. The package depends on neither
+# Metal.jl nor CUDA.jl: install the one you select in an environment on the load path, such as the
+# default `@v1.x` environment. A device that is not present prints one line and no rows.
+#
+# The right-hand sides `b` reach the kernel in two layouts. The array of structures (AoS) is one
+# `SVector` per system, `PerSystem(Vector{SVector{n}})`. The structure of arrays (SoA) is one array
+# per component, `PerSystem(SoAColumns)`, whose entry `i` gathers component `j` of system `i` from
+# array `j`. Both solve the same systems from the same starts, and the script stops with an error
+# where their roots differ by more than `ROOT_RTOL` relative to the AoS root.
+#
+# Rows, each in Msys/s: R2 `Newton()` with AoS and SoA right-hand sides, R2 `Newton(; reuse = 4)`,
+# R2 `Newton(; globalization = Backtracking())`, and two CPU baselines of the R1 `solve!!` loop over
+# the systems: `Threads.@threads :static` over the Julia threads, and one thread.
 
 using GeometricSolvers
 using GeometricSolvers: Adapt, Options, SolverStatus, ToReal, init_state, isconverged,
@@ -17,6 +29,12 @@ using LinearAlgebra
 using Printf
 using Random
 using StaticArrays
+
+include(joinpath(@__DIR__, "hardware", "common.jl"))
+
+# The largest relative difference between the AoS and the SoA root of a system that the check
+# accepts.
+const ROOT_RTOL = sqrt(eps(Float32))
 
 function make_A(::Val{N}, ::Type{T}; seed::Int = 42) where {N, T}
     rng = Xoshiro(seed)
@@ -59,21 +77,57 @@ function make_rhs(prob::NonlinearProblem, X_star::Vector{SVector{N, T}}) where {
     return [prob.F(x, zero(SVector{N, T})) for x in X_star]
 end
 
-function cpu_threaded_loop!(
+# The right-hand sides as a structure of arrays: `cols[j][i]` is component `j` of system `i`, and
+# entry `i` is the `SVector` of system `i`, which is what `PerSystem` hands to the residual.
+struct SoAColumns{N, V <: AbstractVector}
+    cols::NTuple{N, V}
+end
+
+Adapt.@adapt_structure SoAColumns
+
+Base.length(s::SoAColumns) = length(s.cols[1])
+
+Base.@propagate_inbounds function Base.getindex(s::SoAColumns{N}, i::Integer) where {N}
+    return SVector{N}(ntuple(j -> s.cols[j][i], Val(N)))
+end
+
+function soa_columns(B::Vector{SVector{N, T}}, array_ctor) where {N, T}
+    return SoAColumns(ntuple(j -> array_ctor([b[j] for b in B]), Val(N)))
+end
+
+# The largest difference between the roots `X_aos` and `X_soa` of one system, relative to the norm
+# of the AoS root.
+function max_root_difference(X_aos::Vector{<:SVector}, X_soa::Vector{<:SVector})
+    return maximum(i -> norm(X_aos[i] - X_soa[i]) / norm(X_aos[i]), eachindex(X_aos, X_soa))
+end
+
+# The R1 `solve!!` loop over the systems, on the Julia threads or on one thread.
+function cpu_loop!(
         X::Vector{SVector{N, T}},
         S::Vector{SolverStatus{R}},
         prob::NonlinearProblem,
         method,
         B::Vector{SVector{N, T}},
-        opt::Options{R}
+        opt::Options{R};
+        threaded::Bool
 ) where {N, T, R}
     m = Adapt.adapt(ToReal{R}(), method)
     state0 = init_state(m, prob, zero(SVector{N, T}), nothing)
-    Threads.@threads :static for i in eachindex(X)
-        @inbounds begin
-            x, st, _ = solve!!(state0, prob, X[i], m, B[i], opt)
-            X[i] = x
-            S[i] = st
+    if threaded
+        Threads.@threads :static for i in eachindex(X)
+            @inbounds begin
+                x, st, _ = solve!!(state0, prob, X[i], m, B[i], opt)
+                X[i] = x
+                S[i] = st
+            end
+        end
+    else
+        for i in eachindex(X)
+            @inbounds begin
+                x, st, _ = solve!!(state0, prob, X[i], m, B[i], opt)
+                X[i] = x
+                S[i] = st
+            end
         end
     end
     return S
@@ -94,7 +148,8 @@ function measure_row(
         n_sys::Int,
         backend_name::String,
         array_ctor;
-        reps::Int = 3
+        reps::Int = 3,
+        io::IO = stdout
 ) where {N}
     T = Float32
     R = Float32
@@ -103,16 +158,21 @@ function measure_row(
     B_host = make_rhs(prob, X_star)
     opt = Options(R; f_abstol = 1.0f-5, f_reltol = 1.0f-5, max_iterations = 20)
 
-    # 1. Threaded CPU R1 loop
+    # 1. CPU R1 loops: threaded, and on one thread
     X_cpu = similar(X0_host)
     S_cpu = Vector{SolverStatus{R}}(undef, n_sys)
     t_cpu = _best_time_s(; reps) do
         copyto!(X_cpu, X0_host)
-        cpu_threaded_loop!(X_cpu, S_cpu, prob, Newton(), B_host, opt)
+        cpu_loop!(X_cpu, S_cpu, prob, Newton(), B_host, opt; threaded = true)
     end
     rate_cpu = n_sys / t_cpu
+    t_serial = _best_time_s(; reps) do
+        copyto!(X_cpu, X0_host)
+        cpu_loop!(X_cpu, S_cpu, prob, Newton(), B_host, opt; threaded = false)
+    end
+    rate_serial = n_sys / t_serial
 
-    # 2. R2 solve_batch! with Newton()
+    # 2. R2 solve_batch! with Newton(), AoS right-hand sides
     X0_dev = array_ctor(X0_host)
     X_dev = similar(X0_dev)
     S_dev = array_ctor(Vector{SolverStatus{R}}(undef, n_sys))
@@ -122,19 +182,33 @@ function measure_row(
         solve_batch!(X_dev, S_dev, prob, Newton(), P_dev; options = opt)
     end
     rate_r2 = n_sys / t_r2
+    X_aos = Array(X_dev)
 
-    # 3. R2 solve_batch! with Newton(; reuse = 4)
+    # 3. R2 solve_batch! with Newton(), SoA right-hand sides, and the check of its roots
+    X_soa_dev = similar(X0_dev)
+    P_soa = PerSystem(soa_columns(B_host, array_ctor))
+    t_soa = _best_time_s(; reps) do
+        copyto!(X_soa_dev, X0_dev)
+        solve_batch!(X_soa_dev, S_dev, prob, Newton(), P_soa; options = opt)
+    end
+    rate_soa = n_sys / t_soa
+    root_diff = max_root_difference(X_aos, Array(X_soa_dev))
+    root_diff <= ROOT_RTOL || error(
+        "SoA and AoS roots differ by $(root_diff) relative to the AoS root at N_sys = $n_sys, " *
+        "n = $N; the check accepts $(ROOT_RTOL)")
+
+    # 4. R2 solve_batch! with Newton(; reuse = 4)
     t_reuse = _best_time_s(; reps) do
         copyto!(X_dev, X0_dev)
         solve_batch!(X_dev, S_dev, prob, Newton(; reuse = 4), P_dev; options = opt)
     end
     rate_reuse = n_sys / t_reuse
 
-    # 4. R2 solve! with Newton(; globalization = Backtracking()): the row that runs a line
+    # 5. R2 solve_batch! with Newton(; globalization = Backtracking()): the row that runs a line
     # search in the kernel
     t_ls = _best_time_s(; reps) do
         copyto!(X_dev, X0_dev)
-        solve!(X_dev, S_dev, prob, Newton(; globalization = Backtracking()), P_dev;
+        solve_batch!(X_dev, S_dev, prob, Newton(; globalization = Backtracking()), P_dev;
             options = opt)
     end
     rate_ls = n_sys / t_ls
@@ -143,73 +217,67 @@ function measure_row(
     S_got = Array(S_dev)
     n_conv = count(isconverged, S_got)
 
-    @printf("backend=%-6s N_sys=%-8d n=%-2d | R2 Newton: %9.2f Msys/s | R2 reuse=4: %9.2f Msys/s | R2 Backtracking: %9.2f Msys/s | CPU-thr R1: %9.2f Msys/s | speedup=%5.2fx | Backtracking %d/%d conv\n",
+    @printf(io,
+        "| %s | %d | %d | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.2f | %.1e | %d/%d |\n",
         backend_name,
         n_sys,
         N,
         rate_r2 / 1e6,
+        rate_soa / 1e6,
         rate_reuse / 1e6,
         rate_ls / 1e6,
         rate_cpu / 1e6,
+        rate_serial / 1e6,
         rate_r2 / rate_cpu,
+        root_diff,
         n_conv,
-        n_sys,)
+        n_sys)
     return (
         n = N,
         n_sys = n_sys,
         rate_r2 = rate_r2,
+        rate_soa = rate_soa,
         rate_reuse = rate_reuse,
         rate_ls = rate_ls,
-        rate_cpu = rate_cpu
+        rate_cpu = rate_cpu,
+        rate_serial = rate_serial,
+        root_diff = root_diff
     )
 end
 
-function resolve_backend(name::AbstractString)
-    lname = lowercase(strip(name))
-    if lname == "cpu"
-        return "cpu", Array
-    elseif lname == "metal"
-        @eval import Metal
-        if !Base.invokelatest(Metal.functional)
-            error("Metal backend requested, but Metal.functional() is false")
-        end
-        return "metal", Base.invokelatest(() -> Metal.MtlArray)
-    elseif lname == "cuda"
-        @eval import CUDA
-        if !Base.invokelatest(CUDA.functional)
-            error("CUDA backend requested, but CUDA.functional() is false")
-        end
-        return "cuda", Base.invokelatest(() -> CUDA.CuArray)
-    else
-        error("Unknown backend $(repr(name)); expected cpu, metal, or cuda")
-    end
-end
-
-function main(args = ARGS)
-    backend_arg = length(args) >= 1 ? args[1] : "cpu"
-    nsys_list = length(args) >= 2 ? [parse(Int, args[2])] : [1_000, 100_000]
-    n_list = length(args) >= 3 ? [parse(Int, args[3])] : [2, 4, 8, 12, 16]
-
-    bname, ctor = resolve_backend(backend_arg)
-    println("R2 batched throughput benchmark (threads=$(Threads.nthreads()), backend=$bname)")
-
+function run_tables(io, dev, nsys_list, n_list)
+    print_header(io, "R2 batched throughput in Float32 (scripts/r2_throughput.jl)", dev)
+    println(io, "| device | N_sys | n | R2 Newton AoS | R2 Newton SoA | R2 reuse=4 | ",
+        "R2 Backtracking | CPU R1 threaded | CPU R1 one thread | R2 AoS / CPU threaded | ",
+        "SoA-AoS root difference | Backtracking converged |")
+    println(io, "|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+    rows = NamedTuple[]
     for n_sys in nsys_list
-        rows = NamedTuple[]
+        rows_n = NamedTuple[]
         for n in n_list
-            row = measure_row(Val(n), n_sys, bname, ctor)
-            push!(rows, row)
+            push!(rows_n, measure_row(Val(n), n_sys, dev.name, dev.array; io))
         end
         # Report R4 crossover n where R2 Newton throughput drops below CPU threaded R1 loop
-        crossover = findfirst(r -> r.rate_r2 < r.rate_cpu, rows)
+        crossover = findfirst(r -> r.rate_r2 < r.rate_cpu, rows_n)
         if crossover === nothing
-            println("R4 crossover (N_sys=$n_sys): none in n=$(n_list) (R2 >= CPU-thr across all tested n)")
+            println(io, "R4 crossover (N_sys=$n_sys): none in n=$(n_list) ",
+                "(R2 >= CPU-thr across all tested n)")
         else
-            println("R4 crossover (N_sys=$n_sys): n=$(rows[crossover].n)")
+            println(io, "R4 crossover (N_sys=$n_sys): n=$(rows_n[crossover].n)")
         end
+        append!(rows, rows_n)
     end
-    return nothing
+    return rows
 end
 
-if abspath(PROGRAM_FILE) == (@__FILE__) || !isempty(ARGS)
+function main(args = ARGS; io::IO = stdout)
+    dev = select_device(length(args) >= 1 ? args[1] : "cpu"; io)
+    dev === nothing && return nothing
+    nsys_list = length(args) >= 2 ? parse.(Int, split(args[2], ',')) : 10 .^ (3:7)
+    n_list = length(args) >= 3 ? parse.(Int, split(args[3], ',')) : [2, 4, 8, 12, 16]
+    return Base.invokelatest(run_tables, io, dev, nsys_list, n_list)
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
     main()
 end
