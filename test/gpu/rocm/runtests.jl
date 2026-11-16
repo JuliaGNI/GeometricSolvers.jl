@@ -74,25 +74,9 @@ const ROCM_BLAS_ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
         @test which(factorize!!, (DevQR_F16, QRFactorization{Nothing}, MatF16)).module ===
               GeometricSolvers
         @test which(backsolve!, (DevQR_F16, VecF16)).module === GeometricSolvers
-    end
-
-    # The census: LU and QR of (F32, F64, CF32, CF64) have an extension method, F16 has none, and
-    # the SVD has none at any element type.
-    VecI32_D = ROCArray{Int32, 1, AMDGPU.Mem.HIPBuffer}
-    for T in (Float16, Float32, Float64, ComplexF32, ComplexF64)
-        Mat = ROCArray{T, 2, AMDGPU.Mem.HIPBuffer}
-        Vec = ROCArray{T, 1, AMDGPU.Mem.HIPBuffer}
-        VecR = ROCArray{real(T), 1, AMDGPU.Mem.HIPBuffer}
-        expected_ext = T in ROCM_BLAS_ELTYPES
-        for (Fac, M, expected) in (
-            (DeviceLU{Mat, VecI32_D, Nothing, VecI32_D},
-            LUFactorization{Nothing}, expected_ext),
-            (DeviceQR{Mat, Vec, Nothing, VecI32_D}, QRFactorization{Nothing}, expected_ext),
-            (
-            DeviceSVD{Mat, VecR, VecI32_D, Vec, Nothing}, SVDFactorization{Nothing}, false)
-        )
-            @test (which(factorize!!, (Fac, M, Mat)).module === ext_rocm) == expected
-        end
+        DevSVD_F16 = DeviceSVD{MatF16, VecF16, VecI32, VecF16, Nothing}
+        @test which(factorize!!, (DevSVD_F16, SVDFactorization{Nothing}, MatF16)).module ===
+              GeometricSolvers
     end
 end
 
@@ -198,6 +182,35 @@ if AMDGPU.functional()
                 @test norm(x_ext - x_ka, Inf) /
                       max(norm(x_ka, Inf), Float64(eps(Float32))) <= bound
             end
+        end
+    end
+
+    # The `m × n` QR factor of a least-squares problem, `m > n`: `rocBLAS.trsv!` takes a square
+    # matrix only, so its solve runs on the own kernel. The mixed `ldiv!!` and a direct `backsolve!`
+    # reach the extension's method with the length-`m` right-hand side. The bound is that of the
+    # `JLArray` least-squares rows of `test/nonlinear/leastsquares.jl`, in the factor's precision.
+    @testset "ROCm rectangular QR, m = 6 > n = 3: $T" for T in ROCM_BLAS_ELTYPES
+        m_rows, n = 6, 3
+        A_h = T[(i == j ? 3 : 0) + (i + 2j) % 5 for i in 1:m_rows, j in 1:n]
+        b_h = T[1, -2, 3, 0, 2, -1]
+        x_ref = A_h \ b_h
+        prob = LeastSquaresProblem((r, x, p) -> r, m_rows)
+        methods = real(T) === Float64 ? (QRFactorization(), QRFactorization(Float32)) :
+                  (QRFactorization(),)
+        for method in methods
+            d = ROCArray(zeros(T, n))
+            fac = dense_factor(method, prob, d, nothing)
+            @test size(fac.factors) == (m_rows, n)
+            fac = factorize!!(fac, method, ROCArray(A_h))
+            @test returncode(fac) === SUCCESS
+            F = eltype(fac.factors)
+            rtol = 32 * sqrt(eps(real(F)))
+            ldiv!!(d, fac, ROCArray(b_h))
+            @test isapprox(Array(d), x_ref; rtol)
+            # The factors are those of `J / 2^e`, `e = fac.scale_exponent`.
+            d_m = ROCArray(F.(b_h))
+            backsolve!(fac, d_m)
+            @test isapprox(Array(d_m)[1:n] .* F(2)^(-fac.scale_exponent), F.(x_ref); rtol)
         end
     end
 

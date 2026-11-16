@@ -16,10 +16,12 @@ so that a compat-only bump can be told apart from an interface change.
   `ROCMatrix{T}`, `T <: LinearAlgebra.BlasFloat`, call `AMDGPU.rocSOLVER.getrf!` (`info` the first
   zero pivot) and `getrs!`, and `geqrf!` (`info` the first zero or non-finite diagonal entry of
   `R`), `ormqr!` and `AMDGPU.rocBLAS.trsv!`, as the CUDA extension does with cuSOLVER and cuBLAS.
-  A `Float32` factor of a `Float64` Jacobian reaches the `Float32` methods. `Float16`, the SVD and
-  `LDLᵀ` stay on the own `KernelAbstractions` kernels. `Project.toml` adds `AMDGPU` (`2.11`) under
-  `[weakdeps]` and `[compat]`. The tests are in `test/gpu/rocm/runtests.jl`: the dispatch and JET
-  rows run without a device, and the factorising rows run by hand on a ROCm device.
+  A `Float32` factor of a `Float64` Jacobian reaches the `Float32` methods. `Float16`, the SVD,
+  `LDLᵀ` and the solve with the `m × n` QR factor of a least-squares problem, `m > n`, stay on the
+  own `KernelAbstractions` kernels, because `rocBLAS.trsv!` takes a square matrix only.
+  `Project.toml` adds `AMDGPU` (`2.11`) under `[weakdeps]` and `[compat]`. The tests are in
+  `test/gpu/rocm/runtests.jl`: the dispatch and JET rows run without a device, and the factorising
+  rows run by hand on a ROCm device.
 
 - **The headers of `.github/workflows/Metal.yml` and `Enzyme.yml` name the command that installs
   `CI.yml`.** They pointed to an installer script that does not exist, and to the directories of a

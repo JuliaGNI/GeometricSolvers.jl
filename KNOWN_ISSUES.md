@@ -512,3 +512,16 @@
   only counts these rows as solved.
 - **kind:** upstream
 - **found:** 2026-11-15 (Y3 premises probe on four cards)
+
+### K90 · The CUDA `backsolve!` for an `m × n` `DeviceQR`, `m > n`, throws `DimensionMismatch`
+
+- **location:** `ext/GeometricSolversCUDAExt.jl:60–61`
+- **evidence:** the method calls `CUDA.CUBLAS.trsv!('U', 'N', 'N', fac.factors, d)` on the whole
+  factor, and that wrapper throws `DimensionMismatch("Matrix A is $m by $n but must be square")`
+  for `m ≠ n` (CUDA 5.9.5, `lib/cublas/wrappers.jl:968–969`). The mixed-precision `ldiv!!` of a
+  `LeastSquaresProblem` with `QRFactorization(Float32)` and a `Float64` iterate calls this
+  `backsolve!` on the `m × n` factor with the length-`m` right-hand side
+  (`src/linear/mixed.jl:19`). The same-type solve goes to the own-kernel `backsolve_shifted!` and
+  is not affected. The ROCm extension sends an `m × n` factor to `ka_qr_backsolve!` instead.
+- **kind:** defect
+- **found:** critic round 1 of the ROCm extension, 2026-11-16

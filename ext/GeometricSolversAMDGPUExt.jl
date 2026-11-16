@@ -1,7 +1,7 @@
 # ROCm rocSOLVER and rocBLAS dense LU and QR factorisations and solves for `ROCMatrix{T}` and
-# `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). Non-BLAS element types (`Float16`, `BFloat16`)
-# and the SVD and LDLᵀ factorisations remain on the `KernelAbstractions` device kernels in
-# `src/linear/ka/`.
+# `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). Non-BLAS element types (`Float16`, `BFloat16`),
+# the SVD and LDLᵀ factorisations, and the solve with an `m × n` QR factor, `m > n`, remain on the
+# `KernelAbstractions` device kernels in `src/linear/ka/`.
 
 module GeometricSolversAMDGPUExt
 
@@ -58,6 +58,10 @@ function GeometricSolvers.backsolve!(
         d::ROCVector{T}
 ) where {T <: BlasFloat}
     isempty(d) && return d
+    # `rocBLAS.trsv!` takes a square matrix only, so the `m × n` factor of a least-squares problem
+    # with `m > n` solves on the own kernel, which leaves the solution in `d[1:n]`.
+    size(fac.factors, 1) == size(fac.factors, 2) ||
+        return GeometricSolvers.ka_qr_backsolve!(fac.factors, fac.τ, d)
     AMDGPU.rocSOLVER.ormqr!('L', T <: Real ? 'T' : 'C', fac.factors, fac.τ, d)
     AMDGPU.rocBLAS.trsv!('U', 'N', 'N', fac.factors, d)
     return d
