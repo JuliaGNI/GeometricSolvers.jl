@@ -98,14 +98,24 @@ end
     JET.test_call(backsolve!, (DevQR, Vec); target_modules = (ext_rocm,))
 end
 
+# The data of the `m × n` least-squares QR rows, `m > n`. For complex `T` the entries have
+# imaginary parts, so the LAPACK `τ` of `A` is not real and `conj.(τ) != τ`: a solve that reads
+# the factor with the unconverted `τ` misses the least-squares solution.
+function rect_qr_data(T, m_rows, n)
+    A = T[(i == j ? 3 : 0) + (i + 2j) % 5 + (T <: Complex ? im * ((i * j) % 3) : 0)
+          for i in 1:m_rows, j in 1:n]
+    b = T[mod(7i, 5) - 2 + (T <: Complex ? im * (i % 2) : 0) for i in 1:m_rows]
+    return A, b
+end
+
 # The `m × n` factor, `m > n`, that `factorize!!` leaves after `rocSOLVER.geqrf!`: the LAPACK
 # factor with `conj.(τ)`. Host `LAPACK.geqrf!` stands in for `rocSOLVER.geqrf!`, and a `JLArray`
-# for the device, so the own kernel's reading of that factor is checked without a device.
+# for the device, so the own kernel's reading of that factor is checked without a device. For
+# complex `T`, the solve with the LAPACK `τ` as it is must miss the solution: this shows that the
+# data tell the converted factor from the unconverted one.
 @testset "LAPACK m × n QR factor with conj.(τ) on the own kernel: $T" for T in ROCM_BLAS_ELTYPES
     for (m_rows, n) in ((6, 3), (40, 7))
-        A = T[(i == j ? 3 : 0) + (i + 2j) % 5 + (T <: Complex ? im * ((i * j) % 3) : 0)
-              for i in 1:m_rows, j in 1:n]
-        b = T[mod(7i, 5) - 2 + (T <: Complex ? im * (i % 2) : 0) for i in 1:m_rows]
+        A, b = rect_qr_data(T, m_rows, n)
         x_ref = A \ b
         rtol = 32 * sqrt(eps(real(T)))
         F = copy(A)
@@ -123,6 +133,12 @@ end
         d_m = JLArray(copy(b))
         ka_qr_backsolve!(JLArray(F), JLArray(conj.(τ)), d_m)
         @test isapprox(Array(d_m)[1:n], x_ref; rtol)
+
+        if T <: Complex
+            d_raw = JLArray(copy(b))
+            ka_qr_backsolve!(JLArray(F), JLArray(τ), d_raw)
+            @test !isapprox(Array(d_raw)[1:n], x_ref; rtol)
+        end
     end
 end
 
@@ -222,8 +238,7 @@ if AMDGPU.functional()
     # `JLArray` least-squares rows of `test/nonlinear/leastsquares.jl`, in the factor's precision.
     @testset "ROCm rectangular QR, m = 6 > n = 3: $T" for T in ROCM_BLAS_ELTYPES
         m_rows, n = 6, 3
-        A_h = T[(i == j ? 3 : 0) + (i + 2j) % 5 for i in 1:m_rows, j in 1:n]
-        b_h = T[1, -2, 3, 0, 2, -1]
+        A_h, b_h = rect_qr_data(T, m_rows, n)
         x_ref = A_h \ b_h
         prob = LeastSquaresProblem((r, x, p) -> r, m_rows)
         methods = real(T) === Float64 ? (QRFactorization(), QRFactorization(Float32)) :
