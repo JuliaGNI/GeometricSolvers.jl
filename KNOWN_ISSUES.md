@@ -521,7 +521,13 @@
   for `m ≠ n` (CUDA 5.9.5, `lib/cublas/wrappers.jl:968–969`). The mixed-precision `ldiv!!` of a
   `LeastSquaresProblem` with `QRFactorization(Float32)` and a `Float64` iterate calls this
   `backsolve!` on the `m × n` factor with the length-`m` right-hand side
-  (`src/linear/mixed.jl:19`). The same-type solve goes to the own-kernel `backsolve_shifted!` and
-  is not affected. The ROCm extension sends an `m × n` factor to `ka_qr_backsolve!` instead.
+  (`src/linear/mixed.jl:19`). The same-type solve goes to the own-kernel `backsolve_shifted!`
+  (`src/linear/ka/qr.jl:184`), which throws no error but, for complex `T`, gives a wrong
+  solution: the cuSOLVER `geqrf!` factor has the LAPACK `τ` (H = I − τ v vᴴ), and the own
+  `qadj` kernel applies I − τ v vᴴ as Hᴴ, which holds for the LAPACK factor only with
+  `conj.(τ)`. A host `LAPACK.geqrf!` factor solved with `ka_qr_backsolve!` on a `JLArray` fails
+  for `ComplexF32` and `ComplexF64` at 6 × 3, 40 × 7 and 3 × 1 and passes with `conj.(τ)`
+  (critic round 2 probe of the ROCm extension). The ROCm extension conjugates `τ` of an `m × n`
+  factor and sends it to `ka_qr_backsolve!`.
 - **kind:** defect
 - **found:** critic round 1 of the ROCm extension, 2026-11-16

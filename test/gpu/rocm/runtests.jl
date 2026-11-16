@@ -1,18 +1,21 @@
 # The tests of `GeometricSolversAMDGPUExt`, run by hand on a machine with a ROCm device:
 # `julia --project=test/gpu/rocm test/gpu/rocm/runtests.jl`. The extension loading, dispatch and
-# JET rows run without a device; every row that factorises runs where `AMDGPU.functional()`.
+# JET rows, and the `JLArray` row of the `m × n` QR factor, run without a device; every row that
+# factorises on a ROCm array runs where `AMDGPU.functional()`.
 
 using AMDGPU
 using GPUArraysCore: allowscalar
 using JET: JET
-using LinearAlgebra: BLAS, I, cond, norm
+using JLArrays: JLArray
+using LinearAlgebra: BLAS, I, LAPACK, cond, norm
 using Test
 
 using GeometricSolvers
 using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
 using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
 using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!,
-                        ka_factorize_lu!, ka_factorize_qr!, ldiv!!, returncode
+                        ka_factorize_lu!, ka_factorize_qr!, ka_qr_backsolve!, ldiv!!,
+                        returncode
 
 include("../../helpers/own_kernel.jl")
 
@@ -93,6 +96,34 @@ end
     JET.test_call(factorize!!, (DevQR, QRFactorization{Nothing}, Mat);
         target_modules = (ext_rocm,))
     JET.test_call(backsolve!, (DevQR, Vec); target_modules = (ext_rocm,))
+end
+
+# The `m × n` factor, `m > n`, that `factorize!!` leaves after `rocSOLVER.geqrf!`: the LAPACK
+# factor with `conj.(τ)`. Host `LAPACK.geqrf!` stands in for `rocSOLVER.geqrf!`, and a `JLArray`
+# for the device, so the own kernel's reading of that factor is checked without a device.
+@testset "LAPACK m × n QR factor with conj.(τ) on the own kernel: $T" for T in ROCM_BLAS_ELTYPES
+    for (m_rows, n) in ((6, 3), (40, 7))
+        A = T[(i == j ? 3 : 0) + (i + 2j) % 5 + (T <: Complex ? im * ((i * j) % 3) : 0)
+              for i in 1:m_rows, j in 1:n]
+        b = T[mod(7i, 5) - 2 + (T <: Complex ? im * (i % 2) : 0) for i in 1:m_rows]
+        x_ref = A \ b
+        rtol = 32 * sqrt(eps(real(T)))
+        F = copy(A)
+        _, τ = LAPACK.geqrf!(F)
+
+        prob = LeastSquaresProblem((r, x, p) -> r, m_rows)
+        d = JLArray(zeros(T, n))
+        fac = dense_factor(QRFactorization(), prob, d, nothing)
+        @test fac isa DeviceQR
+        copyto!(fac.factors, JLArray(F))
+        copyto!(fac.τ, JLArray(conj.(τ)))
+        ldiv!!(d, fac, JLArray(b))
+        @test isapprox(Array(d), x_ref; rtol)
+
+        d_m = JLArray(copy(b))
+        ka_qr_backsolve!(JLArray(F), JLArray(conj.(τ)), d_m)
+        @test isapprox(Array(d_m)[1:n], x_ref; rtol)
+    end
 end
 
 if AMDGPU.functional()

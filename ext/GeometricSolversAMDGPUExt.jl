@@ -1,6 +1,7 @@
 # ROCm rocSOLVER and rocBLAS dense LU and QR factorisations and solves for `ROCMatrix{T}` and
-# `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). Non-BLAS element types (`Float16`, `BFloat16`),
-# the SVD and LDLᵀ factorisations, and the solve with an `m × n` QR factor, `m > n`, remain on the
+# `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). `geqrf!` factorises at every shape; the solve
+# with an `m × n` QR factor, `m > n`, runs on the `KernelAbstractions` device kernel. Non-BLAS
+# element types (`Float16`, `BFloat16`) and the SVD and LDLᵀ factorisations remain on the
 # `KernelAbstractions` device kernels in `src/linear/ka/`.
 
 module GeometricSolversAMDGPUExt
@@ -49,6 +50,11 @@ function GeometricSolvers.factorize!!(
     isempty(fac.factors) &&
         return DeviceQR(fac.factors, fac.τ, fac.rhs, 0, e, fac.status)
     AMDGPU.rocSOLVER.geqrf!(fac.factors, fac.τ)
+    # `geqrf!` writes the LAPACK layout, H = I - τ v vᴴ. The `m × n` factor, `m > n`, solves on
+    # `ka_qr_backsolve!`, whose `qadj` kernel applies I - τ v vᴴ as Hᴴ (the layout of `ka_qr!`),
+    # so it reads Hᴴ = I - conj(τ) v vᴴ of the LAPACK factor from `conj.(τ)`. The square factor
+    # keeps the LAPACK `τ` that `ormqr!` reads.
+    size(fac.factors, 1) == size(fac.factors, 2) || (fac.τ .= conj.(fac.τ))
     info = _rocsolver_qr_info(fac.factors)
     return DeviceQR(fac.factors, fac.τ, fac.rhs, info, e, fac.status)
 end
