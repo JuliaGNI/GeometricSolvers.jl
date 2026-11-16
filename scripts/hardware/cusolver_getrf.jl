@@ -1,6 +1,6 @@
 # cuSOLVER `getrf` in `Float64` on a CUDA device, with the relative residual of the solve, under
-# the cuBLAS math mode of CUDA.jl that it runs with by default and under the `Float64` fixed-point
-# emulation mode.
+# cuSOLVER's default math mode and under its `Float64` fixed-point emulation mode. The emulated
+# row is not yet measured on a device.
 #
 # Usage, from the root of the repository:
 #   julia --startup-file=no --project=<env> scripts/hardware/cusolver_getrf.jl [n,…] [reps]
@@ -10,12 +10,13 @@
 # KernelAbstractions and CUDA.jl. Without a functional CUDA device the script prints one line and
 # no rows.
 #
-# Each size has two rows. `default` sets `CUDA.math_mode!(CUDA.DEFAULT_MATH)`, the mode that CUDA.jl
-# starts with unless Julia runs with `--math-mode=fast`. `FixedPoint` sets
-# `CUDA.math_mode!(CUDA.FAST_MATH; precision = :FixedPoint)`, which CUDA.jl 6.5 maps to
-# `CUBLAS_FP64_EMULATED_FIXEDPOINT_MATH` on its cuBLAS handle from cuBLAS 13.1 on. Whether that
-# handle's mode reaches the products inside cuSOLVER's `getrf` is what the two rows show. Switches
-# that cuBLAS reads from the environment act on the whole process, so a run with them is a second
+# Each size has two rows. The math mode is a property of cuSOLVER's dense handle, which
+# `CUDA.math_mode!` does not set: that call sets the cuBLAS handle alone. `default` runs with
+# `CUSOLVER_DEFAULT_MATH` on the dense handle. `FixedPoint` sets
+# `cusolverDnSetMathMode(dense_handle(), CUSOLVER_FP64_EMULATED_FIXEDPOINT_MATH)` before the row
+# and sets `CUSOLVER_DEFAULT_MATH` again after it, also when the row throws. The column `cuSOLVER
+# mode read back` is the mode that `cusolverDnGetMathMode` returns for the row. Switches that
+# cuBLAS reads from the environment act on the whole process, so a run with them is a second
 # process: the header lists every environment variable whose name begins with `CUBLAS_`.
 #
 # `getrf` is the median and the minimum wall time in ms of a device copy of the matrix followed by
@@ -36,12 +37,26 @@ function cublas_environment()
     return join(("$k=$(ENV[k])" for k in vars), ", ")
 end
 
+function cusolver_math_mode(cuSOLVER)
+    mode = Ref{cuSOLVER.cusolverMathMode_t}()
+    cuSOLVER.cusolverDnGetMathMode(cuSOLVER.dense_handle(), mode)
+    return mode[]
+end
+
 function measure(io, CUDA, n::Int, mode::String; reps::Int)
+    cuSOLVER = CUDA.cuSOLVER
     if mode == "FixedPoint"
-        CUDA.math_mode!(CUDA.FAST_MATH; precision = :FixedPoint)
-    else
-        CUDA.math_mode!(CUDA.DEFAULT_MATH)
+        cuSOLVER.cusolverDnSetMathMode(cuSOLVER.dense_handle(),
+            cuSOLVER.CUSOLVER_FP64_EMULATED_FIXEDPOINT_MATH)
     end
+    try
+        return measure_row(io, CUDA, n, mode, cusolver_math_mode(cuSOLVER); reps)
+    finally
+        cuSOLVER.cusolverDnSetMathMode(cuSOLVER.dense_handle(), cuSOLVER.CUSOLVER_DEFAULT_MATH)
+    end
+end
+
+function measure_row(io, CUDA, n::Int, mode::String, read_back; reps::Int)
     rng = Xoshiro(n)
     A = randn(rng, Float64, n, n)
     b = randn(rng, Float64, n)
@@ -59,10 +74,9 @@ function measure(io, CUDA, n::Int, mode::String; reps::Int)
     CUDA.cuSOLVER.getrs!('N', F_dev, ipiv, x_dev)
     x = Array(x_dev)
     res = norm(A * x - b, Inf) / (opnorm(A, Inf) * norm(x, Inf))
-    @printf(io, "| %d | %s | %.3f / %.3f | %.2e |\n", n, mode, 1e3 * t.median, 1e3 * t.min,
-        res)
-    CUDA.math_mode!(CUDA.DEFAULT_MATH)
-    return (n = n, mode = mode, getrf = t, residual = res)
+    @printf(io, "| %d | %s | %s | %.3f / %.3f | %.2e |\n", n, mode, read_back,
+        1e3 * t.median, 1e3 * t.min, res)
+    return (n = n, mode = mode, read_back = read_back, getrf = t, residual = res)
 end
 
 function run_tables(io, dev, ns, reps)
@@ -73,8 +87,9 @@ function run_tables(io, dev, ns, reps)
             "cuSOLVER" => string(CUDA.cuSOLVER.version()),
             "environment" => cublas_environment(),
             "reps" => string(reps)])
-    println(io, "| n | math mode | getrf ms (median / min) | residual |")
-    println(io, "|--:|:--|--:|--:|")
+    println(io,
+        "| n | math mode | cuSOLVER mode read back | getrf ms (median / min) | residual |")
+    println(io, "|--:|:--|:--|--:|--:|")
     return [measure(io, CUDA, n, mode; reps) for n in ns
             for mode in ("default", "FixedPoint")]
 end

@@ -33,8 +33,10 @@ using StaticArrays
 include(joinpath(@__DIR__, "hardware", "common.jl"))
 
 # The largest relative difference between the AoS and the SoA root of a system that the check
-# accepts.
-const ROOT_RTOL = sqrt(eps(Float32))
+# accepts. Both layouts run the same arithmetic on the same values, so the roots agree to a few
+# ulps (`cpu 1000,2000 2` gives a difference of 0.0); 8 ulps leave room for FMA contraction and
+# reduction order.
+const ROOT_RTOL = 8 * eps(Float32)
 
 function make_A(::Val{N}, ::Type{T}; seed::Int = 42) where {N, T}
     rng = Xoshiro(seed)
