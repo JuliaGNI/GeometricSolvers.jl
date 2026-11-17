@@ -99,15 +99,14 @@ step then evaluates the global residual once at the swept iterate and returns it
 An inner iteration of block `i` stops before its linear solve when the block residual norm is at
 most `atol + rtol * ‖f_i⁰‖`, with `f_i⁰` the block's residual at its first inner iteration. With a
 positive tolerance (`atol > 0` or `rtol > 0`), a local solve is also converged at its residual
-floor, where the residual can fall no further: a Newton step ``\\delta`` with
-``\\|\\delta\\| \\le \\sqrt{\\varepsilon} \\|x_i\\|`` that leaves the block residual norm no smaller
-ends it, and so does a last step at the rounding level of its iterate,
-``\\|\\delta\\| \\le \\varepsilon \\|x_i\\|``, with ``\\varepsilon`` the `eps` of the element type.
-A local solve that takes all `max_iterations` steps otherwise evaluates its block residual once
-more, and where that norm is above the tolerance and not at the floor, the local solve has not
-converged: the step returns the iterate unchanged with `MAXITERS`, which ends the solve, and
-[`ras_counts`](@ref) names the block in `failed_block`. With `atol = rtol = 0` every local
-solve takes `max_iterations` steps and makes no claim of convergence. With
+floor, the bound of the rounding error of its residual: a block residual norm of at most
+``n_i \\varepsilon \\|J_i\\|_F \\|x_i\\|`` ends it, with ``n_i`` the block size, ``J_i`` the block
+Jacobian of its last Newton step, ``\\|\\cdot\\|_F`` the Frobenius norm and ``\\varepsilon`` the
+`eps` of the element type. A local solve that takes all `max_iterations` steps evaluates its block
+residual once more, and where that norm is above the tolerance and above the floor, the local
+solve has not converged: the step returns the iterate unchanged with `MAXITERS`, which ends the
+solve, and [`ras_counts`](@ref) names the block in `failed_block`. With `atol = rtol = 0` every
+local solve takes `max_iterations` steps and makes no claim of convergence. With
 `balance_threshold = ρ` the step returns the iterate unchanged, as a `SUCCESS` of zero norm, when
 ``\\max_i \\|R_i F(x)\\| \\le \\rho \\|F(x)\\|`` (`CaiLi:2011`); the block residuals cost one call
 per block in that test, and the global residual costs none. [`LeftPreconditioned`](@ref) refuses a
@@ -376,13 +375,19 @@ function ras_prolongate!(dest, x_locals, owners, local_owners)
     return dest
 end
 
-# The residual floor of a local Newton solve: a step of at most `√eps ‖x_i‖` that leaves the residual
-# norm no smaller than before it. Newton's error after such a step is at the rounding level, so its
-# residual is at the floor `≈ eps ‖J_i‖ ‖x_i‖`, below which no step reduces it; a step there has norm
-# `≈ eps κ(J_i) ‖x_i‖`, which lies above `eps ‖x_i‖` for any block Jacobian with `κ(J_i) > 1`. A
-# step far from the root that fails to reduce the residual is of the order of the error, above
-# `√eps ‖x_i‖`, and a slowly converging solve still reduces it, so neither counts.
-@inline at_floor(fnorm, fprev, small) = small && fnorm >= fprev
+# The residual floor of a local Newton solve, `n_i eps ‖J_i‖_F ‖x_i‖`, with `n_i` the block size:
+# the rounding bound `|fl(J_i x_i) - J_i x_i| ≤ n_i eps |J_i| |x_i|` of a matrix-vector product of
+# length `n_i`, in the Euclidean norm of `rnorm`, where `‖|J_i| |x_i|‖ ≤ ‖J_i‖_F ‖x_i‖`. It bounds
+# the rounding error of an affine block residual at its root, and a nonlinear one has the same
+# leading term there; a Newton step reduces a residual no further than that rounding error, so a
+# residual of at most the floor counts as converged. An iterate with an error `e` has a residual of
+# at least `σ_min(J_i) ‖e‖`, so an error of `√eps ‖x_i‖` lies above the floor wherever
+# `n_i κ_F(J_i) < 1/√eps`. `rnorm` of a matrix is its Frobenius norm, one reduction without scalar
+# indexing on every array type.
+@inline function residual_floor(J_i, x_i)
+    R = real(eltype(x_i))
+    return length(x_i) * eps(R) * rnorm(J_i) * rnorm(x_i)
+end
 
 # One sweep, and the code it ends with: `SINGULAR` where a block's factor reports a zero pivot,
 # `NONFINITE` where a block residual is not finite, and `MAXITERS` where a local solve with a
@@ -408,8 +413,8 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
         J_i = blocks.jacobians[i]
         x_loc .= view(x, blocks.subdomains[i])
         f₀ = zero(R)
-        fprev = zero(R)
-        small = false
+        # the residual floor at the last block Jacobian, zero before the first one
+        floor = zero(R)
         k = 0
         converged = false
         for it in 1:m.max_iterations
@@ -417,29 +422,26 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
             all(isfinite, f_i) || return NONFINITE
             fnorm = rnorm(f_i)
             it == 1 && (f₀ = fnorm)
-            if fnorm <= m.atol + m.rtol * f₀ || (tolerance && at_floor(fnorm, fprev, small))
+            if fnorm <= m.atol + m.rtol * f₀ || (tolerance && fnorm <= floor)
                 converged = true
                 break
             end
             block_jacobian!!(J_i, blocks, prob, i, x_loc, x, p)
+            tolerance && (floor = residual_floor(J_i, x_loc))
             fac = factorize!!(state.factors[i], LUFactorization(), J_i)
             iszero(fac.info) || return SINGULAR
             state.factors[i] = fac
             x_loc .-= ldiv!!(blocks.deltas[i], fac, f_i)
-            small = rnorm(blocks.deltas[i]) <= sqrt(eps(R)) * rnorm(x_loc)
-            fprev = fnorm
             k += 1
         end
         # a positive tolerance makes the local solve a claim of convergence, which the residual
-        # after its last step decides, unless the solve is at its residual floor: its last step is
-        # at the rounding level of the local iterate, `‖δ‖ ≤ eps ‖x_i‖`, or the floor test of
-        # `at_floor` holds; zero tolerances take `max_iterations` steps and claim none
-        rounded = k > 0 && rnorm(blocks.deltas[i]) <= eps(R) * rnorm(x_loc)
-        if !converged && !rounded && tolerance
+        # after its last step decides: at most the tolerance or the residual floor of
+        # `residual_floor`; zero tolerances take `max_iterations` steps and claim none
+        if !converged && tolerance
             block_residual(prob, i)(f_i, x_loc, x, p)
             all(isfinite, f_i) || return NONFINITE
             fnorm = rnorm(f_i)
-            if fnorm > m.atol + m.rtol * f₀ && !at_floor(fnorm, fprev, small)
+            if fnorm > m.atol + m.rtol * f₀ && fnorm > floor
                 state.counts.failed_block = i
                 return MAXITERS
             end

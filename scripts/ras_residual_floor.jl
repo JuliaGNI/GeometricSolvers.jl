@@ -1,14 +1,15 @@
 # The margins of the tests that end a positive-tolerance RAS local solve, sweep by sweep, on the
 # problem of the RAS doctest of docs/src/algorithms/composition.md: the residual test
-# ‖f_i‖ ≤ rtol ‖f_i⁰‖ and the rounding test ‖δ‖ ≤ eps ‖x_i‖ of the last Newton step. A ratio above 1
+# ‖f_i‖ ≤ rtol ‖f_i⁰‖, the rounding ratio ‖δ‖ / (eps ‖x_i‖) of the last Newton step, and the floor
+# test ‖f_i‖ ≤ n_i eps ‖J_i‖_F ‖x_i‖ of `residual_floor` in src/composition/ras.jl. A ratio above 1
 # fails its test. Where the residual ratio is above 1, the residual target lies below the floor of
-# the block residual, and the rounding ratio, a quantity at the noise level, decides alone. The
-# sweeps from 6 on have rounding ratios between about 0.25 and 1.05, so a row with both ratios
-# above 1 appears or not by the last bits of the arithmetic; such a row passes by the floor test of
-# `at_floor` in src/composition/ras.jl, and without it the step returns `MAXITERS`.
+# the block residual, and only a floor test can end the local solve. The floor ratio of a
+# converged block stays well below 1, and the rounding ratio, that of a test `‖δ‖ ≤ eps ‖x_i‖`, lies
+# far above 1 where one Newton step reaches the floor: such a test fails on blocks that the floor
+# test passes.
 # Run with `julia --project=. scripts/ras_residual_floor.jl`.
 using GeometricSolvers
-using GeometricSolvers: init_state, start!!, _ras_sweep!!, rnorm, SUCCESS
+using GeometricSolvers: init_state, start!!, _ras_sweep!!, rnorm, residual_floor, SUCCESS
 using Printf
 
 const n = 8
@@ -37,7 +38,7 @@ x = zeros(n)
 Fx = F!(similar(x), x, nothing)
 fnorm₀ = rnorm(Fx)
 state = start!!(init_state(m, prob, x, nothing), m, prob, x, Fx, nothing, fnorm₀)
-@printf "%5s %5s %10s %22s %22s\n" "sweep" "block" "‖f_i⁰‖" "‖f_i‖/(rtol ‖f_i⁰‖)" "‖δ‖/(eps ‖x_i‖)"
+@printf "%5s %5s %10s %20s %16s %16s\n" "sweep" "block" "‖f_i⁰‖" "‖f_i‖/(rtol ‖f_i⁰‖)" "‖δ‖/(eps ‖x_i‖)" "‖f_i‖/floor"
 for sweep in 1:20
     f₀ = [rnorm(blocks[i](zeros(length(S)), x[S], x, nothing))
           for (i, S) in enumerate(part.subdomains)]
@@ -47,7 +48,8 @@ for sweep in 1:20
         f = blocks[i](zeros(length(S)), b.x_locals[i], b.couplings, nothing)
         residual = rnorm(f) / (rtol * f₀[i])
         rounding = rnorm(b.deltas[i]) / (eps() * rnorm(b.x_locals[i]))
-        @printf "%5d %5d %10.2e %22.3g %22.3g\n" sweep i f₀[i] residual rounding
+        floor = rnorm(f) / residual_floor(b.jacobians[i], b.x_locals[i])
+        @printf "%5d %5d %10.2e %20.3g %16.3g %16.3g\n" sweep i f₀[i] residual rounding floor
     end
     code === SUCCESS || (println("sweep $sweep: ", code); break)
     # the default stopping test of `solve`, `‖F(x)‖ ≤ √eps ‖F(x₀)‖`
