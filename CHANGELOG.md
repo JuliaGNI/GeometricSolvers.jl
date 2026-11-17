@@ -11,6 +11,17 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **A `RAS` local solve with a positive tolerance at its residual floor is converged.** Where
+  `atol + rtol * ‖f_i⁰‖` lies below the floor of the block residual, only the test of the last
+  Newton step against `eps ‖x_i‖` could pass the local solve, and a step at the floor has norm
+  `≈ eps κ(J_i) ‖x_i‖`, which lies above that bound in a share of the cases. The step then
+  returned `MAXITERS` by the last bits of the arithmetic, and the `RAS` and RASPEN doctests of
+  `docs/src/algorithms/composition.md` failed on some CI runners and passed on others with the
+  same source. A Newton step of at most `√eps ‖x_i‖` that leaves the block residual norm no
+  smaller now also ends the local solve as converged. On an affine problem with `κ(J_i) ≈ 14`,
+  started `√eps` from the root, 18 of 50 steps returned `MAXITERS` before and none do now; a local
+  solve that still reduces its residual, or whose step is larger, is `MAXITERS` as before.
+
 - **The headers of `.github/workflows/Metal.yml` and `Enzyme.yml` name the command that installs
   `CI.yml`.** They pointed to an installer script that does not exist, and to the directories of a
   local checkout. The workflows themselves are unchanged.
