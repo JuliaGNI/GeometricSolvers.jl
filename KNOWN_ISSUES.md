@@ -512,3 +512,17 @@
   only counts these rows as solved.
 - **kind:** upstream
 - **found:** 2026-11-15 (Y3 premises probe on four cards)
+
+### K90 · The residual floor of a `RAS` local solve separates a converged block from one with an error of `√eps ‖x_i‖` only where `n_i κ_F(J_i) < 1/√eps`
+
+- **location:** `src/composition/ras.jl` (`residual_floor`, `_ras_sweep!!`)
+- **evidence:** A positive-tolerance local solve is converged at a block residual norm of at most
+  `n_i eps ‖J_i‖_F ‖x_i‖`. A block with an error `e` has a residual of at least
+  `σ_min(J_i) ‖e‖`, so an error of `√eps ‖x_i‖` lies above that floor only where
+  `n_i κ_F(J_i) < 1/√eps`: about 2900 in `Float32`, 6.7e7 in `Float64`. A larger or worse
+  conditioned `Float32` block can accept an iterate whose error is of the order of `√eps ‖x_i‖`,
+  also from a diverging local solve. The tests reach blocks of 4 indices with `κ ≈ 14`; the
+  bound for larger blocks is derived, not measured. The outer iteration still tests the global
+  residual.
+- **kind:** not verified
+- **found:** #97
