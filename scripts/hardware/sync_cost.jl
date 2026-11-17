@@ -34,8 +34,10 @@
 #
 # `t_wait` is the median time of one wait with no work queued: a `synchronize` and a reduction of a
 # one-entry array read by the host. The synchronisation time of the step is `waits × t_wait`, and
-# its arithmetic time is the sum of the phases less that. The note says when the phases do not sum
-# to within 10 % of the measured step.
+# its arithmetic time is the measured step less that. The timed step ends with one synchronisation
+# of the measurement, and the timed phases with five, none of them in `waits`; the phases are
+# therefore not summed into the arithmetic time, and the note says when they do not sum to within
+# 10 % of the measured step.
 
 using GeometricSolvers
 using GeometricSolvers: Newton, NonlinearProblem, factorize!!, init_state, residual!!,
@@ -202,7 +204,7 @@ function measure_size(io, dev, n::Int; reps::Int)
     waits = sum(last, counts)
     launches = sum(first, counts)
     t_sync = waits * t_wait
-    t_arith = sum(phases) - t_sync
+    t_arith = t_step - t_sync
     @printf(io, "| %d | %s | step (measured) | %s | | | |\n", n, path, ms(t_step))
     @printf(io, "| %d | %s | synchronisations | %s | | %d | t_wait = %s ms |\n", n, path,
         ms(t_sync), waits, ms(t_wait))

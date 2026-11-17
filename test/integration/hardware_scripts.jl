@@ -83,6 +83,10 @@ end
 
 @testset "r3_lu_blas.jl runs with OpenBLAS at n = 64" begin
     @test_throws r"^ArgumentError: unknown library \"mkl\"" R3LUBlas.main(["mkl"]; io = devnull)
+    # AppleAccelerate keeps OpenBLAS as a fallback: with both forwarded, `openblas` is refused
+    @test_throws r"^ArgumentError: openblas after accelerate" R3LUBlas.select_library(
+        devnull, "openblas", () -> "libopenblas64_.dylib, Accelerate")
+    @test R3LUBlas.select_library(devnull, "openblas", () -> "libopenblas64_.dylib")
     buf = IOBuffer()
     rows = R3LUBlas.main(["openblas", "64", "1"]; io = buf)
     out = String(take!(buf))
@@ -192,7 +196,7 @@ end
         state = Base.invokelatest(SyncCost.init_state, SyncCost.Newton(), prob, x0, p)
         @test state.J === state.fac.factors
     end
-    @test r.arithmetic ≈ sum(r.phases) - r.sync
+    @test r.arithmetic ≈ r.step - r.sync
 end
 
 @testset "r2_throughput.jl: SoA and AoS give the same roots on the CPU" begin

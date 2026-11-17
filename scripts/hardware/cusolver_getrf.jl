@@ -15,9 +15,12 @@
 # `CUSOLVER_DEFAULT_MATH` on the dense handle. `FixedPoint` sets
 # `cusolverDnSetMathMode(dense_handle(), CUSOLVER_FP64_EMULATED_FIXEDPOINT_MATH)` before the row
 # and sets `CUSOLVER_DEFAULT_MATH` again after it, also when the row throws. The column `cuSOLVER
-# mode read back` is the mode that `cusolverDnGetMathMode` returns for the row. Switches that
-# cuBLAS reads from the environment act on the whole process, so a run with them is a second
-# process: the header lists every environment variable whose name begins with `CUBLAS_`.
+# mode read back` is the mode that `cusolverDnGetMathMode` returns for the row before its timed
+# calls. A memory reclaim can replace the task's dense handle, and the new handle need not carry
+# that mode, so the row stops with an error where the mode read back after the timed calls
+# differs. Switches that cuBLAS reads from the environment act on the whole process, so a run with
+# them is a second process: the header lists every environment variable whose name begins with
+# `CUBLAS_`.
 #
 # `getrf` is the median and the minimum wall time in ms of a device copy of the matrix followed by
 # `cuSOLVER.getrf!` on it, which returns the pivot status to the host and so waits for the
@@ -70,6 +73,10 @@ function measure_row(io, CUDA, n::Int, mode::String, read_back; reps::Int)
             _, _, info[] = CUDA.cuSOLVER.getrf!(F_dev, ipiv)
         end, () -> CUDA.synchronize(); reps)
     info[] == 0 || error("getrf! at n = $n returned info = $(info[])")
+    read_after = cusolver_math_mode(CUDA.cuSOLVER)
+    read_after == read_back || error(
+        "the cuSOLVER math mode at n = $n changed from $read_back to $read_after during the " *
+        "timed calls: the task's dense handle was replaced")
     x_dev = CUDA.CuArray(b)
     CUDA.cuSOLVER.getrs!('N', F_dev, ipiv, x_dev)
     x = Array(x_dev)

@@ -32,10 +32,11 @@ lu_noop(r, x, p) = nothing
 blas_libraries() = join((basename(l.libname) for l in BLAS.get_config().loaded_libs), ", ")
 
 # Make `lib` the library of BLAS and LAPACK, or return `false` after one line where it is not
-# present.
-function select_library(io, lib::String)
+# present. `libraries()` names the libraries that libblastrampoline forwards to. AppleAccelerate
+# keeps OpenBLAS among them as a fallback, so `openblas` is refused wherever Accelerate is there.
+function select_library(io, lib::String, libraries = blas_libraries)
     if lib == "openblas"
-        occursin("openblas", lowercase(blas_libraries())) ||
+        occursin("accelerate", lowercase(libraries())) &&
             throw(ArgumentError("openblas after accelerate: run it in a process of its own"))
         return true
     end
@@ -47,8 +48,8 @@ function select_library(io, lib::String)
         return false
     end
     Base.require(id)
-    occursin("accelerate", lowercase(blas_libraries())) ||
-        error("AppleAccelerate loaded, but libblastrampoline forwards to $(blas_libraries())")
+    occursin("accelerate", lowercase(libraries())) ||
+        error("AppleAccelerate loaded, but libblastrampoline forwards to $(libraries())")
     return true
 end
 
