@@ -54,7 +54,7 @@ function GeometricSolvers.factorize!!(
     # `ka_qr_backsolve!`, whose `qadj` kernel applies I - τ v vᴴ as Hᴴ (the layout of `ka_qr!`),
     # so it reads Hᴴ = I - conj(τ) v vᴴ of the LAPACK factor from `conj.(τ)`. The square factor
     # keeps the LAPACK `τ` that `ormqr!` reads.
-    size(fac.factors, 1) == size(fac.factors, 2) || (fac.τ .= conj.(fac.τ))
+    T <: Complex && size(fac.factors, 1) != size(fac.factors, 2) && (fac.τ .= conj.(fac.τ))
     info = _rocsolver_qr_info(fac.factors)
     return DeviceQR(fac.factors, fac.τ, fac.rhs, info, e, fac.status)
 end
