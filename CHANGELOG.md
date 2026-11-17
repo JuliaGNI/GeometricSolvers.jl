@@ -25,6 +25,21 @@ so that a compat-only bump can be told apart from an interface change.
   tests are in `test/gpu/rocm/runtests.jl`: the dispatch and JET rows and a `JLArray` row of the
   `m × n` QR solve run without a device, and the factorising rows run by hand on a ROCm device.
 
+- **A `RAS` local solve with a positive tolerance at its residual floor is converged.** Where
+  `atol + rtol * ‖f_i⁰‖` lies below the floor of the block residual, only the test of the last
+  Newton step against `eps ‖x_i‖` could pass the local solve, and a step at the floor has norm
+  `≈ eps κ(J_i) ‖x_i‖`, which lies above that bound in a share of the cases. The step then
+  returned `MAXITERS` by the last bits of the arithmetic, and the `RAS` and RASPEN doctests of
+  `docs/src/algorithms/composition.md` failed on some CI runners and passed on others with the
+  same source. A block residual norm of at most `n_i eps ‖J_i‖_F ‖x_i‖`, the rounding bound of a
+  matrix-vector product of length `n_i` at the block Jacobian of the last Newton step, now ends
+  the local solve as converged, inside the loop and after its last step; the test of the last
+  step against `eps ‖x_i‖` is gone. On an affine problem with `κ(J_i) ≈ 14`, started `√eps` from
+  the root, 18 of 50 steps returned `MAXITERS` before with ten inner iterations, and all 50 with
+  one; none do now, and each block takes one Newton step. The residual of the doctest's local
+  solves ends at 0.02 to 0.2 times that floor. A local solve whose residual stays above the floor,
+  whether it falls or grows, is `MAXITERS` as before.
+
 - **The headers of `.github/workflows/Metal.yml` and `Enzyme.yml` name the command that installs
   `CI.yml`.** They pointed to an installer script that does not exist, and to the directories of a
   local checkout. The workflows themselves are unchanged.
