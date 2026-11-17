@@ -1,0 +1,180 @@
+```@meta
+CurrentModule = GeometricSolvers
+```
+
+# [Methods by regime](@id guide)
+
+This page lists, for each regime, the methods that run in it and the conditions under which each
+one applies. It names no method as the right one: the choice depends on the problem, its size, the
+cost of its residual and its Jacobian, and the start. The pages under *Algorithms* describe each
+method in full.
+
+The storage of the iterate selects the regime (see [The three regimes](@ref regimes)). R5 is an R3
+iterate with a matrix-free linear solver:
+
+| regime | iterate | entry point | linear solver |
+|:--|:--|:--|:--|
+| **R1** value semantics | `Number` or `SVector` | [`solve`](@ref) | a factorisation of a static matrix |
+| **R2** batched | an array of `Number` or `SVector`, one entry per system | [`solve_batch!`](@ref) | a factorisation of a static matrix, per system |
+| **R3** in place | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | a factorisation of a dense or sparse matrix |
+| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref), with no Jacobian matrix |
+
+`Newton()` takes `linsolve = LUFactorization()` and `globalization = Static()` unless the caller
+gives others (see [Nonlinear methods](@ref nonlinear)).
+
+## R1: one small system as a value
+
+**Methods.**
+
+| method | condition |
+|:--|:--|
+| [`Newton`](@ref) with [`LUFactorization`](@ref) | a square Jacobian |
+| [`Newton`](@ref) with [`LDLTFactorization`](@ref) | a symmetric or Hermitian Jacobian; it reads the lower triangle only |
+| [`Newton`](@ref) with [`QRFactorization`](@ref) | a square Jacobian, or a [`LeastSquaresProblem`](@ref) |
+| [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian, or a [`LeastSquaresProblem`](@ref); the status reports the numerical rank |
+| [`Newton`](@ref) with `regularization = μ` | a singular or nearly singular Jacobian, where the step of ``J + \mu I`` is acceptable |
+| [`QuasiNewton`](@ref)`(k)`, or [`Newton`](@ref) with `reuse = k` | the Jacobian and its factorisation dominate the cost of a step; the rate is then linear |
+| [`Refinement`](@ref), [`GMRESRefinement`](@ref) | a factorisation precision below the working type; in R1 a `GMRESRefinement` runs the LU-IR passes alone |
+| [`GaussNewton`](@ref) | a [`LeastSquaresProblem`](@ref) |
+| [`Picard`](@ref) | ``I - \omega J`` is a contraction; it needs no Jacobian, and the rate is linear |
+| [`Anderson`](@ref), [`Broyden`](@ref) | a fixed-point iteration whose map is cheap and whose Jacobian is expensive or unavailable; in R1 the depth is `1 ≤ m ≤ 4` |
+| [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref) | members that run in R1, and a problem that is not a [`LeastSquaresProblem`](@ref) |
+
+**Globalizations.** [`Static`](@ref) applies close to the solution. [`Backtracking`](@ref),
+[`Bisection`](@ref) and [`StrongWolfe`](@ref) search along the direction from a distant start.
+[`DogLeg`](@ref) and [`LevenbergMarquardt`](@ref) change the direction and continue where the
+Jacobian is singular or ill-conditioned; they take no factor reuse (see
+[Globalization](@ref globalization)).
+
+**Conditions of the regime.** The static factorisations unroll over the size of the system, so
+the compile time and the register use grow with it. A [`GMRES`](@ref) solve and
+[`LeftPreconditioned`](@ref) need an array iterate and raise an `ArgumentError` here. A
+factorisation precision below the working type saves registers and memory, not operations.
+[`solve`](@ref) differentiates through the solve when `x₀` or `p` carries a `ForwardDiff.Dual`
+(see [Implicit differentiation](@ref)); a [`LeastSquaresProblem`](@ref) raises an
+`ArgumentError` there.
+
+```jldoctest guide_r1
+julia> using GeometricSolvers, StaticArrays
+
+julia> F(x, p) = SVector(x[1]^2 + x[2]^2 - p, x[1] - x[2]);
+
+julia> prob = NonlinearProblem(F);
+
+julia> candidates = (Newton(), Newton(; linsolve = SVDFactorization()), QuasiNewton(3),
+                     Newton(; globalization = DogLeg()));
+
+julia> all(candidates) do m
+           x, status = solve(prob, SVector(1.0, 0.5), m, 2.0)
+           status.code === SUCCESS && x ≈ SVector(1.0, 1.0)
+       end
+true
+```
+
+## R2: many small systems in one launch
+
+**Methods.** [`solve_batch!`](@ref) runs the R1 loop in one work-item per system, so a batch takes
+each method of R1 above, with the same conditions. A [`LeastSquaresProblem`](@ref) has no batch
+form. [`PerSystem`](@ref) and [`BatchParams`](@ref) give each system its own parameters, and
+[`batch_summary`](@ref) reduces the status vector.
+
+**Conditions of the regime.** The systems are independent and of the same form. On a `Vector` the
+kernel runs on the KernelAbstractions `CPU()` backend. On a GPU backend the problem enters the
+kernel by value, so each part of it is `isbits`: a residual that captures a host array, or a
+sparse `jacobian_prototype`, cannot enter a device kernel. On Metal the element type is `Float32`.
+This page runs no device example.
+
+```jldoctest guide_r2
+julia> using GeometricSolvers, StaticArrays
+
+julia> F(x, p) = SVector(x[1]^2 + x[2]^2 - p, x[1] - x[2]);
+
+julia> prob = NonlinearProblem(F);
+
+julia> X = [SVector(1.0, 0.5), SVector(2.0, 1.0), SVector(0.5, 0.1)];
+
+julia> S = Vector{SolverStatus{Float64}}(undef, length(X));
+
+julia> solve_batch!(X, S, prob, Newton(; globalization = Backtracking()), PerSystem([2.0, 8.0, 0.5]));
+
+julia> batch_summary(S).all_converged && X ≈ [SVector(1.0, 1.0), SVector(2.0, 2.0), SVector(0.5, 0.5)]
+true
+```
+
+## R3: one system in place
+
+**Methods.** Each method of R1 runs in R3, with no limit on the depth of [`Anderson`](@ref) and
+[`Broyden`](@ref), and a [`GMRESRefinement`](@ref) runs its GMRES-IR stage. R3 adds:
+
+| method | condition |
+|:--|:--|
+| [`LUFactorization`](@ref) on a sparse `jacobian_prototype` | a host `Vector` iterate of a real element type, Sparspak loaded, the element type of the iterate as the factorisation precision, and a Jacobian from an analytic `J!` that writes the nonzeros of the prototype or from `jacobian = AutoSparse(...)` (see [Sparse direct solves](@ref sparse)) |
+| [`RAS`](@ref) | local nonlinearities that a [`BlockPartition`](@ref) isolates, and one local residual per block |
+| [`LeftPreconditioned`](@ref) | an inner step `N` whose fixed points are the wanted roots; each trial point of the outer globalization costs one inner step, and with [`RAS`](@ref) it needs converged local solves |
+
+[`Refinement`](@ref) converges while the error of the solve in the factorisation precision,
+roughly the condition number of ``J`` times its unit round-off, stays below one, and
+[`GMRESRefinement`](@ref) extends that range of condition numbers; where both fail, the step
+refactorises in the working type. [Mixed precision](@ref mixed) gives the conditions in full.
+
+**Conditions of the regime.** [`init`](@ref) allocates each buffer once, so a system that is solved
+more than once goes through [`init`](@ref) and [`solve!`](@ref). On a device array the
+factorisation methods run on device kernels. On CUDA, [`LUFactorization`](@ref),
+[`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types; on
+Metal, [`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
+[What runs where](@ref)). The residual of a device solve indexes no scalars. On a device array,
+[`LevenbergMarquardt`](@ref) runs with [`SVDFactorization`](@ref) and `scaling = :none` only, and
+the sparse LU does not run. This page runs no device example.
+
+```jldoctest guide_r3
+julia> using GeometricSolvers
+
+julia> F!(y, x, p) = (y .= x .^ 2 .- p; y);
+
+julia> method = Newton(; linsolve = LUFactorization(Float32), refinement = Refinement());
+
+julia> solver = init(NonlinearProblem(F!), ones(4), method, [1.0, 4.0, 9.0, 16.0]);
+
+julia> x, status = solve!(solver);
+
+julia> status.code === SUCCESS && x ≈ [1.0, 2.0, 3.0, 4.0]
+true
+```
+
+## R5: one system without a Jacobian matrix
+
+**Methods.** [`Newton`](@ref) with `linsolve = GMRES()` holds no ``n \times n`` Jacobian. Each
+inner iteration of [`GMRES`](@ref) takes one Jacobian–vector product, from automatic
+differentiation or from a [`JVPFunction`](@ref).
+
+| method or option | condition |
+|:--|:--|
+| [`GMRES`](@ref) | an `AbstractVector` iterate, on the host or on a device, and the square system of a [`NonlinearProblem`](@ref) |
+| [`EisenstatWalkerChoice2`](@ref) (the default), [`EisenstatWalkerChoice1`](@ref) | an inner tolerance that is loose far from the root and tight near it |
+| [`FixedForcing`](@ref)`(η)` | a constant inner tolerance `η` |
+| a right preconditioner with methods of [`refresh!`](@ref) and [`apply_preconditioner!`](@ref) | an operator that is refreshed once per Newton step and applied before every product |
+| [`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) | as in R1 |
+| [`DogLeg`](@ref) | as in R1; it runs on the Arnoldi relation of one unrestarted cycle without a preconditioner |
+
+**Conditions of the regime.** R5 applies to a large system whose Jacobian no array can hold. A
+`GMRES` solve takes no factor reuse, no [`Refinement`](@ref), no [`LevenbergMarquardt`](@ref) and
+no [`LeastSquaresProblem`](@ref), and it has no implicit differentiation; each of them raises an
+`ArgumentError`. A `Newton` with `GMRES` is not the outer method of a
+[`LeftPreconditioned`](@ref), and raises an `ArgumentError` there; it can be the inner method.
+On a device array no factor is formed. [`f_calls`](@ref) and [`jvp_calls`](@ref) count the
+evaluations of the last solve.
+
+```jldoctest guide_r5
+julia> using GeometricSolvers
+
+julia> F!(y, x, p) = (y .= x .^ 2 .- p; y);
+
+julia> method = Newton(; linsolve = GMRES(; forcing = FixedForcing(1e-6)));
+
+julia> solver = init(NonlinearProblem(F!), ones(4), method, [1.0, 4.0, 9.0, 16.0]);
+
+julia> x, status = solve!(solver);
+
+julia> status.code === SUCCESS && x ≈ [1.0, 2.0, 3.0, 4.0] && jvp_calls(solver) > 0
+true
+```

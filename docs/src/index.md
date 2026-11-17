@@ -35,6 +35,8 @@ true
 - [Getting started](@ref): problems, call forms, `solve`, `init` and `solve!`, options,
   status and return codes, parameters, and the SciML extension.
 - [The three regimes](@ref regimes): R1, R2 and R3, and how to choose one.
+- [Methods by regime](@ref guide): the methods that run in R1, R2, R3 and the matrix-free R5,
+  and the conditions of each.
 - [Problem types](@ref problems): least squares, stationarity, reparametrization, deflation and
   elimination.
 
