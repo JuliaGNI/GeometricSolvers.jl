@@ -386,8 +386,8 @@ end
 
 # One sweep, and the code it ends with: `SINGULAR` where a block's factor reports a zero pivot,
 # `NONFINITE` where a block residual is not finite, and `MAXITERS` where a local solve with a
-# positive tolerance ends its iterations above it and its last step above the rounding level of
-# its iterate, with that block in `failed_block`. A failed
+# positive tolerance ends its iterations above it and away from its residual floor, with that
+# block in `failed_block`. A failed
 # sweep prolongates nothing, so the iterate it was given is unchanged, and leaves no factor
 # readable. The couplings of the frozen block residuals are the iterate of this call, and the
 # factor at the returned local iterate is formed only where a RASPEN preparation reads the block
