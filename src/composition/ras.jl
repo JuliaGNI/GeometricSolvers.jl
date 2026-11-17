@@ -400,13 +400,13 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
     nblocks = length(blocks.subdomains)
     total = 0
     parallel = 0
+    R = real(eltype(x))
+    tolerance = m.atol > 0 || m.rtol > 0
     for i in 1:nblocks
         x_loc = blocks.x_locals[i]
         f_i = blocks.f_locals[i]
         J_i = blocks.jacobians[i]
         x_loc .= view(x, blocks.subdomains[i])
-        R = real(eltype(x))
-        tolerance = m.atol > 0 || m.rtol > 0
         f₀ = zero(R)
         fprev = zero(R)
         small = false
