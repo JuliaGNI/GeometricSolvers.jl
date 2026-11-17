@@ -1299,6 +1299,59 @@ end
     end
 end
 
+# Near the root `rtol * f₀` lies below the residual floor, where a local step has norm
+# `≈ eps κ(J_i) ‖x_i‖`. With 2 on the diagonal the block Jacobians have `κ ≈ 14`, so that step lies
+# above `eps ‖x_i‖` in a share of the starts, and a test of the last step against `eps ‖x_i‖` alone
+# reports `MAXITERS` there; the floor test passes every start.
+@testset "A local solve at its residual floor is converged, $T" for T in REAL_ELTYPES
+    n = 8
+    A = affine_matrix(T, n)
+    for j in 1:n
+        A[j, j] = 2
+    end
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 2; overlap = 1)
+    xstar = A \ b
+    ras = RAS(part; max_iterations = 10, rtol = eps(T))
+    codes = map(1:50) do t
+        x0 = xstar .+ sqrt(eps(T)) .* T.(sin.(t .* (1:n)))
+        prob, _ = affine_problem(x0, A, b, part)
+        Fx = residual!!(similar(x0), prob, x0, nothing)
+        x, _, info = one_step(prob, ras, copy(x0), Fx)
+        info.code === SUCCESS && @test x != x0
+        info.code
+    end
+    @test count(==(SUCCESS), codes) == 50
+end
+
+# A step that fails to reduce the residual is the floor only where it is small: a block Jacobian of
+# the wrong sign doubles the error with every step of the order of the error, and a doubled one
+# halves the residual with every step, small or not; both are `MAXITERS`.
+@testset "A local solve away from its residual floor is MAXITERS, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    xstar = A \ b
+    for (scale, offset) in ((-1, T(1) / 4), (2, sqrt(eps(T)) / 8))
+        x0 = xstar .+ offset .* T.(sin.(1:n))
+        F!, J! = affine_global(x0, A, b)
+        ab = affine_blocks(x0, part, A, b)
+        wrong = (J2, x_loc, x, p) -> (J2 .= scale .* ab.local_jacobians[2]; J2)
+        prob = NonlinearProblem(F!, J!;
+            block_residuals = ntuple(i -> affine_block(ab, i, nothing), 3),
+            block_jacobians = ntuple(i -> i == 2 ? wrong : affine_block_jacobian(ab, i), 3))
+        Fx = residual!!(similar(x0), prob, x0, nothing)
+        m = RAS(part; max_iterations = 3, rtol = T(1e-3))
+        state = init_state(m, prob, copy(x0), nothing)
+        state = start!!(state, m, prob, copy(x0), Fx, nothing, rnorm(Fx))
+        x₊, _, state, info = step!!(state, m, prob, copy(x0), copy(Fx), nothing)
+        @test info.code === MAXITERS
+        @test x₊ == x0
+        @test ras_counts(state).failed_block == 2
+    end
+end
+
 # Block 2's local solve converges at `x0` and at no other iterate away from the root, so a damped
 # Picard outer step, whose trial point is not the root, meets the failure there, where its residual
 # `rˡ` is non-finite: the step reports the inner `MAXITERS`, not the outer's `NONFINITE`, and names

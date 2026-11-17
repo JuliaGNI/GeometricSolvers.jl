@@ -98,13 +98,15 @@ step then evaluates the global residual once at the swept iterate and returns it
 
 An inner iteration of block `i` stops before its linear solve when the block residual norm is at
 most `atol + rtol * ‖f_i⁰‖`, with `f_i⁰` the block's residual at its first inner iteration. With a
-positive tolerance (`atol > 0` or `rtol > 0`), a local solve that takes all `max_iterations` steps
-is converged when its last Newton step ``\\delta`` is at the rounding level of its iterate,
-``\\|\\delta\\| \\le \\varepsilon \\|x_i\\|`` with ``\\varepsilon`` the `eps` of the element type,
-where the residual can fall no further; otherwise it evaluates its block residual once more, and
-where that norm is above the tolerance the local solve has not converged: the step returns the
-iterate unchanged with `MAXITERS`, which ends the solve, and [`ras_counts`](@ref) names the block
-in `failed_block`. With `atol = rtol = 0` every local
+positive tolerance (`atol > 0` or `rtol > 0`), a local solve is also converged at its residual
+floor, where the residual can fall no further: a Newton step ``\\delta`` with
+``\\|\\delta\\| \\le \\sqrt{\\varepsilon} \\|x_i\\|`` that leaves the block residual norm no smaller
+ends it, and so does a last step at the rounding level of its iterate,
+``\\|\\delta\\| \\le \\varepsilon \\|x_i\\|``, with ``\\varepsilon`` the `eps` of the element type.
+A local solve that takes all `max_iterations` steps otherwise evaluates its block residual once
+more, and where that norm is above the tolerance and not at the floor, the local solve has not
+converged: the step returns the iterate unchanged with `MAXITERS`, which ends the solve, and
+[`ras_counts`](@ref) names the block in `failed_block`. With `atol = rtol = 0` every local
 solve takes `max_iterations` steps and makes no claim of convergence. With
 `balance_threshold = ρ` the step returns the iterate unchanged, as a `SUCCESS` of zero norm, when
 ``\\max_i \\|R_i F(x)\\| \\le \\rho \\|F(x)\\|`` (`CaiLi:2011`); the block residuals cost one call
@@ -374,6 +376,14 @@ function ras_prolongate!(dest, x_locals, owners, local_owners)
     return dest
 end
 
+# The residual floor of a local Newton solve: a step of at most `√eps ‖x_i‖` that leaves the residual
+# norm no smaller than before it. Newton's error after such a step is at the rounding level, so its
+# residual is at the floor `≈ eps ‖J_i‖ ‖x_i‖`, below which no step reduces it; a step there has norm
+# `≈ eps κ(J_i) ‖x_i‖`, which lies above `eps ‖x_i‖` for any block Jacobian with `κ(J_i) > 1`. A
+# step far from the root that fails to reduce the residual is of the order of the error, above
+# `√eps ‖x_i‖`, and a slowly converging solve still reduces it, so neither counts.
+@inline at_floor(fnorm, fprev, small) = small && fnorm >= fprev
+
 # One sweep, and the code it ends with: `SINGULAR` where a block's factor reports a zero pivot,
 # `NONFINITE` where a block residual is not finite, and `MAXITERS` where a local solve with a
 # positive tolerance ends its iterations above it and its last step above the rounding level of
@@ -395,7 +405,11 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
         f_i = blocks.f_locals[i]
         J_i = blocks.jacobians[i]
         x_loc .= view(x, blocks.subdomains[i])
-        f₀ = zero(real(eltype(x)))
+        R = real(eltype(x))
+        tolerance = m.atol > 0 || m.rtol > 0
+        f₀ = zero(R)
+        fprev = zero(R)
+        small = false
         k = 0
         converged = false
         for it in 1:m.max_iterations
@@ -403,7 +417,7 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
             all(isfinite, f_i) || return NONFINITE
             fnorm = rnorm(f_i)
             it == 1 && (f₀ = fnorm)
-            if fnorm <= m.atol + m.rtol * f₀
+            if fnorm <= m.atol + m.rtol * f₀ || (tolerance && at_floor(fnorm, fprev, small))
                 converged = true
                 break
             end
@@ -412,17 +426,20 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
             iszero(fac.info) || return SINGULAR
             state.factors[i] = fac
             x_loc .-= ldiv!!(blocks.deltas[i], fac, f_i)
+            small = rnorm(blocks.deltas[i]) <= sqrt(eps(R)) * rnorm(x_loc)
+            fprev = fnorm
             k += 1
         end
         # a positive tolerance makes the local solve a claim of convergence, which the residual
-        # after its last step decides, unless that step is at the rounding level of the local
-        # iterate, `‖δ‖ ≤ eps ‖x_i‖`, where the residual can fall no further; zero tolerances take
-        # `max_iterations` steps and claim none
-        rounded = k > 0 && rnorm(blocks.deltas[i]) <= eps(real(eltype(x))) * rnorm(x_loc)
-        if !converged && !rounded && (m.atol > 0 || m.rtol > 0)
+        # after its last step decides, unless the solve is at its residual floor: its last step is
+        # at the rounding level of the local iterate, `‖δ‖ ≤ eps ‖x_i‖`, or the floor test of
+        # `at_floor` holds; zero tolerances take `max_iterations` steps and claim none
+        rounded = k > 0 && rnorm(blocks.deltas[i]) <= eps(R) * rnorm(x_loc)
+        if !converged && !rounded && tolerance
             block_residual(prob, i)(f_i, x_loc, x, p)
             all(isfinite, f_i) || return NONFINITE
-            if rnorm(f_i) > m.atol + m.rtol * f₀
+            fnorm = rnorm(f_i)
+            if fnorm > m.atol + m.rtol * f₀ && !at_floor(fnorm, fprev, small)
                 state.counts.failed_block = i
                 return MAXITERS
             end
