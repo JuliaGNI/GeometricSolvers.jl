@@ -5,7 +5,6 @@ ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 GeometricSolvers = "3a2b8526-dde5-4630-ad43-3d2dcd69f118"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
-JLArrays = "27aeb0d3-9eb9-45fb-866b-73c2ecf80fcb"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -16,5 +15,4 @@ GeometricSolvers = {path = "../../.."}
 
 [compat]
 JET = "0.12"
-JLArrays = "0.5"
 julia = "1.13"

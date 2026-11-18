@@ -1,8 +1,8 @@
 # ROCm rocSOLVER and rocBLAS dense LU and QR factorisations and solves for `ROCMatrix{T}` and
-# `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). `geqrf!` factorises at every shape; the solve
-# with an `m × n` QR factor, `m > n`, runs on the `KernelAbstractions` device kernel. Non-BLAS
-# element types (`Float16`, `BFloat16`) and the SVD and LDLᵀ factorisations remain on the
-# `KernelAbstractions` device kernels in `src/linear/ka/`.
+# `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). `geqrf!` factorises, and `ormqr!` with
+# `trsv!` solves, at every shape `m × n`, `m ≥ n`, of the QR factor. Non-BLAS element types
+# (`Float16`, `BFloat16`) and the SVD and LDLᵀ factorisations remain on the `KernelAbstractions`
+# device kernels in `src/linear/ka/`.
 
 module GeometricSolversAMDGPUExt
 
@@ -50,27 +50,34 @@ function GeometricSolvers.factorize!!(
     isempty(fac.factors) &&
         return DeviceQR(fac.factors, fac.τ, fac.rhs, 0, e, fac.status)
     AMDGPU.rocSOLVER.geqrf!(fac.factors, fac.τ)
-    # `geqrf!` writes the LAPACK layout, H = I - τ v vᴴ. The `m × n` factor, `m > n`, solves on
-    # `ka_qr_backsolve!`, whose `qadj` kernel applies I - τ v vᴴ as Hᴴ (the layout of `ka_qr!`),
-    # so it reads Hᴴ = I - conj(τ) v vᴴ of the LAPACK factor from `conj.(τ)`. The square factor
-    # keeps the LAPACK `τ` that `ormqr!` reads.
-    T <: Complex && size(fac.factors, 1) != size(fac.factors, 2) && (fac.τ .= conj.(fac.τ))
     info = _rocsolver_qr_info(fac.factors)
     return DeviceQR(fac.factors, fac.τ, fac.rhs, info, e, fac.status)
 end
 
+# The `m × n` factor, `m ≥ n`, and the length-`m` right-hand side `d`: `ormqr!` applies Qᴴ to `d`
+# and `trsv!` solves with the leading `n × n` block `R`, so the solution is in `d[1:n]`.
 function GeometricSolvers.backsolve!(
         fac::DeviceQR{<:ROCMatrix{T}},
         d::ROCVector{T}
 ) where {T <: BlasFloat}
     isempty(d) && return d
-    # `rocBLAS.trsv!` takes a square matrix only, so the `m × n` factor of a least-squares problem
-    # with `m > n` solves on the own kernel, which leaves the solution in `d[1:n]`.
-    size(fac.factors, 1) == size(fac.factors, 2) ||
-        return GeometricSolvers.ka_qr_backsolve!(fac.factors, fac.τ, d)
+    n = size(fac.factors, 2)
     AMDGPU.rocSOLVER.ormqr!('L', T <: Real ? 'T' : 'C', fac.factors, fac.τ, d)
-    AMDGPU.rocBLAS.trsv!('U', 'N', 'N', fac.factors, d)
+    AMDGPU.rocBLAS.trsv!('U', 'N', 'N', view(fac.factors, 1:n, 1:n), view(d, 1:n))
     return d
+end
+
+# The same-type `ldiv!!` of an `m × n` factor, `m > n`, solves through this method, which keeps
+# it on the rocSOLVER and rocBLAS solve above. `ka_qr_backsolve!` would read the LAPACK `τ` that
+# `geqrf!` writes as its conjugate, which gives a wrong solution for complex `T`.
+function GeometricSolvers.backsolve_shifted!(
+        fac::DeviceQR{<:ROCMatrix{T}},
+        d::ROCVector{T},
+        rhs::ROCVector{T}
+) where {T <: BlasFloat}
+    GeometricSolvers.backsolve!(fac, rhs)
+    copyto!(d, 1, rhs, 1, length(d))
+    return 0
 end
 
 end # module GeometricSolversAMDGPUExt

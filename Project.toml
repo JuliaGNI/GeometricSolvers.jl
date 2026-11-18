@@ -33,7 +33,7 @@ GeometricSolversSparspakExt = "Sparspak"
 
 [compat]
 ADTypes = "1.23"
-AMDGPU = "2.11"
+AMDGPU = "2.12"
 Adapt = "4.7.3"
 CUDA = "6.5.1 - 6"
 CommonSolve = "0.2"

@@ -1,21 +1,19 @@
 # The tests of `GeometricSolversAMDGPUExt`, run by hand on a machine with a ROCm device:
 # `julia --startup-file=no --project=test/gpu/rocm test/gpu/rocm/runtests.jl`. The extension
-# loading, dispatch and JET rows, and the `JLArray` row of the `m × n` QR factor, run without a
-# device; every row that factorises on a ROCm array runs where `AMDGPU.functional()`.
+# loading, dispatch and JET rows run without a device; every row that factorises on a ROCm array
+# runs where `AMDGPU.functional()`.
 
 using AMDGPU
 using GPUArraysCore: allowscalar
 using JET: JET
-using JLArrays: JLArray
-using LinearAlgebra: BLAS, I, LAPACK, cond, norm
+using LinearAlgebra: BLAS, I, cond, norm
 using Test
 
 using GeometricSolvers
 using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
 using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
-using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!,
-                        ka_factorize_lu!, ka_factorize_qr!, ka_qr_backsolve!, ldiv!!,
-                        returncode
+using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, backsolve_shifted!, dense_factor,
+                        factorize!!, ka_factorize_lu!, ka_factorize_qr!, ldiv!!, returncode
 
 include("../../helpers/own_kernel.jl")
 
@@ -45,6 +43,8 @@ const ROCM_BLAS_ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
             @test which(factorize!!, (DevQR, QRFactorization{Nothing}, Mat)).module ===
                   ext_rocm
             @test which(backsolve!, (DevQR, Vec)).module === ext_rocm
+            # The same-type `ldiv!!` of an `m × n` factor solves through this method.
+            @test which(backsolve_shifted!, (DevQR, Vec, Vec)).module === ext_rocm
 
             # The SVD stays on the own kernels on ROCm.
             DevSVD = DeviceSVD{Mat, VecR, VecI32, Vec, Nothing}
@@ -77,6 +77,8 @@ const ROCM_BLAS_ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
         @test which(factorize!!, (DevQR_F16, QRFactorization{Nothing}, MatF16)).module ===
               GeometricSolvers
         @test which(backsolve!, (DevQR_F16, VecF16)).module === GeometricSolvers
+        @test which(backsolve_shifted!, (DevQR_F16, VecF16, VecF16)).module ===
+              GeometricSolvers
         DevSVD_F16 = DeviceSVD{MatF16, VecF16, VecI32, VecF16, Nothing}
         @test which(factorize!!, (DevSVD_F16, SVDFactorization{Nothing}, MatF16)).module ===
               GeometricSolvers
@@ -96,50 +98,18 @@ end
     JET.test_call(factorize!!, (DevQR, QRFactorization{Nothing}, Mat);
         target_modules = (ext_rocm,))
     JET.test_call(backsolve!, (DevQR, Vec); target_modules = (ext_rocm,))
+    JET.test_call(backsolve_shifted!, (DevQR, Vec, Vec); target_modules = (ext_rocm,))
 end
 
 # The data of the `m × n` least-squares QR rows, `m > n`. For complex `T` the entries have
 # imaginary parts, so the LAPACK `τ` of `A` is not real and `conj.(τ) != τ`: a solve that reads
-# the factor with the unconverted `τ` misses the least-squares solution.
+# the reflectors of the factor with `conj.(τ)` in place of `τ`, as `ka_qr_backsolve!` does with
+# the factor of `geqrf!`, misses the least-squares solution.
 function rect_qr_data(T, m_rows, n)
     A = T[(i == j ? 3 : 0) + (i + 2j) % 5 + (T <: Complex ? im * ((i * j) % 3) : 0)
           for i in 1:m_rows, j in 1:n]
     b = T[mod(7i, 5) - 2 + (T <: Complex ? im * (i % 2) : 0) for i in 1:m_rows]
     return A, b
-end
-
-# The `m × n` factor, `m > n`, that `factorize!!` leaves after `rocSOLVER.geqrf!`: the LAPACK
-# factor with `conj.(τ)`. Host `LAPACK.geqrf!` stands in for `rocSOLVER.geqrf!`, and a `JLArray`
-# for the device, so the own kernel's reading of that factor is checked without a device. For
-# complex `T`, the solve with the LAPACK `τ` as it is must miss the solution: this shows that the
-# data tell the converted factor from the unconverted one.
-@testset "LAPACK m × n QR factor with conj.(τ) on the own kernel: $T" for T in ROCM_BLAS_ELTYPES
-    for (m_rows, n) in ((6, 3), (40, 7))
-        A, b = rect_qr_data(T, m_rows, n)
-        x_ref = A \ b
-        rtol = 32 * sqrt(eps(real(T)))
-        F = copy(A)
-        _, τ = LAPACK.geqrf!(F)
-
-        prob = LeastSquaresProblem((r, x, p) -> r, m_rows)
-        d = JLArray(zeros(T, n))
-        fac = dense_factor(QRFactorization(), prob, d, nothing)
-        @test fac isa DeviceQR
-        copyto!(fac.factors, JLArray(F))
-        copyto!(fac.τ, JLArray(conj.(τ)))
-        ldiv!!(d, fac, JLArray(b))
-        @test isapprox(Array(d), x_ref; rtol)
-
-        d_m = JLArray(copy(b))
-        ka_qr_backsolve!(JLArray(F), JLArray(conj.(τ)), d_m)
-        @test isapprox(Array(d_m)[1:n], x_ref; rtol)
-
-        if T <: Complex
-            d_raw = JLArray(copy(b))
-            ka_qr_backsolve!(JLArray(F), JLArray(τ), d_raw)
-            @test !isapprox(Array(d_raw)[1:n], x_ref; rtol)
-        end
-    end
 end
 
 if AMDGPU.functional()
@@ -232,10 +202,11 @@ if AMDGPU.functional()
         end
     end
 
-    # The `m × n` QR factor of a least-squares problem, `m > n`: `rocBLAS.trsv!` takes a square
-    # matrix only, so its solve runs on the own kernel. The mixed `ldiv!!` and a direct `backsolve!`
-    # reach the extension's method with the length-`m` right-hand side. The bound is that of the
-    # `JLArray` least-squares rows of `test/nonlinear/leastsquares.jl`, in the factor's precision.
+    # The `m × n` QR factor of a least-squares problem, `m > n`: `ormqr!` applies Qᴴ to the
+    # length-`m` right-hand side and `rocBLAS.trsv!` solves with the leading `n × n` block. The
+    # mixed `ldiv!!` and a direct `backsolve!` reach the extension's method with the length-`m`
+    # right-hand side. The bound is that of the `JLArray` least-squares rows of
+    # `test/nonlinear/leastsquares.jl`, in the factor's precision.
     @testset "ROCm rectangular QR, m = 6 > n = 3: $T" for T in ROCM_BLAS_ELTYPES
         m_rows, n = 6, 3
         A_h, b_h = rect_qr_data(T, m_rows, n)
@@ -257,6 +228,32 @@ if AMDGPU.functional()
             d_m = ROCArray(F.(b_h))
             backsolve!(fac, d_m)
             @test isapprox(Array(d_m)[1:n] .* F(2)^(-fac.scale_exponent), F.(x_ref); rtol)
+        end
+    end
+
+    # The QR solves against the host solve `A \ b`: the same-type `ldiv!!` of an `m × n` factor,
+    # `m > n`, which reaches the extension's `backsolve_shifted!`; the mixed `ldiv!!` of a
+    # `Float32` factor and a `Float64` iterate, which reaches its `backsolve!` with the length-`m`
+    # right-hand side; and the square solve. The bound is in the factor's precision.
+    @testset "ROCm QR solves against the host solve: $T" for T in ROCM_BLAS_ELTYPES
+        methods = real(T) === Float64 ? (QRFactorization(), QRFactorization(Float32)) :
+                  (QRFactorization(),)
+        shapes = ((6, 3), (40, 7), (16, 16))
+        @testset "m = $m_rows, n = $n, $method" for (m_rows, n) in shapes, method in methods
+
+            A_h, b_h = m_rows == n ? cuda_well_conditioned(T, n) :
+                       rect_qr_data(T, m_rows, n)
+            x_ref = A_h \ b_h
+            d = ROCArray(zeros(T, n))
+            prob = m_rows == n ? NonlinearProblem(d, rocm_noop) :
+                   LeastSquaresProblem((r, x, p) -> r, m_rows)
+            fac = dense_factor(method, prob, d, nothing)
+            @test size(fac.factors) == (m_rows, n)
+            fac = factorize!!(fac, method, ROCArray(A_h))
+            @test returncode(fac) === SUCCESS
+            rtol = 32 * sqrt(eps(real(eltype(fac.factors))))
+            ldiv!!(d, fac, ROCArray(b_h))
+            @test isapprox(Array(d), x_ref; rtol)
         end
     end
 

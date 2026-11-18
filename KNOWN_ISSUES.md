@@ -527,9 +527,10 @@
   `qadj` kernel applies I − τ v vᴴ as Hᴴ, which holds for the LAPACK factor only with
   `conj.(τ)`. A host `LAPACK.geqrf!` factor solved with `ka_qr_backsolve!` on a `JLArray` fails
   for `ComplexF32` and `ComplexF64` at 6 × 3, 40 × 7 and 3 × 1 and passes with `conj.(τ)`
-  (critic round 2 probe of the ROCm extension; the 6 × 3 and 40 × 7 cases are the `JLArray` rows
-  of `test/gpu/rocm/runtests.jl:116–143`). The ROCm extension conjugates `τ` of an `m × n`
-  factor and sends it to `ka_qr_backsolve!`.
+  (critic round 2 probe of the ROCm extension). The ROCm extension solves with `ormqr!` on the
+  whole factor and `trsv!` on views of its leading `n × n` block and of `d[1:n]`, which the
+  `rocBLAS.trsv!` of AMDGPU 2.12 accepts, and its own `backsolve_shifted!` keeps the same-type
+  solve on that path.
 - **kind:** defect
 - **found:** 2026-11-16 (critic round 1 of the ROCm extension)
 

@@ -16,14 +16,15 @@ so that a compat-only bump can be told apart from an interface change.
   `ROCMatrix{T}`, `T <: LinearAlgebra.BlasFloat`, call `AMDGPU.rocSOLVER.getrf!` (`info` the first
   zero pivot) and `getrs!`, and `geqrf!` (`info` the first zero or non-finite diagonal entry of
   `R`), `ormqr!` and `AMDGPU.rocBLAS.trsv!`, as the CUDA extension does with cuSOLVER and cuBLAS.
-  A `Float32` factor of a `Float64` Jacobian reaches the `Float32` methods. `geqrf!` factorises
-  the `m × n` Jacobian of a least-squares problem, `m > n`, too, but its solve runs on the own
-  `KernelAbstractions` kernel, because `rocBLAS.trsv!` takes a square matrix only; `factorize!!`
-  conjugates that factor's `τ` into the layout of the own kernel. `Float16`, the SVD and `LDLᵀ`
-  stay on the own `KernelAbstractions` kernels.
-  `Project.toml` adds `AMDGPU` under `[weakdeps]`, `[extensions]` and `[compat]` (`2.11`). The
-  tests are in `test/gpu/rocm/runtests.jl`: the dispatch and JET rows and a `JLArray` row of the
-  `m × n` QR solve run without a device, and the factorising rows run by hand on a ROCm device.
+  A `Float32` factor of a `Float64` Jacobian reaches the `Float32` methods. The `m × n` QR factor
+  of a least-squares problem, `m > n`, solves with the same vendor calls as the square factor:
+  `ormqr!` on the whole factor and the length-`m` right-hand side, then `trsv!` on the leading
+  `n × n` block, so no rectangular QR solve runs on the own kernel. The same-type `ldiv!!` of that
+  factor reaches the extension's `backsolve_shifted!`. `Float16`, the SVD and `LDLᵀ` stay on the
+  own `KernelAbstractions` kernels.
+  `Project.toml` adds `AMDGPU` under `[weakdeps]`, `[extensions]` and `[compat]` (`2.12`, whose
+  `rocBLAS.trsv!` takes a view). The tests are in `test/gpu/rocm/runtests.jl`: the dispatch and
+  JET rows run without a device, and the factorising rows run by hand on a ROCm device.
 
 - **The user guide's method table (`docs/src/guide.md`) corrects two conditions.** A complex
   Jacobian for `LDLTFactorization` is read in full, and `Refinement` and `GMRESRefinement` do not
