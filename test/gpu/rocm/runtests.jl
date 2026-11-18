@@ -257,6 +257,27 @@ if AMDGPU.functional()
         end
     end
 
+    # The `m × 0` factor of a least-squares problem with no unknowns: `factorize!!` returns before
+    # `geqrf!`, and the same-type and the mixed `ldiv!!` reach the extension's `backsolve!` with
+    # the nonzero length-`m` right-hand side, so `ormqr!` runs with `k = 0` and `trsv!` on `0 × 0`
+    # views.
+    @testset "ROCm QR of an m × 0 factor, m = 5: $T" for T in ROCM_BLAS_ELTYPES
+        m_rows = 5
+        _, b_h = rect_qr_data(T, m_rows, 1)
+        methods = real(T) === Float64 ? (QRFactorization(), QRFactorization(Float32)) :
+                  (QRFactorization(),)
+        for method in methods
+            d = ROCArray(zeros(T, 0))
+            prob = LeastSquaresProblem((r, x, p) -> r, m_rows)
+            fac = dense_factor(method, prob, d, nothing)
+            @test size(fac.factors) == (m_rows, 0)
+            fac = factorize!!(fac, method, ROCArray(zeros(T, m_rows, 0)))
+            @test fac.info == 0
+            @test returncode(fac) === SUCCESS
+            @test length(ldiv!!(d, fac, ROCArray(b_h))) == 0
+        end
+    end
+
     @testset "ROCm rocSOLVER 0x0, singular and non-finite rows: $T" for T in ROCM_BLAS_ELTYPES
         ext_rocm = Base.get_extension(GeometricSolvers, :GeometricSolversAMDGPUExt)
         RT = real(T)
