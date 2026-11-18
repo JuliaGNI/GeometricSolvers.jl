@@ -13,7 +13,7 @@ type that the iterate selects, or the matrix-free [`GMRES`](@ref).
 | method | factorisation | matrix |
 |:--|:--|:--|
 | [`LUFactorization`](@ref) | LU with partial pivoting | square |
-| [`LDLTFactorization`](@ref) | Bunch–Kaufman ``L D L^\mathsf{T}`` or ``L D L^\mathsf{H}`` with ``1 \times 1`` and ``2 \times 2`` pivots | symmetric or Hermitian, reads the lower triangle |
+| [`LDLTFactorization`](@ref) | Bunch–Kaufman ``L D L^\mathsf{T}`` or ``L D L^\mathsf{H}`` with ``1 \times 1`` and ``2 \times 2`` pivots | symmetric or Hermitian, reads the lower triangle of a real matrix and both triangles of a complex one |
 | [`QRFactorization`](@ref) | Householder QR | square, or ``m \times n`` with ``m \ge n`` for least squares |
 | [`SVDFactorization`](@ref) | one-sided Jacobi SVD (static, device) or LAPACK `gesvd` (host) | square or ``m \ge n``, rank-revealing |
 

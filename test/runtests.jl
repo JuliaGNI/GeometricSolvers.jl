@@ -83,6 +83,7 @@ if "slow" in GROUPS
     @safetestset "KA dense linear solvers (large)" include("linear/ka_large.jl")
     @safetestset "Static SVD" include("linear/static/svd.jl")
     @safetestset "Broyden multisecant" include("composition/broyden.jl")
+    @safetestset "Measurement scripts" include("integration/hardware_scripts.jl")
 end
 if "doctests" in GROUPS
     @safetestset "Doctests" include("quality/doctests.jl")
