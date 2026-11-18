@@ -29,12 +29,12 @@ gives others (see [Nonlinear methods](@ref nonlinear)).
 | method | condition |
 |:--|:--|
 | [`Newton`](@ref) with [`LUFactorization`](@ref) | a square Jacobian |
-| [`Newton`](@ref) with [`LDLTFactorization`](@ref) | a symmetric or Hermitian Jacobian; it reads the lower triangle only |
+| [`Newton`](@ref) with [`LDLTFactorization`](@ref) | a symmetric or Hermitian Jacobian; a real Jacobian is read from the lower triangle only, a complex one must be given in full, because both triangles decide between ``L D L^\mathsf{T}`` and ``L D L^\mathsf{H}`` |
 | [`Newton`](@ref) with [`QRFactorization`](@ref) | a square Jacobian, or a [`LeastSquaresProblem`](@ref) |
 | [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian, or a [`LeastSquaresProblem`](@ref); the status reports the numerical rank |
 | [`Newton`](@ref) with `regularization = μ` | a singular or nearly singular Jacobian, where the step of ``J + \mu I`` is acceptable |
 | [`QuasiNewton`](@ref)`(k)`, or [`Newton`](@ref) with `reuse = k` | the Jacobian and its factorisation dominate the cost of a step; the rate is then linear |
-| [`Refinement`](@ref), [`GMRESRefinement`](@ref) | a factorisation precision below the working type; in R1 a `GMRESRefinement` runs the LU-IR passes alone |
+| [`Refinement`](@ref), [`GMRESRefinement`](@ref) | a factorisation precision below the working type, and not a [`LeastSquaresProblem`](@ref); in R1 a `GMRESRefinement` runs the LU-IR passes alone |
 | [`GaussNewton`](@ref) | a [`LeastSquaresProblem`](@ref) |
 | [`Picard`](@ref) | ``I - \omega J`` is a contraction; it needs no Jacobian, and the rate is linear |
 | [`Anderson`](@ref), [`Broyden`](@ref) | a fixed-point iteration whose map is cheap and whose Jacobian is expensive or unavailable; in R1 the depth is `1 ≤ m ≤ 4` |

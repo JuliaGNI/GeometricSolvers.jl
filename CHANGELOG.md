@@ -11,6 +11,11 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **The user guide's method table (`docs/src/guide.md`) corrects two conditions.** A complex
+  Jacobian for `LDLTFactorization` is read in full, and `Refinement` and `GMRESRefinement` do not
+  take a `LeastSquaresProblem`. The factorisation table of `docs/src/algorithms/linear.md` states
+  the same triangle rule for `LDLTFactorization`.
+
 - **Measurement scripts for the device and CPU back ends, in `scripts/hardware/`.**
   `ka_lu_large.jl` times `factorize!!` and `ldiv!!` of the KernelAbstractions LU and QR in
   `Float32`, and of the vendor path where an extension defines one, with the KA factorisation split
