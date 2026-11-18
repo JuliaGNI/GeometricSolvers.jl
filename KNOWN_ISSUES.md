@@ -513,6 +513,19 @@
 - **kind:** upstream
 - **found:** 2026-11-15 (Y3 premises probe on four cards)
 
+### K92 · The launch and wait counts of `scripts/hardware/sync_cost.jl` come from a reading of the source, and no test sees them drift from what the step runs
+
+- **location:** `scripts/hardware/sync_cost.jl:142` (`phase_counts`)
+- **evidence:** `phase_counts` returns constants per path and device; the testset
+  "sync_cost.jl runs on jlarray at n = 64" of `test/integration/hardware_scripts.jl` asserts
+  `r.waits == 8` and `r.launches == 3 * 64 + 11`, the same constants written again. A change of
+  `src/` that adds or removes a kernel launch, a `synchronize` or a host read in the step leaves
+  both green. A count of the real synchronisations, such as a wrapped backend that counts
+  `KernelAbstractions.synchronize` and the host reads, would catch that drift. The vendor counts
+  (CUDA, Metal) are not run on a device at all.
+- **kind:** missing test
+- **found:** 2026-11-16 (critic of the measurement scripts)
+
 ### K90 · The residual floor of a `RAS` local solve separates a converged block from one with an error of `√eps ‖x_i‖` only where `n_i κ_F(J_i) < 1/√eps`
 
 - **location:** `src/composition/ras.jl` (`residual_floor`, `_ras_sweep!!`)
