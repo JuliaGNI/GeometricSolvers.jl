@@ -1,0 +1,34 @@
+diff --git a/ext/GeometricSolversAMDGPUExt.jl b/ext/GeometricSolversAMDGPUExt.jl
+index faafa34..6d73e02 100644
+--- a/ext/GeometricSolversAMDGPUExt.jl
++++ b/ext/GeometricSolversAMDGPUExt.jl
+@@ -67,17 +67,4 @@ function GeometricSolvers.backsolve!(
+     return d
+ end
+ 
+-# The same-type `ldiv!!` of an `m × n` factor, `m > n`, solves through this method, which keeps
+-# it on the rocSOLVER and rocBLAS solve above. `ka_qr_backsolve!` would read the LAPACK `τ` that
+-# `geqrf!` writes as its conjugate, which gives a wrong solution for complex `T`.
+-function GeometricSolvers.backsolve_shifted!(
+-        fac::DeviceQR{<:ROCMatrix{T}},
+-        d::ROCVector{T},
+-        rhs::ROCVector{T}
+-) where {T <: BlasFloat}
+-    GeometricSolvers.backsolve!(fac, rhs)
+-    copyto!(d, 1, rhs, 1, length(d))
+-    return 0
+-end
+-
+ end # module GeometricSolversAMDGPUExt
+diff --git a/test/gpu/rocm/runtests.jl b/test/gpu/rocm/runtests.jl
+index 99af406..6e696ca 100644
+--- a/test/gpu/rocm/runtests.jl
++++ b/test/gpu/rocm/runtests.jl
+@@ -44,7 +44,6 @@ const ROCM_BLAS_ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
+                   ext_rocm
+             @test which(backsolve!, (DevQR, Vec)).module === ext_rocm
+             # The same-type `ldiv!!` of an `m × n` factor solves through this method.
+-            @test which(backsolve_shifted!, (DevQR, Vec, Vec)).module === ext_rocm
+ 
+             # The SVD stays on the own kernels on ROCm.
+             DevSVD = DeviceSVD{Mat, VecR, VecI32, Vec, Nothing}

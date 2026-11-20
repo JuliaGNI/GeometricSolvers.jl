@@ -1,0 +1,13 @@
+diff --git a/ext/GeometricSolversAMDGPUExt.jl b/ext/GeometricSolversAMDGPUExt.jl
+index faafa34..aa299fe 100644
+--- a/ext/GeometricSolversAMDGPUExt.jl
++++ b/ext/GeometricSolversAMDGPUExt.jl
+@@ -63,7 +63,7 @@ function GeometricSolvers.backsolve!(
+     isempty(d) && return d
+     n = size(fac.factors, 2)
+     AMDGPU.rocSOLVER.ormqr!('L', T <: Real ? 'T' : 'C', fac.factors, fac.τ, d)
+-    AMDGPU.rocBLAS.trsv!('U', 'N', 'N', view(fac.factors, 1:n, 1:n), view(d, 1:n))
++    AMDGPU.rocBLAS.trsv!('U', 'N', 'N', fac.factors, d)
+     return d
+ end
+ 

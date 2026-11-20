@@ -1,0 +1,22 @@
+diff --git a/ext/GeometricSolversAMDGPUExt.jl b/ext/GeometricSolversAMDGPUExt.jl
+index faafa34..6d73e02 100644
+--- a/ext/GeometricSolversAMDGPUExt.jl
++++ b/ext/GeometricSolversAMDGPUExt.jl
+@@ -67,17 +67,4 @@ function GeometricSolvers.backsolve!(
+     return d
+ end
+ 
+-# The same-type `ldiv!!` of an `m × n` factor, `m > n`, solves through this method, which keeps
+-# it on the rocSOLVER and rocBLAS solve above. `ka_qr_backsolve!` would read the LAPACK `τ` that
+-# `geqrf!` writes as its conjugate, which gives a wrong solution for complex `T`.
+-function GeometricSolvers.backsolve_shifted!(
+-        fac::DeviceQR{<:ROCMatrix{T}},
+-        d::ROCVector{T},
+-        rhs::ROCVector{T}
+-) where {T <: BlasFloat}
+-    GeometricSolvers.backsolve!(fac, rhs)
+-    copyto!(d, 1, rhs, 1, length(d))
+-    return 0
+-end
+-
+ end # module GeometricSolversAMDGPUExt
