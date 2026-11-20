@@ -251,6 +251,8 @@ The call form follows `SciMLBase.isinplace(prob)` and the type of `prob.u0`. The
 
 - [The three regimes](@ref regimes) explains how the storage of the iterate selects the code
   path, and how to choose between value, batched and in-place solves.
+- [Methods by regime](@ref guide) lists the methods that run in each regime, and the conditions
+  under which each one applies.
 - [Problem types](@ref problems) describes the least-squares, stationarity, reparametrized,
   deflated and eliminated problems.
 - The pages under *Algorithms* describe each nonlinear method, globalization, linear solver and

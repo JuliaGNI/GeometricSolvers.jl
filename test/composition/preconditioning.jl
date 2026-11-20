@@ -1275,9 +1275,8 @@ end
 end
 
 # At the exact root each block's first residual is at the rounding level, so `rtol * f₀` lies below
-# what any step can reach; the last local step is then at the rounding level of the local iterate,
-# which counts as converged, and neither the step at the root nor a RASPEN solve that lands on it
-# fails.
+# what any step can reach; the residual after the first local step is at its floor, which counts as
+# converged, and neither the step at the root nor a RASPEN solve that lands on it fails.
 @testset "A local solve at the rounding level is converged, $T" for T in REAL_ELTYPES
     n = 8
     A = affine_matrix(T, n)
@@ -1296,6 +1295,71 @@ end
         x, status = solve(prob, copy(x0), LeftPreconditioned(outer, ras); max_iterations = 20)
         @test status.code === SUCCESS
         @test norm(A * x - b) <= sqrt(eps(T)) * norm(b)
+    end
+end
+
+# Near the root `rtol * f₀` lies below the residual floor, where a local step has norm
+# `≈ eps κ(J_i) ‖x_i‖`. With 2 on the diagonal the block Jacobians have `κ ≈ 14`, so that step lies
+# above `eps ‖x_i‖` in a share of the starts, and a test of the last step against `eps ‖x_i‖` alone
+# reports `MAXITERS` there; the floor test passes every start. One exact Newton step reaches the
+# floor, so with one inner iteration the check after the loop decides by the floor, and with ten
+# the inner loop stops at the floor after that one step per block.
+@testset "A local solve at its residual floor is converged, $T, $iterations" for T in REAL_ELTYPES,
+    iterations in (1, 10)
+
+    n = 8
+    A = affine_matrix(T, n)
+    for j in 1:n
+        A[j, j] = 2
+    end
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 2; overlap = 1)
+    xstar = A \ b
+    ras = RAS(part; max_iterations = iterations, rtol = eps(T))
+    codes = map(1:50) do t
+        x0 = xstar .+ sqrt(eps(T)) .* T.(sin.(t .* (1:n)))
+        prob, _ = affine_problem(x0, A, b, part)
+        Fx = residual!!(similar(x0), prob, x0, nothing)
+        state = init_state(ras, prob, copy(x0), nothing)
+        state = start!!(state, ras, prob, copy(x0), Fx, nothing, rnorm(Fx))
+        x, _, state, info = step!!(state, ras, prob, copy(x0), copy(Fx), nothing)
+        if info.code === SUCCESS
+            @test x != x0
+            @test ras_counts(state).block_solves == 2
+        end
+        info.code
+    end
+    @test count(==(SUCCESS), codes) == 50
+end
+
+# A residual above its floor is no claim of convergence, however it changes: a block Jacobian of
+# the wrong sign doubles the error with every step, a block Jacobian of 0.4 times the exact one
+# overshoots and grows it by 1.5, and a doubled one halves it. From a start `√eps / 8` from the
+# root the error is of the order of `√eps ‖x_i‖`, and its residual lies far above the floor
+# `n_i eps ‖J_i‖_F ‖x_i‖`; all are `MAXITERS`.
+@testset "A local solve away from its residual floor is MAXITERS, $T" for T in REAL_ELTYPES
+    n = 6
+    A = affine_matrix(T, n)
+    b = affine_rhs(T, n)
+    part = BlockPartition(n, 3; overlap = 1)
+    xstar = A \ b
+    for (scale, offset) in ((-1, T(1) / 4), (-1, sqrt(eps(T)) / 8),
+        (T(0.4), sqrt(eps(T)) / 8), (2, sqrt(eps(T)) / 8))
+        x0 = xstar .+ offset .* T.(sin.(1:n))
+        F!, J! = affine_global(x0, A, b)
+        ab = affine_blocks(x0, part, A, b)
+        wrong = (J2, x_loc, x, p) -> (J2 .= scale .* ab.local_jacobians[2]; J2)
+        prob = NonlinearProblem(F!, J!;
+            block_residuals = ntuple(i -> affine_block(ab, i, nothing), 3),
+            block_jacobians = ntuple(i -> i == 2 ? wrong : affine_block_jacobian(ab, i), 3))
+        Fx = residual!!(similar(x0), prob, x0, nothing)
+        m = RAS(part; max_iterations = 3, rtol = T(1e-3))
+        state = init_state(m, prob, copy(x0), nothing)
+        state = start!!(state, m, prob, copy(x0), Fx, nothing, rnorm(Fx))
+        x₊, _, state, info = step!!(state, m, prob, copy(x0), copy(Fx), nothing)
+        @test info.code === MAXITERS
+        @test x₊ == x0
+        @test ras_counts(state).failed_block == 2
     end
 end
 

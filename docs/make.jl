@@ -20,6 +20,7 @@ makedocs(;
         "Manual" => [
             "Getting started" => "manual/getting_started.md",
             "The three regimes" => "manual/regimes.md",
+            "Methods by regime" => "guide.md",
             "Problem types" => "manual/problems.md"
         ],
         "Algorithms" => [
