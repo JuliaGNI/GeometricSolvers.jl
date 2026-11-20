@@ -539,3 +539,17 @@
   residual.
 - **kind:** not verified
 - **found:** #97
+
+### K95 · Under Metal.jl 1.12, `factorize!!` never reaches the negative-status branches of `_mps_lu_finish!`, and a non-singular MPS failure throws instead of giving `info = 1`
+
+- **location:** `ext/GeometricSolversMetalExt.jl:44`
+- **evidence:** From Metal.jl 1.12.0, `LinearAlgebra.lu!` on an `MtlMatrix` passes the MPS status
+  through `MPS.lu_info`, which turns the singular status `-2` into LAPACK's `info` and calls
+  `error(...)` on every other failure status; the compat is `Metal = "1.12"`. So
+  `LinearAlgebra.lu!(fac.factors; check = false)` at line 44 never returns a negative `info`, the
+  `-2` branch and the "any other negative status" branch are reached only by a direct call of
+  `_mps_lu_finish!`, and the comments at lines 12–14 and 21–23 describe the old behaviour. On an
+  Apple M4 Max (macOS 27.2.0, Julia 1.13.4, Metal.jl 1.12.1), Metal's `info` equals LAPACK's for
+  four singular `Float32` matrices (3, 4, 1, 2).
+- **kind:** dead code
+- **found:** #100 (issue #101)
