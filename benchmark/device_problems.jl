@@ -55,8 +55,8 @@ end
 function (r::MidpointResidual{:iode})(y, V, par)
     Q = r.q₀ .+ (r.h / 2) .* SVector(V)
     f = similar(y)
-    @inline r.fs.ϑ(y, r.t̃, Q, V, par)
-    @inline r.fs.f(f, r.t̃, Q, V, par)
+    @inline r.fs.ϑ(y, r.t̃, Q, SVector(V), par)
+    @inline r.fs.f(f, r.t̃, Q, SVector(V), par)
     y .-= r.p₀ .+ (r.h / 2) .* f
     return nothing
 end

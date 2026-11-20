@@ -873,10 +873,13 @@ Each status other than `ran`, per machine and kind, with its count of cells and 
 | cpu | r3 | not run: cpu mode | 6 | the cpu mode runs `n = 256` and 1024 |
 | cpu | lu | not run: cpu mode | 2 | the cpu mode runs `n = 256` and 1024 |
 
-The four Lotka–Volterra rows allocate because their midpoint residual passes the iterate `V`, an
-`MVector`, to GeometricProblems' `ϑ` and `f`. On the host, the residual with `SVector(V)` in
-these two calls is equal and does not allocate for LotkaVolterra2d; LotkaVolterra4d still
-allocates.
+The midpoint residual of the four Lotka–Volterra rows passes the iterate `V` to GeometricProblems'
+`ϑ` and `f` as an `SVector`, and GeometricProblems 0.10.2 inlines LotkaVolterra4d's `ϑ`, so the
+residual does not allocate on the heap and these rows run in a `CPU()` kernel. With the `MVector`
+`V` in these calls all four rows allocate, and with GeometricProblems 0.10.0, whose LotkaVolterra4d
+`ϑ` passes its output vector to a call that is not inlined, LotkaVolterra4d still allocates.
+GeometricProblems 0.10.2 differs from 0.10.0, with which Y1's and Y2's tables were made, only in
+that `@inline`; no cell of those tables changes, and `verify.jl` checks them with 0.10.2 pinned.
 
 ### Y3 · Explanations
 

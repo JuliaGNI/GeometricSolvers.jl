@@ -909,6 +909,18 @@ so that a compat-only bump can be told apart from an interface change.
   KernelAbstractions, StaticArrays and JLArrays with exact `[compat]` versions. No source file
   changes.
 
+- **The four Lotka–Volterra midpoint rows of the device run execute in a kernel on `CPU()`.**
+  The `:iode` midpoint residual `MidpointResidual{:iode}` in `benchmark/device_problems.jl` passes
+  the iterate `V` to GeometricProblems' `ϑ` and `f` as `SVector(V)`, not as the `MVector` `V`, and
+  `benchmark/Project.toml` pins GeometricProblems `=0.10.2`, which differs from 0.10.0 in its
+  source only by an `@inline` on LotkaVolterra4d's `ϑ(Θ, t, q)`. Together the two keep the residual
+  of the rows of LotkaVolterra2d and LotkaVolterra4d at h = 0.01 and 0.1 off the heap, so the rows
+  run in a KernelAbstractions kernel instead of ending as a kernel error; with either change alone
+  LotkaVolterra4d still allocates. A self-test in `benchmark/selftest.jl` solves the four rows in a
+  `CPU()` kernel with `solve_batch!` and `Newton()` and expects `SUCCESS`. Y1's 208 LotkaVolterra4d
+  cells of `benchmark/results/correctness.csv`, run again with 0.10.2, are byte-identical to the
+  committed ones, and `benchmark/verify.jl benchmark/results` passes.
+
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is
   `F(u) = A u + 10 u³ - 1` with `A = tridiag(-1, 2, -1) / h²` on `n = 256` interior points. The

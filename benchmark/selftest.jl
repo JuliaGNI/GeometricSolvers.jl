@@ -826,6 +826,20 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         @test norm(row.F(X[1], row.p), Inf) ≤ tol
     end
 
+    @testset "the Lotka–Volterra midpoint rows run in a CPU() kernel" begin
+        # The :iode residual keeps the iterate and GeometricProblems' outputs off the heap.
+        rows = filter(r -> startswith(r.problem, "LotkaVolterra"), device_rows(T))
+        @test length(rows) == 4
+        for row in rows
+            X = fill(row.x0, 4)
+            S = KernelAbstractions.allocate(CPU(), SolverStatus{T}, 4)
+            solve_batch!(X, S, NonlinearProblem(row.F), Newton(), row.p; f_abstol = tol,
+                f_reltol = 0, max_iterations = 200)
+            @test all(s -> s.code == SUCCESS, S)
+            @test norm(row.F(X[1], row.p), Inf) ≤ tol
+        end
+    end
+
     @testset "the verdict: Y-2's bound scales with the host root" begin
         @test device_verdict(true, true, 5tol, 10, T) == "agree"
         @test device_verdict(true, true, 11tol, 10, T) == "different root"
