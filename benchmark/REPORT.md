@@ -873,6 +873,11 @@ Each status other than `ran`, per machine and kind, with its count of cells and 
 | cpu | r3 | not run: cpu mode | 6 | the cpu mode runs `n = 256` and 1024 |
 | cpu | lu | not run: cpu mode | 2 | the cpu mode runs `n = 256` and 1024 |
 
+The four Lotka–Volterra rows allocate because their midpoint residual passes the iterate `V`, an
+`MVector`, to GeometricProblems' `ϑ` and `f`. On the host, the residual with `SVector(V)` in
+these two calls is equal and does not allocate for LotkaVolterra2d; LotkaVolterra4d still
+allocates.
+
 ### Y3 · Explanations
 
 One line per `different root`, `device fails` and `host fails` verdict, from a host replay of the
