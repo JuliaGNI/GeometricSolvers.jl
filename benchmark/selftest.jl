@@ -1325,11 +1325,11 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
             path = joinpath(dir, "REPORT.md")
             r = read(path, String)
             for (a, b) in ("| cpu | cpu | host apple-m4 | none | 1.13" => "| cpu | cpu | x | none | 1.13",
-                "| GeometricSolvers | 59 | 53 | 53 |" => "| GeometricSolvers | 59 | 52 | 53 |",
+                "| GeometricSolvers | 63 | 57 | 57 |" => "| GeometricSolvers | 63 | 56 | 57 |",
                 "| cpu | 2 | gs-newton | " => "| cpu | 2 | gs-newton | 1 ",
                 "| cpu | 256 | host | ran | 2 | true | " => "| cpu | 256 | host | ran | 2 | true | 1",
-                "| cpu | 256 | 0.00252 |" => "| cpu | 256 | 0.00253 |",
-                "on device cpu | 81 |" => "on device cpu | 80 |",
+                "| cpu | 256 | 0.00423 |" => "| cpu | 256 | 0.00424 |",
+                "on device cpu | 62 |" => "on device cpu | 61 |",
                 "| device fails | The undamped" => "| device fails | |")
                 @test occursin(a, r)
                 r = replace(r, a => b)

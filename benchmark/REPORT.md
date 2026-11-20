@@ -778,7 +778,7 @@ One line per machine, from its `.txt`.
 | rtx4090 | cuda | pending: no CSV | — | — | — | — |
 | rx7900xtx | rocm | pending: no CSV | — | — | — | — |
 
-The cpu run's `.txt` records the load averages 6.84, 5.55 and 4.91 at its start.
+The cpu run's `.txt` records the load averages 2.81, 3.18 and 6.95 at its start.
 
 ### Y3 · R2 correctness
 
@@ -787,11 +787,11 @@ verdict against the host R1 solve.
 
 | machine | column | package | ran | successes | agree | different root | device fails | host fails | both fail |
 |:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|
-| cpu | Newton Static LU | GeometricSolvers | 59 | 53 | 53 | 0 | 1 | 0 | 5 |
-| cpu | Newton Static LU | SimpleNonlinearSolve | 58 | 52 | 52 | 0 | 0 | 0 | 6 |
-| cpu | Newton Backtracking LU | GeometricSolvers | 59 | 50 | 50 | 0 | 0 | 0 | 9 |
-| cpu | Newton DogLeg LU | GeometricSolvers | 59 | 53 | 53 | 0 | 0 | 0 | 6 |
-| cpu | Picard Backtracking | GeometricSolvers | 59 | 18 | 18 | 0 | 0 | 0 | 41 |
+| cpu | Newton Static LU | GeometricSolvers | 63 | 57 | 57 | 0 | 1 | 0 | 5 |
+| cpu | Newton Static LU | SimpleNonlinearSolve | 62 | 56 | 56 | 0 | 0 | 0 | 6 |
+| cpu | Newton Backtracking LU | GeometricSolvers | 63 | 54 | 54 | 0 | 0 | 0 | 9 |
+| cpu | Newton DogLeg LU | GeometricSolvers | 63 | 57 | 57 | 0 | 0 | 0 | 6 |
+| cpu | Picard Backtracking | GeometricSolvers | 62 | 20 | 20 | 0 | 0 | 0 | 42 |
 
 ### Y3 · R2 throughput
 
@@ -801,21 +801,21 @@ throughput is no device throughput.
 
 | machine | n | variant | 10³ | 10⁴ | 10⁵ | 10⁶ | 10⁷ |
 |:--|--:|:--|--:|--:|--:|--:|--:|
-| cpu | 2 | gs-newton | 2.60e+07 | 5.40e+07 | — | — | — |
-| cpu | 2 | gs-reuse4 | 2.44e+07 | 6.39e+07 | — | — | — |
-| cpu | 2 | gs-backtracking | 2.77e+07 | 5.58e+07 | — | — | — |
-| cpu | 2 | sns | 2.42e+07 | 5.47e+07 | — | — | — |
-| cpu | 2 | host-r1 | 7.46e+06 | 4.10e+07 | — | — | — |
-| cpu | 4 | gs-newton | 1.83e+07 | 2.69e+07 | — | — | — |
-| cpu | 4 | gs-reuse4 | 1.94e+07 | 2.61e+07 | — | — | — |
-| cpu | 4 | gs-backtracking | 1.75e+07 | 2.92e+07 | — | — | — |
-| cpu | 4 | sns | 1.84e+07 | 3.19e+07 | — | — | — |
-| cpu | 4 | host-r1 | 6.84e+06 | 2.45e+07 | — | — | — |
-| cpu | 8 | gs-newton | 6.87e+06 | 9.98e+06 | — | — | — |
-| cpu | 8 | gs-reuse4 | 9.49e+06 | 1.21e+07 | — | — | — |
-| cpu | 8 | gs-backtracking | 9.37e+06 | 1.00e+07 | — | — | — |
-| cpu | 8 | sns | 9.87e+06 | 1.11e+07 | — | — | — |
-| cpu | 8 | host-r1 | 5.81e+06 | 9.78e+06 | — | — | — |
+| cpu | 2 | gs-newton | 2.53e+07 | 5.63e+07 | — | — | — |
+| cpu | 2 | gs-reuse4 | 3.06e+07 | 7.45e+07 | — | — | — |
+| cpu | 2 | gs-backtracking | 2.10e+07 | 6.55e+07 | — | — | — |
+| cpu | 2 | sns | 2.90e+07 | 7.30e+07 | — | — | — |
+| cpu | 2 | host-r1 | 6.85e+06 | 4.38e+07 | — | — | — |
+| cpu | 4 | gs-newton | 1.88e+07 | 3.43e+07 | — | — | — |
+| cpu | 4 | gs-reuse4 | 2.06e+07 | 3.90e+07 | — | — | — |
+| cpu | 4 | gs-backtracking | 1.99e+07 | 3.02e+07 | — | — | — |
+| cpu | 4 | sns | 1.84e+07 | 3.17e+07 | — | — | — |
+| cpu | 4 | host-r1 | 6.77e+06 | 2.41e+07 | — | — | — |
+| cpu | 8 | gs-newton | 9.95e+06 | 1.12e+07 | — | — | — |
+| cpu | 8 | gs-reuse4 | 9.02e+06 | 1.29e+07 | — | — | — |
+| cpu | 8 | gs-backtracking | 1.01e+07 | 1.15e+07 | — | — | — |
+| cpu | 8 | sns | 1.06e+07 | 1.16e+07 | — | — | — |
+| cpu | 8 | host-r1 | 5.77e+06 | 9.63e+06 | — | — | — |
 
 ### Y3 · R3 rows
 
@@ -825,18 +825,18 @@ host.
 
 | machine | n | variant | status | iterations | success | median_s |
 |:--|--:|:--|:--|--:|:--|--:|
-| cpu | 256 | device | ran | 2 | true | 0.00685 |
-| cpu | 256 | host | ran | 2 | true | 0.000501 |
-| cpu | 256 | device-mixed | ran | 3 | true | 0.0134 |
-| cpu | 256 | device-mixed-refine | ran | 3 | true | 0.0115 |
+| cpu | 256 | device | ran | 2 | true | 0.00846 |
+| cpu | 256 | host | ran | 2 | true | 0.000513 |
+| cpu | 256 | device-mixed | ran | 3 | true | 0.0135 |
+| cpu | 256 | device-mixed-refine | ran | 3 | true | 0.00933 |
 | cpu | 256 | device-f64 | ran | 3 | true | — |
-| cpu | 256 | host-f64 | ran | 3 | true | 0.00118 |
-| cpu | 1024 | device | ran | 2 | true | 0.0795 |
-| cpu | 1024 | host | ran | 2 | true | 0.0174 |
-| cpu | 1024 | device-mixed | ran | 3 | true | 0.132 |
-| cpu | 1024 | device-mixed-refine | ran | 3 | true | 0.115 |
+| cpu | 256 | host-f64 | ran | 3 | true | 0.00132 |
+| cpu | 1024 | device | ran | 2 | true | 0.0716 |
+| cpu | 1024 | host | ran | 2 | true | 0.0176 |
+| cpu | 1024 | device-mixed | ran | 3 | true | 0.134 |
+| cpu | 1024 | device-mixed-refine | ran | 3 | true | 0.132 |
 | cpu | 1024 | device-f64 | ran | 3 | true | — |
-| cpu | 1024 | host-f64 | ran | 3 | true | 0.0467 |
+| cpu | 1024 | host-f64 | ran | 3 | true | 0.0476 |
 | cpu | 4096 | device | not run: cpu mode | - | - | — |
 | cpu | 4096 | host | not run: cpu mode | - | - | — |
 | cpu | 4096 | device-mixed | not run: cpu mode | - | - | — |
@@ -852,8 +852,8 @@ Per machine and `n`: `median_s` of one factorisation and one solve by each path,
 
 | machine | n | own-ka | dispatched | own-ka / dispatched |
 |:--|--:|--:|--:|--:|
-| cpu | 256 | 0.00252 | 0.00389 | 0.648 |
-| cpu | 1024 | 0.0370 | 0.0374 | 0.989 |
+| cpu | 256 | 0.00423 | 0.00444 | 0.951 |
+| cpu | 1024 | 0.0384 | 0.0388 | 0.990 |
 
 ### Y3 · Not run
 
@@ -861,7 +861,7 @@ Each status other than `ran`, per machine and kind, with its count of cells and 
 
 | machine | kind | status | count | cause |
 |:--|:--|:--|--:|:--|
-| cpu | r2 | kernel error: KernelException: exception thrown during kernel execution on device cpu | 81 | the residual allocates on the heap in the kernel: standard problems 1, 8, 10 and 14 at all three starts and the four Lotka–Volterra midpoint rows, 16 rows in five launched cells each; and SimpleNewtonRaphson's `SingularException` at the singular start of standard problem 12 at `100u0`, where GeometricSolvers returns `SINGULAR` |
+| cpu | r2 | kernel error: KernelException: exception thrown during kernel execution on device cpu | 62 | the residual allocates on the heap in the kernel: standard problems 1, 8, 10 and 14 at all three starts, 12 rows in five launched cells each; `Picard Backtracking` at LotkaVolterra2d h=0.1, whose kernel allocates on the heap (`gc_pool_alloc` in the device stack trace of `julia -g2`) where the host solve ends `LINESEARCH_FAILED` after one iteration; and SimpleNewtonRaphson's `SingularException` at the singular start of standard problem 12 at `100u0`, where GeometricSolvers returns `SINGULAR` |
 | cpu | r2 | no device path | 632 | SimpleSolvers and NLsolve have no device path |
 | cpu | r2 | no method: SimpleNewtonRaphson runs in Newton Static LU only | 237 | SimpleNonlinearSolve has one device method, paired with `Newton Static LU` |
 | cpu | r2 | no compile: KernelError: GPU compilation of MethodInstance for GeometricSolvers.gpu__solve_kernel!(::KernelAbstractions.CompilerMetadata{KernelAbstractions.NDIteration.Dyna… | 8 | the two DoublePendulum rows: GeometricProblems' vector fields are closures that are not `isbits` |
@@ -875,7 +875,9 @@ Each status other than `ran`, per machine and kind, with its count of cells and 
 
 The midpoint residual of the four Lotka–Volterra rows passes the iterate `V` to GeometricProblems'
 `ϑ` and `f` as an `SVector`, and GeometricProblems 0.10.2 inlines LotkaVolterra4d's `ϑ`, so the
-residual does not allocate on the heap and these rows run in a `CPU()` kernel. With the `MVector`
+residual does not allocate on the heap and these rows run in a `CPU()` kernel; only the
+`Picard Backtracking` cell of LotkaVolterra2d h=0.1 ends in the kernel error of the table above.
+With the `MVector`
 `V` in these calls all four rows allocate, and with GeometricProblems 0.10.0, whose LotkaVolterra4d
 `ϑ` passes its output vector to a call that is not inlined, LotkaVolterra4d still allocates.
 GeometricProblems 0.10.2 differs from 0.10.0, with which Y1's and Y2's tables were made, only in
