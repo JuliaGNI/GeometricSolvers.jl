@@ -877,9 +877,9 @@ The midpoint residual of the four Lotka–Volterra rows passes the iterate `V` t
 `ϑ` and `f` as an `SVector`, and GeometricProblems 0.10.2 inlines LotkaVolterra4d's `ϑ`, so the
 residual does not allocate on the heap and these rows run in a `CPU()` kernel; only the
 `Picard Backtracking` cell of LotkaVolterra2d h=0.1 ends in the kernel error of the table above.
-With the `MVector`
-`V` in these calls all four rows allocate, and with GeometricProblems 0.10.0, whose LotkaVolterra4d
-`ϑ` passes its output vector to a call that is not inlined, LotkaVolterra4d still allocates.
+With the `MVector` `V` in these calls all four rows allocate, and with GeometricProblems 0.10.0,
+whose LotkaVolterra4d `ϑ` passes its output vector to a call that is not inlined, LotkaVolterra4d
+still allocates.
 GeometricProblems 0.10.2 differs from 0.10.0, with which Y1's and Y2's tables were made, only in
 that `@inline`; no cell of those tables changes, and `verify.jl` checks them with 0.10.2 pinned.
 
