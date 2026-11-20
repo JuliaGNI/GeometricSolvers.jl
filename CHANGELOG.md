@@ -14,10 +14,10 @@ so that a compat-only bump can be told apart from an interface change.
 - **The test suite runs its files in parallel, with ParallelTestRunner.** `test/runtests.jl`
   takes the parallel form of the test convention: one table `TESTS` of group, label and path, and
   ParallelTestRunner 2.10 runs each file in a worker process, with no retry. `SafeTestsets` leaves
-  the test environment. The files of the group `metal` run one at a time, after the others. Three groups
-  are new: `quality` (Aqua, JET and the element-type matrix, from `core`), `verification` (the
-  standard test set, from `composition`) and `linear`, which replaces `denselarge` and takes the
-  static LU and QR files from `core`. No test file changes or moves. `test/ci-groups.toml` sets
+  the test environment. The files of the group `metal` run one at a time, after the others. Three
+  groups are new: `quality` (Aqua, JET and the element-type matrix, from `core`), `verification`
+  (the standard test set, from `composition`) and `linear`, which replaces `denselarge` and takes
+  the static LU and QR files from `core`. No test file changes or moves. `test/ci-groups.toml` sets
   `split = false`, so CI runs one job per matrix entry with all its groups in place of one job per
   group, and `once = ["quality", "verification"]`, so a pull request and a push run those two
   groups on Ubuntu with Julia 1 only. The required checks become the four `Julia … - default`
@@ -680,13 +680,12 @@ so that a compat-only bump can be told apart from an interface change.
 - CI uploads coverage from the `Julia 1 - ubuntu-latest` job instead of `Julia min`, and a test
   job saves the Julia cache only when it succeeds.
 
-- CI runs the tests as the groups `core`, `nonlinear`, `leastsquares`, `composition`,
-  `denselarge` and `slow`, one job each, listed in `test/ci-groups.toml`. The `metal` group runs
-  only in the Metal workflow, whose jobs are now required checks. `test/nonlinear/leastsquares.jl`
-  moves from `core` to `leastsquares`, where the 60 s budget of a `core` file does not apply.
-  This closes `K68` in `KNOWN_ISSUES.md`. `.github/workflows/CI.yml`, `codecov.yml` and the git
-  hooks in `.githooks/` follow the Harness template, which runs one CI job per group and checks
-  the group files.
+- CI runs the tests as the groups listed in `test/ci-groups.toml`, with the jobs that the file
+  sets. The `metal` group runs only in the Metal workflow, whose jobs are now required checks.
+  `test/nonlinear/leastsquares.jl` moves from `core` to `leastsquares`, where the 60 s budget of a
+  `core` file does not apply. This closes `K68` in `KNOWN_ISSUES.md`. `.github/workflows/CI.yml`,
+  `codecov.yml` and the git hooks in `.githooks/` follow the Harness template, which plans the CI
+  jobs from `test/ci-groups.toml` and checks the group files.
 
 - Raised lower bounds, so that the CI Downgrade job, which resolves `Project.toml` and
   `test/Project.toml` together at their lower bounds on Julia 1.13 and runs the tests there,
@@ -1338,10 +1337,10 @@ so that a compat-only bump can be told apart from an interface change.
   `test/helpers/matrix.jl`: `REAL_ELTYPES`, `ELTYPES`, `ARRAY_BACKENDS` and `KA_BACKEND`. Every
   test file under `test/base/`, `test/linear/` and `test/globalization/`, and `test/backends.jl`,
   loops over those names instead of writing its own tuple, and the new `test/quality/matrix.jl`
-  in the `core` group fails with `file:line` for a literal tuple or vector of two or more element
-  types anywhere under `test/`, outside `test/helpers/` and the separate suite `test/gpu/`. No
-  package code changes, and no test file changes what it asserts: `test/backends.jl` gains testsets
-  of its own for the named sets, beside the ones it had.
+  in the `quality` group fails with `file:line` for a literal tuple or vector of two or more
+  element types anywhere under `test/`, outside `test/helpers/` and the separate suite
+  `test/gpu/`. No package code changes, and no test file changes what it asserts:
+  `test/backends.jl` gains testsets of its own for the named sets, beside the ones it had.
 - The R3 Jacobian seam, internal: `GeometricSolvers.prepare_ad(backend, prob, r, x, p)` chooses the
   AD path once, and `jacobian!!(J, prep, prob, x, p)` and `jvp!!(Jv, prep, prob, x, v, p)` dispatch
   on what it returned, so the solver takes no `ad` keyword and makes no runtime choice.
@@ -1611,7 +1610,8 @@ so that a compat-only bump can be told apart from an interface change.
   (`GPUArraysCore.allowscalar(false)`), so a matrix with finite entries and `σ₁ > floatmax(R)` still
   solves to a finite step.
 
-- The standard test set runs in the `core` group, under the label "Standard test set". It is the
+- The standard test set runs in the `verification` group, under the label
+  "Standard test set". It is the
   23 problems of NonlinearProblemLibrary.jl 0.1.8 (Burkardt's `test_nonlin`, after Moré, Garbow
   and Hillstrom), copied into `test/helpers/standard_problems.jl` with every non-integer constant
   in the element type of the iterate, from the starts `u0`, `10 u0` and `100 u0` (67 starts). It
