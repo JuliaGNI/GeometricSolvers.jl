@@ -686,7 +686,7 @@ end
 dev_launch_failed(s) = startswith(s, "no compile: ") || startswith(s, "kernel error: ")
 
 # The `.txt` of a machine: its fields, by name, and its heap lines.
-function dev_txt(path, m, backend)
+function dev_txt(path, backend)
     where = basename(path)
     isfile(path) || (push!(failures, "$where is missing"); return nothing)
     ls = readlines(path)
@@ -746,7 +746,7 @@ dev_info = Dict{String, Any}()
 for m in DEV_MACHINES
     haskey(dev_files, m) || continue
     backend, band = DEV_BACKEND[m], DEV_BAND[DEV_BACKEND[m]]
-    info = dev_txt(joinpath(DIR, "devices-$m.txt"), m, backend)
+    info = dev_txt(joinpath(DIR, "devices-$m.txt"), backend)
     dev_info[m] = info
     where0 = "devices-$m.csv"
     ls = readlines(dev_files[m])
@@ -830,10 +830,13 @@ for m in DEV_MACHINES
             continue
         end
         if kind == "r3"
-            ref = fs[findfirst(
+            # A missing reference line is a key that the check of the keys reports.
+            j = findfirst(
                 g -> g[1] == "r3" && g[8] == f[8] &&
                      g[12] == (v == "device" ? "host" : "host-f64"),
-                fs)]
+                fs)
+            j === nothing && continue
+            ref = fs[j]
             ref[14] == "ran" || continue
             check(f[18] == ref[15] && f[19] == ref[17], "$where: host fields $(f[18]) $(f[19])")
             ref_ok, xnorm = ref[16] == "true", devref(ref[33], "xnorm", T)
@@ -862,8 +865,11 @@ for m in DEV_MACHINES
     # of its systems exceeds the cap, or where that cell is capped.
     grid = Dict((f[8], f[12], f[9]) => f for f in fs if f[1] == "grid")
     for n in DEV_GRID_N, v in DEV_GRID_VARIANTS, (a, b) in zip(DEV_NSYS[1:4], DEV_NSYS[2:5])
-        fa, fb = grid[(string(n), v, string(a))], grid[(string(n), v, string(b))]
-        projection = fa[14] == "ran" ? 10 * 6 * parse(Float64, fa[29]) : NaN
+        fa = get(grid, (string(n), v, string(a)), nothing)
+        fb = get(grid, (string(n), v, string(b)), nothing)
+        # A missing cell is a key that the check of the keys reports.
+        (fa === nothing || fb === nothing) && continue
+        projection = fa[14] == "ran" ? 10 * 6 * devnum(fa[29], Float64) : NaN
         capped = fa[14] == "not run: time cap" || projection > DEV_TIME_CAP
         fb[14] in ("ran", "not run: time cap") || continue
         check(capped == (fb[14] == "not run: time cap"),
