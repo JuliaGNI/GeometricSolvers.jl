@@ -2,8 +2,9 @@
 # `cond(A, Inf)` on the block-diagonal matrices that `cuda_well_conditioned` returns above
 # n = 256, for the four BLAS element types at n = 300 and n = 1000. The two agree within
 # `8 * eps(real(T))` relative. Two mutants of the closed form, each without one corner block,
-# must disagree with `cond(A, Inf)` at each size and type where that block sets a norm; a mutant
-# that no case separates is reported. A matrix with one entry outside the blocks must throw.
+# disagree with `cond(A, Inf)` only where that block sets `‖A‖∞` or `‖A⁻¹‖∞`; each mutant must
+# disagree in at least one case, and a mutant that no case separates fails the check. A matrix
+# with one entry outside the blocks must throw.
 # Run with `julia --startup-file=no --project=test scripts/well_conditioned_cond.jl`.
 using LinearAlgebra: cond, opnorm
 using Printf
@@ -15,7 +16,7 @@ function cond_without(A, drop)
     n = size(A, 1)
     blocks = [A[1:16, 1:16], A[(n - 15):n, (n - 15):n]]
     deleteat!(blocks, drop)
-    d = abs.([A[i, i] for i in 17:(n - 16)])
+    d = [abs(A[i, i]) for i in 17:(n - 16)]
     norm_A = max(maximum(B -> opnorm(B, Inf), blocks), maximum(d))
     norm_inv = max(maximum(B -> opnorm(inv(B), Inf), blocks), inv(minimum(d)))
     return norm_A * norm_inv

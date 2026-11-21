@@ -54,7 +54,7 @@ function cuda_well_conditioned_cond(A::AbstractMatrix)
     end
     B₁ = A[1:16, 1:16]
     B₂ = A[(n - 15):n, (n - 15):n]
-    d = abs.([A[i, i] for i in 17:(n - 16)])
+    d = [abs(A[i, i]) for i in 17:(n - 16)]
     norm_A = max(opnorm(B₁, Inf), opnorm(B₂, Inf), maximum(d))
     norm_inv = max(opnorm(inv(B₁), Inf), opnorm(inv(B₂), Inf), inv(minimum(d)))
     return norm_A * norm_inv
