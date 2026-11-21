@@ -16,6 +16,7 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [weakdeps]
+AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
@@ -23,6 +24,7 @@ SparseMatrixColorings = "0a514795-09f3-496d-8182-132a7b665d35"
 Sparspak = "e56a9233-b9d6-4f03-8d0f-1825330902ac"
 
 [extensions]
+GeometricSolversAMDGPUExt = "AMDGPU"
 GeometricSolversCUDAExt = "CUDA"
 GeometricSolversMetalExt = "Metal"
 GeometricSolversSciMLBaseExt = "SciMLBase"
@@ -31,6 +33,7 @@ GeometricSolversSparspakExt = "Sparspak"
 
 [compat]
 ADTypes = "1.23"
+AMDGPU = "2.12"
 Adapt = "4.7.3"
 CUDA = "6.5.1 - 6"
 CommonSolve = "0.2"

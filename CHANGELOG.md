@@ -11,6 +11,24 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **The package extension `GeometricSolversAMDGPUExt` factorises dense LU and QR with rocSOLVER on
+  ROCm.** When `AMDGPU` is loaded, `factorize!!` and `backsolve!` for `DeviceLU` and `DeviceQR` on
+  `ROCMatrix{T}`, `T <: LinearAlgebra.BlasFloat`, call `AMDGPU.rocSOLVER.getrf!` (`info` the first
+  zero pivot) and `getrs!`, and `geqrf!` (`info` the first zero or non-finite diagonal entry of
+  `R`), `ormqr!` and `AMDGPU.rocBLAS.trsv!`, as the CUDA extension does with cuSOLVER and cuBLAS.
+  A `Float32` factor of a `Float64` Jacobian reaches the `Float32` methods. The `m × n` QR factor
+  of a least-squares problem, `m > n`, solves with the same vendor calls as the square factor:
+  `ormqr!` on the whole factor and the length-`m` right-hand side, then `trsv!` on the leading
+  `n × n` block, so no rectangular QR solve runs on the own kernel. The same-type `ldiv!!` of that
+  factor reaches the extension's `backsolve_shifted!`. `Float16`, the SVD and `LDLᵀ` stay on the
+  own `KernelAbstractions` kernels.
+  `Project.toml` adds `AMDGPU` under `[weakdeps]`, `[extensions]` and `[compat]` (`2.12`, whose
+  `rocBLAS.trsv!` takes a view). The tests are in `test/gpu/rocm/runtests.jl`: the dispatch and
+  JET rows run without a device, and the factorising rows run by hand on a ROCm device.
+  rocSOLVER's complex `geqrf!` above n = 128 gives `NaN` for a matrix with a column that has nothing
+  below its diagonal (K96), so the complex QR assertions of the agreement rows at n = 10⁴ are
+  marked broken.
+
 - **The user guide's method table (`docs/src/guide.md`) corrects two conditions.** A complex
   Jacobian for `LDLTFactorization` is read in full, and `Refinement` and `GMRESRefinement` do not
   take a `LeastSquaresProblem`. The factorisation table of `docs/src/algorithms/linear.md` states
