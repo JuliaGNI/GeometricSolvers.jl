@@ -176,6 +176,14 @@ so that a compat-only bump can be told apart from an interface change.
   `--check-bounds=yes` a `solve_batch!` with `Newton` on `CPU()`, over a `Reparametrized` or a
   plain `NonlinearProblem`, throws `KernelException` at run time, and no CI job runs the flag,
   because CI runs with `check_bounds: auto`.
+- **The Metal test of the MPS LU status mapping (`test/devices/metal_vendor.jl`) passes on Metal
+  1.12.** From 1.12, Metal.jl's `lu!` turns the singular MPS status `-2` into LAPACK's `info`, a
+  positive pivot index, so a singular `Float32` factorisation reaches `GeometricSolversMetalExt`
+  with the pivot index and never with `-2`; the check that `lu!` returns `-2` for a matrix with a
+  negative diagonal entry beside a zero row failed (`3 == -2`). The test now checks that `lu!`
+  names the pivot 3, as LAPACK does, and checks the `-2` branch of `_mps_lu_finish!` on the factors
+  of the same matrix, whose smallest `|aᵢᵢ|` and smallest `aᵢᵢ` are at different indices, so a
+  `-2` mapping without the absolute value fails it.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
