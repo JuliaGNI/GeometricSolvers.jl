@@ -1,0 +1,107 @@
+AMDGPU 2.12.0, Julia 1.13.4, device HIPDevice(id=1, name=AMD Radeon RX 7900 XTX, gcn_arch=gfx1100)
+
+# D  threshold, 4I, ComplexF32
+D 4I          ComplexF32 n =  128  first bad |diag(R)| = 0  τ zero = 128  first NaN τ = none  first NaN factor = none  ok
+D 4I          ComplexF32 n =  129  first bad |diag(R)| = 65  τ zero = 129  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  144  first bad |diag(R)| = 65  τ zero = 144  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  160  first bad |diag(R)| = 65  τ zero = 160  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  176  first bad |diag(R)| = 65  τ zero = 176  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  192  first bad |diag(R)| = 65  τ zero = 192  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  193  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  208  first bad |diag(R)| = 65  τ zero = 208  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  224  first bad |diag(R)| = 65  τ zero = 224  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  240  first bad |diag(R)| = 65  τ zero = 240  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  255  first bad |diag(R)| = 65  τ zero = 255  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF32 n =  256  first bad |diag(R)| = 65  τ zero = 256  first NaN τ = none  first NaN factor = (1, 65)  BAD
+
+# E  4I with a filled subdiagonal, ComplexF32
+E 4I+subdiag  ComplexF32 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+E 4I+subdiag  ComplexF32 n =  256  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+E 4I+subdiag  ComplexF32 n =  512  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+
+# F  dense with one decoupled variable j (0 = none), ComplexF32
+F dense j =   0 ComplexF32 n =  128  first bad |diag(R)| = 0  τ zero = 0  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 ComplexF32 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =  40 ComplexF32 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =  64 ComplexF32 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j = 100 ComplexF32 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =   0 ComplexF32 n =  256  first bad |diag(R)| = 0  τ zero = 0  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 ComplexF32 n =  256  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (1, 65)  BAD
+F dense j =  40 ComplexF32 n =  256  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (33, 65)  BAD
+F dense j =  64 ComplexF32 n =  256  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (49, 65)  BAD
+F dense j = 100 ComplexF32 n =  256  first bad |diag(R)| = 129  τ zero = 129  first NaN τ = none  first NaN factor = (97, 129)  BAD
+F dense j =   0 ComplexF32 n =  512  first bad |diag(R)| = 0  τ zero = 0  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 ComplexF32 n =  512  first bad |diag(R)| = 65  τ zero = 449  first NaN τ = none  first NaN factor = (1, 65)  BAD
+F dense j =  40 ComplexF32 n =  512  first bad |diag(R)| = 65  τ zero = 449  first NaN τ = none  first NaN factor = (33, 65)  BAD
+F dense j =  64 ComplexF32 n =  512  first bad |diag(R)| = 65  τ zero = 449  first NaN τ = none  first NaN factor = (49, 65)  BAD
+F dense j = 100 ComplexF32 n =  512  first bad |diag(R)| = 129  τ zero = 385  first NaN τ = none  first NaN factor = (97, 129)  BAD
+
+# D  threshold, 4I, ComplexF64
+D 4I          ComplexF64 n =  128  first bad |diag(R)| = 0  τ zero = 128  first NaN τ = none  first NaN factor = none  ok
+D 4I          ComplexF64 n =  129  first bad |diag(R)| = 65  τ zero = 129  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  144  first bad |diag(R)| = 65  τ zero = 144  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  160  first bad |diag(R)| = 65  τ zero = 160  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  176  first bad |diag(R)| = 65  τ zero = 176  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  192  first bad |diag(R)| = 65  τ zero = 192  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  193  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  208  first bad |diag(R)| = 65  τ zero = 208  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  224  first bad |diag(R)| = 65  τ zero = 224  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  240  first bad |diag(R)| = 65  τ zero = 240  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  255  first bad |diag(R)| = 65  τ zero = 255  first NaN τ = none  first NaN factor = (1, 65)  BAD
+D 4I          ComplexF64 n =  256  first bad |diag(R)| = 65  τ zero = 256  first NaN τ = none  first NaN factor = (1, 65)  BAD
+
+# E  4I with a filled subdiagonal, ComplexF64
+E 4I+subdiag  ComplexF64 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+E 4I+subdiag  ComplexF64 n =  256  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+E 4I+subdiag  ComplexF64 n =  512  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+
+# F  dense with one decoupled variable j (0 = none), ComplexF64
+F dense j =   0 ComplexF64 n =  128  first bad |diag(R)| = 0  τ zero = 0  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 ComplexF64 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =  40 ComplexF64 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =  64 ComplexF64 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j = 100 ComplexF64 n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =   0 ComplexF64 n =  256  first bad |diag(R)| = 0  τ zero = 0  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 ComplexF64 n =  256  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (1, 65)  BAD
+F dense j =  40 ComplexF64 n =  256  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (33, 65)  BAD
+F dense j =  64 ComplexF64 n =  256  first bad |diag(R)| = 65  τ zero = 193  first NaN τ = none  first NaN factor = (49, 65)  BAD
+F dense j = 100 ComplexF64 n =  256  first bad |diag(R)| = 129  τ zero = 129  first NaN τ = none  first NaN factor = (97, 129)  BAD
+F dense j =   0 ComplexF64 n =  512  first bad |diag(R)| = 0  τ zero = 0  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 ComplexF64 n =  512  first bad |diag(R)| = 65  τ zero = 449  first NaN τ = none  first NaN factor = (1, 65)  BAD
+F dense j =  40 ComplexF64 n =  512  first bad |diag(R)| = 65  τ zero = 449  first NaN τ = none  first NaN factor = (33, 65)  BAD
+F dense j =  64 ComplexF64 n =  512  first bad |diag(R)| = 65  τ zero = 449  first NaN τ = none  first NaN factor = (49, 65)  BAD
+F dense j = 100 ComplexF64 n =  512  first bad |diag(R)| = 129  τ zero = 385  first NaN τ = none  first NaN factor = (97, 129)  BAD
+
+# G  the same matrices in Float64
+D 4I          Float64    n =  128  first bad |diag(R)| = 0  τ zero = 128  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  129  first bad |diag(R)| = 0  τ zero = 129  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  144  first bad |diag(R)| = 0  τ zero = 144  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  160  first bad |diag(R)| = 0  τ zero = 160  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  176  first bad |diag(R)| = 0  τ zero = 176  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  192  first bad |diag(R)| = 0  τ zero = 192  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  193  first bad |diag(R)| = 0  τ zero = 193  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  208  first bad |diag(R)| = 0  τ zero = 208  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  224  first bad |diag(R)| = 0  τ zero = 224  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  240  first bad |diag(R)| = 0  τ zero = 240  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  255  first bad |diag(R)| = 0  τ zero = 255  first NaN τ = none  first NaN factor = none  ok
+D 4I          Float64    n =  256  first bad |diag(R)| = 0  τ zero = 256  first NaN τ = none  first NaN factor = none  ok
+E 4I+subdiag  Float64    n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+E 4I+subdiag  Float64    n =  256  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+E 4I+subdiag  Float64    n =  512  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =   0 Float64    n =  128  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 Float64    n =  128  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =  40 Float64    n =  128  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =  64 Float64    n =  128  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j = 100 Float64    n =  128  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =   0 Float64    n =  256  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 Float64    n =  256  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =  40 Float64    n =  256  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =  64 Float64    n =  256  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j = 100 Float64    n =  256  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =   0 Float64    n =  512  first bad |diag(R)| = 0  τ zero = 1  first NaN τ = none  first NaN factor = none  ok
+F dense j =   1 Float64    n =  512  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =  40 Float64    n =  512  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j =  64 Float64    n =  512  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+F dense j = 100 Float64    n =  512  first bad |diag(R)| = 0  τ zero = 2  first NaN τ = none  first NaN factor = none  ok
+
+done; errored = false
