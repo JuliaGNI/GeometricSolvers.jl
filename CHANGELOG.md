@@ -19,9 +19,9 @@ so that a compat-only bump can be told apart from an interface change.
   (the standard test set, from `composition`) and `linear`, which replaces `denselarge` and takes
   the static LU and QR files from `core`. No test file changes or moves. `test/ci-groups.toml` sets
   `split = false`, so CI runs one job per matrix entry with all its groups in place of one job per
-  group, and `once = ["quality", "verification"]`, so a pull request and a push run those two
-  groups on Ubuntu with Julia 1 only. The required checks become the four `Julia … - default`
-  jobs, the Doctests job and the two Metal jobs, 7 in place of 27.
+  group, and `once = ["quality", "verification"]`, so a pull request and a push to a branch run
+  those two groups on Ubuntu with Julia 1 only. The required checks become the four
+  `Julia … - default` jobs, the Doctests job and the two Metal jobs, 7 in place of 27.
 
 - **The user guide's method table (`docs/src/guide.md`) corrects two conditions.** A complex
   Jacobian for `LDLTFactorization` is read in full, and `Refinement` and `GMRESRefinement` do not
