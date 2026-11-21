@@ -881,7 +881,8 @@ With the `MVector` `V` in these calls all four rows allocate, and with Geometric
 whose LotkaVolterra4d `ϑ` passes its output vector to a call that is not inlined, LotkaVolterra4d
 still allocates.
 GeometricProblems 0.10.2 differs from 0.10.0, with which Y1's and Y2's tables were made, only in
-that `@inline`; no cell of those tables changes, and `verify.jl` checks them with 0.10.2 pinned.
+that `@inline`. Those tables are not made again with 0.10.2, and `verify.jl` passes on the
+committed tables.
 
 ### Y3 · Explanations
 

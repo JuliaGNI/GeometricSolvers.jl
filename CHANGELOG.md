@@ -919,9 +919,8 @@ so that a compat-only bump can be told apart from an interface change.
   `Picard Backtracking` at LotkaVolterra2d h = 0.1 still ends as a kernel error, from a heap
   allocation in its first Picard step; with either change alone LotkaVolterra4d still allocates. A
   self-test in `benchmark/selftest.jl` solves the four rows in a `CPU()` kernel with `solve_batch!`
-  and `Newton()` and expects `SUCCESS`. Y1's 208 LotkaVolterra4d cells of
-  `benchmark/results/correctness.csv`, run again with 0.10.2, are byte-identical to the committed
-  ones, and `benchmark/verify.jl benchmark/results` passes.
+  and `Newton()` and expects `SUCCESS`. Y1's and Y2's committed tables are not regenerated, and
+  `benchmark/verify.jl benchmark/results` passes on them.
 
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is
