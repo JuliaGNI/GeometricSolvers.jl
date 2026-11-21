@@ -29,6 +29,15 @@ so that a compat-only bump can be told apart from an interface change.
   below its diagonal (K96), so the complex QR assertions of the agreement rows at n = 10⁴ are
   marked broken.
 
+- **The by-hand CUDA and ROCm suites compute `κ∞` of their large agreement matrix in closed
+  form.** Above n = 256, `cuda_well_conditioned` returns a block-diagonal matrix, two `16 × 16`
+  corner blocks around a diagonal. The new `cuda_well_conditioned_cond` in
+  `test/helpers/own_kernel.jl` takes `κ∞` from the blocks, after a check of that structure, in
+  place of `cond(A, Inf)`, which inverts the dense `n × n` matrix on one BLAS thread for each
+  element type at n = 10³ and 10⁴. Up to n = 256 it calls `cond(A, Inf)`. The asserted bounds do not
+  change: `scripts/well_conditioned_cond.jl` checks the closed form against `cond(A, Inf)` within
+  `8 eps` for the four BLAS element types at n = 300 and 1000.
+
 - **The test suite runs its files in parallel, with ParallelTestRunner.** `test/runtests.jl`
   takes the parallel form of the test convention: one table `TESTS` of group, label and path, and
   ParallelTestRunner 2.10 runs each file in a worker process, with no retry. `SafeTestsets` leaves

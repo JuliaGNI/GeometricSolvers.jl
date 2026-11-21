@@ -6,7 +6,7 @@
 using AMDGPU
 using GPUArraysCore: allowscalar
 using JET: JET
-using LinearAlgebra: BLAS, I, cond, norm
+using LinearAlgebra: BLAS, I, norm
 using Test
 
 using GeometricSolvers
@@ -138,7 +138,7 @@ if AMDGPU.functional()
     @testset "ROCm rocSOLVER agreement with own KA kernels at n = $n" for n in (16, 256, 10^4)
         @testset "T = $T" for T in ROCM_BLAS_ELTYPES
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             @test κ <= 10.0
             epsT = Float64(eps(real(T)))
             bound = 8 * n * epsT * κ
@@ -177,7 +177,7 @@ if AMDGPU.functional()
     @testset "ROCm rocSOLVER mixed TF = Float32 at n = $n" for n in (16, 256)
         @testset "T = $T" for T in (Float64, ComplexF64)
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             bound = 8 * n * Float64(eps(Float32)) * κ
             dA = ROCArray(A_cpu)
             db = ROCArray(b_cpu)
