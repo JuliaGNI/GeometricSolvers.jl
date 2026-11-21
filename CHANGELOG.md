@@ -899,6 +899,37 @@ so that a compat-only bump can be told apart from an interface change.
   takes a keyword `tol`, by default `sqrt(eps(T))`, so the correctness sweep gives the same cells.
   No source file changes.
 
+- **`benchmark/devices.jl` runs the R2 and R3 device rows of one machine.**
+  `benchmark/devices.jl <backend> <machine> <dir>` takes the pairs `cpu cpu`, `metal mac`,
+  `cuda spark`, `cuda rtx4090` and `rocm rx7900xtx`, loads the vendor package from the stacked
+  `test/gpu/<backend>` environment, and writes `devices-<machine>.csv` and `.txt`: Y1's 79
+  `Float32` rows in `solve_batch!` with four GeometricSolvers columns and in SimpleNonlinearSolve's
+  `SimpleNewtonRaphson` in a KernelAbstractions kernel, 64 copies each, against the host R1 solve
+  of the same method and start; an R2 throughput grid on the §10.E problem with up to 10⁷ systems;
+  the §10.E problem in R3 form with the device LU, a `Float32` LU of a `Float64` solve with and
+  without `Refinement`, and the host; and one LU factorisation and solve by the path of `solve` and
+  by the internal KernelAbstractions LU. `benchmark/device_problems.jl` holds the inline `MVector`
+  adapter, the `isbits` midpoint residuals, the §10.E problem, the band of each backend and the
+  classifier of a kernel that does not compile or throws. On Metal a run continues in a new process
+  when the device heap fills. The committed `devices-cpu.csv` and `.txt` are the run of the cpu
+  mode on the host; `benchmark/verify.jl` checks every device file and the report's Y3 tables, and
+  with `--all-cards` requires the files of the four cards. The environment adds
+  KernelAbstractions, StaticArrays and JLArrays with exact `[compat]` versions. No source file
+  changes.
+
+- **The four Lotka–Volterra midpoint rows of the device run execute in a kernel on `CPU()`.**
+  The `:iode` midpoint residual `MidpointResidual{:iode}` in `benchmark/device_problems.jl` passes
+  the iterate `V` to GeometricProblems' `ϑ` and `f` as `SVector(V)`, not as the `MVector` `V`, and
+  `benchmark/Project.toml` pins GeometricProblems `=0.10.2`, which differs from 0.10.0 in its
+  source only by an `@inline` on LotkaVolterra4d's `ϑ(Θ, t, q)`. Together the two keep the residual
+  of the rows of LotkaVolterra2d and LotkaVolterra4d at h = 0.01 and 0.1 off the heap, so the rows
+  run in a KernelAbstractions kernel instead of ending as a kernel error, except one cell:
+  `Picard Backtracking` at LotkaVolterra2d h = 0.1 still ends as a kernel error, from a heap
+  allocation in its first Picard step; with either change alone LotkaVolterra4d still allocates. A
+  self-test in `benchmark/selftest.jl` solves the four rows in a `CPU()` kernel with `solve_batch!`
+  and `Newton()` and expects `SUCCESS`. Y1's and Y2's committed tables are not regenerated, and
+  `benchmark/verify.jl benchmark/results` passes on them.
+
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is
   `F(u) = A u + 10 u³ - 1` with `A = tridiag(-1, 2, -1) / h²` on `n = 256` interior points. The

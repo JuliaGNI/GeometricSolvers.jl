@@ -1,12 +1,14 @@
 # The verifier of the results. It reads `<dir>/correctness.csv`, `<dir>/rows.csv`,
 # `<dir>/timings.csv`, the four block tables `<dir>/mixed.csv`, `stage.csv`, `anderson.csv` and
-# `sparse.csv`, `benchmark/REPORT.md` and `benchmark/traces/`, and checks them with code of its
-# own: it loads no file of the harness and no solver package.
+# `sparse.csv`, every `<dir>/devices-<machine>.csv` and its `.txt`, `benchmark/REPORT.md` and
+# `benchmark/traces/`, and checks them with code of its own: it loads no file of the harness and
+# no solver package.
 #
-# Usage: julia benchmark/verify.jl <dir> [--structure]
+# Usage: julia benchmark/verify.jl <dir> [--structure] [--all-cards]
 #
 # With `--structure` it checks everything but the explanations and the report's counts and
-# tables, for the output of a new run.
+# tables, for the output of a new run. `devices-cpu.csv` is required; with `--all-cards` the files
+# of the four cards are required as well.
 
 const DIR = ARGS[1]
 const STRUCTURE = "--structure" in ARGS[2:end]
@@ -583,13 +585,401 @@ const MS = (:iterations, :f_evals, :median_s)
             "REPORT.md: no line states '$nd of the $N_RAN timed cells'")
     end
 
+# --- Y3: the device rows -----------------------------------------------------------------------
+
+const ALL_CARDS = "--all-cards" in ARGS[2:end]
+const DEV_HEAD = "kind,machine,backend,card,set,problem,start,n,n_sys,eltype,factor,variant,package,status,code,success,iterations,host_code,host_iterations,fnorm_inf,dx_host,verdict,copies_same,t1,t2,t3,t4,t5,median_s,spread,solves_per_run,compile_s,comment"
+const DEV_MACHINES = ["cpu", "mac", "spark", "rtx4090", "rx7900xtx"]
+const DEV_BACKEND = Dict("cpu" => "cpu", "mac" => "metal", "spark" => "cuda",
+    "rtx4090" => "cuda", "rx7900xtx" => "rocm")
+const DEV_BAND = Dict("cpu" => nothing, "metal" => 24, "cuda" => 24, "rocm" => 8)
+const DEV_VENDOR = Dict("cpu" => nothing, "metal" => "Metal", "cuda" => "CUDA",
+    "rocm" => "AMDGPU")
+const DEV_COLUMNS = ["Newton Static LU", "Newton Backtracking LU", "Newton DogLeg LU",
+    "Picard Backtracking"]
+const DEV_NSYS = [10^3, 10^4, 10^5, 10^6, 10^7]
+const DEV_GRID_N = [2, 4, 6, 8, 12, 16]
+const DEV_GRID_VARIANTS = ["gs-newton", "gs-reuse4", "gs-backtracking", "sns", "host-r1"]
+const DEV_R3_N = [256, 1024, 4096]
+const DEV_R3_VARIANTS = [
+    "device", "host", "device-mixed", "device-mixed-refine", "device-f64",
+    "host-f64"]
+const DEV_LU_VARIANTS = ["own-ka", "dispatched"]
+const DEV_N_LINES = 1438
+const DEV_OK = Dict("GeometricSolvers" => ["SUCCESS", "info=0"],
+    "SimpleNonlinearSolve" => OK_CODES["SimpleNonlinearSolve"])
+const DEV_METAL_F64 = "no Float64 on Metal; no Metal hybrid (decision 15)"
+const DEV_NOT_TIMED = "device Float64: not timed (decision 6)"
+const DEV_INTERNAL = "internal, not user-selectable"
+const DEV_TIME_CAP = 1800.0
+const DEV_DISAGREE = ["different root", "device fails", "host fails"]
+
+# Y1's 79 Float32 rows, in order, each its set, problem and start, and its dimension: the length of
+# an iterate of the row in correctness.csv.
+dev_rows = [String.(c[1:3])
+            for c in cells
+            if c[4] == "Float32" && c[5] == "Newton Static LU" &&
+                   c[6] == "GeometricSolvers"]
+check(length(dev_rows) == 79, "correctness.csv: $(length(dev_rows)) Float32 rows, not 79")
+dev_dim = Dict{Vector{String}, Int}()
+for c in cells
+    isempty(c[15]) || get!(dev_dim, String.(c[1:3]), length(split(c[15], ";")))
+end
+
+# The keys of a device file in their order: every field of a line but the machine, the backend,
+# the card and the fields of the result.
+function dev_keys()
+    keys = Vector{String}[]
+    for r in dev_rows, col in DEV_COLUMNS, p in PKGS
+        push!(keys, ["r2"; r; string(get(dev_dim, r, 0)); "64"; "Float32"; "-"; col; p])
+    end
+    for ns in DEV_NSYS, n in DEV_GRID_N, v in DEV_GRID_VARIANTS
+        p = v == "sns" ? "SimpleNonlinearSolve" : "GeometricSolvers"
+        push!(keys, [
+            "grid", "-", "10.E", "zero", string(n), string(ns), "Float32", "-", v, p])
+    end
+    for n in DEV_R3_N, v in DEV_R3_VARIANTS
+
+        el = v in ("device", "host") ? "Float32" : "Float64"
+        f = v in ("device-f64", "host-f64") ? "Float64" : "Float32"
+        push!(keys, [
+            "r3", "-", "10.E", "zero", string(n), "1", el, f, v, "GeometricSolvers"])
+    end
+    for n in DEV_R3_N, v in DEV_LU_VARIANTS
+
+        push!(keys, ["lu", "-", "10.E", "-", string(n), "1", "Float32", "Float32", v,
+            "GeometricSolvers"])
+    end
+    return keys
+end
+const DEV_KEYS = dev_keys()
+dev_key(f) = String.(f[[1; 5:13]])
+
+# A field that is a count, a number in the element type `T`, or the value of `name=` in a comment.
+devcount(s) = something(tryparse(Int, s), -1)
+function devnum(s, T)
+    something(
+        tryparse(T, replace(s, "NaN32" => "NaN", "Inf32" => "Inf",
+            r"f(?=-?\d)" => "e")), T(NaN))
+end
+function devref(comment, name, T)
+    m = match(Regex("$name=([^;\"]+)"), comment)
+    return m === nothing ? T(NaN) : devnum(m.captures[1], T)
+end
+dev_eltype(s) = s == "Float64" ? Float64 : Float32
+
+# The verdict of a cell against its reference, by Y-2's bound in the element type `T`.
+function dev_verdict(ok, ref_ok, dx, xnorm, ::Type{T}) where {T}
+    ok && ref_ok &&
+        return dx ≤ sqrt(eps(T)) * max(one(T), xnorm) ? "agree" : "different root"
+    ok && return "host fails"
+    ref_ok && return "device fails"
+    return "both fail"
+end
+
+function dev_status_known(s)
+    s in
+    ("ran", "no device path", "not run: time cap", "not run: cpu mode", DEV_METAL_F64) ||
+        occursin(r"^above band \d+$", s) ||
+        any(p -> startswith(s, p), ("no compile: ", "kernel error: ", "no method: "))
+end
+dev_launch_failed(s) = startswith(s, "no compile: ") || startswith(s, "kernel error: ")
+
+# The `.txt` of a machine: its fields, by name, and its heap lines.
+function dev_txt(path, backend)
+    where = basename(path)
+    isfile(path) || (push!(failures, "$where is missing"); return nothing)
+    ls = readlines(path)
+    names = [
+        "date", "uptime", "julia", "threads", "blas threads", "device", "driver", "band",
+        "packages"]
+    length(ls) == length(names) + 79 ||
+        return (push!(failures, "$where: $(length(ls)) lines, not $(length(names) + 79)");
+            nothing)
+    info = Dict{String, String}()
+    for (l, name) in zip(ls, names)
+        check(startswith(l, "$name: ") && length(l) > length(name) + 2,
+            "$where: the line '$l' is not '$name: …'") || continue
+        info[name] = l[(length(name) + 3):end]
+    end
+    check(get(info, "blas threads", "") == "1", "$where: blas threads $(get(info, "blas threads", ""))")
+    check((get(info, "driver", "") == "none") == (backend == "cpu"),
+        "$where: driver $(get(info, "driver", "")) on $backend")
+    band = DEV_BAND[backend]
+    check(get(info, "band", "") == (band === nothing ? "none" : string(band)),
+        "$where: band $(get(info, "band", ""))")
+    pkgs = [
+        "GeometricSolvers", "KernelAbstractions", "StaticArrays", "SimpleNonlinearSolve",
+        "JLArrays"]
+    DEV_VENDOR[backend] === nothing || push!(pkgs, DEV_VENDOR[backend])
+    for p in pkgs
+        check(occursin(Regex("\\b$p \\d+\\.\\d+\\.\\d+"), get(info, "packages", "")),
+            "$where: packages lack $p and its version")
+    end
+    for (l, r) in zip(ls[(length(names) + 1):end], dev_rows)
+        f = split(l, ","; limit = 5)
+        heap_ok = length(f) == 5 && f[1:3] == ["heap: " * r[1]; r[2:3]] &&
+                  (backend == "metal" ? all(s -> devcount(s) ≥ 0, f[4:5]) :
+                   f[4:5] == ["-", "-"])
+        check(heap_ok, "$where: the heap line '$l' of the row $(join(r, " "))")
+    end
+    return info
+end
+
+dev_files = Dict{String, Any}()
+for file in readdir(DIR)
+    mt = match(r"^devices-(.+)\.csv$", file)
+    mt === nothing && continue
+    m = String(mt.captures[1])
+    check(m in DEV_MACHINES, "$file: no machine $m") || continue
+    dev_files[m] = joinpath(DIR, file)
+end
+check(haskey(dev_files, "cpu"), "devices-cpu.csv is missing")
+if ALL_CARDS
+    for m in DEV_MACHINES[2:end]
+        check(haskey(dev_files, m), "devices-$m.csv is missing (--all-cards)")
+    end
+end
+
+dev_lines = Dict{String, Vector{Vector{String}}}()
+dev_info = Dict{String, Any}()
+for m in DEV_MACHINES
+    haskey(dev_files, m) || continue
+    backend, band = DEV_BACKEND[m], DEV_BAND[DEV_BACKEND[m]]
+    info = dev_txt(joinpath(DIR, "devices-$m.txt"), backend)
+    dev_info[m] = info
+    where0 = "devices-$m.csv"
+    ls = readlines(dev_files[m])
+    check(ls[1] == DEV_HEAD, "$where0: header is $(ls[1])")
+    fs = [String.(split(l, ","; limit = 33)) for l in ls[2:end]]
+    check(length(fs) == DEV_N_LINES, "$where0: $(length(fs)) lines, not $DEV_N_LINES") ||
+        continue
+    check(all(f -> length(f) == 33, fs), "$where0: a line without 33 fields") || continue
+    for f in fs
+        startswith(f[33], "\"") && (f[33] = strip(f[33], '"'))
+    end
+    check(dev_key.(fs) == DEV_KEYS, "$where0: the keys are not those of the device rows in their order")
+    dev_lines[m] = fs
+    for (i, f) in enumerate(fs)
+        where = "$where0 line $(i + 1) ($(join(f[[1; 5:7; 12:13]], " ")))"
+        check(all(!isempty, f), "$where: an empty field")
+        check(f[2] == m && f[3] == backend, "$where: machine $(f[2]) and backend $(f[3])")
+        info === nothing || check(f[4] == get(info, "device", ""), "$where: card $(f[4])")
+        kind, n, ns, v, p, s = f[1], devcount(f[8]), devcount(f[9]), f[12], f[13], f[14]
+        T = dev_eltype(f[10])
+        check(dev_status_known(s), "$where: status '$s'") || continue
+        # The status that the kind, the backend and the band give the cell.
+        above = band !== nothing && n > band ? "above band $band" : nothing
+        if kind == "r2"
+            want = p in ("SimpleSolvers", "NLsolve") ? "no device path" :
+                   p == "SimpleNonlinearSolve" && v != "Newton Static LU" ? "no method" :
+                   above !== nothing ? above : "launched"
+        elseif kind == "grid"
+            cpu_mode = backend == "cpu" && !(ns in DEV_NSYS[1:2] && n in (2, 4, 8))
+            want = cpu_mode ? "not run: cpu mode" :
+                   v != "host-r1" && above !== nothing ? above : "launched"
+        else
+            want = backend == "cpu" && n == 4096 ? "not run: cpu mode" :
+                   kind == "r3" && backend == "metal" && T === Float64 &&
+                   startswith(v, "device") ? DEV_METAL_F64 : "ran"
+        end
+        got = want == "no method" ? (startswith(s, "no method: ") ? "no method" : s) :
+              want == "launched" ?
+              (s == "ran" || dev_launch_failed(s) ||
+               (kind == "grid" && s == "not run: time cap") ? "launched" : s) : s
+        check(got == want, "$where: status '$s', the cell is '$want'") || continue
+        tol = sqrt(eps(T))
+        if s != "ran"
+            # A launch that failed keeps the host R1 solve; SimpleNonlinearSolve has no count of
+            # iterations.
+            host_kept = kind == "r2" && dev_launch_failed(s)
+            check(
+                all(==("-"), f[[15:17; 20:32]]) && (f[18] != "-") == host_kept &&
+                    (f[19] != "-") == (host_kept && p == "GeometricSolvers"),
+                "$where: a cell that did not run has measured fields")
+            continue
+        end
+        code, fnorm = f[15], devnum(f[20], T)
+        timed = kind != "r2" && v != "device-f64"
+        if timed
+            check_times(where, f[24:30])
+            k = devcount(f[31])
+            check(k ≥ 1 && ispow2(k), "$where: solves_per_run $(f[31])")
+            check(isfinite(something(tryparse(Float64, f[32]), NaN)), "$where: compile_s $(f[32])")
+        else
+            check(all(==("-"), f[24:32]), "$where: a cell that is not timed has a time field")
+        end
+        if kind == "grid"
+            tally = [split(t, "=") for t in split(code, ";")]
+            check(
+                all(t -> length(t) == 2 && devcount(t[2]) ≥ 0, tally) &&
+                    sum(t -> devcount(t[2]), tally) == ns,
+                "$where: code $code") || continue
+            okc = sum((devcount(t[2]) for t in tally if t[1] in DEV_OK[p]); init = 0)
+            succ = devcount(f[16])
+            check(fnorm ≤ tol ? succ == okc : 0 ≤ succ ≤ min(okc, ns - 1),
+                "$where: success $(f[16]) of $okc successful codes, ‖F‖∞ $(f[20])")
+            check(all(==("-"), f[[18, 19, 21, 22, 23]]), "$where: a grid cell has a reference")
+            continue
+        end
+        ok = code in DEV_OK[p] && fnorm ≤ tol
+        check(f[16] == string(ok), "$where: success $(f[16]), recomputed $ok")
+        if kind == "r3" && startswith(v, "host")
+            check(all(==("-"), f[[18, 19, 21, 22, 23]]) && startswith(f[33], "xnorm="),
+                "$where: a reference line has a reference or no ‖x‖∞")
+            continue
+        end
+        if kind == "r3"
+            # A missing reference line is a key that the check of the keys reports.
+            j = findfirst(
+                g -> g[1] == "r3" && g[8] == f[8] &&
+                     g[12] == (v == "device" ? "host" : "host-f64"),
+                fs)
+            j === nothing && continue
+            ref = fs[j]
+            ref[14] == "ran" || continue
+            check(f[18] == ref[15] && f[19] == ref[17], "$where: host fields $(f[18]) $(f[19])")
+            ref_ok, xnorm = ref[16] == "true", devref(ref[33], "xnorm", T)
+            check((v == "device-f64") == (f[33] == DEV_NOT_TIMED), "$where: comment $(f[33])")
+        else
+            ref_ok = f[18] in DEV_OK[p] && devref(f[33], "ref_fnorm", T) ≤ tol
+            xnorm = devref(f[33], "ref_xnorm", T)
+            check(occursin(r"ref_xnorm=[^;]+;ref_fnorm=", f[33]),
+                "$where: no ref_xnorm and ref_fnorm in the comment")
+            kind == "lu" &&
+                check((v == "own-ka") == startswith(f[33], DEV_INTERNAL),
+                    "$where: comment $(f[33])")
+        end
+        check((f[21] == "-") == !ref_ok,
+            "$where: dx_host $(f[21]) with a reference that " *
+            (ref_ok ? "succeeded" : "failed"))
+        vd = dev_verdict(ok, ref_ok, ref_ok ? devnum(f[21], T) : zero(T), xnorm, T)
+        check(f[22] == vd, "$where: verdict $(f[22]), recomputed $vd")
+        if kind == "r2"
+            check(0 ≤ devcount(f[23]) ≤ 64, "$where: copies_same $(f[23])")
+            check((p == "SimpleNonlinearSolve") == (f[17] == "-"),
+                "$where: iterations $(f[17])")
+        end
+    end
+    # The time cap: a cell of the grid is capped where the projection from the cell of a tenth
+    # of its systems exceeds the cap, or where that cell is capped.
+    grid = Dict((f[8], f[12], f[9]) => f for f in fs if f[1] == "grid")
+    for n in DEV_GRID_N, v in DEV_GRID_VARIANTS, (a, b) in zip(DEV_NSYS[1:4], DEV_NSYS[2:5])
+        fa = get(grid, (string(n), v, string(a)), nothing)
+        fb = get(grid, (string(n), v, string(b)), nothing)
+        # A missing cell is a key that the check of the keys reports.
+        (fa === nothing || fb === nothing) && continue
+        projection = fa[14] == "ran" ? 10 * 6 * devnum(fa[29], Float64) : NaN
+        capped = fa[14] == "not run: time cap" || projection > DEV_TIME_CAP
+        fb[14] in ("ran", "not run: time cap") || continue
+        check(capped == (fb[14] == "not run: time cap"),
+            "devices-$m.csv: grid n = $n $v at $b is $(fb[14]), projected $projection s")
+    end
+end
+
+# The report's Y3 tables, recomputed from the device files.
+if !STRUCTURE
+    want = []
+    for m in DEV_MACHINES
+        info = get(dev_info, m, nothing)
+        push!(want,
+            info === nothing ?
+            [m, DEV_BACKEND[m], "pending: no CSV", "—", "—", "—", "—"] :
+            [m, DEV_BACKEND[m], info["device"],
+                info["driver"], info["julia"], info["threads"],
+                info["packages"]])
+    end
+    compare_table("the Y3 cards", y2_table("### Y3 · Cards and versions"), want)
+    want = []
+    for m in DEV_MACHINES, col in DEV_COLUMNS,
+        p in ("GeometricSolvers", "SimpleNonlinearSolve")
+        haskey(dev_lines, m) || continue
+        p == "SimpleNonlinearSolve" && col != "Newton Static LU" && continue
+        cs = [f for f in dev_lines[m] if f[1] == "r2" && f[12] == col && f[13] == p]
+        ran = filter(f -> f[14] == "ran", cs)
+        push!(want,
+            [m, col, p, string(length(ran)), string(count(f -> f[16] == "true", ran)),
+                (string(count(f -> f[22] == vd, ran))
+                for vd in ("agree", "different root", "device fails", "host fails",
+                    "both fail"))...])
+    end
+    compare_table("the Y3 R2 correctness", y2_table("### Y3 · R2 correctness"), want)
+    want = []
+    for m in DEV_MACHINES, n in DEV_GRID_N, v in DEV_GRID_VARIANTS
+        haskey(dev_lines, m) || continue
+        cs = [f for f in dev_lines[m] if f[1] == "grid" && f[8] == string(n) && f[12] == v]
+        any(f -> f[14] == "ran", cs) || continue
+        push!(want,
+            [m, string(n), v,
+                (f[14] == "ran" ? s3(parse(Float64, f[9]) / parse(Float64, f[29])) : "—"
+                for f in cs)...])
+    end
+    compare_table("the Y3 R2 throughput", y2_table("### Y3 · R2 throughput"), want)
+    want = []
+    lu = []
+    for m in DEV_MACHINES
+        haskey(dev_lines, m) || continue
+        for f in dev_lines[m]
+            f[1] == "r3" || continue
+            push!(want,
+                [m, f[8], f[12], f[14] == "ran" ? "ran" : f[14], f[17], f[16],
+                    f[29] == "-" ? "—" : s3(parse(Float64, f[29]))])
+        end
+        for n in DEV_R3_N
+            own, disp = (only(f
+                         for f in dev_lines[m]
+                         if f[1] == "lu" && f[8] == string(n) &&
+                                f[12] == v) for v in DEV_LU_VARIANTS)
+            (own[14] == "ran" && disp[14] == "ran") || continue
+            a, b = parse(Float64, own[29]), parse(Float64, disp[29])
+            push!(lu, [m, string(n), s3(a), s3(b), s3(a / b)])
+        end
+    end
+    compare_table("the Y3 R3 rows", y2_table("### Y3 · R3 rows"), want)
+    compare_table("the Y3 LU rows", y2_table("#### Y3 · LU rows"), lu)
+    want = []
+    for m in DEV_MACHINES
+        haskey(dev_lines, m) || continue
+        nstatus = Dict{Tuple{String, String}, Int}()
+        statuses = Tuple{String, String}[]
+        for f in dev_lines[m]
+            f[14] == "ran" && continue
+            k = (f[1], f[14])
+            haskey(nstatus, k) || push!(statuses, k)
+            nstatus[k] = get(nstatus, k, 0) + 1
+        end
+        append!(want, [[m, k[1], k[2], string(nstatus[k])] for k in statuses])
+    end
+    compare_table("the Y3 not-run table",
+        [first(r, 4) for r in y2_table("### Y3 · Not run")], want)
+    want = []
+    for m in DEV_MACHINES
+        haskey(dev_lines, m) || continue
+        for f in dev_lines[m]
+            f[22] in DEV_DISAGREE && push!(want, [m; f[[1, 5, 6, 7, 12, 13, 22]]])
+        end
+    end
+    expl = y2_table("### Y3 · Explanations")
+    compare_table("the Y3 explanations", [first(r, 8) for r in expl], want)
+    check(all(r -> length(r) == 9 && length(r[9]) > 20, expl),
+        "REPORT.md: a Y3 explanation without its text")
+end
+
 if isempty(failures)
     println("VERIFY OK: $(length(cells)) cells, $(length(rows)) rows, ",
         "$(length(timings)) timings, ",
         join(
             ("$(length(get(btables, b, []))) $b"
             for b in ("mixed", "stage", "anderson", "sparse")),
-            ", "), " block cells", STRUCTURE ? " (structure)" : "")
+            ", "), " block cells; device lines: ",
+        join(
+            ("$m $(length(dev_lines[m])) (" *
+             join(
+                 ("$(count(f -> f[1] == k, dev_lines[m])) $k"
+                 for k in ("r2", "grid", "r3", "lu")), ", ") * ")"
+            for m in DEV_MACHINES if haskey(dev_lines, m)),
+            "; "),
+        STRUCTURE ? " (structure)" : "")
 else
     foreach(f -> println("FAIL ", f), first(failures, 50))
     length(failures) > 50 && println("… and $(length(failures) - 50) more")
