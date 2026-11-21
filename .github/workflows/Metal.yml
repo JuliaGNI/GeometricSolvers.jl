@@ -7,8 +7,8 @@
 #
 # WHAT THIS ADDS TO CI.yml.
 #
-# CI.yml's macOS jobs do not run the `metal` group: each CI.yml job runs one group of
-# `test/ci-groups.toml` alone, and `metal` is not one of them. This workflow is the only CI runner
+# CI.yml's macOS jobs do not run the `metal` group: a CI.yml job runs the groups of
+# `test/ci-groups.toml` that it names, and never `metal`. This workflow is the only CI runner
 # of the group. The files of the group record a skip and pass if the device is not functional or
 # is virtualized (issue #34). This job runs the group alone
 # (`test_args: metal`), on macOS 15 rather than on whatever `macos-latest` points to, and a step
