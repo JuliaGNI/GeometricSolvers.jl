@@ -513,6 +513,27 @@
 - **kind:** upstream
 - **found:** 2026-11-15 (Y3 premises probe on four cards)
 
+### K91 · The CUDA `backsolve!` for an `m × n` `DeviceQR`, `m > n`, throws `DimensionMismatch`
+
+- **location:** `ext/GeometricSolversCUDAExt.jl:60–61`
+- **evidence:** the method calls `CUDA.CUBLAS.trsv!('U', 'N', 'N', fac.factors, d)` on the whole
+  factor, and that wrapper throws `DimensionMismatch("Matrix A is $m by $n but must be square")`
+  for `m ≠ n` (CUDA 6.5.1, `lib/cublas/src/wrappers.jl:1058–1059`). The mixed-precision `ldiv!!`
+  of a `LeastSquaresProblem` with `QRFactorization(Float32)` and a `Float64` iterate calls this
+  `backsolve!` on the `m × n` factor with the length-`m` right-hand side
+  (`src/linear/mixed.jl:19`). The same-type solve goes to the own-kernel `backsolve_shifted!`
+  (`src/linear/ka/qr.jl:184`), which throws no error but, for complex `T`, gives a wrong
+  solution: the cuSOLVER `geqrf!` factor has the LAPACK `τ` (H = I − τ v vᴴ), and the own
+  `qadj` kernel applies I − τ v vᴴ as Hᴴ, which holds for the LAPACK factor only with
+  `conj.(τ)`. A host `LAPACK.geqrf!` factor solved with `ka_qr_backsolve!` on a `JLArray` fails
+  for `ComplexF32` and `ComplexF64` at 6 × 3, 40 × 7 and 3 × 1 and passes with `conj.(τ)`
+  (critic round 2 probe of the ROCm extension). The ROCm extension solves with `ormqr!` on the
+  whole factor and `trsv!` on views of its leading `n × n` block and of `d[1:n]`, which the
+  `rocBLAS.trsv!` of AMDGPU 2.12 accepts, and its own `backsolve_shifted!` keeps the same-type
+  solve on that path.
+- **kind:** defect
+- **found:** 2026-11-16 (critic round 1 of the ROCm extension)
+
 ### K92 · The launch and wait counts of `scripts/hardware/sync_cost.jl` come from a reading of the source, and no test sees them drift from what the step runs
 
 - **location:** `scripts/hardware/sync_cost.jl:142` (`phase_counts`)
@@ -566,3 +587,58 @@
   four singular `Float32` matrices (3, 4, 1, 2).
 - **kind:** dead code
 - **found:** #100 (issue #101)
+
+### K96 · rocSOLVER's complex `geqrf!` above n = 128 writes NaN into the trailing columns when a column of a panel has nothing below its diagonal
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:52` (`factorize!!` for `DeviceQR`)
+- **evidence:** on an AMD Radeon RX 7900 XTX (gfx1100; AMDGPU 2.12.0, rocSOLVER 3.37.0, rocBLAS
+  5.7.0, HIP 7.16, Julia 1.13.4), `AMDGPU.rocSOLVER.geqrf!` on a `ComplexF32` or `ComplexF64`
+  matrix gives `NaN` in R where a column has an exactly zero part below the diagonal and a real
+  diagonal entry, so its reflector has τ = 0. `4I` is correct at n = 128 and wrong at every n from
+  129 to 10⁴, with the first `NaN` at (1, 65). One decoupled variable j in a dense
+  `randn + 2n I` (row j and column j zero but for `A[j, j] = 4`, so τ is zero at j only) is
+  correct at n = 128, and at n = 256 and 512 gives the first `NaN` in the first column of the
+  next 64-column panel, in the 16-row block that holds row j: (1, 65), (33, 65), (49, 65) and
+  (97, 129) for j = 1, 40, 64 and 100. The matrix `4I` with 1e-3 below each diagonal entry, the
+  same matrices in `Float64`, every `getrf!`, and a complex `rocBLAS.gemm!` of the trailing-update
+  shape agree with the host. So the fault is in the blocked complex path of rocSOLVER, which
+  starts above n = 128, not in the extension. `factorize!!` reports the `NaN` as the first
+  non-finite diagonal entry of R, `info = 65` and `SINGULAR`. The ROCm agreement rows at
+  n = 10⁴ (`test/gpu/rocm/runtests.jl`), whose matrix has such columns, mark the complex QR
+  assertions broken. The probes are `device-run/probe_info65.jl` and `device-run/probe_tau0.jl`
+  on the branch `device-run/rocm-rx7900xtx`, and their output is in
+  `results/rocmext-rx7900xtx/` on the branch `results/rx7900xtx`.
+- **kind:** upstream
+- **found:** #96 (upstream issue https://github.com/ROCm/rocSOLVER/issues/1050)
+
+### K97 · The ROCm QR solve of an `m × n` factor with `m ≥ max(32768, 8n)` rows takes AMDGPU's own blocked `ormqr!`, which no device row reaches
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:65` (`backsolve!` for `DeviceQR`)
+- **evidence:** the extension applies Qᴴ with `AMDGPU.rocSOLVER.ormqr!('L', 'T'/'C', factors, τ, d)`.
+  In AMDGPU 2.12.0 that wrapper calls `ormqr_blocked!`, AMDGPU's own blocked compact-WY
+  implementation, in place of rocSOLVER's `ormqr` where `prefer_blocked(mA, k)` holds
+  (`src/solver/highlevel.jl:132`, `prefer_blocked(m, k) = m >= max(2^15, 8k)`, read at
+  `src/solver/highlevel.jl:318`). The device rows of `test/gpu/rocm/runtests.jl` stop at the square
+  `n = 10⁴` and at `m = 40` for an `m × n` factor, so a least-squares Jacobian with
+  `m ≥ max(32768, 8n)` rows solves through a path of the dependency that no test runs on a device.
+  A device row at, for example, `40000 × 7` would reach it.
+- **kind:** not verified
+- **found:** #96
+
+### K98 · A `SubArray` right-hand side of a ROCm `DeviceQR` solve falls to the own kernel, which reads the LAPACK `τ` as its conjugate
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:59–81` (`backsolve!` and `backsolve_shifted!` for
+  `DeviceQR`)
+- **evidence:** both extension methods take `d::ROCVector{T}`. A contiguous view, such as
+  `view(x, 1:k)` or `view(A, :, j)`, is itself a `ROCVector` (GPUArrays 12.2.0,
+  `src/host/base.jl:362`) and reaches them, but a `SubArray`, such as `view(x, 1:2:k)` or
+  `view(A, i, :)`, matches neither, and the solve dispatches to the own-kernel `backsolve!` and
+  `backsolve_shifted!` (`src/linear/ka/qr.jl`). The factor of the extension comes from
+  `rocSOLVER.geqrf!`, with the LAPACK `τ`, and the own kernel applies it with `conj.(τ)` (the
+  mechanism of K91), so the solution is wrong for complex `T` at every shape. The call sites of
+  `ldiv!!` in `src/` (`grep -rn "ldiv!!(" src/`) pass no view to a `DeviceQR` solve; the implicit
+  tangent, for example, passes a right-hand side that `similar` allocates
+  (`src/nonlinear/implicit.jl:340`). So no solver path reaches it; a caller that calls `ldiv!!`
+  or `backsolve!` with a `SubArray` does.
+- **kind:** found late
+- **found:** #96
