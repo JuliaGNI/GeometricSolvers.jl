@@ -19,7 +19,7 @@ Three packages are left out:
 | script | what it does |
 |:--|:--|
 | `correctness.jl [outdir]` | runs every cell, writes `correctness.csv` and `rows.csv` (by default to `benchmark/results/`), and prints the tables of this report |
-| `verify.jl <dir> [--structure]` | checks the tables of `<dir>`, this report and the traces with code of its own |
+| `verify.jl <dir> [--structure] [--all-cards]` | checks the tables of `<dir>`, this report and the traces with code of its own |
 | `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows |
 | `check_midpoint.jl` | checks each midpoint residual against one step of `ImplicitMidpoint` |
 | `trace.jl <set> <problem> <start> <eltype> <column> [outfile]` | writes the iteration trace of one row |

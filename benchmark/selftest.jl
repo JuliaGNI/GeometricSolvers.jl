@@ -4,10 +4,11 @@
 # non-finite matrix, and the element type and the start of the midpoint rows; and for the
 # timings and the blocks: the timed runs and the batch, the note of a timed cell, the tolerance
 # of each adapter, the variant labels, the `nsol` adapter, the sparse variants and the profiles;
-# and for the device rows: the machine–backend pairs, the inline adapter in a `CPU()` kernel, the
-# verdict, the band, the classifier of a launch that throws, the Metal heap restart, the order of
-# the clock and `synchronize` in a timed run, the time cap, the two LU paths, and the R2 and R3
-# lines.
+# and for the device rows: the machine–backend pairs, the inline adapter and the Lotka–Volterra
+# midpoint rows in a `CPU()` kernel, the verdict, the band, the classifier of a launch that throws,
+# the Metal heap restart, the order of the clock and `synchronize` in a timed run, the time cap,
+# the `.txt` with the card and the driver of each vendor, the two LU paths, the R2 and R3 lines,
+# and the checks of `verify.jl` on the device files and on the report's Y3 tables.
 #
 # Usage: julia --project=benchmark benchmark/selftest.jl
 

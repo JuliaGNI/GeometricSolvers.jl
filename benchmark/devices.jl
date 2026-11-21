@@ -634,9 +634,9 @@ end
 One factorisation of `J` and one solve with the right-hand side `b`, from the factor `fac`, by
 the path `variant`, and the factor and the solution: `dispatched` is the path of `solve`,
 `factorize!!` and `ldiv!!`, which scales `b` by `2^(-rhs_exponent(b))` before the backsolve and
-the solution by `2^(rhs_exponent(b) − e)` after it; `own-ka` calls the internal
-`ka_factorize_lu!` and `ka_lu_backsolve!` and scales the solution by `2^(−e)`, `e` the factor's
-`scale_exponent`, which no option of `solve` selects where an extension's LU applies.
+the solution by `2^(rhs_exponent(b) − e)` after it; `own-ka`, which no option of `solve` selects
+where an extension's LU applies, calls the internal `ka_factorize_lu!` and `ka_lu_backsolve!`
+and scales the solution by `2^(−e)`, `e` the factor's `scale_exponent`.
 """
 function lu_once!(variant, fac, J, b)
     if variant == "own-ka"
