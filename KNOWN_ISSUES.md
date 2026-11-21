@@ -540,30 +540,29 @@
 - **kind:** not verified
 - **found:** #97
 
-### K93 · The Metal vendor test expects the MPS LU status `-2` for a singular matrix, and MPS returns the positive index of the missing pivot
-
-- **location:** `test/devices/metal_vendor.jl:209`
-- **evidence:** `Pkg.test(; test_args = ["metal"])` on Apple M4 Max, macOS 27.2.0, Metal.jl
-  1.12.1, fails in the testset "Metal MPS LU edge cases and status mapping" with
-  `Expression: F_neg.info == -2`, `Evaluated: 3 == -2`, for
-  `LinearAlgebra.lu!(MtlArray(Float32[-5 1 0; 1 -4 0; 0 0 0]); check = false)`. The run fails the
-  same way, with the same value 3, on `main` at 4646177 (the serial `runtests.jl`) and on the
-  parallel form, so the cause is neither contention nor a worker process. The package code is
-  correct: `_mps_lu_finish!` in `ext/GeometricSolversMetalExt.jl:31` maps a status `>= 0` to
-  `info`, so a positive status names a singular matrix. The premise of the check is stale for this
-  MPS release. Issue #99.
-- **kind:** defect
-- **found:** 2026-11-20
-
 ### K94 · Two entries of the `[Unreleased]` section of `CHANGELOG.md` name test groups and a required-check status that `main` at 4646177 already does not have
 
-- **location:** `CHANGELOG.md:1315`
-- **evidence:** `CHANGELOG.md:1315` says that `test/runtests.jl` selects the groups `core`, `slow`
-  and `metal`; `CHANGELOG.md:1319` puts `test/quality/doctests.jl` in `slow`; `CHANGELOG.md:1322`
-  says that an empty `ARGS` runs `core`, `slow` and `metal`; and `CHANGELOG.md:1331` says that the
+- **location:** `CHANGELOG.md:1323`
+- **evidence:** `CHANGELOG.md:1323` says that `test/runtests.jl` selects the groups `core`, `slow`
+  and `metal`; `CHANGELOG.md:1327` puts `test/quality/doctests.jl` in `slow`; `CHANGELOG.md:1330`
+  says that an empty `ARGS` runs `core`, `slow` and `metal`; and `CHANGELOG.md:1339` says that the
   Metal job is not a required check. At 4646177, `test/ci-groups.toml` lists six groups,
   `test/quality/doctests.jl` is the one file of the group `doctests`, and the Metal jobs are
-  required checks, as `CHANGELOG.md:684` says. These sentences were false before the parallel test
+  required checks, as `CHANGELOG.md:692` says. These sentences were false before the parallel test
   form, which leaves them as they are.
 - **kind:** docs
 - **found:** 2026-11-20
+
+### K95 · Under Metal.jl 1.12, `factorize!!` never reaches the negative-status branches of `_mps_lu_finish!`, and a non-singular MPS failure throws instead of giving `info = 1`
+
+- **location:** `ext/GeometricSolversMetalExt.jl:44`
+- **evidence:** From Metal.jl 1.12.0, `LinearAlgebra.lu!` on an `MtlMatrix` passes the MPS status
+  through `MPS.lu_info`, which turns the singular status `-2` into LAPACK's `info` and calls
+  `error(...)` on every other failure status; the compat is `Metal = "1.12"`. So
+  `LinearAlgebra.lu!(fac.factors; check = false)` at line 44 never returns a negative `info`, the
+  `-2` branch and the "any other negative status" branch are reached only by a direct call of
+  `_mps_lu_finish!`, and the comments at lines 12–14 and 21–23 describe the old behaviour. On an
+  Apple M4 Max (macOS 27.2.0, Julia 1.13.4, Metal.jl 1.12.1), Metal's `info` equals LAPACK's for
+  four singular `Float32` matrices (3, 4, 1, 2).
+- **kind:** dead code
+- **found:** #100 (issue #101)
