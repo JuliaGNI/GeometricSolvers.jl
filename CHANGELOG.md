@@ -1618,8 +1618,7 @@ so that a compat-only bump can be told apart from an interface change.
   (`GPUArraysCore.allowscalar(false)`), so a matrix with finite entries and `σ₁ > floatmax(R)` still
   solves to a finite step.
 
-- The standard test set runs in the `verification` group, under the label
-  "Standard test set". It is the
+- The standard test set runs in the `verification` group, labelled "Standard test set". It is the
   23 problems of NonlinearProblemLibrary.jl 0.1.8 (Burkardt's `test_nonlin`, after Moré, Garbow
   and Hillstrom), copied into `test/helpers/standard_problems.jl` with every non-integer constant
   in the element type of the iterate, from the starts `u0`, `10 u0` and `100 u0` (67 starts). It
