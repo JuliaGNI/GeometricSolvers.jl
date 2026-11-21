@@ -154,9 +154,12 @@ if AMDGPU.functional()
                 fac_ext = dense_factor(m, prob_dev, dx_ext, nothing)
                 fac_ka = dense_factor(m, prob_dev, dx_ka, nothing)
 
+                # Above n = 256 the matrix has columns with nothing below the diagonal, and
+                # rocSOLVER's blocked complex `geqrf!` turns their τ = 0 into NaN (K96).
+                broken_ext = M === QRFactorization && T <: Complex && n > 256  # K96
                 fac_ext = factorize!!(fac_ext, m, dA)
-                @test fac_ext.info == 0
-                @test returncode(fac_ext) === SUCCESS
+                @test fac_ext.info == 0 broken = broken_ext
+                @test returncode(fac_ext) === SUCCESS broken = broken_ext
                 ldiv!!(dx_ext, fac_ext, db)
 
                 fac_ka = M === LUFactorization ? ka_factorize_lu!(fac_ka, dA) :
@@ -166,7 +169,7 @@ if AMDGPU.functional()
 
                 x_ext = Array(dx_ext)
                 x_ka = Array(dx_ka)
-                @test norm(x_ext - x_ka, Inf) / max(norm(x_ka, Inf), epsT) <= bound
+                @test norm(x_ext - x_ka, Inf) / max(norm(x_ka, Inf), epsT) <= bound broken = broken_ext
             end
         end
     end

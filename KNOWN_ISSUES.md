@@ -606,3 +606,26 @@
   four singular `Float32` matrices (3, 4, 1, 2).
 - **kind:** dead code
 - **found:** #100 (issue #101)
+
+### K96 · rocSOLVER's complex `geqrf!` above n = 128 writes NaN into the trailing columns when a column of a panel has nothing below its diagonal
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:52` (`factorize!!` for `DeviceQR`)
+- **evidence:** on an AMD Radeon RX 7900 XTX (gfx1100; AMDGPU 2.12.0, rocSOLVER 3.37.0, rocBLAS
+  5.7.0, HIP 7.16, Julia 1.13.4), `AMDGPU.rocSOLVER.geqrf!` on a `ComplexF32` or `ComplexF64`
+  matrix gives `NaN` in R where a column has an exactly zero part below the diagonal and a real
+  diagonal entry, so its reflector has τ = 0. `4I` is correct at n = 128 and wrong at every n from
+  129 to 10⁴, with the first `NaN` at (1, 65). One decoupled variable j in a dense
+  `randn + 2n I` (row j and column j zero but for `A[j, j] = 4`, so τ is zero at j only) is
+  correct at n = 128, and at n = 256 and 512 gives the first `NaN` in the first column of the
+  next 64-column panel, in the 16-row block that holds row j: (1, 65), (33, 65), (49, 65) and
+  (97, 129) for j = 1, 40, 64 and 100. The matrix `4I` with 1e-3 below each diagonal entry, the
+  same matrices in `Float64`, every `getrf!`, and a complex `rocBLAS.gemm!` of the trailing-update
+  shape agree with the host. So the fault is in the blocked complex path of rocSOLVER, which
+  starts above n = 128, not in the extension. `factorize!!` reports the `NaN` as the first
+  non-finite diagonal entry of R, `info = 65` and `SINGULAR`. The ROCm agreement rows at
+  n = 10⁴ (`test/gpu/rocm/runtests.jl`), whose matrix has such columns, mark the complex QR
+  assertions broken. The probes are `device-run/probe_info65.jl` and `device-run/probe_tau0.jl`
+  on the branch `device-run/rocm-rx7900xtx`, and their output is in
+  `results/rocmext-rx7900xtx/` on the branch `results/rx7900xtx`.
+- **kind:** upstream
+- **found:** #96

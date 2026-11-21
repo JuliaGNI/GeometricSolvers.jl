@@ -25,6 +25,9 @@ so that a compat-only bump can be told apart from an interface change.
   `Project.toml` adds `AMDGPU` under `[weakdeps]`, `[extensions]` and `[compat]` (`2.12`, whose
   `rocBLAS.trsv!` takes a view). The tests are in `test/gpu/rocm/runtests.jl`: the dispatch and
   JET rows run without a device, and the factorising rows run by hand on a ROCm device.
+  rocSOLVER's complex `geqrf!` above n = 128 gives `NaN` for a matrix with a column that has nothing
+  below its diagonal (K96), so the complex QR assertions of the agreement rows at n = 10⁴ are
+  marked broken.
 
 - **The user guide's method table (`docs/src/guide.md`) corrects two conditions.** A complex
   Jacobian for `LDLTFactorization` is read in full, and `Refinement` and `GMRESRefinement` do not
