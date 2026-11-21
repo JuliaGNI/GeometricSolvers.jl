@@ -1,0 +1,171 @@
+ERROR: LoadError: Some tests did not pass: 30 passed, 6 failed, 0 errored, 0 broken.
+in expression starting at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:115
+AMDGPU 2.12.0, GeometricSolvers 0.1.0, Julia 1.13.4
+AMDGPU.functional() = true
+Test Summary:                                                                    | Pass  Total  Time
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment |   77     77  0.1s
+Test Summary:                                           | Pass  Total  Time
+GeometricSolversAMDGPUExt rocSOLVER calls, JET: Float64 |    5      5  5.3s
+Test Summary:                                              | Pass  Total  Time
+GeometricSolversAMDGPUExt rocSOLVER calls, JET: ComplexF64 |    5      5  0.6s
+
+AMDGPU versioninfo
+ROCm provider: downloaded artifacts
+┌───────────┬──────────────────┬────────────┬───────────────────────────────────
+│ Available │ Name             │ Version    │ Path                             ⋯
+├───────────┼──────────────────┼────────────┼───────────────────────────────────
+│     +     │ LLD              │ -          │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     +     │ Device Libraries │ -          │ /home/IPP-AD/mkraus/.julia/scrat ⋯
+│     +     │ HIP              │ 7.16.26385 │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     +     │ rocBLAS          │ 5.7.0      │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     +     │ rocSOLVER        │ 3.37.0     │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     +     │ rocSPARSE        │ 5.1.0      │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     +     │ rocRAND          │ 5.0.0      │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     +     │ rocFFT           │ 1.0.40     │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     -     │ hipTENSOR        │ -          │ /home/IPP-AD/mkraus/.julia/artif ⋯
+│     +     │ MIOpen           │ 3.6.1      │ /home/IPP-AD/mkraus/.julia/artif ⋯
+└───────────┴──────────────────┴────────────┴───────────────────────────────────
+                                                                1 column omitted
+
+Device-library redirects: none
+Foreign ROCm libraries loaded: none
+
+Julia packages: 
+- AMDGPU.jl: 2.12.0
+- GPUArrays: 12.2.0
+- GPUCompiler: 2.23.4
+- KernelInterface: 0.4.7
+- KernelAbstractions: 0.10.8
+- LLVM: 10.7.0
+- AMDGPU_LLVM_Backend_jll: 23.1.3+1
+- LLVMDowngrader_jll: 0.12.2+0
+
+Toolchain:
+- Julia: 1.13.4
+- LLVM: 20.1.8
+
+
+AMDGPU devices
+┌────┬────────────────────────┬──────────┬───────────┬────────────┬─────────────
+│ Id │                   Name │ GCN arch │ Wavefront │     Memory │ Shared Mem ⋯
+├────┼────────────────────────┼──────────┼───────────┼────────────┼─────────────
+│  1 │ AMD Radeon RX 7900 XTX │  gfx1100 │        32 │ 23.984 GiB │    64.000  ⋯
+│  2 │    AMD Radeon Graphics │  gfx1036 │        32 │ 30.957 GiB │    64.000  ⋯
+└────┴────────────────────────┴──────────┴───────────┴────────────┴─────────────
+                                                                1 column omitted
+
+
+rocSOLVER getrf! accepts n = 0, info = 0
+Test Summary:                                          | Pass  Total   Time
+ROCm rocSOLVER agreement with own KA kernels at n = 16 |   36     36  16.8s
+Test Summary:                                           | Pass  Total  Time
+ROCm rocSOLVER agreement with own KA kernels at n = 256 |   36     36  1.6s
+
+T = ComplexF32: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:158
+  Expression: fac_ext.info == 0
+   Evaluated: 65 == 0
+  Stacktrace:
+   [1] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:138
+   [2] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [3] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:139 [inlined]
+   [4] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [5] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:158 [inlined]
+   [6] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+T = ComplexF32: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:159
+  Expression: returncode(fac_ext) === SUCCESS
+   Evaluated: SINGULAR === SUCCESS
+  Stacktrace:
+   [1] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:138
+   [2] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [3] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:139 [inlined]
+   [4] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [5] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:159 [inlined]
+   [6] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+T = ComplexF32: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:169
+  Expression: norm(x_ext - x_ka, Inf) / max(norm(x_ka, Inf), epsT) <= bound
+   Evaluated: NaN <= 0.013997755559103098
+  Stacktrace:
+   [1] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:138
+   [2] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [3] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:139 [inlined]
+   [4] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [5] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:169 [inlined]
+   [6] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+T = ComplexF64: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:158
+  Expression: fac_ext.info == 0
+   Evaluated: 65 == 0
+  Stacktrace:
+   [1] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:138
+   [2] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [3] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:139 [inlined]
+   [4] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [5] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:158 [inlined]
+   [6] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+T = ComplexF64: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:159
+  Expression: returncode(fac_ext) === SUCCESS
+   Evaluated: SINGULAR === SUCCESS
+  Stacktrace:
+   [1] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:138
+   [2] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [3] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:139 [inlined]
+   [4] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [5] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:159 [inlined]
+   [6] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+T = ComplexF64: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:169
+  Expression: norm(x_ext - x_ka, Inf) / max(norm(x_ka, Inf), epsT) <= bound
+   Evaluated: NaN <= 2.6072852293723543e-11
+  Stacktrace:
+   [1] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:138
+   [2] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [3] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:139 [inlined]
+   [4] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:2048 [inlined]
+   [5] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:169 [inlined]
+   [6] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+Test Summary:                                             | Pass  Fail  Total      Time
+ROCm rocSOLVER agreement with own KA kernels at n = 10000 |   30     6     36  13m18.0s
+  T = Float32                                             |    9            9   2m03.4s
+  T = Float64                                             |    9            9   2m29.6s
+  T = ComplexF32                                          |    6     3      9   2m35.9s
+  T = ComplexF64                                          |    6     3      9   6m09.0s
+RNG of the outermost testset: Xoshiro(0x0daf0e9ab027c39b, 0xde9373f6da06e87c, 0x73e23610ecb5695b, 0x069d3efa34d89d70, 0x1b2131ab4fb3d9e6)

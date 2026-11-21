@@ -1,0 +1,9 @@
+instantiate exit 0
+base exit 1
+mutant-N1 exit 1
+mutant-N2 exit 1
+mutant-N3 exit 1
+mutant-N4a exit 1
+mutant-N4b exit 1
+mutant-N5 exit 1
+git status after the run:

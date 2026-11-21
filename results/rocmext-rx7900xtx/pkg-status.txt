@@ -1,0 +1,14 @@
+     Project No packages added to or removed from `~/Julia/GeometricSolvers.jl/test/gpu/rocm/Project.toml`
+    Manifest No packages added to or removed from `~/Julia/GeometricSolvers.jl/test/gpu/rocm/Manifest.toml`
+Status `~/Julia/GeometricSolvers.jl/test/gpu/rocm/Project.toml`
+  [47edcb42] ADTypes v1.24.0
+  [21141c5a] AMDGPU v2.12.0
+  [f6369f11] ForwardDiff v1.5.0
+  [46192b85] GPUArraysCore v0.2.2
+  [3a2b8526] GeometricSolvers v0.1.0 `../../..`
+⌅ [c3a54625] JET v0.12.3
+  [63c18a36] KernelAbstractions v0.10.8
+  [37e2e46d] LinearAlgebra v1.13.0
+  [9a3f8284] Random v1.11.0
+  [8dfed614] Test v1.11.0
+Info Packages marked with ⌅ have new versions available but compatibility constraints restrict them from upgrading. To see why use `status --outdated`
