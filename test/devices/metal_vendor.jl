@@ -172,10 +172,10 @@ if Metal.functional() && !on_virtual_gpu()
         d0 = ldiv!!(similar(x0), fac0, b0)
         @test length(d0) == 0
 
-        # Singular matrices: equal rows (MPS status -2), zero matrix, zero column 2, and a
-        # negative diagonal beside a zero row, whose own check pins the MPS status at `-2`.
-        # `info` is the pivot that the own kernel names: MPS reports `-2` without an index, so
-        # the extension takes the first index of the smallest `|aᵢᵢ|` of its factors.
+        # Singular matrices: equal rows, zero matrix, zero column 2, and a negative diagonal
+        # beside a zero row. `info` is the pivot that the own kernel names. Metal.jl's `lu!`
+        # turns the singular MPS status `-2` into LAPACK's `info`, a positive pivot index, so
+        # these factorisations take the `status_code > 0` branch of the extension.
         x4 = MtlArray(zeros(Float32, 4))
         prob4 = NonlinearProblem(x4, metal_vendor_noop)
         ka_info(A) = ka_factorize_lu!(dense_factor(m, prob4, x4, nothing), MtlArray(A)).info
@@ -198,15 +198,15 @@ if Metal.functional() && !on_virtual_gpu()
 
         # A singular matrix whose factors carry a negative diagonal entry, so that the index the
         # extension names for the missing pivot is not the index of the smallest diagonal entry
-        # itself. Two checks come first: without them a later MPS release that returned a positive
-        # status would send this case down the `status_code > 0` branch and the case would assert
-        # nothing about how `-2` is named. The factor takes the size of `A_neg`: `load_factors!`
-        # copies the matrix into the factor buffer with `copyto!`, entry by entry in linear order,
-        # so a longer buffer keeps what `similar` returned in the entries that the copy does not
+        # itself. `lu!` reports the pivot 3 as LAPACK does, so `factorize!!` takes the
+        # `status_code > 0` branch; the status `-2` is named on the same factors below, through
+        # `_mps_lu_finish!`. The factor takes the size of `A_neg`: `load_factors!` copies the
+        # matrix into the factor buffer with `copyto!`, entry by entry in linear order, so a
+        # longer buffer keeps what `similar` returned in the entries that the copy does not
         # reach, and a shorter one does not hold `A_neg` at all.
         A_neg = Float32[-5 1 0; 1 -4 0; 0 0 0]
         F_neg = LinearAlgebra.lu!(MtlArray(copy(A_neg)); check = false)
-        @test F_neg.info == -2
+        @test F_neg.info == 3
         diag_neg = Array(@view(F_neg.factors[LinearAlgebra.diagind(F_neg.factors)]))
         @test any(<(0), diag_neg)
 
@@ -217,6 +217,14 @@ if Metal.functional() && !on_virtual_gpu()
         @test fac_neg.info ==
               ka_factorize_lu!(dense_factor(m, prob3, x3, nothing), MtlArray(A_neg)).info
         @test returncode(fac_neg) === SINGULAR
+
+        # the status `-2` on the factors of `A_neg`, diagonal `[-5, -3.8, 0]`: the smallest
+        # `|aᵢᵢ|` is the third, while the smallest `aᵢᵢ` is the first
+        fac_neg_m2 = dense_factor(m, prob3, x3, nothing)
+        copyto!(fac_neg_m2.factors, F_neg.factors)
+        fac_neg_m2 = ext_mtl._mps_lu_finish!(fac_neg_m2, F_neg.ipiv, -2)
+        @test fac_neg_m2.info == 3
+        @test returncode(fac_neg_m2) === SINGULAR
 
         # Direct status mapping checks on _mps_lu_finish!: status 0, -2, >0, and any other < 0
         x2 = MtlArray(zeros(Float32, 2))
