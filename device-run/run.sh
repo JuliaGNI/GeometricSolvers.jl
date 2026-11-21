@@ -25,9 +25,9 @@ mkdir -p "$out"
 {
     date -u
     git log -1 --format='%H %s'
-    uname -a
+    uname -srm
     uptime
-    id -nG
+    echo "device groups: $(id -nG | tr ' ' '\n' | grep -x -e video -e render | tr '\n' ' ')"
     rocminfo | grep -E 'Name: +gfx'
     julia --version
 } > "$out/system.txt" 2>&1
