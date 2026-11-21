@@ -1,0 +1,242 @@
+AMDGPU 2.12.0, Julia 1.13.4, device HIPDevice(id=1, name=AMD Radeon RX 7900 XTX, gcn_arch=gfx1100)
+functional = true
+
+# A  extension path, the agreement row's matrix
+A LUFactorization  Float32    n = 256  info = 0  returncode = SUCCESS  ok
+A QRFactorization  Float32    n = 256  info = 0  returncode = SUCCESS  ok
+A LUFactorization  Float64    n = 256  info = 0  returncode = SUCCESS  ok
+A QRFactorization  Float64    n = 256  info = 0  returncode = SUCCESS  ok
+A LUFactorization  ComplexF32 n = 256  info = 0  returncode = SUCCESS  ok
+A QRFactorization  ComplexF32 n = 256  info = 0  returncode = SUCCESS  ok
+A LUFactorization  ComplexF64 n = 256  info = 0  returncode = SUCCESS  ok
+A QRFactorization  ComplexF64 n = 256  info = 0  returncode = SUCCESS  ok
+A LUFactorization  Float32    n = 10000  info = 0  returncode = SUCCESS  ok
+A QRFactorization  Float32    n = 10000  info = 0  returncode = SUCCESS  ok
+A LUFactorization  Float64    n = 10000  info = 0  returncode = SUCCESS  ok
+A QRFactorization  Float64    n = 10000  info = 0  returncode = SUCCESS  ok
+A LUFactorization  ComplexF32 n = 10000  info = 0  returncode = SUCCESS  ok
+A QRFactorization  ComplexF32 n = 10000  info = 65  returncode = SINGULAR  BAD
+A LUFactorization  ComplexF64 n = 10000  info = 0  returncode = SUCCESS  ok
+A QRFactorization  ComplexF64 n = 10000  info = 65  returncode = SINGULAR  BAD
+
+# B  rocSOLVER getrf! and geqrf! against LAPACK
+B getrf! row Float32    n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =    64  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =    65  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =   128  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =   256  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =   257  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =   320  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =   512  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =  1024  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =  2048  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n =  4096  first bad |diag(R)| = 0  ok
+B getrf! row Float32    n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float32    n = 10000  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =    64  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =    65  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =   128  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =   256  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =   257  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =   320  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =   512  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =  1024  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =  2048  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n =  4096  first bad |diag(R)| = 0  ok
+B getrf! row Float64    n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row Float64    n = 10000  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF32 n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =    64  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF32 n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =    65  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF32 n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =   128  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF32 n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =   256  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF32 n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =   257  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF32 n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =   320  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF32 n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =   512  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF32 n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =  1024  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF32 n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =  2048  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF32 n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n =  4096  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF32 n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF32 n = 10000  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF64 n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =    64  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF64 n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =    65  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF64 n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =   128  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF64 n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =   256  first bad |diag(R)| = 0  ok
+B getrf! row ComplexF64 n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =   257  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF64 n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =   320  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF64 n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =   512  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF64 n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =  1024  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF64 n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =  2048  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF64 n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n =  4096  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! row ComplexF64 n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! row ComplexF64 n = 10000  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  Float32    n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =    64  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =    65  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =   128  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =   256  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =   257  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =   320  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =   512  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =  1024  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =  2048  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n =  4096  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float32    n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float32    n = 10000  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =    64  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =    65  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =   128  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =   256  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =   257  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =   320  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =   512  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =  1024  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =  2048  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n =  4096  first bad |diag(R)| = 0  ok
+B getrf! 4I  Float64    n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  Float64    n = 10000  first bad |diag(R)| = 0  ok
+B getrf! 4I  ComplexF32 n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =    64  first bad |diag(R)| = 0  ok
+B getrf! 4I  ComplexF32 n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =    65  first bad |diag(R)| = 0  ok
+B getrf! 4I  ComplexF32 n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =   128  first bad |diag(R)| = 0  ok
+B getrf! 4I  ComplexF32 n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =   256  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF32 n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =   257  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF32 n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =   320  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF32 n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =   512  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF32 n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =  1024  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF32 n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =  2048  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF32 n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n =  4096  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF32 n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF32 n = 10000  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n =    64  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =    64  first bad |diag(R)| = 0  ok
+B getrf! 4I  ComplexF64 n =    65  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =    65  first bad |diag(R)| = 0  ok
+B getrf! 4I  ComplexF64 n =   128  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =   128  first bad |diag(R)| = 0  ok
+B getrf! 4I  ComplexF64 n =   256  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =   256  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n =   257  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =   257  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n =   320  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =   320  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n =   512  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =   512  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n =  1024  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =  1024  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n =  2048  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =  2048  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n =  4096  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n =  4096  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+B getrf! 4I  ComplexF64 n = 10000  info = 0  first bad diag(U) = 0  ipiv same = true  ok
+B geqrf! 4I  ComplexF64 n = 10000  first bad |diag(R)| = 65 (dev NaN, host 4.0)  BAD
+
+# C  rocBLAS gemm!, C = 4I, k = 64, alpha = -1, beta = 1
+C zero   Float32    m =    64  max |C - 4I| = 0.0  ok
+C random Float32    m =    64  relative error = 0.0  bound = 6.1035156e-5  ok
+C zero   Float32    m =   256  max |C - 4I| = 0.0  ok
+C random Float32    m =   256  relative error = 0.0  bound = 6.1035156e-5  ok
+C zero   Float32    m =  1024  max |C - 4I| = 0.0  ok
+C random Float32    m =  1024  relative error = 0.0  bound = 6.1035156e-5  ok
+C zero   Float32    m =  4096  max |C - 4I| = 0.0  ok
+C random Float32    m =  4096  relative error = 0.0  bound = 6.1035156e-5  ok
+C zero   Float32    m =  9936  max |C - 4I| = 0.0  ok
+C random Float32    m =  9936  relative error = 0.0  bound = 6.1035156e-5  ok
+C zero   Float64    m =    64  max |C - 4I| = 0.0  ok
+C random Float64    m =    64  relative error = 1.0328585855873556e-17  bound = 1.1368683772161603e-13  ok
+C zero   Float64    m =   256  max |C - 4I| = 0.0  ok
+C random Float64    m =   256  relative error = 2.1871279375132906e-16  bound = 1.1368683772161603e-13  ok
+C zero   Float64    m =  1024  max |C - 4I| = 0.0  ok
+C random Float64    m =  1024  relative error = 2.1782808536339662e-16  bound = 1.1368683772161603e-13  ok
+C zero   Float64    m =  4096  max |C - 4I| = 0.0  ok
+C random Float64    m =  4096  relative error = 2.176808795669008e-16  bound = 1.1368683772161603e-13  ok
+C zero   Float64    m =  9936  max |C - 4I| = 0.0  ok
+C random Float64    m =  9936  relative error = 2.1790151552130396e-16  bound = 1.1368683772161603e-13  ok
+C zero   ComplexF32 m =    64  max |C - 4I| = 0.0  ok
+C random ComplexF32 m =    64  relative error = 1.1829396e-7  bound = 6.1035156e-5  ok
+C zero   ComplexF32 m =   256  max |C - 4I| = 0.0  ok
+C random ComplexF32 m =   256  relative error = 1.18066914e-7  bound = 6.1035156e-5  ok
+C zero   ComplexF32 m =  1024  max |C - 4I| = 0.0  ok
+C random ComplexF32 m =  1024  relative error = 1.1797917e-7  bound = 6.1035156e-5  ok
+C zero   ComplexF32 m =  4096  max |C - 4I| = 0.0  ok
+C random ComplexF32 m =  4096  relative error = 1.1779236e-7  bound = 6.1035156e-5  ok
+C zero   ComplexF32 m =  9936  max |C - 4I| = 0.0  ok
+C random ComplexF32 m =  9936  relative error = 1.177237e-7  bound = 6.1035156e-5  ok
+C zero   ComplexF64 m =    64  max |C - 4I| = 0.0  ok
+C random ComplexF64 m =    64  relative error = 2.203342380949605e-16  bound = 1.1368683772161603e-13  ok
+C zero   ComplexF64 m =   256  max |C - 4I| = 0.0  ok
+C random ComplexF64 m =   256  relative error = 1.0996256508332837e-16  bound = 1.1368683772161603e-13  ok
+C zero   ComplexF64 m =  1024  max |C - 4I| = 0.0  ok
+C random ComplexF64 m =  1024  relative error = 2.1975049550174276e-16  bound = 1.1368683772161603e-13  ok
+C zero   ComplexF64 m =  4096  max |C - 4I| = 0.0  ok
+C random ComplexF64 m =  4096  relative error = 2.194325723705219e-16  bound = 1.1368683772161603e-13  ok
+C zero   ComplexF64 m =  9936  max |C - 4I| = 0.0  ok
+C random ComplexF64 m =  9936  relative error = 2.1923737207667919e-16  bound = 1.1368683772161603e-13  ok
+
+done; errored = false
