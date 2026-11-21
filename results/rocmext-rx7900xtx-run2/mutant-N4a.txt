@@ -1,0 +1,111 @@
+ERROR: LoadError: Some tests did not pass: 69 passed, 8 failed, 0 errored, 0 broken.
+in expression starting at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:26
+AMDGPU 2.12.0, GeometricSolvers 0.1.0, Julia 1.13.4
+AMDGPU.functional() = true
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment: Test Failed at /home/IPP-AD/mkraus/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47
+  Expression: (which(backsolve_shifted!, (DevQR, Vec, Vec))).var"module" === ext_rocm
+   Evaluated: GeometricSolvers === GeometricSolversAMDGPUExt
+  Stacktrace:
+   [1] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+   [2] macro expansion
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:47 [inlined]
+   [3] macro expansion
+     @ ~/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] top-level scope
+     @ ~/Julia/GeometricSolvers.jl/test/gpu/rocm/runtests.jl:27
+Test Summary:                                                                    | Pass  Fail  Total  Time
+GeometricSolversAMDGPUExt extension loading, dispatch, and ROCm census alignment |   69     8     77  0.7s
+RNG of the outermost testset: Xoshiro(0xde4b2f496cf9cb98, 0xaa41db91ea41ce5c, 0x2e0bbfba0d7de444, 0x63d56bd886d0d834, 0x7e21738d1eea956c)
