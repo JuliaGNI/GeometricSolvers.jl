@@ -561,37 +561,18 @@
 - **kind:** not verified
 - **found:** #97
 
-### K93 · The ROCm QR solve of an `m × n` factor with `m ≥ max(32768, 8n)` rows takes AMDGPU's own blocked `ormqr!`, which no device row reaches
+### K94 · Two entries of the `[Unreleased]` section of `CHANGELOG.md` name test groups and a required-check status that `main` at 4646177 already does not have
 
-- **location:** `ext/GeometricSolversAMDGPUExt.jl:65` (`backsolve!` for `DeviceQR`)
-- **evidence:** the extension applies Qᴴ with `AMDGPU.rocSOLVER.ormqr!('L', 'T'/'C', factors, τ, d)`.
-  In AMDGPU 2.12.0 that wrapper calls `ormqr_blocked!`, AMDGPU's own blocked compact-WY
-  implementation, in place of rocSOLVER's `ormqr` where `prefer_blocked(mA, k)` holds
-  (`src/solver/highlevel.jl:132`, `prefer_blocked(m, k) = m >= max(2^15, 8k)`, read at
-  `src/solver/highlevel.jl:318`). The device rows of `test/gpu/rocm/runtests.jl` stop at the square
-  `n = 10⁴` and at `m = 40` for an `m × n` factor, so a least-squares Jacobian with
-  `m ≥ max(32768, 8n)` rows solves through a path of the dependency that no test runs on a device.
-  A device row at, for example, `40000 × 7` would reach it.
-- **kind:** not verified
-- **found:** #96
-
-### K94 · A `SubArray` right-hand side of a ROCm `DeviceQR` solve falls to the own kernel, which reads the LAPACK `τ` as its conjugate
-
-- **location:** `ext/GeometricSolversAMDGPUExt.jl:59–81` (`backsolve!` and `backsolve_shifted!` for
-  `DeviceQR`)
-- **evidence:** both extension methods take `d::ROCVector{T}`. A contiguous view, such as
-  `view(x, 1:k)` or `view(A, :, j)`, is itself a `ROCVector` (GPUArrays 12.2.0,
-  `src/host/base.jl:362`) and reaches them, but a `SubArray`, such as `view(x, 1:2:k)` or
-  `view(A, i, :)`, matches neither, and the solve dispatches to the own-kernel `backsolve!` and
-  `backsolve_shifted!` (`src/linear/ka/qr.jl`). The factor of the extension comes from
-  `rocSOLVER.geqrf!`, with the LAPACK `τ`, and the own kernel applies it with `conj.(τ)` (the
-  mechanism of K91), so the solution is wrong for complex `T` at every shape. The call sites of
-  `ldiv!!` in `src/` (`grep -rn "ldiv!!(" src/`) pass no view to a `DeviceQR` solve; the implicit
-  tangent, for example, passes a right-hand side that `similar` allocates
-  (`src/nonlinear/implicit.jl:340`). So no solver path reaches it; a caller that calls `ldiv!!`
-  or `backsolve!` with a `SubArray` does.
-- **kind:** found late
-- **found:** #96
+- **location:** `CHANGELOG.md:1323`
+- **evidence:** `CHANGELOG.md:1323` says that `test/runtests.jl` selects the groups `core`, `slow`
+  and `metal`; `CHANGELOG.md:1327` puts `test/quality/doctests.jl` in `slow`; `CHANGELOG.md:1330`
+  says that an empty `ARGS` runs `core`, `slow` and `metal`; and `CHANGELOG.md:1339` says that the
+  Metal job is not a required check. At 4646177, `test/ci-groups.toml` lists six groups,
+  `test/quality/doctests.jl` is the one file of the group `doctests`, and the Metal jobs are
+  required checks, as `CHANGELOG.md:692` says. These sentences were false before the parallel test
+  form, which leaves them as they are.
+- **kind:** docs
+- **found:** 2026-11-20
 
 ### K95 · Under Metal.jl 1.12, `factorize!!` never reaches the negative-status branches of `_mps_lu_finish!`, and a non-singular MPS failure throws instead of giving `info = 1`
 
@@ -628,4 +609,36 @@
   on the branch `device-run/rocm-rx7900xtx`, and their output is in
   `results/rocmext-rx7900xtx/` on the branch `results/rx7900xtx`.
 - **kind:** upstream
+- **found:** #96 (upstream issue https://github.com/ROCm/rocSOLVER/issues/1050)
+
+### K97 · The ROCm QR solve of an `m × n` factor with `m ≥ max(32768, 8n)` rows takes AMDGPU's own blocked `ormqr!`, which no device row reaches
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:65` (`backsolve!` for `DeviceQR`)
+- **evidence:** the extension applies Qᴴ with `AMDGPU.rocSOLVER.ormqr!('L', 'T'/'C', factors, τ, d)`.
+  In AMDGPU 2.12.0 that wrapper calls `ormqr_blocked!`, AMDGPU's own blocked compact-WY
+  implementation, in place of rocSOLVER's `ormqr` where `prefer_blocked(mA, k)` holds
+  (`src/solver/highlevel.jl:132`, `prefer_blocked(m, k) = m >= max(2^15, 8k)`, read at
+  `src/solver/highlevel.jl:318`). The device rows of `test/gpu/rocm/runtests.jl` stop at the square
+  `n = 10⁴` and at `m = 40` for an `m × n` factor, so a least-squares Jacobian with
+  `m ≥ max(32768, 8n)` rows solves through a path of the dependency that no test runs on a device.
+  A device row at, for example, `40000 × 7` would reach it.
+- **kind:** not verified
+- **found:** #96
+
+### K98 · A `SubArray` right-hand side of a ROCm `DeviceQR` solve falls to the own kernel, which reads the LAPACK `τ` as its conjugate
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:59–81` (`backsolve!` and `backsolve_shifted!` for
+  `DeviceQR`)
+- **evidence:** both extension methods take `d::ROCVector{T}`. A contiguous view, such as
+  `view(x, 1:k)` or `view(A, :, j)`, is itself a `ROCVector` (GPUArrays 12.2.0,
+  `src/host/base.jl:362`) and reaches them, but a `SubArray`, such as `view(x, 1:2:k)` or
+  `view(A, i, :)`, matches neither, and the solve dispatches to the own-kernel `backsolve!` and
+  `backsolve_shifted!` (`src/linear/ka/qr.jl`). The factor of the extension comes from
+  `rocSOLVER.geqrf!`, with the LAPACK `τ`, and the own kernel applies it with `conj.(τ)` (the
+  mechanism of K91), so the solution is wrong for complex `T` at every shape. The call sites of
+  `ldiv!!` in `src/` (`grep -rn "ldiv!!(" src/`) pass no view to a `DeviceQR` solve; the implicit
+  tangent, for example, passes a right-hand side that `similar` allocates
+  (`src/nonlinear/implicit.jl:340`). So no solver path reaches it; a caller that calls `ldiv!!`
+  or `backsolve!` with a `SubArray` does.
+- **kind:** found late
 - **found:** #96
