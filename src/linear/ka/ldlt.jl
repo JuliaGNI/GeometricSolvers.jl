@@ -227,22 +227,6 @@ end
     end
 end
 
-@kernel function ka_ldlt_factor_serial_kernel!(A, ipiv, status, n::Int)
-    idx = @index(Global, Linear)
-    @inbounds if idx == 1
-        if !ka_ldlt_all_finite(A, n)
-            for k in 1:n
-                ipiv[k] = Int32(k)
-            end
-            status[1] = Int32(1)
-        else
-            herm = is_hermitian_matrix(A)
-            info = generic_ldlt!(A, ipiv, herm)
-            status[1] = herm ? info : -(info + Int32(1))
-        end
-    end
-end
-
 @kernel function ka_ldlt_backsolve_kernel!(
         d, @Const(A), @Const(ipiv), n::Int, herm::Bool, ::Val{G}) where {G}
     tid = @index(Local, Linear)
@@ -380,26 +364,14 @@ end
     end
 end
 
-@kernel function ka_ldlt_backsolve_serial_kernel!(
-        d, @Const(A), @Const(ipiv), n::Int, herm::Bool)
-    idx = @index(Global, Linear)
-    @inbounds if idx == 1
-        generic_ldlt_backsolve!(A, ipiv, d, herm)
-    end
-end
-
 function ka_ldlt!(A::AbstractGPUArray, ipiv::AbstractVector{Int32},
         status::AbstractVector{Int32})
     n = size(A, 1)
     n == 0 && return 0, true
     backend = get_backend(A)
     fill!(status, Int32(0))
-    if isgpu(backend) || n <= KA_LDLT_WORKGROUP
-        ka_ldlt_factor_kernel!(backend, KA_LDLT_WORKGROUP)(
-            A, ipiv, status, n, Val(KA_LDLT_WORKGROUP); ndrange = KA_LDLT_WORKGROUP)
-    else
-        ka_ldlt_factor_serial_kernel!(backend, 1)(A, ipiv, status, n; ndrange = 1)
-    end
+    ka_ldlt_factor_kernel!(backend, KA_LDLT_WORKGROUP)(
+        A, ipiv, status, n, Val(KA_LDLT_WORKGROUP); ndrange = KA_LDLT_WORKGROUP)
     isgpu(backend) && synchronize(backend)
     raw = Int(Array(status)[1])
     if raw >= 0
@@ -424,12 +396,8 @@ function ka_ldlt_backsolve!(A::AbstractGPUArray, ipiv::AbstractVector{Int32},
     n = length(d)
     n == 0 && return d
     backend = get_backend(A)
-    if isgpu(backend) || n <= KA_LDLT_WORKGROUP
-        ka_ldlt_backsolve_kernel!(backend, KA_LDLT_WORKGROUP)(
-            d, A, ipiv, n, herm, Val(KA_LDLT_WORKGROUP); ndrange = KA_LDLT_WORKGROUP)
-    else
-        ka_ldlt_backsolve_serial_kernel!(backend, 1)(d, A, ipiv, n, herm; ndrange = 1)
-    end
+    ka_ldlt_backsolve_kernel!(backend, KA_LDLT_WORKGROUP)(
+        d, A, ipiv, n, herm, Val(KA_LDLT_WORKGROUP); ndrange = KA_LDLT_WORKGROUP)
     isgpu(backend) && synchronize(backend)
     return d
 end

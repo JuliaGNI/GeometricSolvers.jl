@@ -11,6 +11,12 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **The `KernelAbstractions` LDLᵀ path has no serial kernels.** `ka_ldlt_factor_serial_kernel!`
+  and `ka_ldlt_backsolve_serial_kernel!` are removed: `ka_ldlt!` and `ka_ldlt_backsolve!` take an
+  `AbstractGPUArray`, whose backend is never `CPU`, so the workgroup kernel ran at every `n` and the
+  serial branch was unreachable. The factorisation and the solve are unchanged. The comment of the
+  zero-diagonal sweep in `test/linear/ldlt.jl` now says that the workgroup kernel runs at every `n`.
+
 - **The package extension `GeometricSolversAMDGPUExt` factorises dense LU and QR with rocSOLVER on
   ROCm.** When `AMDGPU` is loaded, `factorize!!` and `backsolve!` for `DeviceLU` and `DeviceQR` on
   `ROCMatrix{T}`, `T <: LinearAlgebra.BlasFloat`, call `AMDGPU.rocSOLVER.getrf!` (`info` the first
