@@ -312,10 +312,14 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
         @test isapprox(rtol_solve(route, fac, A * R[1, 2, 3]), truncated_step(R, r);
             rtol = 8 * eps(R))
     end
-    # the sweep keeps its own tolerance: with rtol = 0 as its tolerance it would not end
-    @testset "I + Hilbert(4), rtol = 0, $T, $route" for T in ELTYPES, route in RTOL_ROUTES
-
-        fac = rtol_factor(route, SVDFactorization(; rtol = 0), full_rank(T, 4))
+    # the sweep keeps its own tolerance: with rtol = 0 as its tolerance it would not end; the
+    # `6 × 4` matrix stacks two rows of `I + Hilbert(4)` below it and takes the rectangular SVD
+    @testset "I + Hilbert(4), rtol = 0, $T, $(mr) × 4, $route" for T in ELTYPES,
+        mr in (4, 6),
+        route in RTOL_ROUTES
+        A = full_rank(T, 4)
+        A = mr == 4 ? A : vcat(A, A[1:2, :])
+        fac = rtol_factor(route, SVDFactorization(; rtol = 0), A)
         @test fac.info == 0
         @test fac.rank == 4
     end
