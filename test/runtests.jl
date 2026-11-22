@@ -66,6 +66,7 @@ const TESTS = [
         "Multiplicative combinator" => "composition/multiplicative.jl",
         "Repeat combinator" => "composition/repeat.jl",
         "Switch combinator" => "composition/switch.jl",
+        "Fallback combinator" => "composition/fallback.jl",
         "Anderson acceleration" => "composition/anderson.jl",
         "Combinators refuse ForwardDiff.Dual inputs" => "composition/implicit.jl",
         "Left preconditioning and RAS" => "composition/preconditioning.jl"

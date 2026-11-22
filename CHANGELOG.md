@@ -880,6 +880,25 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`Fallback(m₁, m₂, ...)` (exported) runs the whole solve of each member in turn and stops at
+  the first `SUCCESS`.** Each member runs its own `solve!!` from `x₀`, with the full `Options` and
+  its own state; an array `x₀` is kept in the state and copied back before each later member, so a
+  member's result is that of its solve alone from `x₀`. Every code but `SUCCESS` moves on, and a
+  member's exception is not caught. The status is the succeeding member's, else the last
+  member's, with `iterations` and `step_failures` summed (saturated at `typemax(Int32)`),
+  `promoted` or-ed and the call counts `0`; the unexported `GeometricSolvers.fallback_member`
+  reads the index of that member from the returned state. `Fallback()` raises an `ArgumentError`.
+  `Fallback` joins the combinators that refuse a `ForwardDiff.Dual` input in `solve` and a
+  `LeastSquaresProblem` in `init_state`, and its `solve!!` takes the problems of a combinator
+  state, so it is not ambiguous with the one-variable `LeastSquaresProblem` method. With
+  `isbits` members it is `isbits`, and its R1 state too. The standard test set gains the column
+  `"Fallback Newton DogLeg LevenbergMarquardt"`, the `Fallback` of the methods of the columns
+  `"Newton Static LU"`, `"Newton DogLeg LU"` and `"Newton LevenbergMarquardt SVD"`: 134 cells, so
+  `test/verification/standard_reference.csv` holds 1876. It returns `SUCCESS` on 66 of 67 starts
+  in `Float32` and 61 of 67 in `Float64`, on every start where one of its members does, and
+  throws on none; 15 of its cells are flagged `unstable`. No other cell changes. A `MAXITERS`
+  cell of the column counts the iterations of every member, up to 600.
+
 - **A manual page on the methods of each regime (`docs/src/guide.md`, "Methods by regime").** For
   R1, R2, R3 and the matrix-free R5, it lists the exported methods that run there and the
   conditions under which each one applies, and names no method above another. Each regime has one

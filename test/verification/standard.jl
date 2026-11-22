@@ -187,6 +187,14 @@ end
     @test perturbed_direction(gmres, 1) === nothing
     @test length(perturbed_runs(
         sp, "u0", sp.u0(Float64), "Newton Backtracking GMRES", gmres)) == 16
+    # a fallback perturbs the direction of each member that has one
+    fb = Fallback(Newton(), gmres, Picard(; globalization = Backtracking()))
+    fbp = perturbed_direction(fb, 1)
+    @test fbp.members[1].refinement isa PerturbedDirection
+    @test fbp.members[2] === gmres && fbp.members[3] === fb.members[3]
+    @test perturbed_direction(Fallback(gmres, picard), 1) === nothing
+    @test length(perturbed_runs(sp, "u0", sp.u0(Float64), first(last(STANDARD_COLUMNS)),
+        last(last(STANDARD_COLUMNS)))) == 20
 end
 
 @testset "The rule of the marker" begin
@@ -317,11 +325,39 @@ end
 @testset "The reference" begin
     cells, iterates = run_standard_cells()
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
-    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1742
+    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1876
     @test all(c -> c.code in codes, cells)
-    # Every cell runs with max_iterations = 200.
+    # Every cell runs with max_iterations = 200. A fallback cell sums the iterations of its
+    # members, each of which runs with that cap.
     @test any(c -> c.code == "MAXITERS", cells)
-    @test all(c -> c.code != "MAXITERS" || c.iterations == 200, cells)
+    fallback = first(last(STANDARD_COLUMNS))
+    @test all(c -> c.code != "MAXITERS" || c.iterations == 200,
+        filter(c -> c.column != fallback, cells))
+    @test all(c -> c.code != "MAXITERS" || c.iterations >= 200,
+        filter(c -> c.column == fallback, cells))
+
+    # The fallback succeeds on every row on which one of its members succeeds from the same
+    # start: the list of exceptions is empty, and no fallback cell throws.
+    @test last(last(STANDARD_COLUMNS)).members ===
+          map(col -> Dict(STANDARD_COLUMNS)[col], FALLBACK_MEMBER_COLUMNS)
+    bykey = Dict(cell_key(c) => c for c in cells)
+    rows = unique((c.problem, c.start, c.eltype) for c in cells)
+    exceptions = filter(rows) do (problem, start, T)
+        any(col -> bykey[(problem, start, col, T)].code == "SUCCESS", FALLBACK_MEMBER_COLUMNS) &&
+            bykey[(problem, start, fallback, T)].code != "SUCCESS"
+    end
+    @test isempty(exceptions)
+    @test !any(c -> c.column == fallback && c.code == "ERROR", cells)
+    union_counts = map(string.(REAL_ELTYPES)) do T
+        count(rows) do (problem, start, T′)
+            T′ == T && any(col -> bykey[(problem, start, col, T)].code == "SUCCESS",
+                FALLBACK_MEMBER_COLUMNS)
+        end
+    end
+    fallback_counts = map(string.(REAL_ELTYPES)) do T
+        count(c -> (c.column, c.eltype, c.code) == (fallback, T, "SUCCESS"), cells)
+    end
+    @test fallback_counts == union_counts
 
     reference = read_table(STANDARD_REFERENCE)
     differences = compare_tables(reference, cells)
