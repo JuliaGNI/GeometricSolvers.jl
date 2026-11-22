@@ -76,7 +76,24 @@ symmetric mismatch `|A[i, j] - A[j, i]|`, and as the complex symmetric `L D Lᵀ
 """
 struct LDLTFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
-for M in (:LUFactorization, :QRFactorization, :SVDFactorization, :LDLTFactorization)
+"""
+    CholeskyFactorization()
+    CholeskyFactorization(TF)
+
+Cholesky factorisation `L Lᴴ` without pivoting, for a Hermitian (real symmetric) positive definite
+matrix, with the factorisation precision of [`LUFactorization`](@ref). It reads the lower triangle
+and the real part of the diagonal, and does not check that the matrix is Hermitian. A matrix that
+is not positive definite in the factorisation precision gives `info = k`, the order of its first
+leading minor that is not positive, and `SINGULAR`, without throwing; a non-finite entry anywhere
+in the matrix gives `info = 1`. A host `Array` iterate factorises with LAPACK `potrf` for a
+`LinearAlgebra.BlasFloat` element type and with a generic loop for the others; a static iterate
+always takes the generic loop. A device array iterate raises an `ArgumentError`, because the
+factorisation has no device factor.
+"""
+struct CholeskyFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
+
+for M in (:LUFactorization, :QRFactorization, :SVDFactorization, :LDLTFactorization,
+    :CholeskyFactorization)
     @eval begin
         $M() = $M{Nothing}()
         $M(::Type{TF}) where {TF <: AbstractFloat} = $M{TF}()

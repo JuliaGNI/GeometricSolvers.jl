@@ -30,6 +30,7 @@ gives others (see [Nonlinear methods](@ref nonlinear)).
 |:--|:--|
 | [`Newton`](@ref) with [`LUFactorization`](@ref) | a square Jacobian |
 | [`Newton`](@ref) with [`LDLTFactorization`](@ref) | a symmetric or Hermitian Jacobian; a real Jacobian is read from the lower triangle only, a complex one must be given in full, because both triangles decide between ``L D L^\mathsf{T}`` and ``L D L^\mathsf{H}`` |
+| [`Newton`](@ref) with [`CholeskyFactorization`](@ref) | a Hermitian (real symmetric) positive definite Jacobian at every iterate, read from the lower triangle; a Jacobian that is not positive definite gives `SINGULAR`; in R3 a host `Array` only, a device array raises an `ArgumentError` |
 | [`Newton`](@ref) with [`QRFactorization`](@ref) | a square Jacobian, or a [`LeastSquaresProblem`](@ref) |
 | [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian, or a [`LeastSquaresProblem`](@ref); the status reports the numerical rank |
 | [`Newton`](@ref) with `regularization = μ` | a singular or nearly singular Jacobian, where the step of ``J + \mu I`` is acceptable |

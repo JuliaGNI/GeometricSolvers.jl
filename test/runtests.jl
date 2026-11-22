@@ -15,6 +15,7 @@ const TESTS = [
         "Static rectangular SVD" => "linear/static/svd_rect.jl",
         "Jacobi eigensolver" => "linear/static/eigen.jl",
         "LDLT factorisation" => "linear/ldlt.jl",
+        "Cholesky factorisation" => "linear/cholesky.jl",
         "Dense linear solvers" => "linear/dense.jl",
         "KA dense linear solvers" => "linear/ka.jl",
         "Own-kernel reference solve" => "devices/own_kernel.jl",

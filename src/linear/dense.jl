@@ -1,6 +1,7 @@
 # Dense CPU linear factorisations (R3): LAPACK (`LAPACK.getrf!`, `geqrf!`, `lapack_gesvd`,
-# `sytrf!`, `sytrs!`, `hetrf!`, `hetrs!`) for `StridedMatrix{<:BlasFloat}` with held workspace
-# buffers, and `LinearAlgebra`'s generic `lu!` and `qr!` (or `generic_ldlt!` of `static/ldlt.jl`)
+# `sytrf!`, `sytrs!`, `hetrf!`, `hetrs!`, `LAPACK.potrf!`, `LAPACK.potrs!`) for
+# `StridedMatrix{<:BlasFloat}` with held workspace buffers, and `LinearAlgebra`'s generic `lu!` and
+# `qr!` (or `generic_ldlt!` of `static/ldlt.jl` and `generic_cholesky!` of `static/cholesky.jl`)
 # for any other `AbstractMatrix`. `geqrf!`, `lapack_gesvd`, `sytrf!` and `hetrf!` take
 # `lwork = -1` for a workspace query, which writes the optimal size into `work[1]` and factorises
 # nothing.
@@ -201,7 +202,7 @@ function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix) where {F}
 end
 
 const DenseFactor{A} = Union{
-    DenseLU{A}, DenseQR{A}, DenseSVD{A}, DenseLDLT{A},
+    DenseLU{A}, DenseQR{A}, DenseSVD{A}, DenseLDLT{A}, DenseCholesky{A},
     DeviceLU{A}, DeviceQR{A}, DeviceSVD{A}, DeviceLDLT{A}}
 
 # The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve_shifted!`
@@ -491,5 +492,38 @@ function backsolve!(
         fac::DenseLDLT{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <: Number}
     isempty(d) && return d
     generic_ldlt_backsolve!(fac.factors, fac.ipiv, d, fac.hermitian)
+    return d
+end
+
+# --- DenseCholesky ---
+
+# A non-finite entry is refused before `potrf`, which reads the lower triangle only and returns
+# `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8). `potrf` leaves the upper triangle
+# as it was, and it is zeroed so that `factors` holds `L` alone, as `generic_cholesky!` leaves it.
+function factorize!!(fac::DenseCholesky{<:StridedMatrix{<:BlasFloat}},
+        ::CholeskyFactorization, J::AbstractMatrix)
+    e = load_factors!(fac.factors, J)
+    all(isfinite, fac.factors) || return DenseCholesky(fac.factors, fac.rhs, 1, e)
+    _, info = LAPACK.potrf!('L', fac.factors)
+    zero_strict_upper!(fac.factors)
+    return DenseCholesky(fac.factors, fac.rhs, Int(info), e)
+end
+
+function factorize!!(
+        fac::DenseCholesky{<:AbstractMatrix}, ::CholeskyFactorization, J::AbstractMatrix)
+    e = load_factors!(fac.factors, J)
+    info = Int(generic_cholesky!(fac.factors))
+    return DenseCholesky(fac.factors, fac.rhs, info, e)
+end
+
+function backsolve!(
+        fac::DenseCholesky{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <: BlasFloat}
+    LAPACK.potrs!('L', fac.factors, d)
+    return d
+end
+
+function backsolve!(
+        fac::DenseCholesky{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <: Number}
+    generic_cholesky_backsolve!(fac.factors, d)
     return d
 end

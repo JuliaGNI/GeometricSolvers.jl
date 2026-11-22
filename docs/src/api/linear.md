@@ -11,6 +11,7 @@ vendor tensor-core path. These names are exported.
 ```@docs
 LUFactorization
 LDLTFactorization
+CholeskyFactorization
 QRFactorization
 SVDFactorization
 TF32
@@ -24,20 +25,22 @@ A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense
 [`factorize!!`](@ref) and [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and
 [`ldiv!!`](@ref) return new `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU
 with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufman `L D Lᵀ` /
-`L D Lᴴ` with `1×1` and `2×2` diagonal blocks, [`StaticQR`](@ref) and [`StaticRectQR`](@ref) are
+`L D Lᴴ` with `1×1` and `2×2` diagonal blocks, [`StaticCholesky`](@ref) is Cholesky `L Lᴴ`
+without pivoting, [`StaticQR`](@ref) and [`StaticRectQR`](@ref) are
 Householder QR without column pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a
 one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
 `√n · eps(TF) · σ₁` for a square matrix and `√m · eps(TF) · σ₁` for a rectangular one, `m` its row
 count, which is what makes a rank-revealing solve finite. For a vector state (R3) with no sparse
 pattern (`jacobian_pattern(prob, jacprep) === nothing`),
-[`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
-[`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref),
-[`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an `AbstractGPUArray`, and [`factorize!!`](@ref) and
-[`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host, and on a device through
-the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on `MtlMatrix{Float32}` and
-`MtlVector{Float32}`, with every MPS failure status reported as a singular factor) and
-`GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS
-`trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
+[`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref),
+[`DenseCholesky`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a host `Array` and
+[`DeviceLU`](@ref), [`DeviceLDLT`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
+`AbstractGPUArray`, where a [`CholeskyFactorization`](@ref) raises an `ArgumentError`, and
+[`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host,
+and on a device through the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on
+`MtlMatrix{Float32}` and `MtlVector{Float32}`, with every MPS failure status reported as a singular
+factor) and `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with
+cuBLAS `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
 LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge)
 package extensions where available and through `KernelAbstractions` otherwise. When `Sparspak` is
 loaded and [`jacobian_pattern`](@ref) is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
@@ -71,6 +74,7 @@ ldiv!!
 factor_eltype
 StaticLU
 StaticLDLT
+StaticCholesky
 StaticQR
 StaticRectQR
 StaticSVD
@@ -79,6 +83,7 @@ DenseLU
 DeviceLU
 DenseLDLT
 DeviceLDLT
+DenseCholesky
 DenseQR
 DeviceQR
 DenseSVD

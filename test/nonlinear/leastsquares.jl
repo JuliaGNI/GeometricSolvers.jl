@@ -197,6 +197,18 @@ end
     @test norm(x_ldlt) <= 10 * sqrt(eps(T))
     @test init(p3, ones(T, 2), lm_ldlt) isa NonlinearSolver
 
+    # CholeskyFactorization is rejected and taken as LDLTFactorization is
+    chol_refused = r"^ArgumentError: LeastSquaresProblem does not support CholeskyFactorization"
+    @test_throws chol_refused solve(p1, x0_s, Newton(; linsolve = CholeskyFactorization()))
+    @test_throws chol_refused init(p3, ones(T, 2), Newton(;
+        linsolve = CholeskyFactorization()))
+    lm_chol = Newton(; linsolve = CholeskyFactorization(),
+        globalization = LevenbergMarquardt(T))
+    x_chol, st_chol = solve(p1, x0_s, lm_chol)
+    @test isconverged(st_chol)
+    @test norm(x_chol) <= 10 * sqrt(eps(T))
+    @test init(p3, ones(T, 2), lm_chol) isa NonlinearSolver
+
     # A factor in a lower precision than the iterate is rejected on m > n residuals, where the
     # Gauss–Newton fixed point of the perturbed factor is not the least-squares point; a square
     # problem and the stacked LevenbergMarquardt step, which reads no factor, take it

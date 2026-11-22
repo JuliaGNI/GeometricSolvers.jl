@@ -3,8 +3,9 @@
 # `factorize!!` and `ldiv!!` follow the `!!` convention of `bang.jl`: the first argument is a
 # buffer where the storage has one and `nothing` where it does not, and the caller always uses
 # the returned value. R1 has no buffer: its factors are `isbits` values, returned new. R3 holds
-# its Jacobian and workspace buffers in `DenseLU`, `DenseQR`, `DenseSVD` and `DenseLDLT` on the
-# host and in `DeviceLU`, `DeviceQR`, `DeviceSVD` and `DeviceLDLT` on a device.
+# its Jacobian and workspace buffers in `DenseLU`, `DenseQR`, `DenseSVD`, `DenseLDLT` and
+# `DenseCholesky` on the host and in `DeviceLU`, `DeviceQR`, `DeviceSVD` and `DeviceLDLT` on a
+# device.
 
 """
     factorize!!(fac, method, J)
@@ -12,17 +13,18 @@
 Factorise the matrix `J` with the linear-solver method `method` and return the factors.
 
 For a static matrix (R1), `fac` is `nothing` or an earlier factor of the same type, whose value
-is not used, and the result is a new [`StaticLU`](@ref), [`StaticQR`](@ref), [`StaticSVD`](@ref)
-or [`StaticLDLT`](@ref) for a square `J`, and a [`StaticRectQR`](@ref) or [`StaticRectSVD`](@ref)
-for the QR or SVD of an `M × N` matrix with `M > N` (the LU and the LDLᵀ have no rectangular
-method). `J` is converted to the element type of the factors,
-[`factor_eltype`](@ref). Where that is not the element type of `J`, `J` is first divided by the
-power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
+is not used, and the result is a new [`StaticLU`](@ref), [`StaticQR`](@ref), [`StaticSVD`](@ref),
+[`StaticLDLT`](@ref) or [`StaticCholesky`](@ref) for a square `J`, and a [`StaticRectQR`](@ref) or
+[`StaticRectSVD`](@ref) for the QR or SVD of an `M × N` matrix with `M > N` (the LU, the LDLᵀ and
+the Cholesky factorisation have no rectangular method). `J` is converted to the element type of the
+factors, [`factor_eltype`](@ref). Where that is not the element type of `J`, `J` is first divided
+by the power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
 exponent range allows, and `e` is kept in the factor, so that the overall scale of `J` neither
 overflows nor underflows in the factor type. A zero or non-finite `J` gives `e = 0`. A singular
 `J` does not throw. LU
 records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, LDLᵀ the first
-zero pivot block (or `1` for a non-finite entry), and
+zero pivot block (or `1` for a non-finite entry), Cholesky the order of the first leading minor
+that is not positive (or `1` for a non-finite entry), and
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 The SVD records its numerical rank in `rank`, the number of singular values above the cutoff
@@ -32,10 +34,10 @@ only where the sweep did not converge or a singular value is not finite, and `ra
 SVD is prescaled at the working precision too, because the sweep squares the entries.
 
 For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref),
-[`DenseSVD`](@ref), [`DenseLDLT`](@ref), [`DeviceLU`](@ref), [`DeviceQR`](@ref),
-[`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref)
-built by [`init_linear`](@ref). `J` is written into `fac.factors`, divided by `2^e` as for a static
-matrix where its element type is not that of `fac.factors`, and `fac.factors` is factorised in
+[`DenseSVD`](@ref), [`DenseLDLT`](@ref), [`DenseCholesky`](@ref), [`DeviceLU`](@ref),
+[`DeviceQR`](@ref), [`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref) built by [`init_linear`](@ref).
+`J` is written into `fac.factors`, divided by `2^e` as for a static matrix where its element type
+is not that of `fac.factors`, and `fac.factors` is factorised in
 place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
 divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors` on the host before
 `gesvd`, and into `fac.U` on a device before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
@@ -43,8 +45,9 @@ divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors
 leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
 singular value of `J / 2^e` is not finite; for [`DeviceSVD`](@ref) it is `1` where the Jacobi
 sweep reaches its sweep cap without converging or meets a non-finite entry; `rank` is the
-numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD and LDLᵀ
-then report `SINGULAR`, and the step that the LU or QR factors give is not specified.
+numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; the SVD, LDLᵀ and
+Cholesky factors then report `SINGULAR`, and the step that the LU or QR factors give is not
+specified.
 
 For a sparse factor (R3), which an extension builds in [`init_linear`](@ref) from a
 `SparseMatrixCSC` `jacobian_prototype`, `J` must have the sparsity pattern of that prototype, or
@@ -379,6 +382,41 @@ struct DeviceLDLT{A <: AbstractMatrix, P <: AbstractVector{Int32},
 end
 
 """
+    StaticCholesky{N, TF, L}
+
+The Cholesky factor `L` of `A = L Lᴴ` for an `N × N` static Hermitian positive definite matrix, in
+element type `TF`: `factors` holds `L`, with a real positive diagonal, on and below the diagonal
+and zeros above it, `info` is the order of the first leading minor that is not positive or `1`
+for a non-finite matrix, or `0`, and `scale_exponent` is the exponent `e` of the power of two `2^e`
+that the matrix was divided by. A non-finite matrix is not factorised, and `factors` then holds it
+as it was converted. `L = N * N` makes the `SMatrix` field concrete, so the factor is `isbits`.
+"""
+struct StaticCholesky{N, TF, L}
+    factors::SMatrix{N, N, TF, L}
+    info::Int32
+    scale_exponent::Int32
+end
+
+"""
+    DenseCholesky{A, V}
+
+The Cholesky factor `L` of `A = L Lᴴ` for a dense `n × n` host Hermitian positive definite
+matrix, with `factors` the `n × n` buffer in the factor element type, which holds `L` on and below
+the diagonal and zeros above it, `rhs` the right-hand-side buffer of the factor element type when
+that differs from the working element type and `nothing` otherwise, `info` the order of the first
+leading minor that is not positive or `1` for a non-finite entry, or `0`, and `scale_exponent` the
+exponent `e` of the power of two `2^e` that the matrix was divided by. A non-finite matrix is not
+factorised, and `factors` then holds it as it was loaded. A `BlasFloat` matrix is factorised by
+LAPACK `potrf`, another element type by `generic_cholesky!`.
+"""
+struct DenseCholesky{A <: AbstractMatrix, V <: Union{Nothing, AbstractVector}}
+    factors::A
+    rhs::V
+    info::Int
+    scale_exponent::Int
+end
+
+"""
     dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
 Build the linear factor for `method` on `x` using `jacobian_prototype(prob)`, with the rows of
@@ -398,9 +436,11 @@ end
     init_linear(method::LinearMethod, pattern, x::AbstractVector)
 
 Build the linear factor for `method` on `x`: the dense host factor [`DenseLU`](@ref),
-[`DenseQR`](@ref), [`DenseSVD`](@ref) or [`DenseLDLT`](@ref) or device factor [`DeviceLU`](@ref),
-[`DeviceQR`](@ref), [`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref) when `pattern === nothing`, or an
-extension's sparse factor when `pattern` is a sparse matrix prototype.
+[`DenseQR`](@ref), [`DenseSVD`](@ref), [`DenseLDLT`](@ref) or [`DenseCholesky`](@ref) or device
+factor [`DeviceLU`](@ref), [`DeviceQR`](@ref), [`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref) when
+`pattern === nothing`, or an extension's sparse factor when `pattern` is a sparse matrix
+prototype. A [`CholeskyFactorization`](@ref) has no device factor and raises an `ArgumentError` on
+a device array.
 """
 function init_linear(m::LUFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
                                                                                  Number}
@@ -500,13 +540,29 @@ function init_linear(
     return DeviceLDLT(factors, ipiv, rhs, 0, 0, status, true)
 end
 
-const AnyStaticFactor = Union{StaticLU, StaticQR, StaticSVD, StaticLDLT}
-const AnyDenseFactor = Union{DenseLU, DenseQR, DenseSVD, DenseLDLT}
+function init_linear(
+        m::CholeskyFactorization, ::Nothing, x::AbstractVector{T}) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    return DenseCholesky(factors, rhs, 0, 0)
+end
+
+function init_linear(
+        ::CholeskyFactorization, ::Nothing, ::AbstractGPUArray{T, 1}) where {T <: Number}
+    throw(ArgumentError(
+        "CholeskyFactorization has no device factor: solve on an Array, or take " *
+        "LDLTFactorization() on a device array"))
+end
+
+const AnyStaticFactor = Union{StaticLU, StaticQR, StaticSVD, StaticLDLT, StaticCholesky}
+const AnyDenseFactor = Union{DenseLU, DenseQR, DenseSVD, DenseLDLT, DenseCholesky}
 const AnyDeviceFactor = Union{DeviceLU, DeviceQR, DeviceSVD, DeviceLDLT}
 const AnyFactor = Union{AnyStaticFactor, AnyDenseFactor, AnyDeviceFactor}
 
-const ExactStaticFactor = Union{StaticLU, StaticQR, StaticLDLT}
-const ExactDenseFactor = Union{DenseLU, DenseQR, DenseLDLT}
+const ExactStaticFactor = Union{StaticLU, StaticQR, StaticLDLT, StaticCholesky}
+const ExactDenseFactor = Union{DenseLU, DenseQR, DenseLDLT, DenseCholesky}
 const ExactDeviceFactor = Union{DeviceLU, DeviceQR, DeviceLDLT}
 const ExactFactor = Union{ExactStaticFactor, ExactDenseFactor, ExactDeviceFactor}
 
@@ -519,15 +575,17 @@ the three-argument method for `m_rows === nothing`, and for an `Int` the rectang
 [`DenseSVD`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) with a right-hand side buffer of
 `m_rows` entries, because its solve reads `m_rows` residual entries and writes `length(x)` step
 entries. Whether `m_rows` is an `Int` decides the buffer, so a factor's type is inferred from its
-call. `LUFactorization` and `LDLTFactorization` take the square factor whatever `m_rows` is: they
-factorise no rectangular matrix, and `LevenbergMarquardt`, the one globalization that takes them
-on a least-squares problem, solves its own stacked system and never factorises that factor.
+call. `LUFactorization`, `LDLTFactorization` and `CholeskyFactorization` take the square factor
+whatever `m_rows` is: they factorise no rectangular matrix, and `LevenbergMarquardt`, the one
+globalization that takes them on a least-squares problem, solves its own stacked system and never
+factorises that factor.
 """
 function init_linear(m::LinearMethod, pattern, x::AbstractVector, ::Nothing)
     init_linear(m, pattern, x)
 end
 function init_linear(
-        m::Union{LUFactorization, LDLTFactorization}, pattern, x::AbstractVector, ::Int)
+        m::Union{LUFactorization, LDLTFactorization, CholeskyFactorization}, pattern,
+        x::AbstractVector, ::Int)
     init_linear(m, pattern, x)
 end
 
@@ -756,7 +814,8 @@ backsolve_shifted(fac, r) = (backsolve(fac, r), 0)
 
 const StaticLUQR{N, TF} = Union{StaticLU{N, TF}, StaticQR{N, TF}}
 const StaticSVDLDLT{N, TF} = Union{StaticSVD{N, TF}, StaticLDLT{N, TF}}
-const StaticFac{N, TF} = Union{StaticLUQR{N, TF}, StaticSVDLDLT{N, TF}}
+const StaticFac{N, TF} = Union{
+    StaticLUQR{N, TF}, StaticSVDLDLT{N, TF}, StaticCholesky{N, TF}}
 
 function ldiv!!(::Nothing, fac::StaticFac{N, TF}, r::StaticVector{N, TF}) where {N, TF}
     k = rhs_exponent(r)
