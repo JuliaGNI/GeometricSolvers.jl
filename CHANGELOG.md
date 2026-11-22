@@ -897,7 +897,10 @@ so that a compat-only bump can be told apart from an interface change.
   `test/verification/standard_reference.csv` holds 1876. It returns `SUCCESS` on 66 of 67 starts
   in `Float32` and 61 of 67 in `Float64`, on every start where one of its members does, and
   throws on none; 15 of its cells are flagged `unstable`. No other cell changes. A `MAXITERS`
-  cell of the column counts the iterations of every member, up to 600.
+  cell of the column counts the iterations of every member, up to 600. In `benchmark/`, the
+  pairing table gives the column no method of SimpleSolvers, SimpleNonlinearSolve or NLsolve
+  ("no whole-solve fallback"), and `benchmark/REPORT.md` and `benchmark/results/` stay the record
+  of their 13-column run.
 
 - **A manual page on the methods of each regime (`docs/src/guide.md`, "Methods by regime").** For
   R1, R2, R3 and the matrix-free R5, it lists the exported methods that run there and the

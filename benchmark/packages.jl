@@ -33,7 +33,7 @@ end
 """
     STANDARD_COLUMNS
 
-The thirteen columns of `test/helpers/standard_cells.jl`, each a name and a method of
+The columns of `test/helpers/standard_cells.jl`, each a name and a method of
 GeometricSolvers, in the order of that file.
 """
 const STANDARD_COLUMNS = standard_constant(:STANDARD_COLUMNS)
@@ -332,12 +332,18 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
         gs_entry("LeftPreconditioned Picard Backtracking Newton"),
         NoMethod("no nonlinear preconditioning"),
         NoMethod("no nonlinear preconditioning"),
-        NoMethod("no nonlinear preconditioning"))
+        NoMethod("no nonlinear preconditioning")),
+    "Fallback Newton DogLeg LevenbergMarquardt" => (
+        gs_entry("Fallback Newton DogLeg LevenbergMarquardt"),
+        NoMethod("no whole-solve fallback"),
+        NoMethod("no whole-solve fallback"),
+        NoMethod("no whole-solve fallback"))
 )
 
 # The nine `Newton` columns with a factorisation take the shared Jacobian. `Picard`, its
-# compositions and Newton–GMRES read `prob.J` whenever the problem has one, so they get a problem
-# without it and keep their own Jacobian source. An `Anderson` takes it where its member does.
+# compositions, Newton–GMRES and `Fallback` read `prob.J` whenever the problem has one, so they
+# get a problem without it and keep their own Jacobian source. An `Anderson` takes it where its
+# member does.
 gs_takes_jacobian(m) = m isa GS.Newton && !(m.linsolve isa GS.GMRES)
 gs_takes_jacobian(a::GS.Anderson) = gs_takes_jacobian(a.member)
 
