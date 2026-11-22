@@ -9,7 +9,7 @@ using SparseArrays: SparseArrays, SparseMatrixCSC, nonzeros, nzrange, rowvals, s
 const SparseProblemEltype = Union{AbstractFloat, Complex{<:AbstractFloat}}
 
 # A complex `T` draws one more number per entry, its imaginary part, after the real one, so that
-# the real parts and the real problems keep the draws of the seed.
+# the real problems keep the draws of the seed.
 function _sparse_circband_entries!(
         I::Vector{Int},
         J::Vector{Int},

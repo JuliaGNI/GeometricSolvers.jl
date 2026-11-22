@@ -642,3 +642,16 @@
   or `backsolve!` with a `SubArray` does.
 - **kind:** found late
 - **found:** #96
+
+### K99 · The CUDA rows that assert one cuDSS analysis per solver read the extension's own counter, not a count that cuDSS reports
+
+- **location:** `ext/GeometricSolversCUDSSExt.jl:76–80` (`factorize!!` for `CUDSSLU`)
+- **evidence:** `test/gpu/cuda/runtests.jl:584`, `:597` and `:617` assert `fac.analyses == 1`.
+  `factorize!!` increments `analyses` in the branch that calls `cudss("analysis", …)`, and calls
+  `cudss("refactorization", …)` in the other branch. A change that also calls
+  `cudss("analysis", …)` in the refactorisation branch, and leaves the counter alone, passes these
+  rows. None of the data parameters that CUDSS.jl 1.0.0 reads with `cudss_get`
+  (`CUDSS_DATA_PARAMETERS`, `src/types.jl:3–9`) counts the analyses of a solver, so the rows check
+  the branch that the extension takes, not the number of analyses that cuDSS runs.
+- **kind:** missing test
+- **found:** 2026-11-22

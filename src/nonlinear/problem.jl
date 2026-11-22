@@ -50,11 +50,12 @@ solver exists for a host `Vector` iterate with a `SparseMatrixCSC{<:Any, Int}` p
 configurations: a real iterate with `Sparspak` loaded and an `LUFactorization` in the iterate's
 element type, and a `Float64` or `ComplexF64` iterate with [`UMFPACKFactorization`](@ref); a
 `QRFactorization`, an `SVDFactorization` and a dense prototype raise `MethodError` when `Newton`
-initialises. With `CUDA` and `CUDSS` loaded, a `CuVector` iterate with a `CuSparseMatrixCSR`
-prototype and an `LUFactorization` in its element type has the cuDSS factor. On a device iterate
-with a `SparseMatrixCSC` prototype, `Newton(; jacobian = nothing)` with an analytic `J` raises
-`MethodError` from the factor, and an `AutoSparse` `jacobian` raises `ArgumentError` in
-[`prepare_ad`](@ref) first, as any back end other than `AutoForwardDiff()` does. `Picard` and a
+initialises, and `ArgumentError` with `UMFPACKFactorization`. With `CUDA` and `CUDSS` loaded, a
+`CuVector` iterate with a `CuSparseMatrixCSR` prototype and an `LUFactorization` in its element
+type has the cuDSS factor. On a device iterate with a `SparseMatrixCSC` prototype,
+`Newton(; jacobian = nothing)` with an analytic `J` raises `MethodError` from the factor, or
+`ArgumentError` with `UMFPACKFactorization`, and an `AutoSparse` `jacobian` raises
+`ArgumentError` in [`prepare_ad`](@ref) first, as any back end other than `AutoForwardDiff()` does. `Picard` and a
 static or batched iterate ignore the prototype.
 
 ```jldoctest

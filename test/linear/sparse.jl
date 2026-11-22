@@ -5,7 +5,8 @@
 
 using ADTypes: AutoForwardDiff, AutoSparse
 using GeometricSolvers
-using GeometricSolvers: LUFactorization, Newton, NonlinearProblem, SINGULAR, SUCCESS,
+using GeometricSolvers: LeastSquaresProblem, LUFactorization, Newton, NonlinearProblem,
+                        SINGULAR, SUCCESS,
                         UMFPACKFactorization, dense_factor, factorize!!, has_sparse_factor,
                         init, init_linear, ldiv!!, returncode, solve!
 using LinearAlgebra: cond, lu, norm
@@ -139,6 +140,14 @@ end
         @test_throws msg init(prob_dense, copy(z0), Newton(; linsolve = m), p_val)
         @test_throws msg init_linear(m, nothing, z0)
         @test_throws msg init_linear(m, Matrix(prob.jacobian_prototype), z0)
+    end
+    # a `LeastSquaresProblem` carries no sparse pattern, and its factor has `m_rows` rows
+    @testset "least squares: T = $T" for T in UMFPACK_ELTYPES
+        f_ls!(r, x, p) = (r[1] = x[1] - 1; r[2] = x[2] - 2; r[3] = x[1] + x[2] - 3; r)
+        x0 = zeros(T, 2)
+        @test_throws msg init(
+            LeastSquaresProblem(f_ls!, 3), x0, Newton(; linsolve = m), nothing)
+        @test_throws msg init_linear(m, nothing, x0, 3)
     end
 end
 

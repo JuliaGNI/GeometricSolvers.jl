@@ -62,6 +62,12 @@ function init_linear(::UMFPACKFactorization, pattern, x::AbstractVector)
     )
 end
 
+# The `m_rows × n` factor of a `LeastSquaresProblem`, which carries no sparse pattern, takes the
+# refusal above.
+function init_linear(m::UMFPACKFactorization, pattern, x::AbstractVector, ::Int)
+    init_linear(m, pattern, x)
+end
+
 function factorize!!(
         fac::UMFPACKLU{T}, ::UMFPACKFactorization,
         J::SparseMatrixCSC{T, Int}) where {T <: UMFPACKEltype}
@@ -75,7 +81,8 @@ function factorize!!(
         )
     end
     J === fac.factors || copyto!(nonzeros(fac.factors), nonzeros(J))
-    # UMFPACK factorises a `NaN` entry without a warning, so a non-finite entry is refused first
+    # UMFPACK factorises some matrices with a `NaN` entry without a warning and throws
+    # `SingularException` on others, so a non-finite entry is refused first
     all(isfinite, nonzeros(fac.factors)) || return UMFPACKLU(fac.factors, fac.lu, 1)
     # `check = false` leaves a singular matrix to `issuccess` instead of a `SingularException`
     lu!(fac.lu, fac.factors; check = false)
