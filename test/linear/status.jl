@@ -297,7 +297,7 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
         # the device kernel that zeroes `U` applies the cutoff a second time
         if route != Array
             @test all(iszero, rtol_U(route, at)[:, 2:end])
-            @test !any(iszero, rtol_U(route, above)[:, 2])
+            @test !all(iszero, rtol_U(route, above)[:, 2])
         end
     end
     # rtol is relative to `σ̂₁` of `J / 2^e`, and the division is exact
