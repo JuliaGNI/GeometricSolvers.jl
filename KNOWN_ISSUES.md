@@ -655,3 +655,16 @@
   the branch that the extension takes, not the number of analyses that cuDSS runs.
 - **kind:** missing test
 - **found:** 2026-11-22
+
+### K100 · A direct `factorize!!` of a 0×0 sparse matrix throws, under `UMFPACKFactorization` and under Sparspak's `LUFactorization`
+
+- **location:** `src/linear/sparse.jl` (`factorize!!` for `UMFPACKLU`)
+- **evidence:** `init_linear(m, spzeros(0, 0), Float64[])` builds the factor for both methods, and
+  `factorize!!` of it on `spzeros(0, 0)` throws: `ArgumentError: the number of rows or columns of
+  the matrix must be greater than zero` from UMFPACK, and `An empty problem, no ordering found.`
+  from Sparspak. The Sparspak case is true on `main` too, because the branch does not change
+  `ext/GeometricSolversSparspakExt.jl`. A Newton solve of order 0 with a 0×0
+  `jacobian_prototype` and `UMFPACKFactorization` returns `SUCCESS` before it factorises, so only
+  a direct call reaches the throw. Julia 1.13.4, with the test environment of the package.
+- **kind:** found late
+- **found:** 2026-11-22

@@ -53,6 +53,10 @@ function init_linear(
 end
 
 function init_linear(::UMFPACKFactorization, pattern, x::AbstractVector)
+    throw_umfpack_refusal(pattern, x)
+end
+
+function throw_umfpack_refusal(pattern, x)
     throw(
         ArgumentError(
         "UMFPACKFactorization factorises a SparseMatrixCSC{<:Any, Int} Jacobian pattern on a " *
@@ -66,6 +70,12 @@ end
 # refusal above.
 function init_linear(m::UMFPACKFactorization, pattern, x::AbstractVector, ::Int)
     init_linear(m, pattern, x)
+end
+
+# A static or scalar iterate has no sparse pattern. Where no factor is reused, the step builds its
+# factor only after `init`, so `init` refuses the iterate here.
+function check_factor_iterate(::UMFPACKFactorization, x::Union{StaticArray, Number})
+    throw_umfpack_refusal(nothing, x)
 end
 
 function factorize!!(

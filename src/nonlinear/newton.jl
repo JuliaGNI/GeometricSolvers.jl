@@ -357,6 +357,10 @@ with no pattern does; an explicit `jacobian_prototype` does not consult it.
 """
 @inline has_sparse_factor(::LinearMethod, x) = false
 
+# Refuse, at `init`, an iterate that `method` builds no factor for, also where the step builds its
+# factor later: no refusal by default.
+@inline check_factor_iterate(::LinearMethod, x) = nothing
+
 # The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
 # detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor. A
 # `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the sparse
@@ -741,6 +745,7 @@ end
     if prob isa LeastSquaresProblem && is_refining(m.refinement)
         throw(ArgumentError("LeastSquaresProblem does not support refinement"))
     end
+    check_factor_iterate(m.linsolve, x)
     m.globalization isa LevenbergMarquardt &&
         check_lm_iterate(m.globalization, m.linsolve, prob, x)
     Fx = if x isa Union{StaticArray, Number}

@@ -14,6 +14,7 @@ using SparseArrays: SparseArrays, SparseMatrixCSC, getcolptr, nnz, nonzeros, row
                     sparse,
                     spzeros
 using SparseConnectivityTracer: TracerSparsityDetector
+using StaticArrays: SVector
 using SparseMatrixColorings: GreedyColoringAlgorithm
 using Sparspak: Sparspak
 using Sparspak.SparseCSCInterface: sparspaklu
@@ -148,6 +149,18 @@ end
         @test_throws msg init(
             LeastSquaresProblem(f_ls!, 3), x0, Newton(; linsolve = m), nothing)
         @test_throws msg init_linear(m, nothing, x0, 3)
+    end
+    # a static or scalar iterate has no sparse pattern, with or without a reused factor
+    @testset "static and scalar iterates" begin
+        F_s(x, p) = SVector(x[1]^2 - 2, x[2] - 1)
+        @test_throws msg init(
+            NonlinearProblem(F_s), SVector(0.0, 0.0), Newton(; linsolve = m), nothing)
+        @test_throws msg init(
+            NonlinearProblem(F_s), SVector(0.0f0, 0.0f0), Newton(; linsolve = m), nothing)
+        @test_throws msg init(
+            NonlinearProblem((x, p) -> x^2 - 2), 0.0, Newton(; linsolve = m), nothing)
+        @test_throws msg init(NonlinearProblem(F_s), SVector(0.0, 0.0),
+            Newton(; linsolve = m, reuse = Int32(2)), nothing)
     end
 end
 
