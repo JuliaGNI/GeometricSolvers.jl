@@ -348,9 +348,10 @@ end
 """
     has_sparse_factor(method::LinearMethod, x)
 
-Whether a package extension builds a sparse factor of `method` on the iterate `x` from a detected
-Jacobian pattern: `false` by default. The `GeometricSolversSparspakExt` extension returns `true`
-for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
+Whether `init_linear` builds a sparse factor of `method` on the iterate `x` from a detected
+Jacobian pattern: `false` by default. It is `true` for [`UMFPACKFactorization`](@ref) on a
+`Vector{Float64}` or `Vector{ComplexF64}`, and the `GeometricSolversSparspakExt` extension returns
+`true` for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
 `T <: AbstractFloat`. Where it is `false`, a detected pattern gives the dense factor, as a solve
 with no pattern does; an explicit `jacobian_prototype` does not consult it.
 """
@@ -358,8 +359,8 @@ with no pattern does; an explicit `jacobian_prototype` does not consult it.
 
 # The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
 # detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor. A
-# `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the one sparse
-# factor, `SparspakLU`, is square, so the `m × n` factor of a least-squares problem is dense.
+# `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the sparse
+# factors are square, so the `m × n` factor of a least-squares problem is dense.
 @inline function factor_pattern(ls, prob, x, jacprep)
     P = jacobian_pattern(prob, jacprep)
     P === nothing || jacobian_prototype(prob) !== nothing || has_sparse_factor(ls, x) ||
