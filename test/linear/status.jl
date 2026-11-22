@@ -300,6 +300,24 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
             @test !all(iszero, rtol_U(route, above)[:, 2])
         end
     end
+    # the factor converts rtol to its real type: `prevfloat(2.0^-30)` rounds to `2f0^-30`, so
+    # `σ₂ = 2f0^-30` lies at the cutoff of a `Float32` factor and counts as zero
+    @testset "a Float64 rtol in a Float32 factor, $(mr) × 3, $route" for mr in (3, 5),
+        route in RTOL_ROUTES
+
+        c = ldexp(1.0f0, -30)
+        A = signed_diagonal(Float32, (1.0, c, 0.0), mr)
+        m = SVDFactorization(; rtol = prevfloat(Float64(c)))
+        @test rtol_factor(route, m, A).rank == 1
+    end
+    # the default cutoff `√m · eps(R) · σ̂₁` counts the rows: `σ₂ = 2 eps(R)` lies below
+    # `√5 eps(R)` and above `√3 eps(R)`
+    @testset "the default cutoff of a 5 × 3 matrix, $R, $route" for R in REAL_ELTYPES,
+        route in RTOL_ROUTES
+
+        A = signed_diagonal(R, (1.0, 2 * eps(R), 0.0), 5)
+        @test rtol_factor(route, SVDFactorization(), A).rank == 1
+    end
     # rtol is relative to `σ̂₁` of `J / 2^e`, and the division is exact
     @testset "the fixture times 2^$k, $R, $(mr) × 3, rtol = $rtol, $route" for R in REAL_ELTYPES,
         mr in (3, 5), k in (-40, 40), (rtol, want) in rtols[1:3], route in RTOL_ROUTES
