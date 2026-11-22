@@ -1,23 +1,27 @@
 # R5 matrix-free Newton–GMRES: the forcing terms, the right-preconditioner slot, the inexact
-# backtracking test, the inner-iteration cap, the matrix-free `DogLeg`, and the decided edges.
+# backtracking test, the inner-iteration cap, the matrix-free `DogLeg`, the Arnoldi
+# orthogonalisation, and the decided edges.
 #
 # The solves run on `Array` and on `JLArray` (a CPU array that refuses scalar indexing, so it
 # catches a GPU-only fault in ordinary CI) in `REAL_ELTYPES`, and the matrix-free `DogLeg` is
 # compared with the factorised one, which is the R3 control of the same problem.
 
 using ADTypes: AutoFiniteDiff
+using Adapt: Adapt
 using FiniteDiff: FiniteDiff
 using ForwardDiff: ForwardDiff
-using GPUArraysCore: allowscalar
-using JLArrays: JLArray
-using LinearAlgebra: Diagonal, I, mul!, norm
+using GPUArraysCore: GPUArraysCore, AnyGPUArray, allowscalar
+using JLArrays: JLArrays, JLArray
+using LinearAlgebra: LinearAlgebra, Diagonal, I, mul!, norm, opnorm, qr
+using Random: Xoshiro
 using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
 using GeometricSolvers: Backtracking, Bisection, ChunkedForwardDiff, DIJacobian, DogLeg,
                         EisenstatWalkerChoice1, EisenstatWalkerChoice2, FixedForcing, GMRES,
-                        InexactStep, JVPFunction, LevenbergMarquardt, LineFunction,
+                        GMRESRefinement, InexactStep, JVPFunction, LevenbergMarquardt,
+                        LineFunction, LUFactorization,
                         NONFINITE, NonlinearProblem, Newton, Refinement, StrongWolfe,
                         SUCCESS, SolverStatus, apply_preconditioner!, f_calls, gmres_solve!,
                         init, init_gmres_workspace, init_state, jvp_calls,
@@ -785,6 +789,279 @@ end
     @test st.code == SUCCESS
     @test max_inner_iterations(solver) <= 8
     @test st.jvp_calls >= st.iterations
+end
+
+# ─── The Arnoldi orthogonalisation ───────────────────────────────────────────
+
+# The reductions of the Arnoldi process, counted at the array level on `JLArray`: every `sum` and
+# `maximum` of a `JLArray` or of a lazy broadcast over one is a `Base.mapreduce` of it, and every
+# matrix–vector product of `JLArray` storage is the seven-argument `mul!` of `LinearAlgebra`. A
+# product with an adjoint or a transposed matrix, `Vᴴ w`, reduces over the length of the basis and
+# counts as a reduction. A product with a plain matrix reduces nothing: the counter records its
+# destination, which `mul!` receives as a one-column matrix on the storage of the vector, so that
+# a test reads which vector it updated. The methods are more specific than those of GPUArrays,
+# which they call, and the file deletes them after the tests that read them.
+const JLGPUArrays = JLArrays.GPUArrays
+const ARRAY_REDUCTIONS = Ref(0)
+const BROADCAST_REDUCTIONS = Ref(0)
+const ADJOINT_OPERANDS = Any[]
+const PLAIN_PRODUCTS = Any[]
+const AnyJL = Union{JLArray, SubArray{<:Any, <:Any, <:JLArray}}
+
+function Base.mapreduce(f, op, A::AnyJL; kwargs...)
+    ARRAY_REDUCTIONS[] += 1
+    return invoke(Base.mapreduce, Tuple{Any, Any, AnyGPUArray}, f, op, A; kwargs...)
+end
+
+function Base.mapreduce(f, op, A::Broadcast.Broadcasted{<:JLArrays.JLArrayStyle}; kwargs...)
+    ARRAY_REDUCTIONS[] += 1
+    BROADCAST_REDUCTIONS[] += 1
+    S = Broadcast.Broadcasted{<:GPUArraysCore.AbstractGPUArrayStyle}
+    return invoke(Base.mapreduce, Tuple{Any, Any, S}, f, op, A; kwargs...)
+end
+
+# Whether the destination `C` of a product is the vector `u`, by its storage.
+is_storage_of(C, u) = Base.mightalias(C, u)
+
+function LinearAlgebra.mul!(
+        C::AnyJL, tA::AbstractChar, tB::AbstractChar, A::AnyJL, B::AnyJL,
+        α::Number, β::Number)
+    if tA == 'N'
+        push!(PLAIN_PRODUCTS, C)
+    else
+        ARRAY_REDUCTIONS[] += 1
+        push!(ADJOINT_OPERANDS, A)
+    end
+    S = JLGPUArrays.AnyStridedGPUVecOrMat
+    return invoke(LinearAlgebra.mul!, Tuple{S, Any, Any, S, S, Number, Number},
+        C, tA, tB, A, B, α, β)
+end
+
+# The product of a diagonal operator by broadcast, which reduces nothing, and which records the
+# reduction count at each call: the difference of two marks is the count of the Arnoldi step
+# between two products.
+struct MarkingOperator{D}
+    d::D
+    marks::Vector{Int}
+end
+
+function (op::MarkingOperator)(Jv, v)
+    push!(op.marks, ARRAY_REDUCTIONS[])
+    Jv .= op.d .* v
+    return Jv
+end
+
+# The reductions of the inner iterations `1:k-1` of one cycle of `n` distinct eigenvalues, on
+# `JLArray`, of the path that `mgs` selects.
+function cycle_reductions(::Type{T}, n, k; mgs, scale = one(real(T))) where {T}
+    R = real(T)
+    op = MarkingOperator(JLArray(T.(scale .* (1:n))), Int[])
+    b = JLArray(ones(T, n))
+    ws = init_gmres_workspace(GMRES(; maxiter = k), JLArray(zeros(T, n)))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(R), Int32(k), Int32(k); mgs)
+    return diff(op.marks), info
+end
+
+@testset "CGS2 takes two reductions per inner iteration, MGS takes j + 1, $T" for T in REAL_ELTYPES
+    counts, info = cycle_reductions(T, 8, 6; mgs = false)
+    @test info.iterations == 6
+    @test counts == fill(2, 5)
+    counts_mgs, info_mgs = cycle_reductions(T, 8, 6; mgs = true)
+    @test info_mgs.iterations == 6
+    @test counts_mgs == collect(2:6)
+end
+
+# Where `s₁ = ‖w₁‖²` underflows below `n floatmin` or overflows, the step norms `w₂` explicitly;
+# `rnorm` takes its scaled path there, one reduction for the sum and two more, so the iteration
+# counts 2 + 3.
+@testset "CGS2 norms w₂ explicitly where s₁ is out of range, $T" for T in REAL_ELTYPES
+    R = real(T)
+    for scale in (sqrt(floatmin(R)) / 64, 4 * sqrt(floatmax(R)))
+        counts, info = cycle_reductions(T, 8, 6; mgs = false, scale)
+        @test info.iterations == 6
+        @test !info.breakdown
+        @test counts == fill(5, 5)
+    end
+end
+
+# The keyword of `GMRES` reaches the inner solve of a `Newton`: the same wrapper counts the two
+# reductions of CGS2 by default and the `j + 1` of MGS with `mgs = true`.
+@testset "The mgs keyword of GMRES selects the path of a Newton step, $T" for T in REAL_ELTYPES
+    n = 8
+    d = JLArray(T.(1:n))
+    for (mgs, expected) in ((false, j -> 2), (true, j -> j + 1))
+        marks = Int[]
+        jvp! = (Jv, x, v, q) -> (push!(marks, ARRAY_REDUCTIONS[]); Jv .= d .* v; Jv)
+        prob = NonlinearProblem((r, x, q) -> (r .= d .* x .- 1; r))
+        g = GMRES(; maxiter = n, forcing = FixedForcing(eps(real(T))), mgs)
+        @test g.mgs == mgs
+        solver = init(prob, JLArray(zeros(T, n)),
+            Newton(; linsolve = g, jacobian = JVPFunction(jvp!)); max_iterations = 1)
+        solve!(solver, JLArray(zeros(T, n)))
+        k = Int(max_inner_iterations(solver))
+        @test k >= 5
+        @test diff(marks)[1:(k - 1)] == expected.(1:(k - 1))
+        # the forcing keyword of `Newton` rebuilds the method, and `adapt` rebuilds it through the
+        # positional form: both keep the field
+        @test Newton(; linsolve = g, forcing = FixedForcing(0.1)).linsolve.mgs == mgs
+        @test Adapt.adapt(Array, g).mgs == mgs
+    end
+end
+
+# The inner GMRES of a `GMRESRefinement` orthogonalises by MGS whatever `GMRES` defaults to: its
+# Arnoldi steps are the conjugated products of `arnoldi_dot`, lazy broadcasts, and no adjoint
+# product of its basis. The step forms the gradient `Jᵀ F` by an adjoint product of the Jacobian,
+# which is no product of the basis. The linear problem has `κ ≈ 5e7`, above the limit of the
+# `Float32` LU-IR stage, so the GMRES-IR stage runs.
+@testset "GMRESRefinement keeps MGS" begin
+    n = 8
+    Q = Matrix(qr(randn(Xoshiro(7), n, n)).Q)
+    A = JLArray(Q * Diagonal([5.0e7^(-(i - 1) / (n - 1)) for i in 1:n]) * Q')
+    prob = NonlinearProblem((r, x, p) -> (mul!(r, A, x); r), (J, x, p) -> copyto!(J, A))
+    m = Newton(; linsolve = LUFactorization(Float32),
+        refinement = GMRESRefinement(Float64; gmres_maxiter = 8, gmres_tol = 1e-8))
+    x₀ = JLArray(2 .* Q[:, n])
+    solver = init(prob, copy(x₀), m)
+    BROADCAST_REDUCTIONS[] = 0
+    empty!(ADJOINT_OPERANDS)
+    _, st = solve!(solver, copy(x₀))
+    @test st.code == SUCCESS
+    @test st.step_failures >= 1
+    @test BROADCAST_REDUCTIONS[] > 0
+    @test !isempty(ADJOINT_OPERANDS)
+    @test !any(A -> is_storage_of(A, solver.state.refbuf.ws.V), ADJOINT_OPERANDS)
+end
+
+# The solution update `u += V y` is one product per cycle, into `u` itself, and so is the direction
+# `V_k y` that the matrix-free `DogLeg` rebuilds.
+@testset "The update and the reduced direction are one product each, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    R = real(T)
+    n = 8
+    A = Diagonal(T.(1:n))
+    dJ = JLArray(T.(1:n))
+    op = (Jv, v) -> (Jv .= dJ .* v; Jv)
+    b = JLArray(ones(T, n))
+    for (maxiter, restart) in ((8, 8), (8, 2))
+        ws = init_gmres_workspace(GMRES(; maxiter, restart), JLArray(zeros(T, n)))
+        empty!(PLAIN_PRODUCTS)
+        d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), R(1e-30), Int32(maxiter),
+            Int32(restart); mgs)
+        cycles = cld(Int(info.iterations), restart)
+        @test count(c -> is_storage_of(c, ws.u), PLAIN_PRODUCTS) == cycles
+        @test restart == maxiter ? cycles == 1 : cycles == 4
+        # the direction is the sum of the cycles' products: its true residual is the one the last
+        # cycle reports
+        @test abs(norm(A * Array(d) - ones(T, n)) - info.resnorm) <= 100 * eps(R) * sqrt(n)
+    end
+    ws = init_gmres_workspace(GMRES(; maxiter = 4), JLArray(zeros(T, n)))
+    gmres_solve!(ws, op, nothing, b, rnorm(b), zero(R), Int32(4), Int32(4); mgs)
+    y = T[0.5, -1.25, 2, 0.75]
+    s = JLArray(ones(T, n))
+    empty!(PLAIN_PRODUCTS)
+    reduced = ARRAY_REDUCTIONS[]
+    GeometricSolvers.reduced_direction!(s, ws, y, 4)
+    @test length(PLAIN_PRODUCTS) == 1
+    @test is_storage_of(only(PLAIN_PRODUCTS), s)
+    @test ARRAY_REDUCTIONS[] == reduced
+    @test norm(Array(s) - Array(ws.V)[:, 1:4] * y) <= 8 * eps(R) * norm(y)
+end
+
+for f in (Base.mapreduce, LinearAlgebra.mul!), m in methods(f)
+
+    m.module === (@__MODULE__) && Base.delete_method(m)
+end
+
+# A normal matrix with its spectrum log-spaced in `[1, 1e8]`, `A = Q Λ Qᴴ` with a unitary `Q`, and
+# a right-hand side, both drawn in `Float64` and rounded to `T`.
+function arnoldi_test_matrix(::Type{T}, n, seed) where {T}
+    rng = Xoshiro(seed)
+    Z = T <: Complex ? complex.(randn(rng, n, n), randn(rng, n, n)) : randn(rng, n, n)
+    Q = Matrix(qr(Z).Q)
+    A = Q * Diagonal(exp10.(range(0, 8; length = n))) * Q'
+    b = T <: Complex ? complex.(randn(rng, n), randn(rng, n)) : randn(rng, n)
+    return T.(A), T.(b)
+end
+
+# The loss of orthogonality `‖I - VᴴV‖₂` of a basis, with `VᴴV` formed in `BigFloat`, so that the
+# rounding of the measurement stays far below the `eps(R)` it measures.
+function orthogonality_loss(V)
+    Vb = big.(V)
+    G = I - Vb' * Vb
+    return opnorm(eltype(V) <: Complex ? ComplexF64.(G) : Float64.(G))
+end
+
+# The control: the Arnoldi basis of classical Gram–Schmidt with one pass, dense.
+function cgs_one_pass_basis(A, b, m)
+    V = zeros(eltype(b), length(b), m + 1)
+    V[:, 1] = b / norm(b)
+    for j in 1:m
+        w = A * V[:, j]
+        w -= V[:, 1:j] * (V[:, 1:j]' * w)
+        V[:, j + 1] = w / norm(w)
+    end
+    return V
+end
+
+@testset "The CGS2 basis stays orthogonal where one-pass CGS loses it, $T" for T in ELTYPES
+    R = real(T)
+    n, m = 200, 30
+    for seed in 1:5
+        A, b = arnoldi_test_matrix(T, n, seed)
+        ws = init_gmres_workspace(GMRES(; maxiter = m), zeros(T, n))
+        op = (Jv, v) -> mul!(Jv, A, v)
+        _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(R), Int32(m), Int32(m))
+        @test info.iterations == m
+        @test !info.breakdown
+        @test orthogonality_loss(ws.V) <= 32 * eps(R)
+        @test orthogonality_loss(cgs_one_pass_basis(A, b, m)) > 1000 * eps(R)
+    end
+end
+
+# A step whose `w` lies within round-off of the span of `V_j`: after one pass, `w₁` is round-off,
+# most of which lies in that span again, so `‖h₂‖² > s₁/2` and `s₁ - ‖h₂‖²` keeps no correct
+# digit. The step norms `w₂` explicitly there, and the last basis vector has unit norm. The
+# operator is the normal matrix of the test above up to step `n - 2`, and `V_{n-1} c` at step
+# `n - 1`.
+@testset "CGS2 norms w₂ explicitly where w₁ lies in the span of V, $T" for T in REAL_ELTYPES
+    R = real(T)
+    n = 128
+    for seed in 1:5
+        A, b = arnoldi_test_matrix(T, n, seed)
+        c = T.(randn(Xoshiro(100 + seed), n - 1))
+        ws = init_gmres_workspace(GMRES(; maxiter = n - 1), zeros(T, n))
+        calls = Ref(0)
+        w = zeros(T, n)
+        op = (Jv, v) -> begin
+            calls[] += 1
+            calls[] == n - 1 ? mul!(Jv, view(ws.V, :, 1:(n - 1)), c) : mul!(Jv, A, v)
+            calls[] == n - 1 && copyto!(w, Jv)
+            Jv
+        end
+        _, info = gmres_solve!(
+            ws, op, nothing, b, rnorm(b), zero(R), Int32(n - 1), Int32(n - 1))
+        @test info.iterations == n - 1
+        @test !info.breakdown
+        # the row is the one it is meant to be: one pass leaves more than half of `s₁` in the span
+        Vj = ws.V[:, 1:(n - 1)]
+        w₁ = w - Vj * (Vj' * w)
+        h₂ = Vj' * w₁
+        @test norm(h₂)^2 > norm(w₁)^2 / 2
+        @test abs(norm(big.(ws.V[:, n])) - 1) <= 4 * eps(R)
+    end
+end
+
+@testset "Both paths solve R5Diagonal, mgs = $mgs, $AT, $T" for T in REAL_ELTYPES,
+    AT in ARRAY_BACKENDS, mgs in (false, true)
+    counts = R5Counts(0, 0)
+    x₀ = AT(fill(T(2), 8))
+    m = Newton(; linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(1e-8), mgs))
+    x, st = solve(r5_problem(counts), x₀, m)
+    @test x isa AT
+    @test st.code == SUCCESS
+    @test st.fnorm <= sqrt(eps(T)) * rnorm(AT(fill(T(-1.5), 8)))
+    @test norm(Array(x) .- 1) <= 100 * sqrt(eps(T))
 end
 
 @testset "Newton with GMRES refuses what needs a factor, and takes the forcing keywords" begin

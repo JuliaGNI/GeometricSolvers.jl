@@ -6,9 +6,11 @@
 # no `n × n` Jacobian, and its step solves `J d = -F` to the relative tolerance `η_k` that the
 # forcing term of the step returns.
 #
-# The Arnoldi loop is the modified Gram–Schmidt process of Saad (2003), §6.5.2, with the
-# Hessenberg matrix, its Givens rotations and the least-squares right-hand side on the host, and
-# every vector of length `n` in the storage of the iterate: the loop allocates nothing after
+# The Arnoldi loop orthogonalises by classical Gram–Schmidt with a second pass (CGS2), two
+# reductions per inner iteration, and with `GMRES(; mgs = true)` by the modified Gram–Schmidt
+# process of Saad (2003), §6.5.2, `j + 1` reductions at iteration `j`. The Hessenberg matrix, its
+# Givens rotations and the least-squares right-hand side are on the host, and every vector of
+# length `n` is in the storage of the iterate: the loop allocates nothing after
 # `init_gmres_workspace`, and it indexes no entry of a vector, so the same code runs under
 # `allowscalar(false)` on a `JLArray` and on an `MtlArray`.
 
@@ -211,13 +213,14 @@ end
 
 """
     GMRES(; maxiter = 30, restart = nothing, forcing = EisenstatWalkerChoice2(),
-            preconditioner = nothing, jvp_eltype = Nothing)
+            preconditioner = nothing, jvp_eltype = Nothing, mgs = false)
 
 The R5 matrix-free Newton–Krylov linear solver of [`Newton`](@ref): right-preconditioned GMRES
-with modified Gram–Schmidt on the Jacobian–vector product of the problem, the forcing term
-`forcing` ([`EisenstatWalkerChoice2`](@ref) by default,
+on the Jacobian–vector product of the problem, with the forcing term `forcing`
+([`EisenstatWalkerChoice2`](@ref) by default,
 [`EisenstatWalkerChoice1`](@ref) or [`FixedForcing`](@ref)), a right preconditioner
-`preconditioner`, and the element type `jvp_eltype` of the product.
+`preconditioner`, the element type `jvp_eltype` of the product, and the orthogonalisation of the
+Arnoldi process that `mgs` selects.
 
 # Fields
 
@@ -238,6 +241,14 @@ with modified Gram–Schmidt on the Jacobian–vector product of the problem, th
   the iterate; a real type `TJ` evaluates it in `TJ` and promotes the product to the working type,
   which is a defect-correction solve: a product in a lower precision, a residual in the working
   one. The iterate, the residual and every norm stay in the working type.
+- `mgs::Bool`: `false`, the default, orthogonalises each new Krylov vector by classical
+  Gram–Schmidt with a second pass (CGS2), which takes two reductions over the basis per inner
+  iteration: ``h_1 = V_j^H w`` and ``w_1 = w - V_j h_1``, then ``[V_j\\ w_1]^H w_1`` for the
+  correction ``h_2`` and for ``s_1 = \\|w_1\\|^2``, and ``w_2 = w_1 - V_j h_2``. The norm of
+  ``w_2`` is ``\\sqrt{s_1 - \\|h_2\\|^2}`` where ``s_1`` is finite, at least `n * floatmin` and
+  ``\\|h_2\\|^2 \\le s_1 / 2``, and one more reduction, `rnorm` of ``w_2``, elsewhere. `true`
+  orthogonalises by modified Gram–Schmidt, which takes ``j + 1`` reductions at inner iteration
+  `j`.
 
 A `Newton` with `GMRES` allocates no `n × n` Jacobian, and its iterate must be an
 `AbstractVector`: a `Number` and a `StaticArray` have no Krylov basis here, and a
@@ -259,25 +270,26 @@ struct GMRES{F <: AbstractForcingTerm, P, TJ} <: LinearMethod{Nothing}
     forcing::F
     preconditioner::P
     jvp_eltype::Type{TJ}
+    mgs::Bool
     # `adapt` rebuilds the method through this constructor, inside a device kernel too.
     function GMRES{F, P, TJ}(maxiter::Int32, restart::Int32, forcing::F,
-            preconditioner::P, jvp_eltype::Type{TJ}) where {
+            preconditioner::P, jvp_eltype::Type{TJ}, mgs::Bool) where {
             F <: AbstractForcingTerm, P, TJ}
         maxiter >= Int32(1) || throw(ArgumentError("GMRES maxiter must be ≥ 1"))
         (Int32(1) <= restart <= maxiter) ||
             throw(ArgumentError("GMRES needs 1 ≤ restart ≤ maxiter"))
-        return new{F, P, TJ}(maxiter, restart, forcing, preconditioner, jvp_eltype)
+        return new{F, P, TJ}(maxiter, restart, forcing, preconditioner, jvp_eltype, mgs)
     end
 end
 
 function GMRES(; maxiter::Integer = 30, restart::Union{Nothing, Integer} = nothing,
         forcing::AbstractForcingTerm = EisenstatWalkerChoice2(),
-        preconditioner = nothing, jvp_eltype::Type = Nothing)
+        preconditioner = nothing, jvp_eltype::Type = Nothing, mgs::Bool = false)
     m = to_int32(maxiter, "GMRES maxiter must fit in an Int32")
     r = restart === nothing ? m :
         to_int32(restart, "GMRES restart must fit in an Int32")
     return GMRES{typeof(forcing), typeof(preconditioner), jvp_eltype}(
-        m, r, forcing, preconditioner, jvp_eltype)
+        m, r, forcing, preconditioner, jvp_eltype, mgs)
 end
 
 # An `Integer` constructor argument as an `Int32`, with a constant message where it does not fit: a
@@ -290,9 +302,9 @@ end
 # The positional form, which `adapt` rebuilds the method through: the element type of the product
 # is a type and not a field, so it travels as the fifth argument.
 @inline function GMRES(maxiter::Int32, restart::Int32, forcing::AbstractForcingTerm,
-        preconditioner, jvp_eltype::Type)
+        preconditioner, jvp_eltype::Type, mgs::Bool)
     return GMRES{typeof(forcing), typeof(preconditioner), jvp_eltype}(
-        maxiter, restart, forcing, preconditioner, jvp_eltype)
+        maxiter, restart, forcing, preconditioner, jvp_eltype, mgs)
 end
 
 Adapt.@adapt_structure GMRES
@@ -326,7 +338,9 @@ storage of the iterate, the host Hessenberg matrix `H` after the Givens rotation
 them, the rotation tables `cs` and `sn`, the right-hand side `g` of the least-squares problem, the
 solution weights `y`, the weights `cg`, `yN` and `yb` of the matrix-free [`DogLeg`](@ref) and its
 reduced work vector `sm`, the vector slots `rr`, `z`, `w`, `u`, `d` and `bb` of length `n`, the
-`jvp_eltype` slots `xT`, `vT` and `wT`, and the counters of the solve.
+`jvp_eltype` slots `xT`, `vT` and `wT`, the vector `hd` of `min(restart, n) + 1` entries in the
+storage of the iterate, which holds the coefficients ``V_j^H w`` of an Arnoldi step and the weights
+`y` of a product ``V_j y``, its host copy `hh`, and the counters of the solve.
 
 `f_calls` and `jvp_calls` count the residual evaluations and the Jacobian–vector products of the
 solve in `Int32`, `gmres_iterations` is the inner count of the last Newton step, `max_inner` the
@@ -340,7 +354,7 @@ step a line search accepted on an unrestarted inner solve and that of the direct
 and a step there fails closed. The counters are mutable, so that a step reports them without
 rebuilding the workspace.
 """
-mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D}
+mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D, HD}
     V::V
     H::M
     H0::M
@@ -361,6 +375,8 @@ mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D}
     xT::D
     vT::D
     wT::D
+    hd::HD
+    hh::ST
     f_calls::Int32
     jvp_calls::Int32
     gmres_iterations::Int32
@@ -377,9 +393,9 @@ end
     init_gmres_workspace(g::GMRES, x::AbstractVector)
 
 Allocate the [`GMRESWorkspace`](@ref) of a solve of `g` on an iterate like `x`: the Krylov basis
-holds `min(g.restart, length(x)) + 1` columns, and the host matrices `H` and `H0` and the host
-vectors are of that width. The slots of `jvp_eltype` are `nothing` unless `g.jvp_eltype` names a
-type.
+holds `min(g.restart, length(x)) + 1` columns, and the host matrices `H` and `H0`, the host
+vectors and the vector `hd` in the storage of `x` are of that width. The slots of `jvp_eltype`
+are `nothing` unless `g.jvp_eltype` names a type.
 """
 function init_gmres_workspace(g::GMRES{F, P, TJ}, x::AbstractVector{T}) where {F, P, TJ, T}
     R = real(T)
@@ -406,9 +422,11 @@ function init_gmres_workspace(g::GMRES{F, P, TJ}, x::AbstractVector{T}) where {F
     xT = TJ === Nothing ? nothing : buffer(x, TJ)
     vT = TJ === Nothing ? nothing : buffer(x, TJ)
     wT = TJ === Nothing ? nothing : buffer(x, TJ)
+    hd = buffer(x, T, w)
+    hh = zeros(T, w)
     return GMRESWorkspace{T, R, typeof(V), typeof(H), typeof(cs), typeof(sn),
-        typeof(rr), typeof(xT)}(
-        V, H, H0, cs, sn, gb, y, cg, yN, yb, sm, rr, z, wv, u, d, bb, xT, vT, wT,
+        typeof(rr), typeof(xT), typeof(hd)}(
+        V, H, H0, cs, sn, gb, y, cg, yN, yb, sm, rr, z, wv, u, d, bb, xT, vT, wT, hd, hh,
         Int32(0), Int32(0), Int32(0), Int32(0), Int32(0), Int32(0),
         R(NaN), R(NaN), R(NaN), R(NaN))
 end
@@ -429,8 +447,8 @@ struct GMRESInfo{R <: Real}
 end
 
 """
-    gmres_solve!(ws::GMRESWorkspace, jvp_op!, P, b, bnorm, tol, maxiter, restart)
-        -> (d, GMRESInfo)
+    gmres_solve!(ws::GMRESWorkspace, jvp_op!, P, b, bnorm, tol, maxiter, restart;
+                 mgs = false) -> (d, GMRESInfo)
 
 Solve `J d = b` with right-preconditioned GMRES in the workspace `ws`, and return the direction
 `d = M⁻¹ u` in the slot `ws.d` and a [`GMRESInfo`](@ref). `jvp_op!(Jv, v)` writes the product
@@ -440,9 +458,12 @@ stops at ``\\|b - J d\\|_2 \\le tol \\cdot bnorm``; `maxiter` caps the inner ite
 `restart` the iterations between restarts, neither of which may exceed the width the workspace was
 allocated for.
 
-The Arnoldi process is modified Gram–Schmidt with the conjugated inner product, so a complex
-iterate is supported and every norm is in `real(T)`. A zero `H[j+1, j]` is a breakdown: the
-Krylov space is invariant, and the solve stops there rather than dividing by zero. The residual of
+The Arnoldi process orthogonalises by classical Gram–Schmidt with a second pass (CGS2), as the
+`mgs` field of [`GMRES`](@ref) describes, and by modified Gram–Schmidt with `mgs = true`; both
+take the conjugated inner product, so a complex iterate is supported and every norm is in
+`real(T)`. The solution update ``u \\mathrel{+}= V_j y`` of a cycle is one matrix–vector product.
+A zero `H[j+1, j]` is a breakdown: the Krylov space is invariant, and the solve stops there rather
+than dividing by zero. The residual of
 the reduced problem is then zero, unless `J` is singular on that space: the rotated diagonal entry
 is then zero too, the residual is that of the last entry of the right-hand side, and the solve
 reports no convergence. A restarted cycle forms its new residual with one more product,
@@ -451,7 +472,7 @@ from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only wher
 system is singular, and the corresponding weight is then `0`.
 """
 function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxiter,
-        restart) where {T, R}
+        restart; mgs::Bool = false) where {T, R}
     n = length(b)
     mr = min(min(Int(restart), n), size(ws.V, 2) - 1)
     atol = R(tol) * R(bnorm)
@@ -480,13 +501,17 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             used += one(Int32)
             @views apply_preconditioner!(ws.z, P, ws.V[:, j])
             jvp_op!(ws.w, ws.z)
-            # modified Gram–Schmidt: one pass of projections, in the order of the basis
-            for i in 1:j
-                h = arnoldi_dot(@view(ws.V[:, i]), ws.w)
-                ws.H[i, j] = h
-                @views ws.w .-= h .* ws.V[:, i]
+            if mgs
+                # modified Gram–Schmidt: one pass of projections, in the order of the basis
+                for i in 1:j
+                    h = arnoldi_dot(@view(ws.V[:, i]), ws.w)
+                    ws.H[i, j] = h
+                    @views ws.w .-= h .* ws.V[:, i]
+                end
+                hj = R(rnorm(ws.w))
+            else
+                hj = cgs2_step!(ws, j)
             end
-            hj = R(rnorm(ws.w))
             ws.H[j + 1, j] = hj
             @views ws.H0[:, j] .= ws.H[:, j]
             # the previous rotations on column j, then the rotation that removes H[j+1, j] from it
@@ -530,9 +555,7 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             end
             ws.y[i] = iszero(ws.H[i, i]) ? zero(T) : acc / ws.H[i, i]
         end
-        for i in 1:j
-            @views ws.u .+= ws.y[i] .* ws.V[:, i]
-        end
+        add_basis_product!(ws.u, ws, ws.y, j)
         resnorm = linres
         breakdown = iszero(hj)
         if linres <= atol || breakdown || used >= maxiter
@@ -547,6 +570,46 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
     apply_preconditioner!(ws.d, P, ws.u)
     ws.arnoldi = arnoldi
     return ws.d, GMRESInfo{R}(used, resnorm, R(bnorm), converged, breakdown)
+end
+
+# One CGS2 step of the Arnoldi process at inner iteration `j`: `ws.w` holds `w = J M⁻¹ v_j` on
+# entry and `w₂` on return, column `j` of `ws.H` takes `h₁ + h₂`, and the norm of `w₂` is
+# returned. The two reductions are the products `h₁ = V_jᴴ w` and `[V_j w₁]ᴴ w₁`, for which
+# column `j + 1` of the basis holds `w₁`; the second gives `h₂` and `s₁ = ‖w₁‖²` together, so the
+# norm is `√(s₁ - ‖h₂‖²)` by Pythagoras. That difference keeps its digits only where `w₂` holds
+# at least half of `s₁`, and `s₁` is accurate only where it is finite and at least
+# `n floatmin`, the threshold of `rnorm`; elsewhere a third reduction, `rnorm(w₂)`, norms it. A
+# non-finite product fails one of those tests, so `rnorm` returns its non-finite norm.
+function cgs2_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
+    n = length(ws.w)
+    Vj = @view ws.V[:, 1:j]
+    hd = @view ws.hd[1:j]
+    w₁ = @view ws.V[:, j + 1]
+    mul!(hd, Vj', ws.w)
+    copyto!(ws.hh, 1, ws.hd, 1, j)
+    for i in 1:j
+        ws.H[i, j] = ws.hh[i]
+    end
+    mul!(ws.w, Vj, hd, -one(T), one(T))
+    w₁ .= ws.w
+    mul!(@view(ws.hd[1:(j + 1)]), (@view ws.V[:, 1:(j + 1)])', w₁)
+    copyto!(ws.hh, 1, ws.hd, 1, j + 1)
+    for i in 1:j
+        ws.H[i, j] += ws.hh[i]
+    end
+    mul!(ws.w, Vj, hd, -one(T), one(T))
+    h₂² = R(norm2(@view ws.hh[1:j]))
+    s₁ = R(real(ws.hh[j + 1]))
+    pythagoras = isfinite(s₁) && s₁ >= n * floatmin(R) && h₂² <= s₁ / 2
+    return pythagoras ? sqrt(s₁ - h₂²) : R(rnorm(ws.w))
+end
+
+# `s += V_k y` for the host weights `y`, as one matrix–vector product: the weights go to the
+# storage of the basis first, in `ws.hd`.
+@inline function add_basis_product!(s, ws::GMRESWorkspace{T}, y, k::Int) where {T}
+    copyto!(ws.hd, 1, y, 1, k)
+    mul!(s, (@view ws.V[:, 1:k]), (@view ws.hd[1:k]), one(T), one(T))
+    return s
 end
 
 """
@@ -591,14 +654,12 @@ end
     return rnorm(hessenberg_product!(ws, y, k))
 end
 
-# `V_k y` in the storage of `s`. The accumulation is the one `gmres_solve!` makes for the solution,
-# in the same order, so the weights of an unrestarted GMRES direction rebuild it bit for bit.
+# `V_k y` in the storage of `s`, one matrix–vector product. The accumulation is the one
+# `gmres_solve!` makes for the solution from zero, so the weights of an unrestarted GMRES direction
+# rebuild it bit for bit.
 @inline function reduced_direction!(s, ws::GMRESWorkspace{T}, y, k::Int) where {T}
     fill!(s, zero(T))
-    for j in 1:k
-        @views s .+= y[j] .* ws.V[:, j]
-    end
-    return s
+    return add_basis_product!(s, ws, y, k)
 end
 
 """

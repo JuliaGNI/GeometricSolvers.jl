@@ -11,6 +11,29 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`GMRES` orthogonalises the Arnoldi basis by classical Gram–Schmidt with a second pass
+  (CGS2) by default.** Each inner iteration takes two reductions over the basis, `h₁ = V_jᴴ w` and
+  `[V_j w₁]ᴴ w₁` for `h₂` and `s₁ = ‖w₁‖²`, in place of the `j + 1` of modified Gram–Schmidt; on a
+  device each reduction is a synchronisation. The norm of `w₂` is `√(s₁ − ‖h₂‖²)` where `s₁` is
+  finite, at least `n·floatmin` and `‖h₂‖² ≤ s₁/2`, and `rnorm(w₂)`, a third reduction, elsewhere.
+  Breakdown stays `iszero(H[j+1, j])`. `GMRES(; mgs = true)` selects modified Gram–Schmidt, the
+  previous behaviour. `GMRES` has a new field `mgs::Bool`, which the positional constructor that
+  `adapt` uses takes as a sixth argument and `Newton(; forcing, preconditioner)` keeps when it
+  rebuilds the method; `gmres_solve!` takes the keyword `mgs = false`. The inner GMRES of
+  `GMRESRefinement` keeps modified Gram–Schmidt whatever `GMRES` selects. The solution update
+  `u += V_j y` of a cycle and `reduced_direction!`, the direction the matrix-free `DogLeg`
+  rebuilds, are one matrix–vector product each, through a new device vector `hd` and host vector
+  `hh` in `GMRESWorkspace` (new type parameter `HD`). The tests count reductions at the array level
+  on `JLArray` and measure `‖I − VᴴV‖₂ ≤ 32·eps(R)` for CGS2 on a normal matrix with spectrum
+  log-spaced in [1, 10⁸] (n = 200, m = 30, five seeds, `Float32`, `Float64`, `ComplexF32`,
+  `ComplexF64`), against a one-pass control above `1000·eps(R)`; modified Gram–Schmidt misses that
+  bound for all five seeds in every element type. Because the Krylov basis differs in round-off,
+  the `Newton Backtracking GMRES` column of `test/verification/standard_reference.csv` is
+  regenerated, 98 rows: 82 change only `fnorm`, the residual norm where the solve ends, and 16
+  change the code, the counts or the `unstable` flag (for example 1/100u0/`Float32`
+  goes STALLED → LINESEARCH_FAILED, and 11/100u0/`Float32` ends SUCCESS in 24 iterations, not 25).
+  `scripts/standard/update_reference.jl` reports 0 cells that differ under the table's comparison.
+
 - **The `KernelAbstractions` LDLᵀ path has no serial kernels.** `ka_ldlt_factor_serial_kernel!`
   and `ka_ldlt_backsolve_serial_kernel!` are removed: `ka_ldlt!` and `ka_ldlt_backsolve!` take an
   `AbstractGPUArray`, whose backend is never `CPU`, so the workgroup kernel ran at every `n` and the
