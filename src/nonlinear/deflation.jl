@@ -29,18 +29,27 @@ and whose Jacobian is the product rule of that product,
 J_{\\mathrm{def}}(x) = M(x) J(x) + F(x) \\nabla M(x)^\\top,
 ```
 
-so that [`Newton`](@ref) started from the same `x₀` converges to a root other than `r₁, …, r_k`
-(Farrell, Birkisson and Funke 2015, *Deflation techniques for finding distinct solutions of
-nonlinear partial differential equations*). Near a simple root `‖M(x) F(x)‖` grows like
-`‖x - rᵢ‖^{1-p}`, which is what pushes the iterate away from it.
+so that, for `p > 1/2`, the known simple roots `r₁, …, r_k` repel the full steps of
+[`Newton`](@ref) started from the same `x₀` (Farrell, Birkisson and Funke 2015, *Deflation
+techniques for finding distinct solutions of nonlinear partial differential equations*). Near a
+simple root `rᵢ`, a Newton step on the deflated residual multiplies `x - rᵢ` by about
+`-p/(1-p)` for `p ≠ 1`, whose modulus exceeds one for `p > 1/2`, and leaves the neighbourhood of
+`rᵢ` for `p = 1`, which is what pushes the iterate away from it. A known root that is not simple can still attract the solve, and so can a simple one under a
+line search, which shortens the step that overshoots it: with `p = 3/4`, `F(x) = x^2` deflated at
+`0` from `x₀ = 1/2`, and `F(x) = x` deflated at `0` from `x₀ = 0.1` with
+[`Backtracking`](@ref), both return `SUCCESS` near `0`. Deflation does not guarantee that another
+root exists or that the solve reaches one either: `F(x) = x - 1` deflated at `1` from `x₀ = 0.6`
+ends with `MAXITERS`. The caller reads the returned status and compares the solution with the
+known roots.
 
 The steps and the line search take the deflated residual, but the stopping test of
 [`Options`](@ref) reads the inner one: `status.fnorm` is `‖F(x)‖`, `f_abstol` bounds it, and
 `f_reltol` is relative to `‖F(x₀)‖`, so a deflated root meets the tolerance of a solve of `prob`.
 
-`power` (`p > 0`) and `shift` (`σ > 0`) are stored in `T = float(real(eltype(first(roots))))`, so
-`Float32` roots give `power::Float32` and a `Float32` product; a solve needs an iterate of that
-element type and a real one.
+`power` (`p > 1/2`; `p ≤ 1/2` raises an `ArgumentError`, because a solve with it can return
+`SUCCESS` even at a known simple root under full steps) and `shift` (`σ > 0`) are stored in
+`T = float(real(eltype(first(roots))))`, so `Float32` roots give `power::Float32` and a `Float32`
+product; a solve needs an iterate of that element type and a real one.
 
 # Roots
 
@@ -84,7 +93,7 @@ an `ArgumentError`, as a [`StationarityProblem`](@ref) does.
 # R2
 
 [`solve_batch!`](@ref) solves every system of a batch under one `Deflated`, so each system is
-deflated at the same roots and ends at a root distinct from them. The batch of a wrapped
+deflated at the same roots. The batch of a wrapped
 [`StationarityProblem`](@ref) takes the datum of its solves from the keyword `b`, shared or
 [`PerSystem`](@ref), or from the problem's own `b`.
 
@@ -113,8 +122,8 @@ struct Deflated{P <: AbstractNonlinearProblem, RTs, T <: AbstractFloat} <:
             shift::T) where {
             P <: AbstractNonlinearProblem, RTs, T <: AbstractFloat}
         _check_deflated_problem(prob)
-        (power > zero(T) && isfinite(power)) ||
-            throw(ArgumentError("Deflated power must be finite and > 0"))
+        (power > inv(T(2)) && isfinite(power)) ||
+            throw(ArgumentError("Deflated power must be finite and > 1/2: at or below 1/2 the known roots do not repel Newton"))
         (shift > zero(T) && isfinite(shift)) ||
             throw(ArgumentError("Deflated shift must be finite and > 0"))
         _check_deflated_roots(roots)
@@ -678,7 +687,7 @@ end
 
 Solve a batch of independent small systems under one [`Deflated`](@ref) problem, as
 [`solve_batch!`](@ref) does on a [`NonlinearProblem`](@ref): every system is deflated at the same
-roots, so each ends at a root distinct from them. The batch of a wrapped
+roots, and, as for one solve, no system is guaranteed to reach another root. The batch of a wrapped
 [`StationarityProblem`](@ref) is deflated on the unknowns of the same full-state roots, and its
 datum comes from the keyword `b`, shared or [`PerSystem`](@ref), or from the problem's own `b`.
 The kernel takes the problem by value, so a `Deflated` whose roots or inner problem are not

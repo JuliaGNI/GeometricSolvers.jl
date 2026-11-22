@@ -82,7 +82,9 @@ bits of it to the SVD's. The step still overflows on every route where the solut
 exceeds `floatmax`.
 Where the element types differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
-converted back and multiplied by `s` (Kelley 2023, eqs. 2.17–2.18). Normalisation prevents
+converted back and multiplied by `s` (Kelley 2023, *Newton's Method in Three Precisions*, Pacific
+J. Optim., [doi:10.61208/pjo-2023-030](https://doi.org/10.61208/pjo-2023-030), eqs. 2.17–2.18
+of arXiv:2307.16051v4). Normalisation prevents
 overflow from the overall right-hand-side scale in a lower factor precision; entries small
 relative to the largest entry can still underflow. The scale takes no squares and overflows
 only where an entry's absolute value does. In the mixed-type path, a zero `r` returns a zero

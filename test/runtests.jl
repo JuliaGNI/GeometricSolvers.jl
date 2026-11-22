@@ -1,87 +1,124 @@
-using SafeTestsets
+using ParallelTestRunner
+using GeometricSolvers
 
-const GROUPS = isempty(ARGS) ?
-               (Sys.isapple() && Sys.ARCH === :aarch64 ? ["core", "slow", "metal"] :
-                ["core", "slow"]) : ARGS
+const TESTS = [
+    "core" => [
+        "Backends" => "integration/backends.jl",
+        "Return codes and status" => "base/status.jl",
+        "Options" => "base/options.jl",
+        "Reductions" => "base/reductions.jl",
+        "ToReal adaptor" => "base/adapt.jl",
+        "Storage seam" => "base/bang.jl",
+        "Linear-solver methods" => "linear/methods.jl",
+        "Static factors" => "linear/factors.jl",
+        "Static rectangular QR" => "linear/static/qr_rect.jl",
+        "Static rectangular SVD" => "linear/static/svd_rect.jl",
+        "Jacobi eigensolver" => "linear/static/eigen.jl",
+        "LDLT factorisation" => "linear/ldlt.jl",
+        "Dense linear solvers" => "linear/dense.jl",
+        "KA dense linear solvers" => "linear/ka.jl",
+        "Own-kernel reference solve" => "devices/own_kernel.jl",
+        "Mixed-precision linear solvers" => "linear/mixed.jl",
+        "Factor status and rank" => "linear/status.jl",
+        "Linear and spectral stability" => "linear/stability.jl",
+        "R1 Jacobian" => "ad/forwarddiff_static.jl",
+        "R3 Jacobian" => "ad/jacobian.jl",
+        "Jacobian-vector product" => "ad/jvp.jl",
+        "Sparse LU and AutoSparse" => "linear/sparspak.jl",
+        "Sparse AD sparsity detection" => "ad/sparse_ad.jl"
+    ],
+    "quality" => [
+        "Aqua Quality Assurance" => "quality/aqua.jl",
+        "JET Static Analysis" => "quality/jet.jl",
+        "Element-type matrix" => "quality/matrix.jl"
+    ],
+    "nonlinear" => [
+        "Line searches" => "globalization/linesearch.jl",
+        "Line function and globalization" => "globalization/linefunction.jl",
+        "Merit passes and search trips" => "globalization/passes.jl",
+        "DogLeg" => "globalization/dogleg.jl",
+        "LevenbergMarquardt" => "globalization/levenbergmarquardt.jl",
+        "Nonlinear problem" => "nonlinear/problem.jl",
+        "Stationarity problem" => "nonlinear/stationarity.jl",
+        "Reparametrized problem" => "nonlinear/reparametrized.jl",
+        "Deflated problem" => "nonlinear/deflation.jl",
+        "Block elimination and variable projection" => "nonlinear/eliminate.jl",
+        "Nonlinear solver loop" => "nonlinear/solver.jl",
+        "Newton" => "nonlinear/newton.jl",
+        "Iterative refinement" => "nonlinear/refinement.jl",
+        "Picard" => "nonlinear/picard.jl",
+        "Solver loop hooks" => "nonlinear/hooks.jl",
+        "Batched R2 nonlinear" => "nonlinear/batched.jl"
+    ],
+    "leastsquares" => [
+        "R3 nonlinear" => "nonlinear/r3.jl",
+        "R5 matrix-free Newton-GMRES" => "nonlinear/krylov.jl",
+        "GMRES-IR" => "nonlinear/gmres_ir.jl",
+        "Implicit differentiation" => "nonlinear/implicit.jl",
+        "Rank-deficient Newton" => "nonlinear/rank_deficient.jl",
+        "Range and spectrum diagnostics" => "nonlinear/diagnostics.jl",
+        "Nonlinear least squares" => "nonlinear/leastsquares.jl",
+        "CommonSolve interface" => "nonlinear/commonsolve.jl"
+    ],
+    "composition" => [
+        "Composition weights" => "composition/weights.jl",
+        "Additive combinator" => "composition/additive.jl",
+        "Multiplicative combinator" => "composition/multiplicative.jl",
+        "Repeat combinator" => "composition/repeat.jl",
+        "Switch combinator" => "composition/switch.jl",
+        "Anderson acceleration" => "composition/anderson.jl",
+        "Combinators refuse ForwardDiff.Dual inputs" => "composition/implicit.jl",
+        "Left preconditioning and RAS" => "composition/preconditioning.jl"
+    ],
+    "verification" => [
+        "Standard test set" => "verification/standard.jl"
+    ],
+    "linear" => [
+        "Dense linear solvers (large)" => "linear/dense_large.jl",
+        "Static LU" => "linear/static/lu.jl",
+        "Static QR" => "linear/static/qr.jl"
+    ],
+    "slow" => [
+        "KA dense linear solvers (large)" => "linear/ka_large.jl",
+        "Static SVD" => "linear/static/svd.jl",
+        "Broyden multisecant" => "composition/broyden.jl",
+        "Measurement scripts" => "integration/hardware_scripts.jl"
+    ],
+    "doctests" => [
+        "Doctests" => "quality/doctests.jl"
+    ],
+    "metal" => [
+        "Metal" => "devices/metal.jl",
+        "Metal static LU and QR" => "devices/metal_linear.jl",
+        "Metal KA LU and QR" => "devices/metal_ka.jl",
+        "Metal vendor fast paths" => "devices/metal_vendor.jl",
+        "Metal static SVD and Jacobi eigensolver" => "devices/metal_svd.jl",
+        "Metal R1 nonlinear" => "devices/metal_nonlinear.jl",
+        "Metal R5 Newton-GMRES" => "devices/metal_krylov.jl"
+    ]
+]
 
-if "core" in GROUPS
-    @safetestset "Aqua Quality Assurance" include("quality/aqua.jl")
-    @safetestset "JET Static Analysis" include("quality/jet.jl")
-    @safetestset "Element-type matrix" include("quality/matrix.jl")
-    @safetestset "Backends" include("integration/backends.jl")
-    @safetestset "Return codes and status" include("base/status.jl")
-    @safetestset "Options" include("base/options.jl")
-    @safetestset "Reductions" include("base/reductions.jl")
-    @safetestset "ToReal adaptor" include("base/adapt.jl")
-    @safetestset "Storage seam" include("base/bang.jl")
-    @safetestset "Linear-solver methods" include("linear/methods.jl")
-    @safetestset "Static factors" include("linear/factors.jl")
-    @safetestset "Static LU" include("linear/static/lu.jl")
-    @safetestset "Static QR" include("linear/static/qr.jl")
-    @safetestset "Static rectangular QR" include("linear/static/qr_rect.jl")
-    @safetestset "Static rectangular SVD" include("linear/static/svd_rect.jl")
-    @safetestset "Jacobi eigensolver" include("linear/static/eigen.jl")
-    @safetestset "LDLT factorisation" include("linear/ldlt.jl")
-    @safetestset "Dense linear solvers" include("linear/dense.jl")
-    @safetestset "KA dense linear solvers" include("linear/ka.jl")
-    @safetestset "Own-kernel reference solve" include("devices/own_kernel.jl")
-    @safetestset "Mixed-precision linear solvers" include("linear/mixed.jl")
-    @safetestset "Factor status and rank" include("linear/status.jl")
-    @safetestset "Linear and spectral stability" include("linear/stability.jl")
-    @safetestset "Line searches" include("globalization/linesearch.jl")
-    @safetestset "Line function and globalization" include("globalization/linefunction.jl")
-    @safetestset "Merit passes and search trips" include("globalization/passes.jl")
-    @safetestset "DogLeg" include("globalization/dogleg.jl")
-    @safetestset "LevenbergMarquardt" include("globalization/levenbergmarquardt.jl")
-    @safetestset "Nonlinear problem" include("nonlinear/problem.jl")
-    @safetestset "Stationarity problem" include("nonlinear/stationarity.jl")
-    @safetestset "Reparametrized problem" include("nonlinear/reparametrized.jl")
-    @safetestset "Deflated problem" include("nonlinear/deflation.jl")
-    @safetestset "Block elimination and variable projection" include("nonlinear/eliminate.jl")
-    @safetestset "Nonlinear solver loop" include("nonlinear/solver.jl")
-    @safetestset "Newton" include("nonlinear/newton.jl")
-    @safetestset "Iterative refinement" include("nonlinear/refinement.jl")
-    @safetestset "Picard" include("nonlinear/picard.jl")
-    @safetestset "Solver loop hooks" include("nonlinear/hooks.jl")
-    @safetestset "Batched R2 nonlinear" include("nonlinear/batched.jl")
-    @safetestset "R3 nonlinear" include("nonlinear/r3.jl")
-    @safetestset "R5 matrix-free Newton-GMRES" include("nonlinear/krylov.jl")
-    @safetestset "GMRES-IR" include("nonlinear/gmres_ir.jl")
-    @safetestset "Implicit differentiation" include("nonlinear/implicit.jl")
-    @safetestset "Rank-deficient Newton" include("nonlinear/rank_deficient.jl")
-    @safetestset "Range and spectrum diagnostics" include("nonlinear/diagnostics.jl")
-    @safetestset "Nonlinear least squares" include("nonlinear/leastsquares.jl")
-    @safetestset "CommonSolve interface" include("nonlinear/commonsolve.jl")
-    @safetestset "Composition weights" include("composition/weights.jl")
-    @safetestset "Additive combinator" include("composition/additive.jl")
-    @safetestset "Multiplicative combinator" include("composition/multiplicative.jl")
-    @safetestset "Repeat combinator" include("composition/repeat.jl")
-    @safetestset "Switch combinator" include("composition/switch.jl")
-    @safetestset "Anderson acceleration" include("composition/anderson.jl")
-    @safetestset "Combinators refuse ForwardDiff.Dual inputs" include("composition/implicit.jl")
-    @safetestset "Left preconditioning and RAS" include("composition/preconditioning.jl")
-    @safetestset "R1 Jacobian" include("ad/forwarddiff_static.jl")
-    @safetestset "R3 Jacobian" include("ad/jacobian.jl")
-    @safetestset "Jacobian-vector product" include("ad/jvp.jl")
-    @safetestset "Sparse LU and AutoSparse" include("linear/sparspak.jl")
-    @safetestset "Sparse AD sparsity detection" include("ad/sparse_ad.jl")
-    @safetestset "Standard test set" include("verification/standard.jl")
-end
-if "slow" in GROUPS
-    @safetestset "Dense linear solvers (large)" include("linear/dense_large.jl")
-    @safetestset "KA dense linear solvers (large)" include("linear/ka_large.jl")
-    @safetestset "Static SVD" include("linear/static/svd.jl")
-    @safetestset "Broyden multisecant" include("composition/broyden.jl")
-end
-if "doctests" in GROUPS
-    @safetestset "Doctests" include("quality/doctests.jl")
-end
-if "metal" in GROUPS
-    @safetestset "Metal" include("devices/metal.jl")
-    @safetestset "Metal static LU and QR" include("devices/metal_linear.jl")
-    @safetestset "Metal KA LU and QR" include("devices/metal_ka.jl")
-    @safetestset "Metal vendor fast paths" include("devices/metal_vendor.jl")
-    @safetestset "Metal static SVD and Jacobi eigensolver" include("devices/metal_svd.jl")
-    @safetestset "Metal R1 nonlinear" include("devices/metal_nonlinear.jl")
-    @safetestset "Metal R5 Newton-GMRES" include("devices/metal_krylov.jl")
-end
+const SELECTED = filter(!startswith("--"), ARGS)
+const GROUPS = isempty(SELECTED) ?
+               (Sys.isapple() && Sys.ARCH === :aarch64 ?
+                [
+    "core", "quality", "nonlinear", "leastsquares", "composition",
+    "verification", "linear", "slow", "metal"] :
+                [
+    "core", "quality", "nonlinear", "leastsquares", "composition",
+    "verification", "linear", "slow"]) : SELECTED
+const UNKNOWN = setdiff(SELECTED, first.(TESTS))
+isempty(UNKNOWN) ||
+    error("no test group ", join(UNKNOWN, ", "), " in runtests.jl; its groups are ",
+        join(first.(TESTS), ", "))
+
+runtests(GeometricSolvers, filter(startswith("--"), ARGS);
+    testsuite = Dict(label => :(include($(joinpath(@__DIR__, path))))
+    for (group, files) in TESTS if group in GROUPS for (label, path) in files),
+    serial = [label
+              for (group, files) in TESTS if group in ("metal", "cuda")
+              for (label, _) in files],
+    serial_position = :after,
+    retries = 0,
+    exeflags = ["--threads=$(Threads.nthreads())"],
+    max_default_jobs = max(1, Sys.CPU_THREADS ÷ Threads.nthreads()))

@@ -320,16 +320,6 @@
 - **kind:** dead code
 - **found:** PR #62
 
-### K68 · `test/nonlinear/leastsquares.jl` may exceed the 60 s budget of a `core` file
-
-- **location:** `test/runtests.jl` (`nonlinear/leastsquares.jl` in `core`)
-- **evidence:** Cold `run-tests.jl <repository> test/nonlinear/leastsquares.jl` on Julia 1.13.3:
-  `PASS in 121 s`, `Test Summary` 1m49.7s, at a load average of 15.3 at the start; the review of
-  PR #62 measured `PASS in 110 s` at a load average of 9.95. Both runs were on a loaded machine,
-  so whether the file stays above 60 s on a quiet one, and moves to `slow`, is open.
-- **kind:** not verified
-- **found:** PR #62
-
 ### K69 · A static `LeastSquaresProblem` evaluates its residual at `x₀` twice in a cold `solve`
 
 - **location:** `src/nonlinear/newton.jl` (`init_state`)
@@ -479,3 +469,176 @@
 - **kind:** defect
 - **found:** 2026-11-12 (a property-based test of the strong Wolfe conditions, checked in
   `BigFloat`)
+
+### K87 · `JET.report_package` errors on Julia pre and nightly, so those CI jobs fail in `test/quality/jet.jl`
+
+- **location:** `test/quality/jet.jl:13`
+- **evidence:** JET 0.12.3 (`JET = "0.12"` in `test/Project.toml`, marked `⌅`, held back) warns
+  "Full JET functionality is not available on Julia 1.14.0-beta1." and `JET report_package`
+  then ends in an `Error During Test at test/quality/jet.jl:13` with the same message:
+  "0 passed, 0 failed, 1 errored". The same on 1.15.0-DEV.729 (nightly). `main` fails the same
+  way (run 43532996461, job 132255039570, 2026-11-14). The pre and nightly jobs are no required
+  checks.
+- **kind:** upstream
+- **found:** PR #84
+
+### K88 · On Metal, a residual that broadcasts over overlapping `@views` of an `MVector` reads wrong values, and `solve_batch!` returns `SUCCESS` at a point that is no root
+
+- **location:** —
+- **evidence:** The residual is the caller's (R2 `solve_batch!` on an `MtlArray`, Metal.jl
+  1.12.0, Apple M4 Max). The generalized Rosenbrock residual (n = 10) with
+  `@views @. out[2:n] = 10 * (x[2:n] - x[1:n-1] * x[1:n-1])` on `MVector`s, through the inline
+  out-of-place adapter of the Y3 premises probe, returns `SUCCESS` at iteration 2 at
+  `X = (1, 0, 1, 0, …)` from all three starts. The device residual there reads
+  `F = (0, 0, 10, 0, …)`, the host residual `F = (0, -10, 10, -10, …)`: the `x[k-1]` terms read as
+  0. The same kernel allocates 80 B per thread on the device heap. On CUDA (GB10, RTX 4090) and
+  ROCm (RX 7900 XTX), where the kernel also allocates, the same rows end `SINGULAR` or
+  `NONFINITE`, as the host R1 `solve` does from the same start. The same residual as a loop, or as
+  a broadcast on views of an `SVector`, is correct on Metal and allocates nothing. The cause of
+  the wrong read (an `unalias` copy of the view is suspected) is not established. A caller on
+  Metal writes such a residual as a loop.
+- **kind:** upstream
+- **found:** 2026-11-15 (Y3 premises probe on four cards)
+
+### K89 · SimpleNonlinearSolve's `SimpleNewtonRaphson` in a KernelAbstractions kernel returns `Success` with a NaN residual, so a comparison with it reads its status and its residual
+
+- **location:** `benchmark/`
+- **evidence:** With SimpleNonlinearSolve 2.14.6: sample problem 18 (`test/helpers/standard_problems.jl`) at `10u0`, in `Float32`,
+  solved with `SimpleNewtonRaphson` in a KA kernel, returns `Success` with host ‖F‖∞ = NaN on Metal
+  (M4 Max), CUDA (GB10, RTX 4090) and ROCm (RX 7900 XTX); at `100u0` it does the same on CUDA and
+  ROCm. On Metal the returned iterate is `u = (-Inf, NaN)`. GeometricSolvers' `Newton` on the
+  same rows returns `SUCCESS` with a finite residual (CUDA and ROCm about 1e-27; on Metal at
+  `10u0` a false root of the cancelling form `1 - exp(-x²)`). A benchmark that counts statuses
+  only counts these rows as solved.
+- **kind:** upstream
+- **found:** 2026-11-15 (Y3 premises probe on four cards)
+
+### K91 · The CUDA `backsolve!` for an `m × n` `DeviceQR`, `m > n`, throws `DimensionMismatch`
+
+- **location:** `ext/GeometricSolversCUDAExt.jl:60–61`
+- **evidence:** the method calls `CUDA.CUBLAS.trsv!('U', 'N', 'N', fac.factors, d)` on the whole
+  factor, and that wrapper throws `DimensionMismatch("Matrix A is $m by $n but must be square")`
+  for `m ≠ n` (CUDA 6.5.1, `lib/cublas/src/wrappers.jl:1058–1059`). The mixed-precision `ldiv!!`
+  of a `LeastSquaresProblem` with `QRFactorization(Float32)` and a `Float64` iterate calls this
+  `backsolve!` on the `m × n` factor with the length-`m` right-hand side
+  (`src/linear/mixed.jl:19`). The same-type solve goes to the own-kernel `backsolve_shifted!`
+  (`src/linear/ka/qr.jl:184`), which throws no error but, for complex `T`, gives a wrong
+  solution: the cuSOLVER `geqrf!` factor has the LAPACK `τ` (H = I − τ v vᴴ), and the own
+  `qadj` kernel applies I − τ v vᴴ as Hᴴ, which holds for the LAPACK factor only with
+  `conj.(τ)`. A host `LAPACK.geqrf!` factor solved with `ka_qr_backsolve!` on a `JLArray` fails
+  for `ComplexF32` and `ComplexF64` at 6 × 3, 40 × 7 and 3 × 1 and passes with `conj.(τ)`
+  (critic round 2 probe of the ROCm extension). The ROCm extension solves with `ormqr!` on the
+  whole factor and `trsv!` on views of its leading `n × n` block and of `d[1:n]`, which the
+  `rocBLAS.trsv!` of AMDGPU 2.12 accepts, and its own `backsolve_shifted!` keeps the same-type
+  solve on that path.
+- **kind:** defect
+- **found:** 2026-11-16 (critic round 1 of the ROCm extension)
+
+### K92 · The launch and wait counts of `scripts/hardware/sync_cost.jl` come from a reading of the source, and no test sees them drift from what the step runs
+
+- **location:** `scripts/hardware/sync_cost.jl:142` (`phase_counts`)
+- **evidence:** `phase_counts` returns constants per path and device; the testset
+  "sync_cost.jl runs on jlarray at n = 64" of `test/integration/hardware_scripts.jl` asserts
+  `r.waits == 8` and `r.launches == 3 * 64 + 11`, the same constants written again. A change of
+  `src/` that adds or removes a kernel launch, a `synchronize` or a host read in the step leaves
+  both green. A count of the real synchronisations, such as a wrapped backend that counts
+  `KernelAbstractions.synchronize` and the host reads, would catch that drift. The vendor counts
+  (CUDA, Metal) are not run on a device at all.
+- **kind:** missing test
+- **found:** 2026-11-16 (critic of the measurement scripts)
+
+### K90 · The residual floor of a `RAS` local solve separates a converged block from one with an error of `√eps ‖x_i‖` only where `n_i κ_F(J_i) < 1/√eps`
+
+- **location:** `src/composition/ras.jl` (`residual_floor`, `_ras_sweep!!`)
+- **evidence:** A positive-tolerance local solve is converged at a block residual norm of at most
+  `n_i eps ‖J_i‖_F ‖x_i‖`. A block with an error `e` has a residual of at least
+  `σ_min(J_i) ‖e‖`, so an error of `√eps ‖x_i‖` lies above that floor only where
+  `n_i κ_F(J_i) < 1/√eps`: about 2900 in `Float32`, 6.7e7 in `Float64`. A larger or worse
+  conditioned `Float32` block can accept an iterate whose error is of the order of `√eps ‖x_i‖`,
+  also from a diverging local solve. The tests reach blocks of 4 indices with `κ ≈ 14`; the
+  bound for larger blocks is derived, not measured. The outer iteration still tests the global
+  residual.
+- **kind:** not verified
+- **found:** #97
+
+### K94 · Two entries of the `[Unreleased]` section of `CHANGELOG.md` name test groups and a required-check status that `main` at 4646177 already does not have
+
+- **location:** `CHANGELOG.md:1323`
+- **evidence:** `CHANGELOG.md:1323` says that `test/runtests.jl` selects the groups `core`, `slow`
+  and `metal`; `CHANGELOG.md:1327` puts `test/quality/doctests.jl` in `slow`; `CHANGELOG.md:1330`
+  says that an empty `ARGS` runs `core`, `slow` and `metal`; and `CHANGELOG.md:1339` says that the
+  Metal job is not a required check. At 4646177, `test/ci-groups.toml` lists six groups,
+  `test/quality/doctests.jl` is the one file of the group `doctests`, and the Metal jobs are
+  required checks, as `CHANGELOG.md:692` says. These sentences were false before the parallel test
+  form, which leaves them as they are.
+- **kind:** docs
+- **found:** 2026-11-20
+
+### K95 · Under Metal.jl 1.12, `factorize!!` never reaches the negative-status branches of `_mps_lu_finish!`, and a non-singular MPS failure throws instead of giving `info = 1`
+
+- **location:** `ext/GeometricSolversMetalExt.jl:44`
+- **evidence:** From Metal.jl 1.12.0, `LinearAlgebra.lu!` on an `MtlMatrix` passes the MPS status
+  through `MPS.lu_info`, which turns the singular status `-2` into LAPACK's `info` and calls
+  `error(...)` on every other failure status; the compat is `Metal = "1.12"`. So
+  `LinearAlgebra.lu!(fac.factors; check = false)` at line 44 never returns a negative `info`, the
+  `-2` branch and the "any other negative status" branch are reached only by a direct call of
+  `_mps_lu_finish!`, and the comments at lines 12–14 and 21–23 describe the old behaviour. On an
+  Apple M4 Max (macOS 27.2.0, Julia 1.13.4, Metal.jl 1.12.1), Metal's `info` equals LAPACK's for
+  four singular `Float32` matrices (3, 4, 1, 2).
+- **kind:** dead code
+- **found:** #100 (issue #101)
+
+### K96 · rocSOLVER's complex `geqrf!` above n = 128 writes NaN into the trailing columns when a column of a panel has nothing below its diagonal
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:52` (`factorize!!` for `DeviceQR`)
+- **evidence:** on an AMD Radeon RX 7900 XTX (gfx1100; AMDGPU 2.12.0, rocSOLVER 3.37.0, rocBLAS
+  5.7.0, HIP 7.16, Julia 1.13.4), `AMDGPU.rocSOLVER.geqrf!` on a `ComplexF32` or `ComplexF64`
+  matrix gives `NaN` in R where a column has an exactly zero part below the diagonal and a real
+  diagonal entry, so its reflector has τ = 0. `4I` is correct at n = 128 and wrong at every n from
+  129 to 10⁴, with the first `NaN` at (1, 65). One decoupled variable j in a dense
+  `randn + 2n I` (row j and column j zero but for `A[j, j] = 4`, so τ is zero at j only) is
+  correct at n = 128, and at n = 256 and 512 gives the first `NaN` in the first column of the
+  next 64-column panel, in the 16-row block that holds row j: (1, 65), (33, 65), (49, 65) and
+  (97, 129) for j = 1, 40, 64 and 100. The matrix `4I` with 1e-3 below each diagonal entry, the
+  same matrices in `Float64`, every `getrf!`, and a complex `rocBLAS.gemm!` of the trailing-update
+  shape agree with the host. So the fault is in the blocked complex path of rocSOLVER, which
+  starts above n = 128, not in the extension. `factorize!!` reports the `NaN` as the first
+  non-finite diagonal entry of R, `info = 65` and `SINGULAR`. The ROCm agreement rows at
+  n = 10⁴ (`test/gpu/rocm/runtests.jl`), whose matrix has such columns, mark the complex QR
+  assertions broken. The probes are `device-run/probe_info65.jl` and `device-run/probe_tau0.jl`
+  on the branch `device-run/rocm-rx7900xtx`, and their output is in
+  `results/rocmext-rx7900xtx/` on the branch `results/rx7900xtx`.
+- **kind:** upstream
+- **found:** #96 (upstream issue https://github.com/ROCm/rocSOLVER/issues/1050)
+
+### K97 · The ROCm QR solve of an `m × n` factor with `m ≥ max(32768, 8n)` rows takes AMDGPU's own blocked `ormqr!`, which no device row reaches
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:65` (`backsolve!` for `DeviceQR`)
+- **evidence:** the extension applies Qᴴ with `AMDGPU.rocSOLVER.ormqr!('L', 'T'/'C', factors, τ, d)`.
+  In AMDGPU 2.12.0 that wrapper calls `ormqr_blocked!`, AMDGPU's own blocked compact-WY
+  implementation, in place of rocSOLVER's `ormqr` where `prefer_blocked(mA, k)` holds
+  (`src/solver/highlevel.jl:132`, `prefer_blocked(m, k) = m >= max(2^15, 8k)`, read at
+  `src/solver/highlevel.jl:318`). The device rows of `test/gpu/rocm/runtests.jl` stop at the square
+  `n = 10⁴` and at `m = 40` for an `m × n` factor, so a least-squares Jacobian with
+  `m ≥ max(32768, 8n)` rows solves through a path of the dependency that no test runs on a device.
+  A device row at, for example, `40000 × 7` would reach it.
+- **kind:** not verified
+- **found:** #96
+
+### K98 · A `SubArray` right-hand side of a ROCm `DeviceQR` solve falls to the own kernel, which reads the LAPACK `τ` as its conjugate
+
+- **location:** `ext/GeometricSolversAMDGPUExt.jl:59–81` (`backsolve!` and `backsolve_shifted!` for
+  `DeviceQR`)
+- **evidence:** both extension methods take `d::ROCVector{T}`. A contiguous view, such as
+  `view(x, 1:k)` or `view(A, :, j)`, is itself a `ROCVector` (GPUArrays 12.2.0,
+  `src/host/base.jl:362`) and reaches them, but a `SubArray`, such as `view(x, 1:2:k)` or
+  `view(A, i, :)`, matches neither, and the solve dispatches to the own-kernel `backsolve!` and
+  `backsolve_shifted!` (`src/linear/ka/qr.jl`). The factor of the extension comes from
+  `rocSOLVER.geqrf!`, with the LAPACK `τ`, and the own kernel applies it with `conj.(τ)` (the
+  mechanism of K91), so the solution is wrong for complex `T` at every shape. The call sites of
+  `ldiv!!` in `src/` (`grep -rn "ldiv!!(" src/`) pass no view to a `DeviceQR` solve; the implicit
+  tangent, for example, passes a right-hand side that `similar` allocates
+  (`src/nonlinear/implicit.jl:340`). So no solver path reaches it; a caller that calls `ldiv!!`
+  or `backsolve!` with a `SubArray` does.
+- **kind:** found late
+- **found:** #96

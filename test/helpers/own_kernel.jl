@@ -1,11 +1,11 @@
-# The reference solve of the vendor fast-path tests, `own_kernel_ldiv!`, and the matrix they run
-# it on, `cuda_well_conditioned`.
+# The reference solve of the vendor fast-path tests, `own_kernel_ldiv!`, the matrix they run it
+# on, `cuda_well_conditioned`, and its `κ∞`, `cuda_well_conditioned_cond`.
 #
-# Every agreement row of `test/devices/metal_vendor.jl` and of `test/gpu/cuda/runtests.jl` takes
-# its reference from `own_kernel_ldiv!`. `test/devices/own_kernel.jl` checks it against the host
-# solve on a `JLArray`, in an ordinary run: both of its branches and all three backsolves, through
-# the mixed LU and QR rows and the real SVD rows. The same-type LU and QR rows and the complex SVD
-# rows run it on a device only.
+# Every agreement row of `test/devices/metal_vendor.jl`, `test/gpu/cuda/runtests.jl` and
+# `test/gpu/rocm/runtests.jl` takes its reference from `own_kernel_ldiv!`.
+# `test/devices/own_kernel.jl` checks it against the host solve on a `JLArray`, in an ordinary
+# run: both of its branches and all three backsolves, through the mixed LU and QR rows and the
+# real SVD rows. The same-type LU and QR rows and the complex SVD rows run it on a device only.
 #
 # `factorize!!` divides `J` by `2^e` where the element type of `J` is not that of the factors, and
 # a device `SVD` divides it always, so the `src/linear/ka/` kernels solve with the factors of
@@ -14,7 +14,7 @@
 # the `ldiv!!` of `src/linear/mixed.jl` does; that method also scales `r` by its largest entry,
 # which changes no solution and which this reference leaves out.
 
-using LinearAlgebra: Diagonal, I
+using LinearAlgebra: Diagonal, I, cond, opnorm
 using Random: Xoshiro
 
 using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
@@ -35,6 +35,29 @@ function cuda_well_conditioned(T::Type, n::Int, seed::Integer = 0x5eed)
     end
     b = randn(rng, T, n)
     return A, b
+end
+
+# `κ∞` of a matrix of `cuda_well_conditioned`. Above `n = 256` that matrix is block diagonal: two
+# `16 × 16` corner blocks `B₁`, `B₂` around a diagonal `D`. Then `‖A‖∞` is the largest of `‖B₁‖∞`,
+# `‖B₂‖∞` and `max|Dᵢᵢ|`, and `‖A⁻¹‖∞` the largest of `‖B₁⁻¹‖∞`, `‖B₂⁻¹‖∞` and `max 1/|Dᵢᵢ|`, so
+# no dense `n × n` inverse is needed. The structure is checked first, so a matrix of another form
+# throws instead of getting a wrong `κ∞`.
+function cuda_well_conditioned_cond(A::AbstractMatrix)
+    n = size(A, 1)
+    size(A, 2) == n || throw(DimensionMismatch("A is $(size(A)), not square"))
+    n <= 256 && return cond(A, Inf)
+    for j in 1:n, i in 1:n
+
+        in_block = (i <= 16 && j <= 16) || (i > n - 16 && j > n - 16)
+        i == j || in_block || iszero(A[i, j]) ||
+            throw(ArgumentError("A[$i, $j] ≠ 0: A is not block diagonal with 16 × 16 corners"))
+    end
+    B₁ = A[1:16, 1:16]
+    B₂ = A[(n - 15):n, (n - 15):n]
+    d = [abs(A[i, i]) for i in 17:(n - 16)]
+    norm_A = max(opnorm(B₁, Inf), opnorm(B₂, Inf), maximum(d))
+    norm_inv = max(opnorm(inv(B₁), Inf), opnorm(inv(B₂), Inf), inv(minimum(d)))
+    return norm_A * norm_inv
 end
 
 # The `src/` kernel that solves with the factors of `fac`, in the factor element type `F`: the

@@ -83,6 +83,14 @@ The commands are for a shell on the machine. Replace `<machine>` with the slug f
    chunked forward mode on the device array, against `ForwardDiff` on an `Array`, in `Float32`
    and — on CUDA and ROCm, which have it — `Float64`.
 
+   On the AMD machine, the tests of the rocSOLVER extension `GeometricSolversAMDGPUExt` are a
+   suite of their own:
+
+   ```sh
+   julia --startup-file=no --project=test/gpu/rocm test/gpu/rocm/runtests.jl \
+       2>&1 | tee ../results/rocmext-<machine>-gpu.txt
+   ```
+
    A spike, here `capabilities` on the GPU. The second command stops with an error when the two
    manifests differ on the version of a package they share; the text after this block says what
    to do then:

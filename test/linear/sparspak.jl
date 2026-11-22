@@ -3,10 +3,12 @@
 using ADTypes: AutoForwardDiff, AutoSparse, NoSparsityDetector
 using ForwardDiff: ForwardDiff
 using GeometricSolvers
-using GeometricSolvers: Backtracking, Bisection, DogLeg, LUFactorization, Newton,
-                        NonlinearProblem, Picard, QRFactorization, SINGULAR, SUCCESS,
-                        SVDFactorization, init, returncode, solve, solve!, solve_batch!
-using LinearAlgebra: norm, transpose
+using GeometricSolvers: Backtracking, Bisection, BlockPartition, DogLeg, LeftPreconditioned,
+                        LUFactorization, Newton, NonlinearProblem, Picard, QRFactorization,
+                        RAS, RASState, SINGULAR,
+                        SUCCESS, SVDFactorization, init, returncode, solve, solve!,
+                        solve_batch!
+using LinearAlgebra: Tridiagonal, norm, transpose
 using SparseArrays: SparseArrays, SparseMatrixCSC, getcolptr, nnz, nonzeros, nzrange,
                     rowvals, sparse, spzeros
 using SparseMatrixColorings: GreedyColoringAlgorithm, column_groups
@@ -520,8 +522,23 @@ end
     # Device iterate (JLArray) with sparse prototype raises MethodError
     @test_throws MethodError init(prob_analytic, JLArray(z0), Newton(), p_val)
 
-    # Default Newton() (ChunkedForwardDiff) with sparse prototype and no analytic J raises MethodError
-    @test_throws MethodError solve(prob_ad, copy(z0), Newton(), p_val)
+    # AutoForwardDiff() (ChunkedForwardDiff), the default of Newton() without an analytic J, with a
+    # sparse prototype is refused at init, before the first step, on a host and a device iterate;
+    # explicitly selected, it is refused also beside an analytic J, which it replaces
+    msg_fd = r"^ArgumentError: a sparse jacobian_prototype takes no Jacobian from AutoForwardDiff\(\)"
+    @test_throws msg_fd init(prob_ad, copy(z0), Newton(), p_val)
+    @test_throws msg_fd init(prob_ad, JLArray(z0), Newton(), p_val)
+    @test_throws msg_fd init(prob_ad, copy(z0), Newton(; jacobian = AutoForwardDiff()), p_val)
+    @test_throws msg_fd init(
+        prob_analytic, copy(z0), Newton(; jacobian = AutoForwardDiff()), p_val)
+    err_fd = try
+        init(prob_ad, copy(z0), Newton(), p_val)
+        nothing
+    catch e
+        e
+    end
+    @test occursin("analytic Jacobian J", sprint(showerror, err_fd))
+    @test occursin("jacobian = AutoSparse(...)", sprint(showerror, err_fd))
 
     # Analytic J! that mutates rowvals raises ArgumentError
     prob_mut_row = NonlinearProblem(
@@ -571,4 +588,74 @@ end
     )
     @test_throws ArgumentError solve(
         prob_nodiag, [1.0, 2.0], Newton(; regularization = 1e-3))
+end
+
+# RAS with a sparse prototype: the block factors are dense and of block size, and the prototype
+# sizes the global Jacobian only. The coupled residual F_j(u) = u_j + u_j (u_{j-1}² + u_{j+1}²) - 1
+# has a tridiagonal Jacobian.
+@testset "RAS with a sparse jacobian_prototype" begin
+    n = 6
+    part = BlockPartition(n, 2; overlap = 1)
+    lft(u, j) = j == 1 ? zero(eltype(u)) : u[j - 1]
+    rgt(u, j) = j == n ? zero(eltype(u)) : u[j + 1]
+    coupled(u, j) = u[j] + u[j] * (lft(u, j)^2 + rgt(u, j)^2) - one(eltype(u))
+    F! = (r, x, p) -> (foreach(j -> r[j] = coupled(x, j), 1:n); r)
+    J! = (J, x, p) -> begin
+        fill!(J, 0)
+        for j in 1:n
+            J[j, j] = 1 + lft(x, j)^2 + rgt(x, j)^2
+            j > 1 && (J[j, j - 1] = 2x[j] * lft(x, j))
+            j < n && (J[j, j + 1] = 2x[j] * rgt(x, j))
+        end
+        J
+    end
+    residuals = ntuple(length(part.owners)) do i
+        S = part.subdomains[i]
+        (f, x_loc, x, p) -> begin
+            u = Vector{promote_type(eltype(x_loc), eltype(x))}(x)
+            u[S] .= x_loc
+            foreach(((k, j),) -> f[k] = coupled(u, j), enumerate(S))
+            f
+        end
+    end
+    P = sparse(Tridiagonal(ones(n - 1), ones(n), ones(n - 1)))
+    x0 = [0.3, 0.5, 0.7, 0.4, 0.6, 0.2]
+
+    prob_ad = NonlinearProblem(F!; jacobian_prototype = P, block_residuals = residuals)
+    prob_sp = NonlinearProblem(F!, J!; jacobian_prototype = P, block_residuals = residuals)
+    prob_dense = NonlinearProblem(F!, J!; block_residuals = residuals)
+    x_ref, st_ref = solve(prob_dense, copy(x0), RAS(part))
+    @test st_ref.code === SUCCESS
+
+    # Without an analytic J, a RAS sweep and a Picard outer under `Static` read no global Jacobian,
+    # so neither builds one: both solve the problem as they solve it without the prototype
+    for m in (RAS(part), LeftPreconditioned(Picard(), RAS(part)))
+        solver = init(prob_ad, copy(x0), m, nothing)
+        ras = solver.state isa RASState ? solver.state : solver.state.problem.state
+        @test ras isa RASState
+        @test ras.G === nothing
+        @test ras.jac_prep === nothing
+        x_ad, st_ad = solve!(solver)
+        @test st_ad.code === SUCCESS
+        @test norm(x_ad - x0, Inf) > 0.1
+        @test norm(F!(similar(x_ad), x_ad, nothing), Inf) < 1e-6
+        @test isapprox(x_ad, x_ref; rtol = 1e-6)
+    end
+
+    # RASPEN, and a Picard outer whose line search reads the slope, read the global Jacobian, whose
+    # ForwardDiff form cannot fill P
+    for m in (LeftPreconditioned(Newton(), RAS(part)),
+        LeftPreconditioned(Picard(; globalization = Backtracking()), RAS(part)))
+        @test_throws r"^ArgumentError: a RASPEN Jacobian on a problem with a sparse jacobian_prototype needs an analytic Jacobian J" init(
+            prob_ad, copy(x0), m, nothing)
+    end
+
+    # With an analytic J, the solve matches the solve of the problem without the prototype
+    x_sp, st_sp = solve(prob_sp, copy(x0), RAS(part))
+    x_dense, st_dense = solve(prob_dense, copy(x0), RAS(part))
+    @test st_sp.code === SUCCESS
+    @test st_dense.code === SUCCESS
+    @test norm(x_sp - x0, Inf) > 0.1
+    @test norm(F!(similar(x_sp), x_sp, nothing), Inf) < 1e-6
+    @test isapprox(x_sp, x_dense; rtol = 8 * eps(Float64))
 end

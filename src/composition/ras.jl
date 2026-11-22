@@ -98,14 +98,15 @@ step then evaluates the global residual once at the swept iterate and returns it
 
 An inner iteration of block `i` stops before its linear solve when the block residual norm is at
 most `atol + rtol * ‖f_i⁰‖`, with `f_i⁰` the block's residual at its first inner iteration. With a
-positive tolerance (`atol > 0` or `rtol > 0`), a local solve that takes all `max_iterations` steps
-is converged when its last Newton step ``\\delta`` is at the rounding level of its iterate,
-``\\|\\delta\\| \\le \\varepsilon \\|x_i\\|`` with ``\\varepsilon`` the `eps` of the element type,
-where the residual can fall no further; otherwise it evaluates its block residual once more, and
-where that norm is above the tolerance the local solve has not converged: the step returns the
-iterate unchanged with `MAXITERS`, which ends the solve, and [`ras_counts`](@ref) names the block
-in `failed_block`. With `atol = rtol = 0` every local
-solve takes `max_iterations` steps and makes no claim of convergence. With
+positive tolerance (`atol > 0` or `rtol > 0`), a local solve is also converged at its residual
+floor, the bound of the rounding error of its residual: a block residual norm of at most
+``n_i \\varepsilon \\|J_i\\|_F \\|x_i\\|`` ends it, with ``n_i`` the block size, ``J_i`` the block
+Jacobian of its last Newton step, ``\\|\\cdot\\|_F`` the Frobenius norm and ``\\varepsilon`` the
+`eps` of the element type. A local solve that takes all `max_iterations` steps evaluates its block
+residual once more, and where that norm is above the tolerance and above the floor, the local
+solve has not converged: the step returns the iterate unchanged with `MAXITERS`, which ends the
+solve, and [`ras_counts`](@ref) names the block in `failed_block`. With `atol = rtol = 0` every
+local solve takes `max_iterations` steps and makes no claim of convergence. With
 `balance_threshold = ρ` the step returns the iterate unchanged, as a `SUCCESS` of zero norm, when
 ``\\max_i \\|R_i F(x)\\| \\le \\rho \\|F(x)\\|`` (`CaiLi:2011`); the block residuals cost one call
 per block in that test, and the global residual costs none. [`LeftPreconditioned`](@ref) refuses a
@@ -114,7 +115,12 @@ per block in that test, and the global residual costs none. [`LeftPreconditioned
 The counters of the last [`start!!`](@ref) are read with [`ras_counts`](@ref). A problem without
 block residuals, a partition whose block count or index count differs from the problem's, and an
 iterate that is not a vector raise an `ArgumentError` at [`init_state`](@ref); the partition's
-validation raises one at construction.
+validation raises one at construction. A `jacobian_prototype` sizes the global Jacobian only: the
+block factors are dense. Only a RASPEN product reads the global Jacobian, so on a sparse
+`jacobian_prototype` without an analytic `J` a sweep, and a [`Picard`](@ref) outer under
+[`Static`](@ref), solve without one, and a reader of the RASPEN product — a [`Newton`](@ref) outer,
+or a `Picard` outer with a line search — raises an `ArgumentError` at `init_state`: the ForwardDiff
+Jacobian of the global residual writes a dense Jacobian only.
 """
 struct RAS{P, R <: Real, B <: Union{Nothing, Real}}
     partition::P
@@ -225,7 +231,8 @@ end
 The state of a [`RAS`](@ref) method: the workspace of every block, the factors of the block
 Jacobians, which [`raspen_jvp!`](@ref) and [`raspen_jacobian!`](@ref) read, the global Jacobian
 buffer and its preparation — `nothing` where the problem has its own `J`, and `AutoForwardDiff()`
-on `F` where it has none — the composite iterate that a RASPEN Jacobian product forms per block,
+on `F` where it has none; both `nothing` on a sparse `jacobian_prototype` without `J`, where no
+global Jacobian is built — the composite iterate that a RASPEN Jacobian product forms per block,
 and the counters that [`ras_counts`](@ref) reports. Every block factor is re-formed in
 every inner iteration, and once more at the local iterate that the sweep returns where the block
 factors feed a RASPEN preparation, which is the factor at the local solution. A factor that no
@@ -273,7 +280,9 @@ end
                  for i in 1:nblocks]
     deltas = [similar(x, length(part.subdomains[i])) for i in 1:nblocks]
     rows = [similar(x, T, length(part.subdomains[i]), part.n) for i in 1:nblocks]
-    factors = [fail_closed!!(dense_factor(LUFactorization(), prob, x_locals[i], p))
+    # The block Jacobians are dense and of block size, so their factors take no prototype: the
+    # problem's `jacobian_prototype` is the global Jacobian's.
+    factors = [fail_closed!!(init_linear(LUFactorization(), nothing, x_locals[i], nothing))
                for i in 1:nblocks]
     couplings = similar(x)
     jacfuns = block_jacobians(prob)
@@ -290,9 +299,17 @@ end
     end
     Fx = similar(x)
     P = jacobian_prototype(prob)
-    G = P === nothing ? similar(x, T, part.n, part.n) : similar(P, T)
-    jac_prep = _has_analytic_jacobian(prob) ? nothing :
-               prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+    # Only a RASPEN product reads the global Jacobian, and the ForwardDiff form of it fills a
+    # dense Jacobian only: on a sparse prototype without `J` the state builds neither, and a
+    # RASPEN preparation of it is refused.
+    if raspen_refused(prob)
+        G = nothing
+        jac_prep = nothing
+    else
+        G = P === nothing ? similar(x, T, part.n, part.n) : similar(P, T)
+        jac_prep = _has_analytic_jacobian(prob) ? nothing :
+                   prepare_ad(AutoForwardDiff(), prob, Fx, x, p)
+    end
     blocks = RASBlocks(subdomains, owners, local_owners, x_locals, f_locals, jacobians,
         deltas, rows, problems, preps, couplings, similar(x), false, false)
     return RASState(blocks, factors, Fx, similar(x), similar(x), jac_prep, G, similar(x),
@@ -358,10 +375,24 @@ function ras_prolongate!(dest, x_locals, owners, local_owners)
     return dest
 end
 
+# The residual floor of a local Newton solve, `n_i eps ‖J_i‖_F ‖x_i‖`, with `n_i` the block size:
+# the rounding bound `|fl(J_i x_i) - J_i x_i| ≤ n_i eps |J_i| |x_i|` of a matrix-vector product of
+# length `n_i`, in the Euclidean norm of `rnorm`, where `‖|J_i| |x_i|‖ ≤ ‖J_i‖_F ‖x_i‖`. It bounds
+# the rounding error of an affine block residual at its root, and a nonlinear one has the same
+# leading term there; a Newton step reduces a residual no further than that rounding error, so a
+# residual of at most the floor counts as converged. An iterate with an error `e` has a residual of
+# at least `σ_min(J_i) ‖e‖`, so an error of `√eps ‖x_i‖` lies above the floor wherever
+# `n_i κ_F(J_i) < 1/√eps`. `rnorm` of a matrix is its Frobenius norm, one reduction without scalar
+# indexing on every array type.
+@inline function residual_floor(J_i, x_i)
+    R = real(eltype(x_i))
+    return length(x_i) * eps(R) * rnorm(J_i) * rnorm(x_i)
+end
+
 # One sweep, and the code it ends with: `SINGULAR` where a block's factor reports a zero pivot,
 # `NONFINITE` where a block residual is not finite, and `MAXITERS` where a local solve with a
-# positive tolerance ends its iterations above it and its last step above the rounding level of
-# its iterate, with that block in `failed_block`. A failed
+# positive tolerance ends its iterations above it and away from its residual floor, with that
+# block in `failed_block`. A failed
 # sweep prolongates nothing, so the iterate it was given is unchanged, and leaves no factor
 # readable. The couplings of the frozen block residuals are the iterate of this call, and the
 # factor at the returned local iterate is formed only where a RASPEN preparation reads the block
@@ -374,12 +405,16 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
     nblocks = length(blocks.subdomains)
     total = 0
     parallel = 0
+    R = real(eltype(x))
+    tolerance = m.atol > 0 || m.rtol > 0
     for i in 1:nblocks
         x_loc = blocks.x_locals[i]
         f_i = blocks.f_locals[i]
         J_i = blocks.jacobians[i]
         x_loc .= view(x, blocks.subdomains[i])
-        f₀ = zero(real(eltype(x)))
+        f₀ = zero(R)
+        # the residual floor at the last block Jacobian, zero before the first one
+        floor = zero(R)
         k = 0
         converged = false
         for it in 1:m.max_iterations
@@ -387,11 +422,12 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
             all(isfinite, f_i) || return NONFINITE
             fnorm = rnorm(f_i)
             it == 1 && (f₀ = fnorm)
-            if fnorm <= m.atol + m.rtol * f₀
+            if fnorm <= m.atol + m.rtol * f₀ || (tolerance && fnorm <= floor)
                 converged = true
                 break
             end
             block_jacobian!!(J_i, blocks, prob, i, x_loc, x, p)
+            tolerance && (floor = residual_floor(J_i, x_loc))
             fac = factorize!!(state.factors[i], LUFactorization(), J_i)
             iszero(fac.info) || return SINGULAR
             state.factors[i] = fac
@@ -399,14 +435,13 @@ function _ras_sweep!!(state::RASState, m::RAS, prob, x, p)
             k += 1
         end
         # a positive tolerance makes the local solve a claim of convergence, which the residual
-        # after its last step decides, unless that step is at the rounding level of the local
-        # iterate, `‖δ‖ ≤ eps ‖x_i‖`, where the residual can fall no further; zero tolerances take
-        # `max_iterations` steps and claim none
-        rounded = k > 0 && rnorm(blocks.deltas[i]) <= eps(real(eltype(x))) * rnorm(x_loc)
-        if !converged && !rounded && (m.atol > 0 || m.rtol > 0)
+        # after its last step decides: at most the tolerance or the residual floor of
+        # `residual_floor`; zero tolerances take `max_iterations` steps and claim none
+        if !converged && tolerance
             block_residual(prob, i)(f_i, x_loc, x, p)
             all(isfinite, f_i) || return NONFINITE
-            if rnorm(f_i) > m.atol + m.rtol * f₀
+            fnorm = rnorm(f_i)
+            if fnorm > m.atol + m.rtol * f₀ && fnorm > floor
                 state.counts.failed_block = i
                 return MAXITERS
             end
@@ -547,6 +582,7 @@ end
 # at the composite iterate, `x` with block `i`'s local solve over its subdomain, restricted to the
 # subdomain's rows. They hold the couplings outside the block, which the block Jacobian does not.
 function raspen_rows!(state::RASState, prob, x, p, i)
+    check_raspen(prob)
     blocks = state.blocks
     u = copy!!(state.composite, x)
     u[blocks.subdomains[i]] .= blocks.x_locals[i]
@@ -554,6 +590,20 @@ function raspen_rows!(state::RASState, prob, x, p, i)
     B = blocks.rows[i]
     B .= view(G, blocks.subdomains[i], :)
     return B
+end
+
+# A RASPEN product reads the global Jacobian, whose ForwardDiff form writes a dense Jacobian only,
+# so a problem with a sparse prototype and no analytic `J` has none: its preparation is refused at
+# `init_state` of the reader, and a product raises before it reads one.
+@inline function raspen_refused(prob)
+    return jacobian_prototype(prob) isa SparseArrays.AbstractSparseMatrix &&
+           !_has_analytic_jacobian(prob)
+end
+
+@inline function check_raspen(prob)
+    raspen_refused(prob) && throw(ArgumentError(
+        "a RASPEN Jacobian on a problem with a sparse jacobian_prototype needs an analytic Jacobian J: its ForwardDiff Jacobian of the global residual writes a dense Jacobian only. Give the problem an analytic Jacobian J, or solve without the jacobian_prototype, or use a plain RAS sweep or a Picard outer under Static, which read no global Jacobian"))
+    return nothing
 end
 
 # A block factor of a `RASState` is a formed factor only after a complete sweep, so a product that

@@ -4,7 +4,7 @@
 
 using CUDA
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, Diagonal, I, LU, cond, lu!, norm, opnorm, qr, qr!, svd!
+using LinearAlgebra: BLAS, Diagonal, I, LU, lu!, norm, opnorm, qr, qr!, svd!
 using Random: Xoshiro
 using Test
 
@@ -116,7 +116,7 @@ if CUDA.functional()
     @testset "CUDA cuSOLVER agreement with own KA kernels at n = $n" for n in (1, 16, 256)
         @testset "T = $T" for T in CUDA_BLAS_ELTYPES
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             @test κ <= 10.0
             epsT = Float64(eps(real(T)))
             bound = 8 * n * epsT * κ
@@ -166,7 +166,7 @@ if CUDA.functional()
         for T in CUDA_BLAS_ELTYPES
             let n = 10^4
                 A_cpu, b_cpu = cuda_well_conditioned(T, n)
-                κ = Float64(cond(A_cpu, Inf))
+                κ = Float64(cuda_well_conditioned_cond(A_cpu))
                 @test κ <= 10.0
                 epsT = Float64(eps(real(T)))
                 dA = CuArray(A_cpu)
@@ -208,7 +208,7 @@ if CUDA.functional()
         for T in CUDA_BLAS_ELTYPES
             let n = 10^3
                 A_cpu, b_cpu = cuda_well_conditioned(T, n)
-                κ = Float64(cond(A_cpu, Inf))
+                κ = Float64(cuda_well_conditioned_cond(A_cpu))
                 @test κ <= 10.0
                 epsT = Float64(eps(real(T)))
                 dA = CuArray(A_cpu)
@@ -245,7 +245,7 @@ if CUDA.functional()
         for T in (Float64, ComplexF64), n in (1, 16, 10^4)
 
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             bound = 8 * n * Float64(eps(Float32)) * κ
             dA = CuArray(A_cpu)
             db = CuArray(b_cpu)
@@ -286,7 +286,7 @@ if CUDA.functional()
         for T in (Float64, ComplexF64), n in (1, 16, 10^3)
 
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             bound = 8 * n * Float64(eps(Float32)) * κ
             dA = CuArray(A_cpu)
             db = CuArray(b_cpu)

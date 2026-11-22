@@ -551,6 +551,19 @@ end
     @test_throws ArgumentError Deflated(prob, (r,); power = -2.0)
     @test_throws ArgumentError Deflated(prob, (r,); power = Inf)
     @test_throws ArgumentError Deflated(prob, (r,); power = NaN)
+    # the known simple roots repel Newton's full steps only for power > 1/2: 1/2 and below are
+    # refused, in each constructor and in Float32, and a power just above 1/2 is taken
+    msg_power = r"^ArgumentError: Deflated power must be finite and > 1/2"
+    for pw in (0.5, 0.3)
+        @test_throws msg_power Deflated(prob, (r,); power = pw)
+        @test_throws msg_power Deflated(prob, (r,), pw, 1.0)
+        @test_throws msg_power Deflated{
+            typeof(prob), Tuple{SVector{2, Float64}}, Float64}(prob, (r,), pw, 1.0)
+        @test_throws msg_power Deflated(prob, (SVector{2, Float32}(1, 2),); power = pw)
+    end
+    @test Deflated(prob, (r,); power = 0.75).power === 0.75
+    @test Deflated(prob, (r,), nextfloat(0.5), 1.0).power === nextfloat(0.5)
+    @test Deflated(prob, (SVector{2, Float32}(1, 2),); power = 0.75).power === 0.75f0
     @test_throws ArgumentError Deflated(prob, (r,); shift = 0.0)
     @test_throws ArgumentError Deflated(prob, (r,); shift = Inf)
     @test_throws ArgumentError Deflated(prob, (SVector(1.0, NaN),))
