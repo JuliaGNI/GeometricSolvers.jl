@@ -49,7 +49,7 @@ export solve_batch!
 export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summary,
        deposited_moments, eliminated_indices, reset_batch!
 
-public solve!!, sciml_retcode
+public solve!!, sciml_retcode, certify
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -103,6 +103,7 @@ include("ad/hessian.jl")
 include("nonlinear/reparametrized.jl")
 include("nonlinear/deflation.jl")
 include("nonlinear/eliminate.jl")
+include("nonlinear/certify.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")

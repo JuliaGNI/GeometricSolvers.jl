@@ -180,3 +180,18 @@ closed set `abstol`, `reltol`, `maxiters` and `options`: `abstol` maps to `f_abs
 `f_reltol = 0` when `reltol` is not given), `reltol` maps to `f_reltol`, `maxiters` maps to
 `max_iterations`, and `options` passes an [`Options`](@ref) alone; any other keyword, or `options`
 together with another keyword, raises an `ArgumentError`.
+
+## IntervalArithmetic extension
+
+When [IntervalArithmetic](https://github.com/JuliaIntervals/IntervalArithmetic.jl) is loaded, the
+package extension `GeometricSolversIntervalArithmeticExt` adds a method of [`certify`](@ref) for a
+[`NonlinearProblem`](@ref) and an iterate `x` that is a real floating-point `Number`, a
+`StaticVector` or a host `Vector`. It runs Krawczyk's test in intervals of the element type of `x`
+and returns `(certified, enclosure, guaranteed)`: whether a box around `x` holds exactly one root,
+an enclosure of that root, and whether IntervalArithmetic guarantees the intervals of `F(x)` and
+`J(X)`. `certify` is `public` and not exported (`GeometricSolvers.certify`); without the extension
+it has no method.
+
+```@docs
+certify
+```
