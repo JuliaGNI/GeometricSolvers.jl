@@ -61,11 +61,12 @@ structural diagonal. Everywhere else — `QRFactorization`, `SVDFactorization`, 
 precision such as `LUFactorization(Float64)` on a `Float32` iterate, an `LUFactorization` on a
 complex iterate, or no `Sparspak` — a detected pattern gives the dense factor and a dense Jacobian
 buffer, as a solve with no pattern does. An explicit `jacobian_prototype` outside these
-configurations raises an error in `init_linear` or at the first `factorize!!`. When `CUDA` and
-`CUDSS` are loaded, the `GeometricSolversCUDSSExt` package extension builds a cuDSS factor for an
-`LUFactorization` in the element type of a `CuVector{T}` iterate (`T <: LinearAlgebra.BlasFloat`)
-with an explicit `CuSparseMatrixCSR` `jacobian_prototype`; its first `factorize!!` runs the cuDSS
-analysis and factorisation, and every later one the refactorisation. A
+configurations and the cuDSS one below raises an error in `init_linear` or at the first
+`factorize!!`. When `CUDA` and `CUDSS` are loaded, the `GeometricSolversCUDSSExt` package
+extension builds a cuDSS factor for an `LUFactorization` in the element type of a `CuVector{T}`
+iterate (`T <: LinearAlgebra.BlasFloat`) with an explicit `CuSparseMatrixCSR` `jacobian_prototype`;
+its first `factorize!!` runs the cuDSS analysis and factorisation, and every later one the
+refactorisation. A
 [`LeastSquaresProblem`](@ref) takes no detected pattern, because the sparse factors are square: its
 `m × n` factor is dense.
 [`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
