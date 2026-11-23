@@ -662,9 +662,10 @@
   at `:549` and `:566` skips the restart. The MGS path has the same class of fault, and so has the base
   (`47d817b`) with the same code: in `Float64` it reports `converged = true` at iteration 12, with
   `resnorm = 2.68e-32 ‖b‖` against a true `9.46e-17 ‖b‖`; in `Float32` it does not converge
-  (`1.5e-15 ‖b‖` reported, `2.6e-8 ‖b‖` true). A check of the true residual `b − J M⁻¹ u` before
-  convergence is accepted covers both paths and costs one Jacobian–vector product on each solve
-  that reaches `j = n`.
+  (`1.5e-15 ‖b‖` reported, `2.6e-8 ‖b‖` true). Each true residual here is formed in `T`. Formed
+  in `Float64`, the two `Float32` rows of `tol = 1e-20` give `3.07e-8 ‖b‖` (CGS2) and
+  `4.63e-8 ‖b‖` (MGS). A check of the true residual `b − J M⁻¹ u` before convergence is accepted
+  covers both paths and costs one Jacobian–vector product on each solve that reaches `j = n`.
 - **kind:** found late
 - **found:** #106; a limit of the user's decision of 2026-11-22 (CGS2 as the default of `GMRES`),
   with its edges "else one `rnorm(w₂)`" and "the second pass always runs"

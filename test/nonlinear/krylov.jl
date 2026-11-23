@@ -1030,8 +1030,9 @@ end
 
 # A normal matrix with its spectrum log-spaced in `[1, 1e8]`, `A = Q Λ Qᴴ` with a unitary `Q`, and
 # a right-hand side, both drawn in `Float64` and rounded to `T`. `Q` is the product of the
-# Householder reflections of a QR factorisation of `Z`. Every sum runs in plain sequential loops,
-# with no BLAS, LAPACK, `@simd` or fused multiply–add, so the matrix is the same on every platform.
+# Householder reflections of a QR factorisation of `Z`. The test's own loops run every sum in
+# plain sequential order, with no BLAS, LAPACK, `@simd` or fused multiply–add, so the matrix is the
+# same on every platform where Base's `exp10` and `abs` give the same result.
 function arnoldi_test_matrix(::Type{T}, n, seed) where {T}
     rng = Xoshiro(seed)
     Z = T <: Complex ? complex.(randn(rng, n, n), randn(rng, n, n)) : randn(rng, n, n)
