@@ -594,9 +594,9 @@ if CUDA.functional()
         @test isapprox(Array(x), z_star; rtol = R === Float32 ? 1.0f-3 : 1e-9)
 
         # The linear solves at the root, at the start and at the planted solution agree with
-        # UMFPACK on the host copy of the Jacobian, in
-        # `Float64` or `ComplexF64` for a `Float32` or `ComplexF32` `T`, within `8n·eps(T)·κ∞`;
-        # three more refactorisations keep the one analysis.
+        # UMFPACK on the host copy of the Jacobian, in `Float64` or `ComplexF64` for a `Float32`
+        # or `ComplexF32` `T`, within `8n·eps(T)·κ∞`; three more refactorisations keep the one
+        # analysis.
         W = T <: Complex ? ComplexF64 : Float64
         function test_umfpack_agreement(solver, z)
             Jd = copy(solver.state.J)

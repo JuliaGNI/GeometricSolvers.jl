@@ -669,3 +669,19 @@
   a direct call reaches the throw. Julia 1.13.4, with the test environment of the package.
 - **kind:** found late
 - **found:** 2026-11-22
+
+### K101 · No test reaches a detected Jacobian pattern in `ComplexF64`, because the sparsity detection of the complex test problem throws
+
+- **location:** `test/helpers/sparse_problems.jl:110` (`F!` of `sparse_bracket_problem`)
+- **evidence:** `init` of `NonlinearProblem(prob.F)` from `sparse_bracket_problem(125, ComplexF64)`
+  with `Newton(; linsolve = UMFPACKFactorization(), jacobian = AutoSparse(AutoForwardDiff();
+  sparsity_detector = TracerSparsityDetector(), …))` raises
+  `SparseConnectivityTracer.MissingPrimalError`: `Function iszero requires primal value(s).` The
+  tracer vector of the residual is real (`Vector{GradientTracer{Int64, BitSet}}`), and `F!` stores
+  into it a sum with a complex matrix entry, whose conversion calls `isreal` and then `iszero` on a
+  tracer. The error message names `TracerLocalSparsityDetector`; no test has tried it. The rows of
+  a detected pattern in `test/linear/sparse.jl` run in `Float64` only, so
+  `has_sparse_factor(::UMFPACKFactorization, ::Vector{ComplexF64})` is asserted, but no solve
+  takes a detected complex pattern.
+- **kind:** found late
+- **found:** 2026-11-23
