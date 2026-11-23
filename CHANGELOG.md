@@ -27,8 +27,8 @@ so that a compat-only bump can be told apart from an interface change.
   `promote_linsolve` carries `rtol`, and `ToReal{R}` converts it to `R` and keeps `TF`, so that a
   `Newton` with a `Float64` `rtol` enters a `Float32` kernel. `SVDFactorization` gains a second
   type parameter, the type of `rtol`; `SVDFactorization{TF}` is now a `UnionAll`. The internal
-  `svd_rank`, `ka_svd!` and the CUDA extension's `_cusolver_svd_finish!` take the cutoff, and
-  `ka_factorize_svd!(fac, J, method)` takes the method as an optional third argument.
+  `svd_rank` and `ka_svd!` take `rtol`, the CUDA extension's `_cusolver_svd_finish!` takes the
+  method, and `ka_factorize_svd!(fac, J, method)` takes the method as an optional third argument.
 
 - **The `KernelAbstractions` LDLᵀ path has no serial kernels.** `ka_ldlt_factor_serial_kernel!`
   and `ka_ldlt_backsolve_serial_kernel!` are removed: `ka_ldlt!` and `ka_ldlt_backsolve!` take an
