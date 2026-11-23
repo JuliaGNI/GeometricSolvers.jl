@@ -685,3 +685,19 @@
   takes a detected complex pattern.
 - **kind:** found late
 - **found:** 2026-11-23
+
+### K102 · The cuDSS `factorize!!` does not check the pattern of a Jacobian that is the factor's own buffer
+
+- **location:** `ext/GeometricSolversCUDSSExt.jl:65–66` (`factorize!!` for `CUDSSLU`)
+- **evidence:** the check compares `J.rowPtr` and `J.colVal` with those of `A = fac.factors` only
+  where `J !== A`. A Newton step with no `DogLeg` and no refinement passes the factor's own
+  buffer as `J` (`init_newton_J` in `src/nonlinear/newton.jl`), so a `J!` that changes the
+  `rowPtr` or `colVal` of that buffer in place goes unchecked, and from the second call on
+  `factorize!!` runs cuDSS's `"refactorization"`, which reuses the analysis of the old pattern.
+  `UMFPACKLU` in `src/linear/sparse.jl` keeps copies of the prototype's `colptr` and `rowval` and
+  compares each Jacobian with them, which closes the same gap on the host. A `CuSparseMatrixCSR`
+  has no normal path that inserts an entry in place, so only a `J!` that writes the index arrays
+  reaches this. The fix keeps device copies of `rowPtr` and `colVal` in `CUDSSLU` and compares
+  with them; it needs a run on a CUDA device.
+- **kind:** found late
+- **found:** PR #110 (CodeRabbit, the host twin)
