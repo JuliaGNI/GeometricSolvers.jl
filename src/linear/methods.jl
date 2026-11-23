@@ -150,6 +150,70 @@ factorisation has no device factor.
 """
 struct CholeskyFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
+"""
+    KroneckerFactorization(; block = LUFactorization())
+    KroneckerFactorization(TF; block = LUFactorization())
+
+The linear solver of the stage system of an implicit Runge–Kutta method, for [`Newton`](@ref) on a
+[`NonlinearProblem`](@ref) with `stage_matrix = A` and `stage_jacobian = jac!`. The stage unknowns
+are the increments `Z = (Z₁, …, Z_s)`, `Zᵢ = Yᵢ - yₙ`, of `s` stages of `n` entries each, stacked
+into one iterate of length `s n`, and the Newton matrix of the stage system
+`Z - h (A ⊗ I) f(yₙ + Z) = 0` is taken as `I - h A ⊗ J`, with `J` the `n × n` matrix that
+`jac!(J, Z, p)` writes at each refresh (Hairer and Wanner 1996, *Solving Ordinary Differential
+Equations II*, §IV.8, [doi:10.1007/978-3-642-05221-7](https://doi.org/10.1007/978-3-642-05221-7)).
+
+With the eigendecomposition `A = V Λ V⁻¹`, computed once where the state is built, a solve with
+`I - h A ⊗ J` is `s` solves with the `n × n` blocks `γᵢ I - J`, `γᵢ = 1 / (h λᵢ)`. For a real
+element type `T` of the iterate, a real eigenvalue takes one block in `T`, and a complex-conjugate
+pair takes one block in `complex(T)`, whose solution gives the other half of the pair as its
+conjugate: a Gauss or Radau IIA tableau of `s` stages takes `⌊s/2⌋` blocks in `complex(T)` and
+`s mod 2` in `T`. For a complex `T` each of the `s` eigenvalues takes one block in `T`. `block` is
+the linear method of each block, a method that factorises in the working precision, such as
+[`LUFactorization`](@ref); a [`GMRES`](@ref), a
+`KroneckerFactorization` and a method with a factorisation precision raise an `ArgumentError`.
+
+The step `h` is read from the parameters as `p.h` at each refresh, and `jac!` is called at each
+refresh, which the `reuse` rule of `Newton` governs. A step `h = 0` makes the Newton matrix the
+identity. A step for which a `γᵢ` overflows, a non-finite `h` and a non-finite entry of `J` give a
+non-finite direction, and the step returns `NONFINITE`. A block whose factor fails gives
+`SINGULAR`.
+
+`init` raises an `ArgumentError` for a value iterate (a `Number` or a `StaticArray`), a device
+iterate, a [`DogLeg`](@ref) or [`LevenbergMarquardt`](@ref) globalization, a refinement,
+`regularization > 0`, a `jacobian` other than `nothing`, a factorisation precision `TF` other than
+`Nothing`, a problem without `stage_matrix`, parameters without a property `h`, an iterate whose
+length is not a multiple of `s`, a stage matrix that is not square, not invertible, or complex for
+a real `T`, and a stage matrix whose eigenvectors have `cond(V) > eps(real(T))^(-1/2)`, which also
+refuses a stage matrix that is not diagonalisable: the solve multiplies by `V` and `V⁻¹` and loses
+`cond(V)` in accuracy. Gauss with 6 stages has `cond(V) ≈ 603`, and a two-stage SDIRK, whose `A`
+has a double eigenvalue with a single eigenvector, about `10¹⁶`.
+"""
+struct KroneckerFactorization{TF <: FactorisationPrecision, B <: LinearMethod} <:
+       LinearMethod{TF}
+    block::B
+    function KroneckerFactorization{
+            TF, B}(block::B) where {
+            TF <: FactorisationPrecision, B <: LinearMethod}
+        (block isa LinearMethod{Nothing} &&
+         !(block isa Union{GMRES, KroneckerFactorization})) ||
+            throw(ArgumentError(
+                "KroneckerFactorization takes a block method that factorises in the working precision, such as LUFactorization()"))
+        return new{TF, B}(block)
+    end
+end
+
+function KroneckerFactorization(; block::LinearMethod = LUFactorization())
+    return KroneckerFactorization{Nothing, typeof(block)}(block)
+end
+function KroneckerFactorization(::Type{TF};
+        block::LinearMethod = LUFactorization()) where {TF <: AbstractFloat}
+    return KroneckerFactorization{TF, typeof(block)}(block)
+end
+function KroneckerFactorization(::TF;
+        block::LinearMethod = LUFactorization()) where {TF <: PrecisionMarker}
+    return KroneckerFactorization{TF, typeof(block)}(block)
+end
+
 for M in (:LUFactorization, :QRFactorization, :LDLTFactorization, :CholeskyFactorization)
     @eval begin
         $M() = $M{Nothing}()

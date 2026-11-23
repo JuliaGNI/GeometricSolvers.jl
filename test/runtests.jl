@@ -46,6 +46,7 @@ const TESTS = [
         "Block elimination and variable projection" => "nonlinear/eliminate.jl",
         "Nonlinear solver loop" => "nonlinear/solver.jl",
         "Newton" => "nonlinear/newton.jl",
+        "Kronecker stage solver" => "nonlinear/kronecker.jl",
         "Iterative refinement" => "nonlinear/refinement.jl",
         "Picard" => "nonlinear/picard.jl",
         "Solver loop hooks" => "nonlinear/hooks.jl",
