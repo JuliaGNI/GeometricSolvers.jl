@@ -5,8 +5,8 @@ Test with interval arithmetic whether `prob` has a root near the iterate `x`, fo
 `p`, when `IntervalArithmetic` is loaded. The package extension
 `GeometricSolversIntervalArithmeticExt` adds the method; without it, `certify` has no method.
 
-The test is Krawczyk's: with `Y` the inverse of the Jacobian at `x`, and a box `X` around `x`, the
-operator
+The test is Krawczyk's: with `Y` the inverse of the Jacobian of `F` at `x`, and a box `X` around
+`x`, the operator
 
 ``K(X) = x - Y F(x) + (I - Y J(X)) (X - x)``
 
@@ -27,20 +27,21 @@ The result is a `NamedTuple` of one concrete type for both outcomes:
   `1 - x[1]`, sets the flag where it meets an interval, and the certificate holds without the
   guarantee. With no certificate, `guaranteed` is `false`.
 
-The call form of `F` and `J` follows the storage of `x`, as for a solve: `F(x, p)` and `J(x, p)`
-for a real floating-point `Number` and a `StaticVector`, and `F(y, x, p)` and `J(A, x, p)` for a
-host `Vector`. Without `J`, `ForwardDiff` differentiates `F`; a given `J` must be the Jacobian of
-`F`, because the test evaluates `F` only at `x`. `F` and `J` must accept intervals: an `F` that
-branches on a comparison of intervals, such as `x[1] < 0`, throws IntervalArithmetic's
+Every hypothesis of the test is read from `F`: `ForwardDiff` differentiates `F` for `Y` and for
+`J(X)`, and the `J` of the problem is not read. The call form of `F` follows the storage of `x`,
+as for a solve: `F(x, p)` for a real floating-point `Number` and a `StaticVector`, and
+`F(y, x, p)` for a host `Vector`. `F` must accept floats, intervals and `ForwardDiff` duals of
+both. An error of `F` is not caught: `log` of a negative float `x` throws a `DomainError`, and an
+`F` that branches on a comparison of intervals, such as `x[1] < 0`, throws IntervalArithmetic's
 `InconclusiveBooleanOperation` where the comparison has no single answer.
 
 A singular Jacobian at `x`, a non-finite `x` or `Y`, a box radius that is not finite, and a test
-that fails on the tenth box each give `certified == false`. So does an interval of `F(x)` or
-`J(X)` that is unbounded, or that IntervalArithmetic decorates below `dac` (defined and
-continuous): `F` or `J` is then undefined or not continuous on part of its arguments, such as
-`log` or `sqrt` of a negative number, `1/x` at 0, or `floor` across an integer. None of these
-throws. A complex iterate, a batch, a device array, a [`StationarityProblem`](@ref) and a
-[`LeastSquaresProblem`](@ref) have no method.
+that fails on the tenth box each give `certified == false`. So does an interval of `F(X)` or
+`J(X)` on a box that is unbounded, or that IntervalArithmetic decorates below `dac` (defined and
+continuous): `F` is then undefined, not continuous or not continuously differentiable on part of
+the box, such as `log` or `sqrt` across 0, `1/x` at 0, `floor` across an integer, or a kink of
+`abs`. None of these throws. A complex iterate, a batch, a device array, a
+[`StationarityProblem`](@ref) and a [`LeastSquaresProblem`](@ref) have no method.
 
 `certify` is `public` and not exported.
 """

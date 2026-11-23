@@ -111,30 +111,45 @@ p17_value(x, p) = SVector(x[1] + x[2] - 3, x[1]^2 + x[2]^2 - 9)
     end
 end
 
-@testset "an analytic Jacobian is the one that is read" begin
+@testset "a given Jacobian is not read" begin
+    # `Y` and `J(X)` come from `ForwardDiff` on `F`; the `J` of the problem is never called.
     for T in REAL_ELTYPES
-        # `x² - 2` at the rounded root √2: the root is irrational, and the enclosure holds it.
+        # `x - 1` off its root, with a constant `J` whose inverse is not finite or not 1.
+        for c in (T(NaN), T(Inf), zero(T))
+            res = @inferred certify(NonlinearProblem((x, p) -> x - 1, (x, p) -> c),
+                one(T) + T(1e-3))
+            @test res.certified
+            @test encloses(res.enclosure, big(1))
+        end
+        # `x² + 10⁻¹²` has no real root. Its `J` here is the constant `2·10⁻³`, the derivative at
+        # the iterate `10⁻³`: as `J(X)`, it would make `I - Y J(X)` vanish, and `K(X)` a point in
+        # the interior of the box.
+        cases = (
+            (NonlinearProblem((x, p) -> x^2 + T(1e-12), (x, p) -> T(2e-3) + 0 * x),
+                T(1e-3)),
+            (
+                NonlinearProblem((x, p) -> x .^ 2 .+ T(1e-12),
+                    (x, p) -> SMatrix{1, 1}(T(2e-3) + 0 * x[1])),
+                SVector(T(1e-3))))
+        for (prob, x) in cases
+            res = @test_logs @inferred certify(prob, x)
+            @test !res.certified
+            @test all(isentire_interval, res.enclosure)
+        end
+        # `x² - 2` at the rounded root √2, whose root is irrational, with a `J` that vanishes
+        # everywhere: as `Y`, its inverse would be infinite.
         F(x, p) = x^2 - 2
-        good = NonlinearProblem(F, (x, p) -> 2x)
-        res = @inferred certify(good, sqrt(T(2)))
+        res = @inferred certify(NonlinearProblem(F, (x, p) -> zero(x)), sqrt(T(2)))
         @test res.certified
         @test encloses(res.enclosure, sqrt(big(2)))
-        # A Jacobian that vanishes everywhere makes the midpoint Jacobian singular.
-        bad = NonlinearProblem(F, (x, p) -> zero(x))
-        @test !(@inferred certify(bad, sqrt(T(2)))).certified
-
-        # The in-place form, on a host `Vector`.
+        # The same in place, on a host `Vector`, where a singular `J` would refuse.
         F!(y, x, p) = (y .= x .^ 2 .- p; nothing)
-        J!(A, x, p) = (A .= 0; for i in eachindex(x)
-                A[i, i] = 2x[i]
-            end; nothing)
+        Z!(A, x, p) = (A .= 0; nothing)
         p = T[2, 3]
-        res = @inferred certify(NonlinearProblem(F!, J!), sqrt.(p), p)
+        res = @inferred certify(NonlinearProblem(F!, Z!), sqrt.(p), p)
         @test res isa result_type(Vector{Interval{T}})
         @test res.certified
         @test encloses(res.enclosure, sqrt.(big.(p)))
-        Z!(A, x, p) = (A .= 0; nothing)
-        @test !(@inferred certify(NonlinearProblem(F!, Z!), sqrt.(p), p)).certified
     end
 end
 
@@ -209,43 +224,50 @@ end
     end
 end
 
-dac_jacobian(x::Interval, p) = 1 + 0 * exp(x * x)
-dac_jacobian(x::AbstractFloat, p) = one(x)
+# `x - p` with the term `0 * exp(x²)` in intervals: on the box around 30, `exp(x²)` overflows to an
+# unbounded interval, and its product with 0 is the point 0 decorated `dac`, in `F(X)` and in
+# `J(X)`. In floats the term is left out, where `0 * Inf` would be `NaN`.
+dac_residual(x, p) = x - p
+function dac_residual(x::Union{Interval, ForwardDiff.Dual{<:Any, <:Interval}}, p)
+    return x - p + 0 * exp(x * x)
+end
 
-@testset "a residual undefined or not continuous on the box does not certify" begin
-    # IntervalArithmetic marks a result on arguments outside the domain of a function with the
-    # decoration `trv`, and on a discontinuity with `def`; `F(x)` can then be empty, and with it
-    # `K(X)`, which the interior of every box holds.
+@testset "a residual undefined, not continuous or with a kink on the box does not certify" begin
+    # IntervalArithmetic decorates a result on arguments outside the domain of a function `trv`,
+    # and a result across a discontinuity `def`, in `F(X)`; the derivative of a kink is a jump,
+    # decorated `def` in `J(X)`. Krawczyk's theorem needs `F` and its Jacobian continuous on the
+    # box.
     for T in REAL_ELTYPES
         cases = (
-            # `F(x)` is empty: `log` and `sqrt` of a negative number, and `1/x` at 0.
-            (NonlinearProblem((x, p) -> log(x), (x, p) -> 1 / x), -one(T)),
-            (NonlinearProblem((x, p) -> log.(x), (x, p) -> SMatrix{1, 1}(1 / x[1])),
-                SVector(-one(T))),
-            (NonlinearProblem((x, p) -> sqrt(x) + 1, (x, p) -> one(x)), -T(4)),
+            # `log` and `sqrt` are undefined on the negative part of the box around 0, and `1/x`
+            # at 0, where `F(x)` is empty.
+            (NonlinearProblem((x, p) -> log(x)), zero(T)),
+            (NonlinearProblem((x, p) -> log.(x)), SVector(zero(T))),
+            (NonlinearProblem((x, p) -> sqrt(x) + 1), zero(T)),
             (NonlinearProblem((x, p) -> 1 / x - 1), zero(T)),
-            # `F(x)` is defined, and `J(X)` is bounded: `sqrt` is undefined on the negative part
-            # of the box around 0, and `floor` is discontinuous at 0.
-            (NonlinearProblem((x, p) -> x, (x, p) -> 1 + 0 * sqrt(x)), zero(T)),
-            (NonlinearProblem((x, p) -> x, (x, p) -> 1 + 0 * floor(x)), zero(T)))
+            # `x + floor(x) + 1/2` is `x - 1/2 < 0` on `[-1, 0)` and `x + 1/2 > 0` on `[0, 1)`:
+            # no root. `F(x)` at the iterate and the `ForwardDiff` derivative `1` show no jump;
+            # only `F(X)` sees it.
+            (NonlinearProblem((x, p) -> x + floor(x) + T(1 / 2)), zero(T)),
+            (NonlinearProblem((x, p) -> x .+ floor.(x) .+ T(1 / 2)), SVector(zero(T))),
+            (NonlinearProblem((y, x, p) -> (y .= x .+ floor.(x) .+ T(1 / 2); nothing)),
+                [zero(T)]),
+            # A kink at the root, in a residual that is continuous: only `J(X)` sees it.
+            (NonlinearProblem((x, p) -> abs(x) + 2x), zero(T)),
+            (NonlinearProblem((x, p) -> abs(x - T(0.1)) + 2x - T(0.2)), T(0.1)))
         for (prob, x) in cases
             res = @test_logs @inferred certify(prob, x)
             @test !res.certified
             @test !res.guaranteed
             @test all(isentire_interval, res.enclosure)
         end
-        # `dac` is enough: `0 * exp(x²)` overflows on the box around 30 to the product of 0 with
-        # an unbounded interval, the point 0 decorated `dac`, so `J(X)` is the point 1 decorated
-        # `dac`. The float method gives `J(x)` without the overflow.
-        res = @test_logs @inferred certify(NonlinearProblem((x, p) -> x - p, dac_jacobian),
-            T(30), T(30))
+        # `dac` is enough.
+        res = @test_logs @inferred certify(NonlinearProblem(dac_residual), T(30), T(30))
         @test res.certified
         @test encloses(res.enclosure, big(30))
-        # A constant analytic Jacobian is a number, not an interval: a finite one certifies, an
-        # infinite one does not.
-        @test certify(NonlinearProblem((x, p) -> x - 1, (x, p) -> one(T)), one(T)).certified
-        res = @test_logs certify(NonlinearProblem((x, p) -> x - 1, (x, p) -> T(Inf)), one(T))
-        @test !res.certified
+        # `F` is called at the float iterate, and an error of `F` there is not caught.
+        @test_throws r"^DomainError with -1\.0:\nlog was called with a negative real" certify(
+            NonlinearProblem((x, p) -> log(x)), -one(T))
     end
 end
 
@@ -259,10 +281,10 @@ end
             @test !res.guaranteed
         end
         sp = standard_problem(17)
-        # A constant analytic Jacobian stays finite and regular at a non-finite iterate. The test
-        # of the iterate refuses it before IntervalArithmetic sees it, which would warn of an
+        # The derivative of `x - p` stays 1 at a non-finite iterate, so `Y` is finite. The test of
+        # the iterate refuses it before IntervalArithmetic sees it, which would warn of an
         # ill-formed interval.
-        linear = NonlinearProblem((x, p) -> x - p, (x, p) -> one(x))
+        linear = NonlinearProblem((x, p) -> x - p)
         for bad in (T(NaN), T(Inf), -T(Inf))
             res = @inferred certify(sp.prob, T[0, bad])
             @test res isa result_type(Vector{Interval{T}})
@@ -272,11 +294,18 @@ end
             @test all(isentire_interval, res.enclosure)
         end
         # From `-0.45 floatmax(T)` the root `0.45 floatmax(T)` asks for a second radius of about
-        # `1.8 floatmax(T)`, which overflows: the test refuses it.
+        # `1.8 floatmax(T)`, which overflows: the test refuses it before it evaluates `F` on an
+        # unbounded box.
         far = T(0.45) * floatmax(T)
-        res = @test_logs @inferred certify(NonlinearProblem((x, p) -> x - p), -far, far)
+        unbounded = Ref(0)
+        function F_far(x, p)
+            x isa Interval && !isbounded(x) && (unbounded[] += 1)
+            return x - p
+        end
+        res = @test_logs @inferred certify(NonlinearProblem(F_far), -far, far)
         @test !res.certified
         @test all(isentire_interval, res.enclosure)
+        @test unbounded[] == 0
         # An exact root certifies at each magnitude from zero to `floatmax(T) / 2`. The residual is
         # linear with the derivative 1, so `K(X)` is the point `s`, while every box is wider.
         roots = (zero(T), -zero(T), nextfloat(zero(T)), floatmin(T), eps(T), one(T),
