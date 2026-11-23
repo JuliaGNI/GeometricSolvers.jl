@@ -312,12 +312,15 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
         @test rtol_factor(route, m, A).rank == 1
     end
     # the default cutoff `√m · eps(R) · σ̂₁` counts the rows: `σ₂ = 2 eps(R)` lies below
-    # `√5 eps(R)` and above `√3 eps(R)`
+    # `√5 eps(R)` and above `√3 eps(R)`. The kernel that zeroes the columns of `U` applies the
+    # cutoff a second time, so its columns past the rank are zero too
     @testset "the default cutoff of a 5 × 3 matrix, $R, $route" for R in REAL_ELTYPES,
         route in RTOL_ROUTES
 
         A = signed_diagonal(R, (1.0, 2 * eps(R), 0.0), 5)
-        @test rtol_factor(route, SVDFactorization(), A).rank == 1
+        fac = rtol_factor(route, SVDFactorization(), A)
+        @test fac.rank == 1
+        route != Array && @test all(iszero, rtol_U(route, fac)[:, 2:end])
     end
     # rtol is relative to `σ̂₁` of `J / 2^e`, and the division is exact
     @testset "the fixture times 2^$k, $R, $(mr) × 3, rtol = $rtol, $route" for R in REAL_ELTYPES,

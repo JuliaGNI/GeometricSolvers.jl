@@ -667,3 +667,13 @@
   mixed-precision `SVDFactorization` with `rtol`.
 - **kind:** not verified
 - **found:** 2026-11-23
+
+### K101 · `SVDFactorization(; rtol = -0.0)` stores `-0.0`, so it is not `===` to `SVDFactorization(; rtol = 0.0)`
+
+- **location:** `src/linear/methods.jl:82` (the inner constructor of `SVDFactorization`)
+- **evidence:** the guard `zero(r) <= r < one(r)` holds for `r = -0.0`, and the constructor
+  stores the value as it is. `SVDFactorization(; rtol = -0.0) === SVDFactorization(; rtol = 0.0)`
+  gives `false`. The R1 rank of the `3 × 3` `Float64` fixture `1, 1e-10, 1e-14` is 3, as at
+  `rtol = 0`, so the rank and the solve do not change.
+- **kind:** found late
+- **found:** 2026-11-23
