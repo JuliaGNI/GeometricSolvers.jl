@@ -39,8 +39,8 @@ export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
        PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
 export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
-export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson,
-       Broyden
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Fallback,
+       Anderson, Broyden
 export BlockResidual, block_residuals, block_jacobians, block_residual, block_jacobian
 export BlockPartition, RAS, RASState, ras_prolongate!, ras_sweep!!, ras_counts
 export LeftPreconditioned, LeftPreconditionedState, LeftPreconditionedProblem,
@@ -110,6 +110,7 @@ include("composition/additive.jl")
 include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
+include("composition/fallback.jl")
 include("composition/anderson.jl")
 include("composition/ras.jl")
 include("composition/preconditioning.jl")
