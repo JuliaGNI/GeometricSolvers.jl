@@ -311,7 +311,7 @@ end
 
 # --- DenseSVD ---
 
-function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactorization,
+function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, method::SVDFactorization,
         J::AbstractMatrix)
     # `J / 2^e` for every element type of `J`, as the static and device SVDs divide it, so that a
     # matrix near either end of the exponent range neither overflows in `gesvd` nor loses its small
@@ -328,7 +328,7 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
     # from them, a singular value that is not finite being a failure too
     ok = iszero(info) && all(isfinite, fac.S)
     status = ok ? 0 : (iszero(info) ? 1 : info)
-    rank = ok ? svd_rank(fac.S, size(fac.factors, 1)) : 0
+    rank = ok ? svd_rank(fac.S, size(fac.factors, 1), method.rtol) : 0
     # `σ̂` into `rwork`, which `gesvd` no longer needs, for the solve, and the singular values
     # `σ̂ · 2^e` of `J` into `S`, which overflow to `Inf` where `σ̂ · 2^e` exceeds `floatmax`
     @inbounds for i in eachindex(fac.S)
@@ -342,11 +342,11 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
 end
 
 # The number of the non-increasing singular values `S` of an `m_rows × n` matrix above the rank
-# cutoff `√m_rows · eps(R) · S[1]`: the rows, not the columns, are what the residual of a truncated
-# direction accumulates over.
-function svd_rank(S::AbstractVector{R}, m_rows::Integer) where {R <: Real}
+# cutoff `rtol · S[1]`, by default `√m_rows · eps(R) · S[1]`: the rows, not the columns, are what
+# the residual of a truncated direction accumulates over.
+function svd_rank(S::AbstractVector{R}, m_rows::Integer, rtol) where {R <: Real}
     isempty(S) && return 0
-    cutoff = jacobi_tolerance(m_rows, R) * S[1]
+    cutoff = rank_tolerance(rtol, m_rows, R) * S[1]
     return count(>(cutoff), S)
 end
 

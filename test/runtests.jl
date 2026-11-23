@@ -49,7 +49,8 @@ const TESTS = [
         "Iterative refinement" => "nonlinear/refinement.jl",
         "Picard" => "nonlinear/picard.jl",
         "Solver loop hooks" => "nonlinear/hooks.jl",
-        "Batched R2 nonlinear" => "nonlinear/batched.jl"
+        "Batched R2 nonlinear" => "nonlinear/batched.jl",
+        "Verified root certificates" => "nonlinear/certify.jl"
     ],
     "leastsquares" => [
         "R3 nonlinear" => "nonlinear/r3.jl",
@@ -67,6 +68,7 @@ const TESTS = [
         "Multiplicative combinator" => "composition/multiplicative.jl",
         "Repeat combinator" => "composition/repeat.jl",
         "Switch combinator" => "composition/switch.jl",
+        "Fallback combinator" => "composition/fallback.jl",
         "Anderson acceleration" => "composition/anderson.jl",
         "Combinators refuse ForwardDiff.Dual inputs" => "composition/implicit.jl",
         "Left preconditioning and RAS" => "composition/preconditioning.jl"

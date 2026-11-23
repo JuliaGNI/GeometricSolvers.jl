@@ -8,8 +8,8 @@ using GeometricSolvers
 using GeometricSolvers: DeviceLDLT, DeviceLU, DeviceQR, DeviceSVD
 using GeometricSolvers: LDLTFactorization, LUFactorization, Newton, NonlinearProblem
 using GeometricSolvers: Options, QRFactorization, SVDFactorization
-using GeometricSolvers: backsolve!, dense_factor, factorize!!, init, jacobi_tolerance,
-                        ldiv!!, returncode, solve, solve!
+using GeometricSolvers: backsolve!, dense_factor, factorize!!, init, init_linear,
+                        jacobi_tolerance, ldiv!!, returncode, solve, solve!
 
 include("../helpers/matrix.jl")
 include("../helpers/metal_device.jl")
@@ -161,6 +161,24 @@ if Metal.functional() && !on_virtual_gpu()
             fwd = norm(x_h - d_cpu, Inf) / norm(d_cpu, Inf)
             @test fwd <= 8 * n * eps32 * κ
         end
+    end
+
+    # the singular values 1, 1e-10, 1e-14, `3 × 3` and `5 × 3`: a diagonal with its columns
+    # permuted and signed. The host rank and the kernel that zeroes the columns of `U` past it
+    # both take the cutoff of `rtol`.
+    @testset "Metal KA SVD with SVDFactorization(; rtol), $(mr) × 3, $m" for mr in (3, 5),
+        (m, r) in ((SVDFactorization(), 1), (SVDFactorization(Float32; rtol = 1e-9), 1),
+            (SVDFactorization(Float32; rtol = 1e-12), 2),
+            (SVDFactorization(; rtol = 1e-12), 2), (SVDFactorization(Float32; rtol = 0), 3))
+
+        A = zeros(Float32, mr, 3)
+        A[2, 1], A[3, 2], A[1, 3] = 1, -1.0f-10, 1.0f-14
+        x = MtlArray(zeros(Float32, 3))
+        fac = factorize!!(init_linear(m, nothing, x, mr == 3 ? nothing : mr), m, MtlArray(A))
+        @test fac isa DeviceSVD
+        @test fac.info == 0
+        @test fac.rank == r
+        @test all(iszero, Array(fac.U)[:, (r + 1):end])
     end
 
     @testset "Metal KA SVD bit-identical repeated runs and traps: $T" for T in METAL_ELTYPES

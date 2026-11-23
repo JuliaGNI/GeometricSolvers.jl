@@ -2,7 +2,8 @@
 # thread per system, in `Float32` and `ComplexF32`: Metal has no `Float64`. Each full-rank system
 # meets the bound of part I, `4n · eps(real(T)) · κ∞(A)` against a `BigFloat` reference; a
 # rank-deficient one ends below the sweep cap with the exact rank; the subnormal input of part J's
-# check 1 gives finite factors; and `jacobi_eigen(im * M)` for a real skew `M` gives the
+# check 1 gives finite factors; the rank of `SVDFactorization(; rtol)` in a kernel is that of its
+# cutoff; and `jacobi_eigen(im * M)` for a real skew `M` gives the
 # eigenvalues of the host within working precision, with a unitary `V`.
 #
 # `runtests.jl` runs this file in the `metal` group. Where `Metal.functional()` is `false`, as
@@ -10,7 +11,8 @@
 # no test and records a skip for issue #34.
 
 using GeometricSolvers
-using GeometricSolvers: factorize!!, ldiv!!, jacobi_eigen
+using GeometricSolvers: ToReal, factorize!!, ldiv!!, jacobi_eigen
+using Adapt: Adapt
 using KernelAbstractions: KernelAbstractions, @kernel, @index, @Const
 using LinearAlgebra: I, norm
 using Metal, Test
@@ -36,7 +38,37 @@ const METAL_ELTYPES = filter(T -> real(T) === Float32, ELTYPES)
     end
 end
 
+@kernel function metal_rank_kernel!(ranks, m, @Const(A))
+    i = @index(Global)
+    ranks[i] = factorize!!(nothing, m, A[i]).rank
+end
+
+"The rank of the R1 SVD factor of each of `As` with `m`, one system per thread on Metal."
+function metal_ranks(m, As)
+    A = MtlArray(As)
+    ranks = MtlArray(zeros(Int32, length(As)))
+    backend = KernelAbstractions.get_backend(A)
+    metal_rank_kernel!(backend)(ranks, m, A; ndrange = length(As))
+    KernelAbstractions.synchronize(backend)
+    return Array(ranks)
+end
+
 if Metal.functional() && !on_virtual_gpu()
+    # the singular values 1, 1e-10, 1e-14, `3 × 3` and `5 × 3`: a diagonal with its columns
+    # permuted and signed. Metal has no `Float64`, so a method with a `Float64` rtol enters the
+    # kernel after `ToReal{Float32}`, and the factor forms its cutoff in `Float32`.
+    @testset "the rank of SVDFactorization(; rtol) on Metal, $(mr) × 3, $m" for mr in (3, 5),
+        (m, r) in ((SVDFactorization(), 1), (SVDFactorization(Float32; rtol = 1e-9), 1),
+            (SVDFactorization(Float32; rtol = 1e-12), 2),
+            (Adapt.adapt(ToReal{Float32}(), SVDFactorization(; rtol = 1e-12)), 2),
+            (SVDFactorization(Float32; rtol = 0), 3))
+
+        A = zeros(Float32, mr, 3)
+        A[2, 1], A[3, 2], A[1, 3] = 1, -1.0f-10, 1.0f-14
+        S = SMatrix{mr, 3, Float32}(A)
+        @test metal_ranks(m, [S, S]) == [r, r]
+    end
+
     @testset "the Jacobi SVD on Metal, $T, n = $n" for T in METAL_ELTYPES, n in (1, 4, 16)
 
         m = SVDFactorization()
