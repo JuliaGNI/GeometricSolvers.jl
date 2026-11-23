@@ -30,7 +30,8 @@ the table.
 A combinator takes a [`NonlinearProblem`](@ref) or a [`StationarityProblem`](@ref) and refuses a
 [`LeastSquaresProblem`](@ref). A combinator and a preconditioning method have no implicit
 differentiation. A combinator other than [`Repeat`](@ref) reports `0` in `f_calls` and
-`jvp_calls`, because its members count only their own steps.
+`jvp_calls`: the members of a combinator of the table count only their own steps, and `Fallback`
+does not add the counts of the solves of its members.
 
 The examples of this page use the fixed-point problem ``x = \cos x``:
 
