@@ -210,9 +210,9 @@ function factorize!!(::Union{Nothing, StaticSVD},
     end
 
     # `info` reports a failed factorisation alone: a sweep that reached its cap, or a singular
-    # value that is not finite. The rank cutoff `σ̂ᵢ ≤ rtol · σ̂₁`, by default `√n · eps(TF) · σ̂₁`,
-    # the tolerance of the sweep, counts a singular value as zero; `σ` is non-increasing, so the
-    # rank is a leading run.
+    # value that is not finite. The rank cutoff `σ̂ᵢ ≤ rtol · σ̂₁`, by default
+    # `√n · eps(real(TF)) · σ̂₁`, the tolerance of the sweep, counts a singular value as zero; `σ`
+    # is non-increasing, so the rank is a leading run.
     ok = converged && all(isfinite, σ)
     info = ok ? Int32(0) : Int32(1)
     cutoff = rank_tolerance(method.rtol, N, real(F)) * σ[1]

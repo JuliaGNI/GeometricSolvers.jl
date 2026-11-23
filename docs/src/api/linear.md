@@ -40,7 +40,8 @@ the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on `MtlMatrix{Floa
 `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS
 `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
 LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge,
-and calling it in place of `gesvdj!` where the `rtol` cutoff lies below `√m · eps(R)`)
+and calling it in place of `gesvdj!` where the `rtol` cutoff lies below `√m · eps(real(T))`, `m`
+the number of rows)
 package extensions where available and through `KernelAbstractions` otherwise. When `Sparspak` is
 loaded and [`jacobian_pattern`](@ref) is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
 AbstractFloat`) — from an explicit `jacobian_prototype`, or detected automatically by

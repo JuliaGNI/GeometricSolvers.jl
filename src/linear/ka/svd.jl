@@ -1,10 +1,10 @@
 # KernelAbstractions parallel round-robin one-sided Jacobi SVD for DeviceSVD on AbstractGPUArray.
 #
-# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `jacobi_rotation` and `jacobi_pair` from
-# `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.V` holds
-# the right singular vectors `V`, `fac.flag` is the 1-element `Int32` rotation flag, and `fac.σ̂`
-# holds the squared column norms during the sweep and the sorted scaled singular values `σ̂` of
-# `J / 2^e` after it.
+# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `rank_tolerance`, `jacobi_rotation` and
+# `jacobi_pair` from `src/linear/static/svd.jl`. `fac.U` holds the working columns during the
+# sweep, `fac.V` holds the right singular vectors `V`, `fac.flag` is the 1-element `Int32`
+# rotation flag, and `fac.σ̂` holds the squared column norms during the sweep and the sorted
+# scaled singular values `σ̂` of `J / 2^e` after it.
 
 using KernelAbstractions: @localmem, @synchronize
 

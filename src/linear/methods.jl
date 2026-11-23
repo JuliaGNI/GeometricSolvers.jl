@@ -81,17 +81,18 @@ struct SVDFactorization{TF <: FactorisationPrecision, R <: Union{Nothing, Abstra
             TF <: FactorisationPrecision, R <: Union{Nothing, AbstractFloat}}
         r = convert(R, rtol)
         # the stored value, after the conversion: a value that rounds to 1 is refused. The
-        # comparison is false for `NaN`, so the guard refuses it too.
+        # comparison is false for `NaN`, so the guard refuses it too. A kernel cannot format a
+        # message, so the message is constant; `r + zero(r)` canonicalises `-0.0` to `+0.0`.
         r === nothing || zero(r) <= r < one(r) ||
             throw(ArgumentError(
-                "SVDFactorization: rtol must be finite and lie in [0, 1), got $r"))
-        return new{TF, R}(r)
+                "SVDFactorization: rtol must be finite and lie in [0, 1)"))
+        return new{TF, R}(r === nothing ? nothing : r + zero(r))
     end
 end
 
-# The storage type of `rtol`: `real(TF)` for a float `TF`, `Float64` for `Nothing` and a marker.
+# The storage type of `rtol`: `TF` for a float `TF`, `Float64` for `Nothing` and a marker.
 svd_rtol_type(::Type, ::Nothing) = Nothing
-svd_rtol_type(::Type{TF}, ::Real) where {TF <: AbstractFloat} = real(TF)
+svd_rtol_type(::Type{TF}, ::Real) where {TF <: AbstractFloat} = TF
 svd_rtol_type(::Type, ::Real) = Float64
 
 function SVDFactorization{TF}(;

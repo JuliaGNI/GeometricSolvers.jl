@@ -25,14 +25,14 @@ include("../helpers/matrix.jl")
     @test_throws TypeError M{Int}()
 end
 
-const RTOL_PHRASE = "SVDFactorization: rtol must be finite and lie in [0, 1), got "
+const RTOL_PHRASE = "SVDFactorization: rtol must be finite and lie in [0, 1)"
 
 "Whether `f()` raises the `ArgumentError` of the `rtol` guard, asserted by its phrase."
 function refuses_rtol(f)
     try
         f()
     catch e
-        return e isa ArgumentError && startswith(e.msg, RTOL_PHRASE)
+        return e isa ArgumentError && e.msg == RTOL_PHRASE
     end
     return false
 end
@@ -78,6 +78,11 @@ end
         0.0, nextfloat(0.0), 1e-20, 0.5, prevfloat(1.0))
         @test SVDFactorization(; rtol = good).rtol === good
     end
+    @testset "-0.0 is canonicalised to +0.0" begin
+        @test SVDFactorization(; rtol = -0.0) === SVDFactorization(; rtol = 0.0)
+        @test SVDFactorization(Float32; rtol = -0.0) ===
+              SVDFactorization(Float32; rtol = 0.0f0)
+    end
     @testset "the stored value is checked, after the conversion" begin
         # 0.99999999 lies in [0, 1) and rounds to 1f0
         @test Float32(0.99999999) == 1
@@ -115,6 +120,8 @@ end
         @test isbits(atf)
         @test Adapt.adapt(to32, Newton(; linsolve = SVDFactorization(; rtol = 1e-12))).linsolve.rtol ===
               1.0f-12
+        # through the checking constructor: a Float64 rtol that rounds to 1f0
+        @test refuses_rtol(() -> Adapt.adapt(to32, SVDFactorization(; rtol = 0.99999999)))
     end
 end
 

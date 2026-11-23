@@ -302,7 +302,8 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
         end
     end
     # the factor converts rtol to its real type: `prevfloat(2.0^-30)` rounds to `2f0^-30`, so
-    # `σ₂ = 2f0^-30` lies at the cutoff of a `Float32` factor and counts as zero
+    # `σ₂ = 2f0^-30` lies at the cutoff of a `Float32` factor and counts as zero; `0.99999999`
+    # rounds to `1f0`, giving rank 0 and the zero step in a direct `factorize!!`
     @testset "a Float64 rtol in a Float32 factor, $(mr) × 3, $route" for mr in (3, 5),
         route in RTOL_ROUTES
 
@@ -310,6 +311,11 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
         A = signed_diagonal(Float32, (1.0, c, 0.0), mr)
         m = SVDFactorization(; rtol = prevfloat(Float64(c)))
         @test rtol_factor(route, m, A).rank == 1
+        fac0 = rtol_factor(route, SVDFactorization(; rtol = 0.99999999), A)
+        @test fac0.info == 0
+        @test fac0.rank == 0
+        route == Array || @test all(iszero, rtol_U(route, fac0))
+        @test iszero(rtol_solve(route, fac0, A * Float32[1, 2, 3]))
     end
     # the default cutoff `√m · eps(R) · σ̂₁` counts the rows: `σ₂ = 2 eps(R)` lies below
     # `√5 eps(R)` and above `√3 eps(R)`. The kernel that zeroes the columns of `U` applies the

@@ -26,8 +26,8 @@ zero pivot block (or `1` for a non-finite entry), and
 [`returncode`](@ref) then gives `SINGULAR`. QR is not rank-revealing: a singular `J` whose `R` has
 no exact zero on the diagonal gives `SUCCESS`, and two equal rows, as a rule, give no exact zero.
 The SVD records its numerical rank in `rank`, the number of singular values above the cutoff
-`rtol · σ₁` of [`SVDFactorization`](@ref), by default `√m · eps(TF) · σ₁`, `m` the number of rows
-of `J`, and a rank deficiency gives `info == 0` and `SUCCESS`; its `info` is nonzero
+`rtol · σ₁` of [`SVDFactorization`](@ref), by default `√m · eps(real(TF)) · σ₁`, `m` the number of
+rows of `J`, and a rank deficiency gives `info == 0` and `SUCCESS`; its `info` is nonzero
 only where the sweep did not converge or a singular value is not finite, and `rank` is then 0. The
 SVD is prescaled at the working precision too, because the sweep squares the entries.
 
@@ -147,7 +147,7 @@ right singular vectors as columns, and `σ̂` holds the `N` singular values of t
 `2^e`, the ones the sweep computed and the solve divides by, in non-increasing order in
 `R = real(TF)`; [`singular_values`](@ref) gives those of the matrix as it was passed. `rank` is
 the number of singular values above the rank cutoff `rtol · σ̂₁` of [`SVDFactorization`](@ref),
-by default `√N · eps(TF) · σ̂₁`; the directions past it are zeroed in `U`, and the solve of
+by default `√N · eps(real(TF)) · σ̂₁`; the directions past it are zeroed in `U`, and the solve of
 [`ldiv!!`](@ref) leaves their coordinates out. `info` is 1
 where the sweep reached its cap of 30 sweeps before the columns were orthogonal or a singular
 value is not finite, and `rank` is then 0; it is 0 otherwise, also for a rank-deficient matrix,
