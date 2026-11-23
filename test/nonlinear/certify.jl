@@ -7,7 +7,7 @@
 
 using ForwardDiff: ForwardDiff
 using IntervalArithmetic: Interval, diam, in_interval, isbounded, isentire_interval
-using StaticArrays: MVector, StaticVector, SVector
+using StaticArrays: MVector, SMatrix, StaticVector, SVector
 using Test
 
 using GeometricSolvers
@@ -57,7 +57,8 @@ end
     for T in REAL_ELTYPES
         for number in CERTIFIED_PROBLEMS
             sp = standard_problem(number)
-            res = @inferred certify(sp.prob, sp.u0(T))
+            # No box forms an interval with NaN bounds, which IntervalArithmetic warns of.
+            res = @test_logs @inferred certify(sp.prob, sp.u0(T))
             @test res isa result_type(Vector{Interval{T}})
             @test !res.certified
             @test !res.guaranteed
@@ -93,7 +94,9 @@ p17_value(x, p) = SVector(x[1] + x[2] - 3, x[1]^2 + x[2]^2 - 9)
         @test res isa result_type(Interval{T})
         @test res.certified
         @test encloses(res.enclosure, big(0))
-        res5 = @inferred certify(prob, T(5))
+        # The derivative vanishes at 5, so its inverse is infinite, and the test refuses it before
+        # IntervalArithmetic sees it.
+        res5 = @test_logs @inferred certify(prob, T(5))
         @test res5 isa result_type(Interval{T})
         @test !res5.certified
 
@@ -189,6 +192,53 @@ end
     end
 end
 
+@testset "an iterate off the root certifies, and its enclosure holds the root" begin
+    # Off the root, `F(x)` is not zero, and the Newton term `-Y F(x)` moves the enclosure from
+    # the iterate to the root. With the sign of that term reversed, `x - 1` at `1 + 1/1000`
+    # certifies the point `1 + 2/1000`, which does not hold the root.
+    for T in REAL_ELTYPES
+        res = @inferred certify(NonlinearProblem((x, p) -> x - 1), one(T) + T(1e-3))
+        @test res.certified
+        @test encloses(res.enclosure, big(1))
+        for number in CERTIFIED_PROBLEMS
+            sp = standard_problem(number)
+            res = @inferred certify(sp.prob, sp.root(T) .+ T(1e-4))
+            @test res.certified
+            @test encloses(res.enclosure, sp.root(BigFloat))
+        end
+    end
+end
+
+@testset "a residual undefined or not continuous on the box does not certify" begin
+    # IntervalArithmetic marks a result on arguments outside the domain of a function with the
+    # decoration `trv`, and on a discontinuity with `def`; `F(x)` can then be empty, and with it
+    # `K(X)`, which the interior of every box holds.
+    for T in REAL_ELTYPES
+        cases = (
+            # `F(x)` is empty: `log` and `sqrt` of a negative number, and `1/x` at 0.
+            (NonlinearProblem((x, p) -> log(x), (x, p) -> 1 / x), -one(T)),
+            (NonlinearProblem((x, p) -> log.(x), (x, p) -> SMatrix{1, 1}(1 / x[1])),
+                SVector(-one(T))),
+            (NonlinearProblem((x, p) -> sqrt(x) + 1, (x, p) -> one(x)), -T(4)),
+            (NonlinearProblem((x, p) -> 1 / x - 1), zero(T)),
+            # `F(x)` is defined, and `J(X)` is bounded: `sqrt` is undefined on the negative part
+            # of the box around 0, and `floor` is discontinuous at 0.
+            (NonlinearProblem((x, p) -> x, (x, p) -> 1 + 0 * sqrt(x)), zero(T)),
+            (NonlinearProblem((x, p) -> x, (x, p) -> 1 + 0 * floor(x)), zero(T)))
+        for (prob, x) in cases
+            res = @test_logs @inferred certify(prob, x)
+            @test !res.certified
+            @test !res.guaranteed
+            @test all(isentire_interval, res.enclosure)
+        end
+        # A constant analytic Jacobian is a number, not an interval: a finite one certifies, an
+        # infinite one does not.
+        @test certify(NonlinearProblem((x, p) -> x - 1, (x, p) -> one(T)), one(T)).certified
+        res = @test_logs certify(NonlinearProblem((x, p) -> x - 1, (x, p) -> T(Inf)), one(T))
+        @test !res.certified
+    end
+end
+
 @testset "hostile iterates return no certificate and do not throw" begin
     for T in REAL_ELTYPES
         prob = NonlinearProblem(p20_value)
@@ -211,13 +261,15 @@ end
             @test !res.certified
             @test all(isentire_interval, res.enclosure)
         end
-        # An exact root certifies at each magnitude from zero to `floatmax(T) / 2`.
+        # An exact root certifies at each magnitude from zero to `floatmax(T) / 2`. The residual is
+        # linear with the derivative 1, so `K(X)` is the point `s`, while every box is wider.
         roots = (zero(T), -zero(T), nextfloat(zero(T)), floatmin(T), eps(T), one(T),
             floatmax(T) / 2, (T(10)^k for k in -8:4:8)...)
         for s in roots
             res = certify(NonlinearProblem((x, p) -> x - p), s, s)
             @test res.certified
             @test encloses(res.enclosure, big(s))
+            @test diam(res.enclosure) == 0
         end
     end
 end

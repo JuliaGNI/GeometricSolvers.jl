@@ -2,7 +2,8 @@ module GeometricSolversIntervalArithmeticExt
 
 using ForwardDiff: ForwardDiff
 using GeometricSolvers: GeometricSolvers, NonlinearProblem, buffer, residual!!
-using IntervalArithmetic: Interval, entireinterval, interval, isguaranteed, isinterior, mag
+using IntervalArithmetic: Interval, dac, decoration, entireinterval, interval, isbounded,
+                          isguaranteed, isinterior, mag
 using LinearAlgebra: issuccess, lu
 using StaticArrays: StaticVector
 
@@ -27,17 +28,24 @@ function jacobian(::Nothing, prob, x::Vector, p)
 end
 
 # The inverse of a point Jacobian, or `nothing` where its LU factorisation fails, because the
-# inverse of a failed LAPACK factorisation throws. A zero scalar Jacobian, and any other inverse
-# that is not finite, make `K(X)` not finite, and so the next radius, which ends the test.
+# inverse of a failed LAPACK factorisation throws. A zero scalar Jacobian gives an infinite
+# inverse, which the caller refuses with every other inverse that is not finite.
 inverse(A::Number) = inv(A)
 function inverse(A::AbstractMatrix)
     fact = lu(A; check = false)
     return issuccess(fact) ? inv(fact) : nothing
 end
 
-# The entries of an interval result, a scalar or an array.
-entries(a::Interval) = (a,)
-entries(a::AbstractArray) = a
+# Whether every entry of `a`, a scalar or an array, is bounded and, for an interval, comes from a
+# function that is defined and continuous on its arguments: the decoration `dac` or `com`.
+# Krawczyk's conclusion needs `F` continuous and `J` its continuous Jacobian on the box; a lower
+# decoration marks a function undefined on part of its arguments, where `F(x)` or `J(X)` can be
+# empty. An unbounded entry makes `K(X)` unbounded, which no bounded box holds, or
+# IntervalArithmetic's product of a float matrix with it forms NaN bounds, with a warning. A number
+# that is not an interval, such as a constant analytic Jacobian, needs only to be finite.
+usable(a::Interval) = decoration(a) >= dac && isbounded(a)
+usable(a::Real) = isfinite(a)
+usable(a::AbstractArray) = all(usable, a)
 
 function GeometricSolvers.certify(prob::NonlinearProblem, x::Iterate{T},
         p = nothing) where {T <: AbstractFloat}
@@ -46,19 +54,21 @@ function GeometricSolvers.certify(prob::NonlinearProblem, x::Iterate{T},
     all(isfinite, x) || return refused
 
     Y = inverse(jacobian(prob, x, p))
-    Y === nothing && return refused
+    (Y === nothing || !all(isfinite, Y)) && return refused
 
     x̃ = map(interval, x)
     fx = residual!!(buffer(x̃), prob, x̃, p)
+    usable(fx) || return refused
     r = eps.(x)
     for _ in 1:MAX_BOXES
         all(isfinite, r) || return refused
         X = x̃ .+ map(ρ -> interval(-ρ, ρ), r)
         JX = jacobian(prob, X, p)
+        usable(JX) || return refused
         M = Y * JX
         K = x̃ - Y * fx + (one(M) - M) * (X - x̃)
         if all(isinterior.(K, X))
-            guaranteed = all(isguaranteed, entries(fx)) && all(isguaranteed, entries(JX))
+            guaranteed = all(isguaranteed, fx) && all(isguaranteed, JX)
             return (; certified = true, enclosure = convert(typeof(unknown), K), guaranteed)
         end
         r = 2 .* map(mag, K - x̃) .+ eps.(x)

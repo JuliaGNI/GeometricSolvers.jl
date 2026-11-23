@@ -29,10 +29,17 @@ The result is a `NamedTuple` of one concrete type for both outcomes:
 
 The call form of `F` and `J` follows the storage of `x`, as for a solve: `F(x, p)` and `J(x, p)`
 for a real floating-point `Number` and a `StaticVector`, and `F(y, x, p)` and `J(A, x, p)` for a
-host `Vector`. Without `J`, `ForwardDiff` differentiates `F`. `F` and `J` must accept intervals.
-A singular Jacobian at `x`, a non-finite `x`, `F(x)` or `Y`, a box radius that is not finite, and
-a test that fails on the tenth box each give `certified == false`; none of these throws. A
-complex iterate, a batch, a device array, a [`StationarityProblem`](@ref) and a
+host `Vector`. Without `J`, `ForwardDiff` differentiates `F`; a given `J` must be the Jacobian of
+`F`, because the test evaluates `F` only at `x`. `F` and `J` must accept intervals: an `F` that
+branches on a comparison of intervals, such as `x[1] < 0`, throws IntervalArithmetic's
+`InconclusiveBooleanOperation` where the comparison has no single answer.
+
+A singular Jacobian at `x`, a non-finite `x` or `Y`, a box radius that is not finite, and a test
+that fails on the tenth box each give `certified == false`. So does an interval of `F(x)` or
+`J(X)` that is unbounded, or that IntervalArithmetic decorates below `dac` (defined and
+continuous): `F` or `J` is then undefined or not continuous on part of its arguments, such as
+`log` or `sqrt` of a negative number, `1/x` at 0, or `floor` across an integer. None of these
+throws. A complex iterate, a batch, a device array, a [`StationarityProblem`](@ref) and a
 [`LeastSquaresProblem`](@ref) have no method.
 
 `certify` is `public` and not exported.
