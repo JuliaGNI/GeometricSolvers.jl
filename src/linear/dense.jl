@@ -498,8 +498,9 @@ end
 # --- DenseCholesky ---
 
 # A non-finite entry is refused before `potrf`, which reads the lower triangle only and returns
-# `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8). `potrf` leaves the upper triangle
-# as it was, and it is zeroed so that `factors` holds `L` alone, as `generic_cholesky!` leaves it.
+# `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8).
+# `potrf` leaves the upper triangle as it was, and it is zeroed so that `factors` holds `L` alone,
+# as `generic_cholesky!` leaves it.
 function factorize!!(fac::DenseCholesky{<:StridedMatrix{<:BlasFloat}},
         ::CholeskyFactorization, J::AbstractMatrix)
     e = load_factors!(fac.factors, J)

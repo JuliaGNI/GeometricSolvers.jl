@@ -892,9 +892,9 @@ so that a compat-only bump can be told apart from an interface change.
   0.3.30). A factor in `TF` below the working precision that fails takes the existing promotion of
   `Newton` to the working precision, unchanged: with `CholeskyFactorization(Float32)`, the Jacobian
   `[1 1; 1 1 + 1e-9]` has a zero pivot in `Float32`, and the step factorises it in `Float64`. A
-  `LeastSquaresProblem` takes the method only in the stacked
-  `LevenbergMarquardt` step, as it takes `LDLTFactorization`, and a device array iterate raises an
-  `ArgumentError`, because the method has no device factor. The tests are in
+  `LeastSquaresProblem` takes the method only in the stacked `LevenbergMarquardt` step, as it takes
+  `LDLTFactorization`, and a device array iterate raises an `ArgumentError`, because the method has
+  no device factor. The tests are in
   `test/linear/cholesky.jl`, and the LDLᵀ rows of `test/nonlinear/leastsquares.jl`, `gmres_ir.jl`
   and `refinement.jl` have Cholesky twins. The standard test set has no Cholesky column, as it has
   no LDLᵀ column.
