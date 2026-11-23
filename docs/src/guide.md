@@ -39,6 +39,7 @@ gives others (see [Nonlinear methods](@ref nonlinear)).
 | [`Picard`](@ref) | ``I - \omega J`` is a contraction; it needs no Jacobian, and the rate is linear |
 | [`Anderson`](@ref), [`Broyden`](@ref) | a fixed-point iteration whose map is cheap and whose Jacobian is expensive or unavailable; in R1 the depth is `1 ≤ m ≤ 4` |
 | [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref) | members that run in R1, and a problem that is not a [`LeastSquaresProblem`](@ref) |
+| [`Fallback`](@ref) | members that run in R1, and a problem that is not a [`LeastSquaresProblem`](@ref); each member solves from ``x_0`` in turn until one returns `SUCCESS` |
 
 **Globalizations.** [`Static`](@ref) applies close to the solution. [`Backtracking`](@ref),
 [`Bisection`](@ref) and [`StrongWolfe`](@ref) search along the direction from a distant start.

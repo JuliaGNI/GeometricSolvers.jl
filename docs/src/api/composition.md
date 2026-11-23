@@ -21,6 +21,10 @@ filters and safeguards by solving the lower-triangular Type-II Broyden multiseca
 forward substitution. A combinator has no implicit differentiation: [`solve`](@ref) with a
 combinator method raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`.
 
+[`Fallback`](@ref) composes whole solves instead of steps: it runs [`solve!!`](@ref) with each
+member in turn, each from `x₀`, and stops at the first member that returns `SUCCESS`;
+[`fallback_member`](@ref) reads the index of the member whose result a solve returned.
+
 ```@docs
 Additive
 OptimalWeights
@@ -28,6 +32,8 @@ FixedWeights
 Multiplicative
 Repeat
 Switch
+Fallback
+fallback_member
 Anderson
 Broyden
 AndersonHistory

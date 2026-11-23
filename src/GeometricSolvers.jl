@@ -39,8 +39,8 @@ export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
        PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
 export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
-export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson,
-       Broyden
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Fallback,
+       Anderson, Broyden
 export BlockResidual, block_residuals, block_jacobians, block_residual, block_jacobian
 export BlockPartition, RAS, RASState, ras_prolongate!, ras_sweep!!, ras_counts
 export LeftPreconditioned, LeftPreconditionedState, LeftPreconditionedProblem,
@@ -49,7 +49,7 @@ export solve_batch!
 export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summary,
        deposited_moments, eliminated_indices, reset_batch!
 
-public solve!!, sciml_retcode
+public solve!!, sciml_retcode, certify
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -103,12 +103,14 @@ include("ad/hessian.jl")
 include("nonlinear/reparametrized.jl")
 include("nonlinear/deflation.jl")
 include("nonlinear/eliminate.jl")
+include("nonlinear/certify.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")
 include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
+include("composition/fallback.jl")
 include("composition/anderson.jl")
 include("composition/ras.jl")
 include("composition/preconditioning.jl")

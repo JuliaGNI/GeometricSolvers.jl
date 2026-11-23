@@ -154,7 +154,7 @@ function Newton(;
         f = forcing === nothing ? g.forcing : forcing
         P = preconditioner === nothing ? g.preconditioner : preconditioner
         linsolve = GMRES{typeof(f), typeof(P), g.jvp_eltype}(
-            g.maxiter, g.restart, f, P, g.jvp_eltype)
+            g.maxiter, g.restart, f, P, g.jvp_eltype, g.mgs)
     end
     return Newton(linsolve, globalization, jacobian, ref, reg, r)
 end
@@ -1244,7 +1244,7 @@ end
         bnorm = R(rnorm(b))
         (isfinite(bnorm) && !iszero(bnorm)) || break
         δd, info = gmres_solve!(
-            refbuf.ws, op, nothing, b, bnorm, tol, m_cap - used, m_cap - used)
+            refbuf.ws, op, nothing, b, bnorm, tol, m_cap - used, m_cap - used; mgs = true)
         used += Int(info.iterations)
         axpby!!(cand, one(T), cand, one(T), δd)
     end
@@ -1714,7 +1714,7 @@ end
     map!!(-, ws.bb, Fx)
     op = R5Operator(state.jvpprep, prob, x, p)
     _, info = gmres_solve!(
-        ws, op, g.preconditioner, ws.bb, fnorm, η, maxiter, g.restart)
+        ws, op, g.preconditioner, ws.bb, fnorm, η, maxiter, g.restart; mgs = g.mgs)
     ws.gmres_iterations = info.iterations
     ws.max_inner = max(ws.max_inner, info.iterations)
     ws.linres = info.resnorm

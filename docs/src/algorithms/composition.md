@@ -22,10 +22,16 @@ take a [`NonlinearProblem`](@ref) with a mutable vector iterate, so they run in 
 | [`RAS`](@ref)`(partition)` | restricted additive Schwarz: local Newton solves on overlapping blocks |
 | [`LeftPreconditioned`](@ref)`(outer, inner)` | `outer` on the residual ``y - N(y)`` of one step `N` of `inner` |
 
+[`Fallback`](@ref)`(m₁, m₂, …)` composes whole solves instead of steps. It has no
+[`step!!`](@ref): its [`solve!!`](@ref) runs the solve of each member in turn, each from `x₀`,
+and stops at the first member that returns `SUCCESS`. So it is not a member of the combinators of
+the table.
+
 A combinator takes a [`NonlinearProblem`](@ref) or a [`StationarityProblem`](@ref) and refuses a
 [`LeastSquaresProblem`](@ref). A combinator and a preconditioning method have no implicit
 differentiation. A combinator other than [`Repeat`](@ref) reports `0` in `f_calls` and
-`jvp_calls`, because its members count only their own steps.
+`jvp_calls`: the members of a combinator of the table count only their own steps, and `Fallback`
+does not add the counts of the solves of its members.
 
 The examples of this page use the fixed-point problem ``x = \cos x``:
 

@@ -282,8 +282,8 @@
   method runs the primal solve and then the implicit-function-theorem tangent solve
   (`solve_implicit` in `src/nonlinear/implicit.jl`). The tangent solve takes its Jacobian
   preparation from `_tangent_jacprep`, which has a method for a `NewtonState` and a `PicardState`
-  only. `solve` with an `Additive`, `Multiplicative`, `Repeat`, `Switch`, `Anderson`, `Broyden`,
-  `LeftPreconditioned` or `RAS` method therefore raises an `ArgumentError` for a
+  only. `solve` with an `Additive`, `Multiplicative`, `Repeat`, `Switch`, `Fallback`, `Anderson`,
+  `Broyden`, `LeftPreconditioned` or `RAS` method therefore raises an `ArgumentError` for a
   `ForwardDiff.Dual` in `x₀` or `p`, before the primal solve; `init`, `solve!` and
   `solve_batch!` refuse a dual input for every method. Implicit
   differentiation through a combinator, which needs the Jacobian of `F` at `x*` and not the steps
@@ -643,7 +643,34 @@
 - **kind:** found late
 - **found:** #96
 
-### K99 · Two `SVDFactorization(BigFloat; rtol)` with the same `rtol` are not `===`
+### K99 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
+
+- **location:** `src/linear/gmres.jl:547` (`linres` from the rotated right-hand side)
+- **evidence:** with `rng = Xoshiro(1)`, `A = T.(Diagonal(1:6) + 0.1 randn(rng, 6, 6))`, then
+  `b = T.(randn(rng, 6))`, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32`
+  reports `resnorm = 8.7e-17`, while the true residual is `‖b − A d‖ = 5.8e-8 ‖b‖`; in `Float64`
+  it reports `6.0e-35` against `2.4e-16 ‖b‖`. Modified Gram–Schmidt (`mgs = true`) reports
+  `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
+  is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
+  of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1720`). The true
+  residual stays at the round-off of the solve; the reported value is low only where the solve
+  runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
+  `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
+  in `Float32` at iteration 12, with `resnorm = 9.7e-24 ‖b‖` against a true `5.1e-8 ‖b‖`; in
+  `Float64` at iteration 6, with `2.6e-35 ‖b‖` against `2.4e-16 ‖b‖`, where the convergence test
+  at `:549` and `:566` skips the restart. The MGS path has the same class of fault, and so has the base
+  (`47d817b`) with the same code: in `Float64` it reports `converged = true` at iteration 12, with
+  `resnorm = 2.68e-32 ‖b‖` against a true `9.46e-17 ‖b‖`; in `Float32` it does not converge
+  (`1.5e-15 ‖b‖` reported, `2.6e-8 ‖b‖` true). Each true residual here is formed in `T`. Formed
+  in `Float64`, the two `Float32` rows of `tol = 1e-20` give `3.07e-8 ‖b‖` (CGS2) and
+  `4.63e-8 ‖b‖` (MGS). A check of the true residual `b − J M⁻¹ u` before convergence is accepted
+  covers both paths and costs one Jacobian–vector product on each solve that reaches `j = n`.
+- **kind:** found late
+- **found:** #106; a limit of the user's decision of 2026-11-22 (CGS2 as the default of `GMRES`),
+  with its edges "else one `rnorm(w₂)`" and "the second pass always runs"
+
+### K100 · Two `SVDFactorization(BigFloat; rtol)` with the same `rtol` are not `===`
 
 - **location:** `src/linear/methods.jl:82` (the inner constructor of `SVDFactorization`)
 - **evidence:** `rtol` is stored in `real(TF)`, so for `TF = BigFloat` the field is a
@@ -654,7 +681,7 @@
 - **kind:** found late
 - **found:** 2026-11-23
 
-### K100 · No test observes whether a CUDA SVD runs on `gesvdj!` or on the own Jacobi kernel, so a mutant of the route comparison that changes only the route passes
+### K101 · No test observes whether a CUDA SVD runs on `gesvdj!` or on the own Jacobi kernel, so a mutant of the route comparison that changes only the route passes
 
 - **location:** `ext/GeometricSolversCUDAExt.jl:128` (the comparison of the rank cutoff with the
   sweep tolerance in `factorize!!`)
