@@ -1,45 +1,46 @@
+HEAD=6ed46f315c65fd0f65cba0e3ac4c514568435918
 Test Summary:                                                                  | Pass  Total  Time
 GeometricSolversCUDAExt extension loading, dispatch, and CUDA census alignment |   88     88  0.1s
 Test Summary:                                                         | Pass  Total  Time
-GeometricSolversCUDSSExt extension loading, dispatch and JET: Float32 |   42     42  5.2s
+GeometricSolversCUDSSExt extension loading, dispatch and JET: Float32 |   50     50  5.1s
 Test Summary:                                                         | Pass  Total  Time
-GeometricSolversCUDSSExt extension loading, dispatch and JET: Float64 |   42     42  0.1s
+GeometricSolversCUDSSExt extension loading, dispatch and JET: Float64 |   50     50  0.2s
 Test Summary:                                                            | Pass  Total  Time
-GeometricSolversCUDSSExt extension loading, dispatch and JET: ComplexF32 |   42     42  0.2s
+GeometricSolversCUDSSExt extension loading, dispatch and JET: ComplexF32 |   50     50  0.1s
 Test Summary:                                                            | Pass  Total  Time
-GeometricSolversCUDSSExt extension loading, dispatch and JET: ComplexF64 |   42     42  0.1s
+GeometricSolversCUDSSExt extension loading, dispatch and JET: ComplexF64 |   50     50  0.1s
 Test Summary:                                        | Pass  Total   Time
-CUDA cuSOLVER agreement with own KA kernels at n = 1 |   60     60  26.4s
+CUDA cuSOLVER agreement with own KA kernels at n = 1 |   60     60  24.2s
 Test Summary:                                         | Pass  Total  Time
-CUDA cuSOLVER agreement with own KA kernels at n = 16 |   60     60  8.3s
+CUDA cuSOLVER agreement with own KA kernels at n = 16 |   60     60  4.0s
 Test Summary:                                          | Pass  Total  Time
-CUDA cuSOLVER agreement with own KA kernels at n = 256 |   60     60  3.7s
+CUDA cuSOLVER agreement with own KA kernels at n = 256 |   60     60  1.2s
 Test Summary:                                             | Pass  Total      Time
-CUDA cuSOLVER large-n LU, QR, SVD, and mixed TF = Float32 |  144    144  65m47.9s
+CUDA cuSOLVER large-n LU, QR, SVD, and mixed TF = Float32 |  144    144  32m45.8s
 Test Summary:                                                                                  | Pass  Total  Time
-CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: Float32 |   53     53  0.7s
+CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: Float32 |   53     53  0.6s
 Test Summary:                                                                                  | Pass  Total  Time
 CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: Float64 |   53     53  0.5s
 Test Summary:                                                                                     | Pass  Total  Time
 CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: ComplexF32 |   53     53  0.7s
 Test Summary:                                                                                     | Pass  Total  Time
-CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: ComplexF64 |   53     53  0.6s
+CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: ComplexF64 |   53     53  0.7s
 Test Summary:                | Pass  Total   Time
-CUDA capability census probe |   16     16  13.4s
+CUDA capability census probe |   16     16  13.1s
 Test Summary:                                                 | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 125, T = Float32 |   21     21  6.5s
+cuDSS sparse LU through LUFactorization: N = 125, T = Float32 |   51     51  6.9s
 Test Summary:                                                 | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 125, T = Float64 |   21     21  2.8s
+cuDSS sparse LU through LUFactorization: N = 125, T = Float64 |   51     51  3.5s
 Test Summary:                                                    | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 125, T = ComplexF32 |   21     21  3.2s
+cuDSS sparse LU through LUFactorization: N = 125, T = ComplexF32 |   51     51  4.1s
 Test Summary:                                                    | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 125, T = ComplexF64 |   21     21  2.9s
+cuDSS sparse LU through LUFactorization: N = 125, T = ComplexF64 |   51     51  3.6s
 Test Summary:                                                 | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 768, T = Float32 |   21     21  0.6s
+cuDSS sparse LU through LUFactorization: N = 768, T = Float32 |   51     51  1.7s
 Test Summary:                                                 | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 768, T = Float64 |   21     21  0.6s
+cuDSS sparse LU through LUFactorization: N = 768, T = Float64 |   51     51  1.4s
 Test Summary:                                                    | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 768, T = ComplexF32 |   21     21  1.9s
+cuDSS sparse LU through LUFactorization: N = 768, T = ComplexF32 |   51     51  5.6s
 Test Summary:                                                    | Pass  Total  Time
-cuDSS sparse LU through LUFactorization: N = 768, T = ComplexF64 |   21     21  1.9s
-EXIT=0
+cuDSS sparse LU through LUFactorization: N = 768, T = ComplexF64 |   51     51  5.6s
+EXIT=

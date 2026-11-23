@@ -28,7 +28,7 @@ Toolchain:
 - LLVM: 20.1.8
 
 1 device:
-  0: NVIDIA GB10 (sm_121, 89.472 GiB / 121.687 GiB available)
+  0: NVIDIA GB10 (sm_121, 95.433 GiB / 121.687 GiB available)
      compiles to sm_121a / PTX 9.4 (LLVM: sm_121a / PTX 9.2)
 CUDA.functional() = true
 CUDSS.version() = v"1.0.0"
