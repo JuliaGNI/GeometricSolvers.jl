@@ -122,7 +122,7 @@ more than once goes through [`init`](@ref) and [`solve!`](@ref). On a device arr
 factorisation methods run on device kernels. On CUDA, [`LUFactorization`](@ref),
 [`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types,
 except an [`SVDFactorization`](@ref) whose `rtol` lies below its default cutoff `√m · eps(R)`,
-with `m` the row count and `R` the real type, which runs on the own kernel; on Metal,
+with `m` the row count and `R` the real type of the factor, which runs on the own kernel; on Metal,
 [`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
 [What runs where](@ref)). The residual of a device solve indexes no scalars. On a device array,
 [`LevenbergMarquardt`](@ref) runs with [`SVDFactorization`](@ref) and `scaling = :none` only, and
