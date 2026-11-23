@@ -7,10 +7,10 @@ Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) an
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
 `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
 [`CholeskyFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref) or the
-matrix-free [`GMRES`](@ref)), globalization `globalization`
-([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the
-trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector
-`jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
+matrix-free [`GMRES`](@ref)), globalization `globalization` ([`Static`](@ref),
+[`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust region
+[`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector `jacobian`,
+iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
 [`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
 `reuse`.
 
@@ -18,15 +18,14 @@ trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), 
 
 - `linsolve::L`: the linear-solver method. A [`LeastSquaresProblem`](@ref) takes none of
   [`LUFactorization`](@ref), [`LDLTFactorization`](@ref) and [`CholeskyFactorization`](@ref)
-  outside the stacked
-  [`LevenbergMarquardt`](@ref) step. With more residuals than unknowns it takes no factor in a
-  lower precision than the element type of the iterate, because a Gauss–Newton step with such a
-  factor stops off the least-squares point; a factor in the same or a higher precision is taken,
-  and the stacked `LevenbergMarquardt` step, which reads no factor, takes any. Each refusal raises
-  an `ArgumentError` where the state is built. A factor in a higher precision on more residuals
-  than unknowns is not promoted to the working precision after a stall: at a nonzero-residual
-  least-squares point ``\\|F + J d\\| \\approx \\|F\\|``, which on a square problem reads as a stall.
-  It is promoted where the factorisation fails.
+  outside the stacked [`LevenbergMarquardt`](@ref) step. With more residuals than unknowns it
+  takes no factor in a lower precision than the element type of the iterate, because a
+  Gauss–Newton step with such a factor stops off the least-squares point; a factor in the same or
+  a higher precision is taken, and the stacked `LevenbergMarquardt` step, which reads no factor,
+  takes any. Each refusal raises an `ArgumentError` where the state is built. A factor in a higher
+  precision on more residuals than unknowns is not promoted to the working precision after a
+  stall: at a nonzero-residual least-squares point ``\\|F + J d\\| \\approx \\|F\\|``, which on a
+  square problem reads as a stall. It is promoted where the factorisation fails.
 - `globalization::G`: the globalization method. A line search takes its merit at `α = 0` from
   the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))` and each [`step!!`](@ref) to the
   merit of the residual it returns. A `step!!` with a line search therefore takes only the

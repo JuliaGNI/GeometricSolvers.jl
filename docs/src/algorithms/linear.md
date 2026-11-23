@@ -83,12 +83,11 @@ With an [`SVDFactorization`](@ref), the status reports the numerical rank of the
 - [`LDLTFactorization`](@ref) for a symmetric or Hermitian Jacobian; it needs about half the
   work of LU and handles an indefinite matrix with its ``2 \times 2`` pivots.
 - [`CholeskyFactorization`](@ref) for a Hermitian or real symmetric Jacobian that is positive
-  definite at every iterate, such as the Hessian of a [`StationarityProblem`](@ref) with `E == U`
-  where that Hessian is positive definite at every iterate, or ``J + \mu I`` with a Hermitian
-  positive semidefinite ``J``
-  and ``\mu > 0``. It takes no pivots, and a Jacobian that is not positive definite gives
-  `SINGULAR`, with the order of the first leading minor that is not positive in `info`. It runs on
-  a host `Array` and in R1 and R2; in R3 a GPU array raises an `ArgumentError`.
+  definite at every iterate, such as the Hessian of a [`StationarityProblem`](@ref) with `E == U`,
+  or ``J + \mu I`` with a Hermitian positive semidefinite ``J`` and ``\mu > 0``. It takes no
+  pivots, and a Jacobian that is not positive definite gives `SINGULAR`, with the order of the
+  first leading minor that is not positive in `info`. It runs on a host `Array` and in R1 and R2;
+  in R3 a GPU array raises an `ArgumentError`.
 - [`QRFactorization`](@ref) for a least-squares problem, and where an orthogonal factorisation is
   wanted.
 - [`SVDFactorization`](@ref) for a rank-deficient or nearly singular Jacobian. It costs more than

@@ -643,7 +643,7 @@
 - **kind:** found late
 - **found:** #96
 
-### K99 · An R3 `Newton` solve with a `BigFloat` or `Complex{BigFloat}` iterate and the default automatic differentiation throws `UndefRefError`
+### K102 · An R3 `Newton` solve with a `BigFloat` or `Complex{BigFloat}` iterate and the default automatic differentiation throws `UndefRefError`
 
 - **location:** `src/ad/chunked.jl:115` (`jacobian!!` for `ChunkedForwardDiff`), called from
   `newton_factor` in `src/nonlinear/newton.jl`
@@ -659,3 +659,34 @@
   themselves take `BigFloat` (`test/linear/cholesky.jl`).
 - **kind:** found late
 - **found:** 2026-11-22
+
+### K103 · The docstrings of `StaticLU`, `StaticSVD`, `StaticLDLT` and `StaticRectQR` say that the factor is `isbits` for every element type, which is false for `BigFloat`
+
+- **location:** `src/linear/factors.jl:119` (`StaticLU`), `:159` (`StaticSVD`), `:327`
+  (`StaticLDLT`), `src/linear/static/qr_rect.jl:12` (`StaticRectQR`)
+- **evidence:** each docstring says that the size parameter makes the `SMatrix` field concrete,
+  "so the factor is `isbits`", with no condition on `TF`.
+  `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
+  `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
+  `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:738`), so
+  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:392-393`) states
+  the condition.
+- **kind:** docs
+- **found:** #108
+
+### K104 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
+
+- **location:** `src/linear/factors.jl:730` (`factor_matrix`), and `src/linear/static/svd.jl:91`
+  and `src/linear/static/svd_rect.jl:53`, which scale always
+- **evidence:** the scale exponent of every static factor is an `Int32` field, and
+  `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
+  `A = SMatrix{2, 2, BigFloat}(big(2)^(big(2)^31 + 5) * [4 1; 1 5])`,
+  `factorize!!(nothing, m, A)` raises `InexactError: trunc(Int32, 2147483655)` for
+  `m = SVDFactorization()`, `LUFactorization(Float64)`, `CholeskyFactorization(Float64)` and
+  `SVDFactorization(Float64)`, and returns a factor for `LUFactorization()`,
+  `LDLTFactorization()`, `CholeskyFactorization()` and `QRFactorization()`, which do not scale a
+  matrix in its own element type (Julia 1.13.4, tree of `c6a2c4f`). `origin/main` has the same
+  `Int32(e)` in `factor_matrix` and `svd.jl`.
+- **kind:** defect
+- **found:** #108

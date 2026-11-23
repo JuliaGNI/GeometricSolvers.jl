@@ -888,8 +888,8 @@ so that a compat-only bump can be told apart from an interface change.
   `potrf`/`potrs` for a `BlasFloat` element type and the same loop for another, such as `BigFloat`.
   Both read the lower triangle and the real part of the diagonal, take the power-of-two scale of a
   factor in another element type from these entries alone, and hold `L` with zeros above the
-  diagonal. A matrix that is not positive definite in the factorisation precision
-  gives `info = k`, the order of its first leading minor that is not positive, and `SINGULAR`, with
+  diagonal. A matrix that is not positive definite in the factorisation precision gives
+  `info = k`, the order of its first leading minor that is not positive, and `SINGULAR`, with
   no fallback to another factorisation; a non-finite entry anywhere gives `info = 1` before
   `potrf`, which itself returns 0 for a `NaN` below the diagonal of the first column (OpenBLAS
   0.3.30). A factor in `TF` below the working precision that fails takes the existing promotion of
