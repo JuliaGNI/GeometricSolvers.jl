@@ -894,10 +894,9 @@ so that a compat-only bump can be told apart from an interface change.
   `[1 1; 1 1 + 1e-9]` has a zero pivot in `Float32`, and the step factorises it in `Float64`. A
   `LeastSquaresProblem` takes the method only in the stacked `LevenbergMarquardt` step, as it takes
   `LDLTFactorization`, and a device array iterate raises an `ArgumentError`, because the method has
-  no device factor. The tests are in
-  `test/linear/cholesky.jl`, and the LDLᵀ rows of `test/nonlinear/leastsquares.jl`, `gmres_ir.jl`
-  and `refinement.jl` have Cholesky twins. The standard test set has no Cholesky column, as it has
-  no LDLᵀ column.
+  no device factor. The tests are in `test/linear/cholesky.jl`, and the LDLᵀ rows of
+  `test/nonlinear/leastsquares.jl`, `gmres_ir.jl` and `refinement.jl` have Cholesky twins. The
+  standard test set has no Cholesky column, as it has no LDLᵀ column.
 
 - **A manual page on the methods of each regime (`docs/src/guide.md`, "Methods by regime").** For
   R1, R2, R3 and the matrix-free R5, it lists the exported methods that run there and the
