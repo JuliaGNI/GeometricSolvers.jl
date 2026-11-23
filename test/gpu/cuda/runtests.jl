@@ -123,6 +123,9 @@ end
         JET.test_call(init_linear, (LUFactorization{Nothing}, Mat, Vec); target_modules = (ext,))
         JET.test_call(factorize!!, (Fac, LUFactorization{Nothing}, Mat); target_modules = (ext,))
         JET.test_call(ldiv!!, (Vec, Fac, Vec); target_modules = (ext,))
+        # a solve with no reuse keeps the factor that `init` built in its state, so the record of
+        # the analysis is a cell that every factor of one `init_linear` shares
+        @test fieldtype(Fac, :analyses) === Base.RefValue{Int}
     end
     # a dense device iterate keeps the dense factor of the CUDA extension
     @test which(init_linear, (LUFactorization{Nothing}, Nothing, CuArray{T, 1})).module ===
@@ -575,13 +578,14 @@ if CUDA.functional()
         solver = init(prob_d, CuArray(z0), Newton(), p; f_abstol = tol, f_reltol = zero(R))
         fac0 = solver.state.fac
         @test fac0 isa ext.CUDSSLU{T}
-        @test fac0.analyses == 0
+        @test fac0.analyses[] == 0
         @test solver.state.J === fac0.factors
         x, st = solve!(solver)
         @test st.code === SUCCESS
         @test st.iterations >= 2
         @test Array(x) != z0
-        @test solver.state.fac.analyses == 1
+        # every step factorised, and only the first analysed
+        @test solver.state.fac.analyses[] == 1
         @test isapprox(Array(x), z_star; rtol = R === Float32 ? 1.0f-3 : 1e-9)
 
         # The linear solves at the root, at the start and at the planted solution agree with
@@ -594,7 +598,7 @@ if CUDA.functional()
             prob_d.J(Jd, z, p)
             fac = factorize!!(solver.state.fac, LUFactorization(), Jd)
             @test returncode(fac) === SUCCESS
-            @test fac.analyses == 1
+            @test fac.analyses[] == 1
             rhs = T <: Complex ? T.(range(0.1, 1.0; length = n) .+ im) :
                   T.(range(0.1, 1.0; length = n))
             d = Array(ldiv!!(CuArray(zero(rhs)), fac, CuArray(rhs)))
@@ -614,7 +618,7 @@ if CUDA.functional()
         CUDA.@allowscalar Jn.nzVal[1] = T(NaN)
         fac_n = factorize!!(solver.state.fac, LUFactorization(), Jn)
         @test returncode(fac_n) === SINGULAR
-        @test fac_n.analyses == 1
+        @test fac_n.analyses[] == 1
         @test_throws r"^ArgumentError: sparse LUFactorization with a CuSparseMatrixCSR" init(
             prob_d, CuArray(z0),
             Newton(; linsolve = LUFactorization(R === Float64 ? Float32 :

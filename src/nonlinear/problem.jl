@@ -55,8 +55,8 @@ initialises, and `ArgumentError` with `UMFPACKFactorization`. With `CUDA` and `C
 type has the cuDSS factor. On a device iterate with a `SparseMatrixCSC` prototype,
 `Newton(; jacobian = nothing)` with an analytic `J` raises `MethodError` from the factor, or
 `ArgumentError` with `UMFPACKFactorization`, and an `AutoSparse` `jacobian` raises
-`ArgumentError` in [`prepare_ad`](@ref) first, as any back end other than `AutoForwardDiff()` does. `Picard` and a
-static or batched iterate ignore the prototype.
+`ArgumentError` in [`prepare_ad`](@ref) first, as any back end other than `AutoForwardDiff()`
+does. `Picard` and a static or batched iterate ignore the prototype.
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x .* x .- 4);

@@ -20,9 +20,10 @@ so that a compat-only bump can be told apart from an interface change.
   (`fac.lu.symbolic` stays the same object). A singular Jacobian gives `info = 1` and `SINGULAR`
   without throwing, and so does a non-finite entry, which is refused before UMFPACK. `init` raises
   `ArgumentError` for a `Float32` or `ComplexF32` iterate, which the standard library would promote
-  to `Float64` in silence, and for a problem with no sparse pattern. `has_sparse_factor` is `true`
-  for it on `Float64` and `ComplexF64`. `LUFactorization()` on a `SparseMatrixCSC` prototype keeps
-  the Sparspak factor. UMFPACK is distributed under the GPL with `SparseArrays`.
+  to `Float64` in silence, and for a problem with no sparse pattern, such as one on a static or
+  scalar iterate. `has_sparse_factor` is `true` for it on `Float64` and `ComplexF64`.
+  `LUFactorization()` on a `SparseMatrixCSC` prototype keeps the Sparspak factor. UMFPACK is
+  distributed under the GPL with `SparseArrays`.
   With `CUDA` and `CUDSS` loaded, `LUFactorization()` on a `CuSparseMatrixCSR{T}` prototype and a
   `CuVector{T}` iterate, `T <: LinearAlgebra.BlasFloat`, gets a cuDSS factor: the analysis runs at
   the first `factorize!!` and later steps refactorise, a non-finite entry or a nonzero cuDSS `info`

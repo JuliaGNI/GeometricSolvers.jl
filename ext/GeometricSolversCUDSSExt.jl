@@ -14,14 +14,16 @@ using LinearAlgebra: BlasFloat
 # pattern of `jacobian_prototype`, into which `factorize!!` writes the Jacobian; `solver` is the
 # `CudssSolver` of the general (`"G"`, LDU) structure on that buffer; `info` is `1` for a Jacobian
 # with a non-finite entry or a nonzero cuDSS `info` after the factorisation, and `0` otherwise;
-# `analyses` counts the symbolic analyses that `solver` ran. `init_linear` runs none; the first
-# `factorize!!` of finite values runs the analysis and the factorisation, and every later one the
-# refactorisation alone, so a solver runs one analysis.
+# `analyses` holds the count of the symbolic analyses that `solver` ran. `init_linear` runs none;
+# the first `factorize!!` of finite values runs the analysis and the factorisation, and every later
+# one the refactorisation alone, so a solver runs one analysis. Every factor that `factorize!!`
+# returns from one `init_linear` shares `factors`, `solver` and the `analyses` cell, because a
+# Newton step with no reuse factorises from the factor that `init` stored in its state.
 struct CUDSSLU{T <: BlasFloat, A <: CuSparseMatrixCSR{T}, S <: CudssSolver{T}}
     factors::A
     solver::S
     info::Int
-    analyses::Int
+    analyses::Base.RefValue{Int}
 end
 
 GeometricSolvers.returncode(fac::CUDSSLU) = iszero(fac.info) ? SUCCESS : SINGULAR
@@ -51,7 +53,7 @@ function GeometricSolvers.init_linear(
     )
     nzval = fill!(similar(P.nzVal, T), zero(T))
     factors = CuSparseMatrixCSR{T, Ti}(copy(P.rowPtr), copy(P.colVal), nzval, size(P))
-    return CUDSSLU(factors, CudssSolver(factors, "G", 'F'), 0, 0)
+    return CUDSSLU(factors, CudssSolver(factors, "G", 'F'), 0, Ref(0))
 end
 
 function GeometricSolvers.factorize!!(
@@ -73,16 +75,15 @@ function GeometricSolvers.factorize!!(
     n = size(A, 1)
     x = CudssMatrix(T, n)
     b = CudssMatrix(T, n)
-    analyses = fac.analyses
-    if iszero(analyses)
+    if iszero(fac.analyses[])
         cudss("analysis", fac.solver, x, b)
         cudss("factorization", fac.solver, x, b; asynchronous = false)
-        analyses += 1
+        fac.analyses[] += 1
     else
         cudss("refactorization", fac.solver, x, b; asynchronous = false)
     end
     info = cudss_get(fac.solver, "info")
-    return CUDSSLU(A, fac.solver, iszero(info) ? 0 : 1, analyses)
+    return CUDSSLU(A, fac.solver, iszero(info) ? 0 : 1, fac.analyses)
 end
 
 function GeometricSolvers.ldiv!!(
