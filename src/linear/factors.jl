@@ -20,7 +20,8 @@ the Cholesky factorisation have no rectangular method). `J` is converted to the 
 factors, [`factor_eltype`](@ref). Where that is not the element type of `J`, `J` is first divided
 by the power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
 exponent range allows, and `e` is kept in the factor, so that the overall scale of `J` neither
-overflows nor underflows in the factor type. A zero or non-finite `J` gives `e = 0`. A singular
+overflows nor underflows in the factor type (for Cholesky, `e` is taken from the lower triangle and
+the real part of the diagonal alone). A zero or non-finite `J` gives `e = 0`. A singular
 `J` does not throw. LU
 records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, LDLᵀ the first
 zero pivot block (or `1` for a non-finite entry), Cholesky the order of the first leading minor

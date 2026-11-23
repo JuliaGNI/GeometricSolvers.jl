@@ -20,7 +20,6 @@ const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_L
 const CHOLESKY_ELTYPES = (ELTYPES..., BigFloat, Complex{BigFloat})
 
 # The bytes of a call, after one warm call of the same function through the barrier.
-allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
 function cholesky_factor_allocations(M::A) where {A}
     (factorize!!(nothing, CholeskyFactorization(), M);
         @allocated factorize!!(nothing, CholeskyFactorization(), M))
@@ -250,8 +249,8 @@ end
         @test fac.info == 1
     end
 
-    # a non-finite entry anywhere gives info = 1 before the factorisation; `potrf` itself returns
-    # 0 for a `NaN` below the first column's diagonal entry
+    # a non-finite entry anywhere gives info = 1 and scale_exponent = 0 before the factorisation;
+    # `potrf` itself returns 0 for a `NaN` below the first column's diagonal entry
     n = 4
     A = randhpd(T, n, 10, 53)
     b = ones(T, n)
@@ -259,12 +258,20 @@ end
     A_nan[n, 1] = T(NaN)
     A_inf_upper = copy(A)
     A_inf_upper[1, n] = T(Inf)
-    for M in (A_nan, A_inf_upper),
+    nonfinite_cases = if T <: Complex
+        A_inf_diag_im = copy(A)
+        A_inf_diag_im[1, 1] = complex(real(A[1, 1]), real(T)(Inf))
+        (A_nan, A_inf_upper, A_inf_diag_im)
+    else
+        (A_nan, A_inf_upper)
+    end
+    for M in nonfinite_cases,
         method in (CholeskyFactorization(), CholeskyFactorization(mixed_precision(T)),
             CholeskyFactorization(Float16))
 
         for (fac, _) in cholesky_paths(method, M, b)
             @test fac.info == 1
+            @test fac.scale_exponent == 0
             @test returncode(fac) == SINGULAR
         end
     end

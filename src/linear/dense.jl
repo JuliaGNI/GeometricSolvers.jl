@@ -508,8 +508,11 @@ end
 # as it was, and it is zeroed so that `factors` holds `L` alone, as `generic_cholesky!` leaves it.
 function factorize!!(fac::DenseCholesky{<:StridedMatrix{<:BlasFloat}},
         ::CholeskyFactorization, J::AbstractMatrix)
+    if !all(isfinite, J)
+        J === fac.factors || copyto!(fac.factors, J)
+        return DenseCholesky(fac.factors, fac.rhs, 1, 0)
+    end
     e = load_factors!(fac.factors, J, cholesky_exponent)
-    all(isfinite, J) || return DenseCholesky(fac.factors, fac.rhs, 1, e)
     _, info = LAPACK.potrf!('L', fac.factors)
     zero_strict_upper!(fac.factors)
     return DenseCholesky(fac.factors, fac.rhs, Int(info), e)
@@ -517,8 +520,11 @@ end
 
 function factorize!!(
         fac::DenseCholesky{<:AbstractMatrix}, ::CholeskyFactorization, J::AbstractMatrix)
+    if !all(isfinite, J)
+        J === fac.factors || copyto!(fac.factors, J)
+        return DenseCholesky(fac.factors, fac.rhs, 1, 0)
+    end
     e = load_factors!(fac.factors, J, cholesky_exponent)
-    all(isfinite, J) || return DenseCholesky(fac.factors, fac.rhs, 1, e)
     info = Int(generic_cholesky!(fac.factors))
     return DenseCholesky(fac.factors, fac.rhs, info, e)
 end

@@ -75,8 +75,9 @@ end
 function factorize!!(::Union{Nothing, StaticCholesky},
         method::CholeskyFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
-    Â, e = factor_matrix(factor_eltype(method, T), J, cholesky_exponent)
-    all(isfinite, J) || return StaticCholesky(Â, Int32(1), e)
+    F = factor_eltype(method, T)
+    all(isfinite, J) || return StaticCholesky(SMatrix{N, N, F}(J), Int32(1), Int32(0))
+    Â, e = factor_matrix(F, J, cholesky_exponent)
     A = local_array(Â)
     info = generic_cholesky!(A)
     return StaticCholesky(SMatrix(A), info, e)

@@ -32,7 +32,7 @@ The type of the iterate selects the factor:
 | GPU array (R3) | [`DeviceLU`](@ref) | [`DeviceLDLT`](@ref) | none: `ArgumentError` | [`DeviceQR`](@ref) | [`DeviceSVD`](@ref) |
 
 - The **static factors** are scalar loops over `SMatrix` data with `Int32` pivots. They return
-  new `isbits` values, so they run in one GPU thread.
+  new values, `isbits` for an `isbits` element type, so they run in one GPU thread.
 - The **dense factors** call LAPACK (`getrf`, `sytrf`/`hetrf`, `potrf`, `geqrf`, `gesvd`) on
   buffers that [`init`](@ref) allocates once.
 - The **device factors** are KernelAbstractions kernels: panel pivoting and trailing updates
