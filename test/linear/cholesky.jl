@@ -293,8 +293,8 @@ end
     end
 end
 
-@testset "A Float32 factor that is not positive definite takes the promotion of Newton ($T)" for T in (
-    Float64, ComplexF64)
+@testset "A Float32 factor that is not positive definite takes the promotion of Newton ($T)" for T in filter(
+    T -> real(T) === Float64, ELTYPES)
     # `J` is Hermitian and positive definite in the working precision and has a zero pivot in
     # `Float32`, where `1 + 1e-9` rounds to 1: `1 - |J₂₁|² = 0`. The first factorisation in
     # `Float32` is SINGULAR, and the step factorises in the working precision.
