@@ -68,9 +68,9 @@ end
 @inline function _fallback_status(
         st::SolverStatus{R}, iterations::Int32, failures::Int32, promoted::Bool) where {R}
     return SolverStatus{R}(
-        st.code, Int16(0), _sat_add32(st.iterations, iterations), st.fnorm, st.stepnorm,
+        st.code, _sat_add32(st.iterations, iterations), st.fnorm, st.stepnorm,
         _sat_add32(st.step_failures, failures), st.promoted | promoted, st.stationary,
-        Int16(0), st.rank, st.nullnorm, st.gradratio)
+        st.rank, st.nullnorm, st.gradratio)
 end
 
 # Solve with the first member from `x`; on a code other than `SUCCESS`, restore `x₀` from `saved`

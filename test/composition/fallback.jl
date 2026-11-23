@@ -178,6 +178,18 @@ end
     m = Fallback(FailWith(STALLED), FailWith(SUCCESS, Int32(1), Int32(0), false, 0.5, true))
     _, st = solve(r1_problem(T), start_value(T), m)
     @test (st.code, st.stationary, st.iterations) === (SUCCESS, true, Int32(3))
+    # a member that is not the last succeeds, with the counts of the members before it added
+    m = Fallback(FailWith(STALLED, Int32(3), Int32(1), true, 5.0),
+        FailWith(SUCCESS, Int32(1), Int32(0), false, 0.5, true), Newton())
+    for x₀ in (start_value(T), Vector(start_value(T)))
+        prob = x₀ isa SVector ? r1_problem(T) : r3_problem(T)
+        x, st = solve(prob, x₀, m)
+        @test (st.code, st.iterations, st.step_failures, st.promoted) ===
+              (SUCCESS, Int32(4), Int32(1), true)
+        @test st.fnorm === T(0.5)
+        @test member_of(prob, x₀, m) == 2
+        @test x == start_value(T) .+ one(T)
+    end
 end
 
 @testset "Each member restarts from x₀, $T" for T in REAL_ELTYPES
@@ -239,9 +251,9 @@ end
     @test (st.code, st.iterations, st.step_failures) === (NONFINITE, Int32(2), Int32(1))
 end
 
-@testset "A member that throws is not caught" begin
-    for x₀ in (start_value(Float64), Vector(start_value(Float64)))
-        prob = x₀ isa SVector ? r1_problem(Float64) : r3_problem(Float64)
+@testset "A member that throws is not caught, $T" for T in REAL_ELTYPES
+    for x₀ in (start_value(T), Vector(start_value(T)))
+        prob = x₀ isa SVector ? r1_problem(T) : r3_problem(T)
         @test_throws r"^MemberError: the member's solve throws$" solve(
             prob, x₀, Fallback(Throws(), Newton()))
         @test_throws r"^MemberError: the member's solve throws$" solve(
@@ -249,39 +261,44 @@ end
     end
     # a residual that throws in the first member's solve
     prob = NonlinearProblem((x, p) -> SVector(sqrt(x[1] - 10)))
-    @test_throws r"^DomainError with -10\.0:\nsqrt was called with a negative real argument" solve(
-        prob, SVector(0.0), Fallback(Newton(), Newton()))
+    minus_ten = replace(string(T(-10)), "." => "\\.")
+    @test_throws Regex("^DomainError with $(minus_ten):\\nsqrt was called with a negative real argument") solve(
+        prob, SVector(zero(T)), Fallback(Newton(), Newton()))
 end
 
 struct FallbackDualTag end
 
-@testset "Fallback refuses a ForwardDiff.Dual input and a LeastSquaresProblem" begin
+@testset "Fallback refuses a ForwardDiff.Dual input and a LeastSquaresProblem, $T" for T in REAL_ELTYPES
     m = Fallback(Newton(), Newton(; globalization = DogLeg()))
-    d(v) = ForwardDiff.Dual{FallbackDualTag}(v, 1.0)
+    d(v) = ForwardDiff.Dual{FallbackDualTag}(v, one(T))
     prob_s = NonlinearProblem((x, p) -> x .- p)
     prob_a = NonlinearProblem((r, x, p) -> (r .= x .- p; nothing))
     msg = r"^ArgumentError: solve does not accept ForwardDiff.Dual inputs for the combinator Fallback"
-    @test_throws msg solve(prob_s, SVector(0.0, 0.0), m, SVector(d(1.0), d(2.0)))
-    @test_throws msg solve(prob_a, [d(0.0), d(0.0)], m, [1.0, 2.0])
-    x, st = solve(prob_s, SVector(0.0, 0.0), m, SVector(1.0, 2.0))
+    @test_throws msg solve(prob_s, SVector(T(0), T(0)), m, SVector(d(T(1)), d(T(2))))
+    @test_throws msg solve(prob_a, [d(T(0)), d(T(0))], m, T[1, 2])
+    x, st = solve(prob_s, SVector(T(0), T(0)), m, SVector(T(1), T(2)))
     @test st.code === SUCCESS
-    @test x ≈ SVector(1.0, 2.0)
+    @test eltype(x) === T
+    @test isapprox(x, SVector(T(1), T(2)); rtol = 8 * eps(T))
 
     lsq = LeastSquaresProblem((r, x, p) -> (r[1] = x[1] - 1; r[2] = x[2] - 2; nothing))
     lsq_msg = r"^ArgumentError: the combinator Fallback does not take a LeastSquaresProblem"
-    @test_throws lsq_msg init(lsq, [0.0, 0.0], m)
-    @test_throws lsq_msg solve(lsq, [0.0, 0.0], m)
+    @test_throws lsq_msg init(lsq, T[0, 0], m)
+    @test_throws lsq_msg solve(lsq, T[0, 0], m)
     lsq_1 = LeastSquaresProblem((x, p) -> SVector(x - 1, 2x - 2))
-    @test_throws lsq_msg solve(lsq_1, 0.0, m)
+    @test_throws lsq_msg solve(lsq_1, zero(T), m)
 end
 
 # ∇S(x) = x³ + x - 1 componentwise, whose real root is 0.6823278038280193
-@testset "Fallback on a StationarityProblem, $(nameof(typeof(x₀)))" for x₀ in (
-    SVector(0.1, 0.2), [0.1, 0.2])
+@testset "Fallback on a StationarityProblem, $T, $(nameof(typeof(x₀)))" for T in REAL_ELTYPES,
+    x₀ in (SVector(T(0.1), T(0.2)), T[0.1, 0.2])
+
     sp = StationarityProblem((x, p) -> sum(abs2, x) / 2 - sum(x) + sum(x .^ 4) / 4)
     x, st = solve(sp, x₀, Fallback(FailWith(STALLED), Newton()))
     @test st.code === SUCCESS
-    @test isapprox(Array(x), fill(0.6823278038280193, 2); rtol = 1e-10)
+    @test eltype(x) === T
+    # the root to the residual tolerance `f_reltol = √eps(T)` of the default `Options`
+    @test isapprox(Array(x), fill(T(0.6823278038280193), 2); rtol = sqrt(eps(T)))
 end
 
 @testset "R1/R2/R3 parity, isbits, @inferred, 0 allocs, $T" for T in REAL_ELTYPES
@@ -335,4 +352,14 @@ end
     @test all(x -> isapprox(x, SVector(sqrt(T(2)), sqrt(T(3))); rtol = sqrt(eps(T))), X_batch)
     counts = solve_batch!([x₀_s for _ in 1:4], prob_s, m)
     @test counts.SUCCESS == 4
+    # the same batch on a JLArray, through the kernel of the array's backend
+    X0 = [x₀_s .+ T(k) / 10 for k in 1:4]
+    X_jl = JLArray(copy(X0))
+    S_jl = JLArray(Vector{SolverStatus{T}}(undef, 4))
+    solve_batch!(X_jl, S_jl, prob_s, stalls)
+    @test all(s -> s.code == SUCCESS, Array(S_jl))
+    for (x_jl, x0) in zip(Array(X_jl), X0)
+        x_ref, _ = solve(prob_s, x0, stalls)
+        @test isapprox(x_jl, x_ref; rtol = 8 * eps(T))
+    end
 end

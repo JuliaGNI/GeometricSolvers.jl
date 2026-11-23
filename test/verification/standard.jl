@@ -348,6 +348,15 @@ end
     end
     @test isempty(exceptions)
     @test !any(c -> c.column == fallback && c.code == "ERROR", cells)
+    # A fallback cell has the code of its first member cell with SUCCESS, else of the last
+    # member cell, and the iterations of the member cells up to that one, summed.
+    wrong_sums = filter(rows) do (problem, start, T)
+        members = [bykey[(problem, start, col, T)] for col in FALLBACK_MEMBER_COLUMNS]
+        k = something(findfirst(c -> c.code == "SUCCESS", members), length(members))
+        c = bykey[(problem, start, fallback, T)]
+        c.code != members[k].code || c.iterations != sum(m -> m.iterations, members[1:k])
+    end
+    @test isempty(wrong_sums)
     union_counts = map(string.(REAL_ELTYPES)) do T
         count(rows) do (problem, start, T′)
             T′ == T && any(col -> bykey[(problem, start, col, T)].code == "SUCCESS",
