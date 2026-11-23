@@ -889,8 +889,9 @@ so that a compat-only bump can be told apart from an interface change.
   `promoted` or-ed and the call counts `0`; the unexported `GeometricSolvers.fallback_member`
   reads the index of that member from the returned state. `Fallback()` raises an `ArgumentError`.
   `Fallback` joins the combinators that refuse a `ForwardDiff.Dual` input in `solve` and a
-  `LeastSquaresProblem` in `init_state`, and its `solve!!` takes the problems of a combinator
-  state, so it is not ambiguous with the one-variable `LeastSquaresProblem` method. With
+  `LeastSquaresProblem` in `init_state`, and its `solve!!` takes only the problems that a
+  combinator's `init_state` takes, so it is not ambiguous with the one-variable
+  `LeastSquaresProblem` method. With
   `isbits` members it is `isbits`, and its R1 state too. The standard test set gains the column
   `"Fallback Newton DogLeg LevenbergMarquardt"`, the `Fallback` of the methods of the columns
   `"Newton Static LU"`, `"Newton DogLeg LU"` and `"Newton LevenbergMarquardt SVD"`: 134 cells, so

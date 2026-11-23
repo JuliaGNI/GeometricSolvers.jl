@@ -64,7 +64,7 @@ end
 # `a + b` for two non-negative counts, saturated at `typemax(Int32)`.
 @inline _sat_add32(a::Int32, b::Int32) = Int32(min(Int64(a) + Int64(b), typemax(Int32)))
 
-# The status of member `st`, with the counts of the members before it added, and no call counts.
+# The status `st` of a member, with the counts of the members before it added, and no call counts.
 @inline function _fallback_status(
         st::SolverStatus{R}, iterations::Int32, failures::Int32, promoted::Bool) where {R}
     return SolverStatus{R}(

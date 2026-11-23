@@ -13,9 +13,10 @@ function solve_implicit(
         "solve does not accept ForwardDiff.Dual inputs for the combinator $(nameof(typeof(method))); implicit differentiation through a combinator is not implemented"))
 end
 
-# A combinator state holds residual and candidate buffers of the iterate's length, and a `Picard`
-# member takes a square `NonlinearProblem` alone, so a `LeastSquaresProblem`, whose residual may be
-# longer than the iterate, is not a `CombinatorProblem`; `init_state` refuses it.
+# The state of each combinator but `Fallback` holds residual and candidate buffers of the
+# iterate's length, and a `Picard` member takes a square `NonlinearProblem` alone, so a
+# `LeastSquaresProblem`, whose residual may be longer than the iterate, is not a
+# `CombinatorProblem`; `init_state` refuses it.
 function init_state(
         method::Union{Additive, Multiplicative, Repeat, Switch, Anderson, Broyden,
             Fallback, LeftPreconditioned, RAS},
