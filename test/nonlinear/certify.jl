@@ -6,7 +6,8 @@
 # those problems, and problem 20 at its double root `x = 5`, must not certify.
 
 using ForwardDiff: ForwardDiff
-using IntervalArithmetic: Interval, diam, in_interval, isbounded, isentire_interval
+using IntervalArithmetic: Interval, diam, in_interval, isbounded, isentire_interval,
+                          isguaranteed
 using StaticArrays: MVector, SMatrix, StaticVector, SVector
 using Test
 
@@ -154,16 +155,25 @@ end
 
 @testset "guaranteed reads the NG flags of F(x) and J(X)" begin
     # At the root 1 of `x² - x`: written `x * x - x`, neither evaluation converts a number, and
-    # the certificate is guaranteed. A `+ 0` converts the integer in `F(x)` only, and `x^2`
-    # converts the integer `2` of its derivative `2x` in `J(X)` only.
+    # the certificate is guaranteed (along with every entry of `enclosure`). A `+ 0` converts the
+    # integer in `F(x)` only, and `x^2` converts the integer `2` of its derivative `2x` in `J(X)`
+    # only.
     for T in REAL_ELTYPES
         cases = (((x, p) -> x * x - x, true), ((x, p) -> x * x - x + 0, false),
             ((x, p) -> x^2 - x, false))
         for (F, guaranteed) in cases
-            res = @inferred certify(NonlinearProblem(F), one(T))
-            @test res.certified
-            @test res.guaranteed == guaranteed
-            @test encloses(res.enclosure, big(1))
+            for (prob, x, root) in (
+                (NonlinearProblem(F), one(T), big(1)),
+                (NonlinearProblem((x, p) -> SVector(F(x[1], p))), SVector(one(T)),
+                BigFloat[1]),
+                (NonlinearProblem((y, x, p) -> (y[1] = F(x[1], p); nothing)), [one(T)],
+                BigFloat[1]))
+                res = @inferred certify(prob, x)
+                @test res.certified
+                @test res.guaranteed == guaranteed
+                @test all(isguaranteed, res.enclosure) == guaranteed
+                @test encloses(res.enclosure, root)
+            end
         end
     end
 end
@@ -244,6 +254,7 @@ end
             (NonlinearProblem((x, p) -> log.(x)), SVector(zero(T))),
             (NonlinearProblem((x, p) -> sqrt(x) + 1), zero(T)),
             (NonlinearProblem((x, p) -> 1 / x - 1), zero(T)),
+            (NonlinearProblem((y, x, p) -> (y[1] = 1 / x[1] - 1; nothing)), [zero(T)]),
             # `x + floor(x) + 1/2` is `x - 1/2 < 0` on `[-1, 0)` and `x + 1/2 > 0` on `[0, 1)`:
             # no root. `F(x)` at the iterate and the `ForwardDiff` derivative `1` show no jump;
             # only `F(X)` sees it.
@@ -292,19 +303,57 @@ end
             @test !res.certified
             @test all(isentire_interval, res.enclosure)
         end
-        # From `-0.45 floatmax(T)` the root `0.45 floatmax(T)` asks for a second radius of about
-        # `1.8 floatmax(T)`, which overflows: the test refuses it before it evaluates `F` on an
-        # unbounded box.
-        far = T(0.45) * floatmax(T)
-        unbounded = Ref(0)
-        function F_far(x, p)
-            x isa Interval && !isbounded(x) && (unbounded[] += 1)
-            return x - p
+        # When `r` overflows (`-0.45 floatmax(T)` toward `0.45 floatmax(T)`), or when `x + r`
+        # overflows with finite `r` (`floatmax(T)` on box 1, or `0.6 floatmax(T)` toward
+        # `0.1 floatmax(T)` on box 2), the test refuses before it evaluates `F` on an unbounded box.
+        for (x0, p0) in (
+            (-T(0.45) * floatmax(T), T(0.45) * floatmax(T)),
+            (floatmax(T), floatmax(T)),
+            (T(0.6) * floatmax(T), T(0.1) * floatmax(T)))
+            unbounded = Ref(0)
+            function F_far(x, p)
+                x isa Interval && !isbounded(x) && (unbounded[] += 1)
+                return x - p
+            end
+            res = @test_logs @inferred certify(NonlinearProblem(F_far), x0, p0)
+            @test !res.certified
+            @test all(isentire_interval, res.enclosure)
+            @test unbounded[] == 0
         end
-        res = @test_logs @inferred certify(NonlinearProblem(F_far), -far, far)
-        @test !res.certified
-        @test all(isentire_interval, res.enclosure)
-        @test unbounded[] == 0
+        # `tanh((x - x0) / L) - 3/2 <= -1/2 < 0` has no real root anywhere, yet its `F(X)` and
+        # `J(X)` stay bounded and `dac` on a half-infinite box `[a, ∞)`. When `x0 + r` overflows
+        # `floatmax(T)`, the unbounded box must be refused without warnings rather than certifying.
+        L = ldexp(one(T), exponent(floatmax(T)) - 3)
+        x0 = T(14) * L
+        F_unb(x, p) = tanh((x - x0) / L) - T(1.5)
+        for (prob, x) in (
+            (NonlinearProblem(F_unb), x0),
+            (NonlinearProblem((x, p) -> SVector(F_unb(x[1], p))), SVector(x0)),
+            (NonlinearProblem((x, p) -> SVector(F_unb(x[1], p), x[2])),
+            SVector(x0, zero(T))),
+            (NonlinearProblem((y, x, p) -> (y[1] = F_unb(x[1], p); nothing)), [x0]))
+            res = @test_logs @inferred certify(prob, x)
+            @test !res.certified
+            @test !res.guaranteed
+            @test all(isentire_interval, res.enclosure)
+        end
+        # Badly scaled systems where `Y`, `F(x)`, `X` and `J(X)` are all finite and bounded, while
+        # `Y * J(X)` or `Y * F(x)` overflows: refuse cleanly on `Vector` with no `NaI` warnings.
+        s = ldexp(one(T), 2 * exponent(floatmax(T)) ÷ 3)
+        function F_overflow_M!(y, x, p)
+            y[1] = inv(s) * x[1] + s * (x[2] - 1)^2
+            y[2] = s * (x[2] - 1) + inv(s) * x[1]
+            return nothing
+        end
+        res_M = @test_logs @inferred certify(NonlinearProblem(F_overflow_M!), T[1, 1])
+        @test !res_M.certified
+        @test !res_M.guaranteed
+        @test all(isentire_interval, res_M.enclosure)
+        F_overflow_c!(y, x, p) = (y[1] = inv(s) * x[1] - s; nothing)
+        res_c = @test_logs @inferred certify(NonlinearProblem(F_overflow_c!), [zero(T)])
+        @test !res_c.certified
+        @test !res_c.guaranteed
+        @test all(isentire_interval, res_c.enclosure)
         # An exact root certifies at each magnitude from zero to `floatmax(T) / 2`. The residual is
         # linear with the derivative 1, so `K(X)` is the point `s`, while every box is wider.
         roots = (zero(T), -zero(T), nextfloat(zero(T)), floatmin(T), eps(T), one(T),

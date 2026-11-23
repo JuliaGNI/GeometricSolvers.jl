@@ -37,8 +37,8 @@ end
 # Krawczyk's conclusion needs `F` continuous and `J` its continuous Jacobian on the box; a lower
 # decoration marks a function that can be undefined or not continuous on part of its arguments,
 # such as a jump of `F` in `F(X)`, or a kink of `F` in `J(X)`. An unbounded entry makes `K(X)`
-# unbounded, which no bounded box holds, or IntervalArithmetic's product of a float matrix with it
-# forms NaN bounds, with a warning.
+# unbounded, which no bounded box holds, or IntervalArithmetic's matrix product with it forms NaN
+# bounds, with a warning.
 usable(a::Interval) = decoration(a) >= dac && isbounded(a)
 usable(a::AbstractArray) = all(usable, a)
 
@@ -53,15 +53,23 @@ function GeometricSolvers.certify(prob::NonlinearProblem, x::Iterate{T},
 
     x̃ = map(interval, x)
     fx = residual!!(buffer(x̃), prob, x̃, p)
+    usable(fx) || return refused
+    Yi = map(interval, Y)
+    c = x̃ - Yi * fx
+    all(isbounded, c) || return refused
+
     r = eps.(x)
     for _ in 1:MAX_BOXES
         all(isfinite, r) || return refused
         X = x̃ .+ map(ρ -> interval(-ρ, ρ), r)
+        all(isbounded, X) || return refused
         usable(residual!!(buffer(X), prob, X, p)) || return refused
         JX = jacobian(prob, X, p)
         usable(JX) || return refused
-        M = Y * JX
-        K = x̃ - Y * fx + (one(M) - M) * (X - x̃)
+        M = Yi * JX
+        R = one(M) - M
+        all(isbounded, R) || return refused
+        K = c + R * (X - x̃)
         if all(isinterior.(K, X))
             guaranteed = all(isguaranteed, fx) && all(isguaranteed, JX)
             return (; certified = true, enclosure = convert(typeof(unknown), K), guaranteed)
