@@ -642,3 +642,28 @@
   or `backsolve!` with a `SubArray` does.
 - **kind:** found late
 - **found:** #96
+
+### K99 · Two `SVDFactorization(BigFloat; rtol)` with the same `rtol` are not `===`
+
+- **location:** `src/linear/methods.jl:82` (the inner constructor of `SVDFactorization`)
+- **evidence:** `rtol` is stored in `real(TF)`, so for `TF = BigFloat` the field is a
+  `BigFloat`, which `===` compares by identity.
+  `SVDFactorization(BigFloat; rtol = 1e-9) === SVDFactorization(BigFloat; rtol = 1e-9)` gives
+  `false`, while the same call with `Float32` or `Float64` gives `true`. The factor reads only the
+  value, so the rank and the solve do not change.
+- **kind:** found late
+- **found:** 2026-11-23
+
+### K100 · The `ArgumentError` of the `SVDFactorization` constructor interpolates `rtol` into its message, and no test runs it inside a GPU kernel
+
+- **location:** `src/linear/methods.jl:86` (the guard of the inner constructor);
+  `src/nonlinear/newton.jl:989`, `:1002` (`promote_linsolve` in the R1 mixed-precision step)
+- **evidence:** the R1 `Newton` step rebuilds the method with `promote_linsolve` inside the step,
+  so a batched device solve with a mixed-precision `SVDFactorization(TF; rtol)` and a float `rtol`
+  constructs the method in the kernel. The guard there is
+  `throw(ArgumentError("SVDFactorization: rtol must be finite and lie in [0, 1), got $r"))`, and a
+  string interpolation in a device kernel may fail to compile. The Metal tests of the method run
+  the R1 SVD in a kernel with a method that is built on the host, and no device test runs a
+  mixed-precision `SVDFactorization` with `rtol`.
+- **kind:** not verified
+- **found:** 2026-11-23

@@ -63,14 +63,15 @@ Singular value decomposition, with the factorisation precision of [`LUFactorizat
 The factor counts a singular value at or below `rtol · σ₁` as zero: its `rank` is the number of
 singular values above that cutoff, and its solve is the pseudo-inverse truncated at that rank.
 `rtol = nothing` is the cutoff `√m · eps(R) · σ₁`, with `m` the number of rows of the matrix and
-`R` the real type of the factor; it is the tolerance of the Jacobi sweep, and the only cutoff at
-the level of the rounding noise. `rtol = 0` keeps every nonzero singular value, also one of
-rounding noise.
+`R` the real type of the factor; it is also the tolerance of the Jacobi sweep of a static factor
+and of the own-kernel device factor, and the only cutoff at the level of the rounding noise.
+`rtol = 0` keeps every nonzero singular value, also one of rounding noise.
 
 `rtol` is stored in `real(TF)` for a float `TF`, and in `Float64` for `TF = Nothing` and for a
 precision marker; the factor converts it to its own real type, so that a `Float64` `rtol` that
-rounds to `1` there gives rank 0 and the zero step. [`ToReal`](@ref) converts `rtol` to its type
-and keeps `TF`. A stored `rtol` outside `[0, 1)`, or not finite, raises an `ArgumentError`.
+rounds to `1` there gives rank 0 and the zero step in a direct `factorize!!`. [`ToReal`](@ref)
+converts `rtol` to its type and keeps `TF`. A stored `rtol` outside `[0, 1)`, or not finite,
+raises an `ArgumentError`, also where `ToReal` rounds it to `1` in a solve.
 """
 struct SVDFactorization{TF <: FactorisationPrecision, R <: Union{Nothing, AbstractFloat}} <:
        LinearMethod{TF}

@@ -265,8 +265,9 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
         @test fac.rank == r
         # the host route truncates in the solve and keeps `U` as `gesvd` wrote it
         route == Array || @test all(iszero, rtol_U(route, fac)[:, (r + 1):end])
-        # on a complex `Array`, LAPACK's `U` is accurate to `eps`, which is `eps / 1e-10` along
-        # `σ = 1e-10`: the step is asserted on the real types
+        # on a complex `Array`, LAPACK's `U` is accurate to `eps`, so the coordinate of the step
+        # along `σ = 1e-10` has a relative error up to `eps / 1e-10`: the step is asserted on the
+        # real types
         if T <: Real
             d = rtol_solve(route, fac, A * T[1, 2, 3])
             @test isapprox(d, truncated_step(T, r); rtol = 8 * eps(R))
@@ -330,8 +331,9 @@ truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
         @test isapprox(rtol_solve(route, fac, A * R[1, 2, 3]), truncated_step(R, r);
             rtol = 8 * eps(R))
     end
-    # the sweep keeps its own tolerance: with rtol = 0 as its tolerance it would not end; the
-    # `6 × 4` matrix stacks two rows of `I + Hilbert(4)` below it and takes the rectangular SVD
+    # the sweep keeps its own tolerance: with rtol = 0 as its tolerance it would reach its sweep
+    # cap and give `info = 1` and rank 0; the `6 × 4` matrix stacks two rows of `I + Hilbert(4)`
+    # below it and takes the rectangular SVD
     @testset "I + Hilbert(4), rtol = 0, $T, $(mr) × 4, $route" for T in ELTYPES,
         mr in (4, 6),
         route in RTOL_ROUTES
