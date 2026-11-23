@@ -209,6 +209,9 @@ end
     end
 end
 
+dac_jacobian(x::Interval, p) = 1 + 0 * exp(x * x)
+dac_jacobian(x::AbstractFloat, p) = one(x)
+
 @testset "a residual undefined or not continuous on the box does not certify" begin
     # IntervalArithmetic marks a result on arguments outside the domain of a function with the
     # decoration `trv`, and on a discontinuity with `def`; `F(x)` can then be empty, and with it
@@ -231,6 +234,13 @@ end
             @test !res.guaranteed
             @test all(isentire_interval, res.enclosure)
         end
+        # `dac` is enough: `0 * exp(x²)` overflows on the box around 30 to the product of 0 with
+        # an unbounded interval, the point 0 decorated `dac`, so `J(X)` is the point 1 decorated
+        # `dac`. The float method gives `J(x)` without the overflow.
+        res = @test_logs @inferred certify(NonlinearProblem((x, p) -> x - p, dac_jacobian),
+            T(30), T(30))
+        @test res.certified
+        @test encloses(res.enclosure, big(30))
         # A constant analytic Jacobian is a number, not an interval: a finite one certifies, an
         # infinite one does not.
         @test certify(NonlinearProblem((x, p) -> x - 1, (x, p) -> one(T)), one(T)).certified
@@ -261,6 +271,12 @@ end
             @test !res.certified
             @test all(isentire_interval, res.enclosure)
         end
+        # From `-0.45 floatmax(T)` the root `0.45 floatmax(T)` asks for a second radius of about
+        # `1.8 floatmax(T)`, which overflows: the test refuses it.
+        far = T(0.45) * floatmax(T)
+        res = @test_logs @inferred certify(NonlinearProblem((x, p) -> x - p), -far, far)
+        @test !res.certified
+        @test all(isentire_interval, res.enclosure)
         # An exact root certifies at each magnitude from zero to `floatmax(T) / 2`. The residual is
         # linear with the derivative 1, so `K(X)` is the point `s`, while every box is wider.
         roots = (zero(T), -zero(T), nextfloat(zero(T)), floatmin(T), eps(T), one(T),
