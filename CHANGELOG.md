@@ -20,9 +20,9 @@ so that a compat-only bump can be told apart from an interface change.
   previous behaviour: the projections, the update `u += V_j y` one column at a time and the
   rebuilt direction are unchanged. `GMRES` has a new field `mgs::Bool`, which the positional
   constructor that `adapt` uses takes as a sixth argument and `Newton(; forcing, preconditioner)`
-  keeps when it rebuilds the method; `gmres_solve!` takes the keyword `mgs = false`. The inner GMRES of `GMRESRefinement` keeps modified Gram–Schmidt whatever
-  `GMRES` selects. On the CGS2 path the solution update `u += V_j y` of a cycle and
-  `reduced_direction!`, the direction the matrix-free `DogLeg` rebuilds, are one matrix–vector
+  keeps when it rebuilds the method; `gmres_solve!` takes the keyword `mgs = false`. The inner
+  GMRES of `GMRESRefinement` keeps modified Gram–Schmidt whatever `GMRES` selects. On the CGS2
+  path the solution update `u += V_j y` of a cycle and `reduced_direction!`, the direction the matrix-free `DogLeg` rebuilds, are one matrix–vector
   product each, through a new device vector `hd` and host vector `hh` in `GMRESWorkspace` (new
   type parameter `HD`); `reduced_direction!` follows the path of the last solve on the workspace,
   which its new field `mgs` records. The tests count reductions at the array level on `JLArray`

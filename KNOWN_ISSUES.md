@@ -650,9 +650,9 @@
   `b = T.(randn(rng, 6))`, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32`
   reports `resnorm = 8.7e-17`, while the true residual is `‖b − A d‖ = 5.8e-8 ‖b‖`; in `Float64`
   it reports `6.0e-35` against `2.4e-16 ‖b‖`. Modified Gram–Schmidt (`mgs = true`) reports
-  `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂` is
-  round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off of
-  a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
+  `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
+  is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
+  of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
   `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1720`). The true
   residual stays at the round-off of the solve; only the reported value is low, and only where the
   solve runs to `j = n` without meeting `tol`.
