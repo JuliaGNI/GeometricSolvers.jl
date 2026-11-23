@@ -315,6 +315,75 @@ end
         SparseMatrixCSC(n, n, copy(colptr), rowval_moved, copy(nonzeros(J))))
 end
 
+@testset "UMFPACKFactorization: a J! that changes the pattern of the factor's own buffer: T = $T" for T in UMFPACK_ELTYPES
+    m = UMFPACKFactorization()
+    msg = r"^ArgumentError: sparse Jacobian sparsity pattern differs from jacobian_prototype$"
+    P = sparse([1, 2], [1, 2], ones(T, 2), 2, 2)
+    F!(r, x, p) = (r[1] = x[1]^2 - 4; r[2] = x[2]^2 - 9; r)
+    x0 = T[3, 5]
+
+    # plain Newton without refinement writes the Jacobian into the factor's buffer, so a `J!`
+    # that inserts an entry outside the diagonal prototype changes the factor's own pattern in
+    # place, on the first step or on a later one
+    for first_insert in (1, 2)
+        calls = Ref(0)
+        J_insert!(J, x, p) = begin
+            calls[] += 1
+            J[1, 1] = 2 * x[1]
+            J[2, 2] = 2 * x[2]
+            calls[] >= first_insert && (J[1, 2] = T(3) / 10)
+            J
+        end
+        prob_ins = NonlinearProblem(F!, J_insert!; jacobian_prototype = P)
+        solver_ins = init(prob_ins, copy(x0), Newton(; linsolve = m);
+            f_abstol = 1e-10, f_reltol = 0.0)
+        @test solver_ins.state.J === solver_ins.state.fac.factors
+        @test_throws msg solve!(solver_ins)
+        @test calls[] == first_insert
+    end
+
+    # a `J!` that updates the stored entries solves, and the pattern copies stay the same objects
+    prob = NonlinearProblem(F!, (J, x, p) -> (J[1, 1] = 2 * x[1]; J[2, 2] = 2 * x[2]; J);
+        jacobian_prototype = P)
+    solver = init(prob, copy(x0), Newton(; linsolve = m); f_abstol = 1e-10, f_reltol = 0.0)
+    @test solver.state.J === solver.state.fac.factors
+    colptr0, rowval0 = solver.state.fac.colptr, solver.state.fac.rowval
+    x, st = solve!(solver)
+    @test st.code === SUCCESS
+    @test x != x0
+    @test isapprox(x, T[2, 3]; rtol = 1e-9)
+    @test solver.state.fac.colptr === colptr0
+    @test solver.state.fac.rowval === rowval0
+    @test colptr0 == getcolptr(P) && colptr0 !== getcolptr(P)
+    @test rowval0 == rowvals(P) && rowval0 !== rowvals(P)
+
+    # every factor that `factorize!!` returns, singular or not, keeps the copies of
+    # `init_linear`, so a chained factor still checks against the prototype
+    fac0 = init_linear(m, P, zeros(T, 2))
+    copyto!(nonzeros(fac0.factors), T[3, 5])
+    fac1 = factorize!!(fac0, m, fac0.factors)
+    @test fac1.info == 0
+    nonzeros(fac1.factors)[1] = T(NaN)
+    fac_nan = factorize!!(fac1, m, fac1.factors)
+    @test fac_nan.info == 1
+    for fac in (fac1, fac_nan)
+        @test fac.colptr === fac0.colptr
+        @test fac.rowval === fac0.rowval
+    end
+    nonzeros(fac_nan.factors)[1] = T(3)
+    fac_nan.factors[1, 2] = T(3) / 10
+    @test_throws msg factorize!!(fac_nan, m, fac_nan.factors)
+
+    # an in-place change of the buffer's column pointers alone, or of its row indices alone,
+    # gives a valid matrix of another pattern
+    for change! in (J -> (getcolptr(J)[2] += 1), J -> (rowvals(J)[1] = 2))
+        fac_c = init_linear(m, P, zeros(T, 2))
+        copyto!(nonzeros(fac_c.factors), T[3, 5])
+        change!(fac_c.factors)
+        @test_throws msg factorize!!(fac_c, m, fac_c.factors)
+    end
+end
+
 @testset "UMFPACKFactorization: prototype size and diagnostics: T = $T" for T in UMFPACK_ELTYPES
     prob, _, z0, p_val, _ = sparse_bracket_problem(125, T)
     m = UMFPACKFactorization()

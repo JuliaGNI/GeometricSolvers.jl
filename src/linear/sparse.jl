@@ -13,17 +13,21 @@ const UMFPACKEltype = Union{Float64, ComplexF64}
 
 The sparse LU factor of [`UMFPACKFactorization`](@ref) in element type `T`, `Float64` or
 `ComplexF64`. `factors` is the `SparseMatrixCSC{T, Int}` buffer with the pattern of the Jacobian
-prototype, into which [`factorize!!`](@ref) writes the Jacobian; `lu` is the UMFPACK factor
-`SparseArrays.UMFPACK.UmfpackLU{T, Int}` of that pattern; `info` is `1` for a singular Jacobian or
-one with a non-finite entry, and `0` otherwise.
+prototype, into which [`factorize!!`](@ref) writes the Jacobian; `colptr` and `rowval` are copies
+of the prototype's column pointers and row indices, against which `factorize!!` checks the
+pattern of each Jacobian; `lu` is the UMFPACK factor `SparseArrays.UMFPACK.UmfpackLU{T, Int}` of
+that pattern; `info` is `1` for a singular Jacobian or one with a non-finite entry, and `0`
+otherwise.
 
 [`init_linear`](@ref) builds `lu` with no analysis and no factorisation. The first `factorize!!`
 runs UMFPACK's symbolic analysis and its numeric factorisation, and every later `factorize!!` the
 numeric factorisation alone, on the symbolic object `lu.symbolic` of the first. Every factor that
-`factorize!!` returns from one `init_linear` shares `factors` and `lu`.
+`factorize!!` returns from one `init_linear` shares `factors`, `colptr`, `rowval` and `lu`.
 """
 struct UMFPACKLU{T <: UMFPACKEltype}
     factors::SparseMatrixCSC{T, Int}
+    colptr::Vector{Int}
+    rowval::Vector{Int}
     lu::UmfpackLU{T, Int}
     info::Int
 end
@@ -49,7 +53,10 @@ function init_linear(
     )
     factors = similar(P, T)
     fill!(nonzeros(factors), zero(T))
-    return UMFPACKLU(factors, UmfpackLU(factors), 0)
+    # Copies, not the arrays of `factors`: a Jacobian written into `factors` can change them
+    colptr = copy(getcolptr(P))
+    rowval = copy(rowvals(P))
+    return UMFPACKLU(factors, colptr, rowval, UmfpackLU(factors), 0)
 end
 
 function init_linear(::UMFPACKFactorization, pattern, x::AbstractVector)
@@ -82,8 +89,8 @@ function factorize!!(
         fac::UMFPACKLU{T}, ::UMFPACKFactorization,
         J::SparseMatrixCSC{T, Int}) where {T <: UMFPACKEltype}
     if size(J) != size(fac.factors) ||
-       getcolptr(J) != getcolptr(fac.factors) ||
-       rowvals(J) != rowvals(fac.factors)
+       getcolptr(J) != fac.colptr ||
+       rowvals(J) != fac.rowval
         throw(
             ArgumentError(
             "sparse Jacobian sparsity pattern differs from jacobian_prototype"
@@ -93,10 +100,11 @@ function factorize!!(
     J === fac.factors || copyto!(nonzeros(fac.factors), nonzeros(J))
     # UMFPACK factorises some matrices with a `NaN` entry without a warning and throws
     # `SingularException` on others, so a non-finite entry is refused first
-    all(isfinite, nonzeros(fac.factors)) || return UMFPACKLU(fac.factors, fac.lu, 1)
+    all(isfinite, nonzeros(fac.factors)) ||
+        return UMFPACKLU(fac.factors, fac.colptr, fac.rowval, fac.lu, 1)
     # `check = false` leaves a singular matrix to `issuccess` instead of a `SingularException`
     lu!(fac.lu, fac.factors; check = false)
-    return UMFPACKLU(fac.factors, fac.lu, issuccess(fac.lu) ? 0 : 1)
+    return UMFPACKLU(fac.factors, fac.colptr, fac.rowval, fac.lu, issuccess(fac.lu) ? 0 : 1)
 end
 
 function ldiv!!(d::Vector{T}, fac::UMFPACKLU{T}, r::Vector{T}) where {T <: UMFPACKEltype}
