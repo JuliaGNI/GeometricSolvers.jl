@@ -23,11 +23,11 @@ BF16
 
 A linear-solver method enters a solve through [`init_linear`](@ref) (and [`dense_factor`](@ref)),
 [`factorize!!`](@ref) and [`ldiv!!`](@ref). For a static matrix (R1) [`factorize!!`](@ref) and
-[`ldiv!!`](@ref) return new `isbits` values, so they run inside a kernel: [`StaticLU`](@ref) is LU
-with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufman `L D Lᵀ` /
-`L D Lᴴ` with `1×1` and `2×2` diagonal blocks, [`StaticCholesky`](@ref) is Cholesky `L Lᴴ`
-without pivoting, [`StaticQR`](@ref) and [`StaticRectQR`](@ref) are
-Householder QR without column pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a
+[`ldiv!!`](@ref) return new values, `isbits` for an `isbits` element type, so they run inside a
+kernel: [`StaticLU`](@ref) is LU with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref)
+is Bunch–Kaufman `L D Lᵀ` / `L D Lᴴ` with `1×1` and `2×2` diagonal blocks,
+[`StaticCholesky`](@ref) is Cholesky `L Lᴴ` without pivoting, [`StaticQR`](@ref) and
+[`StaticRectQR`](@ref) are Householder QR without column pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a
 one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
 `√n · eps(TF) · σ₁` for a square matrix and `√m · eps(TF) · σ₁` for a rectangular one, `m` its row
 count, which is what makes a rank-revealing solve finite. For a vector state (R3) with no sparse

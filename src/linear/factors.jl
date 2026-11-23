@@ -389,7 +389,8 @@ element type `TF`: `factors` holds `L`, with a real positive diagonal, on and be
 and zeros above it, `info` is the order of the first leading minor that is not positive or `1`
 for a non-finite matrix, or `0`, and `scale_exponent` is the exponent `e` of the power of two `2^e`
 that the matrix was divided by. A non-finite matrix is not factorised, and `factors` then holds it
-as it was converted. `L = N * N` makes the `SMatrix` field concrete, so the factor is `isbits`.
+as it was converted. `L = N * N` makes the `SMatrix` field concrete, so the factor is `isbits`
+for an `isbits` `TF`; with `BigFloat` entries it is not.
 """
 struct StaticCholesky{N, TF, L}
     factors::SMatrix{N, N, TF, L}
@@ -719,11 +720,13 @@ end
 
 # `J` in the factor element type `F`, as an `SMatrix`, which keeps the conversion off the heap, and
 # the exponent `e` of the power of two that `J` was divided by: 0 where `F` is the element type of
-# `J`, else the exponent of the largest |re| or |im| of `J`, which takes no `abs` that can overflow.
-# `e` is clamped to the exponent range, so that `2^-e` is a float and the product with it is exact.
-function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T}) where {F, M, N, T}
+# `J`, else `scale_exponent(J)`: by default `matrix_exponent`, the exponent of the largest |re| or
+# |im| of `J`, which takes no `abs` that can overflow. `e` is clamped to the exponent range, so that
+# `2^-e` is a float and the product with it is exact.
+function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T},
+        scale_exponent::E = matrix_exponent) where {F, M, N, T, E}
     F === T && return SMatrix{M, N, F}(J), Int32(0)
-    e = matrix_exponent(J)
+    e = scale_exponent(J)
     return SMatrix{M, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
 end
 
@@ -752,6 +755,24 @@ function matrix_exponent(J::AbstractArray)
         reinterpret(R, maximum(a -> max(abs_bits(real(a)), abs_bits(imag(a))), J))
     else
         float(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
+    end
+    emax = exponent(floatmax(m))
+    return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
+end
+
+# The exponent of the largest |re| or |im| of the strict lower triangle and |re| of the diagonal of
+# a square `J`, the entries that a Cholesky factorisation reads, as `matrix_exponent` gives it:
+# clamped to the exponent range, and 0 for a zero or non-finite lower triangle. An entry above the
+# diagonal or an imaginary part of the diagonal sets no scale, so that the lower triangle of a
+# factor in a narrower precision does not underflow by it.
+function cholesky_exponent(J::AbstractMatrix)
+    m = float(zero(real(eltype(J))))
+    @inbounds for j in axes(J, 2)
+        m = max(m, float(abs(real(J[j, j]))))
+        for i in (j + 1):size(J, 1)
+            a = J[i, j]
+            m = max(m, float(abs(real(a))), float(abs(imag(a))))
+        end
     end
     emax = exponent(floatmax(m))
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0

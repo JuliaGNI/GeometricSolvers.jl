@@ -190,13 +190,15 @@ end
 
 # `J` into the factor buffer `A`, and the exponent `e` of the power of two that it was divided by,
 # as `factor_matrix` does for R1: 0 where `J` has the element type of `A`, which is then copied,
-# else `matrix_exponent(J)`.
-function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix) where {F}
+# else `scale_exponent(J)`: `matrix_exponent` by default, or `cholesky_exponent` for the entries
+# that a Cholesky factorisation reads.
+function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix,
+        scale_exponent::E = matrix_exponent) where {F, E}
     if eltype(J) === F || isempty(J)
         J === A || copyto!(A, J)
         return 0
     end
-    e = matrix_exponent(J)
+    e = scale_exponent(J)
     A .= J .* ldexp(one(float(real(eltype(J)))), -e)
     return e
 end
@@ -497,14 +499,17 @@ end
 
 # --- DenseCholesky ---
 
-# A non-finite entry is refused before `potrf`, which reads the lower triangle only and returns
-# `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8).
-# `potrf` leaves the upper triangle as it was, and it is zeroed so that `factors` holds `L` alone,
-# as `generic_cholesky!` leaves it.
+# The scale of a factor in another element type is taken from the entries that the factorisation
+# reads, the lower triangle and the real diagonal (`cholesky_exponent`). A non-finite entry of `J`
+# anywhere is refused before the factorisation: `potrf` reads the lower triangle only and returns
+# `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8). The
+# test is on `J`, not on the factor buffer, where an entry above the diagonal or an imaginary part
+# of the diagonal can overflow in the conversion and is not read. `potrf` leaves the upper triangle
+# as it was, and it is zeroed so that `factors` holds `L` alone, as `generic_cholesky!` leaves it.
 function factorize!!(fac::DenseCholesky{<:StridedMatrix{<:BlasFloat}},
         ::CholeskyFactorization, J::AbstractMatrix)
-    e = load_factors!(fac.factors, J)
-    all(isfinite, fac.factors) || return DenseCholesky(fac.factors, fac.rhs, 1, e)
+    e = load_factors!(fac.factors, J, cholesky_exponent)
+    all(isfinite, J) || return DenseCholesky(fac.factors, fac.rhs, 1, e)
     _, info = LAPACK.potrf!('L', fac.factors)
     zero_strict_upper!(fac.factors)
     return DenseCholesky(fac.factors, fac.rhs, Int(info), e)
@@ -512,7 +517,8 @@ end
 
 function factorize!!(
         fac::DenseCholesky{<:AbstractMatrix}, ::CholeskyFactorization, J::AbstractMatrix)
-    e = load_factors!(fac.factors, J)
+    e = load_factors!(fac.factors, J, cholesky_exponent)
+    all(isfinite, J) || return DenseCholesky(fac.factors, fac.rhs, 1, e)
     info = Int(generic_cholesky!(fac.factors))
     return DenseCholesky(fac.factors, fac.rhs, info, e)
 end

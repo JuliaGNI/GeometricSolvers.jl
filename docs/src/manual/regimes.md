@@ -22,7 +22,7 @@ state of the solve holds no buffers: each buffer slot is `nothing`. The problem,
 state, the [`Options`](@ref) and the [`SolverStatus`](@ref) are `isbits` when the functions of the
 problem are, so a kernel can hold all of them. The static factorisations ([`StaticLU`](@ref),
 [`StaticQR`](@ref), [`StaticLDLT`](@ref), [`StaticCholesky`](@ref), [`StaticSVD`](@ref)) are scalar
-loops that the compiler keeps in registers.
+loops that the compiler keeps in registers for an `isbits` element type.
 
 ```jldoctest regimes
 julia> using GeometricSolvers, StaticArrays

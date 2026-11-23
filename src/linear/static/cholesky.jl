@@ -16,13 +16,13 @@ end
 
 # The Cholesky factor `L` of the Hermitian matrix `A` in place, column by column, reading the lower
 # triangle of `A` and the real part of its diagonal only, as LAPACK `potrf` with `uplo = 'L'` does,
-# and setting the entries above the diagonal to zero. Returns `info`: `1` for a matrix with a
-# non-finite entry anywhere, which is refused before any arithmetic or write, the order `j` of the
-# first leading minor whose pivot `real(A[j, j]) - Σₖ |L[j, k]|²` is not positive (a zero or a
-# `NaN` pivot included), with the columns from `j` on left unfactorised, or `0`.
+# and setting the entries above the diagonal to zero. Returns `info`: the order `j` of the first
+# leading minor whose pivot `real(A[j, j]) - Σₖ |L[j, k]|²` is not positive (a zero or a `NaN`
+# pivot included), with the columns from `j` on left unfactorised, or `0`. Its callers refuse a
+# matrix with a non-finite entry anywhere before they call it, by a test on the matrix as given,
+# since an entry that it does not read can overflow in the conversion to the factor element type.
 @inline function generic_cholesky!(A::AbstractMatrix{F}) where {F <: Number}
     n = size(A, 1)
-    all(isfinite, A) || return Int32(1)
     R = real(F)
     info = Int32(0)
     @inbounds for j in 1:n
@@ -75,7 +75,8 @@ end
 function factorize!!(::Union{Nothing, StaticCholesky},
         method::CholeskyFactorization{<:Union{Nothing, AbstractFloat}},
         J::StaticMatrix{N, N, T}) where {N, T}
-    Â, e = factor_matrix(factor_eltype(method, T), J)
+    Â, e = factor_matrix(factor_eltype(method, T), J, cholesky_exponent)
+    all(isfinite, J) || return StaticCholesky(Â, Int32(1), e)
     A = local_array(Â)
     info = generic_cholesky!(A)
     return StaticCholesky(SMatrix(A), info, e)

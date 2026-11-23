@@ -194,6 +194,44 @@ end
     end
 end
 
+@testset "The prescaling reads the lower triangle and the real diagonal only ($T)" for T in CHOLESKY_ELTYPES
+    # The Hermitian positive definite matrix of the lower triangle is `[4 2+i; 2-i 5]`, or its real
+    # part. Above the diagonal, and in the imaginary part of the diagonal, sits an entry of the
+    # largest exponent of `real(T)`, which the matrix is not divided by: divided by it, the lower
+    # triangle of a factor in a narrower precision would be zero.
+    R = real(T)
+    huge = ldexp(one(R), exponent(floatmax(R)) - 1)
+    A = T <: Real ? T[4 2; 2 5] : T[4 2+im; 2-im 5]
+    A_huge = copy(A)
+    A_huge[1, 2] = huge
+    if T <: Complex
+        A_huge[1, 1] += T(0, huge)
+        A_huge[2, 2] -= T(0, huge)
+    end
+    b = T <: Real ? T[1, -2] : T[1 + im, -2]
+    TF = mixed_precision(T)
+    # a `Float16` factor is no `BlasFloat` and takes the generic loop on the dense path too
+    for (method, ε) in ((CholeskyFactorization(), eps(R)),
+        (CholeskyFactorization(TF), max(eps(R), eps(TF))),
+        (CholeskyFactorization(Float16), eps(Float16)))
+        for ((f, x), (f_huge, x_huge)) in zip(
+            cholesky_paths(method, A, b), cholesky_paths(method, A_huge, b))
+            @test returncode(f_huge) == SUCCESS
+            @test f_huge.scale_exponent == f.scale_exponent
+            @test Matrix(f_huge.factors) == Matrix(f.factors)
+            @test x_huge == x
+            @test agrees_with_backslash(A, x_huge, b, ε)
+        end
+        # the diagonal sets the scale where it is larger than the strict lower triangle: here
+        # `5 · 2²⁰` is above `floatmax(Float16)`, and `2⁻¹⁰` far below it
+        A_diag = T[4 2.0^-30; 2.0^-30 5] * 2^20
+        for (f, x) in cholesky_paths(method, A_diag, b)
+            @test returncode(f) == SUCCESS
+            @test agrees_with_backslash(A_diag, x, b, ε)
+        end
+    end
+end
+
 @testset "Edges: n = 0, n = 1, a non-finite entry, a factorisation precision ($T)" for T in CHOLESKY_ELTYPES
     # n = 0 gives SUCCESS and the empty step on the host
     b0 = T[]
@@ -221,8 +259,11 @@ end
     A_nan[n, 1] = T(NaN)
     A_inf_upper = copy(A)
     A_inf_upper[1, n] = T(Inf)
-    for M in (A_nan, A_inf_upper)
-        for (fac, _) in cholesky_paths(CholeskyFactorization(), M, b)
+    for M in (A_nan, A_inf_upper),
+        method in (CholeskyFactorization(), CholeskyFactorization(mixed_precision(T)),
+            CholeskyFactorization(Float16))
+
+        for (fac, _) in cholesky_paths(method, M, b)
             @test fac.info == 1
             @test returncode(fac) == SINGULAR
         end
@@ -259,9 +300,10 @@ end
 end
 
 @testset "Newton with CholeskyFactorization on a convex StationarityProblem ($T)" for T in REAL_ELTYPES
-    # `S` is strictly convex, so its Hessian `I + 3 diag(x²)` is positive definite at every
-    # iterate, and its stationary point solves `x + x³ = 1` in each component. A complex state
-    # fails in the default automatic differentiation (K28), so the state is real.
+    # The Hessian `I + 3 diag(x²)` of `S` is positive definite at every iterate, which strict
+    # convexity alone does not give, and its stationary point solves `x + x³ = 1` in each
+    # component. A complex state fails in the default automatic differentiation (K28), so the
+    # state is real.
     S(x, p) = sum(abs2, x) / 2 + sum(x .^ 4) / 4 - p * sum(x)
     prob = StationarityProblem(S)
     x_star = T(0.6823278038280193)
