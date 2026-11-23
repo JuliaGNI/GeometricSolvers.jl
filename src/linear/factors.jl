@@ -2,10 +2,10 @@
 #
 # `factorize!!` and `ldiv!!` follow the `!!` convention of `bang.jl`: the first argument is a
 # buffer where the storage has one and `nothing` where it does not, and the caller always uses
-# the returned value. R1 has no buffer: its factors are `isbits` values, returned new. R3 holds
-# its Jacobian and workspace buffers in `DenseLU`, `DenseQR`, `DenseSVD`, `DenseLDLT` and
-# `DenseCholesky` on the host and in `DeviceLU`, `DeviceQR`, `DeviceSVD` and `DeviceLDLT` on a
-# device.
+# the returned value. R1 has no buffer: its factors are values, returned new, `isbits` for an
+# `isbits` element type. R3 holds its Jacobian and workspace buffers in `DenseLU`, `DenseQR`,
+# `DenseSVD`, `DenseLDLT` and `DenseCholesky` on the host and in `DeviceLU`, `DeviceQR`,
+# `DeviceSVD` and `DeviceLDLT` on a device.
 
 """
     factorize!!(fac, method, J)
