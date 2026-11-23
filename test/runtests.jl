@@ -17,6 +17,7 @@ const TESTS = [
         "LDLT factorisation" => "linear/ldlt.jl",
         "Cholesky factorisation" => "linear/cholesky.jl",
         "Dense linear solvers" => "linear/dense.jl",
+        "Recursive host LU" => "linear/recursive_lu.jl",
         "KA dense linear solvers" => "linear/ka.jl",
         "Own-kernel reference solve" => "devices/own_kernel.jl",
         "Mixed-precision linear solvers" => "linear/mixed.jl",
