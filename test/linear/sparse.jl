@@ -5,7 +5,8 @@
 
 using ADTypes: AutoForwardDiff, AutoSparse
 using GeometricSolvers
-using GeometricSolvers: LeastSquaresProblem, LUFactorization, Newton, NonlinearProblem,
+using GeometricSolvers: LeastSquaresProblem, LevenbergMarquardt, LUFactorization, Newton,
+                        NonlinearProblem,
                         SINGULAR, SUCCESS,
                         UMFPACKFactorization, dense_factor, factorize!!, has_sparse_factor,
                         init, init_linear, ldiv!!, returncode, solve!
@@ -161,6 +162,22 @@ end
             NonlinearProblem((x, p) -> x^2 - 2), 0.0, Newton(; linsolve = m), nothing)
         @test_throws msg init(NonlinearProblem(F_s), SVector(0.0, 0.0),
             Newton(; linsolve = m, reuse = Int32(2)), nothing)
+    end
+    # a detected pattern that `Newton` does not use counts as none: under `LevenbergMarquardt`,
+    # and under `regularization ≠ 0` where the pattern lacks a structural diagonal entry
+    @testset "detected pattern not used: T = $T" for T in UMFPACK_ELTYPES
+        backend = AutoSparse(
+            AutoForwardDiff(); sparsity_detector = TracerSparsityDetector(),
+            coloring_algorithm = GreedyColoringAlgorithm())
+        F_swap!(r, x, p) = (r[1] = x[2]^2 - 1; r[2] = x[1]^2 - 4; r)
+        @test init(NonlinearProblem(F_swap!), T[1, 1],
+            Newton(; linsolve = m, jacobian = backend), nothing).state.fac isa
+              GeometricSolvers.UMFPACKLU{T}
+        @test_throws msg init(NonlinearProblem(F_swap!), T[1, 1],
+            Newton(; linsolve = m, jacobian = backend,
+                globalization = LevenbergMarquardt()), nothing)
+        @test_throws msg init(NonlinearProblem(F_swap!), T[1, 1],
+            Newton(; linsolve = m, jacobian = backend, regularization = 1e-3), nothing)
     end
 end
 
