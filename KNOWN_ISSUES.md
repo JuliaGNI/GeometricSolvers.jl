@@ -646,7 +646,8 @@
 ### K99 · The CUDA rows that assert one cuDSS analysis per solver read the extension's own counter, not a count that cuDSS reports
 
 - **location:** `ext/GeometricSolversCUDSSExt.jl:78–84` (`factorize!!` for `CUDSSLU`)
-- **evidence:** `test/gpu/cuda/runtests.jl:588`, `:601` and `:621` assert `fac.analyses[] == 1`.
+- **evidence:** `test/gpu/cuda/runtests.jl:593`, `:606`, `:632` and `:645` assert
+  `fac.analyses[] == 1`.
   `factorize!!` increments the `analyses` cell in the branch that calls `cudss("analysis", …)`,
   and calls `cudss("refactorization", …)` in the other branch. A change that also calls
   `cudss("analysis", …)` in the refactorisation branch, and leaves the counter alone, passes these

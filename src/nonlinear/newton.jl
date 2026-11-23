@@ -386,8 +386,9 @@ end
 # element type decides it also for the factor in the working precision that a mixed-precision
 # solve promotes to, so that both factors and the Jacobian buffer share one layout. `regularize!!`
 # writes `μ` onto the diagonal of `J`, so under `μ ≠ 0` a detected pattern without the whole
-# structural diagonal gives the dense factor. A `LevenbergMarquardt` step reads no sparse factor
-# (see `check_lm_iterate`), so a detected pattern gives it the dense factor and Jacobian buffer.
+# structural diagonal gives the dense factor, or the `ArgumentError` of a method that has no dense
+# factor. A `LevenbergMarquardt` step reads no sparse factor (see `check_lm_iterate`), so a
+# detected pattern gives it the dense factor and Jacobian buffer, or that `ArgumentError`.
 @inline function newton_pattern(m::Newton, prob, x, jacprep)
     P = factor_pattern(m.linsolve, prob, x, jacprep)
     m.globalization isa LevenbergMarquardt && jacobian_prototype(prob) === nothing &&
@@ -399,7 +400,8 @@ end
 
 # The factor of `ls` for a Newton solve with `m`: `m.linsolve`, or its promotion to the working
 # precision. A pattern that the `init_factor` of `ls` would take and `newton_pattern` rejects gives
-# the dense factor, and every other case the `init_factor` of `ls`.
+# the dense factor, or the `ArgumentError` of a method that has no dense factor, and every other
+# case the `init_factor` of `ls`.
 @inline function init_newton_factor(
         m::Newton, ls, prob, x::Union{StaticVector, Number}, p, jacprep)
     return init_factor(ls, prob, x, p, jacprep)
@@ -424,7 +426,7 @@ end
             return fac_T.factors
         end
     end
-    if fac.factors isa SparseArrays.SparseMatrixCSC
+    if fac.factors isa SparseArrays.AbstractSparseMatrix
         return similar(fac.factors, eltype(x))
     end
     return buffer(x, eltype(x), length(Fx), length(x))

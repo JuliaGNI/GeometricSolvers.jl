@@ -126,6 +126,11 @@ end
         # a solve with no reuse keeps the factor that `init` built in its state, so the record of
         # the analysis is a cell that every factor of one `init_linear` shares
         @test fieldtype(Fac, :analyses) === Base.RefValue{Int}
+        # a step that reads the Jacobian after the factorisation keeps a sparse Jacobian buffer
+        for m in (Newton(; globalization = DogLeg()), Newton(; refinement = Refinement()))
+            @test only(Base.return_types(GeometricSolvers.init_newton_J,
+                (typeof(m), Fac, Nothing, Vec, Vec))) <: CuSparseMatrixCSR
+        end
     end
     # a dense device iterate keeps the dense factor of the CUDA extension
     @test which(init_linear, (LUFactorization{Nothing}, Nothing, CuArray{T, 1})).module ===
@@ -593,7 +598,7 @@ if CUDA.functional()
         # `Float64` or `ComplexF64` for a `Float32` or `ComplexF32` `T`, within `8n·eps(T)·κ∞`;
         # three more refactorisations keep the one analysis.
         W = T <: Complex ? ComplexF64 : Float64
-        for z in (x, CuArray(z0), CuArray(z_star))
+        function test_umfpack_agreement(solver, z)
             Jd = copy(solver.state.J)
             prob_d.J(Jd, z, p)
             fac = factorize!!(solver.state.fac, LUFactorization(), Jd)
@@ -610,6 +615,25 @@ if CUDA.functional()
             d_ref = ldiv!!(zeros(W, n), fac_h, W.(rhs))
             κ = cond(Matrix(Jw), Inf)
             @test norm(W.(d) - d_ref, Inf) / norm(d_ref, Inf) <= 8 * n * eps(R) * κ
+        end
+        for z in (x, CuArray(z0), CuArray(z_star))
+            test_umfpack_agreement(solver, z)
+        end
+
+        # a `DogLeg` trial loop and a refinement read `J` after the factorisation, so they keep a
+        # sparse buffer of the factor's pattern apart from the factor's matrix
+        for m in (Newton(; globalization = DogLeg()), Newton(; refinement = Refinement()))
+            solver_m = init(prob_d, CuArray(z0), m, p; f_abstol = tol, f_reltol = zero(R))
+            @test solver_m.state.J isa CuSparseMatrixCSR{T, Int32}
+            @test solver_m.state.J !== solver_m.state.fac.factors
+            x_m, st_m = solve!(solver_m)
+            @test st_m.code === SUCCESS
+            @test Array(x_m) != z0
+            @test solver_m.state.fac.analyses[] == 1
+            @test isapprox(Array(x_m), z_star; rtol = R === Float32 ? 1.0f-3 : 1e-9)
+            for z in (x_m, CuArray(z0), CuArray(z_star))
+                test_umfpack_agreement(solver_m, z)
+            end
         end
 
         # a non-finite entry gives `SINGULAR` without a cuDSS call; mixed precision and another
