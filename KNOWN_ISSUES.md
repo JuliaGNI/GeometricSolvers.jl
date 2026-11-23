@@ -677,3 +677,16 @@
   `rtol = 0`, so the rank and the solve do not change.
 - **kind:** found late
 - **found:** 2026-11-23
+
+### K102 · No test observes whether a CUDA SVD runs on `gesvdj!` or on the own Jacobi kernel, so a mutant of the route comparison that changes only the route passes
+
+- **location:** `ext/GeometricSolversCUDAExt.jl:128` (the comparison of the rank cutoff with the
+  sweep tolerance in `factorize!!`)
+- **evidence:** the mutant `<` → `<=` moves the default `rtol = nothing` off `gesvdj!`, and the
+  mutant `true &&` never runs `gesvdj!`. Every row of the two `rtol` loops of
+  `test/gpu/cuda/runtests.jl`, run on the own kernel alone, passes 96 of 96, because both routes
+  give the same rank within rounding. The only observable is the zero `σ̂₂` that `gesvdj!` returns
+  in `Float32` for the fixture `1, 1e-10, 1e-14`. A seam that reports the route would catch both
+  mutants.
+- **kind:** missing test
+- **found:** 2026-11-23
