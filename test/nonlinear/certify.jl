@@ -380,6 +380,20 @@ end
             @test res.certified
             @test encloses(res.enclosure, big(0))
         end
+        # `x - 1 + (m x - m x)` at its root 1, with `m = floatmax(T)`: `F(x)` and `J(X)` are
+        # bounded, and `K(X)` is the point 1, but `m X` overflows on the box, so `F(X)` is
+        # unbounded and decorated `dac`. The test refuses an unbounded `F(X)`.
+        m = floatmax(T)
+        F_wide(x, p) = x - 1 + (m * x - m * x)
+        for (prob, x) in (
+            (NonlinearProblem(F_wide), one(T)),
+            (NonlinearProblem((x, p) -> SVector(F_wide(x[1], p))), SVector(one(T))),
+            (NonlinearProblem((y, x, p) -> (y[1] = F_wide(x[1], p); nothing)), [one(T)]))
+            res = @test_logs @inferred certify(prob, x)
+            @test !res.certified
+            @test !res.guaranteed
+            @test all(isentire_interval, res.enclosure)
+        end
         # An exact root certifies at each magnitude from zero to `floatmax(T) / 2`. The residual is
         # linear with the derivative 1, so `K(X)` is the point `s`, while every box is wider.
         roots = (zero(T), -zero(T), nextfloat(zero(T)), floatmin(T), eps(T), one(T),

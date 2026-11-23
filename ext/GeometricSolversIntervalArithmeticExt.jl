@@ -36,8 +36,8 @@ end
 # function that is defined and continuous on its arguments: the decoration `dac` or `com`.
 # Krawczyk's conclusion needs `F` continuous and `J` its continuous Jacobian on the box; a lower
 # decoration marks a function that can be undefined or not continuous on part of its arguments,
-# such as a jump of `F` in `F(X)`, or a kink of `F` in `J(X)`. An unbounded entry of `F(x)` or
-# `J(X)` makes `K(X)` unbounded, which no bounded box holds.
+# such as a jump of `F` in `F(X)`, or a kink of `F` in `J(X)`. A bound that overflows keeps the
+# decoration `dac`, so an unbounded `F(X)` or `J(X)` is refused by its bound.
 usable(a::Interval) = decoration(a) >= dac && isbounded(a)
 usable(a::AbstractArray) = all(usable, a)
 
@@ -67,7 +67,6 @@ function GeometricSolvers.certify(prob::NonlinearProblem, x::Iterate{T},
 
     x̃ = map(interval, x)
     fx = residual!!(buffer(x̃), prob, x̃, p)
-    usable(fx) || return refused
     Yi = map(interval, Y)
     c = x̃ - mul(Yi, fx)
 
@@ -75,6 +74,8 @@ function GeometricSolvers.certify(prob::NonlinearProblem, x::Iterate{T},
     for _ in 1:MAX_BOXES
         X = x̃ .+ map(ρ -> interval(-ρ, ρ), r)
         all(isbounded, X) || return refused
+        # Every box holds `x`, so `F(X)` holds `F(x)`, decorated no higher: this test refuses
+        # also an `F(x)` that is unbounded or decorated below `dac`.
         usable(residual!!(buffer(X), prob, X, p)) || return refused
         JX = jacobian(prob, X, p)
         usable(JX) || return refused
