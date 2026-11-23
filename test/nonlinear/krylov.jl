@@ -989,7 +989,7 @@ end
 # is the direction `V_k y` that the matrix-free `DogLeg` rebuilds. On the MGS path both are a loop
 # over the columns, which takes no product: the direction follows the path of the last solve on
 # the workspace.
-@testset "The update and the reduced direction are one product each on the CGS2 path, mgs = $mgs, $T" for T in REAL_ELTYPES,
+@testset "The update and the reduced direction follow the path, mgs = $mgs, $T" for T in REAL_ELTYPES,
     mgs in (false, true)
 
     R = real(T)
