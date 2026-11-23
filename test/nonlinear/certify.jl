@@ -338,7 +338,8 @@ end
             @test all(isentire_interval, res.enclosure)
         end
         # Badly scaled systems where `Y`, `F(x)`, `X` and `J(X)` are all finite and bounded, while
-        # `Y * J(X)` or `Y * F(x)` overflows: refuse cleanly on `Vector` with no `NaI` warnings.
+        # `Y * J(X)` or `Y * F(x)` overflows: `K(X)` is unbounded, so the next box is unbounded,
+        # and the test refuses on `Vector` with no warning.
         s = ldexp(one(T), 2 * exponent(floatmax(T)) ÷ 3)
         function F_overflow_M!(y, x, p)
             y[1] = inv(s) * x[1] + s * (x[2] - 1)^2
@@ -354,6 +355,31 @@ end
         @test !res_c.certified
         @test !res_c.guaranteed
         @test all(isentire_interval, res_c.enclosure)
+        # `x - 1` far from its root, where `F(x)` is bounded and near `floatmax(T)`: the products of
+        # `Y` with intervals form no NaN bound, and the test refuses without a warning.
+        h = floatmax(T) / 2
+        for (prob, x) in (
+            (NonlinearProblem((x, p) -> x - 1), floatmax(T)),
+            (NonlinearProblem((x, p) -> SVector(x[1] - 1)), SVector(floatmax(T))),
+            (NonlinearProblem((y, x, p) -> (y[1] = x[1] - 1; nothing)), [floatmax(T)]),
+            (NonlinearProblem((y, x, p) -> (y .= x .- 1; nothing)), [h, h]))
+            res = @test_logs @inferred certify(prob, x)
+            @test !res.certified
+            @test !res.guaranteed
+            @test all(isentire_interval, res.enclosure)
+        end
+        # `a x + x²/2` at its root 0, with `a = 3/4 floatmax(T)`: every interval of `J(X)` is bounded
+        # and above `floatmax(T) / 2`, and its product with `Y` forms no NaN bound.
+        a = T(3) / 4 * floatmax(T)
+        F_steep(x, p) = a * x + x^2 / 2
+        for (prob, x) in (
+            (NonlinearProblem(F_steep), zero(T)),
+            (NonlinearProblem((x, p) -> SVector(F_steep(x[1], p))), SVector(zero(T))),
+            (NonlinearProblem((y, x, p) -> (y[1] = F_steep(x[1], p); nothing)), [zero(T)]))
+            res = @test_logs @inferred certify(prob, x)
+            @test res.certified
+            @test encloses(res.enclosure, big(0))
+        end
         # An exact root certifies at each magnitude from zero to `floatmax(T) / 2`. The residual is
         # linear with the derivative 1, so `K(X)` is the point `s`, while every box is wider.
         roots = (zero(T), -zero(T), nextfloat(zero(T)), floatmin(T), eps(T), one(T),

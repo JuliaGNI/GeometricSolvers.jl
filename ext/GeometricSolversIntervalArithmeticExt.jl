@@ -36,11 +36,25 @@ end
 # function that is defined and continuous on its arguments: the decoration `dac` or `com`.
 # Krawczyk's conclusion needs `F` continuous and `J` its continuous Jacobian on the box; a lower
 # decoration marks a function that can be undefined or not continuous on part of its arguments,
-# such as a jump of `F` in `F(X)`, or a kink of `F` in `J(X)`. An unbounded entry makes `K(X)`
-# unbounded, which no bounded box holds, or IntervalArithmetic's matrix product with it forms NaN
-# bounds, with a warning.
+# such as a jump of `F` in `F(X)`, or a kink of `F` in `J(X)`. An unbounded entry of `F(x)` or
+# `J(X)` makes `K(X)` unbounded, which no bounded box holds.
 usable(a::Interval) = decoration(a) >= dac && isbounded(a)
 usable(a::AbstractArray) = all(usable, a)
+
+# The product of an interval matrix with an interval vector or matrix, as sums of interval
+# products. IntervalArithmetic's default product of `Matrix` arguments works on midpoints and
+# radii, which overflow on bounded intervals near `floatmax` into NaN bounds, with a warning; sums
+# of products overflow into infinite bounds only. A number and a `StaticArray` take their own
+# product, which forms no midpoints.
+mul(A, B) = A * B
+function mul(A::Matrix{<:Interval}, b::Vector{<:Interval})
+    return [sum(A[i, k] * b[k] for k in axes(A, 2); init = zero(eltype(b)))
+            for i in axes(A, 1)]
+end
+function mul(A::Matrix{<:Interval}, B::Matrix{<:Interval})
+    return [sum(A[i, k] * B[k, j] for k in axes(A, 2); init = zero(eltype(B)))
+            for i in axes(A, 1), j in axes(B, 2)]
+end
 
 function GeometricSolvers.certify(prob::NonlinearProblem, x::Iterate{T},
         p = nothing) where {T <: AbstractFloat}
@@ -55,21 +69,18 @@ function GeometricSolvers.certify(prob::NonlinearProblem, x::Iterate{T},
     fx = residual!!(buffer(x̃), prob, x̃, p)
     usable(fx) || return refused
     Yi = map(interval, Y)
-    c = x̃ - Yi * fx
-    all(isbounded, c) || return refused
+    c = x̃ - mul(Yi, fx)
 
     r = eps.(x)
     for _ in 1:MAX_BOXES
-        all(isfinite, r) || return refused
         X = x̃ .+ map(ρ -> interval(-ρ, ρ), r)
         all(isbounded, X) || return refused
         usable(residual!!(buffer(X), prob, X, p)) || return refused
         JX = jacobian(prob, X, p)
         usable(JX) || return refused
-        M = Yi * JX
+        M = mul(Yi, JX)
         R = one(M) - M
-        all(isbounded, R) || return refused
-        K = c + R * (X - x̃)
+        K = c + mul(R, X - x̃)
         if all(isinterior.(K, X))
             guaranteed = all(isguaranteed, fx) && all(isguaranteed, JX)
             return (; certified = true, enclosure = convert(typeof(unknown), K), guaranteed)
