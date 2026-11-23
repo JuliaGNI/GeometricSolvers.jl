@@ -32,16 +32,19 @@ Every hypothesis of the test is read from `F`: `ForwardDiff` differentiates `F` 
 as for a solve: `F(x, p)` for a real floating-point `Number` and a `StaticVector`, and
 `F(y, x, p)` for a host `Vector`. `F` must accept floats, intervals and `ForwardDiff` duals of
 both. An error of `F` is not caught: `log` of a negative float `x` throws a `DomainError`, and an
-`F` that branches on a comparison of intervals, such as `x[1] < 0`, throws IntervalArithmetic's
+`F` that branches on a comparison of intervals, such as `x[1] < 0`, or that calls `max` or `min`
+on arguments whose order the box does not fix, throws IntervalArithmetic's
 `InconclusiveBooleanOperation` where the comparison has no single answer.
 
 A singular Jacobian at `x`, a non-finite `x` or `Y`, a box radius that is not finite, and a test
 that fails on the tenth box each give `certified == false`. So does an interval of `F(X)` or
 `J(X)` on a box that is unbounded, or that IntervalArithmetic decorates below `dac` (defined and
-continuous): `F` is then undefined, not continuous or not continuously differentiable on part of
-the box, such as `log` or `sqrt` across 0, `1/x` at 0, `floor` across an integer, or a kink of
-`abs`. None of these throws. A complex iterate, a batch, a device array, a
-[`StationarityProblem`](@ref) and a [`LeastSquaresProblem`](@ref) have no method.
+continuous): `F` can then be undefined, not continuous or not continuously differentiable on part
+of the box, such as `log` or `sqrt` across 0, `1/x` at 0, `floor` across an integer, or a kink of
+`abs`. The decoration follows the functions that `F` calls, so `abs` across 0 refuses also where
+`F` is continuously differentiable, such as `x * abs(x) + x` at 0. None of these throws. A
+complex iterate, a batch, a device array, a [`StationarityProblem`](@ref) and a
+[`LeastSquaresProblem`](@ref) have no method.
 
 `certify` is `public` and not exported.
 """

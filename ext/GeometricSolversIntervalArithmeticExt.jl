@@ -35,10 +35,10 @@ end
 # Whether every interval of `a`, an interval or an array of them, is bounded and comes from a
 # function that is defined and continuous on its arguments: the decoration `dac` or `com`.
 # Krawczyk's conclusion needs `F` continuous and `J` its continuous Jacobian on the box; a lower
-# decoration marks a function undefined or not continuous on part of its arguments, such as a jump
-# of `F` in `F(X)`, or a kink of `F` in `J(X)`. An unbounded entry makes `K(X)` unbounded, which no
-# bounded box holds, or IntervalArithmetic's product of a float matrix with it forms NaN bounds,
-# with a warning.
+# decoration marks a function that can be undefined or not continuous on part of its arguments,
+# such as a jump of `F` in `F(X)`, or a kink of `F` in `J(X)`. An unbounded entry makes `K(X)`
+# unbounded, which no bounded box holds, or IntervalArithmetic's product of a float matrix with it
+# forms NaN bounds, with a warning.
 usable(a::Interval) = decoration(a) >= dac && isbounded(a)
 usable(a::AbstractArray) = all(usable, a)
 
