@@ -642,3 +642,20 @@
   or `backsolve!` with a `SubArray` does.
 - **kind:** found late
 - **found:** #96
+
+### K99 · An R3 `Newton` solve with a `BigFloat` or `Complex{BigFloat}` iterate and the default automatic differentiation throws `UndefRefError`
+
+- **location:** `src/ad/chunked.jl:115` (`jacobian!!` for `ChunkedForwardDiff`), called from
+  `newton_factor` in `src/nonlinear/newton.jl`
+- **evidence:** with `A = BigFloat[4 1; 1 5]`, `b = BigFloat[1, 2]` and
+  `G!(r, x, p) = (r .= A * x .- b; r)`,
+  `solve(NonlinearProblem(G!), zeros(BigFloat, 2), Newton())` raises
+  `UndefRefError: access to undefined reference` at `prep.xdual .= seed.(prep.xdual, x, …)`,
+  which reads the dual buffer before any element of it is set. The buffer comes from
+  `similar(x, dual_type(…))` (`src/ad/chunked.jl:65`), and a `BigFloat` dual is no bits type, so
+  its elements are undefined references. The same holds for `Complex{BigFloat}` and for
+  `LUFactorization()`, `LDLTFactorization()` and `CholeskyFactorization()` alike; `ComplexF64`
+  gives `SUCCESS` (Julia 1.13.4, tree of `cd5834b`). The static R1 path and the dense factors
+  themselves take `BigFloat` (`test/linear/cholesky.jl`).
+- **kind:** found late
+- **found:** 2026-11-22

@@ -16,8 +16,8 @@ include("../helpers/matrix.jl")
 const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
 
 # The element types of the factorisation: the BLAS types of `ELTYPES`, which take LAPACK `potrf`
-# on the host, and `BigFloat`, which takes the generic loop on every path.
-const CHOLESKY_ELTYPES = (ELTYPES..., BigFloat)
+# on the host, and `BigFloat` and `Complex{BigFloat}`, which take the generic loop on every path.
+const CHOLESKY_ELTYPES = (ELTYPES..., BigFloat, Complex{BigFloat})
 
 # The bytes of a call, after one warm call of the same function through the barrier.
 allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
@@ -258,42 +258,51 @@ end
         Newton(; linsolve = CholeskyFactorization(), globalization = LevenbergMarquardt()), 1.0)
 end
 
-@testset "Newton with CholeskyFactorization on a convex StationarityProblem" begin
+@testset "Newton with CholeskyFactorization on a convex StationarityProblem ($T)" for T in REAL_ELTYPES
     # `S` is strictly convex, so its Hessian `I + 3 diag(x²)` is positive definite at every
-    # iterate, and its stationary point solves `x + x³ = 1` in each component
+    # iterate, and its stationary point solves `x + x³ = 1` in each component. A complex state
+    # fails in the default automatic differentiation (K28), so the state is real.
     S(x, p) = sum(abs2, x) / 2 + sum(x .^ 4) / 4 - p * sum(x)
     prob = StationarityProblem(S)
-    x_star = 0.6823278038280193
+    x_star = T(0.6823278038280193)
+    # the residual test stops at `‖F(x)‖ ≤ √eps ‖F(x₀)‖`, with `‖F(x₀)‖ < 0.7` from both starts, and
+    # `F′ = 1 + 3x² ≥ 1` gives `|x - x*| ≤ |F(x)|`: a relative error of at most `√eps · 0.7 / x*`.
+    # The step test, `|Δx| ≤ 2 eps |x|`, stops closer to the root.
+    rtol = 2 * sqrt(eps(T))
+    p = one(T)
     # a `Number` iterate takes the `1 × 1` static factor
-    for x₀ in (0.3, SVector(0.3, 0.6), [0.3, 0.6])
-        x, st = solve(prob, copy(x₀), Newton(; linsolve = CholeskyFactorization()), 1.0)
+    for x₀ in (T(0.3), SVector{2, T}(0.3, 0.6), T[0.3, 0.6])
+        x, st = solve(prob, copy(x₀), Newton(; linsolve = CholeskyFactorization()), p)
         @test st.code == SUCCESS
-        @test all(xi -> isapprox(xi, x_star; rtol = 1e-12), x)
-        x32, st32 = solve(prob, copy(x₀),
-            Newton(; linsolve = CholeskyFactorization(Float32),
+        @test x != x₀
+        @test all(xi -> isapprox(xi, x_star; rtol), x)
+        xm, stm = solve(prob, copy(x₀),
+            Newton(; linsolve = CholeskyFactorization(mixed_precision(T)),
                 refinement = Refinement()),
-            1.0)
-        @test st32.code == SUCCESS
-        @test all(xi -> isapprox(xi, x_star; rtol = 1e-10), x32)
+            p)
+        @test stm.code == SUCCESS
+        @test all(xi -> isapprox(xi, x_star; rtol), xm)
     end
     # R2: the static factor in one work-item per system
     for Arr in ARRAY_BACKENDS
-        X = Arr([SVector(0.3, 0.6) for _ in 1:3])
+        X = Arr([SVector{2, T}(0.3, 0.6) for _ in 1:3])
         counts = solve_batch!(X, prob, Newton(; linsolve = CholeskyFactorization()),
-            PerSystem(Arr([1.0, 1.0, 1.0])))
+            PerSystem(Arr(ones(T, 3))))
         @test counts.SUCCESS == 3
-        @test all(x -> all(xi -> isapprox(xi, x_star; rtol = 1e-12), x), Array(X))
+        @test all(x -> all(xi -> isapprox(xi, x_star; rtol), x), Array(X))
     end
 end
 
-@testset "A Float32 factor that is not positive definite takes the promotion of Newton" begin
-    # `J = [1 1; 1 1 + 1e-9]` is positive definite in `Float64` and has a zero pivot in `Float32`,
-    # so the first factorisation in `Float32` is SINGULAR and the step factorises in `Float64`
-    A = [1.0 1.0; 1.0 1.0+1e-9]
-    x_star = [1.0, -1.0]
+@testset "A Float32 factor that is not positive definite takes the promotion of Newton ($T)" for T in (
+    Float64, ComplexF64)
+    # `J` is Hermitian and positive definite in the working precision and has a zero pivot in
+    # `Float32`, where `1 + 1e-9` rounds to 1: `1 - |J₂₁|² = 0`. The first factorisation in
+    # `Float32` is SINGULAR, and the step factorises in the working precision.
+    A = T <: Real ? T[1 1; 1 1+1e-9] : T[1 im; -im 1+1e-9]
+    x_star = T <: Real ? T[1, -1] : T[1 + 2im, -1 + im]
     rhs = A * x_star
     F!(r, x, p) = (r .= A * x .- rhs; r)
-    x, st = solve(NonlinearProblem(F!), zeros(2),
+    x, st = solve(NonlinearProblem(F!), zeros(T, 2),
         Newton(; linsolve = CholeskyFactorization(Float32)))
     @test st.code == SUCCESS
     @test st.promoted
@@ -349,9 +358,7 @@ end
     fac = factorize!!(dense_factor(CholeskyFactorization(), nothing, b, nothing),
         CholeskyFactorization(), A)
     @test returncode(fac) == SUCCESS
-    if Base.JLOptions().check_bounds != 1
-        @test dense_factor_allocations(fac, A) == 0
-        @test dense_solve_allocations(d, fac, b) == 0
-    end
+    @test dense_factor_allocations(fac, A) == 0
+    @test dense_solve_allocations(d, fac, b) == 0
     @test allocations(collect, b) > 0
 end

@@ -88,7 +88,7 @@ With an [`SVDFactorization`](@ref), the status reports the numerical rank of the
   and ``\mu > 0``. It takes no
   pivots, and a Jacobian that is not positive definite gives `SINGULAR`, with the order of the
   first leading minor that is not positive in `info`. It runs on a host `Array` and in R1 and R2;
-  a GPU array raises an `ArgumentError`.
+  in R3 a GPU array raises an `ArgumentError`.
 - [`QRFactorization`](@ref) for a least-squares problem, and where an orthogonal factorisation is
   wanted.
 - [`SVDFactorization`](@ref) for a rank-deficient or nearly singular Jacobian. It costs more than

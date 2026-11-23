@@ -23,13 +23,14 @@ With [`SVDFactorization`](@ref) and `scaling = :none`, `J(x) = U Σ Vᴴ` is fac
 outer step and each trial `μ` evaluates the damped pseudoinverse step from `(U, Σ, V)` without
 refactoring `J(x)`. With [`QRFactorization`](@ref), [`LUFactorization`](@ref),
 [`LDLTFactorization`](@ref) or [`CholeskyFactorization`](@ref) (or when `scaling = :diagonal`),
-`[J(x) | -F(x)]` is reduced once per outer step to an upper-triangular `(R₀, c₀)` and each trial
-`μ` copies that pair and eliminates only its own damping rows `√μ D` by Givens rotations, without
-forming `J(x)ᴴ J(x)`; for a [`LeastSquaresProblem`](@ref) the rows of `J(x)` past its `n` columns
-are eliminated into the same `n × n` pair. This reduction reads no symmetry, so it serves the
-Hessian of a [`StationarityProblem`](@ref) as any other `J(x)`. That path indexes scalars and runs
-on a host array: an `init` on a device array iterate raises an `ArgumentError` for it. Neither path
-reads a sparse factor, so an `init` on a non-static array iterate whose problem carries a sparse
+`[J(x) | -F(x)]` is reduced once per
+outer step to an upper-triangular `(R₀, c₀)` and each trial `μ` copies that pair and eliminates
+only its own damping rows `√μ D` by Givens rotations, without forming `J(x)ᴴ J(x)`; for a
+[`LeastSquaresProblem`](@ref) the rows of `J(x)` past its `n` columns are eliminated into the same
+`n × n` pair. This reduction reads no symmetry, so it serves the Hessian of a
+[`StationarityProblem`](@ref) as any other `J(x)`. That path indexes scalars and runs on a host
+array: an `init` on a device array iterate raises an `ArgumentError` for it. Neither path reads a
+sparse factor, so an `init` on a non-static array iterate whose problem carries a sparse
 `jacobian_prototype` raises an `ArgumentError` too. A `μ` below `4 eps` of the working type, which
 only an initial `μ₀` below the schedule's floor can be, is taken as no damping: the truncated
 Newton step, the `μ → 0` limit.
