@@ -46,8 +46,7 @@ end
         @test !res.guaranteed
         # The enclosure is the Krawczyk image, not the whole line. At an exact root the first box
         # has the radius of one `eps` of the root, and these roots certify on the second or third
-        # box; the measured widths are 1.5 to 4 `eps(T)`, a factor 4 below the
-        # bound.
+        # box; the measured widths are 1.5 to 4 `eps(T)`, a factor 4 below the bound.
         @test all(isbounded, res.enclosure)
         @test all(c -> diam(c) <= 16 * eps(T), res.enclosure)
     end
