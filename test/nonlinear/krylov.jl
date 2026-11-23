@@ -1029,14 +1029,71 @@ for f in (Base.mapreduce, LinearAlgebra.mul!), m in methods(f)
 end
 
 # A normal matrix with its spectrum log-spaced in `[1, 1e8]`, `A = Q Λ Qᴴ` with a unitary `Q`, and
-# a right-hand side, both drawn in `Float64` and rounded to `T`.
+# a right-hand side, both drawn in `Float64` and rounded to `T`. `Q` is the product of the
+# Householder reflections of a QR factorisation of `Z`. Every sum runs in plain sequential loops,
+# with no BLAS, LAPACK, `@simd` or fused multiply–add, so the matrix is the same on every platform.
 function arnoldi_test_matrix(::Type{T}, n, seed) where {T}
     rng = Xoshiro(seed)
     Z = T <: Complex ? complex.(randn(rng, n, n), randn(rng, n, n)) : randn(rng, n, n)
-    Q = Matrix(qr(Z).Q)
-    A = Q * Diagonal(exp10.(range(0, 8; length = n))) * Q'
     b = T <: Complex ? complex.(randn(rng, n), randn(rng, n)) : randn(rng, n)
-    return T.(A), T.(b)
+    S = eltype(Z)
+    vs = Vector{Vector{S}}(undef, n - 1)
+    for k in 1:(n - 1)
+        s = 0.0
+        for i in k:n
+            s += abs2(Z[i, k])
+        end
+        x₁ = Z[k, k]
+        α = -(iszero(x₁) ? one(S) : x₁ / abs(x₁)) * sqrt(s)
+        v = Z[k:n, k]
+        v[1] -= α
+        sv = 0.0
+        for i in eachindex(v)
+            sv += abs2(v[i])
+        end
+        nv = sqrt(sv)
+        for i in eachindex(v)
+            v[i] /= nv
+        end
+        vs[k] = v
+        for c in k:n
+            p = zero(S)
+            for i in k:n
+                p += conj(v[i - k + 1]) * Z[i, c]
+            end
+            for i in k:n
+                Z[i, c] -= 2 * v[i - k + 1] * p
+            end
+        end
+    end
+    Q = Matrix{S}(undef, n, n)
+    for c in 1:n, i in 1:n
+
+        Q[i, c] = i == c ? one(S) : zero(S)
+    end
+    for k in (n - 1):-1:1
+        v = vs[k]
+        for c in k:n
+            p = zero(S)
+            for i in k:n
+                p += conj(v[i - k + 1]) * Q[i, c]
+            end
+            for i in k:n
+                Q[i, c] -= 2 * v[i - k + 1] * p
+            end
+        end
+    end
+    λ = exp10.(range(0, 8; length = n))
+    A = Matrix{T}(undef, n, n)
+    for c in 1:n, i in 1:n
+
+        a = zero(S)
+        for l in 1:n
+            a += Q[i, l] * λ[l] * conj(Q[c, l])
+        end
+        A[i, c] = T(a)
+    end
+    return A, T.(b)
 end
 
 # The loss of orthogonality `‖I - VᴴV‖₂` of a basis, with `VᴴV` formed in `BigFloat`, so that the
@@ -1047,18 +1104,62 @@ function orthogonality_loss(V)
     return opnorm(eltype(V) <: Complex ? ComplexF64.(G) : Float64.(G))
 end
 
-# The control: the Arnoldi basis of classical Gram–Schmidt with one pass, dense.
+# The control: the Arnoldi basis of classical Gram–Schmidt with one pass, `w = A v`, `h = Vⱼᴴ w`,
+# `w -= Vⱼ h` and `w / ‖w‖`, in `T`. Every sum runs in a plain sequential loop, with no BLAS,
+# `@simd` or fused multiply–add, so the control is the same on every platform.
 function cgs_one_pass_basis(A, b, m)
-    V = zeros(eltype(b), length(b), m + 1)
-    V[:, 1] = b / norm(b)
+    T = eltype(b)
+    n = length(b)
+    V = zeros(T, n, m + 1)
+    w = zeros(T, n)
+    h = zeros(T, m)
+    s = zero(real(T))
+    for i in 1:n
+        s += abs2(b[i])
+    end
+    nb = sqrt(s)
+    for i in 1:n
+        V[i, 1] = b[i] / nb
+    end
     for j in 1:m
-        w = A * V[:, j]
-        w -= V[:, 1:j] * (V[:, 1:j]' * w)
-        V[:, j + 1] = w / norm(w)
+        for i in 1:n
+            a = zero(T)
+            for l in 1:n
+                a += A[i, l] * V[l, j]
+            end
+            w[i] = a
+        end
+        for i in 1:j
+            a = zero(T)
+            for l in 1:n
+                a += conj(V[l, i]) * w[l]
+            end
+            h[i] = a
+        end
+        for l in 1:n
+            a = w[l]
+            for i in 1:j
+                a -= V[l, i] * h[i]
+            end
+            w[l] = a
+        end
+        s = zero(real(T))
+        for l in 1:n
+            s += abs2(w[l])
+        end
+        nw = sqrt(s)
+        for l in 1:n
+            V[l, j + 1] = w[l] / nw
+        end
     end
     return V
 end
 
+# The control's loss in eps(R), seeds 1:5, Julia 1.13.4, the same with and without
+# `--check-bounds=yes`:
+# Float32 4051.1, 12137.7, 11263.7, 8042.4, 3717.0; Float64 6794.7, 6554.6, 9048.8, 10338.0,
+# 7172.4; ComplexF32 2682.8, 2617.4, 7624.4, 5889.7, 4042.2; ComplexF64 9140.6, 5041.1, 4196.4,
+# 6581.8, 11350.3.
 @testset "The CGS2 basis stays orthogonal where one-pass CGS loses it, $T" for T in ELTYPES
     R = real(T)
     n, m = 200, 30
