@@ -144,9 +144,9 @@ end
 
 # An `@allocated` assertion measures through a function barrier whose arguments have concrete types
 # and which calls the function once before it measures.
-function gmres_allocations(ws, op, b, β, tol, maxiter, restart)
-    gmres_solve!(ws, op, nothing, b, β, tol, maxiter, restart)
-    return @allocated gmres_solve!(ws, op, nothing, b, β, tol, maxiter, restart)
+function gmres_allocations(ws, op, b, β, tol, maxiter, restart; mgs = false)
+    gmres_solve!(ws, op, nothing, b, β, tol, maxiter, restart; mgs)
+    return @allocated gmres_solve!(ws, op, nothing, b, β, tol, maxiter, restart; mgs)
 end
 
 @testset "R5 matrix-free Newton–GMRES" begin
@@ -884,6 +884,59 @@ end
     end
 end
 
+# One CGS2 step at `j = 1` on a basis column `v` and a vector `w` set by hand, on `JLArray`: the
+# reductions of the step, the entry `H[1, 1] = h₁ + h₂` and the norm it returns.
+function cgs2_row(::Type{T}, v, w) where {T}
+    n = length(w)
+    ws = init_gmres_workspace(GMRES(; maxiter = 2), JLArray(zeros(T, n)))
+    V = zeros(T, size(ws.V))
+    V[:, 1] = v
+    copyto!(ws.V, V)
+    copyto!(ws.w, T.(w))
+    reduced = ARRAY_REDUCTIONS[]
+    hj = GeometricSolvers.cgs2_step!(ws, 1)
+    return ARRAY_REDUCTIONS[] - reduced, ws.H[1, 1], hj
+end
+
+# The step takes `√(s₁ - ‖h₂‖²)` where `‖h₂‖² ≤ s₁/2` and `s₁ ≥ n floatmin(R)`, and `rnorm(w₂)`
+# elsewhere. With `v = 2e₁` and `w = e₁ + y e₂`, the arithmetic is exact: `h₁ = 2`,
+# `w₁ = -3e₁ + y e₂`, `h₂ = -6`, `s₁ = 9 + y²` and `w₂ = 9e₁ + y e₂`, so `y = 8` gives
+# `‖h₂‖²/s₁ = 36/73 ≈ 0.49` and the norm `√37`, and `y = 7.5` gives `36/65.25 ≈ 0.55` and the
+# norm `√137.25` of one more reduction. With `v = e₁` and `w = t e₂`, `s₁ = t²`, and
+# `t² = 0.8 n floatmin(R)` takes `rnorm(w₂)` on its scaled path, three reductions, where
+# `t² = 1.25 n floatmin(R)` takes the two of Pythagoras.
+@testset "CGS2 brackets its thresholds and norms w₂ by Pythagoras, $T" for T in REAL_ELTYPES
+    R = real(T)
+    n = 8
+    e(i) = [k == i ? one(T) : zero(T) for k in 1:n]
+    for (y, reductions, norm₂) in ((8, 2, sqrt(R(37))), (7.5, 3, sqrt(R(137.25))))
+        c, h, hj = cgs2_row(T, 2 .* e(1), e(1) .+ T(y) .* e(2))
+        @test c == reductions
+        @test isapprox(h, T(-4); rtol = 8 * eps(R))
+        @test isapprox(hj, norm₂; rtol = 8 * eps(R))
+    end
+    for (f, reductions) in ((0.8, 5), (1.25, 2))
+        t = sqrt(R(f) * n * floatmin(R))
+        c, h, hj = cgs2_row(T, e(1), t .* e(2))
+        @test c == reductions
+        @test iszero(h)
+        @test isapprox(hj, t; rtol = 8 * eps(R))
+    end
+    # Both thresholds hold with equality and take Pythagoras. `v = 5e₁` and `w = e₁ + 168e₂`
+    # give `h₁ = 5`, `h₂ = -120` and `s₁ = 28800`, so `‖h₂‖² = s₁/2` and the norm is `120`, where
+    # `rnorm(w₂) = ‖576e₁ + 168e₂‖` is `600`. With `n = 4` and `t = √(4 floatmin(R))`, a power of
+    # two, `s₁ = t² = n floatmin(R)` exactly.
+    c, h, hj = cgs2_row(T, 5 .* e(1), e(1) .+ T(168) .* e(2))
+    @test c == 2
+    @test isapprox(h, T(-115); rtol = 8 * eps(R))
+    @test isapprox(hj, R(120); rtol = 8 * eps(R))
+    t = sqrt(4 * floatmin(R))
+    c, h, hj = cgs2_row(T, T[1, 0, 0, 0], T[0, t, 0, 0])
+    @test c == 2
+    @test iszero(h)
+    @test isapprox(hj, t; rtol = 8 * eps(R))
+end
+
 # The keyword of `GMRES` reaches the inner solve of a `Newton`: the same wrapper counts the two
 # reductions of CGS2 by default and the `j + 1` of MGS with `mgs = true`.
 @testset "The mgs keyword of GMRES selects the path of a Newton step, $T" for T in REAL_ELTYPES
@@ -932,9 +985,11 @@ end
     @test !any(A -> is_storage_of(A, solver.state.refbuf.ws.V), ADJOINT_OPERANDS)
 end
 
-# The solution update `u += V y` is one product per cycle, into `u` itself, and so is the direction
-# `V_k y` that the matrix-free `DogLeg` rebuilds.
-@testset "The update and the reduced direction are one product each, mgs = $mgs, $T" for T in REAL_ELTYPES,
+# On the CGS2 path the solution update `u += V y` is one product per cycle, into `u` itself, and so
+# is the direction `V_k y` that the matrix-free `DogLeg` rebuilds. On the MGS path both are a loop
+# over the columns, which takes no product: the direction follows the path of the last solve on
+# the workspace.
+@testset "The update and the reduced direction are one product each on the CGS2 path, mgs = $mgs, $T" for T in REAL_ELTYPES,
     mgs in (false, true)
 
     R = real(T)
@@ -949,7 +1004,7 @@ end
         d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), R(1e-30), Int32(maxiter),
             Int32(restart); mgs)
         cycles = cld(Int(info.iterations), restart)
-        @test count(c -> is_storage_of(c, ws.u), PLAIN_PRODUCTS) == cycles
+        @test count(c -> is_storage_of(c, ws.u), PLAIN_PRODUCTS) == (mgs ? 0 : cycles)
         @test restart == maxiter ? cycles == 1 : cycles == 4
         # the direction is the sum of the cycles' products: its true residual is the one the last
         # cycle reports
@@ -962,8 +1017,8 @@ end
     empty!(PLAIN_PRODUCTS)
     reduced = ARRAY_REDUCTIONS[]
     GeometricSolvers.reduced_direction!(s, ws, y, 4)
-    @test length(PLAIN_PRODUCTS) == 1
-    @test is_storage_of(only(PLAIN_PRODUCTS), s)
+    @test length(PLAIN_PRODUCTS) == (mgs ? 0 : 1)
+    @test mgs || is_storage_of(only(PLAIN_PRODUCTS), s)
     @test ARRAY_REDUCTIONS[] == reduced
     @test norm(Array(s) - Array(ws.V)[:, 1:4] * y) <= 8 * eps(R) * norm(y)
 end
@@ -1016,6 +1071,110 @@ end
         @test !info.breakdown
         @test orthogonality_loss(ws.V) <= 32 * eps(R)
         @test orthogonality_loss(cgs_one_pass_basis(A, b, m)) > 1000 * eps(R)
+    end
+end
+
+# A reference GMRES with modified Gram–Schmidt and no preconditioner on dense storage, transcribed
+# from the MGS path of `gmres_solve!` in the same order of operations: the projections, the Givens
+# rotations, the back substitution, the update of `u` one column at a time and the residual of a
+# restart. It returns the iterate and the inner iteration count.
+function mgs_gmres_reference(A, b, tol, maxiter, restart)
+    T = eltype(b)
+    R = real(T)
+    n = length(b)
+    mr = min(restart, n)
+    V = zeros(T, n, mr + 1)
+    H = zeros(T, mr + 1, mr)
+    cs = zeros(R, mr)
+    sn = zeros(T, mr)
+    g = zeros(T, mr + 1)
+    y = zeros(T, mr)
+    u = zeros(T, n)
+    w = zeros(T, n)
+    z = zeros(T, n)
+    rr = copy(b)
+    atol = R(tol) * R(rnorm(b))
+    used = 0
+    while used < maxiter
+        β = R(rnorm(rr))
+        β <= atol && break
+        @views V[:, 1] .= rr ./ β
+        fill!(g, zero(T))
+        g[1] = β
+        j = 0
+        hj = β
+        linres = β
+        while j < mr && used < maxiter
+            j += 1
+            used += 1
+            @views z .= V[:, j]
+            mul!(w, A, z)
+            for i in 1:j
+                h = GeometricSolvers.arnoldi_dot(@view(V[:, i]), w)
+                H[i, j] = h
+                @views w .-= h .* V[:, i]
+            end
+            hj = R(rnorm(w))
+            H[j + 1, j] = hj
+            for i in 1:(j - 1)
+                t = cs[i] * H[i, j] + sn[i] * H[i + 1, j]
+                H[i + 1, j] = -conj(sn[i]) * H[i, j] + cs[i] * H[i + 1, j]
+                H[i, j] = t
+            end
+            a = H[j, j]
+            bj = H[j + 1, j]
+            radius = R(hypot(abs(a), abs(bj)))
+            if iszero(radius)
+                cs[j] = one(R)
+                sn[j] = zero(T)
+            else
+                cs[j] = R(abs(a) / radius)
+                sn[j] = iszero(abs(a)) ? conj(bj) / T(radius) :
+                        (a / T(abs(a))) * conj(bj) / T(radius)
+            end
+            H[j, j] = cs[j] * a + sn[j] * bj
+            H[j + 1, j] = zero(T)
+            gj = g[j]
+            g[j + 1] = -conj(sn[j]) * gj
+            g[j] = cs[j] * gj
+            linres = iszero(radius) ? R(hypot(abs(g[j]), abs(g[j + 1]))) : R(abs(g[j + 1]))
+            (iszero(hj) || linres <= atol) && break
+            @views V[:, j + 1] .= w ./ hj
+        end
+        for i in j:-1:1
+            acc = g[i]
+            for k in (i + 1):j
+                acc -= H[i, k] * y[k]
+            end
+            y[i] = iszero(H[i, i]) ? zero(T) : acc / H[i, i]
+        end
+        for i in 1:j
+            @views u .+= y[i] .* V[:, i]
+        end
+        (linres <= atol || iszero(hj) || used >= maxiter) && break
+        z .= u
+        mul!(w, A, z)
+        rr .= b .- w
+    end
+    return u, used
+end
+
+# The MGS path of the keyword is modified Gram–Schmidt with the update of `u` one column at a
+# time, so on the matrices of the test above, restarted every 5 iterations, it gives the iterate of
+# the reference within `8 eps(R)` relative, in the 2-norm, and its iteration count.
+@testset "The MGS path gives the iterate of the reference MGS GMRES, $T" for T in ELTYPES
+    R = real(T)
+    n, m, restart = 200, 30, 5
+    for seed in 1:3, tol in (zero(R), R(1e-4))
+
+        A, b = arnoldi_test_matrix(T, n, seed)
+        ws = init_gmres_workspace(GMRES(; maxiter = m, restart), zeros(T, n))
+        op = (Jv, v) -> mul!(Jv, A, v)
+        d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(m), Int32(restart);
+            mgs = true)
+        x, used = mgs_gmres_reference(A, b, tol, m, restart)
+        @test info.iterations == used
+        @test norm(d - x) <= 8 * eps(R) * norm(x)
     end
 end
 
@@ -1439,7 +1598,9 @@ function solve_allocations(solver, x₀, work)
     end
 end
 
-@testset "The inner solve allocates nothing after init on Array, $T" for T in REAL_ELTYPES
+@testset "The inner solve allocates nothing after init on Array, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
     Base.JLOptions().check_bounds == 1 && continue
     prob = r5_affine()
     m = Newton(; linsolve = GMRES(; maxiter = 4))
@@ -1449,7 +1610,8 @@ end
     b = similar(zeros(T, 4))
     map!(-, b, R5_B4)
     β = rnorm(b)
-    @test gmres_allocations(ws, op, b, β, T(1e-10), Int32(4), Int32(4)) == 0
+    @test gmres_allocations(ws, op, b, β, T(1e-10), Int32(4), Int32(4); mgs) == 0
+    @inferred gmres_solve!(ws, op, nothing, b, β, T(1e-10), Int32(4), Int32(4); mgs)
     # the control: the helper sees an allocation
     @test (@allocated similar(b)) > 0
 end

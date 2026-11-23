@@ -340,7 +340,8 @@ solution weights `y`, the weights `cg`, `yN` and `yb` of the matrix-free [`DogLe
 reduced work vector `sm`, the vector slots `rr`, `z`, `w`, `u`, `d` and `bb` of length `n`, the
 `jvp_eltype` slots `xT`, `vT` and `wT`, the vector `hd` of `min(restart, n) + 1` entries in the
 storage of the iterate, which holds the coefficients ``V_j^H w`` of an Arnoldi step and the weights
-`y` of a product ``V_j y``, its host copy `hh`, and the counters of the solve.
+`y` of a product ``V_j y``, its host copy `hh`, the flag `mgs` of the path of the last solve,
+which `reduced_direction!` follows, and the counters of the solve.
 
 `f_calls` and `jvp_calls` count the residual evaluations and the Jacobian–vector products of the
 solve in `Int32`, `gmres_iterations` is the inner count of the last Newton step, `max_inner` the
@@ -377,6 +378,7 @@ mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D, HD}
     wT::D
     hd::HD
     hh::ST
+    mgs::Bool
     f_calls::Int32
     jvp_calls::Int32
     gmres_iterations::Int32
@@ -426,7 +428,8 @@ function init_gmres_workspace(g::GMRES{F, P, TJ}, x::AbstractVector{T}) where {F
     hh = zeros(T, w)
     return GMRESWorkspace{T, R, typeof(V), typeof(H), typeof(cs), typeof(sn),
         typeof(rr), typeof(xT), typeof(hd)}(
-        V, H, H0, cs, sn, gb, y, cg, yN, yb, sm, rr, z, wv, u, d, bb, xT, vT, wT, hd, hh,
+        V, H, H0, cs, sn, gb, y, cg, yN, yb, sm, rr,
+        z, wv, u, d, bb, xT, vT, wT, hd, hh, false,
         Int32(0), Int32(0), Int32(0), Int32(0), Int32(0), Int32(0),
         R(NaN), R(NaN), R(NaN), R(NaN))
 end
@@ -461,9 +464,10 @@ allocated for.
 The Arnoldi process orthogonalises by classical Gram–Schmidt with a second pass (CGS2), as the
 `mgs` field of [`GMRES`](@ref) describes, and by modified Gram–Schmidt with `mgs = true`; both
 take the conjugated inner product, so a complex iterate is supported and every norm is in
-`real(T)`. The solution update ``u \\mathrel{+}= V_j y`` of a cycle is one matrix–vector product.
-A zero `H[j+1, j]` is a breakdown: the Krylov space is invariant, and the solve stops there rather
-than dividing by zero. The residual of
+`real(T)`. The solution update ``u \\mathrel{+}= V_j y`` of a cycle is one matrix–vector product
+on the CGS2 path and one update per column of ``V_j`` on the MGS path, which `ws.mgs` records for
+`reduced_direction!`. A zero `H[j+1, j]` is a breakdown: the Krylov space is invariant, and the
+solve stops there rather than dividing by zero. The residual of
 the reduced problem is then zero, unless `J` is singular on that space: the rotated diagonal entry
 is then zero too, the residual is that of the last entry of the right-hand side, and the solve
 reports no convergence. A restarted cycle forms its new residual with one more product,
@@ -476,6 +480,7 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
     n = length(b)
     mr = min(min(Int(restart), n), size(ws.V, 2) - 1)
     atol = R(tol) * R(bnorm)
+    ws.mgs = mgs
     fill!(ws.u, zero(T))
     copy!!(ws.rr, b)
     used = Int32(0)
@@ -555,7 +560,7 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             end
             ws.y[i] = iszero(ws.H[i, i]) ? zero(T) : acc / ws.H[i, i]
         end
-        add_basis_product!(ws.u, ws, ws.y, j)
+        add_basis!(ws.u, ws, ws.y, j)
         resnorm = linres
         breakdown = iszero(hj)
         if linres <= atol || breakdown || used >= maxiter
@@ -587,16 +592,12 @@ function cgs2_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
     w₁ = @view ws.V[:, j + 1]
     mul!(hd, Vj', ws.w)
     copyto!(ws.hh, 1, ws.hd, 1, j)
-    for i in 1:j
-        ws.H[i, j] = ws.hh[i]
-    end
+    @views ws.H[1:j, j] .= ws.hh[1:j]
     mul!(ws.w, Vj, hd, -one(T), one(T))
     w₁ .= ws.w
     mul!(@view(ws.hd[1:(j + 1)]), (@view ws.V[:, 1:(j + 1)])', w₁)
     copyto!(ws.hh, 1, ws.hd, 1, j + 1)
-    for i in 1:j
-        ws.H[i, j] += ws.hh[i]
-    end
+    @views ws.H[1:j, j] .+= ws.hh[1:j]
     mul!(ws.w, Vj, hd, -one(T), one(T))
     h₂² = R(norm2(@view ws.hh[1:j]))
     s₁ = R(real(ws.hh[j + 1]))
@@ -604,9 +605,16 @@ function cgs2_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
     return pythagoras ? sqrt(s₁ - h₂²) : R(rnorm(ws.w))
 end
 
-# `s += V_k y` for the host weights `y`, as one matrix–vector product: the weights go to the
-# storage of the basis first, in `ws.hd`.
-@inline function add_basis_product!(s, ws::GMRESWorkspace{T}, y, k::Int) where {T}
+# `s += V_k y` for the host weights `y`, on the path of the last solve: after an MGS solve one
+# update per column of `V_k`, in the order of the basis; after a CGS2 solve one matrix–vector
+# product, for which the weights go to the storage of the basis first, in `ws.hd`.
+@inline function add_basis!(s, ws::GMRESWorkspace{T}, y, k::Int) where {T}
+    if ws.mgs
+        for i in 1:k
+            @views s .+= y[i] .* ws.V[:, i]
+        end
+        return s
+    end
     copyto!(ws.hd, 1, y, 1, k)
     mul!(s, (@view ws.V[:, 1:k]), (@view ws.hd[1:k]), one(T), one(T))
     return s
@@ -654,12 +662,12 @@ end
     return rnorm(hessenberg_product!(ws, y, k))
 end
 
-# `V_k y` in the storage of `s`, one matrix–vector product. The accumulation is the one
+# `V_k y` in the storage of `s`, on the path of the last solve on `ws`. The accumulation is the one
 # `gmres_solve!` makes for the solution from zero, so the weights of an unrestarted GMRES direction
 # rebuild it bit for bit.
 @inline function reduced_direction!(s, ws::GMRESWorkspace{T}, y, k::Int) where {T}
     fill!(s, zero(T))
-    return add_basis_product!(s, ws, y, k)
+    return add_basis!(s, ws, y, k)
 end
 
 """

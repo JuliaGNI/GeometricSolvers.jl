@@ -114,8 +114,8 @@ The Arnoldi process of `GMRES` orthogonalises each new Krylov vector by classica
 a second pass (CGS2), which takes two reductions over the basis per inner iteration, and one more,
 or three where [`rnorm`](@ref) scales, on an iteration where the norm of the new vector is formed
 explicitly. `GMRES(; mgs = true)` selects modified Gram–Schmidt, which takes `j + 1` reductions at
-inner iteration `j`; on a device, each reduction is a synchronisation. The inner GMRES of a [`GMRESRefinement`](@ref) orthogonalises by
-modified Gram–Schmidt whatever `GMRES` selects.
+inner iteration `j`; on a device, each reduction is a synchronisation. The inner GMRES of a
+[`GMRESRefinement`](@ref) orthogonalises by modified Gram–Schmidt whatever `GMRES` selects.
 
 The matrix-free [`DogLeg`](@ref) runs on the Arnoldi relation of an unrestarted `GMRES` only
 (`restart == maxiter`), and a `Newton` with a preconditioner or a restarted `GMRES` under it raises

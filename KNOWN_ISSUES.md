@@ -642,3 +642,19 @@
   or `backsolve!` with a `SubArray` does.
 - **kind:** found late
 - **found:** #96
+
+### K99 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual
+
+- **location:** `src/linear/gmres.jl:547` (`linres` from the rotated right-hand side)
+- **evidence:** with `A = Diagonal(1:6) + 0.1 randn(Xoshiro(1), 6, 6)`, `b = randn` from the same
+  generator, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32` reports
+  `resnorm = 5.39e-17`, while the true residual is `‖b − A d‖ = 9.5e-8 ‖b‖`; in `Float64` it
+  reports `6.0e-35` against `2.4e-16 ‖b‖`. Modified Gram–Schmidt (`mgs = true`) reports `1.07e-7`
+  against `1.17e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂` is
+  round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off of
+  a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1720`). The true
+  residual stays at the round-off of the solve; only
+  the reported value is low, and only where the solve runs to `j = n` without meeting `tol`.
+- **kind:** found late
+- **found:** 2026-11-23
