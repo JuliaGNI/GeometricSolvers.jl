@@ -15,8 +15,11 @@ so that a compat-only bump can be told apart from an interface change.
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
   counts as zero: the factor's `rank`, `SolverStatus.rank` and the truncation of the solve follow
   it, on the R1 square and rectangular SVDs, the host `DenseSVD`, the KernelAbstractions
-  `DeviceSVD` and the CUDA `gesvdj!` path with its Jacobi fallback. The default `rtol = nothing`
-  keeps the cutoff `√m · eps(R) · σ̂₁` bit for bit, and `SVDFactorization()` stays an `isbits`
+  `DeviceSVD` and the CUDA `gesvdj!` path with its Jacobi fallback. On CUDA a cutoff below the
+  sweep tolerance `√m · eps(R)`, such as `rtol = 0`, runs on the own Jacobi kernel in place of
+  `gesvdj!`, which returns a singular value far below `eps(R) · σ̂₁` as 0 in single precision, so
+  `rtol = 0` keeps every nonzero singular value on every route. The default `rtol = nothing` keeps
+  the cutoff `√m · eps(R) · σ̂₁` bit for bit, and `SVDFactorization()` stays an `isbits`
   value of size 0, `=== SVDFactorization{Nothing}()`. The Jacobi sweep keeps `√m · eps(R)` as its
   tolerance whatever `rtol` is. `rtol` is stored in `real(TF)` for a float `TF` and in `Float64`
   for `TF = Nothing` and a precision marker, and the constructor refuses a stored value outside

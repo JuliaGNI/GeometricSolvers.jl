@@ -393,9 +393,11 @@ if CUDA.functional()
         ldiv!!(dx_ok, fac_svd_fb, CuArray(T[5, 4]))
         @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
 
-        # SVDFactorization(; rtol) on the gesvdj! path and on its Jacobi fallback: the singular
-        # values 1, 1e-10, 1e-14, a diagonal with its columns permuted and signed, whose default
-        # rank is 1 in Float32 and 3 in Float64
+        # SVDFactorization(; rtol) through `factorize!!` and on the Jacobi fallback of `gesvdj!`:
+        # the singular values 1, 1e-10, 1e-14, a diagonal with its columns permuted and signed,
+        # whose default rank is 1 in Float32 and 3 in Float64. In single precision `gesvdj!`
+        # returns 1e-10 and 1e-14 as 0, so a cutoff below the sweep tolerance (rtol 1e-9, 1e-12
+        # and 0 in Float32, rtol 0 in Float64) runs on the own Jacobi kernel.
         A_rt = zeros(T, 3, 3)
         A_rt[2, 1], A_rt[3, 2], A_rt[1, 3] = 1, -1e-10, 1e-14
         x_rt = CuArray(zeros(T, 3))
@@ -413,6 +415,20 @@ if CUDA.functional()
             @test fac_fb.info == 0
             @test fac_fb.rank == r_rt
             @test all(iszero, Array(fac_fb.U)[:, (r_rt + 1):end])
+        end
+
+        # The singular values 1, 1e-3, 1e-5, which `gesvdj!` resolves in every element type: the
+        # cutoffs 1e-2 and 1e-4 lie above the sweep tolerance and run on `gesvdj!`, rtol 0 on the
+        # own Jacobi kernel
+        A_rtb = zeros(T, 3, 3)
+        A_rtb[2, 1], A_rtb[3, 2], A_rtb[1, 3] = 1, -1e-3, 1e-5
+        for (m_rt, r_rt) in ((SVDFactorization(), 3), (SVDFactorization(; rtol = 1e-2), 1),
+            (SVDFactorization(; rtol = 1e-4), 2), (SVDFactorization(; rtol = 0), 3))
+            fac_rt = factorize!!(
+                dense_factor(m_rt, prob_rt, x_rt, nothing), m_rt, CuArray(A_rtb))
+            @test fac_rt.info == 0
+            @test fac_rt.rank == r_rt
+            @test all(iszero, Array(fac_rt.U)[:, (r_rt + 1):end])
         end
 
         # SVD prescaling on a subnormal input

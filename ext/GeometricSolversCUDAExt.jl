@@ -120,6 +120,14 @@ function GeometricSolvers.factorize!!(
         fac.factors .= J
     end
     all(isfinite, J) || return _cusolver_svd_failed!(fac, 0)
+    # In single precision `gesvdj!` returns a singular value far below `eps(R) · σ̂₁` as 0, whatever
+    # its tolerance, while the own Jacobi kernel resolves it. A cutoff below the sweep tolerance
+    # `√m · eps(R)`, such as `rtol = 0`, needs those values, so it runs on the own kernel. The
+    # default `rtol = nothing` gives the sweep tolerance itself and stays on `gesvdj!`.
+    RT, m_rows = real(T), size(fac.U, 1)
+    GeometricSolvers.rank_tolerance(method.rtol, m_rows, RT) <
+    GeometricSolvers.jacobi_tolerance(m_rows, RT) &&
+        return GeometricSolvers.ka_factorize_svd!(fac, J, method)
     e = GeometricSolvers.matrix_exponent(J)
     fac.U .= GeometricSolvers.ldexp2.(J, -e)
     all(isfinite, fac.U) || return _cusolver_svd_failed!(fac, e)
