@@ -52,10 +52,12 @@ calls reuse them across Newton steps. [`UMFPACKFactorization`](@ref) builds the 
 [`UMFPACKLU`](@ref) on such a pattern on a host `Vector{Float64}` or `Vector{ComplexF64}`, with no
 package to load: its first `factorize!!` runs UMFPACK's symbolic analysis, and every later one
 reuses it. It raises `ArgumentError` at `init` for any other element type and for a solve with no
-sparse pattern, such as one on a static or scalar iterate. These two configurations have a host
-sparse factor, and [`has_sparse_factor`](@ref) names them. A detected pattern is used only where
-`has_sparse_factor` holds and, under a `Newton` `regularization ≠ 0`, only where the pattern holds
-the whole structural diagonal. Everywhere else — `QRFactorization`, `SVDFactorization`, mixed
+sparse pattern, such as one on a static or scalar iterate, or one whose detected pattern `Newton`
+does not use: under `LevenbergMarquardt`, and under `regularization ≠ 0` where the pattern does
+not hold the whole structural diagonal. These two configurations have a host sparse factor, and
+[`has_sparse_factor`](@ref) names them. A detected pattern is used only where `has_sparse_factor`
+holds and, under a `Newton` `regularization ≠ 0`, only where the pattern holds the whole
+structural diagonal. Everywhere else — `QRFactorization`, `SVDFactorization`, mixed
 precision such as `LUFactorization(Float64)` on a `Float32` iterate, an `LUFactorization` on a
 complex iterate, or no `Sparspak` — a detected pattern gives the dense factor and a dense Jacobian
 buffer, as a solve with no pattern does. An explicit `jacobian_prototype` outside these
