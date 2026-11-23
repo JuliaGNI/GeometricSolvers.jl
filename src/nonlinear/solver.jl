@@ -389,8 +389,8 @@ and custom structs not registered with `Adapt.@adapt_structure` raise an `Argume
 combinator method, [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref),
 [`Switch`](@ref), [`Fallback`](@ref), [`Anderson`](@ref) or [`Broyden`](@ref), and a
 preconditioning method, [`LeftPreconditioned`](@ref) or [`RAS`](@ref), has no implicit
-differentiation: with a
-`ForwardDiff.Dual` in `x₀` or `p`, `solve` raises an `ArgumentError` before the primal solve.
+differentiation: with a `ForwardDiff.Dual` in `x₀` or `p`, `solve` raises an `ArgumentError`
+before the primal solve.
 
 `prob` may capture an object whose type holds a `ForwardDiff.Dual`, such as a
 `ForwardDiff.GradientConfig` or a dual work buffer, and `solve` does not check it. A residual
