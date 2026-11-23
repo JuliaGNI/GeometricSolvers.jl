@@ -120,8 +120,8 @@ refactorises in the working type. [Mixed precision](@ref mixed) gives the condit
 **Conditions of the regime.** [`init`](@ref) allocates each buffer once, so a system that is solved
 more than once goes through [`init`](@ref) and [`solve!`](@ref). On a device array the
 factorisation methods run on device kernels. On CUDA, [`LUFactorization`](@ref),
-[`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types; on
-Metal, [`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
+[`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types,
+except an [`SVDFactorization`](@ref) whose `rtol` cutoff lies below `√m · eps(R)`; on Metal, [`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
 [What runs where](@ref)). The residual of a device solve indexes no scalars. On a device array,
 [`LevenbergMarquardt`](@ref) runs with [`SVDFactorization`](@ref) and `scaling = :none` only, and
 the sparse LU does not run. This page runs no device example.
