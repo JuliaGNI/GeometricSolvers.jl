@@ -899,6 +899,11 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         sns4 = filter(c -> c[13] == "SimpleNonlinearSolve", f4)
         @test [c[14] for c in sns4] == [SNS_ROCM; fill(NO_METHOD_SNS, 3)]
         @test all(c -> all(==("-"), c[15:33]), sns4)
+        # On any other device, the SimpleNonlinearSolve cell within the band is launched.
+        cuda = Device("cuda", "spark", nothing, identity, identity, "selftest card")
+        f4cuda = [split(l, ","; limit = 33) for l in first(r2_row_lines(cuda, row4))]
+        @test [c[14] for c in filter(c -> c[13] == "SimpleNonlinearSolve", f4cuda)] ==
+              ["ran"; fill(NO_METHOD_SNS, 3)]
         # The grid: the cpu mode, the band of every variant but host-r1, and the system counts.
         @test grid_status("cpu", 6, "gs-newton") == "not run: cpu mode"
         @test grid_status("cpu", 6, "host-r1") == "not run: cpu mode"
