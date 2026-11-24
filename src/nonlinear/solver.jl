@@ -170,8 +170,10 @@ factorisation that the step took at its start point `x_k` passes the test, with 
 `k ≥ options.min_iterations`, the solve returns `x_k` with `SUCCESS` and
 `status.stationary == true`, and the step is discarded: the status counts the `k` iterations that
 reached `x_k` and carries the `fnorm` and `stepnorm` of `x_k` and the diagnostics of its
-factorisation. The step from `x₀` is always kept, and a step along a reused factor takes no
-factorisation at its start point. When neither test holds
+factorisation. The step from `x₀` is always kept. A step along a reused factor takes no
+factorisation at its start point unless it falls back to a fresh one there, after a failed line
+search or refinement; without one, it carries the diagnostics that the solve tested at `x_k`
+before, which failed, so it is kept. When neither test holds
 after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
 at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
 would start — unless the stationarity test, re-measured at that iterate, holds, which a

@@ -568,19 +568,10 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS}
     kept::KS
 end
 
-# The state of a factorising method, whose linear solve keeps no workspace of its own: the fifteen
-# fields of a state whose linear method forms and factorises a Jacobian.
-@inline function NewtonState(jacprep::JP, jvpprep::VP, Fx::FX, d::D, fac::FAC, J::JM, g::G,
-        rule::RS, merit::PH, fnorm::R, diag::DG, refbuf::RB, fac_T::FT, promoted::Bool,
-        slow_steps::Int32) where {JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT}
-    return NewtonState(
-        jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf, fac_T,
-        promoted, slow_steps, nothing)
-end
-
-# A state with no slots for the start point of a step: the sixteen fields up to the workspace.
+# A state with no slots for the start point of a step: the fields up to the workspace `ws`, which
+# defaults to `nothing` for a factorising method, whose linear solve keeps no workspace of its own.
 @inline function NewtonState(jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag,
-        refbuf, fac_T, promoted::Bool, slow_steps::Int32, ws)
+        refbuf, fac_T, promoted::Bool, slow_steps::Int32, ws = nothing)
     return NewtonState(
         jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf, fac_T,
         promoted, slow_steps, ws, (nothing, nothing))

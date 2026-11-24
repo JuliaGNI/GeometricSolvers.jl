@@ -1056,6 +1056,9 @@ end
     @test ratio_a(-one(T)) > g_tol
     prob_s = LeastSquaresProblem(r_s, J_s)
     prob_d = LeastSquaresProblem(r_d!, J_d!, 2)
+    # the same problem on a `Number` iterate, with its Jacobian as a column
+    prob_n = LeastSquaresProblem((x, p) -> SVector(r1(x), one(T)),
+        (x, p) -> SVector(r1(x) * dL(x), zero(T)))
     for alg in (GaussNewton(), GaussNewton(; linsolve = SVDFactorization()))
         # from t = 1 the first step reaches t = 0, whose fresh factorisation, at the start of the
         # second step, reads stationary; that step goes to t = −1, which does not, so the solve
@@ -1070,6 +1073,21 @@ end
         @test isapprox(st.stepnorm, one(T); rtol = 8 * eps(T))
         @test ratio_a(x[1]) <= g_tol
         @test isapprox(st.gradratio, ratio_a(x[1]); rtol = sqrt(eps(T)))
+        # a `Number` iterate keeps the start point by value
+        xn, stn = solve(prob_n, one(T), alg)
+        @test xn isa T
+        @test stn.code === SUCCESS
+        @test stn.stationary === true
+        @test stn.iterations == 1
+        @test abs(xn) <= 8 * eps(T)
+        # the budget ends on the discarded step: the solve returns t = 0, which passed the test,
+        # with `SUCCESS` and the one step that reached it, not `MAXITERS` at t = −1
+        x2, st2 = solve(prob_s, SVector{1, T}(one(T)), alg;
+            options = Options(T; max_iterations = 2))
+        @test st2.code === SUCCESS
+        @test st2.stationary === true
+        @test st2.iterations == 1
+        @test abs(x2[1]) <= 8 * eps(T)
         for AT in ARRAY_BACKENDS
             @testset "(a) $(nameof(typeof(alg.linsolve))), $AT" begin
                 solver = init(prob_d, AT(ones(T, 1)), alg)
@@ -1156,14 +1174,20 @@ end
     # fails it. The model reduction of the step is at the rounding level of ‖r‖, so rounding decides
     # whether `DogLeg` accepts it: where it rejects it, the zero step ends the solve at the first
     # iterate; where it accepts it, the solve returns the first iterate instead of going on to a
-    # minimum.
-    m_b = T === Float64 ? T(1e5) : T(200)
-    c_b = sqrt(2 / m_b)
+    # minimum. `LevenbergMarquardt` damps the steps, so u reaches 1 over several steps while the
+    # distance in v from the saddle grows by at most m per step; with m = 1e3 in Float64 and
+    # m = 200 in Float32 an iterate near the saddle passes the test, and the next step fails it.
     perturbations = ((one(T), nextfloat(one(T))), (nextfloat(one(T)), one(T)),
         (prevfloat(one(T)), one(T)), (one(T), nextfloat(one(T), 2)),
         (prevfloat(one(T)), nextfloat(one(T))), (nextfloat(one(T), 3), prevfloat(one(T))))
     dogleg = GaussNewton(; globalization = DogLeg())
-    for (d₁, d₂) in perturbations
+    # a device array takes `LevenbergMarquardt` with an SVD factorisation only
+    lm = GaussNewton(; globalization = LevenbergMarquardt(), linsolve = SVDFactorization())
+    for (alg_b, m_b) in ((dogleg, T === Float64 ? T(1e5) : T(200)),
+            (lm, T === Float64 ? T(1e3) : T(200))),
+        (d₁, d₂) in perturbations
+
+        c_b = sqrt(2 / m_b)
         rb_s(x, p) = SVector(x[1] - one(T), c_b * x[2], -((x[2] - d₁) * (x[2] + d₂)))
         Jb_s(x, p) = SMatrix{3, 2, T, 6}(
             one(T), zero(T), zero(T), zero(T), c_b, -((x[2] + d₂) + (x[2] - d₁)))
@@ -1185,14 +1209,15 @@ end
             return J
         end
         x0_b = zero(SVector{2, T})
-        results = Any[solve(LeastSquaresProblem(rb_s, Jb_s), x0_b, dogleg)]
+        results = Any[solve(LeastSquaresProblem(rb_s, Jb_s), x0_b, alg_b)]
         for AT in ARRAY_BACKENDS
             push!(results, solve!(init(
                 LeastSquaresProblem(rb_d!, Jb_d!, 3), AT(zeros(T, 2)),
-                dogleg)))
+                alg_b)))
         end
+        gname = nameof(typeof(alg_b.globalization))
         for (x, st) in results
-            @testset "(b) d₁ = $d₁, d₂ = $d₂, $(typeof(x))" begin
+            @testset "(b) $gname, d₁ = $d₁, d₂ = $d₂, $(typeof(x))" begin
                 xb = SVector{2, T}(Array(x))
                 @test st.code === SUCCESS
                 @test st.stationary === true
