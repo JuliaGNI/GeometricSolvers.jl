@@ -74,10 +74,11 @@ iterate that a step returns, the earliest of equal norms, and [`finish!!`](@ref)
 place of the last iterate when the solve ends with a code other than `SUCCESS` and its norm is
 finite and below the norm of the last one. `status.fnorm` then reports that norm, and every other
 field of the status is that of `best = false`: the code, the counts, the step norm and the
-diagnostics of the last fresh factorisation. For an array iterate the residual buffer then holds the residual of
-the returned iterate. Otherwise the solve returns what `best = false` returns. The ranking reads
-the 2-norm under every [`StoppingNorm`](@ref) of the [`Options`](@ref), and each solve starts a new
-record in [`start!!`](@ref), so a state reused across solves restores nothing of an earlier one.
+diagnostics of the last fresh factorisation. For an array iterate the residual buffer then holds
+the residual of the returned iterate. Otherwise the solve returns what `best = false` returns. The
+ranking reads the 2-norm under every [`StoppingNorm`](@ref) of the [`Options`](@ref), and each
+solve starts a new record in [`start!!`](@ref), so a state reused across solves restores nothing
+of an earlier one.
 The state keeps a copy of `x` and of `F(x)` for an array iterate, which [`init_state`](@ref)
 allocates once, and holds the record by value for a value iterate, where it stays `isbits`. A
 combinator that steps a `Newton` member, such as [`Repeat`](@ref) or [`Switch`](@ref), gets the
