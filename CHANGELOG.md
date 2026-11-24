@@ -62,6 +62,31 @@ so that a compat-only bump can be told apart from an interface change.
   and 18/u0/`Float32` change nothing else.
   `scripts/standard/update_reference.jl` reports 0 cells that differ under the table's comparison.
 
+- **`UMFPACKFactorization()` adds the sparse LU of UMFPACK, and the package extension
+  `GeometricSolversCUDSSExt` the sparse LU of cuDSS.** `UMFPACKFactorization` is a new exported
+  linear-solver method. On a host `Vector{Float64}` or `Vector{ComplexF64}` iterate with a
+  `SparseMatrixCSC{<:Any, Int}` pattern, from a `jacobian_prototype` or a detected `AutoSparse`
+  pattern, `init_linear` builds the new factor `UMFPACKLU` from `SparseArrays`, with no package to
+  load. Its first `factorize!!` runs UMFPACK's symbolic analysis, and every later one reuses it
+  (`fac.lu.symbolic` stays the same object). A singular Jacobian gives `info = 1` and `SINGULAR`
+  without throwing, and so does a non-finite entry, which is refused before UMFPACK. `init` raises
+  `ArgumentError` for a `Float32` or `ComplexF32` iterate, which the standard library would promote
+  to `Float64` in silence, and for a problem with no sparse pattern, such as one on a static or
+  scalar iterate. `has_sparse_factor` is `true` for it on `Float64` and `ComplexF64`.
+  `LUFactorization()` on a `SparseMatrixCSC` prototype keeps the Sparspak factor. UMFPACK is
+  distributed under the GPL with `SparseArrays`.
+  With `CUDA` and `CUDSS` loaded, `LUFactorization()` on a `CuSparseMatrixCSR{T}` prototype and a
+  `CuVector{T}` iterate, `T <: LinearAlgebra.BlasFloat`, gets a cuDSS factor: the analysis runs at
+  the first `factorize!!` and later steps refactorise, a non-finite entry or a nonzero cuDSS `info`
+  gives `SINGULAR`, and mixed precision raises `ArgumentError`. Its Jacobian comes from an analytic
+  `J`. `Project.toml` adds `CUDSS` under `[weakdeps]`, `[extensions]` and `[compat]` (`1`).
+  The tests are `test/linear/sparse.jl`, in `core`, whose solves agree with Sparspak (real) or the
+  dense `lu` (complex) within `8n·eps(T)·κ∞`, and the cuDSS rows of
+  `test/gpu/cuda/runtests.jl`: the dispatch and JET rows run without a device, and the solve rows,
+  which compare with UMFPACK on the host copy and count one analysis per solver, run by hand on a
+  CUDA device. `sparse_bracket_problem` in `test/helpers/sparse_problems.jl` takes a complex
+  element type.
+
 - **The `KernelAbstractions` LDLᵀ path has no serial kernels.** `ka_ldlt_factor_serial_kernel!`
   and `ka_ldlt_backsolve_serial_kernel!` are removed: `ka_ldlt!` and `ka_ldlt_backsolve!` take an
   `AbstractGPUArray`, whose backend is never `CPU`, so the workgroup kernel ran at every `n` and the
