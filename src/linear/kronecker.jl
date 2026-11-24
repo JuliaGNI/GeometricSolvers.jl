@@ -1,6 +1,6 @@
-# The factor of `KroneckerFactorization`: the `n × n` blocks `γᵢ I - J` of the Newton matrix
-# `I - h A ⊗ J` of a stage system in the eigenbasis of the stage matrix `A = V Λ V⁻¹`, and the
-# transforms `V` and `V⁻¹` between the stacked increments and that basis.
+# The factor of `KroneckerFactorization`: the `n × n` blocks `γᵢ I - J`, each scaled by a power of
+# two, of the Newton matrix `I - h A ⊗ J` of a stage system in the eigenbasis of the stage matrix
+# `A = V Λ V⁻¹`, and the transforms `V` and `V⁻¹` between the stacked increments and that basis.
 #
 # The blocks fall into two lists. A block of the first list is factorised in the element type `T`
 # of the iterate, and its solution enters the step once: a real eigenvalue for a real `T`, and each
@@ -86,47 +86,47 @@ function kronecker_factor(block::LinearMethod, A::AbstractMatrix, x::AbstractVec
         real(T)(NaN), 0, false, true)
 end
 
-# `M = γ I - J`.
-@inline function shift_block!(M::AbstractMatrix, γ, J::AbstractMatrix)
-    @inbounds for j in axes(J, 2), i in axes(J, 1)
-
-        M[i, j] = ifelse(i == j, γ, zero(γ)) - J[i, j]
-    end
-    return M
-end
+# The power of two `τ` by which the blocks of a refresh at the nonzero finite step `h` are scaled:
+# the block `τ (γ I - J) = (μ / η) I - τ J`, with `η = h / τ`. For `|h| < 1`, `τ = 2^exponent(h)`,
+# so that `|η|` lies in `[1, 2)` and `μ / η` stays finite where `γ = μ / h` overflows for a tiny
+# `h`; otherwise `τ = 1`, so that `τ J` cannot overflow. A power of two scales without rounding,
+# up to an underflow, so where `γ` is finite the block is `γ I - J` times `τ` exactly.
+@inline step_scale(h) = abs(h) < 1 ? ldexp(one(h), exponent(h)) : one(h)
 
 # The refresh of the factor at the step `h` and the Jacobian `J` of the field: each block
-# `γᵢ I - J`, `γᵢ = μᵢ / h`, factorised with `block`.
+# `τ (γᵢ I - J)`, `γᵢ = μᵢ / h`, factorised with `block`.
 function factorize_stages!!(fac::KroneckerFactor, block::LinearMethod, J::AbstractMatrix, h)
     iszero(h) && return with_refresh(fac, h, 0, true, true)
     (isfinite(h) && all(isfinite, J)) || return with_refresh(fac, h, 0, false, false)
+    τ = step_scale(h)
+    η = h / τ
     info = 0
     for i in eachindex(fac.facs)
-        f = factorize!!(fac.facs[i], block, shift_block!(fac.M, fac.μ[i] / h, J))
+        f = factorize!!(fac.facs[i], block, regularize!!(fac.M .= .-τ .* J, fac.μ[i] / η))
         fac.facs[i] = f
         info == 0 && f.info != 0 && (info = i)
     end
     for i in eachindex(fac.pair_facs)
-        f = factorize!!(fac.pair_facs[i], block, shift_block!(
-            fac.pair_M, fac.pair_μ[i] /
-                        h, J))
+        f = factorize!!(fac.pair_facs[i], block,
+            regularize!!(fac.pair_M .= .-τ .* J, fac.pair_μ[i] / η))
         fac.pair_facs[i] = f
         info == 0 && f.info != 0 && (info = length(fac.facs) + i)
     end
     return with_refresh(fac, h, info, false, true)
 end
 
-# `b = γ (W[i, :] ⊗ I) r`, the right-hand side of block `i` scaled by its `γ`: with
-# `I - h λ J = h λ (γ I - J)`, the block solution `(I - h λ J)⁻¹ y` is `(γ I - J)⁻¹ (γ y)`.
+# `b = ρ (W[i, :] ⊗ I) r`, the right-hand side of block `i` scaled by the `ρ = μ / η` of its block
+# `ρ I - τ J`: with `I - h λ J = (h λ / τ) (ρ I - τ J)`, the block solution `(I - h λ J)⁻¹ y` is
+# `(ρ I - τ J)⁻¹ (ρ y)`.
 @inline function block_rhs!(
-        b::AbstractVector, W::AbstractMatrix, i::Int, γ, r::AbstractVector)
+        b::AbstractVector, W::AbstractMatrix, i::Int, ρ, r::AbstractVector)
     n = length(b)
     @inbounds for l in 1:n
         acc = zero(eltype(b))
         for j in axes(W, 2)
             acc += W[i, j] * r[(j - 1) * n + l]
         end
-        b[l] = γ * acc
+        b[l] = ρ * acc
     end
     return b
 end
@@ -137,9 +137,10 @@ function ldiv!!(d::AbstractVector{T}, fac::KroneckerFactor{T}, r::AbstractVector
     fac.identity && return copyto!(d, r)
     fac.finite || return fill!(d, T(NaN))
     n = length(fac.b)
+    η = fac.h / step_scale(fac.h)
     fill!(d, zero(T))
     for i in eachindex(fac.facs)
-        w = ldiv!!(fac.b, fac.facs[i], block_rhs!(fac.b, fac.W, i, fac.μ[i] / fac.h, r))
+        w = ldiv!!(fac.b, fac.facs[i], block_rhs!(fac.b, fac.W, i, fac.μ[i] / η, r))
         @inbounds for k in axes(fac.V, 1)
             v = fac.V[k, i]
             for l in 1:n
@@ -149,7 +150,7 @@ function ldiv!!(d::AbstractVector{T}, fac::KroneckerFactor{T}, r::AbstractVector
     end
     for i in eachindex(fac.pair_facs)
         w = ldiv!!(fac.pair_b, fac.pair_facs[i],
-            block_rhs!(fac.pair_b, fac.pair_W, i, fac.pair_μ[i] / fac.h, r))
+            block_rhs!(fac.pair_b, fac.pair_W, i, fac.pair_μ[i] / η, r))
         @inbounds for k in axes(fac.pair_V, 1)
             v = fac.pair_V[k, i]
             for l in 1:n

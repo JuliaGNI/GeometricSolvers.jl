@@ -191,10 +191,10 @@ The stage matrix `A` of `prob`, or `nothing` when `prob` carries none: a problem
 the `stage_matrix` keyword, and any problem that is not a [`NonlinearProblem`](@ref), gives
 `nothing`.
 """
-stage_matrix(prob::NonlinearProblem) = _stage_matrix(prob.F)
+function stage_matrix(prob::NonlinearProblem)
+    return prob.F isa StageResidual ? prob.F.stage_matrix : nothing
+end
 stage_matrix(::AbstractNonlinearProblem) = nothing
-@inline _stage_matrix(F::StageResidual) = F.stage_matrix
-@inline _stage_matrix(F) = nothing
 
 """
     stage_jacobian(prob)
@@ -202,10 +202,10 @@ stage_matrix(::AbstractNonlinearProblem) = nothing
 The Jacobian `jac!(J, Z, p)` of the vector field of `prob`, or `nothing` when `prob` carries none,
 as for [`stage_matrix`](@ref).
 """
-stage_jacobian(prob::NonlinearProblem) = _stage_jacobian(prob.F)
+function stage_jacobian(prob::NonlinearProblem)
+    return prob.F isa StageResidual ? prob.F.stage_jacobian : nothing
+end
 stage_jacobian(::AbstractNonlinearProblem) = nothing
-@inline _stage_jacobian(F::StageResidual) = F.stage_jacobian
-@inline _stage_jacobian(F) = nothing
 
 """
     jacobian_prototype(prob)

@@ -3,6 +3,7 @@
 # with a counting block factor, the refusals at `init`, and the edges of the stage system.
 
 using ADTypes: AutoForwardDiff
+using ForwardDiff: ForwardDiff
 using GeometricSolvers
 using GeometricSolvers: DenseLU, LinearMethod, factorize!!, init_linear
 using JET: JET, @test_opt
@@ -43,6 +44,15 @@ function kronecker_options(::Type{T}) where {T}
         max_iterations = 8, max_stalls = 5)
 end
 
+# The options of a solve that takes one step, and the bound `C_STEP · eps · ‖Z‖∞` on the
+# difference of two first steps, ten times the largest measured ratio, 1.6.
+function first_step(::Type{T}) where {T}
+    Options(
+        T; f_abstol = stage_xtol(T), f_reltol = 0, x_abstol = stage_xtol(T), x_reltol = 0,
+        max_iterations = 1, max_stalls = 5)
+end
+const C_STEP = 16
+
 # A block method that factorises with `LUFactorization()` and logs the element type and the size of
 # each matrix it factorises.
 struct CountingLU <: LinearMethod{Nothing} end
@@ -55,13 +65,16 @@ function GeometricSolvers.factorize!!(fac::DenseLU, ::CountingLU, J::AbstractMat
     return factorize!!(fac, LUFactorization(), J)
 end
 
-# The bytes of a `solve!` from `x₀`, after one warm call through the barrier.
-function stage_solve_allocations(x::X, x₀::X, solver::S, p::Q) where {X, S, Q}
-    copyto!(x, x₀)
-    solve!(solver, x, p)
-    copyto!(x, x₀)
-    return @allocated solve!(solver, x, p)
+# The bytes of a call `f(a)`, after one warm call through the barrier.
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+
+# A `solve!` of `solver` from `x₀` into `x`, at the parameters `p`.
+struct SolveFrom{X, S, Q}
+    x₀::X
+    solver::S
+    p::Q
 end
+(f::SolveFrom)(x) = (copyto!(x, f.x₀); solve!(f.solver, x, f.p))
 
 stage_params(::Type{T}, h, y₀) where {T} = (h = real(T)(h), y = T.(y₀))
 
@@ -121,6 +134,22 @@ end
         Zc, _ = solve(prob, Z₀, Newton(), stage_params(T, 1.0, y₀); options = opt)
         @test maximum(abs, Za .- Zb) <= C_AGREE * stage_xtol(T)
         @test maximum(abs, Za .- Zc) > 100 * stage_xtol(T)
+        # The first step from `Z = 0`, where `I - h A ⊗ J(yₙ)` is the Jacobian of the stacked
+        # residual, so the two first steps solve one linear system and differ by rounding only:
+        # at most 1.6 eps · ‖Z‖∞ measured over `h = 0.37`, `0.05` and `1`. A factor at another
+        # `h` than the residual's moves the step by a fraction of itself.
+        Zk, _ = solve(prob, Z₀, KRON, stage_params(T, 0.37, y₀); options = first_step(T))
+        Zs, _ = solve(
+            prob, Z₀, Newton(), stage_params(T, 0.37, y₀); options = first_step(T))
+        @test maximum(abs, Zk .- Zs) <= C_STEP * eps(T) * maximum(abs, Zs)
+        # with reuse, a second solve! at another `h` refreshes the factor at that `h`
+        solver = init(prob, Z₀, Newton(; linsolve = KroneckerFactorization(), reuse = 3),
+            stage_params(T, 0.37, y₀); options = first_step(T))
+        solve!(solver)
+        Zk, _ = solve!(solver, zeros(T, 3n), stage_params(T, 0.05, y₀))
+        Zs, _ = solve(
+            prob, Z₀, Newton(), stage_params(T, 0.05, y₀); options = first_step(T))
+        @test maximum(abs, Zk .- Zs) <= C_STEP * eps(T) * maximum(abs, Zs)
     end
 end
 
@@ -191,7 +220,7 @@ end
 @testset "the refusal bound is eps(real(T))^(-1/2)" begin
     for T in REAL_ELTYPES
         bound = inv(sqrt(eps(real(T))))
-        for (factor, refused) in ((0.5, false), (2.0, true))
+        for (factor, refused) in ((0.8, false), (1.25, true))
             A = conditioned_tableau(2 / (factor * bound))
             κ = cond(eigen(A).vectors)
             @test (κ > bound) == refused
@@ -272,6 +301,8 @@ end
           f(zeros(4), ones(4), (h = 0.1, y = [0.5, 0.0]))
     @test stage_matrix(NonlinearProblem(f)) === nothing
     @test stage_jacobian(NonlinearProblem(f)) === nothing
+    @test stage_matrix(NonlinearProblem((G, x, p) -> G)) === nothing
+    @test stage_jacobian(NonlinearProblem((G, x, p) -> G)) === nothing
     @test stage_matrix(LeastSquaresProblem((r, x, p) -> r, 2)) === nothing
 end
 
@@ -418,7 +449,70 @@ end
         Zs, _ = solve(prob, zeros(T, 6), Newton(), p; options = opt)
         @test stk.code == SUCCESS
         @test maximum(abs, Zk .- Zs) <= C_AGREE * stage_xtol(T)
+        # the direction solves `I - h A ⊗ J(yₙ)`, not the Jacobian of the residual at the
+        # iterate, so the factor reports an inexact solve and the line search measures its slope
+        solver = init(prob, zeros(T, 6), KRON, p)
+        solve!(solver)
+        @test !GeometricSolvers.exact_solve(solver.state.fac)
     end
+end
+
+@testset "the block methods" begin
+    A = radau_iia3_tableau()
+    name, f!, jac!, y₀ = ODE_FIELDS[2]
+    for T in REAL_ELTYPES
+        prob, _ = stage_problem(f!, jac!, A, T, 2)
+        p = stage_params(T, 0.1, y₀)
+        Zs, _ = solve(prob, zeros(T, 6), Newton(), p; options = stage_options(T))
+        for block in (QRFactorization(), SVDFactorization())
+            Zk, st = solve(prob, zeros(T, 6),
+                Newton(; linsolve = KroneckerFactorization(; block)), p;
+                options = kronecker_options(T))
+            @test st.code == SUCCESS
+            @test maximum(abs, Zk .- Zs) <= C_AGREE * stage_xtol(T)
+        end
+    end
+    @test_throws "is in general not Hermitian" KroneckerFactorization(;
+        block = CholeskyFactorization())
+    @test_throws "is in general not Hermitian" KroneckerFactorization(;
+        block = LDLTFactorization())
+end
+
+@testset "a tiny step agrees with the stacked solve" begin
+    A = gauss_tableau(3)
+    for T in REAL_ELTYPES, h in (nextfloat(zero(T)), floatmin(T), eps(T))
+
+        prob, _ = stage_problem(pendulum!, pendulum_jac!, A, T, 2)
+        p = (h = h, y = T[acos(0.4), 0.0])
+        Zk, stk = solve(prob, fill(T(0.25), 6), KRON, p; options = stage_options(T))
+        Zs, sts = solve(prob, fill(T(0.25), 6), Newton(), p; options = stage_options(T))
+        @test stk.code == SUCCESS
+        @test sts.code == SUCCESS
+        @test maximum(abs, Zk .- Zs) <= C_AGREE * stage_xtol(T)
+    end
+end
+
+@testset "a huge step keeps the blocks finite" begin
+    # at `h = floatmax(T) / 2` the block `γ I - J` is near `-J`; a scale of `J` by the power of
+    # two below `h` would overflow it
+    A = gauss_tableau(3)
+    for T in REAL_ELTYPES
+        prob, _ = stage_problem(oscillator!, oscillator_jac!, A, T, 2)
+        solver = init(prob, zeros(T, 6), KRON, stage_params(T, 0.1, [0.5, 0.0]))
+        fac = GeometricSolvers.factorize_stages!!(
+            solver.state.fac, LUFactorization(), T[4 4; -4 4], floatmax(T) / 2)
+        @test fac.info == 0
+        @test all(isfinite, GeometricSolvers.ldiv!!(zeros(T, 6), fac, ones(T, 6)))
+    end
+end
+
+@testset "a dual input is refused" begin
+    A = gauss_tableau(2)
+    prob, _ = stage_problem(pendulum!, pendulum_jac!, A, Float64, 2)
+    y = [acos(0.4), 0.0]
+    p = (h = ForwardDiff.Dual(0.1, 1.0), y = y)
+    @test_throws "for a Newton with KroneckerFactorization" solve(
+        prob, zeros(4), KRON, p; options = stage_options(Float64))
 end
 
 @testset "a solve! allocates nothing and infers" begin
@@ -430,7 +524,9 @@ end
         solver = init(prob, copy(x₀), Newton(; linsolve = KroneckerFactorization(), reuse),
             p; options = stage_options(T))
         x = copy(x₀)
-        @test stage_solve_allocations(x, x₀, solver, p) == 0
+        @test allocations(SolveFrom(x₀, solver, p), x) == 0
+        # the control: the barrier sees an allocation
+        @test allocations(collect, x) > 0
         @test (@inferred solve!(solver, x, p))[2].code == SUCCESS
         JET_WORKS && @test_opt target_modules = (GeometricSolvers,) solve!(solver, x, p)
     end

@@ -168,15 +168,18 @@ element type `T` of the iterate, a real eigenvalue takes one block in `T`, and a
 pair takes one block in `complex(T)`, whose solution gives the other half of the pair as its
 conjugate: a Gauss or Radau IIA tableau of `s` stages takes `⌊s/2⌋` blocks in `complex(T)` and
 `s mod 2` in `T`. For a complex `T` each of the `s` eigenvalues takes one block in `T`. `block` is
-the linear method of each block, a method that factorises in the working precision, such as
-[`LUFactorization`](@ref); a [`GMRES`](@ref), a
-`KroneckerFactorization` and a method with a factorisation precision raise an `ArgumentError`.
+the linear method of each block, a method that factorises a general square matrix in the working
+precision, such as [`LUFactorization`](@ref), [`QRFactorization`](@ref) or
+[`SVDFactorization`](@ref). A [`GMRES`](@ref), a `KroneckerFactorization`, a method with a
+factorisation precision, and a [`CholeskyFactorization`](@ref) or
+[`LDLTFactorization`](@ref), which read one triangle of a block that is in general not Hermitian,
+raise an `ArgumentError`.
 
 The step `h` is read from the parameters as `p.h` at each refresh, and `jac!` is called at each
-refresh, which the `reuse` rule of `Newton` governs. A step `h = 0` makes the Newton matrix the
-identity. A step for which a `γᵢ` overflows, a non-finite `h` and a non-finite entry of `J` give a
-non-finite direction, and the step returns `NONFINITE`. A block whose factor fails gives
-`SINGULAR`.
+refresh, which the `reuse` rule of `Newton` governs. Each block is factorised as `γᵢ I - J` scaled
+by a power of two, which keeps it finite for a tiny `h`. A step `h = 0` makes the Newton matrix the
+identity. A non-finite `h` and a non-finite entry of `J` give a non-finite direction, and the step
+returns `NONFINITE`. A block whose factor fails gives `SINGULAR`.
 
 `init` raises an `ArgumentError` for a value iterate (a `Number` or a `StaticArray`), a device
 iterate, a [`DogLeg`](@ref) or [`LevenbergMarquardt`](@ref) globalization, a refinement,
@@ -186,7 +189,9 @@ length is not a multiple of `s`, a stage matrix that is not square, not invertib
 a real `T`, and a stage matrix whose eigenvectors have `cond(V) > eps(real(T))^(-1/2)`, which also
 refuses a stage matrix that is not diagonalisable: the solve multiplies by `V` and `V⁻¹` and loses
 `cond(V)` in accuracy. Gauss with 6 stages has `cond(V) ≈ 603`, and a two-stage SDIRK, whose `A`
-has a double eigenvalue with a single eigenvector, about `10¹⁶`.
+has a double eigenvalue with a single eigenvector, about `10¹⁶`. `solve` raises an
+`ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`: the tangent solve of implicit
+differentiation needs the Jacobian of the stacked residual.
 """
 struct KroneckerFactorization{TF <: FactorisationPrecision, B <: LinearMethod} <:
        LinearMethod{TF}
@@ -198,6 +203,8 @@ struct KroneckerFactorization{TF <: FactorisationPrecision, B <: LinearMethod} <
          !(block isa Union{GMRES, KroneckerFactorization})) ||
             throw(ArgumentError(
                 "KroneckerFactorization takes a block method that factorises in the working precision, such as LUFactorization()"))
+        block isa Union{CholeskyFactorization, LDLTFactorization} && throw(ArgumentError(
+            "KroneckerFactorization takes a block method for a general square matrix, such as LUFactorization(): a block γ I - J is in general not Hermitian, and $(nameof(typeof(block))) reads one triangle of it"))
         return new{TF, B}(block)
     end
 end

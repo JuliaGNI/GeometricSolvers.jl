@@ -1869,3 +1869,13 @@ end
     fac = factorize_stages!!(state.fac, m.linsolve.block, state.J, R(p.h))
     return state.J, fac, NewtonDiagnostics(R)
 end
+
+# The tangent solve of implicit differentiation factorises the Jacobian of the stacked residual,
+# which a `Newton` with `KroneckerFactorization` never forms, so `solve` refuses a dual input for
+# it before the primal solve, as it does for `GMRES`.
+function solve_implicit(
+        ::NonlinearProblem, x₀, method::Newton{<:KroneckerFactorization}, p,
+        options::Union{Nothing, Options}, kwargs)
+    throw(ArgumentError(
+        "solve does not accept ForwardDiff.Dual inputs for a Newton with KroneckerFactorization; its tangent solve needs the Jacobian of the stacked residual, which this solver does not form"))
+end
