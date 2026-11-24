@@ -30,7 +30,8 @@ export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_F
 export SolverStatus, StepInfo, Options, stopping_test
 export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized, Deflated,
        BlockEliminated, VariableProjection
-export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
+export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization,
+       CholeskyFactorization
 export UMFPACKFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
@@ -63,6 +64,7 @@ include("linear/methods.jl")
 include("linear/factors.jl")
 include("linear/static/lu.jl")
 include("linear/static/ldlt.jl")
+include("linear/static/cholesky.jl")
 include("linear/static/qr.jl")
 include("linear/static/qr_rect.jl")
 include("linear/static/svd.jl")

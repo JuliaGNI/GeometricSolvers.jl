@@ -712,7 +712,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1728`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1742`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -752,3 +752,51 @@
   mutants.
 - **kind:** missing test
 - **found:** 2026-11-23
+
+### K106 · An R3 `Newton` solve with a `BigFloat` or `Complex{BigFloat}` iterate and the default automatic differentiation throws `UndefRefError`
+
+- **location:** `src/ad/chunked.jl:115` (`jacobian!!` for `ChunkedForwardDiff`), called from
+  `newton_factor` in `src/nonlinear/newton.jl`
+- **evidence:** with `A = BigFloat[4 1; 1 5]`, `b = BigFloat[1, 2]` and
+  `G!(r, x, p) = (r .= A * x .- b; r)`,
+  `solve(NonlinearProblem(G!), zeros(BigFloat, 2), Newton())` raises
+  `UndefRefError: access to undefined reference` at `prep.xdual .= seed.(prep.xdual, x, …)`,
+  which reads the dual buffer before any element of it is set. The buffer comes from
+  `similar(x, dual_type(…))` (`src/ad/chunked.jl:65`), and a `BigFloat` dual is no bits type, so
+  its elements are undefined references. The same holds for `Complex{BigFloat}` and for
+  `LUFactorization()`, `LDLTFactorization()` and `CholeskyFactorization()` alike; `ComplexF64`
+  gives `SUCCESS` (Julia 1.13.4, tree of `cd5834b`). The static R1 path and the dense factors
+  themselves take `BigFloat` (`test/linear/cholesky.jl`).
+- **kind:** found late
+- **found:** 2026-11-22
+
+### K107 · The docstrings of `StaticLU`, `StaticSVD`, `StaticLDLT` and `StaticRectQR` say that the factor is `isbits` for every element type, which is false for `BigFloat`
+
+- **location:** `src/linear/factors.jl:122` (`StaticLU`), `:162` (`StaticSVD`), `:330`
+  (`StaticLDLT`), `src/linear/static/qr_rect.jl:12` (`StaticRectQR`)
+- **evidence:** each docstring says that the size parameter makes the `SMatrix` field concrete,
+  "so the factor is `isbits`", with no condition on `TF`.
+  `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
+  `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
+  `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:742`), so
+  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:395-396`) states
+  the condition.
+- **kind:** docs
+- **found:** #108
+
+### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
+
+- **location:** `src/linear/factors.jl:734` (`factor_matrix`), and `src/linear/static/svd.jl:91`
+  and `src/linear/static/svd_rect.jl:53`, which scale always
+- **evidence:** the scale exponent of every static factor is an `Int32` field, and
+  `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
+  `A = SMatrix{2, 2, BigFloat}(big(2)^(big(2)^31 + 5) * [4 1; 1 5])`,
+  `factorize!!(nothing, m, A)` raises `InexactError: trunc(Int32, 2147483655)` for
+  `m = SVDFactorization()`, `LUFactorization(Float64)`, `CholeskyFactorization(Float64)` and
+  `SVDFactorization(Float64)`, and returns a factor for `LUFactorization()`,
+  `LDLTFactorization()`, `CholeskyFactorization()` and `QRFactorization()`, which do not scale a
+  matrix in its own element type (Julia 1.13.4, tree of `c6a2c4f`). `origin/main` has the same
+  `Int32(e)` in `factor_matrix` and `svd.jl`.
+- **kind:** defect
+- **found:** #108

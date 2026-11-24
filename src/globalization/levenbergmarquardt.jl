@@ -21,18 +21,18 @@ by `k²` and leaves `μ` as it is, so a damping of `μ` on `k J(x)` acts as `μ 
 
 With [`SVDFactorization`](@ref) and `scaling = :none`, `J(x) = U Σ Vᴴ` is factorised once per
 outer step and each trial `μ` evaluates the damped pseudoinverse step from `(U, Σ, V)` without
-refactoring `J(x)`. With [`QRFactorization`](@ref), [`LUFactorization`](@ref) or
-[`LDLTFactorization`](@ref) (or when `scaling = :diagonal`), `[J(x) | -F(x)]` is reduced once per
-outer step to an upper-triangular `(R₀, c₀)` and each trial `μ` copies that pair and eliminates
-only its own damping rows `√μ D` by Givens rotations, without forming `J(x)ᴴ J(x)`; for a
-[`LeastSquaresProblem`](@ref) the rows of `J(x)` past its `n` columns are eliminated into the same
-`n × n` pair. This reduction reads no symmetry, so it serves the Hessian of a
-[`StationarityProblem`](@ref) as any other `J(x)`. That path indexes scalars and runs on a host
-array: an `init` on a device array iterate raises an `ArgumentError` for it. Neither path reads a
-sparse factor, so an `init` on a non-static array iterate whose problem carries a sparse
-`jacobian_prototype` raises an `ArgumentError` too. A `μ` below `4 eps` of the working type, which
-only an initial `μ₀` below the schedule's floor can be, is taken as no damping: the truncated
-Newton step, the `μ → 0` limit.
+refactoring `J(x)`. With [`QRFactorization`](@ref), [`LUFactorization`](@ref),
+[`LDLTFactorization`](@ref) or [`CholeskyFactorization`](@ref) (or when `scaling = :diagonal`),
+`[J(x) | -F(x)]` is reduced once per outer step to an upper-triangular `(R₀, c₀)` and each
+trial `μ` copies that pair and eliminates only its own damping rows `√μ D` by Givens rotations,
+without forming `J(x)ᴴ J(x)`; for a [`LeastSquaresProblem`](@ref) the rows of `J(x)` past its `n`
+columns are eliminated into the same `n × n` pair. This reduction reads no symmetry, so it serves
+the Hessian of a [`StationarityProblem`](@ref) as any other `J(x)`. That path indexes scalars and
+runs on a host array: an `init` on a device array iterate raises an `ArgumentError` for it.
+Neither path reads a sparse factor, so an `init` on a non-static array iterate whose problem
+carries a sparse `jacobian_prototype` raises an `ArgumentError` too. A `μ` below `4 eps` of the
+working type, which only an initial `μ₀` below the schedule's floor can be, is taken as no
+damping: the truncated Newton step, the `μ → 0` limit.
 
 A solve starts at `μ₀`. A trial is accepted when `ρ > ρ_accept`, and an accepted step sets `μ` to
 `max(μ · μ_decrease, max(μ_min, 4 eps(R)))`. A rejected trial, or one whose step is not finite,
@@ -113,8 +113,8 @@ end
         throw(ArgumentError(
             "a device array iterate takes LevenbergMarquardt() with SVDFactorization() and " *
             "scaling = :none only: the damped step of QRFactorization(), LUFactorization(), " *
-            "LDLTFactorization() and scaling = :diagonal is the stacked QR solve, which " *
-            "indexes scalars. Solve on an Array to use that step."))
+            "LDLTFactorization(), CholeskyFactorization() and scaling = :diagonal is the " *
+            "stacked QR solve, which indexes scalars. Solve on an Array to use that step."))
     end
     if x isa AbstractVector && !(x isa StaticArray) &&
        jacobian_prototype(prob) isa SparseArrays.AbstractSparseMatrix
@@ -130,9 +130,9 @@ end
 
 # The workspace of `LevenbergMarquardt` at an iterate `x` with residual `Fx`: the trial buffers
 # that every path uses, `Jδ` and `Ft` of the residual's length, and the buffers of the stacked
-# solve, which only the QR, LU and LDLᵀ paths and Marquardt's scaling read. The SVD step reads none
-# of them, so the stacked slots are allocated only where they are used; a device iterate never asks
-# for them, because `init_state` refuses the stacked step before this function runs (see
+# solve, which only the QR, LU, LDLᵀ and Cholesky paths and Marquardt's scaling read. The SVD step
+# reads none of them, so the stacked slots are allocated only where they are used; a device iterate
+# never asks for them, because `init_state` refuses the stacked step before this function runs (see
 # `check_lm_iterate`). The stacked factor is `n × n` whatever the residual's length.
 @inline function init_globalization(lm::LevenbergMarquardt, linsolve::LinearMethod, x, Fx = x)
     T = eltype(x)

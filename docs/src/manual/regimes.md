@@ -21,8 +21,8 @@ In R1 the iterate is a `Number` or an `SVector`, and every operation returns a n
 state of the solve holds no buffers: each buffer slot is `nothing`. The problem, the method, the
 state, the [`Options`](@ref) and the [`SolverStatus`](@ref) are `isbits` when the functions of the
 problem are, so a kernel can hold all of them. The static factorisations ([`StaticLU`](@ref),
-[`StaticQR`](@ref), [`StaticLDLT`](@ref), [`StaticSVD`](@ref)) are scalar loops that the compiler
-keeps in registers.
+[`StaticQR`](@ref), [`StaticLDLT`](@ref), [`StaticCholesky`](@ref), [`StaticSVD`](@ref)) are scalar
+loops that the compiler keeps in registers for an `isbits` element type.
 
 ```jldoctest regimes
 julia> using GeometricSolvers, StaticArrays
@@ -114,7 +114,8 @@ the element type is `Float32`.
 In R3 the iterate is an `AbstractVector` that is not static. The residual and the Jacobian write
 into buffers, and [`init`](@ref) allocates every buffer once. The factorisation is LAPACK on a host
 `Array` and a device factorisation on a GPU array. See [Linear solvers](@ref linear) for the
-factor that each array type gets.
+factor that each array type gets. [`CholeskyFactorization`](@ref) factorises on a host `Array`
+only: it has no device factorisation, and a GPU array raises an `ArgumentError` in [`init`](@ref).
 
 ```jldoctest regimes
 julia> F!(y, x, p) = (y .= x .^ 2 .- p; y);
