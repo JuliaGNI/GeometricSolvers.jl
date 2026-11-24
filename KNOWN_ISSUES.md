@@ -803,12 +803,15 @@
 
 ### K109 · A Cholesky factor in the matrix's own element type takes no power-of-two scale, so the solve with a matrix of subnormal entries has a relative error far above `eps`
 
-- **location:** `src/linear/dense.jl:509-529` (`factorize!!` of `DenseCholesky`)
+- **location:** `src/linear/dense.jl:509-529` (`factorize!!` of `DenseCholesky`), and
+  `src/linear/ka/cholesky.jl:55` (the load kernel of `DeviceCholesky`)
 - **evidence:** with `s = 2^10 * nextfloat(zero(R))`, `A = 3s * I(5)` and `A[3, 1] = A[1, 3] = s`,
   `CholeskyFactorization()` gives `info = 0`, `scale_exponent = 0` and, for `b = fill(s, 5)`, a
   solution with a relative error of `2.7e-4` against the `BigFloat` solve, in `Float32`,
   `Float64`, `ComplexF32` and `ComplexF64`. LAPACK's `cholesky(Hermitian(A, :L)) \ b` gives the
   same `2.7e-4`. For `b = ones(5)` the solution is not finite, and the exact solution also lies
-  above `floatmax` (`2.3e41` in `Float32`). Julia 1.13.4, tree of `2ddfd8f`.
+  above `floatmax` (`2.3e41` in `Float32`). Julia 1.13.4, tree of `2ddfd8f`. A `DeviceCholesky`
+  on a `JLArray` gives the same `info`, `scale_exponent` and `2.7e-4` in the four element types
+  (tree of `49a1752`).
 - **kind:** found late
 - **found:** 2026-11-24

@@ -983,13 +983,13 @@ so that a compat-only bump can be told apart from an interface change.
   anywhere with `info = 1`, takes the power-of-two scale of a factor in another element type from
   the lower triangle and the real diagonal, and writes zeros above the diagonal; a factor kernel
   runs the column loop, each work-item taking the trailing columns `k + tid, k + tid + 64, …`; and
-  the status is read back once. On a `CuMatrix` and a `ROCMatrix` of a `BlasFloat` element type, the CUDA and AMDGPU
-  extensions call cuSOLVER and rocSOLVER `potrf`/`potrs` after the same load kernel. The status is
-  the host factor's: `info = k` for the first leading minor that is not positive, `SINGULAR`, and
-  `n = 0` launches nothing and gives `SUCCESS`. The JLArray rows of `test/linear/cholesky.jl` agree
-  with `DenseCholesky` at `n = 1, 4, 64, 65, 128`; the Metal rows are in
-  `test/devices/metal_ka.jl`, and the cuSOLVER and rocSOLVER rows, which compare the vendor factor
-  with the own kernel, in `test/gpu/cuda/runtests.jl` and `test/gpu/rocm/runtests.jl`.
+  the status is read back once. On a `CuMatrix` and a `ROCMatrix` of a `BlasFloat` element type,
+  the CUDA and AMDGPU extensions call cuSOLVER and rocSOLVER `potrf`/`potrs` after the same load
+  kernel. The status is the host factor's: `info = k` for the first leading minor that is not
+  positive, `SINGULAR`, and `n = 0` launches nothing and gives `SUCCESS`. The JLArray rows of
+  `test/linear/cholesky.jl` agree with `DenseCholesky` at `n = 1, 4, 64, 65, 128`; the Metal rows
+  are in `test/devices/metal_ka.jl`, and the cuSOLVER and rocSOLVER rows, which compare the vendor
+  factor with the own kernel, in `test/gpu/cuda/runtests.jl` and `test/gpu/rocm/runtests.jl`.
 
 - **Verified root certificates, `GeometricSolvers.certify`, with the package extension
   `GeometricSolversIntervalArithmeticExt`.** When `IntervalArithmetic` is loaded,
