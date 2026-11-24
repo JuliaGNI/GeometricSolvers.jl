@@ -982,12 +982,12 @@ so that a compat-only bump can be told apart from an interface change.
   `CholeskyFactorization` and returns a `LinearSolver`; `GMRES`, `UMFPACKFactorization` and a
   precision marker such as `TF32` raise an `ArgumentError`. `solve!` returns `(x, status)` with an
   `isbits` `LinearStatus` of `code::ReturnCode` and `rank::Int32`. A static matrix (R1) gives a
-  solver that is `isbits` for an `isbits` element type and a new `SVector` result, and `init`,
-  `solve!` and `refactorize!!` are inferred and allocation-free for a `Float64` `SMatrix`. Any other dense `AbstractMatrix`, on the host or a
-  device (R3), returns the buffer `solver.x`, which the next `solve!` overwrites; on a `Float64`
-  host `Array`, `solve!` and `refactorize!!` allocate nothing after a warm-up. The object adds no
-  kernel. `m == n` takes every factor type, and `CholeskyFactorization` on a device raises an
-  `ArgumentError`. `m > n` is the least-squares
+  new `SVector` result and a solver that is `isbits` for an `isbits` element type, and `init`,
+  `solve!` and `refactorize!!` are inferred and allocation-free for a `Float64` `SMatrix`. Any
+  other dense `AbstractMatrix`, on the host or a device (R3), returns the buffer `solver.x`, which
+  the next `solve!` overwrites; on a `Float64` host `Array`, `solve!` and `refactorize!!` allocate
+  nothing after a warm-up. The object adds no kernel. `m == n` takes every factor type, and
+  `CholeskyFactorization` on a device raises an `ArgumentError`. `m > n` is the least-squares
   solution through QR or SVD, the minimum-norm one where the SVD rank is below `n`; LU, LDLᵀ and
   Cholesky raise an `ArgumentError` for `m ≠ n`. `m < n` is the minimum-norm solution through the
   SVD of `Aᴴ` truncated at its rank, on every route, or through a QR of `Aᴴ`, `x = Q R⁻ᴴ b`, on a

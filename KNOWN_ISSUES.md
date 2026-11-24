@@ -806,7 +806,7 @@
 - **location:** `src/linear/static/lu.jl:24`, `src/linear/static/qr.jl:9`,
   `src/linear/static/qr_rect.jl:28`, `src/linear/static/svd.jl:171`
 - **evidence:** with `A = ldexp.(wellcond(Float64, 4, 4), -1070)` (`κ ≤ 3`) and
-  `b = ldexp.(rhs(Float64, 4), -1000)`, the helpers of `test/linear/linearproblem.jl`,
+  `b = ldexp.(rhs(Float64, 4), -1000)` (`wellcond` and `rhs` of `test/linear/linearproblem.jl`),
   `factorize!!(nothing, method, SMatrix{4, 4}(A))` and `ldiv!!` give `SUCCESS` with a relative
   error of 0.038 for `LUFactorization()` and 0.035 for `QRFactorization()` against the `BigFloat`
   solution, `SUCCESS` and 3.1e-16 for `SVDFactorization()`, and `SINGULAR` for
