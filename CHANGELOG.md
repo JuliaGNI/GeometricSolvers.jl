@@ -965,7 +965,7 @@ so that a compat-only bump can be told apart from an interface change.
   `benchmark/verify.jl benchmark/results --all-cards` passes on them. On ROCm every
   SimpleNonlinearSolve cell within the band has the status `not run: SimpleNonlinearSolve kernel
   faults on ROCm`, because SimpleNewtonRaphson's kernel faults with `hipErrorIllegalAddress` on
-  that card (K99 in `KNOWN_ISSUES.md`). `benchmark/REPORT.md` gives each card's version line,
+  that card. `benchmark/REPORT.md` gives each card's version line,
   correctness counts, throughput, R3 and LU rows, the cause of each status other than `ran`, and
   one explanation for each of the 27 card cells whose verdict is `different root`, `device fails`
   or `host fails`, from a host replay and the card's iterations and status. The report states that
