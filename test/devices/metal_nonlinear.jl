@@ -323,3 +323,66 @@ end
         @test_skip Metal.functional()
     end
 end
+
+# `Newton(; best = true)` and the max-norm stopping test on the device: the R2 kernel of
+# `solve_batch!` holds the record of the best iterate in its `isbits` state, and an R3 `MtlArray`
+# solve takes the max norm through one device reduction.
+metal_no_root(x, p) = x .* x .+ one(eltype(x))
+
+function metal_d7!(F, x, p)
+    n = length(x)
+    @views begin
+        @. F[1:1] = (4.0f0 + 0.5f0 * x[1:1]^2) * x[1:1] - x[2:2] - 1.0f0
+        @. F[2:(n - 1)] = -x[1:(n - 2)] + (4.0f0 + 0.5f0 * x[2:(n - 1)]^2) * x[2:(n - 1)] -
+                          x[3:n] - 1.0f0
+        @. F[n:n] = -x[(n - 1):(n - 1)] + (4.0f0 + 0.5f0 * x[n:n]^2) * x[n:n] - 1.0f0
+    end
+    return F
+end
+
+@testset "Metal: best = true and MaxNorm" begin
+    if Metal.functional() && !on_virtual_gpu()
+        GPUArraysCore.allowscalar(false)
+        R = Float32
+        prob = NonlinearProblem(metal_no_root)
+        xs_host = [SVector(0.5f0 + R(k) / 1000) for k in 1:B_METAL_NL]
+        m = Newton(; best = true)
+        state₀ = init_state(m, prob, xs_host[1], nothing)
+        for opt in (Options(R; max_iterations = 8), Options(R; max_iterations = 8, norm = MaxNorm()))
+            X = Metal.MtlArray(xs_host)
+            S = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
+            solve_batch!(X, S, prob, m; options = opt)
+            xs_got = Array(X)
+            st_got = Array(S)
+            for k in 1:B_METAL_NL
+                x_ref, st_ref, _ = solve!!(state₀, prob, xs_host[k], m, nothing, opt)
+                _, st_false, _ = solve!!(
+                    init_state(Newton(), prob, xs_host[k], nothing), prob, xs_host[k],
+                    Newton(), nothing, opt)
+                @test st_ref.fnorm < st_false.fnorm    # the host restores an earlier iterate
+                @test st_got[k].code == st_ref.code
+                @test st_got[k].iterations == st_ref.iterations
+                @test isapprox(xs_got[k], x_ref; rtol = 8 * eps(R), atol = 8 * eps(R))
+            end
+        end
+
+        # R3: the max norm of an `MtlArray` residual stops at the iteration of the host
+        prob_d7 = NonlinearProblem(metal_d7!)
+        x0_cpu = fill(0.2f0, 64)
+        method = Newton(; linsolve = LUFactorization())
+        _, st_two = solve(prob_d7, copy(x0_cpu), method; f_abstol = 1.0f-3, f_reltol = 0)
+        _, st_cpu = solve(prob_d7, copy(x0_cpu), method;
+            f_abstol = 1.0f-3, f_reltol = 0, norm = MaxNorm())
+        x_gpu, st_gpu = solve(prob_d7, Metal.MtlArray(x0_cpu), method;
+            f_abstol = 1.0f-3, f_reltol = 0, norm = MaxNorm())
+        @test st_cpu.code == SUCCESS
+        @test st_gpu.code == SUCCESS
+        @test x_gpu isa Metal.MtlVector{Float32}
+        @test st_gpu.iterations == st_cpu.iterations
+        @test st_cpu.iterations <= st_two.iterations
+    elseif Metal.functional()
+        @test_skip on_virtual_gpu()  # issue #34
+    else
+        @test_skip Metal.functional()
+    end
+end

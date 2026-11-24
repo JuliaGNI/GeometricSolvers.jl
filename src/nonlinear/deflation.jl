@@ -576,12 +576,17 @@ end
 
 # A `Newton` takes a callable `jacobian` as the Jacobian of the problem it solves, which here is the
 # deflated one, `M J + F ∇Mᵀ`; a Jacobian of the inner `F` there steps in the wrong direction. An
-# analytic Jacobian of `F` is the `J` of the wrapped `NonlinearProblem`.
+# analytic Jacobian of `F` is the `J` of the wrapped `NonlinearProblem`. A `Newton` with
+# `best = true` ranks its iterates by the deflated `‖M F‖`, while `status.fnorm` is the inner
+# `‖F‖`, so it is refused too.
 @inline _check_deflated_method(method) = nothing
 @inline function _check_deflated_method(m::Newton)
     (m.jacobian === nothing || m.jacobian isa AbstractADType) || throw(ArgumentError(
         "Deflated needs a Newton whose jacobian is nothing or an AD backend: a callable would be " *
         "taken as the deflated Jacobian; give the Jacobian of F to the NonlinearProblem instead"))
+    m.best === Val(false) || throw(ArgumentError(
+        "Deflated takes no Newton with best = true: the best iterate would be ranked by the " *
+        "deflated residual, not by the inner residual that status.fnorm reports"))
     return nothing
 end
 

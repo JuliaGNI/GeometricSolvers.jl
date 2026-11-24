@@ -701,6 +701,50 @@ end
     @test norm(x - SVector(1.0, 2.0)) > 1 / 2
 end
 
+# The best iterate of a `Newton` ranks `‖M F‖₂`, while `status.fnorm` of a deflated solve is the
+# inner `‖F‖₂`, so a `Deflated` problem refuses `best = true` at every entry point.
+@testset "A Newton with best = true is refused, naming best" begin
+    names_best(f) =
+        try
+            f()
+            false
+        catch e
+            e isa ArgumentError && occursin("best", e.msg)
+        end
+    m = Newton(; best = true)
+    @test names_best(() -> solve(Deflated(NonlinearProblem((x, p) -> x .* x .- 4), (2.0,)),
+        1.0, m))
+    def = Deflated(p2_problem_ad(), (SVector(1.0, 2.0),))
+    x0 = SVector(0.8, 1.7)
+    @test names_best(() -> solve(def, x0, m))
+    @test names_best(() -> init(def, x0, m))
+    @test names_best(() -> solve_batch!(fill(x0, 2), def, m))
+    @test names_best(() -> solve(def, x0, Newton(; globalization = Backtracking(), best = true)))
+    @test GS.isconverged(last(solve(def, x0, Newton(; globalization = Backtracking()))))
+end
+
+# Under `MaxNorm()` the residual test of a deflated solve reads the inner residual,
+# `‖M F‖∞ / M`, not `‖M F‖∞`. From `(-1, 3)` the inner max norm at `k = 2` lies far below those of
+# `k = 0` and `k = 1`, and the deflation factor there is well above 1, so an `f_abstol` just above it
+# stops at `k = 2` only when the test divides by `M`.
+@testset "MaxNorm on a deflated solve tests the inner residual" begin
+    df(x, p) = SVector(x[1]^2 - 4, x[2] - 1)
+    dprob = Deflated(NonlinearProblem(df), (SVector(2.0, 1.0),))
+    x0 = SVector(-1.0, 3.0)
+    inner = [maximum(abs, df(first(solve(dprob, x0, Newton(); max_iterations = k)), nothing))
+             for k in 0:5]
+    x₂, _ = solve(dprob, x0, Newton(); max_iterations = 2)
+    @test inner[3] * (1 + 1e-4) < min(inner[1], inner[2])
+    @test GS._deflate_scale(dprob, x₂) > 1 + 1e-3
+    a = inner[3] * (1 + 1e-4)
+    x, st = solve(dprob, x0, Newton(); f_abstol = a, f_reltol = 0, norm = MaxNorm())
+    @test st.code == SUCCESS
+    @test st.iterations == 2
+    @test x == x₂
+    # `status.fnorm` stays the inner 2-norm
+    @test st.fnorm ≈ norm(df(x, nothing)) rtol = 8eps()
+end
+
 # ─── Edge 12: the distance on the unknowns, and the datum `b` ───────────────
 
 @testset "Edge 12: the datum b reaches the wrapped StationarityProblem" begin

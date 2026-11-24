@@ -299,7 +299,7 @@ end
     R = typeof(f_abs)
     return Options{R}(
         f_abs, f_rel, x_abs, x_rel,
-        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t)
+        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t, opt.norm)
 end
 
 function Adapt.adapt_structure(
@@ -2289,8 +2289,20 @@ end
     return DenseElimState(outer_state, st.ws, st.oprob)
 end
 
+# The solve of an eliminated problem returns the iterate of its own `finish!!`, built from the outer
+# iterate and the inner solution of the last step, and discards the one that the outer `finish!!`
+# returns, so an outer `Newton` with `best = true` would restore nothing; it is refused.
+@inline _check_elim_outer_method(m) = nothing
+@inline function _check_elim_outer_method(m::Newton)
+    m.best === Val(false) || throw(ArgumentError(
+        "BlockEliminated and VariableProjection take no outer Newton with best = true: the " *
+        "solve returns the outer iterate of the last step with its inner solution"))
+    return nothing
+end
+
 @inline function _init_elim_r1(
         m, elim::BlockEliminated, x₀::StaticVector{N, T}, p) where {N, T}
+    _check_elim_outer_method(m)
     R = real(T)
     Y, Z, E_y, E_z = _resolve_partition_r1(elim, x₀, p)
     Ny = length(Y)
@@ -2305,6 +2317,7 @@ end
 
 @inline function _init_elim_r1(
         m, vp::VariableProjection, x₀::StaticVector{N, T}, p) where {N, T}
+    _check_elim_outer_method(m)
     R = real(T)
     Y, Z = _resolve_partition_r1(vp, x₀, p)
     Ny = length(Y)
@@ -2319,6 +2332,7 @@ end
 
 function _init_elim_r3(
         m, elim::BlockEliminated, x₀::AbstractVector{T}, p) where {T}
+    _check_elim_outer_method(m)
     R = real(T)
     m_r = Adapt.adapt(ToReal{R}(), m)
     ws = _build_block_elim_prep(_ad_backend_of(m_r), elim, x₀, p)
@@ -2334,6 +2348,7 @@ end
 
 function _init_elim_r3(
         m, vp::VariableProjection, x₀::AbstractVector{T}, p) where {T}
+    _check_elim_outer_method(m)
     R = real(T)
     m_r = Adapt.adapt(ToReal{R}(), m)
     ws = _build_varpro_prep(_ad_backend_of(m_r), vp, x₀, p)
@@ -3319,13 +3334,14 @@ end
 end
 
 # The options of the batch's inner solve at the tolerance `tol`: the template of `inner_options` for
-# every field but the residual test, which is `tol` absolutely and not at all relatively, so that a
-# second evaluation at the same tolerance stops at `0` iterations.
+# the step test, the iteration bounds and the norm, with the residual test `tol` absolutely and not
+# at all relatively, so that a second evaluation at the same tolerance stops at `0` iterations,
+# and the default `g_tol`.
 @inline function _batch_inner_options(prob::BatchEliminated, tol)
     RIn, _ = _batch_real_types(prob)
     t = prob.inner_options
     return Options{RIn}(tol, zero(RIn), t.x_abstol, t.x_reltol,
-        t.min_iterations, t.max_iterations, t.max_stalls)
+        t.min_iterations, t.max_iterations, t.max_stalls, sqrt(eps(RIn)), t.norm)
 end
 
 # One inner batch solve from the warm start `prob.Y` at the tolerance `tol`, with the shared

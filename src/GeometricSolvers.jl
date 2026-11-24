@@ -29,6 +29,7 @@ isgpu(backend) = !(backend isa CPU)
 
 export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_FAILED
 export SolverStatus, StepInfo, Options, stopping_test
+export L2Norm, MaxNorm
 export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized, Deflated,
        BlockEliminated, VariableProjection
 export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization,
