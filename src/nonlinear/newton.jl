@@ -621,9 +621,9 @@ end
 end
 
 # The record of the best iterate of a solve under `best = true`: the iterate `x`, its residual
-# `Fx` and its norm `fnorm`. For a value iterate `x` is the value and `Fx` is `nothing`, so the
-# record is `isbits`; for an array iterate both are copies that the record owns. `fnorm` is `NaN`
-# until `start!!` sets it to the norm of the start.
+# `Fx` and its norm `fnorm`. For a value iterate `x` is the value, an `SVector` for an `MVector`
+# iterate, and `Fx` is `nothing`, so the record is `isbits`; for an array iterate both are copies
+# that the record owns. `fnorm` is `NaN` until `start!!` sets it to the norm of the start.
 struct BestIterate{X, FX, R <: Real}
     x::X
     Fx::FX
@@ -636,8 +636,16 @@ end
     return BestIterate(best_slot(x), best_slot(Fx), real(eltype(x))(NaN))
 end
 @inline best_slot(x::Union{Number, StaticArray}) = x
+@inline best_slot(x::StaticVector) = SVector(x)
 @inline best_slot(x::AbstractArray) = similar(x)
 @inline best_slot(::Nothing) = nothing
+
+# The iterate `x` in the record's slot, and the record's iterate `b` in the type of `x`: a static
+# vector is kept as an `SVector`, which an `MVector` iterate takes back as an `MVector`.
+@inline keep_iterate!!(slot, x) = copy!!(slot, x)
+@inline keep_iterate!!(::StaticVector, x::StaticVector) = SVector(x)
+@inline restore_iterate!!(x, b) = copy!!(x, b)
+@inline restore_iterate!!(x::StaticVector, b::StaticVector) = convert(typeof(x), b)
 
 @inline function with_best(s::NewtonState, best)
     return NewtonState(
@@ -662,7 +670,7 @@ end
 @inline function restore_best(b::BestIterate, x, Fx, status::SolverStatus)
     should_restore_best(status, b.fnorm) || return x, status
     restore_residual!!(Fx, b.Fx)
-    return copy!!(x, b.x), with_fnorm(status, b.fnorm)
+    return restore_iterate!!(x, b.x), with_fnorm(status, b.fnorm)
 end
 @inline restore_residual!!(Fx, ::Nothing) = nothing
 @inline restore_residual!!(Fx, slot) = copy!!(Fx, slot)
@@ -997,7 +1005,7 @@ end
 
 @inline start_best(::Nothing, x, Fx, fnorm₀) = nothing
 @inline function start_best(b::BestIterate, x, Fx, fnorm₀)
-    return BestIterate(copy!!(b.x, x), keep_residual!!(b.Fx, Fx), oftype(b.fnorm, fnorm₀))
+    return BestIterate(keep_iterate!!(b.x, x), keep_residual!!(b.Fx, Fx), oftype(b.fnorm, fnorm₀))
 end
 
 # The state that `solve!!` returns carries the merit and the norm of `init_state` again. A step on
