@@ -23,12 +23,14 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The thirteen columns of the standard test set, each a name and a method: `Newton` with each
+The fourteen columns of the standard test set, each a name and a method: `Newton` with each
 globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
 `LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, `Picard` with
 `Backtracking`, the matrix-free `Newton` with `GMRES` and `Backtracking`, whose column holds no
-Jacobian, `Broyden()`, whose default `Picard` member is damped by 0.5, and `Picard` with
-`Backtracking` left-preconditioned by one `Newton()` step.
+Jacobian, `Broyden()`, whose default `Picard` member is damped by 0.5, `Picard` with
+`Backtracking` left-preconditioned by one `Newton()` step, and the `Fallback` of the methods of
+the columns "Newton Static LU", "Newton DogLeg LU" and "Newton LevenbergMarquardt SVD", in this
+order.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),
@@ -48,8 +50,15 @@ const STANDARD_COLUMNS = (
         linsolve = GMRES(), globalization = Backtracking()),
     "Broyden" => Broyden(),
     "LeftPreconditioned Picard Backtracking Newton" =>
-        LeftPreconditioned(Picard(; globalization = Backtracking()), Newton())
+        LeftPreconditioned(Picard(; globalization = Backtracking()), Newton()),
+    "Fallback Newton DogLeg LevenbergMarquardt" => Fallback(
+        Newton(), Newton(; globalization = DogLeg()),
+        Newton(; globalization = LevenbergMarquardt(), linsolve = SVDFactorization()))
 )
+
+# The columns whose methods are the members of the `Fallback` column, in its order.
+const FALLBACK_MEMBER_COLUMNS = (
+    "Newton Static LU", "Newton DogLeg LU", "Newton LevenbergMarquardt SVD")
 
 """
     CountedResidual(f)
@@ -219,6 +228,14 @@ function perturbed_direction(m::LeftPreconditioned, seed)
     outer = perturbed_direction(m.outer, seed)
     outer === nothing && return nothing
     return LeftPreconditioned(outer, m.inner)
+end
+
+# A fallback perturbs the direction of each member that has one, and keeps the others; a fallback
+# with no such member gives `nothing`.
+function perturbed_direction(m::Fallback, seed)
+    perturbed = map(member -> perturbed_direction(member, seed), m.members)
+    all(isnothing, perturbed) && return nothing
+    return Fallback(map((q, member) -> q === nothing ? member : q, perturbed, m.members))
 end
 
 """

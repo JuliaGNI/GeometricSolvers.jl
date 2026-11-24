@@ -53,6 +53,7 @@ matrix-free and never a combinator: the problem carries no information that sele
 |:--|:--|
 | [`Newton`](@ref) with [`LUFactorization`](@ref) | a square Jacobian |
 | [`Newton`](@ref) with [`LDLTFactorization`](@ref) | a symmetric or Hermitian Jacobian; a real Jacobian is read from the lower triangle only, a complex one must be given in full, because both triangles decide between ``L D L^\mathsf{T}`` and ``L D L^\mathsf{H}`` |
+| [`Newton`](@ref) with [`CholeskyFactorization`](@ref) | a Hermitian (real symmetric) positive definite Jacobian at every iterate, read from the lower triangle; a Jacobian that is not positive definite gives `SINGULAR`; in R3 a host `Array` only, a device array raises an `ArgumentError` |
 | [`Newton`](@ref) with [`QRFactorization`](@ref) | a square Jacobian, or a [`LeastSquaresProblem`](@ref) |
 | [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian, or a [`LeastSquaresProblem`](@ref); the status reports the numerical rank |
 | [`Newton`](@ref) with `regularization = μ` | a singular or nearly singular Jacobian, where the step of ``J + \mu I`` is acceptable |
@@ -62,6 +63,7 @@ matrix-free and never a combinator: the problem carries no information that sele
 | [`Picard`](@ref) | ``I - \omega J`` is a contraction; it needs no Jacobian, and the rate is linear |
 | [`Anderson`](@ref), [`Broyden`](@ref) | a fixed-point iteration whose map is cheap and whose Jacobian is expensive or unavailable; in R1 the depth is `1 ≤ m ≤ 4` |
 | [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref) | members that run in R1, and a problem that is not a [`LeastSquaresProblem`](@ref) |
+| [`Fallback`](@ref) | members that run in R1, and a problem that is not a [`LeastSquaresProblem`](@ref); each member solves from ``x_0`` in turn until one returns `SUCCESS` |
 
 **Globalizations.** [`Static`](@ref) applies close to the solution. [`Backtracking`](@ref),
 [`Bisection`](@ref) and [`StrongWolfe`](@ref) search along the direction from a distant start.
@@ -143,8 +145,10 @@ refactorises in the working type. [Mixed precision](@ref mixed) gives the condit
 **Conditions of the regime.** [`init`](@ref) allocates each buffer once, so a system that is solved
 more than once goes through [`init`](@ref) and [`solve!`](@ref). On a device array the
 factorisation methods run on device kernels. On CUDA, [`LUFactorization`](@ref),
-[`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types; on
-Metal, [`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
+[`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types,
+except an [`SVDFactorization`](@ref) whose `rtol` lies below its default cutoff `√m · eps(R)`,
+with `m` the row count and `R` the real type of the factor, which runs on the own kernel; on Metal,
+[`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
 [What runs where](@ref)). The residual of a device solve indexes no scalars. On a device array,
 [`LevenbergMarquardt`](@ref) runs with [`SVDFactorization`](@ref) and `scaling = :none` only, and
 the sparse LU does not run. This page runs no device example.

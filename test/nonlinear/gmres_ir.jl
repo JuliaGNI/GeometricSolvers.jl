@@ -391,7 +391,8 @@ end
         @test promoted_factors(free) === nothing
         # nor does a factorisation that is no LU factorisation, in either precision
         for ls in (QRFactorization(), QRFactorization(Float32), SVDFactorization(),
-            SVDFactorization(Float32), LDLTFactorization(), LDLTFactorization(Float32))
+            SVDFactorization(Float32), LDLTFactorization(), LDLTFactorization(Float32),
+            CholeskyFactorization(), CholeskyFactorization(Float32))
             other = init(prob, copy(x0), Newton(; linsolve = ls))
             @test stored_factors(other) === nothing
             @test promoted_factors(other) === nothing

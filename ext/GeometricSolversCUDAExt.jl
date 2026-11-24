@@ -76,6 +76,7 @@ end
 
 function _cusolver_svd_finish!(
         fac::DeviceSVD{<:CuMatrix{T}},
+        method::SVDFactorization,
         J::AbstractMatrix,
         U::AbstractMatrix{T},
         S::AbstractVector{<:Real},
@@ -84,7 +85,7 @@ function _cusolver_svd_finish!(
         e::Int = 0
 ) where {T <: BlasFloat}
     if info_c != 0
-        return GeometricSolvers.ka_factorize_svd!(fac, J)
+        return GeometricSolvers.ka_factorize_svd!(fac, J, method)
     end
     if !all(isfinite, S) || !all(isfinite, U) || !all(isfinite, V)
         return _cusolver_svd_failed!(fac, e)
@@ -95,7 +96,7 @@ function _cusolver_svd_finish!(
     copyto!(fac.σ̂, S)
     fac.S .= GeometricSolvers.ldexp2.(S, e)
     m_rows, n = size(fac.U, 1), size(fac.U, 2)
-    r = GeometricSolvers.svd_rank(Array(fac.σ̂), m_rows)
+    r = GeometricSolvers.svd_rank(Array(fac.σ̂), m_rows, method.rtol)
     r < n && fill!(@view(fac.U[:, (r + 1):n]), zero(T))
     fill!(fac.flag, Int32(0))
     return DeviceSVD(
@@ -105,7 +106,7 @@ end
 
 function GeometricSolvers.factorize!!(
         fac::DeviceSVD{<:CuMatrix{T}},
-        ::SVDFactorization,
+        method::SVDFactorization,
         J::AbstractMatrix
 ) where {T <: BlasFloat}
     isempty(fac.factors) && return DeviceSVD(
@@ -119,12 +120,20 @@ function GeometricSolvers.factorize!!(
         fac.factors .= J
     end
     all(isfinite, J) || return _cusolver_svd_failed!(fac, 0)
+    # In single precision `gesvdj!` returns a singular value far below `eps(R) · σ̂₁` as 0, whatever
+    # its tolerance, while the own Jacobi kernel resolves it. A cutoff below the sweep tolerance
+    # `√m · eps(R)`, such as `rtol = 0`, needs those values, so it runs on the own kernel. The
+    # default `rtol = nothing` gives the sweep tolerance itself and stays on `gesvdj!`.
+    RT, m_rows = real(T), size(fac.U, 1)
+    GeometricSolvers.rank_tolerance(method.rtol, m_rows, RT) <
+    GeometricSolvers.jacobi_tolerance(m_rows, RT) &&
+        return GeometricSolvers.ka_factorize_svd!(fac, J, method)
     e = GeometricSolvers.matrix_exponent(J)
     fac.U .= GeometricSolvers.ldexp2.(J, -e)
     all(isfinite, fac.U) || return _cusolver_svd_failed!(fac, e)
     U, S, V = CUDA.CUSOLVER.gesvdj!('V', 1, fac.U)
     info_c = Int(Array(CUDA.CUSOLVER.dense_handle().info)[1])
-    return _cusolver_svd_finish!(fac, J, U, S, V, info_c, e)
+    return _cusolver_svd_finish!(fac, method, J, U, S, V, info_c, e)
 end
 
 function GeometricSolvers.backsolve!(

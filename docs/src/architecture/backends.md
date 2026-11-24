@@ -109,8 +109,9 @@ The factor that a dense R3 solve uses:
 |:--|:--|:--|:--|:--|
 | [`LUFactorization`](@ref) | LAPACK `getrf`/`getrs` | cuSOLVER `getrf`/`getrs` for BLAS element types | MPS `lu!` for `Float32`; own kernel otherwise | rocSOLVER `getrf`/`getrs` on `ROCArray` for BLAS element types; own kernel otherwise |
 | [`QRFactorization`](@ref) | LAPACK `geqrf`/`ormqr` | cuSOLVER `geqrf`/`ormqr` and cuBLAS `trsv` for BLAS element types | own kernel | rocSOLVER `geqrf`/`ormqr` and rocBLAS `trsv` on `ROCArray` for BLAS element types; own kernel otherwise |
-| [`SVDFactorization`](@ref) | LAPACK `gesvd` | cuSOLVER `gesvdj`, own kernel where it does not converge | own kernel | own kernel |
+| [`SVDFactorization`](@ref) | LAPACK `gesvd` | cuSOLVER `gesvdj`, own kernel where it does not converge or where the `rtol` cutoff lies below `√m · eps(R)` (`m` rows, `R` the factor's real type) | own kernel | own kernel |
 | [`LDLTFactorization`](@ref) | LAPACK `sytrf`/`hetrf` | own kernel | own kernel | own kernel |
+| [`CholeskyFactorization`](@ref) | LAPACK `potrf`/`potrs` for BLAS element types; generic loop otherwise | no device factor: `ArgumentError` | no device factor: `ArgumentError` | no device factor: `ArgumentError` |
 | [`GMRES`](@ref) | no factor | no factor | no factor | no factor |
 
 - The **CUDA** extension `GeometricSolversCUDAExt` adds methods for `DeviceLU`, `DeviceQR` and

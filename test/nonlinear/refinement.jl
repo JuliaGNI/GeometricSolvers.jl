@@ -995,7 +995,8 @@ end
     @test st_ref.code == SUCCESS
     for m in (Newton(; linsolve = LUFactorization(Float32)),
         Newton(; linsolve = LUFactorization(Float32), refinement = Refinement()),
-        Newton(; linsolve = LDLTFactorization(Float32), refinement = Refinement(), reuse = 2))
+        Newton(; linsolve = LDLTFactorization(Float32), refinement = Refinement(), reuse = 2),
+        Newton(; linsolve = CholeskyFactorization(Float32), refinement = Refinement(), reuse = 2))
         x, st = solve(prob, copy(x₀), m)
         @test st.code == SUCCESS
         @test !st.promoted

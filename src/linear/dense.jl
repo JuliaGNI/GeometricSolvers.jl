@@ -1,6 +1,7 @@
 # Dense CPU linear factorisations (R3): LAPACK (`LAPACK.getrf!`, `geqrf!`, `lapack_gesvd`,
-# `sytrf!`, `sytrs!`, `hetrf!`, `hetrs!`) for `StridedMatrix{<:BlasFloat}` with held workspace
-# buffers, and `LinearAlgebra`'s generic `lu!` and `qr!` (or `generic_ldlt!` of `static/ldlt.jl`)
+# `sytrf!`, `sytrs!`, `hetrf!`, `hetrs!`, `LAPACK.potrf!`, `LAPACK.potrs!`) for
+# `StridedMatrix{<:BlasFloat}` with held workspace buffers, and `LinearAlgebra`'s generic `lu!` and
+# `qr!` (or `generic_ldlt!` of `static/ldlt.jl` and `generic_cholesky!` of `static/cholesky.jl`)
 # for any other `AbstractMatrix`. `geqrf!`, `lapack_gesvd`, `sytrf!` and `hetrf!` take
 # `lwork = -1` for a workspace query, which writes the optimal size into `work[1]` and factorises
 # nothing.
@@ -189,19 +190,21 @@ end
 
 # `J` into the factor buffer `A`, and the exponent `e` of the power of two that it was divided by,
 # as `factor_matrix` does for R1: 0 where `J` has the element type of `A`, which is then copied,
-# else `matrix_exponent(J)`.
-function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix) where {F}
+# else `scale_exponent(J)`: `matrix_exponent` by default, or `cholesky_exponent` for the entries
+# that a Cholesky factorisation reads.
+function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix,
+        scale_exponent::E = matrix_exponent) where {F, E}
     if eltype(J) === F || isempty(J)
         J === A || copyto!(A, J)
         return 0
     end
-    e = matrix_exponent(J)
+    e = scale_exponent(J)
     A .= J .* ldexp(one(float(real(eltype(J)))), -e)
     return e
 end
 
 const DenseFactor{A} = Union{
-    DenseLU{A}, DenseQR{A}, DenseSVD{A}, DenseLDLT{A},
+    DenseLU{A}, DenseQR{A}, DenseSVD{A}, DenseLDLT{A}, DenseCholesky{A},
     DeviceLU{A}, DeviceQR{A}, DeviceSVD{A}, DeviceLDLT{A}}
 
 # The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve_shifted!`
@@ -308,7 +311,7 @@ end
 
 # --- DenseSVD ---
 
-function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactorization,
+function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, method::SVDFactorization,
         J::AbstractMatrix)
     # `J / 2^e` for every element type of `J`, as the static and device SVDs divide it, so that a
     # matrix near either end of the exponent range neither overflows in `gesvd` nor loses its small
@@ -325,7 +328,7 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
     # from them, a singular value that is not finite being a failure too
     ok = iszero(info) && all(isfinite, fac.S)
     status = ok ? 0 : (iszero(info) ? 1 : info)
-    rank = ok ? svd_rank(fac.S, size(fac.factors, 1)) : 0
+    rank = ok ? svd_rank(fac.S, size(fac.factors, 1), method.rtol) : 0
     # `σ̂` into `rwork`, which `gesvd` no longer needs, for the solve, and the singular values
     # `σ̂ · 2^e` of `J` into `S`, which overflow to `Inf` where `σ̂ · 2^e` exceeds `floatmax`
     @inbounds for i in eachindex(fac.S)
@@ -339,11 +342,11 @@ function factorize!!(fac::DenseSVD{<:StridedMatrix{<:BlasFloat}}, ::SVDFactoriza
 end
 
 # The number of the non-increasing singular values `S` of an `m_rows × n` matrix above the rank
-# cutoff `√m_rows · eps(R) · S[1]`: the rows, not the columns, are what the residual of a truncated
-# direction accumulates over.
-function svd_rank(S::AbstractVector{R}, m_rows::Integer) where {R <: Real}
+# cutoff `rtol · S[1]`, by default `√m_rows · eps(R) · S[1]`: the rows, not the columns, are what
+# the residual of a truncated direction accumulates over.
+function svd_rank(S::AbstractVector{R}, m_rows::Integer, rtol) where {R <: Real}
     isempty(S) && return 0
-    cutoff = jacobi_tolerance(m_rows, R) * S[1]
+    cutoff = rank_tolerance(rtol, m_rows, R) * S[1]
     return count(>(cutoff), S)
 end
 
@@ -491,5 +494,49 @@ function backsolve!(
         fac::DenseLDLT{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <: Number}
     isempty(d) && return d
     generic_ldlt_backsolve!(fac.factors, fac.ipiv, d, fac.hermitian)
+    return d
+end
+
+# --- DenseCholesky ---
+
+# The scale of a factor in another element type is taken from the entries that the factorisation
+# reads, the lower triangle and the real diagonal (`cholesky_exponent`). A non-finite entry of `J`
+# anywhere is refused before the factorisation: `potrf` reads the lower triangle only and returns
+# `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8). The
+# test is on `J`, not on the factor buffer, where an entry above the diagonal or an imaginary part
+# of the diagonal can overflow in the conversion and is not read. `potrf` leaves the upper triangle
+# as it was, and it is zeroed so that `factors` holds `L` alone, as `generic_cholesky!` leaves it.
+function factorize!!(fac::DenseCholesky{<:StridedMatrix{<:BlasFloat}},
+        ::CholeskyFactorization, J::AbstractMatrix)
+    if !all(isfinite, J)
+        J === fac.factors || copyto!(fac.factors, J)
+        return DenseCholesky(fac.factors, fac.rhs, 1, 0)
+    end
+    e = load_factors!(fac.factors, J, cholesky_exponent)
+    _, info = LAPACK.potrf!('L', fac.factors)
+    zero_strict_upper!(fac.factors)
+    return DenseCholesky(fac.factors, fac.rhs, Int(info), e)
+end
+
+function factorize!!(
+        fac::DenseCholesky{<:AbstractMatrix}, ::CholeskyFactorization, J::AbstractMatrix)
+    if !all(isfinite, J)
+        J === fac.factors || copyto!(fac.factors, J)
+        return DenseCholesky(fac.factors, fac.rhs, 1, 0)
+    end
+    e = load_factors!(fac.factors, J, cholesky_exponent)
+    info = Int(generic_cholesky!(fac.factors))
+    return DenseCholesky(fac.factors, fac.rhs, info, e)
+end
+
+function backsolve!(
+        fac::DenseCholesky{<:StridedMatrix{T}}, d::AbstractVector{T}) where {T <: BlasFloat}
+    LAPACK.potrs!('L', fac.factors, d)
+    return d
+end
+
+function backsolve!(
+        fac::DenseCholesky{<:AbstractMatrix{T}}, d::AbstractVector{T}) where {T <: Number}
+    generic_cholesky_backsolve!(fac.factors, d)
     return d
 end
