@@ -124,7 +124,9 @@ end
           typeof(init(prob_ls, zeros(T, 2), GaussNewton(), nothing))
 end
 
-@testset "solve and init with no method on a sparse prototype: T = $T" for T in (Float64, ComplexF64)
+# UMFPACK takes the element types of real part `Float64`.
+@testset "solve and init with no method on a sparse prototype: T = $T" for T in filter(
+    T -> real(T) === Float64, ELTYPES)
     prob = sparse_cubic_problem(T)
     x, status = solve(prob, zeros(T, 6))
     @test status.code === SUCCESS
