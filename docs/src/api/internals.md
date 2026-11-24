@@ -84,6 +84,8 @@ isconverged
 isstalled
 norm2
 rnorm
+rmaxnorm
+stopping_norm
 rdot
 BatchEliminatedJVPPrep
 PIC1DParams

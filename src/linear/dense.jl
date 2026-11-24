@@ -1,6 +1,7 @@
 # Dense CPU linear factorisations (R3): LAPACK (`LAPACK.getrf!`, `geqrf!`, `lapack_gesvd`,
 # `sytrf!`, `sytrs!`, `hetrf!`, `hetrs!`, `LAPACK.potrf!`, `LAPACK.potrs!`) for
-# `StridedMatrix{<:BlasFloat}` with held workspace buffers, and `LinearAlgebra`'s generic `lu!` and
+# `StridedMatrix{<:BlasFloat}` with held workspace buffers, or `recursive_lu!` of `recursive_lu.jl`
+# for an LU in the band of `use_recursive_lu`, and `LinearAlgebra`'s generic `lu!` and
 # `qr!` (or `generic_ldlt!` of `static/ldlt.jl` and `generic_cholesky!` of `static/cholesky.jl`)
 # for any other `AbstractMatrix`. `geqrf!`, `lapack_gesvd`, `sytrf!` and `hetrf!` take
 # `lwork = -1` for a workspace query, which writes the optimal size into `work[1]` and factorises
@@ -245,9 +246,15 @@ end
 
 # --- DenseLU ---
 
-function factorize!!(fac::DenseLU{<:StridedMatrix{<:BlasFloat}}, ::LUFactorization,
-        J::AbstractMatrix)
+# An `n × n` factor with `n` in the band of `use_recursive_lu` takes `recursive_lu!`, whose `ipiv`
+# is LAPACK's, so that `getrs!` solves with either factor.
+function factorize!!(fac::DenseLU{<:StridedMatrix{F}}, ::LUFactorization,
+        J::AbstractMatrix) where {F <: BlasFloat}
     e = load_factors!(fac.factors, J)
+    if use_recursive_lu(F, size(fac.factors, 1))
+        info = recursive_lu!(fac.factors, fac.ipiv, RECURSIVE_LU_BASE)
+        return DenseLU(fac.factors, fac.ipiv, fac.rhs, info, e)
+    end
     _, ipiv, info = LAPACK.getrf!(fac.factors, fac.ipiv; check = false)
     return DenseLU(fac.factors, ipiv, fac.rhs, Int(info), e)
 end

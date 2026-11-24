@@ -701,6 +701,68 @@ end
     @test norm(x - SVector(1.0, 2.0)) > 1 / 2
 end
 
+# The best iterate of a `Newton` ranks `‖M F‖₂`, while `status.fnorm` of a deflated solve is the
+# inner `‖F‖₂`, so a `Deflated` problem refuses `best = true` at every entry point.
+@testset "A Newton with best = true is refused, naming best" begin
+    refusal = r"^ArgumentError: Deflated takes no Newton with best = true"
+    m = Newton(; best = true)
+    @test_throws refusal solve(Deflated(NonlinearProblem((x, p) -> x .* x .- 4), (2.0,)),
+        1.0, m)
+    def = Deflated(p2_problem_ad(), (SVector(1.0, 2.0),))
+    x0 = SVector(0.8, 1.7)
+    @test_throws refusal solve(def, x0, m)
+    @test_throws refusal init(def, x0, m)
+    @test_throws refusal solve_batch!(fill(x0, 2), def, m)
+    @test_throws refusal solve(def, x0, Newton(; globalization = Backtracking(), best = true))
+    @test GS.isconverged(last(solve(def, x0, Newton(; globalization = Backtracking()))))
+end
+
+# Under `MaxNorm()` the residual test of a deflated solve reads the inner residual,
+# `‖M F‖∞ / M`, not `‖M F‖∞`. From `(-1, 3)` the inner max norm at `k = 2` lies far below those of
+# `k = 0` and `k = 1`, and the deflation factor there is well above 1, so an `f_abstol` just above it
+# stops at `k = 2` only when the test divides by `M`.
+@testset "MaxNorm on a deflated solve tests the inner residual" begin
+    df(x, p) = SVector(x[1]^2 - 4, x[2] - 1)
+    dprob = Deflated(NonlinearProblem(df), (SVector(2.0, 1.0),))
+    x0 = SVector(-1.0, 3.0)
+    inner = [maximum(abs, df(first(solve(dprob, x0, Newton(); max_iterations = k)), nothing))
+             for k in 0:5]
+    x₂, _ = solve(dprob, x0, Newton(); max_iterations = 2)
+    @test inner[3] * (1 + 1e-4) < min(inner[1], inner[2])
+    @test GS._deflate_scale(dprob, x₂) > 1 + 1e-3
+    a = inner[3] * (1 + 1e-4)
+    x, st = solve(dprob, x0, Newton(); f_abstol = a, f_reltol = 0, norm = MaxNorm())
+    @test st.code == SUCCESS
+    @test st.iterations == 2
+    @test x == x₂
+    # `status.fnorm` stays the inner 2-norm
+    @test st.fnorm ≈ norm(df(x, nothing)) rtol = 8eps()
+    # a start at a root of the inner problem that is not deflated has a zero residual, which the
+    # max-norm test takes at once on a value and on an array iterate
+    df!(y, x, p) = (y .= (x[1]^2 - 4, x[2] - 1); y)
+    for (prob, x0) in ((dprob, SVector(-2.0, 1.0)),
+        (Deflated(NonlinearProblem(df!), ([2.0, 1.0],)), [-2.0, 1.0]))
+        x, st = solve(prob, x0, Newton(); norm = MaxNorm())
+        @test st.code == SUCCESS
+        @test st.iterations == 0
+        @test x == x0
+    end
+    # far from the root the deflation factor is the subnormal shift, so the deflated residual is
+    # near `1e-310` while the inner residual is 1: the max-norm test takes `f_abstol = 2` as the
+    # 2-norm test does, without forming the overflowing reciprocal of the factor
+    one!(y, x, p) = (y .= one(eltype(x)); y)
+    for (prob, x0) in (
+        (Deflated(NonlinearProblem((x, p) -> one(x)), (0.0,); shift = 1e-310), 1e160),
+        (Deflated(NonlinearProblem(one!), ([0.0],); shift = 1e-310), [1e160]))
+        for n in (L2Norm(), MaxNorm())
+            x, st = solve(prob, x0, Newton(); f_abstol = 2.0, f_reltol = 0.0, norm = n,
+                max_iterations = 0)
+            @test st.code == SUCCESS
+            @test st.fnorm ≈ 1 rtol = 8eps()
+        end
+    end
+end
+
 # ─── Edge 12: the distance on the unknowns, and the datum `b` ───────────────
 
 @testset "Edge 12: the datum b reaches the wrapped StationarityProblem" begin

@@ -1,7 +1,8 @@
 # The one reduction seam: every norm, dot product and merit value of the package goes through
-# these three functions, and each returns `real(T)`. A widened or compensated accumulator, if
-# one is ever needed, is a change here and nowhere else. They use no scalar indexing, so they
-# run on an `Array`, on a GPU array and on an `SVector` inside a kernel.
+# the reductions of this file, `norm2`, `rnorm`, `rmaxnorm` and `rdot`, and each returns `real(T)`.
+# A widened or compensated accumulator, if one is ever needed, is a change here and nowhere else.
+# They use no scalar indexing, so they run on an `Array`, on a GPU array and on an `SVector`
+# inside a kernel.
 
 """
     norm2(a)
@@ -54,6 +55,27 @@ function rnorm(a)
     S = promote_type(R, Float32)
     return R(ldexp2(sqrt(sum(ScaledSquares{S}(-e), a)), e))
 end
+
+"""
+    rmaxnorm(a)
+
+The max norm ``\\max_i |a_i|``, the largest modulus of an entry, in `real(eltype(a))`: one
+`maximum(abs, a)`, which gives zero for an empty `a` on an `Array`, an `SVector` and a GPU
+array alike. It needs no scaling, so it is finite wherever the largest modulus is, also where the
+2-norm overflows. A `NaN` entry gives `NaN`, and an `Inf` entry and no `NaN` gives `Inf`.
+"""
+rmaxnorm(a) = real(eltype(a))(maximum(abs, a))
+
+"""
+    stopping_norm(n::StoppingNorm, a)
+
+The norm `n` of `a` in `real(eltype(a))`: [`rnorm`](@ref) for [`L2Norm`](@ref) and
+[`rmaxnorm`](@ref) for [`MaxNorm`](@ref). The residual test of [`solve!!`](@ref) takes the
+max norm of [`Options`](@ref) through it; under `L2Norm()` it reads `status.fnorm`, which is
+the 2-norm of the residual already.
+"""
+@inline stopping_norm(::L2Norm, a) = rnorm(a)
+@inline stopping_norm(::MaxNorm, a) = rmaxnorm(a)
 
 """
     rdot(a, b)

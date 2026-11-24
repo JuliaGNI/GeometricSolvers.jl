@@ -24,9 +24,12 @@ a `balance_threshold` is refused at `init_state` with an `ArgumentError`, becaus
 returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root. A
 [`Newton`](@ref) with [`GMRES`](@ref) as `outer` is refused at `init_state` with an
 `ArgumentError`, because it solves a `NonlinearProblem` and `outer` solves ``r^\\ell``; as `inner`
-it is taken. `outer` may be a combinator, such as [`Repeat`](@ref) or [`Multiplicative`](@ref),
-whose members step on ``r^\\ell``; with a `RAS` inner, every member of an [`Additive`](@ref)
-after the first costs one more sweep, at the iterate, because the RASPEN Jacobian reads the block
+it is taken. A `Newton` with `best = true` as `outer`, or as a member of a combinator `outer`, is
+refused at `init_state` with an `ArgumentError` too, because its best iterate would be ranked by
+``\\|r^\\ell\\|_2``; as `inner` it is taken, and its `best` has no effect. `outer` may be a
+combinator, such as [`Repeat`](@ref) or [`Multiplicative`](@ref), whose members step on
+``r^\\ell``; with a `RAS` inner, every member of an [`Additive`](@ref) after the first costs one
+more sweep, at the iterate, because the RASPEN Jacobian reads the block
 factors of the last sweep. A [`Deflated`](@ref) problem is refused at `init_state` with an
 `ArgumentError`, because its stopping test reads the deflation factor from a `Newton` state. With
 an `inner` other than a `RAS` the derivative of

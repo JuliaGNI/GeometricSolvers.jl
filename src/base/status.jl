@@ -12,9 +12,11 @@ is in `R = real(T)` for the element type `T` of the iterate.
   [`GMRES`](@ref) keeps the count, and so does a [`Repeat`](@ref) of it. The other combinators
   keep none and report `0`: the members of a step-level combinator count only their own steps,
   and [`Fallback`](@ref) does not add the counts of the solves of its members.
-- `iterations::Int32`: the number of steps taken.
+- `iterations::Int32`: the number of steps taken; for a solve that returns the start point of a
+  step it discards, the steps that reached that point.
 - `fnorm::R`: ``\\|F(x)\\|`` at return.
-- `stepnorm::R`: ``\\|Δx\\|`` of the last step.
+- `stepnorm::R`: ``\\|Δx\\|`` of the last step; for a solve that returns the start point of a
+  step it discards, that of the step that reached that point.
 - `step_failures::Int32`: every step-rule failure of the solve, such as a failed line search, in
   one count.
 - `promoted::Bool`: a factorisation ran in a higher precision than the factorisation precision
@@ -34,7 +36,10 @@ is in `R = real(T)` for the element type `T` of the iterate.
 
 The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
 ``x`` at return; a solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has
-factorised afresh at the iterate it returns, so its numbers are that iterate's. With `regularization = μ ≠ 0`, `rank` and `nullnorm` are those of the
+factorised afresh at the iterate it returns, so its numbers are that iterate's. Where such a solve
+returns the start point of a step it discards, the numbers are those of the factorisation at that
+point, the iterate at return, and not those of the later re-measure at the end of the step.
+With `regularization = μ ≠ 0`, `rank` and `nullnorm` are those of the
 factored matrix ``J(x_k) + μ I`` and `gradratio` is that of ``J(x_k)``, so the classification
 below holds for `μ = 0` only. For a [`Newton`](@ref) solve with `n ≥ 2` (for `n = 1`, any
 nonzero scalar Jacobian has `gradratio == 1`, and `rank == 1` with an SVD factor), they

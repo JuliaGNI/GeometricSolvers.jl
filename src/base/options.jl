@@ -1,5 +1,31 @@
 """
-    Options{R <: Real}
+    StoppingNorm
+
+The norm that the residual test of [`Options`](@ref) reads: [`L2Norm`](@ref) or
+[`MaxNorm`](@ref). Each is a singleton type, so the norm is a type parameter of `Options` and
+adds no byte to it.
+"""
+abstract type StoppingNorm end
+
+"""
+    L2Norm()
+
+The Euclidean norm ``\\|F\\|_2``, the default [`StoppingNorm`](@ref) of [`Options`](@ref). Under
+it the residual test reads `status.fnorm` and takes no reduction of its own.
+"""
+struct L2Norm <: StoppingNorm end
+
+"""
+    MaxNorm()
+
+The max norm ``\\|F\\|_\\infty = \\max_i |F_i|``, a [`StoppingNorm`](@ref) of [`Options`](@ref).
+Under it the residual test takes one reduction of the residual at the start and after each step
+that reaches the test, `GeometricSolvers.rmaxnorm`, which also runs on a device array.
+"""
+struct MaxNorm <: StoppingNorm end
+
+"""
+    Options{R <: Real, N <: StoppingNorm}
 
 The stopping test of the loop, and nothing else. It is `isbits`, and every tolerance is in
 `R = real(T)` for the element type `T` of the iterate, so a `Float64` tolerance never reaches a
@@ -7,19 +33,21 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 
 # Fields
 
-- `f_abstol::R`, `f_reltol::R`: the residual test ``\\|F(x)\\| ≤ \\max(f_{abstol}, f_{reltol} \\|F(x₀)\\|)``.
-- `x_abstol::R`, `x_reltol::R`: the step test ``\\|Δx\\| ≤ \\max(x_{abstol}, x_{reltol} \\|x\\|)``.
+- `f_abstol::R`, `f_reltol::R`: the residual test ``\\|F(x)\\|_N ≤ \\max(f_{abstol}, f_{reltol} \\|F(x₀)\\|_N)`` in the norm `N`.
+- `x_abstol::R`, `x_reltol::R`: the step test ``\\|Δx\\|_2 ≤ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)``.
 - `min_iterations::Int32`, `max_iterations::Int32`: the bounds on the number of steps.
 - `max_stalls::Int32`: the number of consecutive stalled steps after which the solve stops.
 - `g_tol::R`: the stationarity tolerance ``\\|J^\\top F\\|_2 / (\\|J\\|_F \\|F\\|_2) \\le g_{\\text{tol}}`` on a [`LeastSquaresProblem`](@ref).
+- `norm::N`: the [`StoppingNorm`](@ref) of the residual test, [`L2Norm`](@ref) or
+  [`MaxNorm`](@ref). It is a singleton, so `Options` has the size of its other fields.
 
 [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
 type `T` of the iterate, so the caller never names `R`. A solve takes only an `Options{R}` for
 `R = real(T)` and raises an `ArgumentError` for any other: the tolerances of another precision do
 not carry over, because the `Float64` default `f_reltol = √eps(Float64)` lies below `eps(Float32)`
-and a `Float32` solve cannot reach it.
+and a `Float32` solve cannot reach it. `Options{R}` names the options of every norm in `R`.
 """
-struct Options{R <: Real}
+struct Options{R <: Real, N <: StoppingNorm}
     f_abstol::R
     f_reltol::R
     x_abstol::R
@@ -28,13 +56,23 @@ struct Options{R <: Real}
     max_iterations::Int32
     max_stalls::Int32
     g_tol::R
+    norm::N
+end
+
+# The positional forms in `R`: eight values and a norm, `L2Norm()` without one, and the seven
+# values before `g_tol`, which take `g_tol = √eps(R)`.
+function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
+        min_iterations::Integer, max_iterations::Integer, max_stalls::Integer, g_tol::Real,
+        norm::N = L2Norm()) where {R <: Real, N <: StoppingNorm}
+    return Options{R, N}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
+        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm)
 end
 
 function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
         min_iterations::Integer, max_iterations::Integer, max_stalls::Integer) where {R <:
                                                                                       Real}
-    return Options{R}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
-        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), sqrt(eps(R)))
+    return Options{R}(f_abstol, f_reltol, x_abstol, x_reltol,
+        min_iterations, max_iterations, max_stalls, sqrt(eps(R)))
 end
 
 @inline function nonnegative(name::Symbol, tol::Real)
@@ -43,7 +81,7 @@ end
 end
 
 """
-    Options(T = Float64; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls, g_tol)
+    Options(T = Float64; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls, g_tol, norm)
 
 Build the [`Options`](@ref) of a solve whose iterate has element type `T`, as `Options{real(T)}`.
 The relative tolerances scale with `eps(R)`:
@@ -58,6 +96,15 @@ The relative tolerances scale with `eps(R)`:
 | `max_iterations` | `100` |
 | `max_stalls` | `2` |
 | `g_tol` | `√eps(R)` |
+| `norm` | [`L2Norm()`](@ref L2Norm) |
+
+**The stopping norm is the norm of the residual test only.** With `norm = MaxNorm()` the residual
+test reads ``\\|F(x)\\|_\\infty \\le \\max(f_{abstol}, f_{reltol} \\|F(x₀)\\|_\\infty)``, so the
+default `f_reltol` is relative to the max norm of the start. The step test, the stationarity test,
+the `NONFINITE` test of the start, the merit ``\\|F\\|_2^2`` of every line search and
+`status.fnorm` stay in the 2-norm, so a `SUCCESS` under `MaxNorm()` can report a `status.fnorm`
+above `f_abstol`. On a [`Deflated`](@ref) problem the test reads the norm of the inner residual,
+``\\|M F\\|_N / M``.
 
 **The default residual test is relative.** The residual cannot fall below about
 ``\\mathrm{eps}(T) \\|J\\| \\|x\\|``, whatever the precision of the residual (Tisseur 2001,
@@ -78,10 +125,13 @@ A negative or `NaN` tolerance, a negative `min_iterations`, a `max_iterations` b
 julia> opt = Options(ComplexF32; f_reltol = 1e-4);
 
 julia> typeof(opt)
-Options{Float32}
+Options{Float32, L2Norm}
 
 julia> opt.f_reltol
 0.0001f0
+
+julia> Options(Float64; norm = MaxNorm()).norm
+MaxNorm()
 ```
 """
 function Options(::Type{T} = Float64;
@@ -92,7 +142,8 @@ function Options(::Type{T} = Float64;
         min_iterations::Integer = 0,
         max_iterations::Integer = 100,
         max_stalls::Integer = 2,
-        g_tol::Real = sqrt(eps(real(T)))) where {T <: Number}
+        g_tol::Real = sqrt(eps(real(T))),
+        norm::StoppingNorm = L2Norm()) where {T <: Number}
     R = real(T)
     # one call per tolerance, because a loop over their mixed types allocates
     nonnegative(:f_abstol, f_abstol)
@@ -107,7 +158,7 @@ function Options(::Type{T} = Float64;
     max_stalls >= 1 ||
         throw(ArgumentError("max_stalls must be at least 1, got $max_stalls"))
     Options{R}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
-        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol))
+        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm)
 end
 
 # `nothing` when `options` is an `Options{real(T)}`, the options of an iterate of element type
@@ -126,7 +177,9 @@ The stopping test of [`Options`](@ref) at `status`, for a start with residual no
 an iterate of norm `xnorm`. It holds once `min_iterations` steps are taken and either the residual
 test or, after a step of nonzero norm, the step test holds. At 0 iterations it is the test before
 the first step: the relative residual test then holds only for ``F(x₀) = 0``, so a start passes it
-through `f_abstol`. A zero step is no progress, so it never passes the step test.
+through `f_abstol`. A zero step is no progress, so it never passes the step test. The residual
+test compares `status.fnorm` with `fnorm₀` as they are given: under [`MaxNorm`](@ref), the caller
+passes both in the max norm, as [`solve!!`](@ref) does.
 
 [`solve!!`](@ref) returns `SUCCESS` only through the residual test: a step test that holds while
 the residual test fails returns `STALLED`.

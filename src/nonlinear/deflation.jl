@@ -532,6 +532,17 @@ end
     return _inner_status(status, _deflate_scale!(state.jacprep.us, def, x))
 end
 
+# Under `MaxNorm` the residual test reads the inner residual in the max norm, `‖M F‖∞ / M`.
+# `status` holds `‖M F‖₂ / M` of `raw`, whose norm is `‖M F‖₂`, so `‖M F‖∞ / ‖M F‖₂`, a ratio
+# between `1 / √n` and 1, scales `status.fnorm` to the inner max norm. The reciprocal `1 / M` is
+# never formed, as it overflows where `M` is subnormal. A zero residual has no ratio, and its max
+# norm is zero under any factor.
+@inline function test_status(n::MaxNorm, state, def::Deflated, x, Fx, raw, status)
+    maxnorm = stopping_norm(n, Fx)
+    iszero(raw.fnorm) && return with_fnorm(status, maxnorm)
+    return with_fnorm(status, (maxnorm / raw.fnorm) * status.fnorm)
+end
+
 # ─── The checks of a solve ───────────────────────────────────────────────────
 
 # The iterate of a solve: real, in the element type of the roots, as long as every root, and a
@@ -576,12 +587,17 @@ end
 
 # A `Newton` takes a callable `jacobian` as the Jacobian of the problem it solves, which here is the
 # deflated one, `M J + F ∇Mᵀ`; a Jacobian of the inner `F` there steps in the wrong direction. An
-# analytic Jacobian of `F` is the `J` of the wrapped `NonlinearProblem`.
+# analytic Jacobian of `F` is the `J` of the wrapped `NonlinearProblem`. A `Newton` with
+# `best = true` ranks its iterates by the deflated `‖M F‖`, while `status.fnorm` is the inner
+# `‖F‖`, so it is refused too.
 @inline _check_deflated_method(method) = nothing
 @inline function _check_deflated_method(m::Newton)
     (m.jacobian === nothing || m.jacobian isa AbstractADType) || throw(ArgumentError(
         "Deflated needs a Newton whose jacobian is nothing or an AD backend: a callable would be " *
         "taken as the deflated Jacobian; give the Jacobian of F to the NonlinearProblem instead"))
+    m.best === Val(false) || throw(ArgumentError(
+        "Deflated takes no Newton with best = true: the best iterate would be ranked by the " *
+        "deflated residual, not by the inner residual that status.fnorm reports"))
     return nothing
 end
 

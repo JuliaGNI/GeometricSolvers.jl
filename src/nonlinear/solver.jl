@@ -73,6 +73,16 @@ end
         status.step_failures, status.promoted, true)
 end
 
+# The status of a solve that returns the start point `x_k` of a step it discards: `SUCCESS` and
+# stationary, with the iterations, `fnorm` and `stepnorm` of `status_k` at `x_k`, and the
+# step-rule failures and the promotion of `status`, into which `record` folded the discarded step.
+@inline function discarded_step_status(
+        status_k::SolverStatus{R}, status::SolverStatus{R}) where {R}
+    return SolverStatus{R}(
+        SUCCESS, status_k.iterations, status_k.fnorm, status_k.stepnorm,
+        status.step_failures, status.promoted, true)
+end
+
 @inline function end_status(status::SolverStatus{R}, code::ReturnCode) where {R}
     return SolverStatus{R}(
         code, status.iterations, status.fnorm, status.stepnorm,
@@ -84,6 +94,24 @@ end
 # `fnorm` to the norm of its inner residual.
 @inline converged_status(state, prob, x, status) = status
 
+# `status` with its residual norm replaced by `fnorm`, and every other field kept.
+@inline function with_fnorm(status::SolverStatus{R}, fnorm::R) where {R}
+    return SolverStatus{R}(
+        status.code, status.f_calls, status.iterations, fnorm, status.stepnorm,
+        status.step_failures, status.promoted, status.stationary, status.jvp_calls,
+        status.rank, status.nullnorm, status.gradratio)
+end
+
+# The status that the residual test of `solve!!` reads at `x`, whose residual is `Fx`: `status`,
+# which `converged_status` gave from `raw`, under `L2Norm`; under another norm, the status that
+# `converged_status` gives from `raw` with the norm of `Fx` in that norm, so that a `Deflated`
+# problem tests its inner residual in the norm of the options too. Under `MaxNorm` a `Deflated`
+# problem has a method of its own, which reuses the factor that `status` holds.
+@inline test_status(::L2Norm, state, prob, x, Fx, raw, status) = status
+@inline function test_status(n::StoppingNorm, state, prob, x, Fx, raw, status)
+    return converged_status(state, prob, x, with_fnorm(raw, stopping_norm(n, Fx)))
+end
+
 @inline function stationary_converged(
         ::AbstractNonlinearProblem, ::Options{R}, state, ::SolverStatus{R}) where {R}
     return false
@@ -94,6 +122,32 @@ end
     jnorm = state_jnorm(state)
     grad = state_gradratio(state)
     return jnorm > zero(R) && status.fnorm > zero(R) && grad <= options.g_tol
+end
+
+# The slots that `solve!!` copies the start point of each step and its residual into, so that it
+# can return that point after the step: two buffers for an array iterate of a
+# `LeastSquaresProblem`, and `nothing` where `copy!!` keeps the value itself.
+@inline step_start_buffers(state) = (nothing, nothing)
+
+# Whether `solve!!` returns the start point `x_k` of the step that `state₊` returned, with the
+# status `status_k` of `x_k`, once the stationarity test re-measured at the step's end has failed:
+# on a `LeastSquaresProblem`, where `x_k` is no start point of the solve, and the diagnostics of
+# `state₊` pass the stationarity test with `status_k`. For a step that factorises at `x_k`, those
+# are the diagnostics of that factorisation. A step along a reused factor carries the diagnostics
+# that the state held at `x_k`, and `solve!!` has tested those with `status_k` after the step
+# before and gone on, so they fail here; a state that reports no diagnostics reads `NaN`, which
+# fails too. Only a `NewtonState` has the buffers of `step_start_buffers`; with any other state, an
+# array `x_k` is the iterate itself, which the step overwrites. So every other problem returns
+# `false`, also one whose `stationary_converged` can pass, such as a `VariableProjection`.
+@inline function keeps_step_start(
+        ::AbstractNonlinearProblem, ::Options{R}, state₊, ::SolverStatus{R}) where {R}
+    return false
+end
+@inline function keeps_step_start(
+        prob::LeastSquaresProblem, options::Options{R}, state₊,
+        status_k::SolverStatus{R}) where {R}
+    status_k.iterations >= one(Int32) || return false
+    return stationary_converged(prob, options, state₊, status_k)
 end
 
 # `residual!!` at a primal iterate of a solve, refused when the residual contains a
@@ -119,7 +173,10 @@ p)` and `fnorm₀ = rnorm(Fx)`, and calls [`start!!`](@ref) once, which resets t
 of the method (the reuse age and the stalled flag under factor reuse, the radius under
 [`DogLeg`](@ref), the damping parameter under [`LevenbergMarquardt`](@ref), and the anchor merit
 of a line search). Every return goes through
-[`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns.
+[`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns. The residual test
+reads the [`StoppingNorm`](@ref) of `options`: under [`MaxNorm`](@ref), `solve!!` takes one
+[`rmaxnorm`](@ref) of the residual at the start and after each step that reaches the test, and
+`status.fnorm` stays the 2-norm of the residual.
 
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
 returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds
@@ -141,7 +198,18 @@ keeps its new iterate, increments
 hold, the stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ options.g_tol` (with `‖J‖_F > 0` and
 `‖F‖ > 0`) returns `SUCCESS` with `status.stationary == true`. The state's diagnostics are those
 of its last fresh factorisation, at the start of the step, so the ratio is re-measured at the
-iterate the solve returns before it ends on this test. When neither test holds
+iterate the solve returns before it ends on this test. Where that re-measure fails, but the
+factorisation that the step took at its start point `x_k` passes the test, with `k ≥ 1` and
+`k ≥ options.min_iterations`, the solve returns `x_k` with `SUCCESS` and
+`status.stationary == true`, and the step is discarded: the status counts the `k` iterations that
+reached `x_k` and carries the `fnorm` and `stepnorm` of `x_k` and the diagnostics of its
+factorisation, while the step-rule failures and the promotion of the discarded step still count
+in `status.step_failures` and `status.promoted`. The rule reads the stationarity test, not
+`‖F‖`: at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum, it returns `x_k`
+also where the discarded step lowers `‖F‖`. The step from `x₀` is always kept. A step
+along a reused factor takes no factorisation at its start point unless it falls back to a fresh
+one there, after a failed line search or refinement; without one, it carries the diagnostics
+that the solve tested at `x_k` before, which failed, so it is kept. When neither test holds
 after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
 at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
 would start — unless the stationarity test, re-measured at that iterate, holds, which a
@@ -161,22 +229,31 @@ function solve!!(
     Fx = primal_residual!!(residual_buffer(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
-    status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false, false)
+    status₀ = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false, false)
     if !isfinite(fnorm₀)
-        return finish!!(state, method, prob, x, Fx, end_status(status, NONFINITE))
+        return finish!!(state, method, prob, x, Fx, end_status(status₀, NONFINITE))
     end
-    status = converged_status(state, prob, x, status)
-    ftest₀ = status.fnorm
-    if residual_converged(options, status, ftest₀)
+    status = converged_status(state, prob, x, status₀)
+    # the residual test reads the norm of `options`, and `status.fnorm` stays the 2-norm
+    tested = test_status(options.norm, state, prob, x, Fx, status₀, status)
+    ftest₀ = tested.fnorm
+    if residual_converged(options, tested, ftest₀)
         return finish!!(state, method, prob, x, Fx, status)
     end
     if options.max_iterations == Int32(0)
         return finish!!(state, method, prob, x, Fx, end_status(status, MAXITERS))
     end
     stalls = Int32(0)
+    xbuf, Fbuf = step_start_buffers(state)
     while true
+        # the start point of the step, its residual and its status
+        x_k = copy!!(xbuf, x)
+        F_k = copy!!(Fbuf, Fx)
+        status_k = status
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
-        status = converged_status(state, prob, x, record(status, info))
+        state_step = state
+        recorded = record(status, info)
+        status = converged_status(state, prob, x, recorded)
         if info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS
             return finish!!(state, method, prob, x, Fx, status)
         end
@@ -184,7 +261,8 @@ function solve!!(
            !stationary_converged(prob, options, state, status)
             return finish!!(state, method, prob, x, Fx, status)
         end
-        if residual_converged(options, status, ftest₀)
+        tested = test_status(options.norm, state, prob, x, Fx, recorded, status)
+        if residual_converged(options, tested, ftest₀)
             return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
         # the diagnostics are re-measured at `x` at most once per step
@@ -194,6 +272,15 @@ function solve!!(
             refreshed = true
             if stationary_converged(prob, options, state, status)
                 return finish!!(state, method, prob, x, Fx, stationary_status(status))
+            end
+            # the step left a start point that its factorisation there reads stationary: the solve
+            # returns that point, with its status, in which the failures and the promotion of the
+            # discarded step still count, and the state that carries its diagnostics
+            if keeps_step_start(prob, options, state_step, status_k)
+                x = copy!!(x, x_k)
+                Fx = copy!!(Fx, F_k)
+                return finish!!(state_step, method, prob, x, Fx,
+                    discarded_step_status(status_k, status))
             end
         end
         # the residual test fails: the step test, or a zero step, ends the solve unconverged,

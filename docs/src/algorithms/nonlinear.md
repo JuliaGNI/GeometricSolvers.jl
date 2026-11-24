@@ -23,6 +23,7 @@ its globalization. Its keywords are:
 | `regularization` | `0` | the diagonal shift ``\mu`` of ``J + \mu I`` |
 | `reuse` | `nothing` | the factor-reuse period `k` |
 | `forcing`, `preconditioner` | `nothing` | the forcing term and the right preconditioner of a `GMRES` |
+| `best` | `false` | return the iterate of the smallest ``\|F\|_2`` of a solve that ends without `SUCCESS` |
 
 ```jldoctest nonlinear
 julia> using GeometricSolvers
@@ -62,6 +63,37 @@ Jacobian at the current iterate.
 `regularization = μ` factorises ``J + \mu I`` instead of ``J``. With an
 [`SVDFactorization`](@ref) a singular Jacobian gives the truncated minimum-norm step instead, and
 [`SolverStatus`](@ref) reports the numerical rank in `rank`.
+
+### The best iterate
+
+A full Newton step can raise ``\|F\|``, so a solve that ends without `SUCCESS` can end on an
+iterate worse than one it passed. With `best = true`, `Newton` keeps the iterate of the smallest
+``\|F\|_2`` among the start and every iterate a step returned, and returns it where the solve ends
+with a code other than `SUCCESS` and that norm is below the norm of the last iterate;
+`status.fnorm` then reports that norm, and every other field of the status is that of
+`best = false`. A solve that succeeds returns its last iterate. On ``F(x) = x^2 + 1``, which has
+no real root, eight steps from `0.5` end on ``\|F\| \approx 2.49``, and the sixth iterate has
+``\|F\| \approx 1.03``:
+
+```jldoctest nonlinear
+julia> noroot = NonlinearProblem((x, p) -> x^2 + 1);
+
+julia> _, last_status = solve(noroot, 0.5, Newton(); max_iterations = 8);
+
+julia> _, best_status = solve(noroot, 0.5, Newton(; best = true); max_iterations = 8);
+
+julia> last_status.code === best_status.code === MAXITERS
+true
+
+julia> round(last_status.fnorm; digits = 2), round(best_status.fnorm; digits = 2)
+(2.49, 1.03)
+```
+
+[`GaussNewton`](@ref) and [`QuasiNewton`](@ref) take the keyword too. A [`Deflated`](@ref) problem
+and the outer method of a [`BlockEliminated`](@ref), a [`VariableProjection`](@ref) or a
+[`BatchEliminated`](@ref) problem refuse it, and so does [`LeftPreconditioned`](@ref) for a
+`Newton` in its outer method. The residual test can read the max norm instead of the 2-norm, with
+`Options(T; norm = MaxNorm())` ([`Options`](@ref)); the ranking of `best` stays in the 2-norm.
 
 ## `GaussNewton`
 

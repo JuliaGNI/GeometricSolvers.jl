@@ -702,3 +702,389 @@ end
             x -> isapprox(x, SVector{2, T}(T(2), T(3)); rtol = 10 * sqrt(eps(R))), xs_c)
     end
 end
+
+# ─── `Newton(; best = true)`: the iterate of the smallest ‖F‖₂ ─────────────────
+#
+# Each fixture runs on the four routes of an iterate: the value iterates `Number` and `SVector`,
+# and the array iterates `Array` and `JLArray`, which refuses scalar indexing.
+
+using LinearAlgebra: norm
+
+best_iterate(::Type{Number}, v) = only(v)
+best_iterate(::Type{SVector}, v) = SVector{length(v)}(v)
+best_iterate(::Type{B}, v) where {B} = B(v)
+best_problem(::Type{<:Union{Number, SVector}}, f, f!) = NonlinearProblem(f)
+best_problem(::Type, f, f!) = NonlinearProblem(f!)
+best_host(x::Number) = [x]
+best_host(x) = Array(x)
+const BEST_ROUTES = (Number, SVector, ARRAY_BACKENDS...)
+
+# `x` and `y` agree to `8 eps`: the same arithmetic on two routes may differ in the last bits.
+best_close(x, y) = all(isapprox.(x, y; rtol = 8 * eps(real(eltype(float(x)))), atol = 0))
+
+# The no-root scalar `F(x) = x² + 1`: Newton from `x₀ = 0.5` jumps between iterates of growing and
+# shrinking residual, and `‖F(x_k)‖₂` for `k = 0, …, 8` is `BEST_NR_F`, the smallest at `k = 6`.
+best_nr(x, p) = x .* x .+ one(eltype(x))
+best_nr!(y, x, p) = (y .= x .* x .+ one(eltype(x)); y)
+best_nr_J(x::Number, p) = 2x
+const BEST_NR_F = (
+    1.25, 1.5625, 1.0850694444444444, 3.4600428713151907, 1.2166349630462578,
+    1.7081737551644687, 1.0300641461766078, 8.823069005566088, 2.487724019230605)
+
+# Every field of a status but `fnorm`.
+function best_same_rest(a, b)
+    a.code == b.code && a.iterations == b.iterations &&
+        isequal(a.stepnorm, b.stepnorm) && a.step_failures == b.step_failures &&
+        a.promoted == b.promoted && a.stationary == b.stationary &&
+        a.f_calls == b.f_calls && a.jvp_calls == b.jvp_calls &&
+        a.rank == b.rank && isequal(a.nullnorm, b.nullnorm) &&
+        isequal(a.gradratio, b.gradratio)
+end
+
+# What `best = true` returns, from the solves of `best = false` capped at each `k`: the iterate of
+# the smallest ‖F‖₂, the earliest among equal norms, where the uncapped solve ends without `SUCCESS`
+# and that norm is below its last one; else the return of `best = false`.
+function best_reference(prob, x₀, method, p, K; kwargs...)
+    x_last, st_last = solve(prob, x₀, method, p; max_iterations = K, kwargs...)
+    n = Int(st_last.iterations)
+    xs = Vector{Vector}(undef, n + 1)
+    fs = zeros(real(eltype(best_host(x₀))), n + 1)
+    for k in 0:n
+        x, st = solve(prob, x₀, method, p; max_iterations = k, kwargs...)
+        xs[k + 1] = best_host(x)
+        fs[k + 1] = st.fnorm
+    end
+    j = argmin(map(f -> isfinite(f) ? f : oftype(f, Inf), fs))
+    restore = st_last.code != SUCCESS && isfinite(fs[j]) && fs[j] < st_last.fnorm
+    return (restore ? (xs[j], fs[j]) : (best_host(x_last), st_last.fnorm)), st_last
+end
+
+function test_best(prob, x₀, method, best_method, p, K; kwargs...)
+    (x_ref, f_ref), st_false = best_reference(prob, x₀, method, p, K; kwargs...)
+    x, st = solve(prob, x₀, best_method, p; max_iterations = K, kwargs...)
+    @test best_close(best_host(x), x_ref)
+    @test best_close(st.fnorm, f_ref)
+    @test best_same_rest(st, st_false)
+    return x, st
+end
+
+@testset "Newton(; best): the keyword, the field and the constructors" begin
+    @test Newton().best === Val(false)
+    @test Newton(; best = true).best === Val(true)
+    @test Newton(; best = false).best === Val(false)
+    @test fieldnames(Newton)[end] === :best
+    @test isbits(Newton(; best = true)) == isbits(Newton())
+    # the type check of the keyword `best::Bool`
+    @test_throws r"^TypeError: non-boolean \(Int64\) used in boolean context$" Newton(;
+        best = 1)
+    @test QuasiNewton(2; best = true).best === Val(true)
+    @test GaussNewton(; best = true).best === Val(true)
+    @test GaussNewton().best === Val(false)
+    for glob in (Static(), Backtracking(), DogLeg(), LevenbergMarquardt())
+        @test Newton(; globalization = glob, best = true).best === Val(true)
+    end
+    @test Newton(; linsolve = GMRES(), best = true).best === Val(true)
+    @test Newton(; reuse = 2, best = true).best === Val(true)
+    m = Newton(; best = true)
+    m6 = Newton(m.linsolve, m.globalization, m.jacobian, m.refinement, m.regularization,
+        m.reuse)
+    @test m6.best === Val(false)
+    m7 = Newton(m.linsolve, m.globalization, m.jacobian, m.refinement, m.regularization,
+        m.reuse, m.best)
+    @test m7 === m
+    # `solve` adapts every method with `ToReal`, which rebuilds it field by field
+    @test Adapt.adapt(ToReal{Float32}(), m).best === Val(true)
+    @test Adapt.adapt(ToReal{Float32}(), Newton()).best === Val(false)
+    # a one-variable least-squares problem rebuilds a callable-Jacobian method on its lifted path
+    lifted = GeometricSolvers.lift_scalar_operator(GaussNewton(; jacobian = best_nr_J, best = true))
+    @test lifted.best === Val(true)
+end
+
+@testset "best = true on the no-root scalar, $B" for B in BEST_ROUTES
+    prob = best_problem(B, best_nr, best_nr!)
+    x₀ = best_iterate(B, [0.5])
+    x, st = test_best(prob, x₀, Newton(), Newton(; best = true), nothing, 8)
+    @test st.code == MAXITERS
+    @test st.iterations == 8
+    @test best_close(st.fnorm, BEST_NR_F[7])
+    x₆, _ = solve(prob, x₀, Newton(), nothing; max_iterations = 6)
+    @test best_host(x) == best_host(x₆)
+    test_best(prob, x₀, QuasiNewton(2), QuasiNewton(2; best = true), nothing, 8)
+    test_best(prob, x₀, Newton(; globalization = Backtracking()),
+        Newton(; globalization = Backtracking(), best = true), nothing, 8)
+    # a solve that ends in SUCCESS restores nothing, whatever its sequence
+    _, st_ok = solve(prob, x₀, Newton(; best = true), nothing; f_abstol = 1.3, f_reltol = 0)
+    @test st_ok.code == SUCCESS && st_ok.iterations == 0 && st_ok.fnorm == 1.25
+end
+
+@testset "best = true with GMRES keeps the call counts" begin
+    prob = NonlinearProblem(best_nr!)
+    _, st = test_best(prob, [0.5], Newton(; linsolve = GMRES()),
+        Newton(; linsolve = GMRES(), best = true), nothing, 8)
+    @test st.f_calls > 0 && st.jvp_calls > 0
+    @test best_close(st.fnorm, BEST_NR_F[7])
+end
+
+@testset "GaussNewton(; best = true) on a one-variable LeastSquaresProblem" begin
+    prob = LeastSquaresProblem(best_nr, 1)
+    # the AD Jacobian, and a callable one, with which the lifted path rebuilds the method
+    for kw in ((;), (; jacobian = best_nr_J))
+        x, st = test_best(
+            prob, 0.5, GaussNewton(; kw...), GaussNewton(; kw..., best = true),
+            nothing, 8)
+        @test x isa Float64
+        @test st.code == MAXITERS
+        @test best_close(st.fnorm, BEST_NR_F[7])
+    end
+end
+
+@testset "best = true in the combinators that wrap Newton, $B" for B in BEST_ROUTES
+    prob = best_problem(B, best_nr, best_nr!)
+    x₀ = best_iterate(B, [0.5])
+    x_at(k) = best_host(first(solve(prob, x₀, Newton(), nothing; max_iterations = k)))
+    # `Repeat` takes the best over its sub-steps: x₆ of eight
+    x, st = solve(prob, x₀, Repeat(Newton(; best = true), 2), nothing; max_iterations = 4)
+    @test st.code == MAXITERS && st.iterations == 4
+    @test best_close(st.fnorm, BEST_NR_F[7])
+    @test best_host(x) == x_at(6)
+    # `Switch` restores its member's best in the member's `finish!!`: x₂ of four
+    x, st = solve(prob, x₀, Switch(Newton(; best = true), Newton()), nothing;
+        max_iterations = 4)
+    @test st.code == MAXITERS
+    @test best_close(st.fnorm, BEST_NR_F[3])
+    @test best_host(x) == x_at(2)
+    # `Fallback` solves each member from x₀: x₂ of the second member's four
+    x, st = solve(prob, x₀, Fallback(Newton(), Newton(; best = true)), nothing;
+        max_iterations = 4)
+    @test st.code == MAXITERS && st.iterations == 8
+    @test best_close(st.fnorm, BEST_NR_F[3])
+    @test best_host(x) == x_at(2)
+end
+
+@testset "best = true with DogLeg and LevenbergMarquardt is best = false, $B" for B in BEST_ROUTES
+    prob = best_problem(B, best_nr, best_nr!)
+    x₀ = best_iterate(B, [0.5])
+    ls = B === JLArray ? SVDFactorization() : LUFactorization()
+    for glob in (DogLeg(), LevenbergMarquardt())
+        x_f, st_f = solve(prob, x₀, Newton(; linsolve = ls, globalization = glob), nothing;
+            max_iterations = 8)
+        x_b, st_b = solve(
+            prob, x₀, Newton(; linsolve = ls, globalization = glob, best = true),
+            nothing; max_iterations = 8)
+        @test best_host(x_b) == best_host(x_f)
+        @test st_b === st_f
+    end
+end
+
+# `F(x) = atan(x)` from `x₀ = 1.5`: the full Newton step overshoots, `|F|` grows until the
+# Jacobian underflows and the solve ends `SINGULAR`, so the start is the best iterate.
+best_atan(x, p) = atan.(x)
+best_atan!(y, x, p) = (y .= atan.(x); y)
+
+@testset "best = true restores the start: $B, $T" for B in BEST_ROUTES, T in REAL_ELTYPES
+
+    prob = best_problem(B, best_atan, best_atan!)
+    x₀ = best_iterate(B, [T(1.5)])
+    x, st = test_best(prob, x₀, Newton(), Newton(; best = true), nothing, 100)
+    @test st.code == SINGULAR
+    @test best_host(x) == [T(1.5)]
+    @test st.fnorm == atan(T(1.5))
+end
+
+# `F(x) = log(x)` for `x > 0` and `NaN` else: from 3 the first step lands left of 0, Newton keeps
+# its iterate and ends `NONFINITE`; from -1 the start is not finite.
+best_nan(x, p) = ifelse.(x .> 0, log.(abs.(x)), NaN .* x)
+best_nan!(y, x, p) = (y .= ifelse.(x .> 0, log.(abs.(x)), NaN .* x); y)
+
+@testset "best = true restores nothing on a non-finite residual, $B" for B in BEST_ROUTES
+    prob = best_problem(B, best_nan, best_nan!)
+    x, st = solve(prob, best_iterate(B, [3.0]), Newton(; best = true), nothing)
+    @test st.code == NONFINITE && st.iterations == 1
+    @test best_host(x) == [3.0]
+    # the `log` of a `JLArray` kernel runs on POCL, which can differ from `Base.log` in the last ULP
+    @test best_close(st.fnorm, log(3.0))
+    x, st = solve(prob, best_iterate(B, [-1.0]), Newton(; best = true), nothing)
+    @test st.code == NONFINITE && st.iterations == 0
+    @test best_host(x) == [-1.0] && isnan(st.fnorm)
+end
+
+# The chord fixture: `F(x) = x - c` with the constant Jacobian `(I - G)⁻¹`, so that `F(x_k) = Gᵏ e₀`
+# with `e₀ = (1, 1)`: `‖F‖₂` is 1.4142, 0.8, 0.8485, 0.48 and `‖F‖∞` 1, 0.8, 0.6, 0.48. The max
+# norm passes `f_abstol = 0.7` at `k = 2`, whose 2-norm lies above that of `k = 1`.
+const BEST_CHORD_G = SMatrix{2, 2}(0.75, 0.75, 0.05, -0.75)
+const BEST_CHORD_M = inv(SMatrix{2, 2, Float64}(I) - BEST_CHORD_G)
+const BEST_CHORD_C = [1.0, 2.0]
+best_chord(x, p) = x .- p
+best_chord!(y, x, p) = (y .= x .- p; y)
+best_chord_J(x, p) = BEST_CHORD_M
+best_chord_J!(J, x, p) = (copyto!(J, Matrix(BEST_CHORD_M)); J)
+best_chord_newton(::Type{SVector}; kwargs...) = Newton(; jacobian = best_chord_J, kwargs...)
+best_chord_newton(::Type; kwargs...) = Newton(; jacobian = best_chord_J!, kwargs...)
+
+@testset "best = true keeps a SUCCESS, $B" for B in (SVector, ARRAY_BACKENDS...)
+    prob = best_problem(B, best_chord, best_chord!)
+    x₀ = best_iterate(B, BEST_CHORD_C .+ 1)
+    p = best_iterate(B, BEST_CHORD_C)
+    x, st = solve(prob, x₀, best_chord_newton(B; best = true), p;
+        f_abstol = 0.7, f_reltol = 0, norm = MaxNorm())
+    @test st.code == SUCCESS
+    @test st.iterations == 2
+    @test abs(st.fnorm - norm([0.6, 0.6])) <= 1e-14
+    @test all(abs.(best_host(x) .- BEST_CHORD_C .- [0.6, 0.6]) .<= 1e-14)
+end
+
+@testset "solve_batch! with best = true and MaxNorm, per system" begin
+    X = [SVector{2}(BEST_CHORD_C .+ 1) for _ in 1:3]
+    S = Vector{SolverStatus{Float64}}(undef, 3)
+    m = best_chord_newton(SVector; best = true)
+    solve_batch!(X, S, NonlinearProblem(best_chord), m, SVector{2}(BEST_CHORD_C);
+        f_abstol = 0.7, f_reltol = 0, norm = MaxNorm())
+    @test all(s -> s.code == SUCCESS && s.iterations == 2, S)
+    @test all(x -> all(abs.(x .- BEST_CHORD_C .- 0.6) .<= 1e-14), X)
+    # the no-root scalar: each system returns its best iterate
+    Y = [SVector(0.5) for _ in 1:3]
+    S₁ = Vector{SolverStatus{Float64}}(undef, 3)
+    solve_batch!(
+        Y, S₁, NonlinearProblem(best_nr), Newton(; best = true); max_iterations = 8)
+    @test all(s -> s.code == MAXITERS && best_close(s.fnorm, BEST_NR_F[7]), S₁)
+end
+
+@testset "a state reused across solves restores nothing of an earlier solve" begin
+    m = Newton(; best = true)
+    opt₈ = Options(Float64; max_iterations = 8)
+    opt₀ = Options(Float64; max_iterations = 0)
+    prob = NonlinearProblem(best_nr)
+    state = init_state(m, prob, SVector(0.5), nothing)
+    _, st₁, state = solve!!(state, prob, SVector(0.5), m, nothing, opt₈)
+    @test best_close(st₁.fnorm, BEST_NR_F[7])
+    x₂, st₂, _ = solve!!(state, prob, SVector(3.0), m, nothing, opt₀)
+    @test x₂ == SVector(3.0) && st₂.fnorm == 10.0 && st₂.code == MAXITERS
+    prob! = NonlinearProblem(best_nr!)
+    state = init_state(m, prob!, [0.5], nothing)
+    _, st₁, state = solve!!(state, prob!, [0.5], m, nothing, opt₈)
+    @test best_close(st₁.fnorm, BEST_NR_F[7])
+    x₂, st₂, state = solve!!(state, prob!, [3.0], m, nothing, opt₀)
+    @test x₂ == [3.0] && st₂.fnorm == 10.0 && st₂.code == MAXITERS
+end
+
+@testset "the residual buffer holds F of the restored iterate, $B" for B in ARRAY_BACKENDS
+    m = Newton(; best = true)
+    prob = NonlinearProblem(best_nr!)
+    x₀ = B([0.5])
+    state = init_state(m, prob, x₀, nothing)
+    x, st, state = solve!!(
+        state, prob, x₀, m, nothing, Options(Float64; max_iterations = 8))
+    @test best_close(st.fnorm, BEST_NR_F[7])
+    @test best_close(Array(GeometricSolvers.residual_buffer(state)), Array(x .* x .+ 1))
+    # a restore of the start: the residual that `start!!` recorded
+    prob_atan = NonlinearProblem(best_atan!)
+    x₀ = B([1.5])
+    state = init_state(m, prob_atan, x₀, nothing)
+    x, st, state = solve!!(state, prob_atan, x₀, m, nothing, Options(Float64))
+    @test st.code == SINGULAR && Array(x) == [1.5]
+    @test Array(GeometricSolvers.residual_buffer(state)) == [atan(1.5)]
+end
+
+# A residual `F(x) = x` with a callable Jacobian that steps 3 → 1 → -1 → 2: the norms 3, 1, 1, 2
+# tie at `k = 1` and `k = 2`, and the earliest of the two is restored.
+best_tie_J(x::Number, p) = x == 3 ? 1.5 : x == 1 ? 0.5 : x == -1 ? 1 / 3 : 1.0
+best_tie_J!(J, x, p) = (J .= best_tie_J.(x, p); J)
+
+@testset "best = true restores the earliest of equal norms, $B" for B in BEST_ROUTES
+    static = B in (Number, SVector)
+    prob = static ? NonlinearProblem((x, p) -> x) :
+           NonlinearProblem((y, x, p) -> (y .= x; y))
+    jac = B === Number ? best_tie_J :
+          B === SVector ? ((x, p) -> SMatrix{1, 1}(best_tie_J(x[1], p))) : best_tie_J!
+    x₀ = best_iterate(B, [3.0])
+    x, st = solve(
+        prob, x₀, Newton(; jacobian = jac, best = true), nothing; max_iterations = 3)
+    @test st.code == MAXITERS && st.iterations == 3
+    @test st.fnorm == 1.0
+    @test best_host(x) == [1.0]
+end
+
+@testset "dual inputs: best = true returns what best = false returns" begin
+    prob = NonlinearProblem((x, p) -> x .* x .- p)
+    x_b, st_b = solve(prob, 1.0, Newton(; best = true), ForwardDiff.Dual(4.0, 1.0))
+    x_f, st_f = solve(prob, 1.0, Newton(), ForwardDiff.Dual(4.0, 1.0))
+    @test st_b.code == SUCCESS && st_b === st_f
+    @test x_b == x_f
+    @test ForwardDiff.partials(x_b) == ForwardDiff.partials(x_f)
+end
+
+function best_solve_allocated(state::S, prob::P, x::X, m::M, opt::O) where {S, P, X, M, O}
+    (
+        solve!!(state, prob, x, m, nothing, opt);
+        @allocated solve!!(state, prob, x, m, nothing, opt))
+end
+
+@testset "the R1 state of best = true is isbits, allocation-free and inferred" begin
+    prob = NonlinearProblem(best_nr)
+    x₀ = SVector(0.5)
+    @test sizeof(init_state(Newton(), prob, x₀, nothing)) == 48
+    for opt in (Options(Float64; max_iterations = 8),
+        Options(Float64; max_iterations = 8, norm = MaxNorm()))
+        m = Newton(; best = true)
+        state = init_state(m, prob, x₀, nothing)
+        @test isbits(state)
+        _, st, _ = @inferred solve!!(state, prob, x₀, m, nothing, opt)
+        @test best_close(st.fnorm, BEST_NR_F[7])
+        if Base.JLOptions().check_bounds != 1
+            @test best_solve_allocated(state, prob, x₀, m, opt) == 0
+        end
+    end
+end
+
+# An `MVector` iterate is a value iterate as an `SVector` is: the record of `best = true` keeps an
+# immutable copy, so the state stays `isbits`, and the restored iterate is an `MVector` again.
+@testset "the R1 state of best = true is isbits for an MVector iterate" begin
+    prob = NonlinearProblem(best_nr)
+    m = Newton(; best = true)
+    opt = Options(Float64; max_iterations = 8)
+    @test isbits(init_state(Newton(), prob, MVector(0.5), nothing))
+    @test isbits(init_state(m, prob, MVector(0.5), nothing))
+    x₀ = MVector(0.5)
+    x, st, state = solve!!(init_state(m, prob, x₀, nothing), prob, x₀, m, nothing, opt)
+    @test isbits(state)
+    @test x isa MVector{1, Float64}
+    @test st.code == MAXITERS
+    @test best_close(st.fnorm, BEST_NR_F[7])
+    @test best_close(x[1]^2 + 1, BEST_NR_F[7])
+    @test x₀ == MVector(0.5)
+end
+
+@testset "an array solve with best = true or MaxNorm allocates no more than best = false" begin
+    prob = NonlinearProblem(best_nr!)
+    function allocated(m, opt)
+        state = init_state(m, prob, [0.5], nothing)
+        return best_solve_allocated(state, prob, [0.5], m, opt)
+    end
+    opt = Options(Float64; max_iterations = 8)
+    a_false = allocated(Newton(), opt)
+    @test a_false <= 256
+    @test allocated(Newton(; best = true), opt) <= a_false
+    @test allocated(Newton(; best = true), Options(Float64; max_iterations = 8,
+        norm = MaxNorm())) <= a_false
+end
+
+# An outer `Newton` of `LeftPreconditioned` ranks the preconditioned residual `‖rˡ‖₂`, while
+# `status.fnorm` is the global `‖F‖₂`, so it refuses `best = true` at any depth of the outer
+# method. An inner `Newton` is only stepped, so its `best = true` is taken and changes nothing.
+@testset "LeftPreconditioned refuses an outer Newton with best = true" begin
+    refusal = r"^ArgumentError: LeftPreconditioned does not take a Newton with best = true as its outer method"
+    prob = NonlinearProblem(best_nr!)
+    pic = Picard(; damping = 0.5)
+    for outer in (Newton(; best = true), Repeat(Newton(; best = true), 1))
+        m = LeftPreconditioned(outer, pic)
+        @test_throws refusal solve(prob, [0.5], m; max_iterations = 1)
+        @test_throws refusal init(prob, [0.5], m)
+    end
+    _, st = solve(prob, [0.5], LeftPreconditioned(Newton(), pic); max_iterations = 1)
+    @test st.code == MAXITERS
+    x_f, st_f = solve(prob, [0.5], LeftPreconditioned(Picard(), Newton()); max_iterations = 3)
+    x_b, st_b = solve(
+        prob, [0.5], LeftPreconditioned(Picard(), Newton(; best = true)); max_iterations = 3)
+    @test best_close(x_b, x_f)
+    @test best_close(st_b.fnorm, st_f.fnorm)
+end

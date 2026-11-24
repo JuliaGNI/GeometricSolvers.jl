@@ -26,7 +26,9 @@ at the warm start. The cap stands alone before the first outer residual exists, 
 without them. The inner iteration is Newton's method with step halving (at most 8 halvings per
 step) and at most `max_iterations` steps of `inner_options` (50 without them); `inner_method`
 supplies only the linear solver of these steps and of the Schur complement
-(`inner_method.linsolve` for a `Newton`, or a linear method itself). The outer solver then steps on
+(`inner_method.linsolve` for a `Newton`, or a linear method itself). The inner iteration reads
+only `f_abstol`, `f_reltol` and `max_iterations` of `inner_options`, against the 2-norm, so their
+`norm` has no effect. The outer solver then steps on
 the reduced residual ``F_{\\text{red}}(z) = F_{E_z}(\\tilde y(z), z)``, where for
 `linear_inner = false` and an inner residual above the floor ``\\tilde y(z) = y - J_{yy}(y, z)^+
 F_{E_y}(y, z)`` is the inner iterate `y` refined by one Newton correction (it agrees with
@@ -84,8 +86,9 @@ solve ``y^*(z) = -\\Phi(z)^+ r(0, z)`` with ``\\Phi(z) = \\partial r / \\partial
 `linear_inner = true`, or by a Gauss–Newton iteration with step halving, warm-started from `y_warm`,
 when `linear_inner = false`). `linsolve` factorises ``\\Phi(z)`` when `linear_inner = true`; with
 `linear_inner = false` the linear solver of `inner_method` (`inner_method.linsolve` for a `Newton`,
-or a linear method itself) does, in the iteration and in the reduced Jacobian. The outer solver
-steps on the reduced residual
+or a linear method itself) does, in the iteration and in the reduced Jacobian. The iteration
+reads the tolerances and `max_iterations` of `inner_options` as [`BlockEliminated`](@ref) does,
+against the 2-norm, so their `norm` has no effect. The outer solver steps on the reduced residual
 ``r_{\\text{red}}(z) = r(y^*(z), z)`` with reduced Jacobian (`m × |Z|`):
 
 - `jacobian_mode = :kaufman` (default): Kaufman's first-term reduced Jacobian
@@ -299,7 +302,7 @@ end
     R = typeof(f_abs)
     return Options{R}(
         f_abs, f_rel, x_abs, x_rel,
-        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t)
+        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t, opt.norm)
 end
 
 function Adapt.adapt_structure(
@@ -2289,8 +2292,20 @@ end
     return DenseElimState(outer_state, st.ws, st.oprob)
 end
 
+# The solve of an eliminated problem returns the iterate of its own `finish!!`, built from the outer
+# iterate and the inner solution of the last step, and discards the one that the outer `finish!!`
+# returns, so an outer `Newton` with `best = true` would restore nothing; it is refused.
+@inline _check_elim_outer_method(m) = nothing
+@inline function _check_elim_outer_method(m::Newton)
+    m.best === Val(false) || throw(ArgumentError(
+        "BlockEliminated and VariableProjection take no outer Newton with best = true: the " *
+        "solve returns the outer iterate of the last step with its inner solution"))
+    return nothing
+end
+
 @inline function _init_elim_r1(
         m, elim::BlockEliminated, x₀::StaticVector{N, T}, p) where {N, T}
+    _check_elim_outer_method(m)
     R = real(T)
     Y, Z, E_y, E_z = _resolve_partition_r1(elim, x₀, p)
     Ny = length(Y)
@@ -2305,6 +2320,7 @@ end
 
 @inline function _init_elim_r1(
         m, vp::VariableProjection, x₀::StaticVector{N, T}, p) where {N, T}
+    _check_elim_outer_method(m)
     R = real(T)
     Y, Z = _resolve_partition_r1(vp, x₀, p)
     Ny = length(Y)
@@ -2319,6 +2335,7 @@ end
 
 function _init_elim_r3(
         m, elim::BlockEliminated, x₀::AbstractVector{T}, p) where {T}
+    _check_elim_outer_method(m)
     R = real(T)
     m_r = Adapt.adapt(ToReal{R}(), m)
     ws = _build_block_elim_prep(_ad_backend_of(m_r), elim, x₀, p)
@@ -2334,6 +2351,7 @@ end
 
 function _init_elim_r3(
         m, vp::VariableProjection, x₀::AbstractVector{T}, p) where {T}
+    _check_elim_outer_method(m)
     R = real(T)
     m_r = Adapt.adapt(ToReal{R}(), m)
     ws = _build_varpro_prep(_ad_backend_of(m_r), vp, x₀, p)
@@ -3319,13 +3337,14 @@ end
 end
 
 # The options of the batch's inner solve at the tolerance `tol`: the template of `inner_options` for
-# every field but the residual test, which is `tol` absolutely and not at all relatively, so that a
-# second evaluation at the same tolerance stops at `0` iterations.
+# the step test, the iteration bounds and the norm, with the residual test `tol` absolutely and not
+# at all relatively, so that a second evaluation at the same tolerance stops at `0` iterations,
+# and the default `g_tol`.
 @inline function _batch_inner_options(prob::BatchEliminated, tol)
     RIn, _ = _batch_real_types(prob)
     t = prob.inner_options
     return Options{RIn}(tol, zero(RIn), t.x_abstol, t.x_reltol,
-        t.min_iterations, t.max_iterations, t.max_stalls)
+        t.min_iterations, t.max_iterations, t.max_stalls, sqrt(eps(RIn)), t.norm)
 end
 
 # One inner batch solve from the warm start `prob.Y` at the tolerance `tol`, with the shared
@@ -3489,8 +3508,13 @@ end
 # Jacobian–vector slot and no Jacobian matrix anywhere. Only `GMRES` is a linear method of this
 # problem: a factorising method would need the outer Jacobian as a matrix, which the batch does not
 # form. The product is the batch's own difference, which no AD back end but the default selects,
-# in the precision the difference sets, which no `jvp_eltype` replaces.
+# in the precision the difference sets, which no `jvp_eltype` replaces. A `best = true` is refused:
+# the solve leaves the inner solutions, the moments and the statuses of the batch at the last
+# evaluation, which a restored outer iterate would not match.
 @inline function init_state(m::Newton, prob::BatchEliminated, x::AbstractVector, p)
+    m.best === Val(false) || throw(ArgumentError(
+        "a BatchEliminated problem takes no outer Newton with best = true: the solve leaves the " *
+        "inner solutions and the moments of the batch at the last evaluation"))
     g = m.linsolve
     g isa GMRES || throw(ArgumentError(
         "a BatchEliminated problem takes a Newton with GMRES: the outer Jacobian is matrix-free, " *

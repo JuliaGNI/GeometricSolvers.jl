@@ -799,6 +799,52 @@ if CUDA.functional()
             solver.state.fac, LUFactorization(), Ad2)
     end
 
+    # The linear-solve object on `CuArray`s: square LU, QR and SVD, `m > n` and `m < n` through the
+    # SVD, and the refusal of the QR with `m < n`, each solve to `64 eps(R)` against the solution in
+    # `BigFloat` of a matrix of `κ ≤ 3`; and the ranks of the SVD path on the wide fixture with the
+    # singular values `1, 1e-10, 1e-14`. The `m > n` QR is left out: the CUDA solve of an `m × n`
+    # `DeviceQR` throws (K91 of `KNOWN_ISSUES.md`).
+    @testset "LinearProblem on CUDA: $T" for T in filter(T -> T <: Real, CUDA_BLAS_ELTYPES)
+        wellcond(m, n) = [T((i == j ? 2.0 : 0.0) + 0.3 * sin(i + 2j))
+                          for i in 1:m, j in 1:n]
+        function lp_ref(A, b)
+            Ab, bb = big.(A), big.(b)
+            m, n = size(Ab)
+            m == n && return Ab \ bb
+            m > n && return (Ab' * Ab) \ (Ab' * bb)
+            return Ab' * ((Ab * Ab') \ bb)
+        end
+        for (method, m, n) in ((LUFactorization(), 4, 4), (QRFactorization(), 4, 4),
+            (SVDFactorization(), 4, 4), (SVDFactorization(), 5, 3), (
+            SVDFactorization(), 3, 5))
+            A = wellcond(m, n)
+            b = T.(1:m)
+            solver = init(LinearProblem(CuArray(A)), method)
+            x, st = solve!(solver, CuArray(b))
+            @test x === solver.x
+            @test st.code == SUCCESS
+            @test st.rank == (method isa SVDFactorization ? min(m, n) : -1)
+            xr = lp_ref(A, b)
+            @test Float64(norm(big.(Array(x)) - xr) / norm(xr)) <= 64 * eps(T)
+        end
+        @test_throws r"^ArgumentError: QRFactorization has no minimum-norm solve of an m × n system with m < n on a device array; take SVDFactorization\(\)$" init(
+            LinearProblem(CuArray(wellcond(3, 5))), QRFactorization())
+        # the adjoint of the `5 × 3` signed permutation of `diag(1, 1e-10, 1e-14)`: the default
+        # cutoff counts the 5 rows of the factored matrix
+        F = zeros(T, 5, 3)
+        for (j, σ) in enumerate((1.0, 1e-10, 1e-14))
+            F[mod1(j - 1, 3), j] = T(isodd(j) ? σ : -σ)
+        end
+        for (rtol, r32, r64) in ((nothing, 1, 3), (1e-12, 2, 2), (1e-9, 1, 1), (0.0, 3, 3))
+            method = rtol === nothing ? SVDFactorization() : SVDFactorization(; rtol)
+            solver = init(LinearProblem(CuArray(Matrix(F'))), method)
+            x, st = solve!(solver, CuArray(T[1, 2, 3]))
+            @test st.code == SUCCESS
+            @test st.rank == (T === Float32 ? r32 : r64)
+            @test all(isfinite, Array(x))
+        end
+    end
+
     BLAS.set_num_threads(old_blas_threads)
 else
     @test_skip CUDA.functional()
