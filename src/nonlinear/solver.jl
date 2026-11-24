@@ -139,7 +139,7 @@ of a line search). Every return goes through
 [`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns. The residual test
 reads the [`StoppingNorm`](@ref) of `options`: under [`MaxNorm`](@ref), `solve!!` takes one
 [`rmaxnorm`](@ref) of the residual at the start and after each step that reaches the test, and
-`status.fnorm` stays `rnorm` of the residual.
+`status.fnorm` stays the 2-norm of the residual.
 
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
 returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds

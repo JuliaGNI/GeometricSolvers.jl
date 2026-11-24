@@ -19,8 +19,8 @@ struct L2Norm <: StoppingNorm end
     MaxNorm()
 
 The max norm ``\\|F\\|_\\infty = \\max_i |F_i|``, a [`StoppingNorm`](@ref) of [`Options`](@ref).
-Under it the residual test takes one reduction of the residual at the start and after each step,
-`GeometricSolvers.rmaxnorm`, which also runs on a device array.
+Under it the residual test takes one reduction of the residual at the start and after each step
+that reaches the test, `GeometricSolvers.rmaxnorm`, which also runs on a device array.
 """
 struct MaxNorm <: StoppingNorm end
 
