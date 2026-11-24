@@ -6,14 +6,17 @@
 using AMDGPU
 using GPUArraysCore: allowscalar
 using JET: JET
-using LinearAlgebra: BLAS, I, norm
+using LinearAlgebra: BLAS, Diagonal, I, cond, norm
+using Random: Xoshiro
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
-using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
+using GeometricSolvers: DeviceCholesky, DeviceLU, DeviceQR, DeviceSVD
+using GeometricSolvers: CholeskyFactorization, LUFactorization, NonlinearProblem,
+                        QRFactorization, SVDFactorization
 using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, backsolve_shifted!, dense_factor,
-                        factorize!!, ka_factorize_lu!, ka_factorize_qr!, ldiv!!, returncode
+                        factorize!!, ka_cholesky_backsolve!, ka_factorize_cholesky!,
+                        ka_factorize_lu!, ka_factorize_qr!, ldexp2, ldiv!!, returncode
 
 include("../../helpers/own_kernel.jl")
 
@@ -82,6 +85,25 @@ const ROCM_BLAS_ELTYPES = (Float32, Float64, ComplexF32, ComplexF64)
         DevSVD_F16 = DeviceSVD{MatF16, VecF16, VecI32, VecF16, Nothing}
         @test which(factorize!!, (DevSVD_F16, SVDFactorization{Nothing}, MatF16)).module ===
               GeometricSolvers
+
+        # Cholesky: rocSOLVER `potrf`/`potrs` for the BLAS types, the mixed pair included, and
+        # the own kernel for `Float16`
+        for T in ROCM_BLAS_ELTYPES
+            Mat = ROCArray{T, 2, B}
+            Vec = ROCArray{T, 1, B}
+            DevChol = DeviceCholesky{Mat, Nothing, VecI32}
+            @test which(factorize!!, (DevChol, CholeskyFactorization{Nothing}, Mat)).module ===
+                  ext_rocm
+            @test which(backsolve!, (DevChol, Vec)).module === ext_rocm
+        end
+        DevChol_Mix = DeviceCholesky{MatF32, VecF32, VecI32}
+        @test which(factorize!!, (DevChol_Mix, CholeskyFactorization{Float32}, MatF64)).module ===
+              ext_rocm
+        @test which(backsolve!, (DevChol_Mix, VecF32)).module === ext_rocm
+        DevChol_F16 = DeviceCholesky{MatF16, Nothing, VecI32}
+        @test which(factorize!!, (DevChol_F16, CholeskyFactorization{Nothing}, MatF16)).module ===
+              GeometricSolvers
+        @test which(backsolve!, (DevChol_F16, VecF16)).module === GeometricSolvers
     end
 end
 
@@ -99,6 +121,10 @@ end
         target_modules = (ext_rocm,))
     JET.test_call(backsolve!, (DevQR, Vec); target_modules = (ext_rocm,))
     JET.test_call(backsolve_shifted!, (DevQR, Vec, Vec); target_modules = (ext_rocm,))
+    DevChol = DeviceCholesky{Mat, Nothing, VecI32}
+    JET.test_call(factorize!!, (DevChol, CholeskyFactorization{Nothing}, Mat);
+        target_modules = (ext_rocm,))
+    JET.test_call(backsolve!, (DevChol, Vec); target_modules = (ext_rocm,))
 end
 
 # The data of the `m × n` least-squares QR rows, `m > n`. For complex `T` the entries have
@@ -341,6 +367,96 @@ if AMDGPU.functional()
         @test returncode(fac_al) === SUCCESS
         ldiv!!(dx_ok, fac_al, ROCArray(T[5, 4]))
         @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
+    end
+
+    # A seeded Hermitian positive definite matrix `G Gᴴ / n + I` and a right-hand side.
+    function rocm_hpd(::Type{T}, n::Int, seed::Integer = 0xc401) where {T}
+        rng = Xoshiro(seed + n)
+        G = randn(rng, T, n, n)
+        A = G * G' / n + Matrix{T}(I, n, n)
+        return (A + A') / 2, randn(rng, T, n)
+    end
+
+    # The own-kernel solve with the factor `fac`, the reference of the rocSOLVER rows: in `d` where
+    # `d` holds the factor element type, else in `fac.rhs`, multiplied by `2^-e` either way.
+    function own_cholesky_ldiv!(d::AbstractVector{T}, fac, r::AbstractVector) where {T}
+        F = eltype(fac.factors)
+        e = fac.scale_exponent
+        if T === F
+            copyto!(d, r)
+            ka_cholesky_backsolve!(fac.factors, d)
+            iszero(e) || (d .= ldexp2.(d, -e))
+        else
+            fac.rhs .= F.(r)
+            ka_cholesky_backsolve!(fac.factors, fac.rhs)
+            d .= T.(ldexp2.(fac.rhs, -e))
+        end
+        return d
+    end
+
+    @testset "ROCm rocSOLVER Cholesky agrees with the own KA kernel at n = $n" for n in (
+        1, 16, 65, 256)
+        @testset "T = $T, $method" for T in ROCM_BLAS_ELTYPES,
+            method in (CholeskyFactorization(), CholeskyFactorization(Float32))
+
+            A_cpu, b_cpu = rocm_hpd(T, n)
+            κ = Float64(cond(A_cpu, Inf))
+            # the round-off of the coarser of the working and the factorisation precision
+            ε = Float64(method isa CholeskyFactorization{Nothing} ? eps(real(T)) :
+                        eps(Float32))
+            dA = ROCArray(A_cpu)
+            db = ROCArray(b_cpu)
+            fac_ext = dense_factor(method, nothing, ROCArray(zeros(T, n)), nothing)
+            fac_ka = dense_factor(method, nothing, ROCArray(zeros(T, n)), nothing)
+            fac_ext = factorize!!(fac_ext, method, dA)
+            fac_ka = ka_factorize_cholesky!(fac_ka, dA)
+            @test fac_ext.info == fac_ka.info == 0
+            @test fac_ext.scale_exponent == fac_ka.scale_exponent
+            @test returncode(fac_ext) === SUCCESS
+            dx_ext = ldiv!!(ROCArray(zeros(T, n)), fac_ext, db)
+            dx_ka = own_cholesky_ldiv!(ROCArray(zeros(T, n)), fac_ka, db)
+            x_ext = Array(dx_ext)
+            x_ka = Array(dx_ka)
+            @test norm(x_ext - x_ka, Inf) <= 8 * n * ε * κ * norm(x_ka, Inf)
+            # both write `L` with zeros above the diagonal
+            L = Array(fac_ext.factors)
+            @test all(iszero, (L[i, j] for j in 2:n for i in 1:(j - 1)))
+        end
+    end
+
+    @testset "ROCm rocSOLVER Cholesky: info as the own kernel gives it: $T" for T in ROCM_BLAS_ELTYPES
+        m = CholeskyFactorization()
+        function both(A)
+            fac_ext = factorize!!(
+                dense_factor(m, nothing, ROCArray(zeros(T, size(A, 1))), nothing), m,
+                ROCArray(A))
+            fac_ka = ka_factorize_cholesky!(
+                dense_factor(m, nothing, ROCArray(zeros(T, size(A, 1))), nothing),
+                ROCArray(A))
+            return fac_ext, fac_ka
+        end
+        # not positive definite: the order of the first leading minor that is not positive
+        for (A, info) in ((Matrix(Diagonal(T[1, 2, -1, 3])), 3),
+            (Matrix(Diagonal(T[0, 1])), 1), (fill(T(-4), 1, 1), 1))
+            fac_ext, fac_ka = both(A)
+            @test fac_ext.info == fac_ka.info == info
+            @test returncode(fac_ext) === SINGULAR
+        end
+        # a non-finite entry gives info = 1 before `potrf`, which returns 0 for some of them
+        n = 4
+        A, _ = rocm_hpd(T, n)
+        for (i, j, v) in ((n, 1, T(NaN)), (1, n, T(Inf)))
+            A_bad = copy(A)
+            A_bad[i, j] = v
+            fac_ext, fac_ka = both(A_bad)
+            @test fac_ext.info == fac_ka.info == 1
+            @test fac_ext.scale_exponent == 0
+            @test isequal(Array(fac_ext.factors), A_bad)
+        end
+        # n = 0 calls nothing and gives SUCCESS
+        fac_ext, fac_ka = both(zeros(T, 0, 0))
+        @test returncode(fac_ext) === SUCCESS
+        @test isempty(ldiv!!(ROCArray(T[]), fac_ext, ROCArray(T[])))
     end
 
     BLAS.set_num_threads(old_blas_threads)

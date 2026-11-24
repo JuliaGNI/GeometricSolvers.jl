@@ -1,14 +1,14 @@
-# ROCm rocSOLVER and rocBLAS dense LU and QR factorisations and solves for `ROCMatrix{T}` and
-# `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). `geqrf!` factorises, and `ormqr!` with
-# `trsv!` solves, at every shape `m × n`, `m ≥ n`, of the QR factor. Non-BLAS element types
-# (`Float16`, `BFloat16`) and the SVD and LDLᵀ factorisations remain on the `KernelAbstractions`
-# device kernels in `src/linear/ka/`.
+# ROCm rocSOLVER and rocBLAS dense LU, QR and Cholesky factorisations and solves for
+# `ROCMatrix{T}` and `ROCVector{T}` (`T <: LinearAlgebra.BlasFloat`). `geqrf!` factorises, and
+# `ormqr!` with `trsv!` solves, at every shape `m × n`, `m ≥ n`, of the QR factor. Non-BLAS element
+# types (`Float16`, `BFloat16`) and the SVD and LDLᵀ factorisations remain on the
+# `KernelAbstractions` device kernels in `src/linear/ka/`.
 
 module GeometricSolversAMDGPUExt
 
 using AMDGPU: AMDGPU, ROCMatrix, ROCVector
-using GeometricSolvers: GeometricSolvers, DeviceLU, DeviceQR, LUFactorization,
-                        QRFactorization
+using GeometricSolvers: GeometricSolvers, CholeskyFactorization, DeviceCholesky, DeviceLU,
+                        DeviceQR, LUFactorization, QRFactorization
 using LinearAlgebra: BlasFloat, diagind
 
 function GeometricSolvers.factorize!!(
@@ -78,6 +78,32 @@ function GeometricSolvers.backsolve_shifted!(
     GeometricSolvers.backsolve!(fac, rhs)
     copyto!(d, 1, rhs, 1, length(d))
     return 0
+end
+
+# The load kernel of the own factorisation refuses a non-finite matrix with `info = 1` and writes
+# `J / 2^e` with zeros above the diagonal; `potrf` then factorises the lower triangle, whose layout
+# and `info` are LAPACK's, as the own kernel writes them.
+function GeometricSolvers.factorize!!(
+        fac::DeviceCholesky{<:ROCMatrix{T}},
+        ::CholeskyFactorization,
+        J::AbstractMatrix
+) where {T <: BlasFloat}
+    info, e = GeometricSolvers.ka_load_cholesky!(fac, J)
+    (info != 0 || isempty(fac.factors)) &&
+        return DeviceCholesky(fac.factors, fac.rhs, info, e, fac.status)
+    # `potrf!` throws an `ArgumentError` for a negative status, so `info_r` is the order of the
+    # first leading minor that is not positive, or 0.
+    _, info_r = AMDGPU.rocSOLVER.potrf!('L', fac.factors)
+    return DeviceCholesky(fac.factors, fac.rhs, Int(info_r), e, fac.status)
+end
+
+function GeometricSolvers.backsolve!(
+        fac::DeviceCholesky{<:ROCMatrix{T}},
+        d::ROCVector{T}
+) where {T <: BlasFloat}
+    isempty(d) && return d
+    AMDGPU.rocSOLVER.potrs!('L', fac.factors, d)
+    return d
 end
 
 end # module GeometricSolversAMDGPUExt

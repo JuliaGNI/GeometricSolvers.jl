@@ -4,16 +4,17 @@
 
 using CUDA
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, Diagonal, I, LU, lu!, norm, opnorm, qr, qr!, svd!
+using LinearAlgebra: BLAS, Diagonal, I, LU, cond, lu!, norm, opnorm, qr, qr!, svd!
 using Random: Xoshiro
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
-using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
+using GeometricSolvers: DeviceCholesky, DeviceLU, DeviceQR, DeviceSVD
+using GeometricSolvers: CholeskyFactorization, LUFactorization, NonlinearProblem,
+                        QRFactorization, SVDFactorization
 using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!,
-                        ka_factorize_lu!, ka_factorize_qr!, ka_factorize_svd!, ldiv!!,
-                        returncode
+                        ka_cholesky_backsolve!, ka_factorize_cholesky!, ka_factorize_lu!,
+                        ka_factorize_qr!, ka_factorize_svd!, ldexp2, ldiv!!, returncode
 
 include("../../helpers/own_kernel.jl")
 
@@ -76,6 +77,25 @@ include("../../helpers/own_kernel.jl")
         @test which(factorize!!, (DevSVD_F16, SVDFactorization{Nothing}, MatF16)).module ===
               GeometricSolvers
         @test which(backsolve!, (DevSVD_F16, VecF16)).module === GeometricSolvers
+
+        # Cholesky: cuSOLVER `potrf`/`potrs` for the BLAS types, the mixed pair included, and
+        # the own kernel for `Float16`
+        for T in (Float32, Float64, ComplexF32, ComplexF64)
+            Mat = CuArray{T, 2, Mem}
+            Vec = CuArray{T, 1, Mem}
+            DevChol = DeviceCholesky{Mat, Nothing, VecI32}
+            @test which(factorize!!, (DevChol, CholeskyFactorization{Nothing}, Mat)).module ===
+                  ext_cuda
+            @test which(backsolve!, (DevChol, Vec)).module === ext_cuda
+        end
+        DevChol_Mix = DeviceCholesky{MatF32, VecF32, VecI32}
+        @test which(factorize!!, (DevChol_Mix, CholeskyFactorization{Float32}, MatF64)).module ===
+              ext_cuda
+        @test which(backsolve!, (DevChol_Mix, VecF32)).module === ext_cuda
+        DevChol_F16 = DeviceCholesky{MatF16, Nothing, VecI32}
+        @test which(factorize!!, (DevChol_F16, CholeskyFactorization{Nothing}, MatF16)).module ===
+              GeometricSolvers
+        @test which(backsolve!, (DevChol_F16, VecF16)).module === GeometricSolvers
     end
 
     # CUDA capability census alignment: every pass factorisation cell for (F32, F64, CF32, CF64)
@@ -490,6 +510,94 @@ if CUDA.functional()
         fac_keep = factorize!!(fac_keep, m_svd, CuArray(A_keep2))
         @test fac_keep.info == 0
         @test Array(fac_keep.factors) == A_keep2
+    end
+
+    # A seeded Hermitian positive definite matrix `G Gᴴ / n + I` and a right-hand side.
+    function cuda_hpd(::Type{T}, n::Int, seed::Integer = 0xc401) where {T}
+        rng = Xoshiro(seed + n)
+        G = randn(rng, T, n, n)
+        A = G * G' / n + Matrix{T}(I, n, n)
+        return (A + A') / 2, randn(rng, T, n)
+    end
+
+    # The own-kernel solve with the factor `fac`, the reference of the cuSOLVER rows: in `d` where
+    # `d` holds the factor element type, else in `fac.rhs`, multiplied by `2^-e` either way.
+    function own_cholesky_ldiv!(d::AbstractVector{T}, fac, r::AbstractVector) where {T}
+        F = eltype(fac.factors)
+        e = fac.scale_exponent
+        if T === F
+            copyto!(d, r)
+            ka_cholesky_backsolve!(fac.factors, d)
+            iszero(e) || (d .= ldexp2.(d, -e))
+        else
+            fac.rhs .= F.(r)
+            ka_cholesky_backsolve!(fac.factors, fac.rhs)
+            d .= T.(ldexp2.(fac.rhs, -e))
+        end
+        return d
+    end
+
+    @testset "CUDA cuSOLVER Cholesky agrees with the own KA kernel at n = $n" for n in (
+        1, 16, 65, 256)
+        @testset "T = $T, $method" for T in CUDA_BLAS_ELTYPES,
+            method in (CholeskyFactorization(), CholeskyFactorization(Float32))
+
+            A_cpu, b_cpu = cuda_hpd(T, n)
+            κ = Float64(cond(A_cpu, Inf))
+            # the round-off of the coarser of the working and the factorisation precision
+            ε = Float64(method isa CholeskyFactorization{Nothing} ? eps(real(T)) :
+                        eps(Float32))
+            dA = CuArray(A_cpu)
+            db = CuArray(b_cpu)
+            fac_ext = dense_factor(method, nothing, CuArray(zeros(T, n)), nothing)
+            fac_ka = dense_factor(method, nothing, CuArray(zeros(T, n)), nothing)
+            fac_ext = factorize!!(fac_ext, method, dA)
+            fac_ka = ka_factorize_cholesky!(fac_ka, dA)
+            @test fac_ext.info == fac_ka.info == 0
+            @test fac_ext.scale_exponent == fac_ka.scale_exponent
+            @test returncode(fac_ext) === SUCCESS
+            dx_ext = ldiv!!(CuArray(zeros(T, n)), fac_ext, db)
+            dx_ka = own_cholesky_ldiv!(CuArray(zeros(T, n)), fac_ka, db)
+            x_ext = Array(dx_ext)
+            x_ka = Array(dx_ka)
+            @test norm(x_ext - x_ka, Inf) <= 8 * n * ε * κ * norm(x_ka, Inf)
+            # both write `L` with zeros above the diagonal
+            L = Array(fac_ext.factors)
+            @test all(iszero, (L[i, j] for j in 2:n for i in 1:(j - 1)))
+        end
+    end
+
+    @testset "CUDA cuSOLVER Cholesky: info as the own kernel gives it: $T" for T in CUDA_BLAS_ELTYPES
+        m = CholeskyFactorization()
+        function both(A)
+            fac_ext = factorize!!(
+                dense_factor(m, nothing, CuArray(zeros(T, size(A, 1))), nothing), m, CuArray(A))
+            fac_ka = ka_factorize_cholesky!(
+                dense_factor(m, nothing, CuArray(zeros(T, size(A, 1))), nothing), CuArray(A))
+            return fac_ext, fac_ka
+        end
+        # not positive definite: the order of the first leading minor that is not positive
+        for (A, info) in ((Matrix(Diagonal(T[1, 2, -1, 3])), 3),
+            (Matrix(Diagonal(T[0, 1])), 1), (fill(T(-4), 1, 1), 1))
+            fac_ext, fac_ka = both(A)
+            @test fac_ext.info == fac_ka.info == info
+            @test returncode(fac_ext) === SINGULAR
+        end
+        # a non-finite entry gives info = 1 before `potrf`, which returns 0 for some of them
+        n = 4
+        A, _ = cuda_hpd(T, n)
+        for (i, j, v) in ((n, 1, T(NaN)), (1, n, T(Inf)))
+            A_bad = copy(A)
+            A_bad[i, j] = v
+            fac_ext, fac_ka = both(A_bad)
+            @test fac_ext.info == fac_ka.info == 1
+            @test fac_ext.scale_exponent == 0
+            @test isequal(Array(fac_ext.factors), A_bad)
+        end
+        # n = 0 calls nothing and gives SUCCESS
+        fac_ext, fac_ka = both(zeros(T, 0, 0))
+        @test returncode(fac_ext) === SUCCESS
+        @test isempty(ldiv!!(CuArray(T[]), fac_ext, CuArray(T[])))
     end
 
     @testset "CUDA capability census probe" begin

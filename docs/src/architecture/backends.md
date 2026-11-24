@@ -34,7 +34,8 @@ loads its own backend, and the package extensions for CUDA and Metal load with i
 
 - [`solve_batch!`](@ref) launches one kernel on `get_backend(X)` with one work-item per system.
 - The device factorisations ([`DeviceLU`](@ref), [`DeviceQR`](@ref), [`DeviceLDLT`](@ref),
-  [`DeviceSVD`](@ref)) are sequences of KernelAbstractions kernels on an `AbstractGPUArray`.
+  [`DeviceCholesky`](@ref), [`DeviceSVD`](@ref)) are sequences of KernelAbstractions kernels on an
+  `AbstractGPUArray`.
 - The chunked forward mode of ForwardDiff and the reductions run on any array type, with
   broadcasting and `sum` and no scalar indexing.
 
@@ -111,24 +112,28 @@ The factor that a dense R3 solve uses:
 | [`QRFactorization`](@ref) | LAPACK `geqrf`/`ormqr` | cuSOLVER `geqrf`/`ormqr` and cuBLAS `trsv` for BLAS element types | own kernel | rocSOLVER `geqrf`/`ormqr` and rocBLAS `trsv` on `ROCArray` for BLAS element types; own kernel otherwise |
 | [`SVDFactorization`](@ref) | LAPACK `gesvd` | cuSOLVER `gesvdj`, own kernel where it does not converge or where the `rtol` cutoff lies below `√m · eps(R)` (`m` rows, `R` the factor's real type) | own kernel | own kernel |
 | [`LDLTFactorization`](@ref) | LAPACK `sytrf`/`hetrf` | own kernel | own kernel | own kernel |
-| [`CholeskyFactorization`](@ref) | LAPACK `potrf`/`potrs` for BLAS element types; generic loop otherwise | no device factor: `ArgumentError` | no device factor: `ArgumentError` | no device factor: `ArgumentError` |
+| [`CholeskyFactorization`](@ref) | LAPACK `potrf`/`potrs` for BLAS element types; generic loop otherwise | cuSOLVER `potrf`/`potrs` for BLAS element types; own kernel otherwise | own kernel | rocSOLVER `potrf`/`potrs` on `ROCArray` for BLAS element types; own kernel otherwise |
 | [`GMRES`](@ref) | no factor | no factor | no factor | no factor |
 
-- The **CUDA** extension `GeometricSolversCUDAExt` adds methods for `DeviceLU`, `DeviceQR` and
-  `DeviceSVD` on `CuMatrix{T}` with `T <: LinearAlgebra.BlasFloat`. Other element types stay on
-  the own kernels.
+- The **CUDA** extension `GeometricSolversCUDAExt` adds methods for `DeviceLU`, `DeviceQR`,
+  `DeviceSVD` and `DeviceCholesky` on `CuMatrix{T}` with `T <: LinearAlgebra.BlasFloat`. Other
+  element types stay on the own kernels.
 - The **Metal** extension `GeometricSolversMetalExt` adds the Metal Performance Shaders LU and
   triangular solve for `MtlMatrix{Float32}`. Every MPS failure status gives a singular factor.
   `ComplexF32` and the other factorisations stay on the own kernels.
 - The **ROCm** extension `GeometricSolversAMDGPUExt` adds the rocSOLVER and rocBLAS methods for
-  `DeviceLU` and `DeviceQR` on `ROCMatrix{T}` with `T <: LinearAlgebra.BlasFloat`. rocSOLVER
+  `DeviceLU`, `DeviceQR` and `DeviceCholesky` on `ROCMatrix{T}` with
+  `T <: LinearAlgebra.BlasFloat`. rocSOLVER
   `geqrf` and `ormqr` and rocBLAS `trsv` serve every shape of the QR factor: the solve with the
   `m × n` factor of a least-squares problem, `m > n`, runs `trsv` on its leading `n × n` block.
   Other element types and the other factorisations stay on the own kernels.
 
 A vendor method replaces only `factorize!!` and the back substitution of its factor type. The
 scaling by a power of two, the mixed-precision solve and the status handling are the same on
-every backend.
+every backend. The own Cholesky kernel is one workgroup of 64 work-items, as the LDLT kernel is;
+the vendor `potrf` methods take its load kernel first, which refuses a non-finite matrix with
+`info = 1` before `potrf` and divides a matrix of another element type than the factor by its
+power of two.
 
 R1 and R2 use the static factorisations on every backend, because they run in one thread. The
 sparse LU of Sparspak runs on a host `Vector` only. The stacked [`LevenbergMarquardt`](@ref) path,

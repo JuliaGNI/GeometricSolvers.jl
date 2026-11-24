@@ -35,13 +35,13 @@ a rectangular one, `m` its row count, which is what makes a rank-revealing solve
 vector state (R3) with no sparse pattern (`jacobian_pattern(prob, jacprep) === nothing`),
 [`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref),
 [`DenseCholesky`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a host `Array` and
-[`DeviceLU`](@ref), [`DeviceLDLT`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
-`AbstractGPUArray`, where a [`CholeskyFactorization`](@ref) raises an `ArgumentError`, and
+[`DeviceLU`](@ref), [`DeviceLDLT`](@ref), [`DeviceCholesky`](@ref), [`DeviceQR`](@ref) or
+[`DeviceSVD`](@ref) on an `AbstractGPUArray`, and
 [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host,
 and on a device through the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on
 `MtlMatrix{Float32}` and `MtlVector{Float32}`, with every MPS failure status reported as a singular
 factor) and `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with
-cuBLAS `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
+cuBLAS `trsv!`, `potrf!`, `potrs!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
 LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge,
 and calling it in place of `gesvdj!` where the `rtol` cutoff lies below `√m · eps(real(T))`, `m`
 the number of rows)
@@ -87,6 +87,7 @@ DeviceLU
 DenseLDLT
 DeviceLDLT
 DenseCholesky
+DeviceCholesky
 DenseQR
 DeviceQR
 DenseSVD

@@ -1,4 +1,4 @@
-# CUDA cuSOLVER and cuBLAS dense LU, QR, and SVD factorisations and solves for
+# CUDA cuSOLVER and cuBLAS dense LU, QR, SVD and Cholesky factorisations and solves for
 # `CuMatrix{T}` and `CuVector{T}` (`T <: LinearAlgebra.BlasFloat`). Non-BLAS element
 # types (`Float16`, `BFloat16`) remain on the `KernelAbstractions` device kernels in
 # `src/linear/ka/`.
@@ -6,8 +6,9 @@
 module GeometricSolversCUDAExt
 
 using CUDA: CUDA, CuMatrix, CuVector
-using GeometricSolvers: GeometricSolvers, DeviceLU, DeviceQR, DeviceSVD,
-                        LUFactorization, QRFactorization, SVDFactorization
+using GeometricSolvers: GeometricSolvers, CholeskyFactorization, DeviceCholesky, DeviceLU,
+                        DeviceQR, DeviceSVD, LUFactorization, QRFactorization,
+                        SVDFactorization
 using LinearAlgebra: LinearAlgebra, BlasFloat, adjoint!, diagind
 
 function GeometricSolvers.factorize!!(
@@ -141,6 +142,32 @@ function GeometricSolvers.backsolve!(
         d::CuVector{T}
 ) where {T <: BlasFloat}
     GeometricSolvers.ka_svd_backsolve!(fac, d, d, false)
+    return d
+end
+
+# The load kernel of the own factorisation refuses a non-finite matrix with `info = 1` and writes
+# `J / 2^e` with zeros above the diagonal; `potrf` then factorises the lower triangle, whose layout
+# and `info` are LAPACK's, as the own kernel writes them.
+function GeometricSolvers.factorize!!(
+        fac::DeviceCholesky{<:CuMatrix{T}},
+        ::CholeskyFactorization,
+        J::AbstractMatrix
+) where {T <: BlasFloat}
+    info, e = GeometricSolvers.ka_load_cholesky!(fac, J)
+    (info != 0 || isempty(fac.factors)) &&
+        return DeviceCholesky(fac.factors, fac.rhs, info, e, fac.status)
+    # `potrf!` throws an `ArgumentError` for a negative status, so `info_c` is the order of the
+    # first leading minor that is not positive, or 0.
+    _, info_c = CUDA.CUSOLVER.potrf!('L', fac.factors)
+    return DeviceCholesky(fac.factors, fac.rhs, Int(info_c), e, fac.status)
+end
+
+function GeometricSolvers.backsolve!(
+        fac::DeviceCholesky{<:CuMatrix{T}},
+        d::CuVector{T}
+) where {T <: BlasFloat}
+    isempty(d) && return d
+    CUDA.CUSOLVER.potrs!('L', fac.factors, d)
     return d
 end
 

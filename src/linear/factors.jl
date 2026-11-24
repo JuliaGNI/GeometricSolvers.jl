@@ -5,7 +5,7 @@
 # the returned value. R1 has no buffer: its factors are values, returned new, `isbits` for an
 # `isbits` element type. R3 holds its Jacobian and workspace buffers in `DenseLU`, `DenseQR`,
 # `DenseSVD`, `DenseLDLT` and `DenseCholesky` on the host and in `DeviceLU`, `DeviceQR`,
-# `DeviceSVD` and `DeviceLDLT` on a device.
+# `DeviceSVD`, `DeviceLDLT` and `DeviceCholesky` on a device.
 
 """
     factorize!!(fac, method, J)
@@ -36,7 +36,8 @@ SVD is prescaled at the working precision too, because the sweep squares the ent
 
 For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@ref),
 [`DenseSVD`](@ref), [`DenseLDLT`](@ref), [`DenseCholesky`](@ref), [`DeviceLU`](@ref),
-[`DeviceQR`](@ref), [`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref) built by [`init_linear`](@ref).
+[`DeviceQR`](@ref), [`DeviceSVD`](@ref), [`DeviceLDLT`](@ref) or [`DeviceCholesky`](@ref) built
+by [`init_linear`](@ref).
 `J` is written into `fac.factors`, divided by `2^e` as for a static matrix where its element type
 is not that of `fac.factors`, and `fac.factors` is factorised in
 place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
@@ -421,6 +422,31 @@ struct DenseCholesky{A <: AbstractMatrix, V <: Union{Nothing, AbstractVector}}
 end
 
 """
+    DeviceCholesky{A, V, S}
+
+The Cholesky factor `L` of `A = L Lᴴ` for a dense `n × n` device Hermitian positive definite
+matrix, with `factors` the `n × n` device buffer in the factor element type, which holds `L` on and
+below the diagonal and zeros above it, `rhs` the right-hand-side buffer of the factor element type
+when that differs from the working element type and `nothing` otherwise, `info` the order of the
+first leading minor that is not positive or `1` for a non-finite entry, or `0`, `scale_exponent`
+the exponent `e` of the power of two `2^e` that the matrix was divided by, and `status` the
+2-element `Int32` device buffer of `info` and `scale_exponent`. A non-finite matrix is not
+factorised, and `factors` then holds it as it was loaded. The factorisation is the one-workgroup
+kernels of `src/linear/ka/cholesky.jl`, or cuSOLVER and rocSOLVER `potrf` on a `CuMatrix` and a
+`ROCMatrix` of a `BlasFloat` element type. [`factorize!!`](@ref) reads `J` on the device by index:
+a `J` of another size than `factors` raises a `DimensionMismatch`, and a `J` on another backend
+an `ArgumentError`.
+"""
+struct DeviceCholesky{A <: AbstractMatrix, V <: Union{Nothing, AbstractVector},
+    S <: AbstractVector{Int32}}
+    factors::A
+    rhs::V
+    info::Int
+    scale_exponent::Int
+    status::S
+end
+
+"""
     dense_factor(method::LinearMethod, prob, x::AbstractVector, p)
 
 Build the linear factor for `method` on `x` using `jacobian_prototype(prob)`, with the rows of
@@ -441,10 +467,9 @@ end
 
 Build the linear factor for `method` on `x`: the dense host factor [`DenseLU`](@ref),
 [`DenseQR`](@ref), [`DenseSVD`](@ref), [`DenseLDLT`](@ref) or [`DenseCholesky`](@ref) or device
-factor [`DeviceLU`](@ref), [`DeviceQR`](@ref), [`DeviceSVD`](@ref) or [`DeviceLDLT`](@ref) when
-`pattern === nothing`, or an extension's sparse factor when `pattern` is a sparse matrix
-prototype. A [`CholeskyFactorization`](@ref) has no device factor and raises an `ArgumentError` on
-a device array.
+factor [`DeviceLU`](@ref), [`DeviceQR`](@ref), [`DeviceSVD`](@ref), [`DeviceLDLT`](@ref) or
+[`DeviceCholesky`](@ref) when `pattern === nothing`, or an extension's sparse factor when `pattern`
+is a sparse matrix prototype.
 """
 function init_linear(m::LUFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
                                                                                  Number}
@@ -554,20 +579,23 @@ function init_linear(
 end
 
 function init_linear(
-        ::CholeskyFactorization, ::Nothing, ::AbstractGPUArray{T, 1}) where {T <: Number}
-    throw(ArgumentError(
-        "CholeskyFactorization has no device factor: solve on an Array, or take " *
-        "LDLTFactorization() on a device array"))
+        m::CholeskyFactorization, ::Nothing, x::AbstractGPUArray{T, 1}) where {T <: Number}
+    F = factor_eltype(m, T)
+    n = length(x)
+    factors = similar(x, F, n, n)
+    rhs = F === T ? nothing : similar(x, F, n)
+    status = similar(x, Int32, 2)
+    return DeviceCholesky(factors, rhs, 0, 0, status)
 end
 
 const AnyStaticFactor = Union{StaticLU, StaticQR, StaticSVD, StaticLDLT, StaticCholesky}
 const AnyDenseFactor = Union{DenseLU, DenseQR, DenseSVD, DenseLDLT, DenseCholesky}
-const AnyDeviceFactor = Union{DeviceLU, DeviceQR, DeviceSVD, DeviceLDLT}
+const AnyDeviceFactor = Union{DeviceLU, DeviceQR, DeviceSVD, DeviceLDLT, DeviceCholesky}
 const AnyFactor = Union{AnyStaticFactor, AnyDenseFactor, AnyDeviceFactor}
 
 const ExactStaticFactor = Union{StaticLU, StaticQR, StaticLDLT, StaticCholesky}
 const ExactDenseFactor = Union{DenseLU, DenseQR, DenseLDLT, DenseCholesky}
-const ExactDeviceFactor = Union{DeviceLU, DeviceQR, DeviceLDLT}
+const ExactDeviceFactor = Union{DeviceLU, DeviceQR, DeviceLDLT, DeviceCholesky}
 const ExactFactor = Union{ExactStaticFactor, ExactDenseFactor, ExactDeviceFactor}
 
 """
