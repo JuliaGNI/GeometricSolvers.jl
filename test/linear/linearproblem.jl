@@ -467,9 +467,10 @@ end
 
     # The factor of a dense or device array divides `Aᴴ / 2^e` by a power of two of its own, which
     # the solve adds to `e`: where the largest entry of `A / 2^e` rounds up to 2 in a `Float32`
-    # factor, and where `A` is subnormal. The static factors scale `A` themselves; their QR and
-    # `Float32` SVD lose the accuracy of a subnormal matrix on the square path too, so that matrix is
-    # left out of them.
+    # factor, and where `A` is subnormal. The static factors scale `A` themselves, the QR only for a
+    # factor element type other than that of `A`; their QR and `Float32` SVD lose the accuracy of a
+    # subnormal matrix on the square path too (K109 of `KNOWN_ISSUES.md`), so that matrix is left
+    # out of them.
     device_wide_qr(route, method, 3, 5) && continue
     route == "SMatrix" && A_kind == "subnormal" && continue
     A = wellcond(Float64, 3, 5)

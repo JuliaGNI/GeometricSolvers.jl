@@ -806,14 +806,15 @@
 - **location:** `src/linear/static/lu.jl:24`, `src/linear/static/qr.jl:9`,
   `src/linear/static/qr_rect.jl:28`, `src/linear/static/svd.jl:171`
 - **evidence:** with `A = ldexp.(wellcond(Float64, 4, 4), -1070)` (`κ ≤ 3`) and
-  `b = ldexp.(rhs(Float64, 4), -1000)`, `factorize!!(nothing, method, SMatrix{4, 4}(A))` and
-  `ldiv!!` give `SUCCESS` with a relative error of 0.038 for `LUFactorization()` and 0.035 for
-  `QRFactorization()` against the `BigFloat` solution, `SUCCESS` and 3.1e-16 for
-  `SVDFactorization()`, and `SINGULAR` for `SVDFactorization(Float32)` (Julia 1.13.4). The static
-  LU and QR scale a matrix only for a factorisation type other than its element type
-  (`factor_matrix`), so they factorise this matrix unscaled. A `LinearProblem` of a static matrix takes these
-  factors: its `3 × 5` QR gives `SUCCESS` and 0.02, its `Float32` SVD `SINGULAR`. The dense and
-  device factor of an `m < n` system divides `Aᴴ` by `2^e` first and solves this matrix;
+  `b = ldexp.(rhs(Float64, 4), -1000)`, the helpers of `test/linear/linearproblem.jl`,
+  `factorize!!(nothing, method, SMatrix{4, 4}(A))` and `ldiv!!` give `SUCCESS` with a relative
+  error of 0.038 for `LUFactorization()` and 0.035 for `QRFactorization()` against the `BigFloat`
+  solution, `SUCCESS` and 3.1e-16 for `SVDFactorization()`, and `SINGULAR` for
+  `SVDFactorization(Float32)` (Julia 1.13.4). The static LU and QR scale a matrix only for a
+  factorisation type other than its element type (`factor_matrix`), so they factorise this matrix
+  unscaled. A `LinearProblem` of a static matrix takes these factors: its `3 × 5` QR gives
+  `SUCCESS` and 0.02, its `Float32` SVD `SINGULAR`. The `LinearSolver` of a dense or device
+  `m < n` system divides `Aᴴ` by `2^e` before it factorises it, and solves this matrix;
   `test/linear/linearproblem.jl` leaves the subnormal matrix out of the static rows of its
   scale-exponent testset for this reason.
 - **kind:** defect

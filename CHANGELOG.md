@@ -981,9 +981,9 @@ so that a compat-only bump can be told apart from an interface change.
   `LUFactorization`, `QRFactorization`, `SVDFactorization`, `LDLTFactorization` or
   `CholeskyFactorization` and returns a `LinearSolver`; `GMRES`, `UMFPACKFactorization` and a
   precision marker such as `TF32` raise an `ArgumentError`. `solve!` returns `(x, status)` with an
-  `isbits` `LinearStatus` of `code::ReturnCode` and `rank::Int32`. A static matrix (R1) gives an
-  `isbits` solver and a new `SVector` result, and `init`, `solve!` and `refactorize!!` are inferred
-  and allocation-free for a `Float64` `SMatrix`. Any other dense `AbstractMatrix`, on the host or a
+  `isbits` `LinearStatus` of `code::ReturnCode` and `rank::Int32`. A static matrix (R1) gives a
+  solver that is `isbits` for an `isbits` element type and a new `SVector` result, and `init`,
+  `solve!` and `refactorize!!` are inferred and allocation-free for a `Float64` `SMatrix`. Any other dense `AbstractMatrix`, on the host or a
   device (R3), returns the buffer `solver.x`, which the next `solve!` overwrites; on a `Float64`
   host `Array`, `solve!` and `refactorize!!` allocate nothing after a warm-up. The object adds no
   kernel. `m == n` takes every factor type, and `CholeskyFactorization` on a device raises an
