@@ -6,8 +6,9 @@
 Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) and, as
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
 `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
-[`CholeskyFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref) or the
-matrix-free [`GMRES`](@ref)), globalization `globalization` ([`Static`](@ref),
+[`CholeskyFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref), the
+matrix-free [`GMRES`](@ref), or [`KroneckerFactorization`](@ref) for the stage system of an
+implicit Runge–Kutta method), globalization `globalization` ([`Static`](@ref),
 [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust region
 [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector `jacobian`,
 iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
@@ -754,6 +755,8 @@ end
 
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     m.linsolve isa GMRES && return init_gmres_state(m, m.linsolve, prob, x, p)
+    m.linsolve isa KroneckerFactorization &&
+        return init_kronecker_state(m, m.linsolve, prob, x, p)
     if prob isa LeastSquaresProblem &&
        m.linsolve isa Union{LUFactorization, LDLTFactorization, CholeskyFactorization} &&
        !(m.globalization isa LevenbergMarquardt)
@@ -1821,3 +1824,71 @@ end
     "f_calls reads the count of a Newton with GMRES; this solve keeps none"))
 @inline jvp_calls(::Nothing) = throw(ArgumentError(
     "jvp_calls reads the count of a Newton with GMRES; this solve keeps none"))
+
+# ─── The Kronecker stage solver ──────────────────────────────────────────────
+#
+# A `Newton` whose linear method is a `KroneckerFactorization` solves the stage system that a
+# `NonlinearProblem` with `stage_matrix` carries. Its state holds the `n × n` Jacobian of the vector
+# field in place of the `s n × s n` Jacobian of the stacked residual, and its factor holds the `s`
+# blocks of `I - h A ⊗ J`. Every step body of `Newton` runs unchanged: only the factorisation of a
+# refresh, `newton_factor`, has a method of its own.
+
+# The state of a `Newton` with `KroneckerFactorization`: no Jacobian preparation, the product of the
+# stacked residual by forward mode for a line search, which measures its slope, and none for
+# `Static`.
+function init_kronecker_state(
+        m::Newton, k::KroneckerFactorization{TF}, prob, x, p) where {TF}
+    x isa Union{Number, StaticArray} && throw(ArgumentError(
+        "KroneckerFactorization solves the stage system in place, and a value iterate (a Number or a StaticArray) has no Kronecker solve; pass a Vector"))
+    x isa AbstractGPUArray && throw(ArgumentError(
+        "KroneckerFactorization has no device factor, so a device iterate has no Kronecker solve; pass a Vector"))
+    TF === Nothing || throw(ArgumentError(
+        "KroneckerFactorization takes no factorisation precision: its blocks factorise in the working precision"))
+    m.globalization isa DogLeg && throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no DogLeg globalization: its trial loop needs the Jacobian of the stacked residual"))
+    m.globalization isa LevenbergMarquardt && throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no LevenbergMarquardt globalization: its damped step needs the Jacobian of the stacked residual"))
+    is_refining(m.refinement) && throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no refinement: its blocks factorise in the working precision"))
+    iszero(m.regularization) || throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no regularization: a shift of I - h A ⊗ J has no block form"))
+    m.jacobian === nothing || throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no jacobian: it reads the Jacobian of the vector field from the problem's stage_jacobian"))
+    A = stage_matrix(prob)
+    A === nothing && throw(ArgumentError(
+        "KroneckerFactorization needs a NonlinearProblem with stage_matrix and stage_jacobian"))
+    hasproperty(p, :h) || throw(ArgumentError(
+        "KroneckerFactorization reads the step from p.h, and the parameters have no property h"))
+    fac = kronecker_factor(k.block, A, x)
+    T = eltype(x)
+    R = real(T)
+    n = length(x) ÷ size(A, 1)
+    Fx = buffer(x)
+    jvpprep = m.globalization isa Static ? nothing :
+              prepare_jvp(AutoForwardDiff(), prob, Fx, x, p)
+    return NewtonState(
+        nothing, jvpprep, Fx, buffer(x), fac, similar(x, T, n, n),
+        init_globalization(m.globalization, k, x, Fx), newton_rule(m, x),
+        init_merit(m.globalization, x), R(NaN), NewtonDiagnostics(R), nothing, nothing, false,
+        Int32(0))
+end
+
+# The refresh of a Kronecker step: `jac!` writes the Jacobian of the field into the state, and the
+# blocks are factorised at the step `p.h`. The diagnostics are those of a factor without a rank.
+@inline function newton_factor(
+        m::Newton{<:KroneckerFactorization}, state::NewtonState, prob, x, Fx, p)
+    R = real(eltype(x))
+    stage_jacobian(prob)(state.J, x, p)
+    fac = factorize_stages!!(state.fac, m.linsolve.block, state.J, R(p.h))
+    return state.J, fac, NewtonDiagnostics(R)
+end
+
+# The tangent solve of implicit differentiation factorises the Jacobian of the stacked residual,
+# which a `Newton` with `KroneckerFactorization` never forms, so `solve` refuses a dual input for
+# it before the primal solve, as it does for `GMRES`.
+function solve_implicit(
+        ::NonlinearProblem, x₀, method::Newton{<:KroneckerFactorization}, p,
+        options::Union{Nothing, Options}, kwargs)
+    throw(ArgumentError(
+        "solve does not accept ForwardDiff.Dual inputs for a Newton with KroneckerFactorization; its tangent solve needs the Jacobian of the stacked residual, which this solver does not form"))
+end

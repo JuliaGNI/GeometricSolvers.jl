@@ -53,6 +53,18 @@ block_residual
 block_jacobian
 ```
 
+A [`NonlinearProblem`](@ref) built with the `stage_matrix` and `stage_jacobian` keywords carries
+the stage system of an implicit Runge–Kutta method: its `F` is then a [`StageResidual`](@ref) that
+forwards every call to the stacked residual, and the stage matrix and the Jacobian of the vector
+field are read with [`stage_matrix`](@ref) and [`stage_jacobian`](@ref), which a [`Newton`](@ref)
+with [`KroneckerFactorization`](@ref) does. These names are exported.
+
+```@docs
+StageResidual
+stage_matrix
+stage_jacobian
+```
+
 ### Reduced-space elimination with a batch inside the residual
 
 [`BatchEliminated`](@ref) eliminates a whole batch of independent inner systems *from the residual
