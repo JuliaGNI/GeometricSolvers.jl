@@ -22,6 +22,29 @@ iterate with a matrix-free linear solver:
 `Newton()` takes `linsolve = LUFactorization()` and `globalization = Static()` unless the caller
 gives others (see [Nonlinear methods](@ref nonlinear)).
 
+## The method of a call that names none
+
+[`init`](@ref)`(prob, x₀)` and [`solve`](@ref)`(prob, x₀)` on a [`NonlinearProblem`](@ref), a
+[`StationarityProblem`](@ref) or a [`LeastSquaresProblem`](@ref) take the method
+[`default_method`](@ref)`(prob, x₀)` and the parameters `p = nothing`. The method follows from the problem type, its `jacobian_prototype` and
+the storage of the iterate:
+
+| problem | iterate | method |
+|:--|:--|:--|
+| [`NonlinearProblem`](@ref) with a `SparseMatrixCSC` `jacobian_prototype` | a `Vector{Float64}` or a `Vector{ComplexF64}` | `Newton(; linsolve = UMFPACKFactorization())` |
+| [`NonlinearProblem`](@ref), every other prototype and iterate | any other | `Newton()` |
+| [`StationarityProblem`](@ref) | any | `Newton()` |
+| [`LeastSquaresProblem`](@ref) | any | [`GaussNewton`](@ref)`()` |
+
+The rules read no size. The `LUFactorization()` of `Newton()` selects its factor from the storage
+of the Jacobian: a static factor in R1, and on a dense array the factor that
+[What runs where](@ref) lists for its array type. A `SparseMatrixCSC` prototype on any other
+iterate takes `Newton()` as well: a `Vector{Float32}` gets the Sparspak factor where Sparspak is
+loaded, and `init` raises otherwise, as it does when the caller names `Newton()`. A
+`CuSparseMatrixCSR` prototype takes `Newton()`, which has the cuDSS factor where `CUDA` and
+`CUDSS` are loaded (see [Sparse direct solves](@ref sparse)). The default method is never
+matrix-free and never a combinator: the problem carries no information that selects either.
+
 ## R1: one small system as a value
 
 **Methods.**
