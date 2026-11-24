@@ -76,6 +76,22 @@ symmetric mismatch `|A[i, j] - A[j, i]|`, and as the complex symmetric `L D Lᵀ
 """
 struct LDLTFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
+"""
+    UMFPACKFactorization()
+
+Sparse LU factorisation of a `SparseMatrixCSC` Jacobian through UMFPACK, from `SparseArrays`, in
+the working type of the problem, which is `Float64` or `ComplexF64` on a host `Vector`. The
+Jacobian pattern is a `SparseMatrixCSC{<:Any, Int}` `jacobian_prototype`, or the pattern that the
+sparsity detector of an `AutoSparse` back end finds. `init` raises `ArgumentError` for another
+element type, such as `Float32` or `ComplexF32`, for another iterate, such as a static or scalar
+one, and for a solve with no sparse pattern. A detected pattern that `Newton` does not use counts
+as none: under `LevenbergMarquardt`, and under `regularization ≠ 0` where the pattern does not
+hold the whole structural diagonal. The first factorisation runs the symbolic analysis, and every
+later factorisation of the same factor reuses it (see [`UMFPACKLU`](@ref)). UMFPACK is
+distributed under the GPL with `SparseArrays`.
+"""
+struct UMFPACKFactorization <: LinearMethod{Nothing} end
+
 for M in (:LUFactorization, :QRFactorization, :SVDFactorization, :LDLTFactorization)
     @eval begin
         $M() = $M{Nothing}()
