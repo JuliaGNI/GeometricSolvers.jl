@@ -82,8 +82,8 @@ The state keeps a copy of `x` and of `F(x)` for an array iterate, which [`init_s
 allocates once, and holds the record by value for a value iterate, where it stays `isbits`. A
 combinator that steps a `Newton` member, such as [`Repeat`](@ref) or [`Switch`](@ref), gets the
 member's restore through the member's `finish!!`. A [`Deflated`](@ref) problem and the outer
-method of a [`BlockEliminated`](@ref) or [`VariableProjection`](@ref) problem refuse
-`best = true` with an `ArgumentError`.
+method of a [`BlockEliminated`](@ref), [`VariableProjection`](@ref) or
+[`BatchEliminated`](@ref) problem refuse `best = true` with an `ArgumentError`.
 
 # Keywords of a `GMRES` linear method
 

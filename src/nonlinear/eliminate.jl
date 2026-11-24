@@ -3505,8 +3505,13 @@ end
 # Jacobian–vector slot and no Jacobian matrix anywhere. Only `GMRES` is a linear method of this
 # problem: a factorising method would need the outer Jacobian as a matrix, which the batch does not
 # form. The product is the batch's own difference, which no AD back end but the default selects,
-# in the precision the difference sets, which no `jvp_eltype` replaces.
+# in the precision the difference sets, which no `jvp_eltype` replaces. A `best = true` is refused:
+# the solve leaves the inner solutions, the moments and the statuses of the batch at the last
+# evaluation, which a restored outer iterate would not match.
 @inline function init_state(m::Newton, prob::BatchEliminated, x::AbstractVector, p)
+    m.best === Val(false) || throw(ArgumentError(
+        "a BatchEliminated problem takes no outer Newton with best = true: the solve leaves the " *
+        "inner solutions and the moments of the batch at the last evaluation"))
     g = m.linsolve
     g isa GMRES || throw(ArgumentError(
         "a BatchEliminated problem takes a Newton with GMRES: the outer Jacobian is matrix-free, " *

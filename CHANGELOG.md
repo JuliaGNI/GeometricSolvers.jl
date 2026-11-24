@@ -970,8 +970,8 @@ so that a compat-only bump can be told apart from an interface change.
   allocation-free; the R3 state holds a copy of `x` and of `F(x)`, allocated once by
   `init_state`. `Repeat` takes the best over its sub-steps, and `Switch` and the other step-level
   combinators get the restore of their member's `finish!!`. A `Deflated` problem and the outer
-  method of a `BlockEliminated` or `VariableProjection` problem refuse `best = true` with an
-  `ArgumentError`. `Newton` gains a last field and type parameter, `best::B` with `B` either
+  method of a `BlockEliminated`, `VariableProjection` or `BatchEliminated` problem refuse
+  `best = true` with an `ArgumentError`. `Newton` gains a last field and type parameter, `best::B` with `B` either
   `Val{false}` or `Val{true}`, and `NewtonState` a last field, the record, which is `nothing`
   under `best = false`, so that state keeps its size.
 
