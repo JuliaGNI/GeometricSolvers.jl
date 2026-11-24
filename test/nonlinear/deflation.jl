@@ -704,22 +704,16 @@ end
 # The best iterate of a `Newton` ranks `‖M F‖₂`, while `status.fnorm` of a deflated solve is the
 # inner `‖F‖₂`, so a `Deflated` problem refuses `best = true` at every entry point.
 @testset "A Newton with best = true is refused, naming best" begin
-    names_best(f) =
-        try
-            f()
-            false
-        catch e
-            e isa ArgumentError && occursin("best", e.msg)
-        end
+    refusal = r"^ArgumentError: Deflated takes no Newton with best = true"
     m = Newton(; best = true)
-    @test names_best(() -> solve(Deflated(NonlinearProblem((x, p) -> x .* x .- 4), (2.0,)),
-        1.0, m))
+    @test_throws refusal solve(Deflated(NonlinearProblem((x, p) -> x .* x .- 4), (2.0,)),
+        1.0, m)
     def = Deflated(p2_problem_ad(), (SVector(1.0, 2.0),))
     x0 = SVector(0.8, 1.7)
-    @test names_best(() -> solve(def, x0, m))
-    @test names_best(() -> init(def, x0, m))
-    @test names_best(() -> solve_batch!(fill(x0, 2), def, m))
-    @test names_best(() -> solve(def, x0, Newton(; globalization = Backtracking(), best = true)))
+    @test_throws refusal solve(def, x0, m)
+    @test_throws refusal init(def, x0, m)
+    @test_throws refusal solve_batch!(fill(x0, 2), def, m)
+    @test_throws refusal solve(def, x0, Newton(; globalization = Backtracking(), best = true))
     @test GS.isconverged(last(solve(def, x0, Newton(; globalization = Backtracking()))))
 end
 
