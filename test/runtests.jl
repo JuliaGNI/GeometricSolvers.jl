@@ -47,6 +47,7 @@ const TESTS = [
         "Deflated problem" => "nonlinear/deflation.jl",
         "Block elimination and variable projection" => "nonlinear/eliminate.jl",
         "Nonlinear solver loop" => "nonlinear/solver.jl",
+        "Default method" => "nonlinear/default.jl",
         "Newton" => "nonlinear/newton.jl",
         "Iterative refinement" => "nonlinear/refinement.jl",
         "Picard" => "nonlinear/picard.jl",

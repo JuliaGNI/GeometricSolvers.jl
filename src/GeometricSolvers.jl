@@ -41,6 +41,7 @@ export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice
        FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
        PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
+export default_method
 export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
 export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Fallback,
        Anderson, Broyden
@@ -110,6 +111,7 @@ include("nonlinear/reparametrized.jl")
 include("nonlinear/deflation.jl")
 include("nonlinear/eliminate.jl")
 include("nonlinear/certify.jl")
+include("nonlinear/default.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")

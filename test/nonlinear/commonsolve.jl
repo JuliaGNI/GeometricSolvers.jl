@@ -60,15 +60,17 @@ end
     # own problem or solver types: `init` and `solve` take any `AbstractNonlinearProblem`, so that
     # a `LeastSquaresProblem` reaches one solver loop, and a `StationarityProblem`, a
     # `Reparametrized` and a `Deflated` problem and the `BlockEliminated` and `VariableProjection`
-    # wrappers have their own, the last two taking one `Union` arm each; `init` and `solve!` also
-    # take a `LinearProblem` and a `LinearSolver`
+    # wrappers have their own, the last two taking one `Union` arm each, as do a
+    # `NonlinearProblem` and a `LeastSquaresProblem` in the call with no method; `init` and
+    # `solve!` also take a `LinearProblem` and a `LinearSolver`
     for (f, owned) in (
         (CommonSolve.init,
         (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated,
-            BlockEliminated, VariableProjection, LinearProblem)),
+            BlockEliminated, VariableProjection, NonlinearProblem, LeastSquaresProblem,
+            LinearProblem)),
         (CommonSolve.solve,
         (GS.AbstractNonlinearProblem, StationarityProblem, Reparametrized, Deflated,
-            BlockEliminated, VariableProjection)),
+            BlockEliminated, VariableProjection, NonlinearProblem, LeastSquaresProblem)),
         (CommonSolve.solve!, (NonlinearSolver, ReparametrizedSolver, LinearSolver)))
         ours = filter(m -> m.module === GS, collect(methods(f)))
         @test !isempty(ours)
