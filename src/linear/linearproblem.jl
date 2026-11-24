@@ -23,8 +23,7 @@ one of [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`
 `nothing` or a float type. Another method, such as [`GMRES`](@ref), and a precision marker such as
 [`TF32`](@ref) raise an `ArgumentError`.
 
-- `m == n`: every factor type; [`CholeskyFactorization`](@ref) on a device array raises an
-  `ArgumentError`, because it has no device factor.
+- `m == n`: every factor type, on the host and on a device array.
 - `m > n`: the least-squares solution through `QRFactorization` and `SVDFactorization`, the
   minimum-norm one where the rank of the SVD is below `n`. `LUFactorization`,
   `LDLTFactorization` and `CholeskyFactorization` raise an `ArgumentError` for `m ≠ n`.

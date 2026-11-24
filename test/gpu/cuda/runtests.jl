@@ -815,9 +815,10 @@ if CUDA.functional()
             return Ab' * ((Ab * Ab') \ bb)
         end
         for (method, m, n) in ((LUFactorization(), 4, 4), (QRFactorization(), 4, 4),
-            (SVDFactorization(), 4, 4), (SVDFactorization(), 5, 3), (
-            SVDFactorization(), 3, 5))
-            A = wellcond(m, n)
+            (SVDFactorization(), 4, 4), (CholeskyFactorization(), 4, 4),
+            (SVDFactorization(), 5, 3), (SVDFactorization(), 3, 5))
+            W = wellcond(m, n)
+            A = method isa CholeskyFactorization ? W' * W : W
             b = T.(1:m)
             solver = init(LinearProblem(CuArray(A)), method)
             x, st = solve!(solver, CuArray(b))
