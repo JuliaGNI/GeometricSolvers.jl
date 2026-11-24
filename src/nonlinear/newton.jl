@@ -540,13 +540,15 @@ end
 # factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the working-precision
 # factor slot for mixed-precision promotion (`nothing` where the factorisation runs in the working
 # precision, and for `LevenbergMarquardt`, which promotes nothing), the promotion flag, the
-# count of consecutive slow steps a promotion waits for, and the linear-solver workspace, which
-# only a [`GMRES`](@ref) solve has (`nothing` for every factorising method). For a value iterate the
+# count of consecutive slow steps a promotion waits for, the linear-solver workspace, which
+# only a [`GMRES`](@ref) solve has (`nothing` for every factorising method), and the slots that
+# `solve!!` copies the start point of a step and its residual into (two buffers for an array
+# iterate of a `LeastSquaresProblem`, `(nothing, nothing)` otherwise). For a value iterate the
 # workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The factor
 # slot is the storage that each factorisation writes into; only a step with reuse stores the factor
 # it returns, because only such a step reads it again. The norm is `NaN` on a state that no
 # `start!!` saw or that `solve!!` returned.
-struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS}
+struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS}
     jacprep::JP
     jvpprep::VP
     Fx::FX
@@ -563,6 +565,7 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS}
     promoted::Bool
     slow_steps::Int32
     ws::WS
+    kept::KS
 end
 
 # The state of a factorising method, whose linear solve keeps no workspace of its own: the fifteen
@@ -570,17 +573,27 @@ end
 @inline function NewtonState(jacprep::JP, jvpprep::VP, Fx::FX, d::D, fac::FAC, J::JM, g::G,
         rule::RS, merit::PH, fnorm::R, diag::DG, refbuf::RB, fac_T::FT, promoted::Bool,
         slow_steps::Int32) where {JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT}
-    return NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, Nothing}(
+    return NewtonState(
         jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf, fac_T,
         promoted, slow_steps, nothing)
 end
 
+# A state with no slots for the start point of a step: the sixteen fields up to the workspace.
+@inline function NewtonState(jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag,
+        refbuf, fac_T, promoted::Bool, slow_steps::Int32, ws)
+    return NewtonState(
+        jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf, fac_T,
+        promoted, slow_steps, ws, (nothing, nothing))
+end
+
 @inline state_gradratio(state::NewtonState) = state.diag.gradratio
 @inline state_jnorm(state::NewtonState) = state.diag.jnorm
+@inline step_start_buffers(state::NewtonState) = state.kept
 
 # The state whose diagnostics measure the stationarity test at `(x, Fx)`: `solve!!` re-measures
-# them at the iterate it returns, because a step's diagnostics are those of the last fresh
-# factorisation, at the start of that step. Every other method and problem keeps its reading.
+# them at the end of a step before it returns that iterate on the test, because a step's
+# diagnostics are those of the last fresh factorisation, at the start of that step. Every other
+# method and problem keeps its reading.
 @inline refresh_diagnostics!!(state, method, prob, x, Fx, p) = state
 @inline function refresh_diagnostics!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing}, prob::LeastSquaresProblem,
@@ -609,13 +622,13 @@ end
 @inline function with_factor(s::NewtonState, fac)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function with_factor_T(s::NewtonState, fac_T)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function update_stored_factor(
@@ -631,7 +644,7 @@ end
 @inline function with_rule(s::NewtonState, rule)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 # The merit of the current residual and its norm: the two values a step returns, or that a solve
@@ -640,19 +653,19 @@ end
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit,
         oftype(s.fnorm, fnorm), s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function with_diag(s::NewtonState, diag)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function with_mixed(s::NewtonState, promoted::Bool, slow_steps::Int32)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, promoted, slow_steps, s.ws)
+        s.refbuf, s.fac_T, promoted, slow_steps, s.ws, s.kept)
 end
 
 # ─── A `Number` iterate on the one-entry vector path ─────────────────────────
@@ -802,10 +815,11 @@ end
                 nothing
         zero_promoted_factors!(fac_T)
         refbuf = init_refinement(m.refinement, x)
+        kept = prob isa LeastSquaresProblem ? (buffer(x), buffer(Fx)) : (nothing, nothing)
         return NewtonState(
             jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, fac_T, x, Fx),
             init_globalization(m.globalization, m.linsolve, x, Fx), rule, merit, R(NaN),
-            diag, refbuf, fac_T, false, Int32(0), nothing)
+            diag, refbuf, fac_T, false, Int32(0), nothing, kept)
     end
 end
 

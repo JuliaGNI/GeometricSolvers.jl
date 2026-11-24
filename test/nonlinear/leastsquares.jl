@@ -1016,6 +1016,195 @@ step_of(fac, x::AbstractVector, Fx) = ldiv!!(similar(x), fac, Fx)
     end
 end
 
+# ─── A stationary start point that the next step leaves ──────────────────────
+
+# The stationarity ratio ‖Jᵀ r‖ / (‖J‖_F ‖r‖) at `x`, from the residual and Jacobian in `T`.
+function lsq_ratio(r, J, x)
+    rv = r(x, nothing)
+    Jm = J(x, nothing)
+    return norm(Jm' * rv) / (norm(Jm) * norm(rv))
+end
+
+@testset "a step that leaves a stationary start point returns the start point, $T" for T in REAL_ELTYPES
+    g_tol = Options(T).g_tol
+
+    # (a) r(t) = (c exp(L(t)), 1) with L(t) = t + A (3t² − 2t³) and its analytic Jacobian. Here
+    # L′(t) = 1 + 6A t (1 − t) is 1 at t = 1 and at t = 0, so the Gauss–Newton step
+    # −r₁ / r₁′ = −1 / L′ is −1 at both, and the solve from t = 1 visits t = 0 and t = −1. The
+    # ratio is r₁ / ‖r‖, and r₁ is about e⁷ c at t = 1, c at t = 0 and e²⁹ c ≫ 1 at t = −1, so with
+    # c = g_tol / 10 only t = 0 passes the stationarity test.
+    A = T(6)
+    c = g_tol / 10
+    L(t) = t + A * (3 * t^2 - 2 * t^3)
+    dL(t) = 1 + 6 * A * t * (1 - t)
+    r1(t) = c * exp(L(t))
+    r_s(x, p) = SVector(r1(x[1]), one(T))
+    J_s(x, p) = SMatrix{2, 1, T, 2}(r1(x[1]) * dL(x[1]), zero(T))
+    function r_d!(r, x, p)
+        view(r, 1:1) .= r1.(x)
+        view(r, 2:2) .= one(T)
+        return r
+    end
+    function J_d!(J, x, p)
+        view(J, 1:1, 1) .= r1.(x) .* dL.(x)
+        view(J, 2:2, 1) .= zero(T)
+        return J
+    end
+    ratio_a(t) = lsq_ratio(r_s, J_s, SVector{1, T}(t))
+    @test ratio_a(one(T)) > g_tol
+    @test ratio_a(zero(T)) <= g_tol
+    @test ratio_a(-one(T)) > g_tol
+    prob_s = LeastSquaresProblem(r_s, J_s)
+    prob_d = LeastSquaresProblem(r_d!, J_d!, 2)
+    for alg in (GaussNewton(), GaussNewton(; linsolve = SVDFactorization()))
+        # from t = 1 the first step reaches t = 0, whose fresh factorisation, at the start of the
+        # second step, reads stationary; that step goes to t = −1, which does not, so the solve
+        # returns t = 0 and its status after the one step that reached it
+        x, st = solve(prob_s, SVector{1, T}(one(T)), alg)
+        @test st.code === SUCCESS
+        @test st.stationary === true
+        @test stopping_test(st) === :stationarity
+        @test abs(x[1]) <= 8 * eps(T)
+        @test st.iterations == 1
+        @test isapprox(st.fnorm, norm(r_s(x, nothing)); rtol = 8 * eps(T))
+        @test isapprox(st.stepnorm, one(T); rtol = 8 * eps(T))
+        @test ratio_a(x[1]) <= g_tol
+        @test isapprox(st.gradratio, ratio_a(x[1]); rtol = sqrt(eps(T)))
+        for AT in ARRAY_BACKENDS
+            @testset "(a) $(nameof(typeof(alg.linsolve))), $AT" begin
+                solver = init(prob_d, AT(ones(T, 1)), alg)
+                xa, sta = solve!(solver)
+                @test xa === solver.x
+                @test sta.code === SUCCESS
+                @test sta.stationary === true
+                @test sta.iterations == 1
+                @test abs(Array(xa)[1]) <= 8 * eps(T)
+                @test isapprox(sta.fnorm, st.fnorm; rtol = 8 * eps(T))
+                @test isapprox(sta.stepnorm, one(T); rtol = 8 * eps(T))
+                @test isapprox(sta.gradratio, st.gradratio; rtol = sqrt(eps(T)))
+                # the residual slot of the state holds the residual of the returned iterate
+                @test isapprox(Array(GeometricSolvers.residual_buffer(solver.state)),
+                    Array(r_s(SVector{1, T}(Array(xa)[1]), nothing)); rtol = 8 * eps(T))
+            end
+        end
+        # skipped where a run forces --check-bounds=yes
+        if Base.JLOptions().check_bounds != 1
+            @test allocations(solve, prob_s, SVector{1, T}(one(T)), alg) == 0
+            solver = init(prob_d, ones(T, 1), alg)
+            @test allocations(solve_from_start!, solver, ones(T, 1)) == 0
+            @test abs(solver.x[1]) <= 8 * eps(T)
+        end
+    end
+    # the control: `allocations` sees an allocation where there is one
+    @test allocations(copy, ones(T, 1)) > 0
+
+    # Only a LeastSquaresProblem returns the start point: the same stationary diagnostics, those
+    # that the solve above returned with t = 0, and the same status after one step leave every
+    # other problem type to the loop as it is.
+    solver_a = init(prob_d, ones(T, 1), GaussNewton())
+    solve!(solver_a)
+    status_1 = GeometricSolvers.SolverStatus{T}(
+        SUCCESS, Int32(1), one(T), one(T), Int32(0), false, false)
+    @test GeometricSolvers.keeps_step_start(prob_d, Options(T), solver_a.state, status_1)
+    @test !GeometricSolvers.keeps_step_start(
+        NonlinearProblem(r_d!), Options(T), solver_a.state, status_1)
+
+    # The rule never applies to the first step: from t = 0, which reads stationary, the step to
+    # t = −1 is kept and the solve goes on.
+    for alg in (GaussNewton(), GaussNewton(; linsolve = SVDFactorization()))
+        x0_st = SVector{1, T}(zero(T))
+        x, st = solve(prob_s, x0_st, alg)
+        @test st.iterations >= 2
+        @test x != x0_st
+        # the start point t = 0 of the second step from t = 1 is one step from the start, below
+        # `min_iterations = 2`, so the rule does not return it
+        _, st_min = solve(prob_s, SVector{1, T}(one(T)), alg;
+            options = Options(T; min_iterations = 2))
+        @test st_min.iterations >= 2
+    end
+
+    # Under reuse = 2 the second step, from t = 0, reuses the factor of t = 1 and moves by
+    # −e⁻⁷; its diagnostics are those of t = 1 and fail. The third step factorises afresh at that
+    # iterate, which reads stationary, and goes to t ≈ −1, so the solve returns the iterate of the
+    # second step.
+    alg_r = GaussNewton(; reuse = 2)
+    x2_expected = -exp(-L(one(T)))
+    x_r, st_r = solve(prob_s, SVector{1, T}(one(T)), alg_r)
+    @test st_r.code === SUCCESS
+    @test st_r.stationary === true
+    @test st_r.iterations == 2
+    @test isapprox(x_r[1], x2_expected; rtol = sqrt(eps(T)))
+    @test ratio_a(x_r[1]) <= g_tol
+    @test isapprox(st_r.gradratio, ratio_a(x_r[1]); rtol = sqrt(eps(T)))
+    for AT in ARRAY_BACKENDS
+        solver = init(prob_d, AT(ones(T, 1)), alg_r)
+        xa, sta = solve!(solver)
+        @test sta.code === SUCCESS
+        @test sta.stationary === true
+        @test sta.iterations == 2
+        @test isapprox(Array(xa)[1], x2_expected; rtol = sqrt(eps(T)))
+    end
+
+    # (b) r(u, v) = (u − 1, c_b v, −(v − d₁)(v + d₂)). With d₁ = d₂ = 1 the problem is symmetric
+    # under v ↦ −v, and on v = 0 it has the saddle (1, 0) with residual (0, 0, 1): along v the
+    # merit has the curvature c_b² − 2 < 0, while the Gauss–Newton model sees c_b² > 0, so the
+    # Gauss–Newton iteration multiplies the distance in v from the saddle by m = 2 / c_b² per step.
+    # The minima are near v = ±1. Data d₁ ≠ d₂ a few ULPs apart move the saddle to
+    # v ≈ (d₁ − d₂) / 2, so the first step from the symmetric start (0, 0) reaches (1, m (d₂ − d₁) / 2), whose ratio
+    # is about m |d₂ − d₁|, and the Gauss–Newton step from there multiplies that by m. With m = 1e5
+    # in Float64 and m = 200 in Float32, the first iterate passes the test and the end of that step
+    # fails it. The model reduction of the step is at the rounding level of ‖r‖, so rounding decides
+    # whether `DogLeg` accepts it: where it rejects it, the zero step ends the solve at the first
+    # iterate; where it accepts it, the solve returns the first iterate instead of going on to a
+    # minimum.
+    m_b = T === Float64 ? T(1e5) : T(200)
+    c_b = sqrt(2 / m_b)
+    perturbations = ((one(T), nextfloat(one(T))), (nextfloat(one(T)), one(T)),
+        (prevfloat(one(T)), one(T)), (one(T), nextfloat(one(T), 2)),
+        (prevfloat(one(T)), nextfloat(one(T))), (nextfloat(one(T), 3), prevfloat(one(T))))
+    dogleg = GaussNewton(; globalization = DogLeg())
+    for (d₁, d₂) in perturbations
+        rb_s(x, p) = SVector(x[1] - one(T), c_b * x[2], -((x[2] - d₁) * (x[2] + d₂)))
+        Jb_s(x, p) = SMatrix{3, 2, T, 6}(
+            one(T), zero(T), zero(T), zero(T), c_b, -((x[2] + d₂) + (x[2] - d₁)))
+        function rb_d!(r, x, p)
+            u = view(x, 1:1)
+            v = view(x, 2:2)
+            view(r, 1:1) .= u .- one(T)
+            view(r, 2:2) .= c_b .* v
+            view(r, 3:3) .= .-((v .- d₁) .* (v .+ d₂))
+            return r
+        end
+        function Jb_d!(J, x, p)
+            v = view(x, 2:2)
+            view(J, 1:1, 1) .= one(T)
+            view(J, 2:3, 1) .= zero(T)
+            view(J, 1:1, 2) .= zero(T)
+            view(J, 2:2, 2) .= c_b
+            view(J, 3:3, 2) .= .-((v .+ d₂) .+ (v .- d₁))
+            return J
+        end
+        x0_b = zero(SVector{2, T})
+        results = Any[solve(LeastSquaresProblem(rb_s, Jb_s), x0_b, dogleg)]
+        for AT in ARRAY_BACKENDS
+            push!(results, solve!(init(
+                LeastSquaresProblem(rb_d!, Jb_d!, 3), AT(zeros(T, 2)),
+                dogleg)))
+        end
+        for (x, st) in results
+            @testset "(b) d₁ = $d₁, d₂ = $d₂, $(typeof(x))" begin
+                xb = SVector{2, T}(Array(x))
+                @test st.code === SUCCESS
+                @test st.stationary === true
+                # at the saddle: the minima are near v = ±1
+                @test abs(xb[1] - one(T)) <= sqrt(eps(T))
+                @test abs(xb[2]) <= g_tol
+                @test lsq_ratio(rb_s, Jb_s, xb) <= g_tol
+            end
+        end
+    end
+end
+
 # ─── 8-unit tanh network fit of sin(πx) on 101 points ────────────────────────
 
 @testset "tanh network fit of sin(πx), $T" for T in REAL_ELTYPES
