@@ -101,6 +101,8 @@ function GeometricSolvers.backsolve!(
         fac::DeviceCholesky{<:ROCMatrix{T}},
         d::ROCVector{T}
 ) where {T <: BlasFloat}
+    length(d) == size(fac.factors, 1) ||
+        throw(DimensionMismatch("d has length $(length(d)), the Cholesky factor $(size(fac.factors))"))
     isempty(d) && return d
     AMDGPU.rocSOLVER.potrs!('L', fac.factors, d)
     return d

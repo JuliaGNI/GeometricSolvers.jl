@@ -854,3 +854,14 @@
   Julia 1.13.4, JLArrays 0.5.0, tree of `b6aa30e`.
 - **kind:** found late
 - **found:** #113
+
+### K113 · The vendor LU and QR solves return an empty vector with no error for a factor of order `n > 0`
+
+- **location:** `ext/GeometricSolversCUDAExt.jl:32`, `:60`; `ext/GeometricSolversAMDGPUExt.jl:32`,
+  `:63` (`backsolve!` of `DeviceLU` and `DeviceQR` on a `CuMatrix` and on a `ROCMatrix`)
+- **evidence:** read, not run (no CUDA or ROCm device): each of the four methods starts with
+  `isempty(d) && return d` and checks the length of `d` against the factor nowhere before it, so an
+  empty `d` returns with no error for a factor of any order. The vendor Cholesky solves in the same
+  files check `length(d) == size(fac.factors, 1)` before that return and throw `DimensionMismatch`.
+- **kind:** found late
+- **found:** #113

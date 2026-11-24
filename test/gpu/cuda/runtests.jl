@@ -648,6 +648,20 @@ if CUDA.functional()
         @test isempty(ldiv!!(CuArray(T[]), fac_ext, CuArray(T[])))
     end
 
+    @testset "CUDA cuSOLVER Cholesky: a vector of another length ($T)" for T in CUDA_BLAS_ELTYPES
+        m = CholeskyFactorization()
+        # the length is checked before `potrs`: a vector of another length, the empty one
+        # included, is refused, by `ldiv!!` and by `backsolve!`, as the own KA solve refuses it
+        fac2 = factorize!!(dense_factor(m, nothing, CuArray(zeros(T, 2)), nothing), m,
+            CuArray(T[4 0; 0 9]))
+        @test returncode(fac2) === SUCCESS
+        for k in (0, 1, 3)
+            msg = Regex("^DimensionMismatch: d has length $k, the Cholesky factor \\(2, 2\\)")
+            @test_throws msg ldiv!!(CuArray(ones(T, k)), fac2, CuArray(ones(T, k)))
+            @test_throws msg backsolve!(fac2, CuArray(ones(T, k)))
+        end
+    end
+
     @testset "CUDA capability census probe" begin
         for T in CUDA_BLAS_ELTYPES
             rng = Xoshiro(0x5eed)

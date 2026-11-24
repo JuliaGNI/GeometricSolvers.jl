@@ -466,6 +466,20 @@ if AMDGPU.functional()
         @test isempty(ldiv!!(ROCArray(T[]), fac_ext, ROCArray(T[])))
     end
 
+    @testset "ROCm rocSOLVER Cholesky: a vector of another length ($T)" for T in ROCM_BLAS_ELTYPES
+        m = CholeskyFactorization()
+        # the length is checked before `potrs`: a vector of another length, the empty one
+        # included, is refused, by `ldiv!!` and by `backsolve!`, as the own KA solve refuses it
+        fac2 = factorize!!(dense_factor(m, nothing, ROCArray(zeros(T, 2)), nothing), m,
+            ROCArray(T[4 0; 0 9]))
+        @test returncode(fac2) === SUCCESS
+        for k in (0, 1, 3)
+            msg = Regex("^DimensionMismatch: d has length $k, the Cholesky factor \\(2, 2\\)")
+            @test_throws msg ldiv!!(ROCArray(ones(T, k)), fac2, ROCArray(ones(T, k)))
+            @test_throws msg backsolve!(fac2, ROCArray(ones(T, k)))
+        end
+    end
+
     BLAS.set_num_threads(old_blas_threads)
 else
     @test_skip AMDGPU.functional()
