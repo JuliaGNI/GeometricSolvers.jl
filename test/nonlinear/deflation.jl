@@ -747,6 +747,20 @@ end
         @test st.iterations == 0
         @test x == x0
     end
+    # far from the root the deflation factor is the subnormal shift, so the deflated residual is
+    # near `1e-310` while the inner residual is 1: the max-norm test takes `f_abstol = 2` as the
+    # 2-norm test does, without forming the overflowing reciprocal of the factor
+    one!(y, x, p) = (y .= one(eltype(x)); y)
+    for (prob, x0) in (
+        (Deflated(NonlinearProblem((x, p) -> one(x)), (0.0,); shift = 1e-310), 1e160),
+        (Deflated(NonlinearProblem(one!), ([0.0],); shift = 1e-310), [1e160]))
+        for n in (L2Norm(), MaxNorm())
+            x, st = solve(prob, x0, Newton(); f_abstol = 2.0, f_reltol = 0.0, norm = n,
+                max_iterations = 0)
+            @test st.code == SUCCESS
+            @test st.fnorm ≈ 1 rtol = 8eps()
+        end
+    end
 end
 
 # ─── Edge 12: the distance on the unknowns, and the datum `b` ───────────────
