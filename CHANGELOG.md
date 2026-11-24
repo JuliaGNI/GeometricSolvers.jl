@@ -47,7 +47,11 @@ so that a compat-only bump can be told apart from an interface change.
   the columns `Newton Static LU`, `Newton Backtracking LU`, `Newton Bisection LU`, `Newton
   StrongWolfe LU` and `Newton reuse 3 Backtracking LU`, which stay SINGULAR at the first iteration:
   no perturbed run of the marker moves from that outcome any more. The table's comparison of the
-  old and the new table reports 0 cells that differ.
+  old and the new table reports 0 cells that differ. The check that `Newton LevenbergMarquardt
+  SVD` returns `SUCCESS` wherever `Newton Backtracking LU` does, except at the cells that its
+  specification states (`test/globalization/levenbergmarquardt.jl`), lists ten cells in place of
+  eleven: 8/u0/`Float32` leaves the list, because `Newton Backtracking LU` no longer returns
+  `SUCCESS` there.
 
 - **`init(prob, x₀)` and `solve(prob, x₀)` run on a `NonlinearProblem` and a `LeastSquaresProblem`
   with no method, and the new exported `default_method(prob, x₀)` names the method they take.**

@@ -242,6 +242,16 @@ end
     F = copy(A)
     @test recursive_lu!(F, ipiv, base) == 0
     @test !all(isfinite, F)
+
+    # a `NaN` on the diagonal and nonzero entries below: no entry is `>` the `NaN`, so the first
+    # maximum stays in row 1
+    A = randn(Xoshiro(base), T, n, n)
+    A[1, 1] = T(NaN)
+    @test all(!iszero, A[2:n, 1])
+    F = copy(A)
+    @test recursive_lu!(F, ipiv, base) == 0
+    @test ipiv[1] == 1
+    @test !all(isfinite, F)
 end
 
 @testset "a subnormal pivot divides, as getf2 (T = $T)" for T in ELTYPES
