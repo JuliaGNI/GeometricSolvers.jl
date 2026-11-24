@@ -800,3 +800,19 @@
   `Int32(e)` in `factor_matrix` and `svd.jl`.
 - **kind:** defect
 - **found:** #108
+
+### K109 · No public solve is known to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.promoted` on that return
+
+- **location:** `src/nonlinear/solver.jl:83` (`discarded_step_status`, which takes `promoted`
+  from the status after `record` folds in the discarded step)
+- **evidence:** a trace of the loop of `solve!!` up to the discard return, on the
+  mirror-symmetric saddle problem (b) of the testset "a step that leaves a stationary start point
+  returns the start point" under seven globalizations, six perturbations and `Float64` and
+  `Float32` discards a step in 77 of 84 solves, and records `info.promoted == false` on each of
+  them (Julia 1.13.4, tree of `126ea3b`). The step-rule failures of a discarded step are
+  witnessed (`StrongWolfe(; maxiter = 1)` gives `step_failures == 1`, `Bisection(; maxiter = 1)`
+  gives `2`), and the promotion takes the same path, but only the unit test of
+  `discarded_step_status` with synthetic statuses reaches `promoted == true` there.
+- **kind:** missing test
+- **found:** 2026-11-24, a limit of the decision that tests the promotion on this return with
+  synthetic statuses only
