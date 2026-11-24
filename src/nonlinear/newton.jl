@@ -2059,7 +2059,8 @@ end
 # `‖F + J d‖` over its Krylov space `K`, so the residual `r = F + J d` is orthogonal to `J K`, which
 # holds `J d`: `Fᴴ r = ‖r‖²`, and `‖F + α J d‖² = (1 - α)² ‖F‖² + α (2 - α) ‖r‖²` costs no product.
 # A direction whose last component counts as zero does not minimise over the whole space, and the
-# value is then an estimate. A full step keeps the residual of its direction.
+# value is then an estimate. A full step, and a direction of length zero, where `α` is not finite,
+# keep the residual of the direction.
 @inline function accepted_linres!(ws::MINRESQLPWorkspace{T, R}, stepnorm, dnorm, fnorm,
         resnorm) where {T, R}
     α = R(stepnorm) / R(dnorm)

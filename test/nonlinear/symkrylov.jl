@@ -589,6 +589,18 @@ end
         @test rnorm(F₀ .+ d ./ (1 .+ u₀ .^ 2)) > T(0.1) * rnorm(F₀)
         # the residual ‖F + α J d‖, with the product formed here
         @test state₊.ws.linres ≈ rnorm(F₀ .+ α .* d ./ (1 .+ u₀ .^ 2)) rtol = 8 * eps(T)
+
+        # a direction of length zero keeps the residual of the direction: for `S = ½ x₁²` with
+        # `b = (0, 1)` from 0, `F = (0, 1)` lies in the null space of `J`, the solve stops on a
+        # zero entry with `d = 0`, and the line search finds no step
+        Snull = StationarityProblem((x, p) -> x[1]^2 / 2; b = T[0, 1])
+        m = Newton(; linsolve = MINRESQLP(; forcing = FixedForcing(1e-8)),
+            globalization = Backtracking())
+        solver = init(Snull, zeros(T, 2), m)
+        state, rprob, u, Fu = first_state(solver)
+        _, _, state₊, info = step!!(state, solver.method, rprob, u, Fu, nothing)
+        @test iszero(state₊.ws.x) && info.stepnorm == 0
+        @test state₊.ws.linres == 1
     end
 
     @testset "MINRESQLP counts a step that reaches its cap as a step failure, $T" for T in REAL_ELTYPES
@@ -653,6 +665,19 @@ end
         _, _, state₊, info = step!!(state, solver.method, rprob, u, Fu, nothing)
         @test info.code == SUCCESS && !info.limited
         @test state₊.rule.radius == T(10)
+
+        # a conjugate-gradient iterate that lands exactly on the boundary stops there, as the
+        # Newton step of DogLeg of length δ does: for `S = ½‖x‖² + x₁` from 0 the step is `-e₁`
+        # of norm 1, so the radius 1 makes it a boundary step, and its ratio 1 grows the radius
+        Sunit = StationarityProblem((x, p) -> sum(x .^ 2) / 2; b = T[1, 0])
+        m = Newton(; linsolve = MINRESQLP(; forcing = FixedForcing(1e-8)),
+            globalization = Steihaug(; radius = 1))
+        solver = init(Sunit, zeros(T, 2), m)
+        state, rprob, u, Fu = first_state(solver)
+        _, _, state₊, info = step!!(state, solver.method, rprob, u, Fu, nothing)
+        @test info.code == SUCCESS && info.limited
+        @test info.stepnorm == 1 && info.fnorm == 0
+        @test state₊.rule.radius == T(4)
 
         # a rejected interior step shorter than the new radius is tried again without a new
         # conjugate-gradient run: from 1.5 with a radius of 100, the trials at 100, 25 and 6.25
