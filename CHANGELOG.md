@@ -959,6 +959,18 @@ so that a compat-only bump can be told apart from an interface change.
   and `Newton()` and expects `SUCCESS`. Y1's and Y2's committed tables are not regenerated, and
   `benchmark/verify.jl benchmark/results` passes on them.
 
+- **The device rows of the four cards are committed, and the report's Y3 section covers them.**
+  `benchmark/results/` holds `devices-<machine>.csv` and `.txt` of the Apple M4 Max's GPU (Metal),
+  the NVIDIA GB10 and the RTX 4090 (CUDA) and the AMD Radeon RX 7900 XTX (ROCm), and
+  `benchmark/verify.jl benchmark/results --all-cards` passes on them. On ROCm every
+  SimpleNonlinearSolve cell within the band has the status `not run: SimpleNonlinearSolve kernel
+  faults on ROCm`, because SimpleNewtonRaphson's kernel faults with `hipErrorIllegalAddress` on
+  that card (K99 in `KNOWN_ISSUES.md`). `benchmark/REPORT.md` gives each card's version line,
+  correctness counts, throughput, R3 and LU rows, the cause of each status other than `ran`, and
+  one explanation for each of the 27 card cells whose verdict is `different root`, `device fails`
+  or `host fails`, from a host replay and the card's iterations and status. The report states that
+  the dispatched LU on ROCm is rocSOLVER's, through `GeometricSolversAMDGPUExt`.
+
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is
   `F(u) = A u + 10 u³ - 1` with `A = tridiag(-1, 2, -1) / h²` on `n = 256` interior points. The

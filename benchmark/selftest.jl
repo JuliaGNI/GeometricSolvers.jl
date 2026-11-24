@@ -1225,7 +1225,8 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         @test !ok && occursin("devices-cpu.txt: blas threads 2", out)
         out, ok = verify_devices((ls, dir) -> rm(joinpath(dir, "devices-cpu.csv")))
         @test !ok && occursin("devices-cpu.csv is missing", out)
-        out, ok = verify_devices((ls, _) -> nothing, "--all-cards")
+        out, ok = verify_devices((ls, dir) -> rm(joinpath(dir, "devices-mac.csv")),
+            "--all-cards")
         @test !ok && occursin("devices-mac.csv is missing (--all-cards)", out)
         out, ok = verify_devices((ls, _) -> (ls[3] = join(split(ls[3], ",")[1:30], ",")),
             "--structure")
@@ -1259,6 +1260,9 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
                 setcell!(rocm, i, 14, "above band 8")
             end
             write(joinpath(dir, "devices-rx7900xtx.csv"), join([ls[1]; rocm], "\n") * "\n")
+            # The card's own .txt names another card than these lines, and its card check
+            # would fill the first 50 failures.
+            rm(joinpath(dir, "devices-rx7900xtx.txt"))
         end
         @test !ok
         @test occursin(
