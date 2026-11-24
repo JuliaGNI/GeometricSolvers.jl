@@ -823,7 +823,7 @@
 - **location:** `test/composition/preconditioning.jl:1083` (the testset "Check 6: the P8 counts
   and the parallel schedule"; the NKS-RAS bound at `:1113`, the RASPEN bound at `:1136`)
 - **evidence:** a probe of 64 starts 1 ulp from `x0` (record of 2026-11-24): with `getrf!` as the
-  dense block factor, as on `origin/main`, `Float64` RASPEN takes 4–9 outer iterations and
+  dense block factor, `Float64` RASPEN takes 4–9 outer iterations and
   `Float32` NKS-RAS ends `MAXITERS` from 3 of the 64 starts; with `recursive_lu!` in the band
   `8 ≤ n ≤ 32`, RASPEN takes 4–7 and every `Float32` solve ends `SUCCESS`. From `x0` itself,
   `Float64` RASPEN takes 7 outer iterations under `recursive_lu!`, so a RASPEN bound of `<= 6`

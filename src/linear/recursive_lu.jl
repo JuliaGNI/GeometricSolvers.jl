@@ -13,9 +13,9 @@
 const RECURSIVE_LU_BASE = 16
 
 # The band `(lo, hi)` of `n` in which the measurement of `scripts/hardware/rl_host_lu.jl` gave
-# `r = t(recursion) / t(getrf!) ≤ 0.90` at every `n` from `lo` to `hi`, with BLAS on one thread and
-# on all threads (Apple M4 Max, OpenBLAS 0.3.30, Julia 1.13.4, base case 16), or `nothing` for an
-# element type without such a band.
+# `r = t(recursion) / t(getrf!) ≤ 0.90` at each `n` of its grid from `lo` to `hi` (8, 16 and 32),
+# with BLAS on one thread and on all threads (Apple M4 Max, OpenBLAS 0.3.30, Julia 1.13.4, base
+# case 16), or `nothing` for an element type without such a band.
 recursive_lu_band(::Type) = nothing
 recursive_lu_band(::Type{Float32}) = (8, 32)
 recursive_lu_band(::Type{Float64}) = (8, 32)
