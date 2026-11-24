@@ -3,7 +3,8 @@
 # `ComplexF64`, with BLAS on one thread and on all threads.
 #
 # Usage, from the root of the repository:
-#   julia --startup-file=no --project=<env> scripts/hardware/rl_host_lu.jl [threads] [base] [n,…] [reps]
+#   julia --startup-file=no --project=<env> scripts/hardware/rl_host_lu.jl \
+#       [threads] [base] [n,…] [reps]
 #
 # `threads` is `both` by default: the script runs itself in two cold processes, BLAS on one thread
 # (`1`) and on `Sys.CPU_THREADS` threads (`all`), prints both tables and one verdict line. `1` or

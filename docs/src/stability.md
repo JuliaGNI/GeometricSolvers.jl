@@ -45,7 +45,9 @@ Throughout this page:
 
 - [`StaticLU`](@ref) on `SMatrix{n, n, T}` (register-resident Gaussian elimination with partial
   pivoting),
-- [`DenseLU`](@ref) on host `Array{T, 2}` (LAPACK `getrf!` / `getrs!`), and
+- [`DenseLU`](@ref) on host `Array{T, 2}` (LAPACK `getrf!` / `getrs!`; for `8 ≤ n ≤ 32` in
+  `Float32`, `Float64` and `ComplexF64`, an own recursive LU that pivots by LAPACK's rule, in
+  place of `getrf!`), and
 - [`DeviceLU`](@ref) on GPU `AbstractGPUArray{T, 2}` backends such as `JLArray` and `MtlArray`
   (`KernelAbstractions` panel pivoting and trailing-submatrix update).
 

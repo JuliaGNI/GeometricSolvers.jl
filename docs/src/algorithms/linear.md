@@ -34,7 +34,9 @@ The type of the iterate selects the factor:
 - The **static factors** are scalar loops over `SMatrix` data with `Int32` pivots. They return
   new values, `isbits` for an `isbits` element type, so they run in one GPU thread.
 - The **dense factors** call LAPACK (`getrf`, `sytrf`/`hetrf`, `potrf`, `geqrf`, `gesvd`) on
-  buffers that [`init`](@ref) allocates once.
+  buffers that [`init`](@ref) allocates once. An LU of `n` from 8 to 32 in `Float32`, `Float64`
+  or `ComplexF64` runs an own recursive LU that pivots by LAPACK's rule, in place of `getrf`; see
+  [CPU and GPU backends](@ref backends).
 - The **device factors** are KernelAbstractions kernels: panel pivoting and trailing updates
   for LU, column-norm reductions and reflector application for QR, the Bunch–Kaufman pivots for
   LDLT, and parallel one-sided Jacobi sweeps for the SVD. On CUDA and Metal, vendor libraries

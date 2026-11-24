@@ -12,16 +12,33 @@
 abs1(x::Real) = abs(x)
 abs1(z::Complex) = abs(real(z)) + abs(imag(z))
 
-"""
-    recursive_lu!(A::StridedMatrix{T}, ipiv::AbstractVector{BlasInt}, base::Int) where {T <: BlasFloat}
+# The largest panel that `LUFactorization()` factorises with the unblocked kernel of the recursion:
+# the base case of the measurement of `scripts/hardware/rl_host_lu.jl`.
+const RECURSIVE_LU_BASE = 16
 
-Factorise the square `A` in place as `P A = L U` with partial pivoting, by a recursion over
-halves of the columns down to panels of at most `base` columns, and return `info`: the index of
-the first exactly zero pivot, or 0. `A` then holds `U` on and above the diagonal and the
-multipliers of the unit lower `L` below it, and `ipiv[k]` the row exchanged with row `k` at step
-`k`, as `LAPACK.getrf!` writes them. A `NaN` or an `Inf` in `A` gives a non-finite factor and
-`info = 0`.
-"""
+# The band `(lo, hi)` of `n` in which the measurement of `scripts/hardware/rl_host_lu.jl` gave
+# `r = t(recursion) / t(getrf!) ≤ 0.90` at every `n` from `lo` to `hi`, with BLAS on one thread and
+# on all threads (Apple M4 Max, OpenBLAS 0.3.30, Julia 1.13.4, base case 16), or `nothing` for an
+# element type without such a band.
+recursive_lu_band(::Type) = nothing
+recursive_lu_band(::Type{Float32}) = (8, 32)
+recursive_lu_band(::Type{Float64}) = (8, 32)
+recursive_lu_band(::Type{ComplexF64}) = (8, 32)
+
+# Whether `LUFactorization()` factorises an `n × n` host `Matrix{T}` by `recursive_lu!` rather than
+# `LAPACK.getrf!`: where `n` lies in the band of `T`. `n = 0`, `n = 1`, an `n` outside the band and
+# an element type without a band take `getrf!`; a non-BLAS element type takes the generic `lu!`.
+function use_recursive_lu(::Type{T}, n::Integer) where {T}
+    band = recursive_lu_band(T)
+    return band !== nothing && band[1] <= n <= band[2]
+end
+
+# Factorise the square `A` in place as `P A = L U` with partial pivoting, by a recursion over
+# halves of the columns down to panels of at most `base` columns, and return `info`: the index of
+# the first exactly zero pivot, or 0. `A` then holds `U` on and above the diagonal and the
+# multipliers of the unit lower `L` below it, and `ipiv[k]` the row exchanged with row `k` at step
+# `k`, as `LAPACK.getrf!` writes them. A `NaN` or an `Inf` in `A` gives a non-finite factor, and
+# `info` still counts only an exactly zero pivot.
 function recursive_lu!(A::StridedMatrix{T}, ipiv::AbstractVector{BlasInt},
         base::Int) where {T <: BlasFloat}
     Base.require_one_based_indexing(A, ipiv)

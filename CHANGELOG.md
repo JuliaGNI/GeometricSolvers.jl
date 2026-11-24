@@ -11,6 +11,22 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
+  `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
+  factor's element type, runs `recursive_lu!` (`src/linear/recursive_lu.jl`) in place of
+  `LAPACK.getrf!`: a recursion over halves of the columns, an unblocked kernel on panels of at
+  most 16 columns, and BLAS `trsm!` and `gemm!` for the rest. It pivots by LAPACK's rule, the
+  first entry of largest `|Re| + |Im|`, writes LAPACK's `ipiv` and `info`, and allocates nothing,
+  so `getrs!`, `reuse`, `ldiv!!` and the mixed-precision solve are unchanged. Every other `n`,
+  `ComplexF32` and a non-BLAS element type keep `getrf!` or the generic `lu!`. The band is where
+  `scripts/hardware/rl_host_lu.jl` (new) measured the recursion at `r = t(recursion)/t(getrf!) ≤
+  0.90` with BLAS on one thread and on all threads, on an Apple M4 Max with OpenBLAS 0.3.30 and
+  Julia 1.13.4, commit `35c0c75`; `Float64` gave `r` = 0.52, 0.37 and 0.60 at `n` = 8, 16 and 32
+  on one thread. The factor differs from `getrf!`'s in round-off, so 19 cells of the standard test
+  set that the reference flags `unstable` change their code or iteration count on this machine;
+  no other cell changes. At a subnormal pivot the recursion divides each multiplier, as LAPACK's
+  `getf2`; OpenBLAS's `getrf!` left the multiplier of such a `2 × 2` test matrix unscaled.
+
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
   counts as zero: the factor's `rank`, `SolverStatus.rank` and the truncation of the solve follow
