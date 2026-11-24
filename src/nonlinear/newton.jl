@@ -362,18 +362,23 @@ end
 """
     has_sparse_factor(method::LinearMethod, x)
 
-Whether a package extension builds a sparse factor of `method` on the iterate `x` from a detected
-Jacobian pattern: `false` by default. The `GeometricSolversSparspakExt` extension returns `true`
-for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
+Whether `init_linear` builds a sparse factor of `method` on the iterate `x` from a detected
+Jacobian pattern: `false` by default. It is `true` for [`UMFPACKFactorization`](@ref) on a
+`Vector{Float64}` or `Vector{ComplexF64}`, and the `GeometricSolversSparspakExt` extension returns
+`true` for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
 `T <: AbstractFloat`. Where it is `false`, a detected pattern gives the dense factor, as a solve
 with no pattern does; an explicit `jacobian_prototype` does not consult it.
 """
 @inline has_sparse_factor(::LinearMethod, x) = false
 
+# Refuse, at `init`, an iterate that `method` builds no factor for, also where the step builds its
+# factor later: no refusal by default.
+@inline check_factor_iterate(::LinearMethod, x) = nothing
+
 # The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
 # detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor. A
-# `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the one sparse
-# factor, `SparspakLU`, is square, so the `m × n` factor of a least-squares problem is dense.
+# `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the sparse
+# factors are square, so the `m × n` factor of a least-squares problem is dense.
 @inline function factor_pattern(ls, prob, x, jacprep)
     P = jacobian_pattern(prob, jacprep)
     P === nothing || jacobian_prototype(prob) !== nothing || has_sparse_factor(ls, x) ||
@@ -395,8 +400,9 @@ end
 # element type decides it also for the factor in the working precision that a mixed-precision
 # solve promotes to, so that both factors and the Jacobian buffer share one layout. `regularize!!`
 # writes `μ` onto the diagonal of `J`, so under `μ ≠ 0` a detected pattern without the whole
-# structural diagonal gives the dense factor. A `LevenbergMarquardt` step reads no sparse factor
-# (see `check_lm_iterate`), so a detected pattern gives it the dense factor and Jacobian buffer.
+# structural diagonal gives the dense factor, or the `ArgumentError` of a method that has no dense
+# factor. A `LevenbergMarquardt` step reads no sparse factor (see `check_lm_iterate`), so a
+# detected pattern gives it the dense factor and Jacobian buffer, or that `ArgumentError`.
 @inline function newton_pattern(m::Newton, prob, x, jacprep)
     P = factor_pattern(m.linsolve, prob, x, jacprep)
     m.globalization isa LevenbergMarquardt && jacobian_prototype(prob) === nothing &&
@@ -408,7 +414,8 @@ end
 
 # The factor of `ls` for a Newton solve with `m`: `m.linsolve`, or its promotion to the working
 # precision. A pattern that the `init_factor` of `ls` would take and `newton_pattern` rejects gives
-# the dense factor, and every other case the `init_factor` of `ls`.
+# the dense factor, or the `ArgumentError` of a method that has no dense factor, and every other
+# case the `init_factor` of `ls`.
 @inline function init_newton_factor(
         m::Newton, ls, prob, x::Union{StaticVector, Number}, p, jacprep)
     return init_factor(ls, prob, x, p, jacprep)
@@ -433,7 +440,7 @@ end
             return fac_T.factors
         end
     end
-    if fac.factors isa SparseArrays.SparseMatrixCSC
+    if fac.factors isa SparseArrays.AbstractSparseMatrix
         return similar(fac.factors, eltype(x))
     end
     return buffer(x, eltype(x), length(Fx), length(x))
@@ -754,6 +761,7 @@ end
     if prob isa LeastSquaresProblem && is_refining(m.refinement)
         throw(ArgumentError("LeastSquaresProblem does not support refinement"))
     end
+    check_factor_iterate(m.linsolve, x)
     m.globalization isa LevenbergMarquardt &&
         check_lm_iterate(m.globalization, m.linsolve, prob, x)
     Fx = if x isa Union{StaticArray, Number}
