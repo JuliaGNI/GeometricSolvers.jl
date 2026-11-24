@@ -1131,7 +1131,7 @@ end
         init_state(m, prob, x0, nothing), prob, copy(x0), m, nothing,
         GeometricSolvers.Options(T))
     @test raspen_status.code === SUCCESS
-    # the count is round-off sensitive (K110): from 64 starts 1 ulp from `x0`, `Float64` RASPEN
+    # the count is round-off sensitive (K113): from 64 starts 1 ulp from `x0`, `Float64` RASPEN
     # takes 4–9 outer iterations with `getrf!` as the block factor and 4–7 with `recursive_lu!`
     @test raspen_status.iterations <= 9
     sweeps2, parallel2, total2 = counting2.counts[]
