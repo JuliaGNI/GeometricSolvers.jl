@@ -900,8 +900,8 @@ best_nan!(y, x, p) = (y .= ifelse.(x .> 0, log.(abs.(x)), NaN .* x); y)
     prob = best_problem(B, best_nan, best_nan!)
     x, st = solve(prob, best_iterate(B, [3.0]), Newton(; best = true), nothing)
     @test st.code == NONFINITE && st.iterations == 1
-    # the `log` of a `JLArray` kernel runs on POCL, which can differ from `Base.log` in the last ULP
     @test best_host(x) == [3.0]
+    # the `log` of a `JLArray` kernel runs on POCL, which can differ from `Base.log` in the last ULP
     @test best_close(st.fnorm, log(3.0))
     x, st = solve(prob, best_iterate(B, [-1.0]), Newton(; best = true), nothing)
     @test st.code == NONFINITE && st.iterations == 0

@@ -69,7 +69,7 @@ Jacobian at the current iterate.
 A full Newton step can raise ``\|F\|``, so a solve that ends without `SUCCESS` can end on an
 iterate worse than one it passed. With `best = true`, `Newton` keeps the iterate of the smallest
 ``\|F\|_2`` among the start and every iterate a step returned, and returns it where the solve ends
-with another code than `SUCCESS` and that norm is below the norm of the last iterate;
+with a code other than `SUCCESS` and that norm is below the norm of the last iterate;
 `status.fnorm` then reports that norm, and every other field of the status is that of
 `best = false`. A solve that succeeds returns its last iterate. On ``F(x) = x^2 + 1``, which has
 no real root, eight steps from `0.5` end on ``\|F\| \approx 2.49``, and the sixth iterate has
