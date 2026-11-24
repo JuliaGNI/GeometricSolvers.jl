@@ -815,3 +815,15 @@
   (tree of `49a1752`).
 - **kind:** found late
 - **found:** #113
+
+### K110 · The own KA LU solve does not check the length of the vector against the order of the factor
+
+- **location:** `src/linear/ka/lu.jl:149-151` (`ka_lu_backsolve!`)
+- **evidence:** `ka_lu_backsolve!` takes `n = length(d)` and launches its kernels with that `n`,
+  which read the factor by index under `@inbounds`. A `DeviceLU` of `[4 0; 0 9]` on a `JLArray`,
+  with `ldiv!!(JLArray(ones(k)), fac, JLArray(ones(k)))`: `k = 3` throws `ReadOnlyMemoryError()`
+  in one cold run and ends the Julia process in another; `k = 1` returns `[0.25]`, the solve of
+  the leading `1 × 1` block only, with no error. Julia 1.13.4, JLArrays 0.5.0, tree of `157ca76`.
+  The own Cholesky solve, `ka_cholesky_backsolve!`, throws `DimensionMismatch` in this case.
+- **kind:** defect
+- **found:** #113

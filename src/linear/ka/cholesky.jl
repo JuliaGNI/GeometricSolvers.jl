@@ -271,9 +271,12 @@ function factorize!!(fac::DeviceCholesky, ::CholeskyFactorization, J::AbstractMa
 end
 
 # The solve of `L Lᴴ x = d` in place, with the Cholesky factor `L` in the device matrix `A`, by the
-# own backsolve kernel; returns `d`.
+# own backsolve kernel; returns `d`. The kernel reads `A` by the length of `d`, so a `d` of another
+# length than the order of `A` is refused.
 function ka_cholesky_backsolve!(A::AbstractGPUArray, d::AbstractVector)
     n = length(d)
+    n == size(A, 1) || throw(DimensionMismatch(
+        "d has length $n, the Cholesky factor $(size(A))"))
     n == 0 && return d
     G = KA_CHOLESKY_WORKGROUP
     backend = get_backend(A)

@@ -6,7 +6,7 @@
 using AMDGPU
 using GPUArraysCore: allowscalar
 using JET: JET
-using LinearAlgebra: BLAS, Diagonal, I, cond, norm
+using LinearAlgebra: BLAS, Diagonal, I, cond, norm, opnorm
 using Random: Xoshiro
 using Test
 
@@ -418,6 +418,13 @@ if AMDGPU.functional()
             x_ext = Array(dx_ext)
             x_ka = Array(dx_ka)
             @test norm(x_ext - x_ka, Inf) <= 8 * n * ε * κ * norm(x_ka, Inf)
+            # both solve the host system to a backward error of `8nε`: one load kernel loads `dA`
+            # for both paths, so the agreement above does not see an entry that the load drops or
+            # misplaces
+            for x in (x_ext, x_ka)
+                @test norm(A_cpu * x - b_cpu, Inf) <=
+                      8 * n * ε * opnorm(A_cpu, Inf) * norm(x, Inf)
+            end
             # both write `L` with zeros above the diagonal
             L = Array(fac_ext.factors)
             @test all(iszero, (L[i, j] for j in 2:n for i in 1:(j - 1)))
