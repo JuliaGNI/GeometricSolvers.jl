@@ -118,7 +118,9 @@ end
 # are the diagnostics of that factorisation. A step along a reused factor carries the diagnostics
 # that the state held at `x_k`, and `solve!!` has tested those with `status_k` after the step
 # before and gone on, so they fail here; a state that reports no diagnostics reads `NaN`, which
-# fails too.
+# fails too. Only a `NewtonState` has the buffers of `step_start_buffers`; with any other state, an
+# array `x_k` is the iterate itself, which the step overwrites. So every other problem returns
+# `false`, also one whose `stationary_converged` can pass, such as a `VariableProjection`.
 @inline function keeps_step_start(
         ::AbstractNonlinearProblem, ::Options{R}, state₊, ::SolverStatus{R}) where {R}
     return false
