@@ -726,9 +726,10 @@ measurement of one run on one machine, and it names no package or method as fast
   SimpleNonlinearSolve cell within the band launches there: `not run: SimpleNonlinearSolve kernel
   faults on ROCm`, in R2 and in the grid's `sns` variant.
 - **The Metal heap.** Metal.jl gives a kernel's `malloc` a heap of 1 MiB per process with no free.
-  On Metal the `.txt` records the heap counter before and after each R2 row, and the run continues
-  in a new process when the counter passes the size, from the same row when the row failed on a
-  heap that earlier rows used and from the next row otherwise. The other backends record `-`.
+  On Metal the `.txt` records the heap counter before and after each R2 row. The run continues in
+  a new process from the same row when a launch of the row ends in a kernel error on a heap that
+  earlier rows used, and from the next row when the counter passes the size after the row. The
+  other backends record `-`.
 - **The grid.** The §10.E problem in R1 form, `F(x) = A x + sin.(x) / 10 − b` with
   `A = 2I + R`, off-diagonal row sums of `R` at most 1/2, one `A` per `n`, a per-system `x*` in
   `[-1, 1]ⁿ` from a fixed seed, `b` built in `Float32` on the host and passed as `PerSystem(B)`,
@@ -1154,8 +1155,8 @@ cell with `max_iterations = j` (`maxiters = j` for SimpleNewtonRaphson), `j` = 1
 system with the same limit, and from the device's iterations, status, `‖F‖∞` and
 `‖x − x_host‖∞` in its machine's CSV line. The replay runs on the M4 Max's host, and the host
 fields of each line below are equal on every machine where the cell is launched. On `cpu` the
-`CPU()` kernel is the device; a card's CSV holds the norms of its iterate, not the iterate, so a line states where the
-card's path ends and not where it leaves the host's. The agreement bound is
+`CPU()` kernel is the device; a card's CSV holds the norms of its iterate, not the iterate, so a
+line states where the card's path ends and not where it leaves the host's. The agreement bound is
 `√eps(Float32) · max(1, ‖x_host‖∞)`, `√eps(Float32) = 3.45e-4`.
 
 Problem 18 (Y1's E1) has two lines of roots, `x₁ = 0` and `x₂ = 0`. At the host's end points on

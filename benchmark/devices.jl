@@ -197,8 +197,9 @@ end
     sns_batch!(X, f, P)
 
 SimpleNonlinearSolve's `SimpleNewtonRaphson` on each start of `X` in a KernelAbstractions kernel,
-one work-item per system, with `abstol = sqrt(eps(T))` and `maxiters = 200`, the parameters `P`
-passed as `solve_batch!` passes them; it returns the codes as strings.
+one work-item per system, with `abstol = sqrt(eps(Float32))` and `maxiters = 200`, the parameters
+`P` passed as `solve_batch!` passes them; it returns the `Int32` return codes on the backend of
+`X`, which `sns_code` names.
 """
 function sns_batch!(X, f, P)
     backend = get_backend(X)
