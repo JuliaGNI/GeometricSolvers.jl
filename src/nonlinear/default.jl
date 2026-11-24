@@ -21,8 +21,9 @@ other iterate takes `Newton()` as well: a `Vector{Float32}` gets the Sparspak fa
 Sparspak is loaded, and `init` raises otherwise, as it does when the caller names `Newton()`. No
 default method is matrix-free and none is a combinator.
 
-`init(prob, x₀; kwargs...)` and `solve(prob, x₀; kwargs...)` on a `NonlinearProblem` or a
-`LeastSquaresProblem` call `init(prob, x₀, default_method(prob, x₀), nothing; kwargs...)` and
+`init(prob, x₀; kwargs...)` and `solve(prob, x₀; kwargs...)` on a `NonlinearProblem`, a
+`StationarityProblem` or a `LeastSquaresProblem` call
+`init(prob, x₀, default_method(prob, x₀), nothing; kwargs...)` and
 `solve(prob, x₀, default_method(prob, x₀), nothing; kwargs...)`.
 
 ```jldoctest
@@ -39,17 +40,19 @@ true
 """
 default_method(::NonlinearProblem, x₀) = Newton()
 function default_method(
-        ::NonlinearProblem{<:Any, <:Any, <:SparseArrays.SparseMatrixCSC},
+        ::NonlinearProblem{<:Any, <:Any, <:SparseMatrixCSC},
         ::Vector{<:UMFPACKEltype})
     return Newton(; linsolve = UMFPACKFactorization())
 end
 default_method(::StationarityProblem, x₀) = Newton()
 default_method(::LeastSquaresProblem, x₀) = GaussNewton()
 
-function init(prob::Union{NonlinearProblem, LeastSquaresProblem}, x₀; kwargs...)
+function init(prob::Union{NonlinearProblem, LeastSquaresProblem},
+        x₀::Union{Number, AbstractArray}; kwargs...)
     return init(prob, x₀, default_method(prob, x₀), nothing; kwargs...)
 end
 
-function solve(prob::Union{NonlinearProblem, LeastSquaresProblem}, x₀; kwargs...)
+function solve(prob::Union{NonlinearProblem, LeastSquaresProblem},
+        x₀::Union{Number, AbstractArray}; kwargs...)
     return solve(prob, x₀, default_method(prob, x₀), nothing; kwargs...)
 end

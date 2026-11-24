@@ -632,11 +632,11 @@ function init(pr::StatProb, x₀, m, p = nothing; b = nothing, options = nothing
     return _init_stationarity(pr, x₀, m, p, b, options, kw)
 end
 
-init(pr::StatProb, x₀; kw...) = init(pr, x₀, Newton(), nothing; kw...)
+init(pr::StatProb, x₀; kw...) = init(pr, x₀, default_method(pr, x₀), nothing; kw...)
 
 function solve(pr::StatProb, x₀, m, p = nothing; b = nothing, options = nothing, kw...)
     _refuse_stationarity_duals(:solve, x₀, p)
     return _solve_stationarity(pr, x₀, m, p, b, options, kw)
 end
 
-solve(pr::StatProb, x₀; kw...) = solve(pr, x₀, Newton(), nothing; kw...)
+solve(pr::StatProb, x₀; kw...) = solve(pr, x₀, default_method(pr, x₀), nothing; kw...)

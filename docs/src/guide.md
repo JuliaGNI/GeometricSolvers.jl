@@ -24,9 +24,9 @@ gives others (see [Nonlinear methods](@ref nonlinear)).
 
 ## The method of a call that names none
 
-[`init`](@ref)`(prob, x₀)` and [`solve`](@ref)`(prob, x₀)` on a [`NonlinearProblem`](@ref) or a
-[`LeastSquaresProblem`](@ref) take the method [`default_method`](@ref)`(prob, x₀)` and the
-parameters `p = nothing`. The method follows from the problem type, its `jacobian_prototype` and
+[`init`](@ref)`(prob, x₀)` and [`solve`](@ref)`(prob, x₀)` on a [`NonlinearProblem`](@ref), a
+[`StationarityProblem`](@ref) or a [`LeastSquaresProblem`](@ref) take the method
+[`default_method`](@ref)`(prob, x₀)` and the parameters `p = nothing`. The method follows from the problem type, its `jacobian_prototype` and
 the storage of the iterate:
 
 | problem | iterate | method |

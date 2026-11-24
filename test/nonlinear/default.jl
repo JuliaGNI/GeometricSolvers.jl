@@ -3,9 +3,9 @@
 # `solve` calls with no method argument, which take it with `p = nothing`.
 
 using GeometricSolvers
-using GeometricSolvers: UMFPACKLU, default_method
+using GeometricSolvers: UMFPACKLU
 using JLArrays: JLArray
-using SparseArrays: SparseMatrixCSC, nonzeros, nzrange, rowvals, spdiagm
+using SparseArrays: SparseArrays, SparseMatrixCSC, nonzeros, nzrange, rowvals, spdiagm
 using StaticArrays: SVector
 using Test
 
@@ -73,6 +73,11 @@ end
     end
     # On a `JLArray` iterate the prototype gives no UMFPACK rule.
     @test (@inferred default_method(prob, JLArray(ones(T, 6)))) === Newton()
+    # A sparse prototype that is no `SparseMatrixCSC`, as a `CuSparseMatrixCSR` on a device,
+    # takes `Newton()`.
+    prob_fixed = NonlinearProblem(prob.F, prob.J;
+        jacobian_prototype = SparseArrays.FixedSparseCSC(prob.jacobian_prototype))
+    @test (@inferred default_method(prob_fixed, ones(T, 6))) === Newton()
 end
 
 @testset "Standard rows: default_method is Newton(), the method of Newton Static LU" begin
@@ -122,6 +127,18 @@ end
     @test (xl, sl) == solve(prob_ls, zeros(T, 2), GaussNewton(), nothing)
     @test typeof(init(prob_ls, zeros(T, 2))) ==
           typeof(init(prob_ls, zeros(T, 2), GaussNewton(), nothing))
+
+    # A method in the place of the iterate matches no method of `init`, which the generic
+    # `solve` calls.
+    for f in (init, solve), prob in (prob_ip, prob_ls)
+
+        err = try
+            f(prob, Newton())
+        catch e
+            e
+        end
+        @test err isa MethodError && err.f === init && err.args === (prob, Newton())
+    end
 end
 
 # UMFPACK takes the element types of real part `Float64`.
