@@ -154,6 +154,10 @@ cutoff and outside it (`rank < n`, ``\text{nullnorm} \approx \|F(x_k)\|``) at a 
 and an in-range stall from conditioning or step acceptance has `gradratio` bounded away from zero
 with `nullnorm ≈ 0`.
 
+The residual test of [`Options`](@ref) reads the 2-norm of the residual, or with
+`norm = MaxNorm()` its max norm; `status.fnorm` is the 2-norm under either. [`L2Norm`](@ref) and
+[`MaxNorm`](@ref) are exported, and their supertype `GeometricSolvers.StoppingNorm` is not.
+
 ```@docs
 ReturnCode
 sciml_retcode
@@ -162,6 +166,9 @@ stopping_test
 StepInfo
 Options
 Options(::Type{T}) where {T <: Number}
+StoppingNorm
+L2Norm
+MaxNorm
 ```
 
 ## SciMLBase extension

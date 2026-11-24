@@ -956,6 +956,43 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`Newton(; best = true)` returns the iterate of the smallest `‖F‖₂` of a solve that fails.**
+  The solve keeps the iterate of the smallest `‖F(x)‖₂` among `x₀` and every iterate that a step
+  returns, the earliest of equal norms, and `finish!!` returns it in place of the last iterate
+  when the solve ends with a code other than `SUCCESS` and its norm is finite and below the last
+  one, as `Anderson` restores its best iterate. `status.fnorm` then reports that norm, and every
+  other field of the status, the `GMRES` call counts included, is that of `best = false`; for an
+  array iterate the residual buffer holds the residual of the returned iterate. `best = false` is
+  the default and returns what the solve returned before, bit for bit. `GaussNewton` and
+  `QuasiNewton` take the keyword, and the positional `Newton` with six arguments gives
+  `best = false`. Every `start!!` starts a new record, so a state reused across solves restores
+  nothing of an earlier one. The R1 state of `best = true` stays `isbits` and its `solve!!`
+  allocation-free; the R3 state holds a copy of `x` and of `F(x)`, allocated once by
+  `init_state`. `Repeat` takes the best over its sub-steps, and `Switch` and the other step-level
+  combinators get the restore of their member's `finish!!`. A `Deflated` problem and the outer
+  method of a `BlockEliminated` or `VariableProjection` problem refuse `best = true` with an
+  `ArgumentError`. `Newton` gains a last field and type parameter, `best::B` with `B` either
+  `Val{false}` or `Val{true}`, and `NewtonState` a last field, the record, which is `nothing`
+  under `best = false`, so that state keeps its size.
+
+- **`Options(T; norm = MaxNorm())` makes the residual test read the max norm.** The test is then
+  `‖F(x)‖∞ ≤ max(f_abstol, f_reltol · ‖F(x₀)‖∞)`, with the max norm of the inner residual,
+  `‖M F‖∞ / M`, on a `Deflated` problem; the default `norm = L2Norm()` keeps the test of the 2-norm
+  and takes no reduction of its own. The step test, the stationarity test, the `NONFINITE` test of
+  the start, the merit `‖F‖²` of every line search, the ranking of `best`, `status.fnorm`,
+  `StepInfo.fnorm` and `BatchSummary.fnorm` stay in the 2-norm, so a `SUCCESS` under `MaxNorm()`
+  can report a `status.fnorm` above `f_abstol`. The new exported singletons `L2Norm` and `MaxNorm`
+  are subtypes of the new, not exported `GeometricSolvers.StoppingNorm`. `Options` gains a last
+  type parameter `N` and a last field `norm::N`; `Options{R}` still names the options of every
+  norm in `R`, `Options` stays `isbits` at 56 bytes in `Float64` and 32 in `Float32`, and
+  `typeof(Options(Float32))` prints `Options{Float32, L2Norm}`. The positional `Options{R}` takes
+  the norm as an optional ninth argument, and the seven- and eight-argument forms give
+  `L2Norm()`. The inner options of `BlockEliminated`, `VariableProjection` and `BatchEliminated`
+  keep their norm through `ToReal` and the batch tolerance. The max norm is the new internal
+  reduction `GeometricSolvers.rmaxnorm`, one `maximum(abs, ·)` with no scalar indexing, so it runs
+  on a device array and in a kernel; `GeometricSolvers.stopping_norm(n, a)` gives `rnorm` or
+  `rmaxnorm` by the norm `n`.
+
 - **`KroneckerFactorization(; block = LUFactorization())` solves the Newton steps of the stage
   system of an implicit Runge–Kutta method.** With the stage matrix `A = V Λ V⁻¹`, `Newton`
   factorises `s` blocks `γᵢ I − J` of size `n × n`, `γᵢ = 1/(h λᵢ)`, in place of one `s·n × s·n`

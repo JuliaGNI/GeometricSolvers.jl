@@ -63,12 +63,13 @@ depend on BangBang.
 
 ## The reduction seam
 
-Every norm, dot product and merit value goes through three functions:
+Every norm, dot product and merit value goes through four functions:
 [`norm2`](@ref) (the squared norm), [`rnorm`](@ref) (the norm, scaled against overflow and
-underflow) and [`rdot`](@ref) (the real part of the inner product). Each returns
+underflow), [`rmaxnorm`](@ref) (the max norm, which the residual test reads under
+[`MaxNorm`](@ref)) and [`rdot`](@ref) (the real part of the inner product). Each returns
 `R = real(eltype(x))`, and none of them indexes scalars, so they run on an `SVector` inside a
 kernel, on an `Array` and on a GPU array. A widened or compensated accumulator would be a change
-in these three functions and nowhere else.
+in these four functions and nowhere else.
 
 ## Dispatch in place of checks
 
