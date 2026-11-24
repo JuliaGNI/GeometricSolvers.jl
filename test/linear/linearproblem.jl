@@ -470,7 +470,7 @@ end
     # the solve adds to `e`: where the largest entry of `A / 2^e` rounds up to 2 in a `Float32`
     # factor, and where `A` is subnormal. The static factors scale `A` themselves, the QR only for a
     # factor element type other than that of `A`; their QR in the element type of `A` and their
-    # `Float32` SVD lose the accuracy of a subnormal matrix here and on the square path (K109 of
+    # `Float32` SVD lose the accuracy of a subnormal matrix here and on the square path (K110 of
     # `KNOWN_ISSUES.md`), so that matrix is left out of every static row.
     device_wide_qr(route, method, 3, 5) && continue
     route == "SMatrix" && A_kind == "subnormal" && continue

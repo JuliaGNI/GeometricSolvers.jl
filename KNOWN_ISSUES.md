@@ -801,7 +801,23 @@
 - **kind:** defect
 - **found:** #108
 
-### K109 · The static LU and QR factors solve a subnormal matrix with `SUCCESS` and a large error, and the static `SVDFactorization(Float32)` gives `SINGULAR`
+### K109 · No public solve is known to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.promoted` on that return
+
+- **location:** `src/nonlinear/solver.jl:83` (`discarded_step_status`, which takes `promoted`
+  from the status after `record` folds in the discarded step)
+- **evidence:** a trace of the loop of `solve!!` up to the discard return, on the
+  mirror-symmetric saddle problem (b) of the testset "a step that leaves a stationary start point
+  returns the start point" under seven globalizations, six perturbations and `Float64` and
+  `Float32` discards a step in 77 of 84 solves, and records `info.promoted == false` on each of
+  them (Julia 1.13.4, tree of `126ea3b`). The step-rule failures of a discarded step are
+  witnessed (`StrongWolfe(; maxiter = 1)` gives `step_failures == 1`, `Bisection(; maxiter = 1)`
+  gives `2`), and the promotion takes the same path, but only the unit test of
+  `discarded_step_status` with synthetic statuses reaches `promoted == true` there.
+- **kind:** missing test
+- **found:** 2026-11-24, a limit of the decision that tests the promotion on this return with
+  synthetic statuses only
+
+### K110 · The static LU and QR factors solve a subnormal matrix with `SUCCESS` and a large error, and the static `SVDFactorization(Float32)` gives `SINGULAR`
 
 - **location:** `src/linear/static/lu.jl:24`, `src/linear/static/qr.jl:9`,
   `src/linear/static/qr_rect.jl:28`, `src/linear/static/svd.jl:171`
@@ -820,7 +836,7 @@
 - **kind:** defect
 - **found:** 2026-11-24
 
-### K110 · The host and device LU, QR, LDLᵀ and Cholesky factors in the element type of the matrix solve a subnormal matrix with `SUCCESS` and a large error, or give `NONFINITE`
+### K111 · The host and device LU, QR, LDLᵀ and Cholesky factors in the element type of the matrix solve a subnormal matrix with `SUCCESS` and a large error, or give `NONFINITE`
 
 - **location:** `src/linear/dense.jl:197` (`load_factors!`), which `factorize!!` of the host
   factors in `src/linear/dense.jl` and of the device factors in `src/linear/ka/lu.jl:140`,
