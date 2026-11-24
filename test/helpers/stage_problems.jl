@@ -111,8 +111,8 @@ end
 toda_jac!(J, y) = ForwardDiff.jacobian!(J, toda!, similar(y), y)
 
 # A complex linear field `ẏ = L y` for a complex element type.
-const COMPLEX_L = ((0.0 + 1.0im, 0.3, 0.0), (-0.3, 0.0 + 2.0im, 0.1 - 0.2im),
-    (0.0, -0.1 - 0.2im, -0.5 + 0.5im))
+const COMPLEX_L = ((0.0 + 1.0im, 0.3 + 0.0im, 0.0 + 0.0im),
+    (-0.3 + 0.0im, 0.0 + 2.0im, 0.1 - 0.2im), (0.0 + 0.0im, -0.1 - 0.2im, -0.5 + 0.5im))
 function complex_linear!(dy, y)
     for i in 1:3
         acc = zero(eltype(dy))
