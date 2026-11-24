@@ -13,6 +13,7 @@ LUFactorization
 LDLTFactorization
 QRFactorization
 SVDFactorization
+UMFPACKFactorization
 TF32
 FP16
 BF16
@@ -50,15 +51,27 @@ AbstractFloat`) — from an explicit `jacobian_prototype`, or detected automatic
 workspace and unfactorised `Sparspak.SparseSolver` in `init_linear` for an `LUFactorization` whose
 factor element type is `T` (`LUFactorization()` or `LUFactorization(T)`); the first `factorize!!`
 call runs symbolic ordering and symbolic factorisation, and subsequent `factorize!!` and `ldiv!!`
-calls reuse them across Newton steps. That configuration is the only one with a sparse factor, and
-[`has_sparse_factor`](@ref) names it. A detected pattern is used only where `has_sparse_factor`
-holds and, under a `Newton` `regularization ≠ 0`, only where the pattern holds the whole structural
-diagonal. Everywhere else — `QRFactorization`, `SVDFactorization`, mixed precision such as
-`LUFactorization(Float64)` on a `Float32` iterate, a complex iterate, or no `Sparspak` — a
-detected pattern gives the dense factor and a dense Jacobian buffer, as a solve with no pattern
-does. An explicit `jacobian_prototype` outside that configuration raises an error in `init_linear`
-or at the first `factorize!!`. A [`LeastSquaresProblem`](@ref) takes no detected pattern, because
-`SparspakLU` is square: its `m × n` factor is dense.
+calls reuse them across Newton steps. [`UMFPACKFactorization`](@ref) builds the sparse factor
+[`UMFPACKLU`](@ref) on such a pattern on a host `Vector{Float64}` or `Vector{ComplexF64}`, with no
+package to load: its first `factorize!!` runs UMFPACK's symbolic analysis, and every later one
+reuses it. It raises `ArgumentError` at `init` for any other element type and for a solve with no
+sparse pattern, such as one on a static or scalar iterate, or one whose detected pattern `Newton`
+does not use: under `LevenbergMarquardt`, and under `regularization ≠ 0` where the pattern does
+not hold the whole structural diagonal. These two configurations have a host sparse factor, and
+[`has_sparse_factor`](@ref) names them. A detected pattern is used only where `has_sparse_factor`
+holds and, under a `Newton` `regularization ≠ 0`, only where the pattern holds the whole
+structural diagonal. Everywhere else — `QRFactorization`, `SVDFactorization`, mixed
+precision such as `LUFactorization(Float64)` on a `Float32` iterate, an `LUFactorization` on a
+complex iterate, or no `Sparspak` — a detected pattern gives the dense factor and a dense Jacobian
+buffer, as a solve with no pattern does. An explicit `jacobian_prototype` outside these
+configurations and the cuDSS one below raises an error in `init_linear` or at the first
+`factorize!!`. When `CUDA` and `CUDSS` are loaded, the `GeometricSolversCUDSSExt` package
+extension builds a cuDSS factor for an `LUFactorization` in the element type of a `CuVector{T}`
+iterate (`T <: LinearAlgebra.BlasFloat`) with an explicit `CuSparseMatrixCSR` `jacobian_prototype`;
+its first `factorize!!` runs the cuDSS analysis and factorisation, and every later one the
+refactorisation. A
+[`LeastSquaresProblem`](@ref) takes no detected pattern, because the sparse factors are square: its
+`m × n` factor is dense.
 [`factorize!!`](@ref) states what a singular matrix gives: an SVD factor records its numerical rank
 in `rank` apart from its status, and [`exact_solve`](@ref) tells `Newton` whether the solve is
 exact or truncated; [`singular_values`](@ref) gives the singular values of a [`StaticSVD`](@ref)
@@ -86,6 +99,7 @@ DenseQR
 DeviceQR
 DenseSVD
 DeviceSVD
+UMFPACKLU
 returncode
 exact_solve
 singular_values

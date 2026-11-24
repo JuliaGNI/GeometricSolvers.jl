@@ -129,10 +129,27 @@ A vendor method replaces only `factorize!!` and the back substitution of its fac
 scaling by a power of two, the mixed-precision solve and the status handling are the same on
 every backend.
 
+The factor that a sparse R3 solve uses, on a sparse `jacobian_prototype`:
+
+| factorisation | host `Vector`, `SparseMatrixCSC` | `CuVector`, `CuSparseMatrixCSR` (CUDA) | other arrays |
+|:--|:--|:--|:--|
+| [`LUFactorization`](@ref) | Sparspak for a real element type, with `Sparspak` loaded | cuDSS for BLAS element types, with `CUDSS` loaded | no sparse factor |
+| [`UMFPACKFactorization`](@ref) | UMFPACK for `Float64` and `ComplexF64` | no sparse factor | no sparse factor |
+
+- The **cuDSS** extension `GeometricSolversCUDSSExt`, loaded with `CUDA` and `CUDSS`, adds the
+  sparse LU of `LUFactorization()` on a `CuSparseMatrixCSR{T}` prototype and a `CuVector{T}`
+  iterate, `T <: LinearAlgebra.BlasFloat`. The cuDSS analysis runs once, at the first
+  factorisation, and every later factorisation is a refactorisation. Its Jacobian comes from an
+  analytic `J`, because an `AutoSparse` back end needs a host array.
+
+A sparse factor has its own `init_linear`, `factorize!!` and `ldiv!!`, and factorises in the
+element type of the iterate only: it takes no scaling by a power of two and no mixed precision.
+
 R1 and R2 use the static factorisations on every backend, because they run in one thread. The
-sparse LU of Sparspak runs on a host `Vector` only. The stacked [`LevenbergMarquardt`](@ref) path,
-that of every factorisation other than SVD and of `scaling = :diagonal`, indexes scalars and runs
-on a host array only, and an AD back end other than `AutoForwardDiff()` needs a host array.
+sparse LU of Sparspak and that of UMFPACK run on a host `Vector` only. The stacked
+[`LevenbergMarquardt`](@ref) path, that of every factorisation other than SVD and of
+`scaling = :diagonal`, indexes scalars and runs on a host array only, and an AD back end other
+than `AutoForwardDiff()` needs a host array.
 
 ## Device precision
 
