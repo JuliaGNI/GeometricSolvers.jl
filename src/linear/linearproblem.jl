@@ -13,6 +13,9 @@ right-hand sides `b` that `solve!` of a [`LinearSolver`](@ref) is given.
 A matrix with a zero dimension and a sparse matrix raise an `ArgumentError`. The element type of
 `A` is a real or complex floating-point type that the factors of the method take; `A` is not
 converted, so that an integer matrix raises an error in the factorisation or in the solve.
+A device array in two wrappers, such as a view of the adjoint of a device array, raises a
+scalar-indexing error in `init`, because the finiteness test of `A` and the factors index it entry
+by entry; its copy, `copy(A)`, is a plain device array and solves.
 
 `init(prob, method)` factorises `A` with `method` and returns a [`LinearSolver`](@ref); `method` is
 one of [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref),
