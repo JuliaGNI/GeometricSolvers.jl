@@ -440,7 +440,7 @@ end
 end
 
 @testset "Float32 factors of a $T system: $route, $method, $m × $n" for route in ROUTES,
-    T in (Float64, ComplexF64),
+    T in filter(T -> real(T) === Float64, ELTYPES),
     (method, m, n) in ((LUFactorization(Float32), 4, 4), (QRFactorization(Float32), 4, 4),
         (SVDFactorization(Float32), 4, 4), (SVDFactorization(Float32), 5, 3),
         (SVDFactorization(Float32), 3, 5), (QRFactorization(Float32), 5, 3),
