@@ -1,0 +1,14 @@
+DocStringExtensions             0.9.5         0.10.2   DIFFERS
+ForwardDiff                     1.4.7         1.5.0   DIFFERS
+ERROR: the manifests differ on DocStringExtensions, ForwardDiff
+Stacktrace:
+ [1] error(::String, ::String)
+   @ Base ./error.jl:54
+ [2] top-level scope
+   @ none:9
+ [3] eval(m::Module, e::Any)
+   @ Core ./boot.jl:489
+ [4] exec_options(opts::Base.JLOptions)
+   @ Base ./client.jl:310
+ [5] _start()
+   @ Base ./client.jl:577

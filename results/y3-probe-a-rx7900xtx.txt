@@ -1,0 +1,196 @@
+threads: 24; mode: alone
+vendor: AMDGPU 2.12.0
+row indices: standard/1/u0 = 1, standard/2/u0 = 4
+now: standard/2/u0, SimpleNonlinearSolve
+ERROR: LoadError: HIPError(code hipErrorIllegalAddress, illegal address)
+Stacktrace:
+  [1] check
+    @ ~/.julia/packages/AMDGPU/emR7l/src/hip/error.jl:145 [inlined]
+  [2] synchronize(stream::HIPStream; blocking::Bool, spin::Bool)
+    @ AMDGPU.HIP ~/.julia/packages/AMDGPU/emR7l/src/hip/stream.jl:194
+  [3] synchronize
+    @ ~/.julia/packages/AMDGPU/emR7l/src/hip/stream.jl:181 [inlined]
+  [4] synchronize(stm::HIPStream; blocking::Bool, stop_hostcalls::Bool)
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/highlevel.jl:39
+  [5] synchronize
+    @ ~/.julia/packages/AMDGPU/emR7l/src/highlevel.jl:36 [inlined]
+  [6] synchronize()
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/highlevel.jl:36
+  [7] synchronize
+    @ ~/.julia/packages/AMDGPU/emR7l/src/ROCKernels.jl:45 [inlined]
+  [8] sns_batch!(X::ROCArray{SVector{4, Float32}, 1, AMDGPU.Runtime.Mem.HIPBuffer}, f::InlineAdapter{typeof(p2_f!)}, P::Nothing)
+    @ Main ~/Julia/GeometricSolvers.jl/benchmark/devices.jl:203
+  [9] device_r2(dev::Device{Module, var"#device_of##0#device_of##1"{Type{ROCArray}}, var"#device_of##2#device_of##3"{Type{ROCArray}}}, row::@NamedTuple{set::String, problem::String, start::String, x0::SVector{4, Float32}, F::InlineAdapter{typeof(p2_f!)}, p::Nothing}, package::String, m::Nothing)
+    @ Main ~/Julia/GeometricSolvers.jl/benchmark/devices.jl:243
+ [10] top-level scope
+    @ ~/Julia/results/y3-probe-sns.jl:20
+ [11] include(mod::Module, _path::String)
+    @ Base ./Base.jl:309
+ [12] exec_options(opts::Base.JLOptions)
+    @ Base ./client.jl:344
+ [13] _start()
+    @ Base ./client.jl:577
+in expression starting at /home/IPP-AD/mkraus/Julia/results/y3-probe-sns.jl:20
+error in running finalizer: AMDGPU.HIP.HIPError(code=AMDGPU.HIP.hipError_t(0x000002bc), msg="illegal address")
+check at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/hip/error.jl:145 [inlined]
+check at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/utils.jl:277 [inlined]
+hipCtxGetCurrent at /home/IPP-AD/mkraus/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33 [inlined]
+prepare_state at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/tls.jl:229
+prepare_state at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/tls.jl:225 [inlined]
+macro expansion at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/hip/libhip.jl:5418 [inlined]
+#hipModuleUnload##0 at /home/IPP-AD/mkraus/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:34 [inlined]
+check at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/utils.jl:276 [inlined]
+hipModuleUnload at /home/IPP-AD/mkraus/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33
+jfptr_hipModuleUnload_20889 at /home/IPP-AD/mkraus/.julia/compiled/v1.13/AMDGPU/arpZD_PFOtW.so (unknown line)
+run_finalizer at /cache/build/linux-amdci4-3/julialang/julia-ci/src/gc-common.c:180
+jl_gc_run_finalizers_in_list at /cache/build/linux-amdci4-3/julialang/julia-ci/src/gc-common.c:270
+run_finalizers at /cache/build/linux-amdci4-3/julialang/julia-ci/src/gc-common.c:316
+ijl_atexit_hook at /cache/build/linux-amdci4-3/julialang/julia-ci/src/init.c:295
+ijl_exit at /cache/build/linux-amdci4-3/julialang/julia-ci/src/init.c:199
+jlplt_ijl_exit_41831.1 at /home/IPP-AD/mkraus/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/lib/julia/sys.so (unknown line)
+exit at ./initdefs.jl:28
+exec_options at ./client.jl:349
+_start at ./client.jl:577
+jfptr__start_59257.1 at /home/IPP-AD/mkraus/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/lib/julia/sys.so (unknown line)
+jl_apply at /cache/build/linux-amdci4-3/julialang/julia-ci/src/julia.h:2319 [inlined]
+true_main at /cache/build/linux-amdci4-3/julialang/julia-ci/src/jlapi.c:985
+jl_repl_entrypoint at /cache/build/linux-amdci4-3/julialang/julia-ci/src/jlapi.c:1152
+main at /cache/build/linux-amdci4-3/julialang/julia-ci/cli/loader_exe.c:58
+unknown function (ip: 0x78dbacc2a600) at /usr/lib/x86_64-linux-gnu/libc.so.6
+__libc_start_main at /usr/lib/x86_64-linux-gnu/libc.so.6 (unknown line)
+unknown function (ip: 0x4010b8) at /workspace/srcdir/glibc-2.17/csu/../sysdeps/x86_64/start.S
+WARNING: Error while freeing 256 bytes of GPU memory:
+AMDGPU.HIP.HIPError(code=AMDGPU.HIP.hipError_t(0x000002bc), msg="illegal address")
+
+Stacktrace:
+  [1] check
+    @ ~/.julia/packages/AMDGPU/emR7l/src/hip/error.jl:145 [inlined]
+  [2] check
+    @ ~/.julia/packages/AMDGPU/emR7l/src/utils.jl:277 [inlined]
+  [3] hipCtxGetCurrent
+    @ ~/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33 [inlined]
+  [4] prepare_state(state::Nothing)
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/tls.jl:229
+  [5] prepare_state
+    @ ~/.julia/packages/AMDGPU/emR7l/src/tls.jl:225 [inlined]
+  [6] macro expansion
+    @ ~/.julia/packages/AMDGPU/emR7l/src/hip/libhip.jl:4569 [inlined]
+  [7] #hipFreeAsync##0
+    @ ~/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:34 [inlined]
+  [8] check
+    @ ~/.julia/packages/AMDGPU/emR7l/src/utils.jl:276 [inlined]
+  [9] hipFreeAsync
+    @ ~/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33 [inlined]
+ [10] free(buf::AMDGPU.Runtime.Mem.HIPBuffer; stream::HIPStream)
+    @ AMDGPU.Runtime.Mem ~/.julia/packages/AMDGPU/emR7l/src/runtime/memory/hip.jl:109
+ [11] free
+    @ ~/.julia/packages/AMDGPU/emR7l/src/runtime/memory/hip.jl:105 [inlined]
+ [12] #_pool_free##0
+    @ ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:591 [inlined]
+ [13] context!(f::AMDGPU.var"#_pool_free##0#_pool_free##1"{AMDGPU.Managed{AMDGPU.Runtime.Mem.HIPBuffer}, AMDGPU.Runtime.Mem.HIPBuffer}, ctx::HIPContext)
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/tls.jl:174
+ [14] _pool_free
+    @ ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:591 [inlined]
+ [15] macro expansion
+    @ ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:575 [inlined]
+ [16] macro expansion
+    @ ./lock.jl:376 [inlined]
+ [17] macro expansion
+    @ ./timing.jl:463 [inlined]
+ [18] pool_free(managed::AMDGPU.Managed{AMDGPU.Runtime.Mem.HIPBuffer})
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:574
+ [19] release(::GPUArrays.RefCounted{AMDGPU.Managed{AMDGPU.Runtime.Mem.HIPBuffer}})
+    @ GPUArrays ~/.julia/packages/GPUArrays/zDfQ9/src/host/abstractarray.jl:42
+ [20] unsafe_free!
+    @ ~/.julia/packages/GPUArrays/zDfQ9/src/host/abstractarray.jl:100 [inlined]
+ [21] unsafe_free!(x::ROCArray{Int32, 1, AMDGPU.Runtime.Mem.HIPBuffer})
+    @ GPUArrays ~/.julia/packages/GPUArrays/zDfQ9/src/host/abstractarray.jl:206
+ [22] exit(n::Int64)
+    @ Base ./initdefs.jl:28
+ [23] exec_options(opts::Base.JLOptions)
+    @ Base ./client.jl:349
+ [24] _start()
+    @ Base ./client.jl:577
+WARNING: Error while freeing 1024 bytes of GPU memory:
+AMDGPU.HIP.HIPError(code=AMDGPU.HIP.hipError_t(0x000002bc), msg="illegal address")
+
+Stacktrace:
+  [1] check
+    @ ~/.julia/packages/AMDGPU/emR7l/src/hip/error.jl:145 [inlined]
+  [2] check
+    @ ~/.julia/packages/AMDGPU/emR7l/src/utils.jl:277 [inlined]
+  [3] hipCtxGetCurrent
+    @ ~/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33 [inlined]
+  [4] prepare_state(state::Nothing)
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/tls.jl:229
+  [5] prepare_state
+    @ ~/.julia/packages/AMDGPU/emR7l/src/tls.jl:225 [inlined]
+  [6] macro expansion
+    @ ~/.julia/packages/AMDGPU/emR7l/src/hip/libhip.jl:4569 [inlined]
+  [7] #hipFreeAsync##0
+    @ ~/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:34 [inlined]
+  [8] check
+    @ ~/.julia/packages/AMDGPU/emR7l/src/utils.jl:276 [inlined]
+  [9] hipFreeAsync
+    @ ~/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33 [inlined]
+ [10] free(buf::AMDGPU.Runtime.Mem.HIPBuffer; stream::HIPStream)
+    @ AMDGPU.Runtime.Mem ~/.julia/packages/AMDGPU/emR7l/src/runtime/memory/hip.jl:109
+ [11] free
+    @ ~/.julia/packages/AMDGPU/emR7l/src/runtime/memory/hip.jl:105 [inlined]
+ [12] #_pool_free##0
+    @ ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:591 [inlined]
+ [13] context!(f::AMDGPU.var"#_pool_free##0#_pool_free##1"{AMDGPU.Managed{AMDGPU.Runtime.Mem.HIPBuffer}, AMDGPU.Runtime.Mem.HIPBuffer}, ctx::HIPContext)
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/tls.jl:174
+ [14] _pool_free
+    @ ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:591 [inlined]
+ [15] macro expansion
+    @ ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:575 [inlined]
+ [16] macro expansion
+    @ ./lock.jl:376 [inlined]
+ [17] macro expansion
+    @ ./timing.jl:463 [inlined]
+ [18] pool_free(managed::AMDGPU.Managed{AMDGPU.Runtime.Mem.HIPBuffer})
+    @ AMDGPU ~/.julia/packages/AMDGPU/emR7l/src/memory.jl:574
+ [19] release(::GPUArrays.RefCounted{AMDGPU.Managed{AMDGPU.Runtime.Mem.HIPBuffer}})
+    @ GPUArrays ~/.julia/packages/GPUArrays/zDfQ9/src/host/abstractarray.jl:42
+ [20] unsafe_free!
+    @ ~/.julia/packages/GPUArrays/zDfQ9/src/host/abstractarray.jl:100 [inlined]
+ [21] unsafe_free!(x::ROCArray{SVector{4, Float32}, 1, AMDGPU.Runtime.Mem.HIPBuffer})
+    @ GPUArrays ~/.julia/packages/GPUArrays/zDfQ9/src/host/abstractarray.jl:206
+ [22] exit(n::Int64)
+    @ Base ./initdefs.jl:28
+ [23] exec_options(opts::Base.JLOptions)
+    @ Base ./client.jl:349
+ [24] _start()
+    @ Base ./client.jl:577
+error in running finalizer: AMDGPU.HIP.HIPError(code=AMDGPU.HIP.hipError_t(0x000002bc), msg="illegal address")
+check at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/hip/error.jl:145 [inlined]
+check at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/utils.jl:277 [inlined]
+hipCtxGetCurrent at /home/IPP-AD/mkraus/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33 [inlined]
+prepare_state at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/tls.jl:229
+prepare_state at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/tls.jl:225
+macro expansion at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/hip/libhip.jl:4178 [inlined]
+#hipStreamDestroy##0 at /home/IPP-AD/mkraus/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:34
+check at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/utils.jl:276
+hipStreamDestroy at /home/IPP-AD/mkraus/.julia/packages/GPUToolbox/zzEVO/src/ccalls.jl:33
+#HIPStream##2 at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/hip/stream.jl:37
+context! at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/tls.jl:174
+#HIPStream##0 at /home/IPP-AD/mkraus/.julia/packages/AMDGPU/emR7l/src/hip/stream.jl:36
+unknown function (ip: 0x78da30b9ef65) at (unknown file)
+run_finalizer at /cache/build/linux-amdci4-3/julialang/julia-ci/src/gc-common.c:180
+jl_gc_run_finalizers_in_list at /cache/build/linux-amdci4-3/julialang/julia-ci/src/gc-common.c:270
+run_finalizers at /cache/build/linux-amdci4-3/julialang/julia-ci/src/gc-common.c:316
+ijl_atexit_hook at /cache/build/linux-amdci4-3/julialang/julia-ci/src/init.c:295
+ijl_exit at /cache/build/linux-amdci4-3/julialang/julia-ci/src/init.c:199
+jlplt_ijl_exit_41831.1 at /home/IPP-AD/mkraus/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/lib/julia/sys.so (unknown line)
+exit at ./initdefs.jl:28
+exec_options at ./client.jl:349
+_start at ./client.jl:577
+jfptr__start_59257.1 at /home/IPP-AD/mkraus/.julia/juliaup/julia-1.13.4+0.x64.linux.gnu/lib/julia/sys.so (unknown line)
+jl_apply at /cache/build/linux-amdci4-3/julialang/julia-ci/src/julia.h:2319 [inlined]
+true_main at /cache/build/linux-amdci4-3/julialang/julia-ci/src/jlapi.c:985
+jl_repl_entrypoint at /cache/build/linux-amdci4-3/julialang/julia-ci/src/jlapi.c:1152
+main at /cache/build/linux-amdci4-3/julialang/julia-ci/cli/loader_exe.c:58
+unknown function (ip: 0x78dbacc2a600) at /usr/lib/x86_64-linux-gnu/libc.so.6
+__libc_start_main at /usr/lib/x86_64-linux-gnu/libc.so.6 (unknown line)
+unknown function (ip: 0x4010b8) at /workspace/srcdir/glibc-2.17/csu/../sysdeps/x86_64/start.S
