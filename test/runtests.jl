@@ -27,6 +27,7 @@ const TESTS = [
         "R3 Jacobian" => "ad/jacobian.jl",
         "Jacobian-vector product" => "ad/jvp.jl",
         "Sparse LU and AutoSparse" => "linear/sparspak.jl",
+        "Sparse LU of UMFPACK" => "linear/sparse.jl",
         "Sparse AD sparsity detection" => "ad/sparse_ad.jl"
     ],
     "quality" => [

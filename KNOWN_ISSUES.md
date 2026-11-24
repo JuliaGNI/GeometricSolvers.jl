@@ -643,7 +643,66 @@
 - **kind:** found late
 - **found:** #96
 
-### K99 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
+### K99 · The CUDA rows that assert one cuDSS analysis per solver read the extension's own counter, not a count that cuDSS reports
+
+- **location:** `ext/GeometricSolversCUDSSExt.jl:78–84` (`factorize!!` for `CUDSSLU`)
+- **evidence:** `test/gpu/cuda/runtests.jl:593`, `:606`, `:632` and `:645` assert
+  `fac.analyses[] == 1`.
+  `factorize!!` increments the `analyses` cell in the branch that calls `cudss("analysis", …)`,
+  and calls `cudss("refactorization", …)` in the other branch. A change that also calls
+  `cudss("analysis", …)` in the refactorisation branch, and leaves the counter alone, passes these
+  rows. None of the data parameters that CUDSS.jl 1.0.0 reads with `cudss_get`
+  (`CUDSS_DATA_PARAMETERS`, `src/types.jl:3–9`) counts the analyses of a solver, so the rows check
+  the branch that the extension takes, not the number of analyses that cuDSS runs.
+- **kind:** missing test
+- **found:** 2026-11-22
+
+### K100 · A direct `factorize!!` of a 0×0 sparse matrix throws, under `UMFPACKFactorization` and under Sparspak's `LUFactorization`
+
+- **location:** `src/linear/sparse.jl` (`factorize!!` for `UMFPACKLU`)
+- **evidence:** `init_linear(m, spzeros(0, 0), Float64[])` builds the factor for both methods, and
+  `factorize!!` of it on `spzeros(0, 0)` throws: `ArgumentError: the number of rows or columns of
+  the matrix must be greater than zero` from UMFPACK, and `An empty problem, no ordering found.`
+  from Sparspak. The Sparspak case is true on `main` too, because the branch does not change
+  `ext/GeometricSolversSparspakExt.jl`. A Newton solve of order 0 with a 0×0
+  `jacobian_prototype` and `UMFPACKFactorization` returns `SUCCESS` before it factorises, so only
+  a direct call reaches the throw. Julia 1.13.4, with the test environment of the package.
+- **kind:** found late
+- **found:** 2026-11-22
+
+### K101 · No test reaches a detected Jacobian pattern in `ComplexF64`, because the sparsity detection of the complex test problem throws
+
+- **location:** `test/helpers/sparse_problems.jl:110` (`F!` of `sparse_bracket_problem`)
+- **evidence:** `init` of `NonlinearProblem(prob.F)` from `sparse_bracket_problem(125, ComplexF64)`
+  with `Newton(; linsolve = UMFPACKFactorization(), jacobian = AutoSparse(AutoForwardDiff();
+  sparsity_detector = TracerSparsityDetector(), …))` raises
+  `SparseConnectivityTracer.MissingPrimalError`: `Function iszero requires primal value(s).` The
+  tracer vector of the residual is real (`Vector{GradientTracer{Int64, BitSet}}`), and `F!` stores
+  into it a sum with a complex matrix entry, whose conversion calls `isreal` and then `iszero` on a
+  tracer. The error message names `TracerLocalSparsityDetector`; no test has tried it. The rows of
+  a detected pattern in `test/linear/sparse.jl` run in `Float64` only, so
+  `has_sparse_factor(::UMFPACKFactorization, ::Vector{ComplexF64})` is asserted, but no solve
+  takes a detected complex pattern.
+- **kind:** found late
+- **found:** 2026-11-23
+
+### K102 · The cuDSS `factorize!!` does not check the pattern of a Jacobian that is the factor's own buffer
+
+- **location:** `ext/GeometricSolversCUDSSExt.jl:65–66` (`factorize!!` for `CUDSSLU`)
+- **evidence:** the check compares `J.rowPtr` and `J.colVal` with those of `A = fac.factors` only
+  where `J !== A`. A Newton step with no `DogLeg` and no refinement passes the factor's own
+  buffer as `J` (`init_newton_J` in `src/nonlinear/newton.jl`), so a `J!` that changes the
+  `rowPtr` or `colVal` of that buffer in place goes unchecked, and from the second call on
+  `factorize!!` runs cuDSS's `"refactorization"`, which reuses the analysis of the old pattern.
+  `UMFPACKLU` in `src/linear/sparse.jl` keeps copies of the prototype's `colptr` and `rowval` and
+  compares each Jacobian with them, which closes the same gap on the host. A `CuSparseMatrixCSR`
+  has no normal path that inserts an entry in place, so only a `J!` that writes the index arrays
+  reaches this. The fix keeps device copies of `rowPtr` and `colVal` in `CUDSSLU` and compares
+  with them; it needs a run on a CUDA device.
+- **kind:** found late
+- **found:** PR #110 (CodeRabbit, the host twin)
+
+### K103 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
 
 - **location:** `src/linear/gmres.jl:547` (`linres` from the rotated right-hand side)
 - **evidence:** with `rng = Xoshiro(1)`, `A = T.(Diagonal(1:6) + 0.1 randn(rng, 6, 6))`, then
@@ -653,7 +712,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1720`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1742`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -670,7 +729,7 @@
 - **found:** #106; a limit of the user's decision of 2026-11-22 (CGS2 as the default of `GMRES`),
   with its edges "else one `rnorm(w₂)`" and "the second pass always runs"
 
-### K100 · Two `SVDFactorization(BigFloat; rtol)` with the same `rtol` are not `===`
+### K104 · Two `SVDFactorization(BigFloat; rtol)` with the same `rtol` are not `===`
 
 - **location:** `src/linear/methods.jl:82` (the inner constructor of `SVDFactorization`)
 - **evidence:** `rtol` is stored in `real(TF)`, so for `TF = BigFloat` the field is a
@@ -681,7 +740,7 @@
 - **kind:** found late
 - **found:** 2026-11-23
 
-### K101 · No test observes whether a CUDA SVD runs on `gesvdj!` or on the own Jacobi kernel, so a mutant of the route comparison that changes only the route passes
+### K105 · No test observes whether a CUDA SVD runs on `gesvdj!` or on the own Jacobi kernel, so a mutant of the route comparison that changes only the route passes
 
 - **location:** `ext/GeometricSolversCUDAExt.jl:128` (the comparison of the rank cutoff with the
   sweep tolerance in `factorize!!`)
@@ -694,7 +753,7 @@
 - **kind:** missing test
 - **found:** 2026-11-23
 
-### K102 · An R3 `Newton` solve with a `BigFloat` or `Complex{BigFloat}` iterate and the default automatic differentiation throws `UndefRefError`
+### K106 · An R3 `Newton` solve with a `BigFloat` or `Complex{BigFloat}` iterate and the default automatic differentiation throws `UndefRefError`
 
 - **location:** `src/ad/chunked.jl:115` (`jacobian!!` for `ChunkedForwardDiff`), called from
   `newton_factor` in `src/nonlinear/newton.jl`
@@ -711,24 +770,24 @@
 - **kind:** found late
 - **found:** 2026-11-22
 
-### K103 · The docstrings of `StaticLU`, `StaticSVD`, `StaticLDLT` and `StaticRectQR` say that the factor is `isbits` for every element type, which is false for `BigFloat`
+### K107 · The docstrings of `StaticLU`, `StaticSVD`, `StaticLDLT` and `StaticRectQR` say that the factor is `isbits` for every element type, which is false for `BigFloat`
 
-- **location:** `src/linear/factors.jl:119` (`StaticLU`), `:159` (`StaticSVD`), `:327`
+- **location:** `src/linear/factors.jl:122` (`StaticLU`), `:162` (`StaticSVD`), `:330`
   (`StaticLDLT`), `src/linear/static/qr_rect.jl:12` (`StaticRectQR`)
 - **evidence:** each docstring says that the size parameter makes the `SMatrix` field concrete,
   "so the factor is `isbits`", with no condition on `TF`.
   `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
   `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
   `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
-  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:738`), so
-  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:392-393`) states
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:742`), so
+  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:395-396`) states
   the condition.
 - **kind:** docs
 - **found:** #108
 
-### K104 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
+### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
 
-- **location:** `src/linear/factors.jl:730` (`factor_matrix`), and `src/linear/static/svd.jl:91`
+- **location:** `src/linear/factors.jl:734` (`factor_matrix`), and `src/linear/static/svd.jl:91`
   and `src/linear/static/svd_rect.jl:53`, which scale always
 - **evidence:** the scale exponent of every static factor is an `Int32` field, and
   `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
