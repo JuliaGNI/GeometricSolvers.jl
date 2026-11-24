@@ -901,3 +901,28 @@
   `ka_cholesky_backsolve!`, throws `DimensionMismatch` for a vector of another length.
 - **kind:** found late
 - **found:** #113
+
+### K116 · The Cholesky test matrix `cuda_hpd` draws its random numbers in the element type, so each precision gets a different matrix
+
+- **location:** `test/helpers/own_kernel.jl:70`, `:72` (`cuda_hpd`)
+- **evidence:** `G = randn(rng, T, n, n)` and `randn(rng, T, n)` take the stream of `T`, so one
+  seed gives a `Float32` matrix that is not the `Float64` matrix rounded. With the seed of `n = 4`,
+  `randn(Xoshiro(0xc401 + 4), Float32, 4, 4)` and `Float32.(randn(Xoshiro(0xc401 + 4), 4, 4))`
+  differ by up to 1.55 per entry (Julia 1.13.4). The convention is one draw in `Float64`
+  (`ComplexF64` for a complex `T`), rounded to `T`. The rows that use the matrix compare the vendor
+  factor with the own kernel in one `T`, so no result is wrong; a comparison across precisions on
+  these matrices would compare two samples.
+- **kind:** defect
+- **found:** #113
+
+### K117 · The vendor agreement matrix `cuda_well_conditioned` draws its random numbers in the element type, so each precision gets a different matrix
+
+- **location:** `test/helpers/own_kernel.jl:33`, `:36`, `:37`, `:39` (`cuda_well_conditioned`)
+- **evidence:** `randn(rng, T, n, n)`, `randn(rng, T, 16, 16)` and `randn(rng, T, n)` take the
+  stream of `T`. With the seed of `n = 4`, `randn(Xoshiro(0x5eed + 4), Float32, 4, 4)` and
+  `Float32.(randn(Xoshiro(0x5eed + 4), 4, 4))` differ by up to 2.90 per entry (Julia 1.13.4). The
+  convention is one draw in `Float64` (`ComplexF64` for a complex `T`), rounded to `T`. The
+  LU, QR and SVD agreement rows compare in one `T`, so no result is wrong. The function is on
+  `main`.
+- **kind:** defect
+- **found:** #113
