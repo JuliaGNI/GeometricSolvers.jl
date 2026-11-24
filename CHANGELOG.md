@@ -11,6 +11,38 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`GMRES` orthogonalises the Arnoldi basis by classical Gram–Schmidt with a second pass
+  (CGS2) by default.** Each inner iteration takes two reductions over the basis, `h₁ = V_jᴴ w` and
+  `[V_j w₁]ᴴ w₁` for `h₂` and `s₁ = ‖w₁‖²`, in place of the `j + 1` of modified Gram–Schmidt; on a
+  device each reduction is a synchronisation. The norm of `w₂` is `√(s₁ − ‖h₂‖²)` where `s₁` is
+  finite, at least `n·floatmin` and `‖h₂‖² ≤ s₁/2`, and `rnorm(w₂)`, a third reduction, elsewhere.
+  Breakdown stays `iszero(H[j+1, j])`. `GMRES(; mgs = true)` selects modified Gram–Schmidt, the
+  previous behaviour: the projections, the update `u += V_j y` one column at a time and the
+  rebuilt direction are unchanged. `GMRES` has a new field `mgs::Bool`, which the positional
+  constructor that `adapt` uses takes as a sixth argument and `Newton(; forcing, preconditioner)`
+  keeps when it rebuilds the method; `gmres_solve!` takes the keyword `mgs = false`. The inner
+  GMRES of `GMRESRefinement` keeps modified Gram–Schmidt whatever `GMRES` selects. On the CGS2
+  path the solution update `u += V_j y` of a cycle and `reduced_direction!`, the direction the
+  matrix-free `DogLeg` rebuilds, are one matrix–vector product each, through a new device vector
+  `hd` and host vector `hh` in `GMRESWorkspace` (new type parameter `HD`); `reduced_direction!`
+  follows the path of the last solve on the workspace, which its new field `mgs` records. The
+  tests count reductions at the array level on `JLArray` and measure `‖I − VᴴV‖₂ ≤ 32·eps(R)` for
+  CGS2 on a normal matrix with spectrum log-spaced in [1, 10⁸] (n = 200, m = 30, five seeds,
+  `Float32`, `Float64`, `ComplexF32`, `ComplexF64`), against a one-pass control above
+  `1000·eps(R)`; modified Gram–Schmidt misses that bound for all five seeds in every element type.
+  Because the CGS2 basis and the one-product update differ from those of modified Gram–Schmidt in
+  round-off, the `Newton Backtracking GMRES` column of `test/verification/standard_reference.csv`
+  is regenerated, 98 rows: 82 change only `fnorm`, the residual norm where the solve ends, and 16
+  change the code, the counts or the `unstable` flag. Fourteen change the code or the counts:
+  1/100u0/`Float32` (STALLED → LINESEARCH_FAILED), 1/100u0/`Float64`, 1/10u0/`Float32`,
+  3/u0/`Float32`, 6/u0 in both types, 11/u0 in both types, 11/10u0/`Float64`, 11/100u0/`Float32`
+  (SUCCESS in 24 iterations, not 25), 21/u0/`Float32`, 21/10u0/`Float32` (LINESEARCH_FAILED →
+  STALLED), 21/10u0/`Float64` (133 → 132 residual evaluations) and 22/100u0/`Float32`. The
+  `unstable` flag changes in five: 1/100u0 in both types, 1/10u0/`Float32` and
+  3/100u0/`Float64` from true to false, and 18/u0/`Float32` from false to true; 3/100u0/`Float64`
+  and 18/u0/`Float32` change nothing else.
+  `scripts/standard/update_reference.jl` reports 0 cells that differ under the table's comparison.
+
 - **`UMFPACKFactorization()` adds the sparse LU of UMFPACK, and the package extension
   `GeometricSolversCUDSSExt` the sparse LU of cuDSS.** `UMFPACKFactorization` is a new exported
   linear-solver method. On a host `Vector{Float64}` or `Vector{ComplexF64}` iterate with a
