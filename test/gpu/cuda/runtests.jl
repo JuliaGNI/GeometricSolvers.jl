@@ -120,6 +120,9 @@ end
         @test which(returncode, (Fac,)).module === ext
         @test which(GeometricSolvers.factor_diagnostics,
             (Vec, Fac, Vec, real(T))).module === ext
+        # a `CuSparseMatrixCSR` prototype takes the default of every other prototype, `Newton()`
+        @test which(default_method, (NonlinearProblem{Nothing, Nothing, Mat}, Vec)) ===
+              which(default_method, (NonlinearProblem{Nothing, Nothing, Nothing}, Vec))
         JET.test_call(init_linear, (LUFactorization{Nothing}, Mat, Vec); target_modules = (ext,))
         JET.test_call(factorize!!, (Fac, LUFactorization{Nothing}, Mat); target_modules = (ext,))
         JET.test_call(ldiv!!, (Vec, Fac, Vec); target_modules = (ext,))
@@ -618,6 +621,7 @@ if CUDA.functional()
             CuArray(nzval), size(Ah))
         prob_d = cubic_sparse_problem(Ad, CuArray(nzval), CuArray(diagpos), CuArray(b))
         tol = R === Float32 ? 1.0f-4 : 1e-10
+        @test default_method(prob_d, CuArray(z0)) === Newton()
 
         solver = init(prob_d, CuArray(z0), Newton(), p; f_abstol = tol, f_reltol = zero(R))
         fac0 = solver.state.fac
