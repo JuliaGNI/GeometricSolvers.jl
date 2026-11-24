@@ -827,3 +827,30 @@
   The own Cholesky solve, `ka_cholesky_backsolve!`, throws `DimensionMismatch` in this case.
 - **kind:** defect
 - **found:** #113
+
+### K111 · The mixed-precision `ldiv!!` of a dense factor does not check the length of the vector against the order of the factor
+
+- **location:** `src/linear/mixed.jl:12-27` (the `T ≠ TF` method of `ldiv!!` for every
+  `DenseFactor`)
+- **evidence:** `rhs .= F.(r ./ s)` broadcasts a length-1 `r` into the length-2 `fac.rhs`, and the
+  method then writes `rhs[1:1]` into `d`. A factor of `[4 0; 0 9]` with
+  `CholeskyFactorization(Float32)` or `LUFactorization(Float32)`, solved with
+  `ldiv!!(A(ones(k)), fac, A(ones(k)))` in `Float64`, for `DenseCholesky`, `DeviceCholesky`,
+  `DenseLU` and `DeviceLU`, with `A` an `Array` or a `JLArray`: `k = 1` returns a length-1 result
+  with no error, `[0.25]` (`[0.2499999850988388]` for `DenseCholesky`); `k = 3` throws
+  `DimensionMismatch` from the broadcast. Julia 1.13.4, JLArrays 0.5.0, tree of `b6aa30e`.
+- **kind:** found late
+- **found:** #113
+
+### K112 · A same-type `ldiv!!` of a dense factor with vectors of two lengths throws a `TypeError`, not a `DimensionMismatch`
+
+- **location:** `src/linear/dense.jl:224` (the `T == TF` method of `ldiv!!` for every `DenseFactor`)
+- **evidence:** with `length(d) != length(r)` the method takes its branch for a rectangular factor
+  and asserts `fac.rhs::AbstractVector{T}`, which is `nothing` for a square factor. A factor of
+  `[4 0; 0 9]` in `Float32` with `CholeskyFactorization()` or `LUFactorization()`, solved with
+  `ldiv!!(A(ones(2)), fac, A(ones(3)))` or `ldiv!!(A(ones(3)), fac, A(ones(2)))`, throws
+  `TypeError: in typeassert, expected AbstractVector{Float32}, got a value of type Nothing` for
+  `DenseCholesky`, `DeviceCholesky`, `DenseLU` and `DeviceLU`, with `A` an `Array` or a `JLArray`.
+  Julia 1.13.4, JLArrays 0.5.0, tree of `b6aa30e`.
+- **kind:** found late
+- **found:** #113

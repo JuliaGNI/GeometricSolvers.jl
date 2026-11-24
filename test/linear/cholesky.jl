@@ -461,10 +461,15 @@ end
         fac3, m, JLArray(ones(T, 2, 2)))
     @test_throws r"^ArgumentError: J is on the backend .+, the Cholesky factor on .*JLBackend" factorize!!(
         fac3, m, Matrix{T}(I(3)))
-    # the backsolve kernel reads the factor by the length of `d`: a vector of another length is
-    # refused, by `ldiv!!` and by `backsolve!`
+end
+
+@testset "DeviceCholesky on a JLArray: a vector of another length ($T)" for T in ELTYPES
+    allowscalar(false)
+    m = CholeskyFactorization()
+    # the backsolve kernel reads the factor by the length of `d`: a vector of another length,
+    # the empty one included, is refused, by `ldiv!!` and by `backsolve!`
     fac2, _ = cholesky_device(m, T[4 0; 0 9], T[2, 3])
-    for k in (1, 3)
+    for k in (0, 1, 3)
         msg = Regex("^DimensionMismatch: d has length $k, the Cholesky factor \\(2, 2\\)")
         @test_throws msg ldiv!!(JLArray(ones(T, k)), fac2, JLArray(ones(T, k)))
         @test_throws msg GeometricSolvers.backsolve!(fac2, JLArray(ones(T, k)))
