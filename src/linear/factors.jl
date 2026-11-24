@@ -437,7 +437,8 @@ the exponent `e` of the power of two `2^e` that the matrix was divided by, and `
 factorised, and `factors` then holds it as it was loaded. The factorisation is the one-workgroup
 kernels of `src/linear/ka/cholesky.jl`, or cuSOLVER and rocSOLVER `potrf` on a `CuMatrix` and a
 `ROCMatrix` of a `BlasFloat` element type. On that vendor path `status` holds the `info` and
-`scale_exponent` of the load kernel, and only `info` holds the result of `potrf`.
+`scale_exponent` of the load kernel, and only `info` holds the result of `potrf`. At `n = 0` no
+kernel runs: `info` and `scale_exponent` are `0`, and `status` keeps its earlier contents.
 [`factorize!!`](@ref) reads `J` on the device by index: a `J` of another size than `factors` raises
 a `DimensionMismatch`, and a `J` on another backend an `ArgumentError`.
 """

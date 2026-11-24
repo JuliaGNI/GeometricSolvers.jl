@@ -158,7 +158,7 @@ function GeometricSolvers.factorize!!(
         return DeviceCholesky(fac.factors, fac.rhs, info, e, fac.status)
     # `potrf!` throws an `ArgumentError` for a negative status, so `info_c` is the order of the
     # first leading minor that is not positive, or 0.
-    _, info_c = CUDA.CUSOLVER.potrf!('L', fac.factors)
+    _, info_c = CUDA.cuSOLVER.potrf!('L', fac.factors)
     return DeviceCholesky(fac.factors, fac.rhs, Int(info_c), e, fac.status)
 end
 
@@ -169,7 +169,7 @@ function GeometricSolvers.backsolve!(
     length(d) == size(fac.factors, 1) ||
         throw(DimensionMismatch("d has length $(length(d)), the Cholesky factor $(size(fac.factors))"))
     isempty(d) && return d
-    CUDA.CUSOLVER.potrs!('L', fac.factors, d)
+    CUDA.cuSOLVER.potrs!('L', fac.factors, d)
     return d
 end
 
