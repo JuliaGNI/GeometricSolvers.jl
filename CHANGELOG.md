@@ -16,16 +16,38 @@ so that a compat-only bump can be told apart from an interface change.
   factor's element type, runs `recursive_lu!` (`src/linear/recursive_lu.jl`) in place of
   `LAPACK.getrf!`: a recursion over halves of the columns, an unblocked kernel on panels of at
   most 16 columns, and BLAS `trsm!` and `gemm!` for the rest. It pivots by LAPACK's rule, the
-  first entry of largest `|Re| + |Im|`, writes LAPACK's `ipiv` and `info`, and allocates nothing,
+  first entry of largest `|Re| + |Im|`, writes `ipiv` and `info` in LAPACK's convention (`info`
+  is the first pivot that is exactly zero in its own arithmetic), and allocates nothing,
   so `getrs!`, `reuse`, `ldiv!!` and the mixed-precision solve are unchanged. Every other `n`,
   `ComplexF32` and a non-BLAS element type keep `getrf!` or the generic `lu!`. The band is where
   `scripts/hardware/rl_host_lu.jl` (new) measured the recursion at `r = t(recursion)/t(getrf!) ≤
   0.90` with BLAS on one thread and on all threads, on an Apple M4 Max with OpenBLAS 0.3.30 and
   Julia 1.13.4, commit `35c0c75`; `Float64` gave `r` = 0.52, 0.37 and 0.60 at `n` = 8, 16 and 32
-  on one thread. The factor differs from `getrf!`'s in round-off, so 19 cells of the standard test
-  set that the reference flags `unstable` change their code or iteration count on this machine;
-  no other cell changes. At a subnormal pivot the recursion divides each multiplier, as LAPACK's
-  `getf2`; OpenBLAS's `getrf!` left the multiplier of such a `2 × 2` test matrix unscaled.
+  on one thread. At a subnormal pivot the recursion divides each multiplier, as LAPACK's `getf2`;
+  OpenBLAS's `getrf!` left the multiplier of such a `2 × 2` test matrix unscaled (K109). Because
+  the recursion's factor differs from `getrf!`'s in round-off,
+  `test/verification/standard_reference.csv` is regenerated, 169 rows: 144 change only `fnorm`,
+  the residual norm where the solve ends, and 25 change the code, the counts or the `unstable`
+  flag. Nineteen change the code or the iteration
+  count, all of them cells that the old and the new table flag `unstable`: 8/u0/`Float32`
+  `Newton Backtracking LU` (SUCCESS in 13 → LINESEARCH_FAILED in 11) and `Newton StrongWolfe LU`
+  (SUCCESS → LINESEARCH_FAILED, 6), 8/u0/`Float32` and 8/100u0/`Float32` `Newton reuse 3
+  Backtracking LU` (17 → 14, 175 → 150), 11/u0/`Float32` `Newton DogLeg LU` (21 → 26),
+  11/10u0/`Float32` `Newton Static LU` (MAXITERS in 200 → SUCCESS in 178), `Newton Backtracking
+  LU` (29 → 68), `Newton StrongWolfe LU` (LINESEARCH_FAILED in 43 → STALLED in 37) and `Fallback
+  Newton DogLeg LevenbergMarquardt` (215 → 178), 11/100u0/`Float32` `Newton Static LU` (MAXITERS
+  in 200 → SUCCESS in 107), `Newton Backtracking LU` (12 → 16), `Newton StrongWolfe LU`
+  (LINESEARCH_FAILED in 23 → STALLED in 19), `Newton reuse 3 Backtracking LU` (37 → 43) and
+  `Fallback Newton DogLeg LevenbergMarquardt` (215 → 107), 11/10u0/`Float64` and
+  11/100u0/`Float64` `Newton reuse 3 Backtracking LU` (32 → 33, 25 → 26), 11/100u0/`Float64`
+  `Newton StrongWolfe LU` (LINESEARCH_FAILED → STALLED, 45), 12/10u0/`Float32` `LeftPreconditioned
+  Picard Backtracking Newton` (2 → 1) and 14/10u0/`Float64` `Newton Bisection LU` (147 → 150).
+  11/10u0/`Float32` `Newton reuse 3 Backtracking LU` changes only its residual evaluations
+  (100 → 90). The `unstable` flag changes from true to false in five cells, 12/100u0/`Float32` in
+  the columns `Newton Static LU`, `Newton Backtracking LU`, `Newton Bisection LU`, `Newton
+  StrongWolfe LU` and `Newton reuse 3 Backtracking LU`, which stay SINGULAR at the first iteration:
+  no perturbed run of the marker moves from that outcome any more. The table's comparison of the
+  old and the new table reports 0 cells that differ.
 
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,

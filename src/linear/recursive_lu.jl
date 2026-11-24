@@ -8,10 +8,6 @@
 # exchanged with row `ipiv[k]` at step `k`. The recursion works on index ranges of the parent
 # matrix, so that each view is a view of `A` and keeps its type.
 
-# `|Re| + |Im|`, the magnitude by which LAPACK picks a pivot
-abs1(x::Real) = abs(x)
-abs1(z::Complex) = abs(real(z)) + abs(imag(z))
-
 # The largest panel that `LUFactorization()` factorises with the unblocked kernel of the recursion:
 # the base case of the measurement of `scripts/hardware/rl_host_lu.jl`.
 const RECURSIVE_LU_BASE = 16
@@ -35,10 +31,13 @@ end
 
 # Factorise the square `A` in place as `P A = L U` with partial pivoting, by a recursion over
 # halves of the columns down to panels of at most `base` columns, and return `info`: the index of
-# the first exactly zero pivot, or 0. `A` then holds `U` on and above the diagonal and the
+# the first pivot that is exactly zero in this arithmetic, or 0, which is what `getrf!`'s `info`
+# means. Where a zero pivot comes from cancellation, as for a repeated column, `getrf!`'s order of
+# operations can give another `info`. `A` then holds `U` on and above the diagonal and the
 # multipliers of the unit lower `L` below it, and `ipiv[k]` the row exchanged with row `k` at step
-# `k`, as `LAPACK.getrf!` writes them. A `NaN` or an `Inf` in `A` gives a non-finite factor, and
-# `info` still counts only an exactly zero pivot.
+# `k`, as `LAPACK.getrf!` writes them. A `NaN` or an `Inf` in `A` gives a non-finite factor. A `NaN`
+# never counts as a zero pivot, and the search by `>` makes it the pivot only where it stands on
+# the diagonal, the first entry that the search of its column reads.
 function recursive_lu!(A::StridedMatrix{T}, ipiv::AbstractVector{BlasInt},
         base::Int) where {T <: BlasFloat}
     Base.require_one_based_indexing(A, ipiv)

@@ -800,3 +800,20 @@
   `Int32(e)` in `factor_matrix` and `svd.jl`.
 - **kind:** defect
 - **found:** #108
+
+### K109 · OpenBLAS's `getrf!` gives a backward error of order one on a matrix whose entries are subnormal or near `floatmin`
+
+- **location:** `src/linear/dense.jl:258` (`factorize!!` for `DenseLU`, the `getrf!` path)
+- **evidence:** `randn(Xoshiro(n), T, n, n)` scaled by `s`, and
+  `‖A[p, :] − L U‖∞ / ‖A‖∞` in `BigFloat` (libopenblas64_ 0.3.30, Julia 1.13.4, Apple M4 Max):
+  `LAPACK.getrf!` gives 0.51, 1.1 (`Float32`, `s = floatmin`, n = 8, 32), 0.79 (`Float64`,
+  `s = floatmin`, n = 32) and 0.56–0.80 (`s = 2^20 · nextfloat(0)`, n = 8, 32, 64, both types);
+  `recursive_lu!` on the same matrices gives 1.2e-16 to 1.4e-6, the round-off of the subnormal
+  range. At `s = floatmin` and n = 64, `getrf!` gives 2.8e-7 (`Float32`) and 4.9e-16 (`Float64`),
+  of the recursion's size.
+  The `2 × 2` matrix `[s 1; s/2 1]` with `s = 4 · nextfloat(0)` keeps the multiplier `s/2`
+  unscaled in `getrf!`'s factor, where LAPACK's reference `getf2` divides it by the pivot. An
+  `n × n` Jacobian at such a scale in its own element type reaches `getrf!` unscaled for every `n`
+  outside the band of `use_recursive_lu`.
+- **kind:** upstream
+- **found:** 2026-11-24

@@ -157,6 +157,11 @@ end
     d = similar(b)
     @test ldiv!!(d, fac, b) === d
     @test rl_relerr(d, x) <= 8n * eps(real(F)) * κ
+
+    # a zero last column, past the first half of the recursion: its `info` reaches the `DenseLU`
+    A[:, n] .= 0
+    fac = factorize!!(fac, m, A)
+    @test fac.info == rl_getrf(F.(A))[3] == n
 end
 
 @testset "factorize!! in the band: inferred and allocation-free (T = $T)" for T in filter(
@@ -216,6 +221,27 @@ end
         @test recursive_lu!(F, ipiv, 4) == 0
         @test !all(isfinite, F)
     end
+end
+
+@testset "a NaN is no zero pivot, and the pivot only on the diagonal (T = $T, base = $base)" for T in ELTYPES,
+    base in (4, RECURSIVE_LU_BASE)
+
+    n = 16
+    # a zero first column with a `NaN` below the diagonal: the search by `>` skips the `NaN`, so
+    # the pivot is the zero on the diagonal
+    A = randn(Xoshiro(base), T, n, n)
+    A[:, 1] .= 0
+    A[5, 1] = T(NaN)
+    F, ipiv = copy(A), Vector{BlasInt}(undef, n)
+    @test recursive_lu!(F, ipiv, base) == 1
+    @test !all(isfinite, F)
+
+    # a `NaN` on the diagonal and zeros below: the `NaN` is the pivot, and no zero pivot
+    A[:, 1] .= 0
+    A[1, 1] = T(NaN)
+    F = copy(A)
+    @test recursive_lu!(F, ipiv, base) == 0
+    @test !all(isfinite, F)
 end
 
 @testset "a subnormal pivot divides, as getf2 (T = $T)" for T in ELTYPES
