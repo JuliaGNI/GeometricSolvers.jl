@@ -183,7 +183,9 @@ factorisation that the step took at its start point `x_k` passes the test, with 
 `status.stationary == true`, and the step is discarded: the status counts the `k` iterations that
 reached `x_k` and carries the `fnorm` and `stepnorm` of `x_k` and the diagnostics of its
 factorisation, while the step-rule failures and the promotion of the discarded step still count
-in `status.step_failures` and `status.promoted`. The step from `x₀` is always kept. A step
+in `status.step_failures` and `status.promoted`. The rule reads the stationarity test, not
+`‖F‖`: at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum, it returns `x_k`
+also where the discarded step lowers `‖F‖`. The step from `x₀` is always kept. A step
 along a reused factor takes no factorisation at its start point unless it falls back to a fresh
 one there, after a failed line search or refinement; without one, it carries the diagnostics
 that the solve tested at `x_k` before, which failed, so it is kept. When neither test holds

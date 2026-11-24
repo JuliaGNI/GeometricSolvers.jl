@@ -37,13 +37,16 @@ so that a compat-only bump can be told apart from an interface change.
   iterations that reached it and the diagnostics of its factorisation, while `step_failures` and
   `promoted` still count the discarded step; `min_iterations` is read for `x_k`. At a saddle of
   `‖F‖²` that the Gauss–Newton model reads as a minimum, such as the saddle that a
-  mirror-symmetric problem has on its symmetry set, the rule applies with every method, so a
-  solve whose iterate reaches the saddle and passes the test there now ends there. With `DogLeg`
-  and with a line search capped at one iteration, whether the solve ended there or ran on past it
-  depended on rounding: a perturbation of the data by a few ULPs changed the outcome. A solve with
-  the default `GaussNewton()`, with `LevenbergMarquardt` or with the default `StrongWolfe()` in
-  Float64 that left such a saddle for a minimum of lower `‖F‖` ends at the saddle instead. The step
-  from `x₀` is kept, and every other problem type is unchanged. An array iterate keeps `x_k` and its
+  mirror-symmetric problem has on its symmetry set, the rule applies with every method and
+  globalization, so a solve whose step starts at such a saddle, with a factorisation taken there,
+  now ends there. A step along a reused factor (`reuse > 1`) carries the diagnostics of an earlier
+  point, so the rule does not fire at its start point and the solve goes on past a stationary
+  `x_k`. With `DogLeg` and with a line search capped at one iteration, whether the solve ended
+  there or ran on past it depended on rounding: a perturbation of the data by a few ULPs changed
+  the outcome. A solve that left such a saddle for a point of lower `‖F‖` ends at the saddle
+  instead, because the rule reads the stationarity test, not `‖F‖`; on the mirror-symmetric test
+  problem this holds for the default `GaussNewton()`, among others. The step from `x₀` is kept, and
+  every other problem type is unchanged. An array iterate keeps `x_k` and its
   residual in two buffers that `init_state` allocates, so `solve!!` allocates nothing; `NewtonState`
   gains the field `kept` for them.
 
