@@ -1127,6 +1127,21 @@ end
     @test !GeometricSolvers.keeps_step_start(
         NonlinearProblem(r_d!), Options(T), solver_a.state, status_1)
 
+    # The status of the returned start point: the iterations, `fnorm` and `stepnorm` of the start
+    # point, and the step-rule failures and the promotion of the discarded step too.
+    status_k = GeometricSolvers.SolverStatus{T}(
+        SUCCESS, Int32(1), T(2), T(3), Int32(0), false, false)
+    status_2 = GeometricSolvers.SolverStatus{T}(
+        LINESEARCH_FAILED, Int32(2), T(5), T(7), Int32(2), true, false)
+    st_d = GeometricSolvers.discarded_step_status(status_k, status_2)
+    @test st_d.code === SUCCESS
+    @test st_d.stationary === true
+    @test st_d.iterations == 1
+    @test st_d.fnorm == status_k.fnorm
+    @test st_d.stepnorm == status_k.stepnorm
+    @test st_d.step_failures == 2
+    @test st_d.promoted === true
+
     # The rule never applies to the first step: from t = 0, which reads stationary, the step to
     # t = −1 is kept and the solve goes on.
     for alg in (GaussNewton(), GaussNewton(; linsolve = SVDFactorization()))
@@ -1177,15 +1192,23 @@ end
     # solve returns the first iterate instead of going on to a minimum. `LevenbergMarquardt`
     # damps the steps, so u reaches 1 over several steps while the distance in v from the saddle
     # grows by at most m per step; with m = 1e3 in Float64 and m = 200 in Float32 an iterate
-    # near the saddle passes the test, and the next step fails it.
+    # near the saddle passes the test, and the next step fails it. With `StrongWolfe(; maxiter = 1)`
+    # and `Bisection(; maxiter = 1)` the second step is a failed line search that still lowers the
+    # merit; the solve discards it and returns the first iterate, and the failures of the discarded
+    # step count: one in all, and two under `Bisection`, whose first step fails once too.
     perturbations = ((one(T), nextfloat(one(T))), (nextfloat(one(T)), one(T)),
         (prevfloat(one(T)), one(T)), (one(T), nextfloat(one(T), 2)),
         (prevfloat(one(T)), nextfloat(one(T))), (nextfloat(one(T), 3), prevfloat(one(T))))
+    m_dogleg = T === Float64 ? T(1e5) : T(200)
     dogleg = GaussNewton(; globalization = DogLeg())
     # a device array takes `LevenbergMarquardt` with an SVD factorisation only
     lm = GaussNewton(; globalization = LevenbergMarquardt(), linsolve = SVDFactorization())
-    for (alg_b, m_b) in ((dogleg, T === Float64 ? T(1e5) : T(200)),
-            (lm, T === Float64 ? T(1e3) : T(200))),
+    strongwolfe = GaussNewton(; globalization = StrongWolfe(; maxiter = 1))
+    bisection = GaussNewton(; globalization = Bisection(; maxiter = 1))
+    # the method, m and the step-rule failures of a solve that discards its second step
+    for (alg_b, m_b, failures_b) in ((dogleg, m_dogleg, nothing),
+            (lm, T === Float64 ? T(1e3) : T(200), nothing),
+            (strongwolfe, m_dogleg, 1), (bisection, m_dogleg, 2)),
         (d₁, d₂) in perturbations
 
         c_b = sqrt(2 / m_b)
@@ -1226,6 +1249,10 @@ end
                 @test abs(xb[1] - one(T)) <= sqrt(eps(T))
                 @test abs(xb[2]) <= g_tol
                 @test lsq_ratio(rb_s, Jb_s, xb) <= g_tol
+                if failures_b !== nothing
+                    @test st.iterations == 1
+                    @test st.step_failures == failures_b
+                end
             end
         end
     end

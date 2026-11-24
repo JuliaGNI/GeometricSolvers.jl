@@ -16,14 +16,14 @@ so that a compat-only bump can be told apart from an interface change.
   takes at its start point `x_k`, `k ≥ 1`, and fails when `solve!!` re-measures it at the end of
   the step, the solve returns `x_k` with `SUCCESS` and `status.stationary == true`, and no longer
   goes on from the end of the step. The status is that of `x_k`: its `fnorm` and `stepnorm`, the
-  iterations that reached it and the diagnostics of its factorisation; `min_iterations` is read
-  for `x_k`. At a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum, such as the
-  saddle that a mirror-symmetric problem has on its symmetry set, whether the solve ended at the
-  saddle or ran on past it depended on rounding: a perturbation of the data by a few ULPs changed
-  the outcome. Such a solve now ends at the saddle. The step from `x₀` is kept, and every other
-  problem type is unchanged. An array iterate keeps `x_k` and its residual in two buffers that
-  `init_state` allocates, so `solve!!` allocates nothing; `NewtonState` gains the field `kept` for
-  them.
+  iterations that reached it and the diagnostics of its factorisation, while `step_failures` and
+  `promoted` still count the discarded step; `min_iterations` is read for `x_k`. At a saddle of
+  `‖F‖²` that the Gauss–Newton model reads as a minimum, such as the saddle that a
+  mirror-symmetric problem has on its symmetry set, whether the solve ended at the saddle or ran
+  on past it depended on rounding: a perturbation of the data by a few ULPs changed the outcome.
+  Such a solve now ends at the saddle. The step from `x₀` is kept, and every other problem type is
+  unchanged. An array iterate keeps `x_k` and its residual in two buffers that `init_state`
+  allocates, so `solve!!` allocates nothing; `NewtonState` gains the field `kept` for them.
 
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,

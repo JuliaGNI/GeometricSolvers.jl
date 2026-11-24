@@ -73,6 +73,16 @@ end
         status.step_failures, status.promoted, true)
 end
 
+# The status of a solve that returns the start point `x_k` of a step it discards: `SUCCESS` and
+# stationary, with the iterations, `fnorm` and `stepnorm` of `status_k` at `x_k`, and the
+# step-rule failures and the promotion of `status`, into which `record` folded the discarded step.
+@inline function discarded_step_status(
+        status_k::SolverStatus{R}, status::SolverStatus{R}) where {R}
+    return SolverStatus{R}(
+        SUCCESS, status_k.iterations, status_k.fnorm, status_k.stepnorm,
+        status.step_failures, status.promoted, true)
+end
+
 @inline function end_status(status::SolverStatus{R}, code::ReturnCode) where {R}
     return SolverStatus{R}(
         code, status.iterations, status.fnorm, status.stepnorm,
@@ -170,10 +180,11 @@ factorisation that the step took at its start point `x_k` passes the test, with 
 `k ≥ options.min_iterations`, the solve returns `x_k` with `SUCCESS` and
 `status.stationary == true`, and the step is discarded: the status counts the `k` iterations that
 reached `x_k` and carries the `fnorm` and `stepnorm` of `x_k` and the diagnostics of its
-factorisation. The step from `x₀` is always kept. A step along a reused factor takes no
-factorisation at its start point unless it falls back to a fresh one there, after a failed line
-search or refinement; without one, it carries the diagnostics that the solve tested at `x_k`
-before, which failed, so it is kept. When neither test holds
+factorisation, while the step-rule failures and the promotion of the discarded step still count
+in `status.step_failures` and `status.promoted`. The step from `x₀` is always kept. A step
+along a reused factor takes no factorisation at its start point unless it falls back to a fresh
+one there, after a failed line search or refinement; without one, it carries the diagnostics
+that the solve tested at `x_k` before, which failed, so it is kept. When neither test holds
 after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
 at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
 would start — unless the stationarity test, re-measured at that iterate, holds, which a
@@ -234,12 +245,13 @@ function solve!!(
                 return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
             # the step left a start point that its factorisation there reads stationary: the solve
-            # returns that point, with its status and the state that carries its diagnostics
+            # returns that point, with its status, in which the failures and the promotion of the
+            # discarded step still count, and the state that carries its diagnostics
             if keeps_step_start(prob, options, state_step, status_k)
                 x = copy!!(x, x_k)
                 Fx = copy!!(Fx, F_k)
-                return finish!!(
-                    state_step, method, prob, x, Fx, stationary_status(status_k))
+                return finish!!(state_step, method, prob, x, Fx,
+                    discarded_step_status(status_k, status))
             end
         end
         # the residual test fails: the step test, or a zero step, ends the solve unconverged,
