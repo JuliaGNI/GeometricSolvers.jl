@@ -37,11 +37,15 @@ so that a compat-only bump can be told apart from an interface change.
   iterations that reached it and the diagnostics of its factorisation, while `step_failures` and
   `promoted` still count the discarded step; `min_iterations` is read for `x_k`. At a saddle of
   `‖F‖²` that the Gauss–Newton model reads as a minimum, such as the saddle that a
-  mirror-symmetric problem has on its symmetry set, whether the solve ended at the saddle or ran
-  on past it depended on rounding: a perturbation of the data by a few ULPs changed the outcome.
-  Such a solve now ends at the saddle. The step from `x₀` is kept, and every other problem type is
-  unchanged. An array iterate keeps `x_k` and its residual in two buffers that `init_state`
-  allocates, so `solve!!` allocates nothing; `NewtonState` gains the field `kept` for them.
+  mirror-symmetric problem has on its symmetry set, the rule applies with every method, so a
+  solve whose iterate reaches the saddle and passes the test there now ends there. With `DogLeg`
+  and with a line search capped at one iteration, whether the solve ended there or ran on past it
+  depended on rounding: a perturbation of the data by a few ULPs changed the outcome. A solve with
+  the default `GaussNewton()`, with `LevenbergMarquardt` or with the default `StrongWolfe()` in
+  Float64 that left such a saddle for a minimum of lower `‖F‖` ends at the saddle instead. The step
+  from `x₀` is kept, and every other problem type is unchanged. An array iterate keeps `x_k` and its
+  residual in two buffers that `init_state` allocates, so `solve!!` allocates nothing; `NewtonState`
+  gains the field `kept` for them.
 
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
