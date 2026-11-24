@@ -1168,15 +1168,16 @@ end
     # merit has the curvature c_b² − 2 < 0, while the Gauss–Newton model sees c_b² > 0, so the
     # Gauss–Newton iteration multiplies the distance in v from the saddle by m = 2 / c_b² per step.
     # The minima are near v = ±1. Data d₁ ≠ d₂ a few ULPs apart move the saddle to
-    # v ≈ (d₁ − d₂) / 2, so the first step from the symmetric start (0, 0) reaches (1, m (d₂ − d₁) / 2), whose ratio
-    # is about m |d₂ − d₁|, and the Gauss–Newton step from there multiplies that by m. With m = 1e5
-    # in Float64 and m = 200 in Float32, the first iterate passes the test and the end of that step
-    # fails it. The model reduction of the step is at the rounding level of ‖r‖, so rounding decides
-    # whether `DogLeg` accepts it: where it rejects it, the zero step ends the solve at the first
-    # iterate; where it accepts it, the solve returns the first iterate instead of going on to a
-    # minimum. `LevenbergMarquardt` damps the steps, so u reaches 1 over several steps while the
-    # distance in v from the saddle grows by at most m per step; with m = 1e3 in Float64 and
-    # m = 200 in Float32 an iterate near the saddle passes the test, and the next step fails it.
+    # v ≈ (d₁ − d₂) / 2, so the first step from the symmetric start (0, 0) reaches
+    # (1, m (d₂ − d₁) / 2), whose ratio is about m |d₂ − d₁|, and the Gauss–Newton step from
+    # there multiplies that by m. With m = 1e5 in Float64 and m = 200 in Float32, the first
+    # iterate passes the test and the end of that step fails it. The model reduction of the step
+    # is at the rounding level of ‖r‖, so rounding decides whether `DogLeg` accepts it: where it
+    # rejects it, the zero step ends the solve at the first iterate; where it accepts it, the
+    # solve returns the first iterate instead of going on to a minimum. `LevenbergMarquardt`
+    # damps the steps, so u reaches 1 over several steps while the distance in v from the saddle
+    # grows by at most m per step; with m = 1e3 in Float64 and m = 200 in Float32 an iterate
+    # near the saddle passes the test, and the next step fails it.
     perturbations = ((one(T), nextfloat(one(T))), (nextfloat(one(T)), one(T)),
         (prevfloat(one(T)), one(T)), (one(T), nextfloat(one(T), 2)),
         (prevfloat(one(T)), nextfloat(one(T))), (nextfloat(one(T), 3), prevfloat(one(T))))
