@@ -814,4 +814,4 @@
   on a `JLArray` gives the same `info`, `scale_exponent` and `2.7e-4` in the four element types
   (tree of `49a1752`).
 - **kind:** found late
-- **found:** 2026-11-24
+- **found:** #113
