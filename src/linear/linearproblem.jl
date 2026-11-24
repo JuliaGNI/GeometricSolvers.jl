@@ -10,7 +10,9 @@
 The linear system `A x = b` of a dense `m × n` matrix `A`, held in the field `A`, for the
 right-hand sides `b` that `solve!` of a [`LinearSolver`](@ref) is given.
 `A` is a static matrix (R1) or any other dense `AbstractMatrix`, on the host or on a device (R3).
-A matrix with a zero dimension and a sparse matrix raise an `ArgumentError`.
+A matrix with a zero dimension and a sparse matrix raise an `ArgumentError`. The element type of
+`A` is a real or complex floating-point type that the factors of the method take; `A` is not
+converted, so that an integer matrix raises an error in the factorisation or in the solve.
 
 `init(prob, method)` factorises `A` with `method` and returns a [`LinearSolver`](@ref); `method` is
 one of [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref),
@@ -147,7 +149,9 @@ function init(prob::LinearProblem, method)
         throw(ArgumentError(
             "$(nameof(typeof(method))) factorises a square matrix alone, got the size ($m, $n); " *
             "take QRFactorization() or SVDFactorization()"))
-    m < n && method isa QRFactorization && A isa AbstractGPUArray &&
+    # the device factor follows the template `similar(A, T, m)` of `linear_solver`, which is a
+    # device array for a wrapped device array too, such as its adjoint
+    m < n && method isa QRFactorization && similar(A, m) isa AbstractGPUArray &&
         throw(ArgumentError(
             "QRFactorization has no minimum-norm solve of an m × n system with m < n on a device " *
             "array; take SVDFactorization()"))

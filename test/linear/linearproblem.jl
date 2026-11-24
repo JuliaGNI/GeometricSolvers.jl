@@ -12,7 +12,7 @@
 # in `BigFloat` of the matrix and the vector as they are rounded.
 
 using GeometricSolvers
-using GeometricSolvers: NONFINITE, SINGULAR, SUCCESS
+using GeometricSolvers: NONFINITE, SINGULAR, SUCCESS, factor_eltype
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
 using LinearAlgebra: norm
@@ -201,6 +201,9 @@ end
     if device_wide_qr(route, method, m, n)
         @test_throws r"^ArgumentError: QRFactorization has no minimum-norm solve of an m × n system with m < n on a device array; take SVDFactorization\(\)$" init(
             LinearProblem(JLArray(A)), method)
+        # a device array behind a wrapper that is no `AbstractGPUArray` itself
+        @test_throws r"^ArgumentError: QRFactorization has no minimum-norm solve of an m × n system with m < n on a device array; take SVDFactorization\(\)$" init(
+            LinearProblem(JLArray(Matrix(A'))'), method)
         continue
     end
     R = real(T)
@@ -457,6 +460,32 @@ end
     end
 end
 
+@testset "the scale exponent of the factor of Aᴴ with m < n: $route, $method, $A_kind" for route in ROUTES,
+    method in (SVDFactorization(), SVDFactorization(Float32), QRFactorization(),
+        QRFactorization(Float32)),
+    A_kind in ("largest entry prevfloat(2.0)", "subnormal")
+
+    # The factor of a dense or device array divides `Aᴴ / 2^e` by a power of two of its own, which
+    # the solve adds to `e`: where the largest entry of `A / 2^e` rounds up to 2 in a `Float32`
+    # factor, and where `A` is subnormal. The static factors scale `A` themselves; their QR and
+    # `Float32` SVD lose the accuracy of a subnormal matrix on the square path too, so that matrix is
+    # left out of them.
+    device_wide_qr(route, method, 3, 5) && continue
+    route == "SMatrix" && A_kind == "subnormal" && continue
+    A = wellcond(Float64, 3, 5)
+    b = rhs(Float64, 3)
+    if A_kind == "subnormal"
+        A = ldexp.(A, -1070)
+        b = ldexp.(b, -1000)
+    else
+        A ./= maximum(abs, A)
+        A .*= prevfloat(2.0)
+    end
+    x, st, _ = lp_solve(route, method, A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 64 * eps(factor_eltype(method, Float64))
+end
+
 @testset "A · 2^k and b · 2^j: $route, $R, $(nameof(typeof(method))), $m × $n" for route in ROUTES,
     R in REAL_ELTYPES,
     (method, m, n) in ((LUFactorization(), 4, 4), (QRFactorization(), 4, 4),
@@ -496,17 +525,15 @@ allocations(f::F, args::Vararg{Any, K}) where {F, K} = (f(args...); @allocated f
     hb = rhs(Float64, m)
     @inferred solve!(hsolver, hb)
     # under --check-bounds=yes a bounds check lets a local `MMatrix` of the static kernels escape
-    # to the heap, so the allocation counts are skipped where a run forces it
+    # to the heap, so the counts of R1 are skipped where a run forces it
     if Base.JLOptions().check_bounds != 1
         @test allocations(init, prob, method) == 0
         @test allocations(solve!, solver, sb) == 0
         @test allocations(refactorize!!, solver, SA) == 0
-        if !(method isa QRFactorization && m < n)
-            @test allocations(solve!, hsolver, hb) == 0
-            @test allocations(refactorize!!, hsolver, A) == 0
-        end
-        @test allocations(collect, SVector(1.0, 2.0)) > 0
     end
+    @test allocations(solve!, hsolver, hb) == 0
+    @test allocations(refactorize!!, hsolver, A) == 0
+    @test allocations(collect, SVector(1.0, 2.0)) > 0
 end
 
 @testset "BigFloat: $route, $(nameof(typeof(method))), $m × $n" for (route, method, m, n) in (

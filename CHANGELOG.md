@@ -967,9 +967,9 @@ so that a compat-only bump can be told apart from an interface change.
   `isbits` solver and a new `SVector` result, and `init`, `solve!` and `refactorize!!` are inferred
   and allocation-free for a `Float64` `SMatrix`. Any other dense `AbstractMatrix`, on the host or a
   device (R3), returns the buffer `solver.x`, which the next `solve!` overwrites; on a `Float64`
-  host `Array`, `solve!` and `refactorize!!` allocate nothing after a warm-up, and the tests leave
-  the QR path with `m < n` out of that count. The object adds no kernel. `m == n` takes every factor type, and
-  `CholeskyFactorization` on a device raises an `ArgumentError`. `m > n` is the least-squares
+  host `Array`, `solve!` and `refactorize!!` allocate nothing after a warm-up. The object adds no
+  kernel. `m == n` takes every factor type, and `CholeskyFactorization` on a device raises an
+  `ArgumentError`. `m > n` is the least-squares
   solution through QR or SVD, the minimum-norm one where the SVD rank is below `n`; LU, LDLᵀ and
   Cholesky raise an `ArgumentError` for `m ≠ n`. `m < n` is the minimum-norm solution through the
   SVD of `Aᴴ` truncated at its rank, on every route, or through a QR of `Aᴴ`, `x = Q R⁻ᴴ b`, on a
