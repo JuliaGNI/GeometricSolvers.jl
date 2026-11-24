@@ -91,7 +91,8 @@ julia> round(last_status.fnorm; digits = 2), round(best_status.fnorm; digits = 2
 
 [`GaussNewton`](@ref) and [`QuasiNewton`](@ref) take the keyword too. A [`Deflated`](@ref) problem
 and the outer method of a [`BlockEliminated`](@ref), a [`VariableProjection`](@ref) or a
-[`BatchEliminated`](@ref) problem refuse it. The residual test can read the max norm instead of the 2-norm, with
+[`BatchEliminated`](@ref) problem refuse it, and so does [`LeftPreconditioned`](@ref) for a
+`Newton` in its outer method. The residual test can read the max norm instead of the 2-norm, with
 `Options(T; norm = MaxNorm())` ([`Options`](@ref)); the ranking of `best` stays in the 2-norm.
 
 ## `GaussNewton`

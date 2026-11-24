@@ -26,7 +26,9 @@ at the warm start. The cap stands alone before the first outer residual exists, 
 without them. The inner iteration is Newton's method with step halving (at most 8 halvings per
 step) and at most `max_iterations` steps of `inner_options` (50 without them); `inner_method`
 supplies only the linear solver of these steps and of the Schur complement
-(`inner_method.linsolve` for a `Newton`, or a linear method itself). The outer solver then steps on
+(`inner_method.linsolve` for a `Newton`, or a linear method itself). The inner iteration reads
+only `f_abstol`, `f_reltol` and `max_iterations` of `inner_options`, against the 2-norm, so their
+`norm` has no effect. The outer solver then steps on
 the reduced residual ``F_{\\text{red}}(z) = F_{E_z}(\\tilde y(z), z)``, where for
 `linear_inner = false` and an inner residual above the floor ``\\tilde y(z) = y - J_{yy}(y, z)^+
 F_{E_y}(y, z)`` is the inner iterate `y` refined by one Newton correction (it agrees with
@@ -84,8 +86,9 @@ solve ``y^*(z) = -\\Phi(z)^+ r(0, z)`` with ``\\Phi(z) = \\partial r / \\partial
 `linear_inner = true`, or by a Gauss–Newton iteration with step halving, warm-started from `y_warm`,
 when `linear_inner = false`). `linsolve` factorises ``\\Phi(z)`` when `linear_inner = true`; with
 `linear_inner = false` the linear solver of `inner_method` (`inner_method.linsolve` for a `Newton`,
-or a linear method itself) does, in the iteration and in the reduced Jacobian. The outer solver
-steps on the reduced residual
+or a linear method itself) does, in the iteration and in the reduced Jacobian. The iteration
+reads the tolerances and `max_iterations` of `inner_options` as [`BlockEliminated`](@ref) does,
+against the 2-norm, so their `norm` has no effect. The outer solver steps on the reduced residual
 ``r_{\\text{red}}(z) = r(y^*(z), z)`` with reduced Jacobian (`m × |Z|`):
 
 - `jacobian_mode = :kaufman` (default): Kaufman's first-term reduced Jacobian

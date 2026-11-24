@@ -532,6 +532,15 @@ end
     return _inner_status(status, _deflate_scale!(state.jacprep.us, def, x))
 end
 
+# Under `MaxNorm` the residual test reads the inner residual in the max norm, `‖M F‖∞ / M`.
+# `status` holds `‖M F‖₂ / M` of `raw`, whose norm is `‖M F‖₂`, so the ratio of the two norms
+# gives `1 / M` and the step forms the factor once. A zero residual has no ratio, and its max norm
+# is zero under any factor.
+@inline function test_status(n::MaxNorm, state, def::Deflated, x, Fx, raw, status)
+    scale = iszero(raw.fnorm) ? one(raw.fnorm) : status.fnorm / raw.fnorm
+    return with_fnorm(status, stopping_norm(n, Fx) * scale)
+end
+
 # ─── The checks of a solve ───────────────────────────────────────────────────
 
 # The iterate of a solve: real, in the element type of the roots, as long as every root, and a

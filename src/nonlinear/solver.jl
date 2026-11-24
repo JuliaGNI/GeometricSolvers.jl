@@ -95,7 +95,8 @@ end
 # The status that the residual test of `solve!!` reads at `x`, whose residual is `Fx`: `status`,
 # which `converged_status` gave from `raw`, under `L2Norm`; under another norm, the status that
 # `converged_status` gives from `raw` with the norm of `Fx` in that norm, so that a `Deflated`
-# problem tests its inner residual in the norm of the options too.
+# problem tests its inner residual in the norm of the options too. Under `MaxNorm` a `Deflated`
+# problem has a method of its own, which reuses the factor that `status` holds.
 @inline test_status(::L2Norm, state, prob, x, Fx, raw, status) = status
 @inline function test_status(n::StoppingNorm, state, prob, x, Fx, raw, status)
     return converged_status(state, prob, x, with_fnorm(raw, stopping_norm(n, Fx)))

@@ -971,9 +971,12 @@ so that a compat-only bump can be told apart from an interface change.
   `init_state`. `Repeat` takes the best over its sub-steps, and `Switch` and the other step-level
   combinators get the restore of their member's `finish!!`. A `Deflated` problem and the outer
   method of a `BlockEliminated`, `VariableProjection` or `BatchEliminated` problem refuse
-  `best = true` with an `ArgumentError`. `Newton` gains a last field and type parameter, `best::B` with `B` either
-  `Val{false}` or `Val{true}`, and `NewtonState` a last field, the record, which is `nothing`
-  under `best = false`, so that state keeps its size.
+  `best = true` with an `ArgumentError`, and so does `LeftPreconditioned` for a `Newton` in its
+  outer method, also as a member of a combinator there, whose record would rank the preconditioned
+  residual; its inner method takes `best = true`, which has no effect there. `Newton` gains a
+  last field and type parameter, `best::B` with `B` either `Val{false}` or `Val{true}`, and
+  `NewtonState` a last field, the record, which is `nothing` under `best = false`, so that state
+  keeps its size.
 
 - **`Options(T; norm = MaxNorm())` makes the residual test read the max norm.** The test is then
   `‖F(x)‖∞ ≤ max(f_abstol, f_reltol · ‖F(x₀)‖∞)`, with the max norm of the inner residual,
@@ -988,10 +991,11 @@ so that a compat-only bump can be told apart from an interface change.
   `typeof(Options(Float32))` prints `Options{Float32, L2Norm}`. The positional `Options{R}` takes
   the norm as an optional ninth argument, and the seven- and eight-argument forms give
   `L2Norm()`. The inner options of `BlockEliminated`, `VariableProjection` and `BatchEliminated`
-  keep their norm through `ToReal` and the batch tolerance. The max norm is the new internal
-  reduction `GeometricSolvers.rmaxnorm`, one `maximum(abs, ·)` with no scalar indexing, so it runs
-  on a device array and in a kernel; `GeometricSolvers.stopping_norm(n, a)` gives `rnorm` or
-  `rmaxnorm` by the norm `n`.
+  keep their norm through `ToReal` and the batch tolerance; only the inner solves of
+  `BatchEliminated` read it, and the inner iteration of the other two tests the 2-norm. The max
+  norm is the new internal reduction `GeometricSolvers.rmaxnorm`, one `maximum(abs, ·)` with no
+  scalar indexing, so it runs on a device array and in a kernel;
+  `GeometricSolvers.stopping_norm(n, a)` gives `rnorm` or `rmaxnorm` by the norm `n`.
 
 - **`KroneckerFactorization(; block = LUFactorization())` solves the Newton steps of the stage
   system of an implicit Runge–Kutta method.** With the stage matrix `A = V Λ V⁻¹`, `Newton`

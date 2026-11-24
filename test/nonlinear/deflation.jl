@@ -743,6 +743,16 @@ end
     @test x == x₂
     # `status.fnorm` stays the inner 2-norm
     @test st.fnorm ≈ norm(df(x, nothing)) rtol = 8eps()
+    # a start at a root of the inner problem that is not deflated has a zero residual, which the
+    # max-norm test takes at once on a value and on an array iterate
+    df!(y, x, p) = (y .= (x[1]^2 - 4, x[2] - 1); y)
+    for (prob, x0) in ((dprob, SVector(-2.0, 1.0)),
+        (Deflated(NonlinearProblem(df!), ([2.0, 1.0],)), [-2.0, 1.0]))
+        x, st = solve(prob, x0, Newton(); norm = MaxNorm())
+        @test st.code == SUCCESS
+        @test st.iterations == 0
+        @test x == x0
+    end
 end
 
 # ─── Edge 12: the distance on the unknowns, and the datum `b` ───────────────

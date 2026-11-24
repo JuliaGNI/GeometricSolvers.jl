@@ -191,7 +191,7 @@ end
 @testset "the positional Options{R} constructors take the norm" begin
     o = Options(
         Float64; f_abstol = 1e-3, max_iterations = 7, g_tol = 1e-5, norm = MaxNorm())
-    # the seven arguments of the base give `L2Norm()` and `g_tol = √eps(R)`
+    # seven arguments give `L2Norm()` and `g_tol = √eps(R)`
     o7 = Options{Float64}(o.f_abstol, o.f_reltol, o.x_abstol, o.x_reltol,
         o.min_iterations, o.max_iterations, o.max_stalls)
     @test o7.norm === L2Norm()

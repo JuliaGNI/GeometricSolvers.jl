@@ -83,7 +83,10 @@ allocates once, and holds the record by value for a value iterate, where it stay
 combinator that steps a `Newton` member, such as [`Repeat`](@ref) or [`Switch`](@ref), gets the
 member's restore through the member's `finish!!`. A [`Deflated`](@ref) problem and the outer
 method of a [`BlockEliminated`](@ref), [`VariableProjection`](@ref) or
-[`BatchEliminated`](@ref) problem refuse `best = true` with an `ArgumentError`.
+[`BatchEliminated`](@ref) problem refuse `best = true` with an `ArgumentError`, and so does a
+[`LeftPreconditioned`](@ref) method for a `Newton` in its outer method, also as a member of a
+combinator there, because the record would rank the preconditioned residual and `status.fnorm` is
+the norm of the global residual; its inner method takes `best = true`, which has no effect there.
 
 # Keywords of a `GMRES` linear method
 
@@ -645,8 +648,7 @@ end
 # is below the norm it holds, which a `NaN` norm never is, so the earliest of equal norms stays.
 @inline take_best(::Nothing, x, Fx, fnorm) = nothing
 @inline function take_best(b::BestIterate, x, Fx, fnorm)
-    fnorm < b.fnorm || return b
-    return BestIterate(copy!!(b.x, x), keep_residual!!(b.Fx, Fx), oftype(b.fnorm, fnorm))
+    return fnorm < b.fnorm ? start_best(b, x, Fx, fnorm) : b
 end
 @inline keep_residual!!(::Nothing, Fx) = nothing
 @inline keep_residual!!(slot, Fx) = copy!!(slot, Fx)
@@ -837,8 +839,13 @@ end
         "a LeastSquaresProblem with more residuals than unknowns (m = $m_rows, n = $(length(x))) takes no factor in a lower precision than the element type $T of the iterate; a factor in $F moves the Gauss–Newton fixed point off the least-squares point"))
 end
 
-# The state of every linear method, with the record of the best iterate where `best = true`.
+# The state of every linear method, with the record of the best iterate where `best = true`. On a
+# `LeftPreconditionedProblem` the record would rank `‖rˡ‖₂` while `status.fnorm` is the global
+# `‖F‖₂`, so `best = true` is refused there, for an outer `Newton` at any depth of a combinator.
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
+    m.best === Val(true) && prob isa LeftPreconditionedProblem &&
+        throw(ArgumentError(
+            "LeftPreconditioned does not take a Newton with best = true as its outer method: the best iterate would be ranked by the preconditioned residual, and status.fnorm is the norm of the global residual; use best = false"))
     state = newton_init_state(m, prob, x, p)
     return with_best(state, init_best(m.best, x, state.Fx))
 end
