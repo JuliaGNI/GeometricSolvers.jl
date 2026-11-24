@@ -439,24 +439,25 @@ end
     @test relerr(x4, xref(A, b)) <= 64 * eps(Float64)
 end
 
-@testset "Float32 factors of a Float64 system: $route, $method, $m × $n" for route in ROUTES,
+@testset "Float32 factors of a $T system: $route, $method, $m × $n" for route in ROUTES,
+    T in (Float64, ComplexF64),
     (method, m, n) in ((LUFactorization(Float32), 4, 4), (QRFactorization(Float32), 4, 4),
         (SVDFactorization(Float32), 4, 4), (SVDFactorization(Float32), 5, 3),
         (SVDFactorization(Float32), 3, 5), (QRFactorization(Float32), 5, 3),
         (QRFactorization(Float32), 3, 5))
-
     device_wide_qr(route, method, m, n) && continue
-    A = wellcond(Float64, m, n)
-    b = rhs(Float64, m)
+    A = wellcond(T, m, n)
+    b = rhs(T, m)
     x, st, solver = lp_solve(route, method, A, b)
-    @test eltype(x) === Float64
+    @test eltype(x) === T
     @test st.code == SUCCESS
     @test relerr(x, xref(A, b)) <= 64 * eps(Float32)
-    # `b` is divided by its largest entry before it is converted to `Float32`
+    # `b` is divided by its largest absolute entry before it is converted to `Float32`; a power of
+    # two scales a complex entry exactly
     for k in (-140, 140)
-        xk, stk = lp_resolve(route, solver, ldexp.(b, k))
+        xk, stk = lp_resolve(route, solver, b .* 2.0^k)
         @test stk.code == SUCCESS
-        @test isapprox(xk, ldexp.(x, k); rtol = 8 * eps(Float64))
+        @test isapprox(xk, x .* 2.0^k; rtol = 8 * eps(Float64))
     end
 end
 

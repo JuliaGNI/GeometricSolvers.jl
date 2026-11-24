@@ -819,3 +819,24 @@
   scale-exponent testset for this reason.
 - **kind:** defect
 - **found:** 2026-11-24
+
+### K110 · The host and device LU, QR, LDLᵀ and Cholesky factors in the element type of the matrix solve a subnormal matrix with `SUCCESS` and a large error, or give `NONFINITE`
+
+- **location:** `src/linear/dense.jl:197` (`load_factors!`), which `factorize!!` of the host
+  factors in `src/linear/dense.jl` and of the device factors in `src/linear/ka/lu.jl:140`,
+  `src/linear/ka/qr.jl:153` and `src/linear/ka/ldlt.jl:385` calls
+- **evidence:** `load_factors!` copies a matrix unscaled where the factor element type is that of
+  the matrix, and divides it by `2^e` only otherwise. With
+  `A = ldexp.(wellcond(Float64, m, n), -1070)` (`spd(Float64, 4)` in place of `wellcond` for LDLᵀ
+  and Cholesky) and `b = ldexp.(rhs(Float64, m), -1000)`, the helpers of
+  `test/linear/linearproblem.jl`, `solve!(init(LinearProblem(A), method), b)` on a host `Array`
+  gives `SUCCESS` with a relative error against the `BigFloat` solution of 0.022 for
+  `LUFactorization()` 4 × 4, 0.029 for `QRFactorization()` 4 × 4, 0.028 for `QRFactorization()`
+  5 × 3 and 0.0098 for `CholeskyFactorization()` 4 × 4, and `NONFINITE` for
+  `LDLTFactorization()` 4 × 4.
+  `SVDFactorization()` gives 3.0e-16 (4 × 4) and 2.0e-16 (5 × 3), and the `3 × 5`
+  `QRFactorization()`, whose `Aᴴ` the `LinearSolver` divides by `2^e` before it factorises it,
+  5.3e-16 (Julia 1.13.4, tree of `b1896d0`). `test/linear/linearproblem.jl` tests the subnormal
+  matrix for `m < n` alone.
+- **kind:** defect
+- **found:** #115

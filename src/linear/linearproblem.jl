@@ -112,13 +112,19 @@ the method. Every entry of `x` is `NaN` where the status is `SINGULAR`, where `A
 and where `b` is not finite. [`refactorize!!`](@ref) factorises a new matrix with the solver.
 
 On a static matrix the solver is a value, `isbits` for an `isbits` element type; on a dense or
-device array it holds the buffers that `solve!` and `refactorize!!` reuse. Its fields are
-`method`, `factor`, the factor of the method, `x`, the solution buffer, or `nothing` on a static
-matrix, `y`, a buffer of `m` entries in the factor element type for an `m < n` system whose factor
-element type is not that of `A`, and `nothing` otherwise, `m` and `n`, the size of `A`, `finite`,
-whether every entry of the factorised `A` is finite, and `scale_exponent`, the exponent `e` of the
-power of two `2^e` that `Aᴴ` was divided by when it was loaded into the factor of an `m < n`
-system on a dense or device array, and 0 otherwise.
+device array it holds the buffers that `solve!` and `refactorize!!` reuse.
+
+# Fields
+
+- `method`: the method of `init`.
+- `factor`: the factor of the method.
+- `x`: the solution buffer, or `nothing` on a static matrix.
+- `y`: a buffer of `m` entries in the factor element type for an `m < n` system whose factor
+  element type is not that of `A`, and `nothing` otherwise.
+- `m`, `n`: the size of `A`.
+- `finite`: whether every entry of the factorised `A` is finite.
+- `scale_exponent`: the exponent `e` of the power of two `2^e` that `Aᴴ` was divided by when it
+  was loaded into the factor of an `m < n` system on a dense or device array, and 0 otherwise.
 """
 struct LinearSolver{T, W, M <: LinearMethod, F, X, Y}
     method::M
