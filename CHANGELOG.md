@@ -979,11 +979,11 @@ so that a compat-only bump can be told apart from an interface change.
 - **`CholeskyFactorization` factorises on a device array, as the factor `DeviceCholesky`.** The
   own KernelAbstractions kernels run in one workgroup of 64 work-items, as the LDLᵀ kernel does, on
   every device array and element type that no vendor method below takes, `JLArray` and Metal's
-  `Float32` and `ComplexF32` included: a load kernel refuses a matrix with a non-finite entry anywhere with `info = 1`, takes the
-  power-of-two scale of a factor in another element type from the lower triangle and the real
-  diagonal, and writes zeros above the diagonal; a factor kernel runs the column loop, each
-  work-item taking the trailing columns `k + tid, k + tid + 64, …`; and the status is read back
-  once. On a `CuMatrix` and a `ROCMatrix` of a `BlasFloat` element type, the CUDA and AMDGPU
+  `Float32` and `ComplexF32` included: a load kernel refuses a matrix with a non-finite entry
+  anywhere with `info = 1`, takes the power-of-two scale of a factor in another element type from
+  the lower triangle and the real diagonal, and writes zeros above the diagonal; a factor kernel
+  runs the column loop, each work-item taking the trailing columns `k + tid, k + tid + 64, …`; and
+  the status is read back once. On a `CuMatrix` and a `ROCMatrix` of a `BlasFloat` element type, the CUDA and AMDGPU
   extensions call cuSOLVER and rocSOLVER `potrf`/`potrs` after the same load kernel. The status is
   the host factor's: `info = k` for the first leading minor that is not positive, `SINGULAR`, and
   `n = 0` launches nothing and gives `SUCCESS`. The JLArray rows of `test/linear/cholesky.jl` agree

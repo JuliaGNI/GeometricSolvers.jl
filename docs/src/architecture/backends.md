@@ -123,10 +123,9 @@ The factor that a dense R3 solve uses:
   `ComplexF32` and the other factorisations stay on the own kernels.
 - The **ROCm** extension `GeometricSolversAMDGPUExt` adds the rocSOLVER and rocBLAS methods for
   `DeviceLU`, `DeviceQR` and `DeviceCholesky` on `ROCMatrix{T}` with
-  `T <: LinearAlgebra.BlasFloat`. rocSOLVER
-  `geqrf` and `ormqr` and rocBLAS `trsv` serve every shape of the QR factor: the solve with the
-  `m × n` factor of a least-squares problem, `m > n`, runs `trsv` on its leading `n × n` block.
-  Other element types and the other factorisations stay on the own kernels.
+  `T <: LinearAlgebra.BlasFloat`. rocSOLVER `geqrf` and `ormqr` and rocBLAS `trsv` serve every
+  shape of the QR factor: the solve with the `m × n` factor of a least-squares problem, `m > n`,
+  runs `trsv` on its leading `n × n` block. Other element types and the other factorisations stay on the own kernels.
 
 A vendor method replaces only `factorize!!` and the back substitution of its factor type. The
 scaling by a power of two, the mixed-precision solve and the status handling are the same on
