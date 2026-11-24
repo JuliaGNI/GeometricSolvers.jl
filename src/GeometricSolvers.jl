@@ -15,6 +15,7 @@ using KernelAbstractions: CPU, KernelAbstractions, @Const, @index, @kernel, allo
                           get_backend, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, givens,
                      ldiv!, lu!, mul!, qr!
+using LinearAlgebra: cond, eigen
 using SparseArrays: SparseArrays
 using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
                     StaticMatrix, StaticVector, SVector,
@@ -32,6 +33,7 @@ export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrize
        BlockEliminated, VariableProjection
 export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization,
        CholeskyFactorization
+export KroneckerFactorization, StageResidual, stage_matrix, stage_jacobian
 export UMFPACKFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
@@ -80,6 +82,7 @@ include("linear/ka/qr.jl")
 include("linear/ka/svd.jl")
 include("linear/mixed.jl")
 include("linear/gmres.jl")
+include("linear/kronecker.jl")
 
 include("globalization/linesearch.jl")
 include("globalization/static.jl")
