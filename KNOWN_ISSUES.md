@@ -817,3 +817,18 @@
   outside the band of `use_recursive_lu`.
 - **kind:** upstream
 - **found:** 2026-11-24
+
+### K110 · The outer iteration counts of Check 6 in `test/composition/preconditioning.jl` are round-off sensitive, so a change of the block factor's round-off moves them across their bounds
+
+- **location:** `test/composition/preconditioning.jl:1083` (the testset "Check 6: the P8 counts
+  and the parallel schedule"; the NKS-RAS bound at `:1113`, the RASPEN bound at `:1136`)
+- **evidence:** a probe of 64 starts 1 ulp from `x0` (record of 2026-11-24): with `getrf!` as the
+  dense block factor, as on `origin/main`, `Float64` RASPEN takes 4–9 outer iterations and
+  `Float32` NKS-RAS ends `MAXITERS` from 3 of the 64 starts; with `recursive_lu!` in the band
+  `8 ≤ n ≤ 32`, RASPEN takes 4–7 and every `Float32` solve ends `SUCCESS`. From `x0` itself,
+  `Float64` RASPEN takes 7 outer iterations under `recursive_lu!`, where the RASPEN bound was
+  `<= 6`. The RASPEN bound is `<= 9`, the top of the spread under `getrf!`; the NKS-RAS bound
+  stays `<= 6`. The follow-up is a robust Check 6: a start or a `λ` whose measured spread of
+  outer iterations lies inside the bounds.
+- **kind:** missing test
+- **found:** 2026-11-24
