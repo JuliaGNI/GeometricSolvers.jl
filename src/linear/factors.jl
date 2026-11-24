@@ -51,10 +51,13 @@ numerical rank as for a static matrix. An `Inf` in a dense `J` does not throw; t
 Cholesky factors then report `SINGULAR`, and the step that the LU or QR factors give is not
 specified.
 
-For a sparse factor (R3), which an extension builds in [`init_linear`](@ref) from a
-`SparseMatrixCSC` `jacobian_prototype`, `J` must have the sparsity pattern of that prototype, or
-`ArgumentError` is raised. A zero pivot, a non-finite entry of `J` and a non-finite factor give
-`info = 1` and `SINGULAR` without throwing.
+For a sparse factor (R3), which [`init_linear`](@ref) builds from a sparse `jacobian_prototype` —
+the Sparspak factor of an extension and the [`UMFPACKLU`](@ref) of
+[`UMFPACKFactorization`](@ref) from a `SparseMatrixCSC`, and the cuDSS factor of an extension
+from a `CuSparseMatrixCSR` — `J` must have the sparsity pattern of that prototype, or
+`ArgumentError` is raised. A non-finite entry of `J` gives `info = 1` and `SINGULAR` without
+throwing. So do a zero pivot and a non-finite factor of Sparspak, a singular matrix in UMFPACK's
+status, and a nonzero cuDSS `info`.
 
 A precision marker such as [`TF32`](@ref) has no method for a static matrix: the call raises a
 `MethodError`.
@@ -468,8 +471,9 @@ end
 Build the linear factor for `method` on `x`: the dense host factor [`DenseLU`](@ref),
 [`DenseQR`](@ref), [`DenseSVD`](@ref), [`DenseLDLT`](@ref) or [`DenseCholesky`](@ref) or device
 factor [`DeviceLU`](@ref), [`DeviceQR`](@ref), [`DeviceSVD`](@ref), [`DeviceLDLT`](@ref) or
-[`DeviceCholesky`](@ref) when `pattern === nothing`, or an extension's sparse factor when `pattern`
-is a sparse matrix prototype.
+[`DeviceCholesky`](@ref) when `pattern === nothing`, or a sparse factor when `pattern` is a sparse
+matrix prototype: an extension's, or the [`UMFPACKLU`](@ref) of [`UMFPACKFactorization`](@ref),
+which raises `ArgumentError` for `pattern === nothing`.
 """
 function init_linear(m::LUFactorization, ::Nothing, x::AbstractVector{T}) where {T <:
                                                                                  Number}

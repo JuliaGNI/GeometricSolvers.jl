@@ -145,8 +145,13 @@ julia> nameof(typeof(solver.state.fac))
 :SparspakLU
 ```
 
+[`UMFPACKFactorization`](@ref) gives the sparse LU of UMFPACK, from `SparseArrays`, on the same
+pattern for a host `Vector{Float64}` or `Vector{ComplexF64}` iterate, with no package to load; it
+raises `ArgumentError` at `init` for another element type and for a problem with no sparse pattern.
+With `CUDA` and `CUDSS` loaded, an [`LUFactorization`](@ref) on a `CuVector` iterate with a
+`CuSparseMatrixCSR` `jacobian_prototype` and an analytic `J!` gives the sparse LU of cuDSS.
 [`QRFactorization`](@ref), [`SVDFactorization`](@ref), a factorisation precision other than the
-element type of the iterate, a complex iterate and a device iterate have no sparse factor. The
+element type of the iterate, and every other complex or device iterate have no sparse factor. The
 section [Factorisation and solve](@ref) of the API lists which configurations take a detected
 pattern and which raise an error.
 

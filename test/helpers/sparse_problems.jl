@@ -5,6 +5,11 @@ using GeometricSolvers: NonlinearProblem
 using Random: AbstractRNG, MersenneTwister
 using SparseArrays: SparseArrays, SparseMatrixCSC, nonzeros, nzrange, rowvals, sparse
 
+# The element types of the sparse test problems: a real float type, and a complex type over one.
+const SparseProblemEltype = Union{AbstractFloat, Complex{<:AbstractFloat}}
+
+# A complex `T` draws one more number per entry, its imaginary part, after the real one, so that
+# the real problems keep the draws of the seed.
 function _sparse_circband_entries!(
         I::Vector{Int},
         J::Vector{Int},
@@ -15,15 +20,16 @@ function _sparse_circband_entries!(
         ::Type{T},
         rng::AbstractRNG;
         skew::Bool = false
-) where {T <: AbstractFloat}
+) where {T <: SparseProblemEltype}
+    R = real(T)
     for i in 1:N, k in -3:3
 
         j = mod1(i + k, N)
         push!(I, row_offset + i)
         push!(J, col_offset + j)
-        w = T(rand(rng)) / T(4)
-        val = skew ? T(k) * (one(T) + w) : (k == 0 ? T(4) : w)
-        push!(V, val)
+        w = R(rand(rng)) / R(4)
+        val = skew ? R(k) * (one(R) + w) : (k == 0 ? R(4) : w)
+        push!(V, T <: Complex ? T(val, R(rand(rng)) / R(8)) : T(val))
     end
     return nothing
 end
@@ -32,7 +38,7 @@ function _sparse_block_matrix(
         N::Int,
         ::Type{T} = Float64;
         seed::Int = 1
-) where {T <: AbstractFloat}
+) where {T <: SparseProblemEltype}
     rng = MersenneTwister(seed)
     I = Int[]
     J = Int[]
@@ -54,21 +60,27 @@ Build a `2 × 2`-block sparse nonlinear test problem of dimension `n = 2N` with 
 `7`-diagonal periodic banded blocks (`nnz(P) == 28N`, non-symmetric values `P != transpose(P)`),
 cross-block nonlinear coupling (omitted at row `1` so `(1, N + 1)` is a stored zero at every
 iterate), and a planted solution `z_star`. Returns `(prob_analytic, prob_ad, z0, p_val, z_star)`.
+
+`T` is a real float type or a complex type over one. A complex `T` adds an imaginary part in
+`[0, 1/8)` to each entry of the matrix and `cos(θ)/4` and `sin(θ)/4` to the planted solution; the
+residual is holomorphic in `z`, so its analytic Jacobian is the complex derivative. The parameter
+`p_val` is real for every `T`.
 """
 function sparse_bracket_problem(
         N::Int,
         ::Type{T} = Float64;
         seed::Int = 1
-) where {T <: AbstractFloat}
+) where {T <: SparseProblemEltype}
+    R = real(T)
     n = 2 * N
     A = _sparse_block_matrix(N, T; seed = seed)
     P = copy(A)
-    p_val = one(T)
+    p_val = one(R)
     z_star = Vector{T}(undef, n)
     @inbounds for i in 1:N
-        θ = T(2) * T(pi) * T(i) / T(N)
-        z_star[i] = sin(θ) / T(2)
-        z_star[N + i] = cos(θ) / T(2)
+        θ = R(2) * R(pi) * R(i) / R(N)
+        z_star[i] = T <: Complex ? T(sin(θ) / R(2), cos(θ) / R(4)) : sin(θ) / R(2)
+        z_star[N + i] = T <: Complex ? T(cos(θ) / R(2), sin(θ) / R(4)) : cos(θ) / R(2)
     end
 
     b = zeros(T, n)
