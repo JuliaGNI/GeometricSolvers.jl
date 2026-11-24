@@ -986,10 +986,12 @@ so that a compat-only bump can be told apart from an interface change.
   the status is read back once. On a `CuMatrix` and a `ROCMatrix` of a `BlasFloat` element type,
   the CUDA and AMDGPU extensions call cuSOLVER and rocSOLVER `potrf`/`potrs` after the same load
   kernel. The status is the host factor's: `info = k` for the first leading minor that is not
-  positive, `SINGULAR`, and `n = 0` launches nothing and gives `SUCCESS`. The JLArray rows of
-  `test/linear/cholesky.jl` agree with `DenseCholesky` at `n = 1, 4, 64, 65, 128`; the Metal rows
-  are in `test/devices/metal_ka.jl`, and the cuSOLVER and rocSOLVER rows, which compare the vendor
-  factor with the own kernel, in `test/gpu/cuda/runtests.jl` and `test/gpu/rocm/runtests.jl`.
+  positive, `SINGULAR`, and `n = 0` launches nothing and gives `SUCCESS`. On both paths,
+  `backsolve!` refuses a vector whose length is not the order of the factor, the empty vector
+  included, with a `DimensionMismatch`. The JLArray rows of `test/linear/cholesky.jl` agree with
+  `DenseCholesky` at `n = 1, 4, 64, 65, 128`; the Metal rows are in `test/devices/metal_ka.jl`, and
+  the cuSOLVER and rocSOLVER rows, which compare the vendor factor with the own kernel, in
+  `test/gpu/cuda/runtests.jl` and `test/gpu/rocm/runtests.jl`.
 
 - **Verified root certificates, `GeometricSolvers.certify`, with the package extension
   `GeometricSolversIntervalArithmeticExt`.** When `IntervalArithmetic` is loaded,
