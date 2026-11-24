@@ -891,11 +891,21 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
               vcat(["above band 8", "no device path", "above band 8", "no device path"],
             repeat(["above band 8", "no device path", NO_METHOD_SNS, "no device path"], 3))
         @test all(c -> all(==("-"), c[15:33]), f)
+        # Within the band, ROCm launches no SimpleNonlinearSolve cell.
+        row4 = (;
+            set = "selftest", problem = "n4", start = "x0", x0 = zero(SVector{4, T}),
+            F = (x, p) -> x, p = nothing)
+        f4 = [split(l, ","; limit = 33) for l in first(r2_row_lines(rocm, row4))]
+        sns4 = filter(c -> c[13] == "SimpleNonlinearSolve", f4)
+        @test [c[14] for c in sns4] == [SNS_ROCM; fill(NO_METHOD_SNS, 3)]
+        @test all(c -> all(==("-"), c[15:33]), sns4)
         # The grid: the cpu mode, the band of every variant but host-r1, and the system counts.
         @test grid_status("cpu", 6, "gs-newton") == "not run: cpu mode"
         @test grid_status("cpu", 6, "host-r1") == "not run: cpu mode"
         @test grid_status("cpu", 8, "sns") === nothing
         @test grid_status("rocm", 12, "sns") == "above band 8"
+        @test grid_status("rocm", 8, "sns") == SNS_ROCM
+        @test grid_status("cuda", 8, "sns") === nothing
         @test grid_status("rocm", 12, "host-r1") === nothing
         @test grid_status("rocm", 8, "gs-newton") === nothing
         @test grid_status("metal", 16, "gs-reuse4") === nothing
@@ -1230,10 +1240,13 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
             rocm = map(ls[2:end]) do l
                 f = split(l, ","; limit = 33)
                 f[2], f[3] = "rx7900xtx", "rocm"
-                if f[1] == "r2" && parse(Int, f[8]) > 8 &&
-                   (f[14] == "ran" || startswith(f[14], "kernel error") ||
-                    startswith(f[14], "no compile"))
+                launched = f[14] == "ran" || startswith(f[14], "kernel error") ||
+                           startswith(f[14], "no compile")
+                if f[1] == "r2" && parse(Int, f[8]) > 8 && launched
                     f[14] = "above band 8"
+                    f[15:33] .= "-"
+                elseif f[13] == "SimpleNonlinearSolve" && parse(Int, f[8]) <= 8 && launched
+                    f[14] = SNS_ROCM
                     f[15:33] .= "-"
                 end
                 join(f, ",")
@@ -1254,6 +1267,7 @@ GeometricSolvers.ldiv!!(d, ::RecordedLU, b) = (push!(LU_CALLS, :ldiv!!); copyto!
         @test !occursin(
             "(grid - 10.E zero sns SimpleNonlinearSolve): status 'above band 8'",
             out)
+        @test !occursin("status '$SNS_ROCM'", out)
 
         # One copy with a corruption of each field on a line of its own, and of the .txt, and a
         # file of no machine: each check reports its own line.

@@ -49,6 +49,10 @@ const R2_SYSTEMS = 64               # the copies of a row's start in one R2 batc
 const R2_COLUMNS = ("Newton Static LU", "Newton Backtracking LU", "Newton DogLeg LU",
     "Picard Backtracking")
 const NO_METHOD_SNS = "no method: SimpleNewtonRaphson runs in Newton Static LU only"
+# SimpleNonlinearSolve's kernel faults on ROCm with `hipErrorIllegalAddress`, which leaves the
+# device context unusable for the rest of the process, so no SimpleNonlinearSolve cell launches
+# there.
+const SNS_ROCM = "not run: SimpleNonlinearSolve kernel faults on ROCm"
 const GRID_NSYS = (10^3, 10^4, 10^5, 10^6, 10^7)
 const GRID_N = (2, 4, 6, 8, 12, 16)
 const GRID_VARIANTS = ("gs-newton", "gs-reuse4", "gs-backtracking", "sns", "host-r1")
@@ -269,6 +273,9 @@ function r2_row_lines(dev::Device, row)
         band = band_status(dev.backend, n)
         if band !== nothing
             push!(lines, csv_line(; key..., status = band))
+            continue
+        elseif package == "SimpleNonlinearSolve" && dev.backend == "rocm"
+            push!(lines, csv_line(; key..., status = SNS_ROCM))
             continue
         end
         m = methods[column]
@@ -498,14 +505,16 @@ end
     grid_nsys(backend)
 
 The status of every grid cell of dimension `n` and `variant` on `backend` that is not launched,
-`not run: cpu mode` or `above band <band>`, or `nothing` for a series that runs; and the system
-counts at which a series runs. The cpu mode runs `n ∈ CPU_GRID_N` at `n_sys ∈ CPU_GRID_NSYS`, and
-the band applies to every variant but `host-r1`, which runs on the host.
+`not run: cpu mode`, `above band <band>` or [`SNS_ROCM`](@ref), or `nothing` for a series that
+runs; and the system counts at which a series runs. The cpu mode runs `n ∈ CPU_GRID_N` at
+`n_sys ∈ CPU_GRID_NSYS`, the band applies to every variant but `host-r1`, which runs on the host,
+and `sns` within the band does not run on ROCm.
 """
 function grid_status(backend, n, variant)
     backend == "cpu" && !(n in CPU_GRID_N) && return "not run: cpu mode"
     variant == "host-r1" && return nothing
-    return band_status(backend, n)
+    band = band_status(backend, n)
+    return band === nothing && variant == "sns" && backend == "rocm" ? SNS_ROCM : band
 end
 
 grid_nsys(backend) = backend == "cpu" ? CPU_GRID_NSYS : GRID_NSYS

@@ -721,6 +721,10 @@ measurement of one run on one machine, and it names no package or method as fast
   or POCL's `Failed to compile program`) is `no compile: <first line>`; a kernel that throws (a
   `KernelException`, or AMDGPU's `GPU Kernel Exception`) is `kernel error: <first line>`. The host
   solve still runs for both. Any other exception ends the run with the cell named.
+- **SimpleNonlinearSolve on ROCm.** Its kernel faults with `hipErrorIllegalAddress` on the
+  RX 7900 XTX, which leaves the device context unusable for the rest of the process, so no
+  SimpleNonlinearSolve cell within the band launches there: `not run: SimpleNonlinearSolve kernel
+  faults on ROCm`, in R2 and in the grid's `sns` variant.
 - **The Metal heap.** Metal.jl gives a kernel's `malloc` a heap of 1 MiB per process with no free.
   On Metal the `.txt` records the heap counter before and after each R2 row, and the run continues
   in a new process when the counter passes the size, from the same row when the row failed on a

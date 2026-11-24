@@ -611,6 +611,7 @@ const DEV_OK = Dict("GeometricSolvers" => ["SUCCESS", "info=0"],
 const DEV_METAL_F64 = "no Float64 on Metal; no Metal hybrid (decision 15)"
 const DEV_NOT_TIMED = "device Float64: not timed (decision 6)"
 const DEV_INTERNAL = "internal, not user-selectable"
+const DEV_SNS_ROCM = "not run: SimpleNonlinearSolve kernel faults on ROCm"
 const DEV_TIME_CAP = 1800.0
 const DEV_DISAGREE = ["different root", "device fails", "host fails"]
 
@@ -679,7 +680,9 @@ end
 
 function dev_status_known(s)
     s in
-    ("ran", "no device path", "not run: time cap", "not run: cpu mode", DEV_METAL_F64) ||
+    ("ran", "no device path", "not run: time cap",
+            "not run: cpu mode", DEV_METAL_F64,
+            DEV_SNS_ROCM) ||
         occursin(r"^above band \d+$", s) ||
         any(p -> startswith(s, p), ("no compile: ", "kernel error: ", "no method: "))
 end
@@ -770,14 +773,16 @@ for m in DEV_MACHINES
         check(dev_status_known(s), "$where: status '$s'") || continue
         # The status that the kind, the backend and the band give the cell.
         above = band !== nothing && n > band ? "above band $band" : nothing
+        sns_rocm = p == "SimpleNonlinearSolve" && backend == "rocm"
         if kind == "r2"
             want = p in ("SimpleSolvers", "NLsolve") ? "no device path" :
                    p == "SimpleNonlinearSolve" && v != "Newton Static LU" ? "no method" :
-                   above !== nothing ? above : "launched"
+                   above !== nothing ? above : sns_rocm ? DEV_SNS_ROCM : "launched"
         elseif kind == "grid"
             cpu_mode = backend == "cpu" && !(ns in DEV_NSYS[1:2] && n in (2, 4, 8))
             want = cpu_mode ? "not run: cpu mode" :
-                   v != "host-r1" && above !== nothing ? above : "launched"
+                   v != "host-r1" && above !== nothing ? above :
+                   sns_rocm ? DEV_SNS_ROCM : "launched"
         else
             want = backend == "cpu" && n == 4096 ? "not run: cpu mode" :
                    kind == "r3" && backend == "metal" && T === Float64 &&
