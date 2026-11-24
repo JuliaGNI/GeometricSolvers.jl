@@ -801,11 +801,18 @@
 - **kind:** defect
 - **found:** #108
 
-### K109 · A Cholesky factor in the matrix's own element type takes no power-of-two scale, so the solve with a matrix of subnormal entries has a relative error far above `eps`
+### K109 · A Cholesky factor in the matrix's own element type takes no power-of-two scale, so the solve with a matrix of subnormal entries can have an O(1) relative error with `info = 0`
 
 - **location:** `src/linear/dense.jl:509-529` (`factorize!!` of `DenseCholesky`), and
   `src/linear/ka/cholesky.jl:55` (the load kernel of `DeviceCholesky`)
-- **evidence:** with `s = 2^10 * nextfloat(zero(R))`, `A = 3s * I(5)` and `A[3, 1] = A[1, 3] = s`,
+- **evidence:** the error is O(1), with `info = 0` and `SUCCESS`. With `t = nextfloat(zero(R))`,
+  `A = [2t t; t t]` and `b = [0, t]`, the exact solution is `[-1, 2]`. `CholeskyFactorization()`
+  gives `info = 0`, `scale_exponent = 0` and `x ≈ [-0.5, 1.0]`, a relative error of `0.5` in the
+  maximum norm, for the host `DenseCholesky` and for a `DeviceCholesky` on a `JLArray`, in
+  `Float32`, `Float64`, `ComplexF32` and `ComplexF64`. The trailing update `L₂₁² = t/2` lies below
+  the smallest subnormal and rounds to zero, so the factor holds `L₂₂² = t` in place of `t/2`, the
+  factor of `[2t t; t 1.5t]`. Julia 1.13.4, JLArrays 0.5.0, tree of `2390f50`. A milder case:
+  with `s = 2^10 * nextfloat(zero(R))`, `A = 3s * I(5)` and `A[3, 1] = A[1, 3] = s`,
   `CholeskyFactorization()` gives `info = 0`, `scale_exponent = 0` and, for `b = fill(s, 5)`, a
   solution with a relative error of `2.7e-4` in the maximum norm against the `BigFloat` solve, in
   `Float32`, `Float64`, `ComplexF32` and `ComplexF64`. LAPACK's `cholesky(Hermitian(A, :L)) \ b`
@@ -863,5 +870,34 @@
   `isempty(d) && return d` and checks the length of `d` against the factor nowhere before it, so an
   empty `d` returns with no error for a factor of any order. The vendor Cholesky solves in the same
   files check `length(d) == size(fac.factors, 1)` before that return and throw `DimensionMismatch`.
+- **kind:** found late
+- **found:** #113
+
+### K114 · The own KA LDLᵀ solve does not check the length of the vector against the order of the factor
+
+- **location:** `src/linear/ka/ldlt.jl:394-397` (`ka_ldlt_backsolve!`)
+- **evidence:** `ka_ldlt_backsolve!` takes `n = length(d)` and launches its kernel with that `n`,
+  which reads the factor by index under `@inbounds`. A `DeviceLDLT` of `[4 0; 0 9]` with
+  `LDLTFactorization()` on a `JLArray`, with `ldiv!!(JLArray(ones(k)), fac, JLArray(ones(k)))`:
+  `k = 3` throws `ReadOnlyMemoryError()`; `k = 1` returns `[0.25]`, the solve of the leading
+  `1 × 1` block only, with no error. Julia 1.13.4, JLArrays 0.5.0, tree of `2390f50`. The own
+  Cholesky solve, `ka_cholesky_backsolve!`, throws `DimensionMismatch` in this case.
+- **kind:** found late
+- **found:** #113
+
+### K115 · The own KA QR solve does not check the length of the vector against the rows of the factor
+
+- **location:** `src/linear/ka/qr.jl:164-177` (`ka_qr_backsolve!`), `:184-194`
+  (`backsolve_shifted!` of `DeviceQR`)
+- **evidence:** `ka_qr_backsolve!` takes `m, n = size(A)` and its kernels write `d[1:m]` by index
+  under `@inbounds`, whatever the length of `d`. A square `DeviceQR` of `[4 0; 0 9]` with
+  `QRFactorization()` on a `JLArray`: `ldiv!!(JLArray(ones(1)), fac, JLArray(ones(1)))` returns
+  `[0.25]` and the process then ends with signal 11 in a GC finalizer, in two of two cold runs, and
+  `backsolve!(fac, JLArray(ones(1)))` ends it the same way; `k = 3` returns
+  `[0.25, 0.1111111111111111, 1.0]`, whose third entry is the input, with no error. For the
+  `3 × 2` least-squares factor of `[4 0; 0 9; 1 1]`, `backsolve_shifted!(fac, d, JLArray(ones(3)))`
+  with `length(d) = 4` copies `rhs[1:4]` and returns `7.26e-322` as the fourth entry, a read past
+  `rhs`. Julia 1.13.4, JLArrays 0.5.0, tree of `2390f50`. The own Cholesky solve,
+  `ka_cholesky_backsolve!`, throws `DimensionMismatch` for a vector of another length.
 - **kind:** found late
 - **found:** #113
