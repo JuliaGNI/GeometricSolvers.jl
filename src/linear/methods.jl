@@ -171,10 +171,10 @@ conjugate: a Gauss or Radau IIA tableau of `s` stages takes `⌊s/2⌋` blocks i
 the linear method of each block, a method that factorises a general square matrix in the working
 precision, such as [`LUFactorization`](@ref), [`QRFactorization`](@ref) or
 [`SVDFactorization`](@ref). A [`GMRES`](@ref), a `KroneckerFactorization`, a method with a
-factorisation precision, and a [`CholeskyFactorization`](@ref) or
+factorisation precision, a [`CholeskyFactorization`](@ref) or
 [`LDLTFactorization`](@ref), which read one triangle of a block that is in general not Hermitian,
-raise an `ArgumentError`. An [`UMFPACKFactorization`](@ref) block, which needs a sparse pattern
-that a block does not have, raises its own `ArgumentError` at `init`.
+and an [`UMFPACKFactorization`](@ref), which needs a sparse pattern that a block does not have,
+raise an `ArgumentError`.
 
 The step `h` is read from the parameters as `p.h` at each refresh, and `jac!` is called at each
 refresh, which the `reuse` rule of `Newton` governs. Each block is factorised as `γᵢ I - J` scaled
@@ -190,10 +190,14 @@ iterate, a [`DogLeg`](@ref) or [`LevenbergMarquardt`](@ref) globalization, a ref
 `regularization > 0`, a `jacobian` other than `nothing`, a factorisation precision `TF` other than
 `Nothing`, a problem without `stage_matrix`, parameters without a property `h`, an iterate whose
 length is not a multiple of `s`, a stage matrix that is not square, not invertible, or complex for
-a real `T`, and a stage matrix whose eigenvectors have `cond(V) > eps(real(T))^(-1/2)`, which also
-refuses a stage matrix that is not diagonalisable: the solve multiplies by `V` and `V⁻¹` and loses
-`cond(V)` in accuracy. Gauss with 6 stages has `cond(V) ≈ 603`, and a two-stage SDIRK, whose `A`
-has a double eigenvalue with a single eigenvector, about `10¹⁶`. `solve` raises an
+a real `T`, and a stage matrix whose eigenvectors have
+`cond(V) > max(eps(real(T)), eps(Float64))^(-1/2)`, which also refuses a stage matrix that is not
+diagonalisable: the solve multiplies by `V` and `V⁻¹` and loses `cond(V)` in accuracy. Gauss with 6
+stages has `cond(V) ≈ 603`, and a two-stage SDIRK, whose `A` has a double eigenvalue with a single
+eigenvector, about `10¹⁶`. The eigendecomposition runs in `Float64` (`ComplexF64` for a complex
+`A`), so for a `real(T)` wider than `Float64`, such as `BigFloat`, the bound is that of `Float64`,
+and each Newton direction is accurate to `Float64` only, so a solve can take more steps than with
+an exact Newton matrix. `solve` raises an
 `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p`: the tangent solve of implicit
 differentiation needs the Jacobian of the stacked residual.
 """
@@ -209,6 +213,8 @@ struct KroneckerFactorization{TF <: FactorisationPrecision, B <: LinearMethod} <
                 "KroneckerFactorization takes a block method that factorises in the working precision, such as LUFactorization()"))
         block isa Union{CholeskyFactorization, LDLTFactorization} && throw(ArgumentError(
             "KroneckerFactorization takes a block method for a general square matrix, such as LUFactorization(): a block γ I - J is in general not Hermitian, and $(nameof(typeof(block))) reads one triangle of it"))
+        block isa UMFPACKFactorization && throw(ArgumentError(
+            "KroneckerFactorization takes a block method for a dense square matrix, such as LUFactorization(): a block γ I - J has no sparse pattern, which UMFPACKFactorization needs"))
         return new{TF, B}(block)
     end
 end

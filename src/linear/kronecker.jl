@@ -64,10 +64,11 @@ function kronecker_factor(block::LinearMethod, A::AbstractMatrix, x::AbstractVec
     E = eigen(eltype(A) <: Real ? Matrix{Float64}(A) : Matrix{ComplexF64}(A))
     λ, V = E.values, E.vectors
     κ = cond(V)
-    bound = inv(sqrt(eps(real(T))))
+    # the bound of `real(T)`, but no finer than that of `Float64`, the precision of `V`
+    bound = inv(sqrt(max(eps(real(T)), eps(Float64))))
     # `!(κ ≤ bound)` refuses a `NaN` condition number as well
     κ <= bound || throw(ArgumentError(
-        "the stage matrix is not diagonalisable to the working precision: its eigenvectors have cond(V) = $κ, above eps($(real(T)))^(-1/2) = $bound"))
+        "the stage matrix is not diagonalisable to the working precision: its eigenvectors have cond(V) = $κ, above max(eps($(real(T))), eps(Float64))^(-1/2) = $bound"))
     any(iszero, λ) && throw(ArgumentError(
         "KroneckerFactorization needs an invertible stage matrix: the stage matrix has the eigenvalue 0"))
     W = inv(V)

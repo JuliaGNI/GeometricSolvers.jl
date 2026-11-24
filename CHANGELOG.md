@@ -11,6 +11,24 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`init(prob, x₀)` and `solve(prob, x₀)` run on a `NonlinearProblem` and a `LeastSquaresProblem`
+  with no method, and the new exported `default_method(prob, x₀)` names the method they take.**
+  Both calls forward to `init(prob, x₀, default_method(prob, x₀), nothing; kwargs...)` and
+  `solve(prob, x₀, default_method(prob, x₀), nothing; kwargs...)`; before, they raised
+  `MethodError`. A `NonlinearProblem` with a `SparseMatrixCSC` `jacobian_prototype` on a
+  `Vector{Float64}` or `Vector{ComplexF64}` iterate takes
+  `Newton(; linsolve = UMFPACKFactorization())`, so it solves without Sparspak; a
+  `LeastSquaresProblem` takes `GaussNewton()`; every other `NonlinearProblem` and a
+  `StationarityProblem` take `Newton()`, whose `LUFactorization()` selects its factor from the
+  storage. No default is matrix-free or a combinator. Every call that names a method, and the
+  no-method calls of a `StationarityProblem`, a `Deflated{<:StationarityProblem}`, a
+  `Reparametrized`, a `BlockEliminated` and a `VariableProjection`, which take `Newton()`, return
+  what they returned. On each of the 67 problem starts of the standard test set the default is
+  `Newton()`, the method of the column `Newton Static LU`, so the standard table has no column for
+  it. `docs/src/guide.md` states the rules in one table. The tests are `test/nonlinear/default.jl`,
+  in `nonlinear`; `test/nonlinear/commonsolve.jl` counts `NonlinearProblem` and
+  `LeastSquaresProblem` among the first arguments of the package's `init` and `solve` methods.
+
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
   counts as zero: the factor's `rank`, `SolverStatus.rank` and the truncation of the solve follow
@@ -1005,9 +1023,9 @@ so that a compat-only bump can be told apart from an interface change.
   `⌊s/2⌋` complex and `s mod 2` real blocks; a complex `T` takes `s` blocks in `T`. `block` is the
   method of each block: any method that factorises a general square matrix in the working
   precision, such as `LUFactorization`, `QRFactorization` or `SVDFactorization`.
-  `CholeskyFactorization` and `LDLTFactorization` raise an `ArgumentError`, because they read one
-  triangle of a block that is in general not Hermitian, and an `UMFPACKFactorization` block, which
-  needs a sparse pattern, raises its own `ArgumentError` at `init`. `NonlinearProblem` takes the
+  The constructor raises an `ArgumentError` for a `CholeskyFactorization` or `LDLTFactorization`
+  block, which reads one triangle of a block that is in general not Hermitian, and for an
+  `UMFPACKFactorization` block, which needs a sparse pattern. `NonlinearProblem` takes the
   keywords `stage_matrix = A` and `stage_jacobian = jac!`, where `jac!(J, Z, p)` writes the `n × n`
   Jacobian of the vector field, and wraps the residual in the new exported `StageResidual`, read
   with the new exported accessors `stage_matrix(prob)` and `stage_jacobian(prob)`. The step `h` is
@@ -1015,8 +1033,10 @@ so that a compat-only bump can be told apart from an interface change.
   `jac!` is called at each refactorisation. `h = 0` gives the identity Newton matrix; a non-finite
   `J` or `h` gives `NONFINITE`, and a singular block gives `SINGULAR`. `init` raises an
   `ArgumentError` for a stage matrix whose eigenvector matrix has
-  `cond(V) > eps(real(T))^(-1/2)`, which refuses a non-diagonalisable `A` such as an SDIRK tableau
-  (Gauss with 6 stages, `cond(V) ≈ 603`, is accepted); for a singular, non-square or, with real
+  `cond(V) > max(eps(real(T)), eps(Float64))^(-1/2)`, which refuses a non-diagonalisable `A` such
+  as an SDIRK tableau (Gauss with 6 stages, `cond(V) ≈ 603`, is accepted); the eigendecomposition
+  runs in `Float64`, so a wider `real(T)` such as `BigFloat` has that bound and each Newton
+  direction is accurate to `Float64` only; for a singular, non-square or, with real
   `T`, complex `A`; for a value or device iterate; for `DogLeg`, `LevenbergMarquardt`, a
   refinement, `regularization > 0`, a `jacobian` keyword, and a factorisation precision
   `TF ≠ Nothing`. `solve` raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p` with
