@@ -7,7 +7,6 @@ using AMDGPU
 using GPUArraysCore: allowscalar
 using JET: JET
 using LinearAlgebra: BLAS, Diagonal, I, cond, norm, opnorm
-using Random: Xoshiro
 using Test
 
 using GeometricSolvers
@@ -15,8 +14,8 @@ using GeometricSolvers: DeviceCholesky, DeviceLU, DeviceQR, DeviceSVD
 using GeometricSolvers: CholeskyFactorization, LUFactorization, NonlinearProblem,
                         QRFactorization, SVDFactorization
 using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, backsolve_shifted!, dense_factor,
-                        factorize!!, ka_cholesky_backsolve!, ka_factorize_cholesky!,
-                        ka_factorize_lu!, ka_factorize_qr!, ldexp2, ldiv!!, returncode
+                        factorize!!, ka_factorize_cholesky!, ka_factorize_lu!,
+                        ka_factorize_qr!, ldiv!!, returncode
 
 include("../../helpers/own_kernel.jl")
 
@@ -369,37 +368,12 @@ if AMDGPU.functional()
         @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
     end
 
-    # A seeded Hermitian positive definite matrix `G Gᴴ / n + I` and a right-hand side.
-    function rocm_hpd(::Type{T}, n::Int, seed::Integer = 0xc401) where {T}
-        rng = Xoshiro(seed + n)
-        G = randn(rng, T, n, n)
-        A = G * G' / n + Matrix{T}(I, n, n)
-        return (A + A') / 2, randn(rng, T, n)
-    end
-
-    # The own-kernel solve with the factor `fac`, the reference of the rocSOLVER rows: in `d` where
-    # `d` holds the factor element type, else in `fac.rhs`, multiplied by `2^-e` either way.
-    function own_cholesky_ldiv!(d::AbstractVector{T}, fac, r::AbstractVector) where {T}
-        F = eltype(fac.factors)
-        e = fac.scale_exponent
-        if T === F
-            copyto!(d, r)
-            ka_cholesky_backsolve!(fac.factors, d)
-            iszero(e) || (d .= ldexp2.(d, -e))
-        else
-            fac.rhs .= F.(r)
-            ka_cholesky_backsolve!(fac.factors, fac.rhs)
-            d .= T.(ldexp2.(fac.rhs, -e))
-        end
-        return d
-    end
-
     @testset "ROCm rocSOLVER Cholesky agrees with the own KA kernel at n = $n" for n in (
         1, 16, 65, 256)
         @testset "T = $T, $method" for T in ROCM_BLAS_ELTYPES,
             method in (CholeskyFactorization(), CholeskyFactorization(Float32))
 
-            A_cpu, b_cpu = rocm_hpd(T, n)
+            A_cpu, b_cpu = cuda_hpd(T, n)
             κ = Float64(cond(A_cpu, Inf))
             # the round-off of the coarser of the working and the factorisation precision
             ε = Float64(method isa CholeskyFactorization{Nothing} ? eps(real(T)) :
@@ -414,7 +388,7 @@ if AMDGPU.functional()
             @test fac_ext.scale_exponent == fac_ka.scale_exponent
             @test returncode(fac_ext) === SUCCESS
             dx_ext = ldiv!!(ROCArray(zeros(T, n)), fac_ext, db)
-            dx_ka = own_cholesky_ldiv!(ROCArray(zeros(T, n)), fac_ka, db)
+            dx_ka = own_kernel_ldiv!(ROCArray(zeros(T, n)), fac_ka, db)
             x_ext = Array(dx_ext)
             x_ka = Array(dx_ka)
             @test norm(x_ext - x_ka, Inf) <= 8 * n * ε * κ * norm(x_ka, Inf)
@@ -451,7 +425,7 @@ if AMDGPU.functional()
         end
         # a non-finite entry gives info = 1 before `potrf`, which returns 0 for some of them
         n = 4
-        A, _ = rocm_hpd(T, n)
+        A, _ = cuda_hpd(T, n)
         for (i, j, v) in ((n, 1, T(NaN)), (1, n, T(Inf)))
             A_bad = copy(A)
             A_bad[i, j] = v

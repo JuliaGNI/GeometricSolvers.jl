@@ -19,9 +19,8 @@ using GeometricSolvers: CholeskyFactorization, LUFactorization, NonlinearProblem
                         QRFactorization, SVDFactorization,
                         UMFPACKFactorization
 using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!, init,
-                        init_linear, ka_cholesky_backsolve!, ka_factorize_cholesky!,
-                        ka_factorize_lu!, ka_factorize_qr!, ka_factorize_svd!,
-                        ldexp2, ldiv!!, returncode, solve!
+                        init_linear, ka_factorize_cholesky!, ka_factorize_lu!,
+                        ka_factorize_qr!, ka_factorize_svd!, ldiv!!, returncode, solve!
 
 include("../../helpers/own_kernel.jl")
 include("../../helpers/sparse_problems.jl")
@@ -553,31 +552,6 @@ if CUDA.functional()
         @test Array(fac_keep.factors) == A_keep2
     end
 
-    # A seeded Hermitian positive definite matrix `G Gᴴ / n + I` and a right-hand side.
-    function cuda_hpd(::Type{T}, n::Int, seed::Integer = 0xc401) where {T}
-        rng = Xoshiro(seed + n)
-        G = randn(rng, T, n, n)
-        A = G * G' / n + Matrix{T}(I, n, n)
-        return (A + A') / 2, randn(rng, T, n)
-    end
-
-    # The own-kernel solve with the factor `fac`, the reference of the cuSOLVER rows: in `d` where
-    # `d` holds the factor element type, else in `fac.rhs`, multiplied by `2^-e` either way.
-    function own_cholesky_ldiv!(d::AbstractVector{T}, fac, r::AbstractVector) where {T}
-        F = eltype(fac.factors)
-        e = fac.scale_exponent
-        if T === F
-            copyto!(d, r)
-            ka_cholesky_backsolve!(fac.factors, d)
-            iszero(e) || (d .= ldexp2.(d, -e))
-        else
-            fac.rhs .= F.(r)
-            ka_cholesky_backsolve!(fac.factors, fac.rhs)
-            d .= T.(ldexp2.(fac.rhs, -e))
-        end
-        return d
-    end
-
     @testset "CUDA cuSOLVER Cholesky agrees with the own KA kernel at n = $n" for n in (
         1, 16, 65, 256)
         @testset "T = $T, $method" for T in CUDA_BLAS_ELTYPES,
@@ -598,7 +572,7 @@ if CUDA.functional()
             @test fac_ext.scale_exponent == fac_ka.scale_exponent
             @test returncode(fac_ext) === SUCCESS
             dx_ext = ldiv!!(CuArray(zeros(T, n)), fac_ext, db)
-            dx_ka = own_cholesky_ldiv!(CuArray(zeros(T, n)), fac_ka, db)
+            dx_ka = own_kernel_ldiv!(CuArray(zeros(T, n)), fac_ka, db)
             x_ext = Array(dx_ext)
             x_ka = Array(dx_ka)
             @test norm(x_ext - x_ka, Inf) <= 8 * n * ε * κ * norm(x_ka, Inf)
