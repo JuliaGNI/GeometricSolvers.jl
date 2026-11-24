@@ -347,7 +347,10 @@ end
         prob = NonlinearProblem(metal_no_root)
         xs_host = [SVector(0.5f0 + R(k) / 1000) for k in 1:B_METAL_NL]
         m = Newton(; best = true)
-        state₀ = init_state(m, prob, xs_host[1], nothing)
+        # the host reference takes the method in `R`, as `solve_batch!` adapts it
+        m_dev = Adapt.adapt(ToReal{R}(), m)
+        m_false = Adapt.adapt(ToReal{R}(), Newton())
+        state₀ = init_state(m_dev, prob, xs_host[1], nothing)
         for opt in (Options(R; max_iterations = 8), Options(R; max_iterations = 8, norm = MaxNorm()))
             X = Metal.MtlArray(xs_host)
             S = Metal.MtlArray(Vector{SolverStatus{R}}(undef, B_METAL_NL))
@@ -355,10 +358,10 @@ end
             xs_got = Array(X)
             st_got = Array(S)
             for k in 1:B_METAL_NL
-                x_ref, st_ref, _ = solve!!(state₀, prob, xs_host[k], m, nothing, opt)
+                x_ref, st_ref, _ = solve!!(state₀, prob, xs_host[k], m_dev, nothing, opt)
                 _, st_false, _ = solve!!(
-                    init_state(Newton(), prob, xs_host[k], nothing), prob, xs_host[k],
-                    Newton(), nothing, opt)
+                    init_state(m_false, prob, xs_host[k], nothing), prob, xs_host[k],
+                    m_false, nothing, opt)
                 @test st_ref.fnorm < st_false.fnorm    # the host restores an earlier iterate
                 @test st_got[k].code == st_ref.code
                 @test st_got[k].iterations == st_ref.iterations
