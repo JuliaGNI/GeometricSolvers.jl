@@ -1139,10 +1139,9 @@ The midpoint residual of the four Lotka–Volterra rows passes the iterate `V` t
 residual does not allocate on the heap and these rows run in a `CPU()` kernel; only the
 `Picard Backtracking` cell of LotkaVolterra2d h=0.1 ends in the kernel error of the table's first
 line, and on CUDA in a kernel error as well; on Metal and ROCm it runs and ends
-`LINESEARCH_FAILED` after one iteration, as the host solve does.
-With the `MVector` `V` in these calls all four rows allocate, and with GeometricProblems 0.10.0,
-whose LotkaVolterra4d `ϑ` passes its output vector to a call that is not inlined, LotkaVolterra4d
-still allocates.
+`LINESEARCH_FAILED` after one iteration, as the host solve does. With the `MVector` `V` in these
+calls all four rows allocate, and with GeometricProblems 0.10.0, whose LotkaVolterra4d `ϑ` passes
+its output vector to a call that is not inlined, LotkaVolterra4d still allocates.
 GeometricProblems 0.10.2 differs from 0.10.0, with which Y1's and Y2's tables were made, only in
 that `@inline`. Those tables are not made again with 0.10.2, and `verify.jl` passes on the
 committed tables.
@@ -1154,8 +1153,8 @@ cell with `max_iterations = j` (`maxiters = j` for SimpleNewtonRaphson), `j` = 1
 40, 67, 100 and 200 and the iteration counts of the cell, beside the `CPU()` kernel's batch of one
 system with the same limit, and from the device's iterations, status, `‖F‖∞` and
 `‖x − x_host‖∞` in its machine's CSV line. The replay runs on the M4 Max's host, and the host
-fields of each line below are equal on all five machines. On `cpu` the `CPU()` kernel is the
-device; a card's CSV holds the norms of its iterate, not the iterate, so a line states where the
+fields of each line below are equal on every machine where the cell is launched. On `cpu` the
+`CPU()` kernel is the device; a card's CSV holds the norms of its iterate, not the iterate, so a line states where the
 card's path ends and not where it leaves the host's. The agreement bound is
 `√eps(Float32) · max(1, ‖x_host‖∞)`, `√eps(Float32) = 3.45e-4`.
 

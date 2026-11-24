@@ -505,7 +505,7 @@ end
     grid_nsys(backend)
 
 The status of every grid cell of dimension `n` and `variant` on `backend` that is not launched,
-`not run: cpu mode`, `above band <band>` or [`SNS_ROCM`](@ref), or `nothing` for a series that
+`not run: cpu mode`, `above band <band>` or `SNS_ROCM`, or `nothing` for a series that
 runs; and the system counts at which a series runs. The cpu mode runs `n ∈ CPU_GRID_N` at
 `n_sys ∈ CPU_GRID_NSYS`, the band applies to every variant but `host-r1`, which runs on the host,
 and `sns` within the band does not run on ROCm.

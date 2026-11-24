@@ -77,7 +77,7 @@ end
 """
     midpoint_residual(prob)
 
-The [`MidpointResidual`](@ref) of the GeometricProblems problem `prob`.
+The `MidpointResidual` of the GeometricProblems problem `prob`.
 """
 function midpoint_residual(prob)
     k = problem_kind(prob)
@@ -93,8 +93,8 @@ end
 
 Y1's 79 rows in the element type `T`, in Y1's order, each a named tuple of its labels `set`,
 `problem` and `start`, its start `x0` as an `SVector`, its out-of-place residual `F`, an
-[`InlineAdapter`](@ref), and its parameters `p`: `nothing` for a standard row, GeometricProblems'
-parameters for a midpoint row, whose residual is a [`MidpointResidual`](@ref).
+`InlineAdapter`, and its parameters `p`: `nothing` for a standard row, GeometricProblems'
+parameters for a midpoint row, whose residual is a `MidpointResidual`.
 """
 function device_rows(::Type{T}) where {T}
     rows = Any[(; r.set, r.problem, r.start, x0 = SVector{length(r.x0)}(r.x0),
@@ -158,7 +158,7 @@ end
 """
     tenE_batch(n, n_sys, T)
 
-The §10.E problem in R1 form for `n_sys` systems of dimension `n`: the [`TenEResidual`](@ref) of
+The §10.E problem in R1 form for `n_sys` systems of dimension `n`: the `TenEResidual` of
 `tenE_matrix(n, T)` and the vector of the systems' right-hand sides `b = A x* + sin.(x*) / 10`,
 built in `T` on the host, each with its own `x*` drawn uniformly from `[-1, 1]ⁿ` from the seed 1.
 """
