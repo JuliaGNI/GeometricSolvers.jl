@@ -965,8 +965,9 @@ so that a compat-only bump can be told apart from an interface change.
   method of each block: any method that factorises a general square matrix in the working
   precision, such as `LUFactorization`, `QRFactorization` or `SVDFactorization`.
   `CholeskyFactorization` and `LDLTFactorization` raise an `ArgumentError`, because they read one
-  triangle of a block that is in general not Hermitian. `NonlinearProblem` takes the keywords
-  `stage_matrix = A` and `stage_jacobian = jac!`, where `jac!(J, Z, p)` writes the `n × n`
+  triangle of a block that is in general not Hermitian, and an `UMFPACKFactorization` block, which
+  needs a sparse pattern, raises its own `ArgumentError` at `init`. `NonlinearProblem` takes the
+  keywords `stage_matrix = A` and `stage_jacobian = jac!`, where `jac!(J, Z, p)` writes the `n × n`
   Jacobian of the vector field, and wraps the residual in the new exported `StageResidual`, read
   with the new exported accessors `stage_matrix(prob)` and `stage_jacobian(prob)`. The step `h` is
   read from `p.h`. The `reuse` rule of `Newton` governs when the blocks are refactorised, and

@@ -173,13 +173,17 @@ precision, such as [`LUFactorization`](@ref), [`QRFactorization`](@ref) or
 [`SVDFactorization`](@ref). A [`GMRES`](@ref), a `KroneckerFactorization`, a method with a
 factorisation precision, and a [`CholeskyFactorization`](@ref) or
 [`LDLTFactorization`](@ref), which read one triangle of a block that is in general not Hermitian,
-raise an `ArgumentError`.
+raise an `ArgumentError`. An [`UMFPACKFactorization`](@ref) block, which needs a sparse pattern
+that a block does not have, raises its own `ArgumentError` at `init`.
 
 The step `h` is read from the parameters as `p.h` at each refresh, and `jac!` is called at each
 refresh, which the `reuse` rule of `Newton` governs. Each block is factorised as `γᵢ I - J` scaled
 by a power of two, which keeps it finite for a tiny `h`. A step `h = 0` makes the Newton matrix the
 identity. A non-finite `h` and a non-finite entry of `J` give a non-finite direction, and the step
-returns `NONFINITE`. A block whose factor fails gives `SINGULAR`.
+returns `NONFINITE`. So does a residual whose product with `V⁻¹ ⊗ I` overflows, which a step `h`
+near `floatmax(real(T))` can cause, also where the stacked `Newton` solve returns a finite step:
+Gauss with 3 stages at `h = floatmax(Float64)` is one such case. A block whose factor fails gives
+`SINGULAR`.
 
 `init` raises an `ArgumentError` for a value iterate (a `Number` or a `StaticArray`), a device
 iterate, a [`DogLeg`](@ref) or [`LevenbergMarquardt`](@ref) globalization, a refinement,
