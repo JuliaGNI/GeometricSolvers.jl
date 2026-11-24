@@ -11,6 +11,24 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`init(prob, x₀)` and `solve(prob, x₀)` run on a `NonlinearProblem` and a `LeastSquaresProblem`
+  with no method, and the new exported `default_method(prob, x₀)` names the method they take.**
+  Both calls forward to `init(prob, x₀, default_method(prob, x₀), nothing; kwargs...)` and
+  `solve(prob, x₀, default_method(prob, x₀), nothing; kwargs...)`; before, they raised
+  `MethodError`. A `NonlinearProblem` with a `SparseMatrixCSC` `jacobian_prototype` on a
+  `Vector{Float64}` or `Vector{ComplexF64}` iterate takes
+  `Newton(; linsolve = UMFPACKFactorization())`, so it solves without Sparspak; a
+  `LeastSquaresProblem` takes `GaussNewton()`; every other `NonlinearProblem` and a
+  `StationarityProblem` take `Newton()`, whose `LUFactorization()` selects its factor from the
+  storage. No default is matrix-free or a combinator. Every call that names a method, and the
+  no-method calls of a `StationarityProblem`, a `Deflated{<:StationarityProblem}`, a
+  `Reparametrized`, a `BlockEliminated` and a `VariableProjection`, which take `Newton()`, return
+  what they returned. On each of the 67 problem starts of the standard test set the default is
+  `Newton()`, the method of the column `Newton Static LU`, so the standard table has no column for
+  it. `docs/src/guide.md` states the rules in one table. The tests are `test/nonlinear/default.jl`,
+  in `nonlinear`; `test/nonlinear/commonsolve.jl` counts `NonlinearProblem` and
+  `LeastSquaresProblem` among the first arguments of the package's `init` and `solve` methods.
+
 - **A least-squares solve returns the start point of a step that leaves a stationary point.** On
   a `LeastSquaresProblem`, where the stationarity test passes on the factorisation that a step
   takes at its start point `x_k`, `k ≥ 1`, and fails when `solve!!` re-measures it at the end of
