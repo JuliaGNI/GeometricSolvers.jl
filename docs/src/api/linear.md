@@ -157,6 +157,18 @@ f_calls
 jvp_calls
 ```
 
+## Stage systems of implicit Runge–Kutta methods
+
+[`KroneckerFactorization`](@ref) is the linear method of a [`Newton`](@ref) on the stage system that
+a [`NonlinearProblem`](@ref) with `stage_matrix` carries. It factorises the `n × n` blocks of
+`I - h A ⊗ J` in the eigenbasis of the stage matrix `A`, in place of the `s n × s n` Jacobian of
+the stacked residual, and each block with the linear method of its `block` keyword. It runs in R3 on a
+host array iterate only. This name is exported.
+
+```@docs
+KroneckerFactorization
+```
+
 ## Eigensolver
 
 [`jacobi_eigen`](@ref) is a function on a matrix and not a linear-solver method: cyclic two-sided

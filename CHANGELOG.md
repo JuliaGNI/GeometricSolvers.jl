@@ -974,6 +974,34 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`KroneckerFactorization(; block = LUFactorization())` solves the Newton steps of the stage
+  system of an implicit Runge–Kutta method.** With the stage matrix `A = V Λ V⁻¹`, `Newton`
+  factorises `s` blocks `γᵢ I − J` of size `n × n`, `γᵢ = 1/(h λᵢ)`, in place of one `s·n × s·n`
+  Jacobian. For a real element type `T` a real eigenvalue takes one block in `T` and a
+  complex-conjugate pair one block in `complex(T)`, so Gauss and Radau IIA with `s` stages have
+  `⌊s/2⌋` complex and `s mod 2` real blocks; a complex `T` takes `s` blocks in `T`. `block` is the
+  method of each block: any method that factorises a general square matrix in the working
+  precision, such as `LUFactorization`, `QRFactorization` or `SVDFactorization`.
+  The constructor raises an `ArgumentError` for a `CholeskyFactorization` or `LDLTFactorization`
+  block, which reads one triangle of a block that is in general not Hermitian, and for an
+  `UMFPACKFactorization` block, which needs a sparse pattern. `NonlinearProblem` takes the
+  keywords `stage_matrix = A` and `stage_jacobian = jac!`, where `jac!(J, Z, p)` writes the `n × n`
+  Jacobian of the vector field, and wraps the residual in the new exported `StageResidual`, read
+  with the new exported accessors `stage_matrix(prob)` and `stage_jacobian(prob)`. The step `h` is
+  read from `p.h`. The `reuse` rule of `Newton` governs when the blocks are refactorised, and
+  `jac!` is called at each refactorisation. `h = 0` gives the identity Newton matrix; a non-finite
+  `J` or `h` gives `NONFINITE`, and a singular block gives `SINGULAR`. `init` raises an
+  `ArgumentError` for a stage matrix whose eigenvector matrix has
+  `cond(V) > max(eps(real(T)), eps(Float64))^(-1/2)`, which refuses a non-diagonalisable `A` such
+  as an SDIRK tableau (Gauss with 6 stages, `cond(V) ≈ 603`, is accepted); the eigendecomposition
+  runs in `Float64`, so a wider `real(T)` such as `BigFloat` has that bound and each Newton
+  direction is accurate to `Float64` only; for a singular, non-square or, with real
+  `T`, complex `A`; for a value or device iterate; for `DogLeg`, `LevenbergMarquardt`, a
+  refinement, `regularization > 0`, a `jacobian` keyword, and a factorisation precision
+  `TF ≠ Nothing`. `solve` raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p` with
+  this linear method, because the tangent solve of implicit differentiation needs the Jacobian of
+  the stacked residual. The tests are in `test/nonlinear/kronecker.jl`.
+
 - **`CholeskyFactorization()` and `CholeskyFactorization(TF)` factorise a Hermitian (real
   symmetric) positive definite Jacobian as `L Lᴴ`, without pivoting.** The R1 factor
   `StaticCholesky` is a scalar loop, `isbits` and allocation-free for an `isbits` element type such
