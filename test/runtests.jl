@@ -49,7 +49,8 @@ const TESTS = [
         "Iterative refinement" => "nonlinear/refinement.jl",
         "Picard" => "nonlinear/picard.jl",
         "Solver loop hooks" => "nonlinear/hooks.jl",
-        "Batched R2 nonlinear" => "nonlinear/batched.jl"
+        "Batched R2 nonlinear" => "nonlinear/batched.jl",
+        "Verified root certificates" => "nonlinear/certify.jl"
     ],
     "leastsquares" => [
         "R3 nonlinear" => "nonlinear/r3.jl",

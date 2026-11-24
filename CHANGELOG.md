@@ -905,6 +905,27 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **Verified root certificates, `GeometricSolvers.certify`, with the package extension
+  `GeometricSolversIntervalArithmeticExt`.** When `IntervalArithmetic` is loaded,
+  `certify(prob::NonlinearProblem, x, p = nothing)` runs Krawczyk's test in intervals of the element
+  type of `x` and returns `(certified, enclosure, guaranteed)`, one concrete
+  `NamedTuple` type for both outcomes: `enclosure` holds the one root in the tested box when
+  `certified`, and `guaranteed` reports IntervalArithmetic's NG flag on `F(x)` and `J(X)`, which a
+  certificate does not require. Every hypothesis of the test is read from `F`: ForwardDiff
+  differentiates `F` for the inverse `Y` at `x` and for the interval Jacobian `J(X)` on each box,
+  and the problem's `J` is not read. `F` must accept floats, intervals and ForwardDiff duals of
+  both; an error of `F` (such as a `DomainError` of `log` at a negative float `x`) is not caught.
+  It takes a real floating-point `Number`, a `StaticVector` and a host `Vector`. On each box the
+  test evaluates `F(X)` as well as `J(X)`; a singular Jacobian at `x`, a non-finite `x`, ten failed
+  boxes, and an interval of `F(X)` or `J(X)` that is unbounded or decorated below `dac` give
+  `certified == false` without a throw, so a residual undefined, not continuous, or with a kink on
+  the box is refused. `certify` is a `public` stub with no method without the extension, and is
+  not exported. On the standard test set, problems 1, 4, 17 and 22 certify at
+  their roots in `Float32` and `Float64`, each enclosure holding the root in `BigFloat`; their
+  starts `u0`, and problem 20 at its double root `5`, do not. `Project.toml` adds
+  `IntervalArithmetic` under `[weakdeps]`, `[extensions]` and `[compat]` (`1.0.14`); the tests are
+  in `test/nonlinear/certify.jl`.
+
 - **`Fallback(m₁, m₂, ...)` (exported) runs the whole solve of each member in turn and stops at
   the first `SUCCESS`.** Each member runs its own `solve!!` from `x₀`, with the full `Options` and
   its own state; an array `x₀` is kept in the state and copied back before each later member, so a
