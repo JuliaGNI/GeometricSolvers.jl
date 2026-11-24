@@ -21,6 +21,7 @@ const TESTS = [
         "Own-kernel reference solve" => "devices/own_kernel.jl",
         "Mixed-precision linear solvers" => "linear/mixed.jl",
         "Factor status and rank" => "linear/status.jl",
+        "Linear-solve object" => "linear/linearproblem.jl",
         "Linear and spectral stability" => "linear/stability.jl",
         "R1 Jacobian" => "ad/forwarddiff_static.jl",
         "R3 Jacobian" => "ad/jacobian.jl",
@@ -97,6 +98,7 @@ const TESTS = [
         "Metal KA LU and QR" => "devices/metal_ka.jl",
         "Metal vendor fast paths" => "devices/metal_vendor.jl",
         "Metal static SVD and Jacobi eigensolver" => "devices/metal_svd.jl",
+        "Metal linear-solve object" => "devices/metal_linearproblem.jl",
         "Metal R1 nonlinear" => "devices/metal_nonlinear.jl",
         "Metal R5 Newton-GMRES" => "devices/metal_krylov.jl"
     ]

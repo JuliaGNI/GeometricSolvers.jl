@@ -110,6 +110,24 @@ exact_solve
 singular_values
 ```
 
+## Linear-solve object
+
+[`LinearProblem`](@ref)`(A)` factorises a dense matrix once and solves it for many right-hand
+sides: `init(prob, method)` builds a [`LinearSolver`](@ref) with one of the five dense
+factorisations above, `solve!(solver, b)` returns the solution and a [`LinearStatus`](@ref), and
+[`refactorize!!`](@ref) factorises a new matrix of the same size with the same buffers. A square
+system takes every factorisation, an `m × n` system with `m > n` the least-squares solution
+through QR and SVD, and one with `m < n` the minimum-norm solution through the SVD of `Aᴴ`, or a
+QR of `Aᴴ` on a static matrix and a host array. The status carries the numerical rank of an SVD.
+These names are exported.
+
+```@docs
+LinearProblem
+LinearSolver
+LinearStatus
+refactorize!!
+```
+
 ## Matrix-free Krylov solves
 
 [`GMRES`](@ref) is a [`LinearMethod`](@ref) with no factor. The Jacobian enters a step only through
