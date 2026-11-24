@@ -49,6 +49,7 @@ const TESTS = [
         "Nonlinear solver loop" => "nonlinear/solver.jl",
         "Default method" => "nonlinear/default.jl",
         "Newton" => "nonlinear/newton.jl",
+        "Kronecker stage solver" => "nonlinear/kronecker.jl",
         "Iterative refinement" => "nonlinear/refinement.jl",
         "Picard" => "nonlinear/picard.jl",
         "Solver loop hooks" => "nonlinear/hooks.jl",
