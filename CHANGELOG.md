@@ -964,9 +964,9 @@ so that a compat-only bump can be told apart from an interface change.
   `⌊s/2⌋` complex and `s mod 2` real blocks; a complex `T` takes `s` blocks in `T`. `block` is the
   method of each block: any method that factorises a general square matrix in the working
   precision, such as `LUFactorization`, `QRFactorization` or `SVDFactorization`.
-  `CholeskyFactorization` and `LDLTFactorization` raise an `ArgumentError`, because they read one
-  triangle of a block that is in general not Hermitian, and an `UMFPACKFactorization` block, which
-  needs a sparse pattern, raises its own `ArgumentError` at `init`. `NonlinearProblem` takes the
+  The constructor raises an `ArgumentError` for a `CholeskyFactorization` or `LDLTFactorization`
+  block, which reads one triangle of a block that is in general not Hermitian, and for an
+  `UMFPACKFactorization` block, which needs a sparse pattern. `NonlinearProblem` takes the
   keywords `stage_matrix = A` and `stage_jacobian = jac!`, where `jac!(J, Z, p)` writes the `n × n`
   Jacobian of the vector field, and wraps the residual in the new exported `StageResidual`, read
   with the new exported accessors `stage_matrix(prob)` and `stage_jacobian(prob)`. The step `h` is
@@ -974,8 +974,10 @@ so that a compat-only bump can be told apart from an interface change.
   `jac!` is called at each refactorisation. `h = 0` gives the identity Newton matrix; a non-finite
   `J` or `h` gives `NONFINITE`, and a singular block gives `SINGULAR`. `init` raises an
   `ArgumentError` for a stage matrix whose eigenvector matrix has
-  `cond(V) > eps(real(T))^(-1/2)`, which refuses a non-diagonalisable `A` such as an SDIRK tableau
-  (Gauss with 6 stages, `cond(V) ≈ 603`, is accepted); for a singular, non-square or, with real
+  `cond(V) > max(eps(real(T)), eps(Float64))^(-1/2)`, which refuses a non-diagonalisable `A` such
+  as an SDIRK tableau (Gauss with 6 stages, `cond(V) ≈ 603`, is accepted); the eigendecomposition
+  runs in `Float64`, so a wider `real(T)` such as `BigFloat` has that bound and each Newton
+  direction is accurate to `Float64` only; for a singular, non-square or, with real
   `T`, complex `A`; for a value or device iterate; for `DogLeg`, `LevenbergMarquardt`, a
   refinement, `regularization > 0`, a `jacobian` keyword, and a factorisation precision
   `TF ≠ Nothing`. `solve` raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p` with

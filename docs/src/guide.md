@@ -111,7 +111,7 @@ true
 | method | condition |
 |:--|:--|
 | [`LUFactorization`](@ref) on a sparse `jacobian_prototype` | a host `Vector` iterate of a real element type, Sparspak loaded, the element type of the iterate as the factorisation precision, and a Jacobian from an analytic `J!` that writes the nonzeros of the prototype or from `jacobian = AutoSparse(...)` (see [Sparse direct solves](@ref sparse)) |
-| [`KroneckerFactorization`](@ref) | the stage system of an implicit Runge–Kutta method, from a [`NonlinearProblem`](@ref) with `stage_matrix` and `stage_jacobian`, whose stage matrix is diagonalisable with `cond(V) ≤ eps(real(T))^(-1/2)` and invertible; a host array iterate, [`Static`](@ref) or a line search, and the step `h` in `p.h` |
+| [`KroneckerFactorization`](@ref) | the stage system of an implicit Runge–Kutta method, from a [`NonlinearProblem`](@ref) with `stage_matrix` and `stage_jacobian`, whose stage matrix is diagonalisable with `cond(V) ≤ max(eps(real(T)), eps(Float64))^(-1/2)` and invertible; a host array iterate, [`Static`](@ref) or a line search, and the step `h` in `p.h` |
 | [`RAS`](@ref) | local nonlinearities that a [`BlockPartition`](@ref) isolates, and one local residual per block |
 | [`LeftPreconditioned`](@ref) | an inner step `N` whose fixed points are the wanted roots; each trial point of the outer globalization costs one inner step, and with [`RAS`](@ref) it needs converged local solves |
 

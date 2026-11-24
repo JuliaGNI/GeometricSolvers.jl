@@ -35,9 +35,9 @@ end
 const C_AGREE = 4
 
 # The options of a Kronecker solve in the agreement testsets: at most 8 steps. The simplified
-# iteration takes at most 6 on those rows at `h = 0.1`, and an iteration whose Newton matrix is
-# wrong converges at a rate that needs many more, so a wrong matrix that still reaches the root
-# shows as `MAXITERS`.
+# iteration takes at most 6 on those rows at `h = 0.1`. A Newton matrix far from `I - h A ⊗ J`
+# needs more steps and ends with `MAXITERS`, but one near it can still converge within 8 steps,
+# so the first-step comparisons below check the matrix itself.
 function kronecker_options(::Type{T}) where {T}
     Options(
         T; f_abstol = stage_xtol(T), f_reltol = 0, x_abstol = stage_xtol(T), x_reltol = 0,
@@ -104,7 +104,7 @@ const ALL_TABLEAUX = [STAGE_TABLEAUX; [("midpoint s = 1", midpoint_tableau())]]
 end
 
 @testset "the stage increments agree for a complex element type" begin
-    name, f!, jac!, y₀ = COMPLEX_FIELD
+    _, f!, jac!, y₀ = COMPLEX_FIELD
     for T in filter(T -> T <: Complex, ELTYPES), (tname, A) in ALL_TABLEAUX
 
         n, s = length(y₀), size(A, 1)
@@ -123,7 +123,7 @@ end
 
 @testset "a step that is not 1 is read from p.h" begin
     for T in REAL_ELTYPES
-        name, f!, jac!, y₀ = ODE_FIELDS[2]
+        _, f!, jac!, y₀ = ODE_FIELDS[2]
         A = gauss_tableau(3)
         n = length(y₀)
         prob, _ = stage_problem(f!, jac!, A, T, n)
@@ -163,7 +163,7 @@ end
     counting = Newton(; linsolve = KroneckerFactorization(; block = CountingLU()))
     for T in ELTYPES, (tname, A) in ALL_TABLEAUX
 
-        name, f!, jac!, y₀ = T <: Complex ? COMPLEX_FIELD : ODE_FIELDS[2]
+        _, f!, jac!, y₀ = T <: Complex ? COMPLEX_FIELD : ODE_FIELDS[2]
         n, s = length(y₀), size(A, 1)
         prob, jac = stage_problem(f!, jac!, A, T, n)
         p = stage_params(T, 0.1, y₀)
@@ -198,7 +198,7 @@ end
         y₀ = [0.5, 0.0]
         for A in (sdirk2_tableau(), [1.0 1.0; 0.0 1.0])
             prob, _ = stage_problem(oscillator!, oscillator_jac!, A, T, 2)
-            @test_throws "is not diagonalisable to the working precision" init(
+            @test_throws r"^ArgumentError: the stage matrix is not diagonalisable to the working precision" init(
                 prob, zeros(T, 4), KRON, stage_params(T, 0.1, y₀))
         end
         A6 = gauss_tableau(6)
@@ -208,6 +208,10 @@ end
         _, st = solve!(solver)
         @test st.code == SUCCESS
     end
+    # the eigendecomposition runs in `Float64`, so a wider `T` takes the bound of `Float64`
+    prob, _ = stage_problem(oscillator!, oscillator_jac!, sdirk2_tableau(), BigFloat, 2)
+    @test_throws r"^ArgumentError: the stage matrix is not diagonalisable to the working precision" init(
+        prob, zeros(BigFloat, 4), KRON, stage_params(BigFloat, 0.1, [0.5, 0.0]))
 end
 
 # The stage matrix `V diag(1, 2) V⁻¹` whose unit eigenvectors `(1, 0)` and `(1, δ) / ‖(1, δ)‖`
@@ -217,9 +221,9 @@ function conditioned_tableau(δ)
     return V * [1.0 0.0; 0.0 2.0] / V
 end
 
-@testset "the refusal bound is eps(real(T))^(-1/2)" begin
-    for T in REAL_ELTYPES
-        bound = inv(sqrt(eps(real(T))))
+@testset "the refusal bound is max(eps(real(T)), eps(Float64))^(-1/2)" begin
+    for T in (REAL_ELTYPES..., BigFloat)
+        bound = inv(sqrt(max(Float64(eps(real(T))), eps(Float64))))
         for (factor, refused) in ((0.8, false), (1.25, true))
             A = conditioned_tableau(2 / (factor * bound))
             κ = cond(eigen(A).vectors)
@@ -227,12 +231,33 @@ end
             prob, _ = stage_problem(oscillator!, oscillator_jac!, A, T, 2)
             p = stage_params(T, 0.1, [0.5, 0.0])
             if refused
-                @test_throws "is not diagonalisable to the working precision" init(
+                @test_throws r"^ArgumentError: the stage matrix is not diagonalisable to the working precision" init(
                     prob, zeros(T, 4), KRON, p)
             else
                 @test init(prob, zeros(T, 4), KRON, p) isa NonlinearSolver
             end
         end
+    end
+end
+
+# The first step from `Z = 0` against the stacked first step, for the tableaux with a second
+# conjugate pair (Gauss s = 4, 5, 6) or a second real eigenvalue (`V diag(1, 2) V⁻¹ / 4`), so that
+# every block after the first enters a compared step. The transforms lose up to `cond(V)` in
+# accuracy, so the bound is `C_STEP · cond(V) · eps · ‖Z‖∞`; the largest measured ratio to
+# `cond(V) · eps · ‖Z‖∞` is 0.63. A block that takes the eigenvalue of the first block of its list
+# moves the step by at least 1.2e6 eps · ‖Z‖∞ in `Float32` and 6.4e14 eps · ‖Z‖∞ in `Float64`.
+@testset "every block enters the first step" begin
+    tableaux = (gauss_tableau(4), gauss_tableau(5), gauss_tableau(6),
+        conditioned_tableau(0.5) / 4)
+    for T in REAL_ELTYPES, A in tableaux, (_, f!, jac!, y₀) in ODE_FIELDS
+        n, s = length(y₀), size(A, 1)
+        κ = cond(eigen(A).vectors)
+        prob, _ = stage_problem(f!, jac!, A, T, n)
+        p = stage_params(T, 0.37, y₀)
+        Zk, _ = solve(prob, zeros(T, s * n), KRON, p; options = first_step(T))
+        Zs, _ = solve(prob, zeros(T, s * n), Newton(), p; options = first_step(T))
+        @test maximum(abs, Zk .- Zs) <= C_STEP * κ * eps(T) * maximum(abs, Zs)
+        @test maximum(abs, Zs) > 0
     end
 end
 
@@ -242,49 +267,54 @@ end
         prob, _ = stage_problem(oscillator!, oscillator_jac!, A, T, 2)
         p = stage_params(T, 0.1, [0.5, 0.0])
         Z = zeros(T, 4)
-        @test_throws "a value iterate" init(prob, SVector{4, T}(Z), KRON, p)
-        @test_throws "a device iterate" init(prob, JLArray(Z), KRON, p)
-        @test_throws "takes no DogLeg" init(
+        @test_throws r"^ArgumentError: KroneckerFactorization solves the stage system in place, and a value iterate" init(
+            prob, SVector{4, T}(Z), KRON, p)
+        @test_throws r"^ArgumentError: KroneckerFactorization has no device factor, so a device iterate" init(
+            prob, JLArray(Z), KRON, p)
+        @test_throws r"^ArgumentError: Newton with KroneckerFactorization takes no DogLeg" init(
             prob, Z, Newton(; linsolve = KroneckerFactorization(), globalization = DogLeg()),
             p)
-        @test_throws "takes no LevenbergMarquardt" init(
+        @test_throws r"^ArgumentError: Newton with KroneckerFactorization takes no LevenbergMarquardt" init(
             prob, Z,
             Newton(; linsolve = KroneckerFactorization(),
                 globalization = LevenbergMarquardt()),
             p)
-        @test_throws "takes no refinement" init(
+        @test_throws r"^ArgumentError: Newton with KroneckerFactorization takes no refinement" init(
             prob, Z, Newton(; linsolve = KroneckerFactorization(), refinement = Refinement()),
             p)
-        @test_throws "takes no regularization" init(
+        @test_throws r"^ArgumentError: Newton with KroneckerFactorization takes no regularization" init(
             prob, Z, Newton(; linsolve = KroneckerFactorization(), regularization = 0.1), p)
-        @test_throws "takes no factorisation precision" init(
+        @test_throws r"^ArgumentError: KroneckerFactorization takes no factorisation precision" init(
             prob, Z, Newton(; linsolve = KroneckerFactorization(Float32)), p)
-        @test_throws "takes no jacobian" init(
+        @test_throws r"^ArgumentError: Newton with KroneckerFactorization takes no jacobian" init(
             prob, Z,
             Newton(; linsolve = KroneckerFactorization(),
                 jacobian = AutoForwardDiff()), p)
-        @test_throws "needs a NonlinearProblem with stage_matrix" init(
+        @test_throws r"^ArgumentError: KroneckerFactorization needs a NonlinearProblem with stage_matrix" init(
             NonlinearProblem(StageSystem(oscillator!, A, T, 2)), Z, KRON, p)
-        @test_throws "a multiple of the number of stages" init(prob, zeros(T, 5), KRON, p)
-        @test_throws "reads the step from p.h" init(prob, Z, KRON, (; y = p.y))
-        @test_throws "an invertible stage matrix" init(
+        @test_throws r"^ArgumentError: KroneckerFactorization needs an iterate whose length is a multiple of the number of stages" init(
+            prob, zeros(T, 5), KRON, p)
+        @test_throws r"^ArgumentError: KroneckerFactorization reads the step from p\.h" init(
+            prob, Z, KRON, (; y = p.y))
+        @test_throws r"^ArgumentError: KroneckerFactorization needs an invertible stage matrix" init(
             stage_problem(oscillator!, oscillator_jac!, [0.0 0.0; 0.5 0.5], T, 2)[1],
             Z, KRON, p)
-        @test_throws "a real stage matrix" init(
+        @test_throws r"^ArgumentError: KroneckerFactorization with a real iterate needs a real stage matrix" init(
             stage_problem(oscillator!, oscillator_jac!, complex.(A), T, 2)[1], Z, KRON, p)
     end
-    @test_throws "a square stage matrix" init(
+    @test_throws r"^ArgumentError: KroneckerFactorization needs a square stage matrix" init(
         stage_problem(oscillator!, oscillator_jac!, ones(2, 3), Float64, 2)[1],
         zeros(4), KRON, stage_params(Float64, 0.1, [0.5, 0.0]))
-    @test_throws "takes a block method" KroneckerFactorization(; block = GMRES())
-    @test_throws "takes a block method" KroneckerFactorization(;
+    @test_throws r"^ArgumentError: KroneckerFactorization takes a block method that factorises in the working precision" KroneckerFactorization(;
+        block = GMRES())
+    @test_throws r"^ArgumentError: KroneckerFactorization takes a block method that factorises in the working precision" KroneckerFactorization(;
         block = LUFactorization(Float32))
     f = StageSystem(oscillator!, gauss_tableau(2), Float64, 2)
-    @test_throws "stage_matrix and stage_jacobian together" NonlinearProblem(
+    @test_throws r"^ArgumentError: NonlinearProblem takes stage_matrix and stage_jacobian together" NonlinearProblem(
         f; stage_matrix = gauss_tableau(2))
-    @test_throws "stage_matrix and stage_jacobian together" NonlinearProblem(
+    @test_throws r"^ArgumentError: NonlinearProblem takes stage_matrix and stage_jacobian together" NonlinearProblem(
         f; stage_jacobian = FrozenJacobian(oscillator_jac!))
-    @test_throws "either block_residuals or stage_matrix" NonlinearProblem(
+    @test_throws r"^ArgumentError: NonlinearProblem takes either block_residuals or stage_matrix" NonlinearProblem(
         f; stage_matrix = gauss_tableau(2), stage_jacobian = FrozenJacobian(oscillator_jac!),
         block_residuals = (f,))
 end
@@ -310,7 +340,7 @@ end
     counting = KroneckerFactorization(; block = CountingLU())
     for T in REAL_ELTYPES, (tname, A) in ALL_TABLEAUX
 
-        name, f!, jac!, y₀ = ODE_FIELDS[3]
+        _, f!, jac!, y₀ = ODE_FIELDS[3]
         n, s = length(y₀), size(A, 1)
         nblocks = s ÷ 2 + s % 2
         p = stage_params(T, 0.1, y₀)
@@ -338,7 +368,7 @@ end
 
         y₀ = [0.5, 0.0]
         s = size(A, 1)
-        prob, jac = stage_problem(oscillator!, oscillator_jac!, A, T, 2)
+        prob, _ = stage_problem(oscillator!, oscillator_jac!, A, T, 2)
         p = stage_params(T, 0, y₀)
         Z, st = solve(prob, fill(T(0.25), 2s), KRON, p; options = stage_options(T))
         @test st.code == SUCCESS
@@ -401,7 +431,7 @@ end
 @testset "the state holds the n × n Jacobian of the field" begin
     for T in ELTYPES, (tname, A) in ALL_TABLEAUX
 
-        name, f!, jac!, y₀ = T <: Complex ? COMPLEX_FIELD : ODE_FIELDS[4]
+        _, f!, jac!, y₀ = T <: Complex ? COMPLEX_FIELD : ODE_FIELDS[4]
         n, s = length(y₀), size(A, 1)
         prob, _ = stage_problem(f!, jac!, A, T, n)
         solver = init(prob, zeros(T, s * n), KRON, stage_params(T, 0.1, y₀))
@@ -438,7 +468,7 @@ end
 @testset "a line search along the Kronecker direction" begin
     for T in REAL_ELTYPES, glob in (Backtracking(), StrongWolfe())
 
-        name, f!, jac!, y₀ = ODE_FIELDS[2]
+        _, f!, jac!, y₀ = ODE_FIELDS[2]
         A = radau_iia3_tableau()
         prob, _ = stage_problem(f!, jac!, A, T, 2)
         p = stage_params(T, 0.1, y₀)
@@ -459,7 +489,7 @@ end
 
 @testset "the block methods" begin
     A = radau_iia3_tableau()
-    name, f!, jac!, y₀ = ODE_FIELDS[2]
+    _, f!, jac!, y₀ = ODE_FIELDS[2]
     for T in REAL_ELTYPES
         prob, _ = stage_problem(f!, jac!, A, T, 2)
         p = stage_params(T, 0.1, y₀)
@@ -472,10 +502,12 @@ end
             @test maximum(abs, Zk .- Zs) <= C_AGREE * stage_xtol(T)
         end
     end
-    @test_throws "is in general not Hermitian" KroneckerFactorization(;
-        block = CholeskyFactorization())
-    @test_throws "is in general not Hermitian" KroneckerFactorization(;
-        block = LDLTFactorization())
+    for block in (CholeskyFactorization(), LDLTFactorization())
+        @test_throws r"^ArgumentError: KroneckerFactorization takes a block method for a general square matrix, .* is in general not Hermitian" KroneckerFactorization(;
+            block)
+    end
+    @test_throws r"^ArgumentError: KroneckerFactorization takes a block method for a dense square matrix, .* has no sparse pattern, which UMFPACKFactorization needs" KroneckerFactorization(;
+        block = UMFPACKFactorization())
 end
 
 @testset "a tiny step agrees with the stacked solve" begin
@@ -511,7 +543,7 @@ end
     prob, _ = stage_problem(pendulum!, pendulum_jac!, A, Float64, 2)
     y = [acos(0.4), 0.0]
     p = (h = ForwardDiff.Dual(0.1, 1.0), y = y)
-    @test_throws "for a Newton with KroneckerFactorization" solve(
+    @test_throws r"^ArgumentError: solve does not accept ForwardDiff\.Dual inputs for a Newton with KroneckerFactorization" solve(
         prob, zeros(4), KRON, p; options = stage_options(Float64))
 end
 
