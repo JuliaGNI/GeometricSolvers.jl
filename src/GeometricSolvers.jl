@@ -38,7 +38,8 @@ export KroneckerFactorization, StageResidual, stage_matrix, stage_jacobian
 export UMFPACKFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
-export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
+export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt, Steihaug
+export MINRESQLP
 export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice1,
        FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
@@ -82,6 +83,7 @@ include("linear/ka/qr.jl")
 include("linear/ka/svd.jl")
 include("linear/mixed.jl")
 include("linear/gmres.jl")
+include("linear/minres.jl")
 include("linear/kronecker.jl")
 
 include("globalization/linesearch.jl")
@@ -100,6 +102,7 @@ include("ad/jvp.jl")
 
 include("globalization/linefunction.jl")
 include("globalization/dogleg.jl")
+include("globalization/steihaug.jl")
 include("globalization/levenbergmarquardt.jl")
 include("nonlinear/solver.jl")
 include("nonlinear/refinement.jl")

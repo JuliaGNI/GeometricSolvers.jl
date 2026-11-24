@@ -7,10 +7,11 @@ Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) an
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
 `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
 [`CholeskyFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref), the
-matrix-free [`GMRES`](@ref), or [`KroneckerFactorization`](@ref) for the stage system of an
-implicit Runge–Kutta method), globalization `globalization` ([`Static`](@ref),
-[`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust region
-[`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector `jacobian`,
+matrix-free [`GMRES`](@ref) and [`MINRESQLP`](@ref), or [`KroneckerFactorization`](@ref) for the
+stage system of an implicit Runge–Kutta method), globalization `globalization` ([`Static`](@ref),
+[`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust regions
+[`DogLeg`](@ref) and [`Steihaug`](@ref) or the damped step [`LevenbergMarquardt`](@ref)),
+Jacobian selector `jacobian`,
 iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
 [`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
 `reuse`.
@@ -91,12 +92,14 @@ the norm of the global residual; its inner method takes `best = true`, which has
 
 # Keywords of a `GMRES` linear method
 
-`forcing` and `preconditioner` configure the [`GMRES`](@ref) of `linsolve`, and a `Newton` that
-takes either of them with any other linear method raises an `ArgumentError`. A `Newton` with `GMRES`
-forms no factor, so it takes no `reuse`, no [`Refinement`](@ref) and no
+`forcing` and `preconditioner` configure the [`GMRES`](@ref) of `linsolve`, `forcing` configures a
+[`MINRESQLP`](@ref) too, and a `Newton` that takes either of them with any other linear method, or
+a `preconditioner` with `MINRESQLP`, raises an `ArgumentError`. A `Newton` with `GMRES` or
+`MINRESQLP` forms no factor, so it takes no `reuse`, no [`Refinement`](@ref) and no
 [`LevenbergMarquardt`](@ref) globalization, and a [`DogLeg`](@ref) needs an unrestarted `GMRES`
-without a preconditioner. A [`JVPFunction`](@ref) in `jacobian` needs a `GMRES`, because a
-factorising method needs a Jacobian matrix. Each refusal is an `ArgumentError`.
+without a preconditioner. A [`Steihaug`](@ref) globalization needs a `MINRESQLP`. A
+[`JVPFunction`](@ref) in `jacobian` needs a `GMRES` or a `MINRESQLP`, because a factorising method
+needs a Jacobian matrix. Each refusal is an `ArgumentError`.
 
 - `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
   the relative tolerance of every Newton step's inner solve.
@@ -147,9 +150,18 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
             end
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a GMRES solve does not form"))
+        elseif linsolve isa MINRESQLP
+            reuse === nothing ||
+                throw(ArgumentError("Newton with MINRESQLP takes no factor reuse: a MINRESQLP step has no factor"))
+            is_refining(refinement) &&
+                throw(ArgumentError("Newton with MINRESQLP takes no refinement: a MINRESQLP step has no factor to refine against"))
+            globalization isa LevenbergMarquardt &&
+                throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a MINRESQLP solve does not form"))
         elseif jacobian isa JVPFunction
-            throw(ArgumentError("Newton with a JVPFunction needs linsolve = GMRES(...): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give"))
+            throw(ArgumentError("Newton with a JVPFunction needs linsolve = GMRES(...) or MINRESQLP(...): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give"))
         end
+        globalization isa Steihaug && !(linsolve isa MINRESQLP) &&
+            throw(ArgumentError("Newton with a Steihaug globalization needs linsolve = MINRESQLP(...): its conjugate gradients take the place of the MINRES-QLP solve"))
         new{L, G, J, RF, R, K, B}(
             linsolve, globalization, jacobian, refinement, regularization, reuse, best)
     end
@@ -180,9 +192,14 @@ function Newton(;
     reg = float(regularization)
     r = reuse === nothing ? nothing : Int32(reuse)
     ref = refinement isa Bool ? (refinement ? Refinement() : NoRefinement()) : refinement
-    if forcing !== nothing || preconditioner !== nothing
+    if linsolve isa MINRESQLP && (forcing !== nothing || preconditioner !== nothing)
+        preconditioner === nothing || throw(ArgumentError(
+            "MINRESQLP takes no preconditioner: pass preconditioner = nothing, or use GMRES"))
+        f = forcing === nothing ? linsolve.forcing : forcing
+        linsolve = MINRESQLP(linsolve.maxiter, f)
+    elseif forcing !== nothing || preconditioner !== nothing
         linsolve isa GMRES || throw(ArgumentError(
-            "the forcing and preconditioner keywords of Newton configure a GMRES linear method; pass them to GMRES, or set linsolve = GMRES(...)"))
+            "the forcing and preconditioner keywords of Newton configure a GMRES linear method, and forcing a MINRESQLP one; pass them to GMRES, or set linsolve = GMRES(...)"))
         g = linsolve
         f = forcing === nothing ? g.forcing : forcing
         P = preconditioner === nothing ? g.preconditioner : preconditioner
@@ -520,8 +537,8 @@ end
 # is one step long.
 @inline fresh_age(m::Newton) = m.reuse == Int32(1) ? Int32(0) : Int32(1)
 
-# The rule state of `Newton` with `DogLeg`: the radius, and the initial radius that each solve
-# starts from, `0` when the first step sets it.
+# The rule state of `Newton` with `DogLeg` or `Steihaug`: the radius, and the initial radius that
+# each solve starts from, `0` when the first step sets it.
 struct TrustRadius{R}
     radius::R
     radius₀::R
@@ -539,6 +556,10 @@ end
 @inline newton_rule(globalization, ::Int32, ::Type{R}) where {R} = FactorAge(Int32(0), false)
 @inline function newton_rule(dl::DogLeg, ::Nothing, ::Type{R}) where {R}
     δ₀ = dogleg_initial_radius(dl, R)
+    return TrustRadius(δ₀, δ₀)
+end
+@inline function newton_rule(st::Steihaug, ::Nothing, ::Type{R}) where {R}
+    δ₀ = steihaug_initial_radius(st, R)
     return TrustRadius(δ₀, δ₀)
 end
 @inline function newton_rule(::LevenbergMarquardt, ::Nothing, ::Type{R}) where {R}
@@ -567,14 +588,15 @@ end
 end
 
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
-# globalization workspace, the rule state of its reuse, its `DogLeg` or its `LevenbergMarquardt`,
-# the merit `norm2(Fx)` of the current residual for a line search (`nothing` for any other
-# globalization), the norm `‖Fx‖` of the current residual, the diagnostics of the last
-# factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the working-precision
-# factor slot for mixed-precision promotion (`nothing` where the factorisation runs in the working
-# precision, and for `LevenbergMarquardt`, which promotes nothing), the promotion flag, the
-# count of consecutive slow steps a promotion waits for, and the linear-solver workspace, which
-# only a [`GMRES`](@ref) solve has (`nothing` for every factorising method). For a value iterate the
+# globalization workspace, the rule state of its reuse, its `DogLeg` or `Steihaug` or its
+# `LevenbergMarquardt`, the merit `norm2(Fx)` of the current residual for a line search (`nothing`
+# for any other globalization), the norm `‖Fx‖` of the current residual, the diagnostics of the
+# last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the
+# working-precision factor slot for mixed-precision promotion (`nothing` where the factorisation
+# runs in the working precision, and for `LevenbergMarquardt`, which promotes nothing), the
+# promotion flag, the count of consecutive slow steps a promotion waits for, and the linear-solver
+# workspace, which only a [`GMRES`](@ref) or a [`MINRESQLP`](@ref) solve has (`nothing` for every
+# factorising method). For a value iterate the
 # workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The factor
 # slot is the storage that each factorisation writes into; only a step with reuse stores the factor
 # it returns, because only such a step reads it again. The norm is `NaN` on a state that no
@@ -853,6 +875,7 @@ end
 
 @inline function newton_init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     m.linsolve isa GMRES && return init_gmres_state(m, m.linsolve, prob, x, p)
+    m.linsolve isa MINRESQLP && return init_minresqlp_state(m, m.linsolve, prob, x, p)
     m.linsolve isa KroneckerFactorization &&
         return init_kronecker_state(m, m.linsolve, prob, x, p)
     if prob isa LeastSquaresProblem &&
@@ -1806,9 +1829,14 @@ end
     j isa JVPFunction && return j
     backend = j === nothing ? AutoForwardDiff() : j
     backend isa AbstractADType || throw(ArgumentError(
-        "a Newton with GMRES takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a GMRES solve forms none"))
+        "a Newton with GMRES or MINRESQLP takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none"))
     return prepare_jvp(backend, prob, Fx, x, p)
 end
+
+# Whether a `Newton` with `GMRES` solves `prob`: the square system of a `NonlinearProblem`, and the
+# reduced problem of a `StationarityProblem`, which `stationarity.jl` adds.
+@inline gmres_problem(::NonlinearProblem) = true
+@inline gmres_problem(prob) = false
 
 # The state of a `Newton` with `GMRES` at the iterate `x`: no Jacobian matrix, no factor and no
 # factorization slot, a Jacobian–vector preparation, the workspace of the globalization, and the
@@ -1819,8 +1847,8 @@ end
         "a Newton with GMRES solves an array linear system: the iterate must be an AbstractVector and not a value iterate, which is a Number or a StaticArray"))
     prob isa LeftPreconditionedProblem && throw(ArgumentError(
         "LeftPreconditioned does not take a Newton with GMRES as its outer method: a Newton with GMRES solves a NonlinearProblem, and the outer method solves the preconditioned residual; use a Newton with a factorization, such as the default LUFactorization(), or a Picard as the outer method, or put the Newton with GMRES in the inner method"))
-    prob isa NonlinearProblem || throw(ArgumentError(
-        "a Newton with GMRES solves the square system of a NonlinearProblem; a LeastSquaresProblem takes QRFactorization() or SVDFactorization()"))
+    gmres_problem(prob) || throw(ArgumentError(
+        "a Newton with GMRES solves the square system of a NonlinearProblem or a StationarityProblem; a LeastSquaresProblem takes QRFactorization() or SVDFactorization()"))
     T = eltype(x)
     R = real(T)
     Fx = buffer(x)
@@ -1938,11 +1966,147 @@ end
 
 # `nothing` is the linear-solver workspace of a solve that keeps no count.
 @inline max_inner_iterations(::Nothing) = throw(ArgumentError(
-    "max_inner_iterations reads the count of a Newton with GMRES; this solve keeps none"))
+    "max_inner_iterations reads the count of a Newton with GMRES or MINRESQLP; this solve keeps none"))
 @inline f_calls(::Nothing) = throw(ArgumentError(
-    "f_calls reads the count of a Newton with GMRES; this solve keeps none"))
+    "f_calls reads the count of a Newton with GMRES or MINRESQLP; this solve keeps none"))
 @inline jvp_calls(::Nothing) = throw(ArgumentError(
-    "jvp_calls reads the count of a Newton with GMRES; this solve keeps none"))
+    "jvp_calls reads the count of a Newton with GMRES or MINRESQLP; this solve keeps none"))
+
+# ─── R5 on a symmetric Jacobian: MINRES-QLP and Steihaug ─────────────────────
+#
+# A `Newton` whose linear method is a `MINRESQLP` solves the symmetric system of a
+# `StationarityProblem` with `E == U` without a Jacobian matrix. Its state has the shape of the
+# state of a `GMRES` solve, with a `MINRESQLPWorkspace` in the workspace slot, so `start!!`,
+# `finish!!` and `newton_step!!` reach these bodies through the methods of the workspace hooks on
+# that type. Under a `Steihaug` globalization the truncated conjugate gradients take the place of
+# the MINRES-QLP solve, and the workspace keeps the counts.
+
+@inline gmres_counts(ws::MINRESQLPWorkspace) = (ws.f_calls, ws.jvp_calls)
+
+@inline function reset_gmres!(ws::MINRESQLPWorkspace{T, R}, fnorm₀) where {T, R}
+    ws.f_calls = Int32(1)
+    ws.jvp_calls = Int32(0)
+    ws.iterations = Int32(0)
+    ws.max_inner = Int32(0)
+    ws.step = Int32(0)
+    ws.prev_fnorm = R(fnorm₀)
+    ws.last_eta = zero(R)
+    ws.linres = zero(R)
+    return nothing
+end
+
+@inline function close_gmres!(ws::MINRESQLPWorkspace{T, R}) where {T, R}
+    ws.prev_fnorm = R(NaN)
+    ws.last_eta = R(NaN)
+    ws.linres = R(NaN)
+    return nothing
+end
+
+# Whether a `Newton` with `MINRESQLP` solves `prob`: none here, and the reduced problem of a
+# `StationarityProblem` with `E == U`, which `stationarity.jl` adds, raises its own error where the
+# index sets differ.
+@inline function check_symmetric_problem(prob)
+    throw(ArgumentError(
+        "a Newton with MINRESQLP solves the symmetric system of a StationarityProblem with E == U; a NonlinearProblem takes GMRES()"))
+end
+
+# The state of a `Newton` with `MINRESQLP` at the iterate `x`, as `init_gmres_state` builds it for
+# `GMRES`: no Jacobian matrix and no factor, a counted Jacobian–vector preparation, the workspace of
+# the globalization, and the linear-solver workspace.
+@inline function init_minresqlp_state(m::Newton, g::MINRESQLP, prob, x, p)
+    (x isa AbstractVector && !(x isa StaticArray)) || throw(ArgumentError(
+        "a Newton with MINRESQLP solves an array linear system: the iterate must be an AbstractVector and not a value iterate, which is a Number or a StaticArray"))
+    check_symmetric_problem(prob)
+    R = real(eltype(x))
+    Fx = buffer(x)
+    ws = init_minresqlp_workspace(g, x)
+    prep = newton_jvp_prep(m, prob, Fx, x, p)
+    iszero(m.regularization) || (prep = RegularizedJVP(prep, m.regularization))
+    return NewtonState(
+        nothing, R5JVP(prep, ws), Fx, ws.x, nothing, nothing,
+        init_globalization(m.globalization, g, x, Fx), newton_rule(m, x),
+        init_merit(m.globalization, x), R(NaN), NewtonDiagnostics(R),
+        nothing, nothing, false, Int32(0), ws)
+end
+
+# The forcing term of a step on the MINRES-QLP workspace, and `‖F_k‖`; `ok` is `false` where the
+# residual norm or a value that `start!!` sets is not finite, so a step on a state that no `start!!`
+# saw fails closed.
+@inline function minresqlp_forcing(state::NewtonState, g::MINRESQLP, ws::MINRESQLPWorkspace, Fx)
+    R = real(eltype(Fx))
+    fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
+    ok = isfinite(fnorm) && isfinite(ws.prev_fnorm) && isfinite(ws.last_eta)
+    ok || return false, zero(R), fnorm
+    η = R(compute_forcing(g.forcing, ws.step, fnorm, ws.prev_fnorm, ws.last_eta, ws.linres))
+    return true, η, fnorm
+end
+
+# The record of one step on the workspace: its inner iterations, its linear residual, its forcing
+# term and its residual norm, which the forcing term of the next step reads.
+@inline function record_inner!(ws::MINRESQLPWorkspace{T, R}, iterations, linres, η,
+        fnorm) where {T, R}
+    ws.iterations = Int32(iterations)
+    ws.max_inner = max(ws.max_inner, Int32(iterations))
+    ws.linres = R(linres)
+    ws.last_eta = R(η)
+    ws.prev_fnorm = R(fnorm)
+    ws.step += one(Int32)
+    return nothing
+end
+
+# The symmetric Jacobian of a `MINRESQLP` step as the operator of the factorised `DogLeg` loop:
+# `mul!!(y, J, v)` is the counted Hessian–vector product, and `J'` is `J`, so the Cauchy direction
+# `J' F` is one product.
+struct SymmetricJVP{O}
+    op::O
+end
+
+Base.adjoint(J::SymmetricJVP) = J
+@inline mul!!(y::AbstractVecOrMat, J::SymmetricJVP, v) = J.op(y, v)
+
+# The step of a `Newton` with `MINRESQLP`: the inner solve and the globalization of its direction,
+# or the Steihaug step in its place. A line search gets the inexact step kind `InexactStep(η_ach)`,
+# as for `GMRES`; a `DogLeg` runs the factorised trial loop on `SymmetricJVP`, whose Cauchy point
+# takes two products and whose predicted reduction takes one product per trial.
+@inline function gmres_step!!(state::NewtonState, ws::MINRESQLPWorkspace,
+        m::Newton, g::MINRESQLP, prob, x, Fx, p)
+    R = real(eltype(x))
+    counted = counting_problem(prob, ws)
+    op = R5Operator(state.jvpprep, counted, x, p)
+    ok, η, fnorm = minresqlp_forcing(state, g, ws, Fx)
+    ok || return x, Fx, state,
+    StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+    if m.globalization isa Steihaug
+        x₊, F₊, radius, info, linres, iterations = steihaug_step!!(
+            state.g, counted, x, Fx, p, op, η, g.maxiter, state.rule.radius)
+        record_inner!(ws, iterations, linres, η, fnorm)
+        state₊ = with_rule(state, TrustRadius(radius, state.rule.radius₀))
+        return x₊, F₊, with_merit(state₊, state.merit, info.fnorm), info
+    end
+    map!!(-, ws.bb, Fx)
+    d, inner = minresqlp_solve!(ws, op, ws.bb, fnorm, η, g.maxiter)
+    record_inner!(ws, inner.iterations, inner.resnorm, η, fnorm)
+    failures = inner.iterations >= g.maxiter && !inner.converged ? Int32(1) : Int32(0)
+    # a non-finite product leaves a residual of `NaN`: the step ends before a globalization reads
+    # the direction
+    (isfinite(inner.resnorm) && all(isfinite, d)) ||
+        return x, Fx, state, StepInfo{R}(NONFINITE, fnorm, zero(R), failures, false, false)
+    if m.globalization isa DogLeg
+        nd = R(rnorm(d))
+        newton = isfinite(nd) && !iszero(nd)
+        x₊, F₊, radius, info = dogleg_step(
+            state.g, counted, x, Fx, p, SymmetricJVP(op), d, newton, state.rule.radius)
+        state₊ = with_rule(state, TrustRadius(radius, state.rule.radius₀))
+        info = bump_failures(info, failures)
+        return x₊, F₊, with_merit(state₊, state.merit, info.fnorm), info
+    end
+    η_ach = iszero(fnorm) ? zero(R) : min(inner.resnorm / fnorm, η)
+    x₊, F₊, _, info, merit = globalize_merit!!(
+        state.g, m.globalization, counted, x, Fx, d, p, state.jvpprep,
+        InexactStep(R(η_ach)), state.merit)
+    info = bump_failures(info, failures)
+    return x₊, F₊, with_merit(state, merit, info.fnorm), info
+end
 
 # ─── The Kronecker stage solver ──────────────────────────────────────────────
 #

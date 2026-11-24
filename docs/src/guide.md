@@ -177,12 +177,14 @@ differentiation or from a [`JVPFunction`](@ref).
 
 | method or option | condition |
 |:--|:--|
-| [`GMRES`](@ref) | an `AbstractVector` iterate, on the host or on a device, and the square system of a [`NonlinearProblem`](@ref) |
+| [`GMRES`](@ref) | an `AbstractVector` iterate, on the host or on a device, and the square system of a [`NonlinearProblem`](@ref) or of a [`StationarityProblem`](@ref), with any index sets `E` and `U` |
+| [`MINRESQLP`](@ref) | an `AbstractVector` iterate of a real element type and a [`StationarityProblem`](@ref) with `E == U`, the same indices in the same order, whose Jacobian is symmetric and may be indefinite or singular; no preconditioner; under [`DogLeg`](@ref) the Cauchy point takes two Hessian–vector products |
 | [`EisenstatWalkerChoice2`](@ref) (the default), [`EisenstatWalkerChoice1`](@ref) | an inner tolerance that is loose far from the root and tight near it |
 | [`FixedForcing`](@ref)`(η)` | a constant inner tolerance `η` |
 | a right preconditioner with methods of [`refresh!`](@ref) and [`apply_preconditioner!`](@ref) | an operator that is refreshed once per Newton step and applied before every product |
 | [`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) | as in R1 |
 | [`DogLeg`](@ref) | as in R1; it runs on the Arnoldi relation of one unrestarted cycle without a preconditioner |
+| [`Steihaug`](@ref) | `linsolve = MINRESQLP()`; truncated conjugate gradients on the model of the action, accepted by the ratio of `DogLeg` on ``\|F\|``, so a first direction of negative curvature is never accepted |
 
 **Conditions of the regime.** R5 applies to a large system whose Jacobian no array can hold. A
 `GMRES` solve takes no factor reuse, no [`Refinement`](@ref), no [`LevenbergMarquardt`](@ref) and

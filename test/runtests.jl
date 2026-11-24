@@ -58,6 +58,7 @@ const TESTS = [
     "leastsquares" => [
         "R3 nonlinear" => "nonlinear/r3.jl",
         "R5 matrix-free Newton-GMRES" => "nonlinear/krylov.jl",
+        "R5 symmetric Krylov and Steihaug" => "nonlinear/symkrylov.jl",
         "GMRES-IR" => "nonlinear/gmres_ir.jl",
         "Implicit differentiation" => "nonlinear/implicit.jl",
         "Rank-deficient Newton" => "nonlinear/rank_deficient.jl",

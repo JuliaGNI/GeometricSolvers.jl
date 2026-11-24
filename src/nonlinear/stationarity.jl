@@ -375,6 +375,54 @@ end
     return u₊, F₊, with_merit(s, merit), info
 end
 
+# The matrix-free `Newton` on the reduced problem: `GMRES` takes any index sets, and `MINRESQLP` and
+# `Steihaug` take `E == U` only, compared as the problem stores them, so that `(1, 2)` and `(2, 1)`
+# differ: the Jacobian is then not symmetric.
+@inline gmres_problem(::ReducedStatProb) = true
+
+@inline function check_symmetric_problem(rprob::ReducedStatProb)
+    E, U = rprob.prob.E, rprob.prob.U
+    E == U || throw(ArgumentError(
+        "a Newton with MINRESQLP solves the symmetric system of a StationarityProblem with E == U, the same indices in the same order; got E = $E and U = $U, whose Jacobian is not symmetric: use GMRES()"))
+    return nothing
+end
+
+# The product of a matrix-free solve of the reduced problem: the caller's `JVPFunction` on the
+# unknowns, or the Hessian–vector product of the problem's own AD preparation, which
+# `_init_stationarity_state` built for the back end of the `Newton`. That preparation works in the
+# element type of the state, so a `GMRES` with a `jvp_eltype` is refused.
+@inline function newton_jvp_prep(
+        m::Newton, rprob::ReducedStatProb, Fx, u::AbstractVector, p)
+    j = m.jacobian
+    j isa JVPFunction && return j
+    (j === nothing || j isa AbstractADType) || throw(ArgumentError(
+        "a Newton with GMRES or MINRESQLP takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none"))
+    eltype(u) === eltype(rprob.x_ref) || throw(ArgumentError(
+        "a StationarityProblem takes a GMRES with jvp_eltype = Nothing: its Hessian–vector product is formed in the element type of the state"))
+    return rprob.prep
+end
+
+# The residual of the reduced problem as a callable, which the counting wrapper of a matrix-free
+# step reads: each call is one counted evaluation of `F`.
+struct ReducedCountingResidual{P, W}
+    prob::P
+    ws::W
+end
+
+@inline function (c::ReducedCountingResidual)(y, u, p)
+    c.ws.f_calls += Int32(1)
+    return residual!!(y, c.prob, u, p)
+end
+
+@inline function counting_problem(prob::ReducedStatProb, ws)
+    return R5CountingProblem(prob, ReducedCountingResidual(prob, ws))
+end
+
+# The counts of a stationarity solve are those of the method on its reduced problem.
+@inline max_inner_iterations(s::DenseStationarityState) = max_inner_iterations(s.inner)
+@inline f_calls(s::DenseStationarityState) = f_calls(s.inner)
+@inline jvp_calls(s::DenseStationarityState) = jvp_calls(s.inner)
+
 @inline function _init_stationarity_state(m, prob::StatProb, x₀::StaticOrNumber, p, b)
     b_raw = _resolve_datum(prob, p, b)
     _validate_stationarity_solve(prob, x₀, b_raw)
