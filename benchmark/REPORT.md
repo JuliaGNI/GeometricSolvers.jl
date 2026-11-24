@@ -824,18 +824,19 @@ verdict against the host R1 solve.
 | rx7900xtx | Newton DogLeg LU | GeometricSolvers | 45 | 41 | 41 | 0 | 0 | 0 | 4 |
 | rx7900xtx | Picard Backtracking | GeometricSolvers | 45 | 12 | 12 | 0 | 0 | 0 | 33 |
 
-The cells that ran differ between the machines: a row above the band, a kernel that does not
-compile and a kernel that throws are not counted (*Not run* below), so two machines' counts compare
-only over the rows that ran on both.
+The cells that ran differ between the machines: a row above the band, a cell that is not run, a
+kernel that does not compile and a kernel that throws are not counted (*Not run* below), so two
+machines' counts compare only over the rows that ran on both.
 
 ### Y3 · R2 throughput
 
 Per machine, `n` and variant: solves per second, `n_sys / median_s`, at each `n_sys`; `—` for a
 cell that did not run. The cpu mode runs the grid on the host's cores through `CPU()`, so its
 throughput is no device throughput. On a card the four device variants run on the card and
-`host-r1` on the host's threads, whose count is in the cards table; on `rx7900xtx` the device
-variants run up to the band, `n = 8`, and `host-r1` at every `n`. A throughput is of one run of
-one machine at the load of the cards table, and two machines differ in card, host and threads.
+`host-r1` on the host's threads, whose count is in the cards table; on `rx7900xtx` the three
+GeometricSolvers device variants run up to the band, `n = 8`, `sns` does not run, and `host-r1`
+runs at every `n`. A throughput is of one run of one machine at the load of the cards table, and
+two machines differ in card, host and threads.
 
 | machine | n | variant | 10³ | 10⁴ | 10⁵ | 10⁶ | 10⁷ |
 |:--|--:|:--|--:|--:|--:|--:|--:|
@@ -1170,8 +1171,7 @@ successful solves end at `|x₁|` between 5.8e17 and 9.1e18 with `|x₂| < 1.73e
 At the host's end points of `Newton Static LU` from `10u0` and `100u0` `‖F‖∞` is 3.0e-27 and
 3.8e-27 in `Float32`, and `F₂` is 1.5e15 and −1.35e15 in `Float64`: they are roots of the
 `Float32` residual near the line `x₂ = 0`, and where a solve ends on it depends on the rounding of
-each step. The `CPU()` kernel's path from `10u0` lies
-1.3e16 from the host's at iteration 85.
+each step. The `CPU()` kernel's path from `10u0` lies 1.3e16 from the host's at iteration 85.
 
 | machine | kind | set | problem | start | variant | package | verdict | explanation |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
