@@ -29,7 +29,8 @@ with partial pivoting and `Int32` pivots, [`StaticLDLT`](@ref) is Bunch–Kaufma
 Householder QR without column pivoting, and [`StaticSVD`](@ref) and [`StaticRectSVD`](@ref) are a
 one-sided Jacobi singular value decomposition whose solve truncates at the rank cutoff
 `√n · eps(TF) · σ₁` for a square matrix and `√m · eps(TF) · σ₁` for a rectangular one, `m` its row
-count, which is what makes a rank-revealing solve finite. For a vector state (R3) with no sparse
+count, which is what makes a rank-revealing solve finite. `SVDFactorization(; rtol)` sets the
+cutoff to `rtol · σ₁` on every route, R1 and R3. For a vector state (R3) with no sparse
 pattern (`jacobian_pattern(prob, jacprep) === nothing`),
 [`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref), [`DenseQR`](@ref) or
 [`DenseSVD`](@ref) on a host `Array` and [`DeviceLU`](@ref), [`DeviceLDLT`](@ref),
@@ -39,7 +40,9 @@ the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on `MtlMatrix{Floa
 `MtlVector{Float32}`, with every MPS failure status reported as a singular factor) and
 `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with cuBLAS
 `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
-LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge)
+LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge,
+and calling it in place of `gesvdj!` where the `rtol` cutoff lies below `√m · eps(real(T))`, `m`
+the number of rows)
 package extensions where available and through `KernelAbstractions` otherwise. When `Sparspak` is
 loaded and [`jacobian_pattern`](@ref) is a `SparseMatrixCSC{<:Any, Int}` on a host `Vector{T}` (`T <:
 AbstractFloat`) — from an explicit `jacobian_prototype`, or detected automatically by

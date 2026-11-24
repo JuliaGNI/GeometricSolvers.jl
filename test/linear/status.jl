@@ -1,6 +1,7 @@
 # The status and the rank of a factor, apart from each other: the numerical rank of an SVD factor
 # in its field `rank`, `info` and `returncode` reporting a failed factorisation alone, on a static
-# matrix, a host `Array` and a `JLArray`; `exact_solve` of every factor type; the static kernels on
+# matrix, a host `Array` and a `JLArray`; the rank cutoff of `SVDFactorization(; rtol)` on the same
+# routes, square and rectangular; `exact_solve` of every factor type; the static kernels on
 # `BigFloat` and their allocations on the `isbits` types; `singular_values`; the dense LU through
 # `LAPACK.getrf!`; and the LAPACK workspaces of the dense QR and SVD factors.
 #
@@ -9,8 +10,8 @@
 
 using GeometricSolvers
 using GeometricSolvers: DenseSVD, NonlinearProblem, SINGULAR, SUCCESS, StaticLU, StaticQR,
-                        StaticSVD, dense_factor, exact_solve, factorize!!, jacobi_tolerance,
-                        ldiv!!,
+                        StaticSVD, dense_factor, exact_solve, factorize!!, init_linear,
+                        jacobi_tolerance, ldiv!!,
                         returncode, singular_values
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
@@ -207,6 +208,181 @@ end
     end
 end
 
+"""
+    signed_diagonal(T, σ, m = length(σ))
+
+The `m × n` matrix, `n = length(σ)`, whose singular values are exactly `σ` in `T`: a diagonal with
+its columns permuted and given a unit sign or phase, so that the columns are orthogonal and every
+route computes its singular values to the last bit.
+"""
+function signed_diagonal(::Type{T}, σ, m::Int = length(σ)) where {T}
+    n = length(σ)
+    A = zeros(T, m, n)
+    perm = circshift(1:n, 1)
+    for j in 1:n
+        ph = T <: Complex ? T(cis(0.3 * j)) : T(isodd(j) ? 1 : -1)
+        A[perm[j], j] = ph * T(real(T)(σ[j]))
+    end
+    return A
+end
+
+const RTOL_ROUTES = ("SMatrix", ARRAY_BACKENDS...)
+
+"The SVD factor of the `m × n` matrix `A` with `method` on a route of `RTOL_ROUTES`."
+function rtol_factor(route, method, A::AbstractMatrix{T}) where {T}
+    m, n = size(A)
+    route == "SMatrix" && return factorize!!(nothing, method, SMatrix{m, n, T}(A))
+    x = route(zeros(T, n))
+    fac = init_linear(method, nothing, x, m == n ? nothing : m)
+    return factorize!!(fac, method, route(A))
+end
+
+"The step `A⁺ b` of the factor `fac` of a route, as a host `Vector`."
+function rtol_solve(route, fac, b::Vector{T}) where {T}
+    route == "SMatrix" && return Vector(ldiv!!(nothing, fac, SVector{length(b)}(b)))
+    n = size(fac.U, 2)
+    return Array(ldiv!!(route(zeros(T, n)), fac, route(copy(b))))
+end
+
+"The left singular vectors of the factor of a route, as a host `Matrix`."
+rtol_U(route, fac) = route == "SMatrix" ? Matrix(fac.factors) : Array(fac.U)
+
+"`[1, 2, 3]` with the coordinates past the rank `r` set to zero."
+truncated_step(::Type{T}, r) where {T} = T[1, r >= 2 ? 2 : 0, r >= 3 ? 3 : 0]
+
+@testset "the rank cutoff rtol · σ̂₁" begin
+    # the singular values 1, 1e-10, 1e-14: the default cutoff `√m · eps(R)` keeps one of them in
+    # `Float32` and three in `Float64`; rtol = 1e-9 keeps one, 1e-12 two, 1e-20 and 0 three
+    rtols = ((nothing, nothing), (1e-9, 1), (1e-12, 2), (1e-20, 3), (0, 3))
+    @testset "the fixture, $T, $(mr) × 3, rtol = $rtol, $route" for T in ELTYPES,
+        mr in (3, 5),
+        (rtol, want) in rtols, route in RTOL_ROUTES
+        R = real(T)
+        r = something(want, R === Float32 ? 1 : 3)
+        A = signed_diagonal(T, (1.0, 1e-10, 1e-14), mr)
+        fac = rtol_factor(route, SVDFactorization(; rtol), A)
+        @test fac.info == 0
+        @test fac.rank == r
+        # the host route truncates in the solve and keeps `U` as `gesvd` wrote it
+        route == Array || @test all(iszero, rtol_U(route, fac)[:, (r + 1):end])
+        # on a complex `Array`, LAPACK's `U` is accurate to `eps`, so the coordinate of the step
+        # along `σ = 1e-10` has a relative error up to `eps / 1e-10`: the step is asserted on the
+        # real types
+        if T <: Real
+            d = rtol_solve(route, fac, A * T[1, 2, 3])
+            @test isapprox(d, truncated_step(T, r); rtol = 8 * eps(R))
+        end
+    end
+    @testset "a mixed factor, $T, $(mr) × 3, $route" for T in ELTYPES, mr in (3, 5),
+        route in RTOL_ROUTES
+        A = signed_diagonal(T, (1.0, 1e-10, 1e-14), mr)
+        @test rtol_factor(route, SVDFactorization(Float32; rtol = 1e-12), A).rank == 2
+    end
+    @testset "rtol = 0 drops a zero singular value alone, $T, $(mr) × 3, $route" for T in ELTYPES,
+        mr in (3, 5), route in RTOL_ROUTES
+
+        A = signed_diagonal(T, (1.0, 1e-18, 0.0), mr)
+        @test rtol_factor(route, SVDFactorization(; rtol = 0), A).rank == 2
+    end
+    # a singular value at `rtol · σ₁` counts as zero, and the next float above it counts
+    @testset "σ₂ = rtol = 2^-30, $R, $(mr) × 3, 2^$k, $route" for R in REAL_ELTYPES,
+        mr in (3, 5),
+        k in (0, -40, 40), route in RTOL_ROUTES
+        c = ldexp(one(R), -30)
+        m = SVDFactorization(R; rtol = c)
+        at = rtol_factor(route, m, ldexp.(signed_diagonal(R, (1.0, c, 0.0), mr), k))
+        above = rtol_factor(route, m, ldexp.(signed_diagonal(R, (1.0, nextfloat(c), 0.0), mr), k))
+        @test at.scale_exponent == k
+        @test at.rank == 1
+        @test above.rank == 2
+        # the device kernel that zeroes `U` applies the cutoff a second time
+        if route != Array
+            @test all(iszero, rtol_U(route, at)[:, 2:end])
+            @test !all(iszero, rtol_U(route, above)[:, 2])
+        end
+    end
+    # the factor converts rtol to its real type: `prevfloat(2.0^-30)` rounds to `2f0^-30`, so
+    # `σ₂ = 2f0^-30` lies at the cutoff of a `Float32` factor and counts as zero; `0.99999999`
+    # rounds to `1f0`, giving rank 0 and the zero step in a direct `factorize!!`
+    @testset "a Float64 rtol in a Float32 factor, $(mr) × 3, $route" for mr in (3, 5),
+        route in RTOL_ROUTES
+
+        c = ldexp(1.0f0, -30)
+        A = signed_diagonal(Float32, (1.0, c, 0.0), mr)
+        m = SVDFactorization(; rtol = prevfloat(Float64(c)))
+        @test rtol_factor(route, m, A).rank == 1
+        fac0 = rtol_factor(route, SVDFactorization(; rtol = 0.99999999), A)
+        @test fac0.info == 0
+        @test fac0.rank == 0
+        route == Array || @test all(iszero, rtol_U(route, fac0))
+        @test iszero(rtol_solve(route, fac0, A * Float32[1, 2, 3]))
+    end
+    # the default cutoff `√m · eps(R) · σ̂₁` counts the rows: `σ₂ = 2 eps(R)` lies below
+    # `√5 eps(R)` and above `√3 eps(R)`. The kernel that zeroes the columns of `U` applies the
+    # cutoff a second time, so its columns past the rank are zero too
+    @testset "the default cutoff of a 5 × 3 matrix, $R, $route" for R in REAL_ELTYPES,
+        route in RTOL_ROUTES
+
+        A = signed_diagonal(R, (1.0, 2 * eps(R), 0.0), 5)
+        fac = rtol_factor(route, SVDFactorization(), A)
+        @test fac.rank == 1
+        route != Array && @test all(iszero, rtol_U(route, fac)[:, 2:end])
+    end
+    # rtol is relative to `σ̂₁` of `J / 2^e`, and the division is exact
+    @testset "the fixture times 2^$k, $R, $(mr) × 3, rtol = $rtol, $route" for R in REAL_ELTYPES,
+        mr in (3, 5), k in (-40, 40), (rtol, want) in rtols[1:3], route in RTOL_ROUTES
+
+        r = something(want, R === Float32 ? 1 : 3)
+        A = ldexp.(signed_diagonal(R, (1.0, 1e-10, 1e-14), mr), k)
+        fac = rtol_factor(route, SVDFactorization(; rtol), A)
+        @test fac.scale_exponent == k
+        @test fac.rank == r
+        @test isapprox(rtol_solve(route, fac, A * R[1, 2, 3]), truncated_step(R, r);
+            rtol = 8 * eps(R))
+    end
+    # the sweep keeps its own tolerance: with rtol = 0 as its tolerance it would reach its sweep
+    # cap and give `info = 1` and rank 0; the `6 × 4` matrix stacks two rows of `I + Hilbert(4)`
+    # below it and takes the rectangular SVD
+    @testset "I + Hilbert(4), rtol = 0, $T, $(mr) × 4, $route" for T in ELTYPES,
+        mr in (4, 6),
+        route in RTOL_ROUTES
+        A = full_rank(T, 4)
+        A = mr == 4 ? A : vcat(A, A[1:2, :])
+        fac = rtol_factor(route, SVDFactorization(; rtol = 0), A)
+        @test fac.info == 0
+        @test fac.rank == 4
+    end
+    @testset "the edges, rtol = $rtol, $T, $route" for rtol in (1e-9, 0), T in ELTYPES,
+        route in RTOL_ROUTES
+        m = SVDFactorization(; rtol)
+        fz = rtol_factor(route, m, zeros(T, 3, 3))
+        @test fz.info == 0
+        @test fz.rank == 0
+        @test iszero(rtol_solve(route, fz, ones(T, 3)))
+        @test rtol_factor(route, m, fill(zero(T), 1, 1)).rank == 0
+        @test rtol_factor(route, m, fill(T(3), 1, 1)).rank == 1
+        for bad in (NaN, Inf)
+            A = signed_diagonal(T, (1.0, 1e-10, 1e-14))
+            A[2, 2] = T(bad)
+            fb = rtol_factor(route, m, A)
+            @test fb.info != 0
+            @test fb.rank == 0
+        end
+    end
+    @testset "BigFloat on R1, rtol = $rtol" for (rtol, want) in ((nothing, 3), (1e-9, 1),
+        (1e-12, 2))
+        A = signed_diagonal(BigFloat, (1.0, 1e-10, 1e-14))
+        @test rtol_factor("SMatrix", SVDFactorization(; rtol), A).rank == want
+    end
+    @testset "R1 with rtol is inferred and isbits, $(mr) × 3" for mr in (3, 5)
+        m = SVDFactorization(; rtol = 1e-9)
+        S = SMatrix{mr, 3}(signed_diagonal(Float64, (1.0, 1e-10, 1e-14), mr))
+        fac = @inferred factorize!!(nothing, m, S)
+        @test fac isa typeof(factorize!!(nothing, SVDFactorization(), S))
+        @test isbits(fac)
+    end
+end
+
 @testset "the truncated step of a consistent rank-2 system" begin
     @testset "$T, TF = $TF, $label" for (T, TF) in PRECISION_PAIRS,
         (label, make) in routes(T, TF, rank_r(T, 4, 2))
@@ -276,6 +452,11 @@ allocations(f::F, args::Vararg{Any, K}) where {F, K} = (f(args...); @allocated f
             fac = factorize!!(nothing, m, J)
             @test allocations(factorize!!, nothing, m, J) == 0
             @test allocations(ldiv!!, nothing, fac, r) == 0
+        end
+        @testset "SVDFactorization(; rtol = 1e-9), $(mr) × 3" for mr in (3, 5)
+            m = SVDFactorization(; rtol = 1e-9)
+            J = SMatrix{mr, 3}(signed_diagonal(Float64, (1.0, 1e-10, 1e-14), mr))
+            @test allocations(factorize!!, nothing, m, J) == 0
         end
         @test allocations(collect, SVector(1.0, 2.0)) > 0
     end

@@ -42,8 +42,9 @@ The type of the iterate selects the factor:
 A numerical failure of a factorisation does not throw: a zero pivot gives the status `SINGULAR`.
 A configuration or pattern error can throw an `ArgumentError`, for example a sparse factor whose
 pattern the regularisation changes. The SVD of an
-``m \times n`` matrix truncates at the rank cutoff ``\sqrt{m}\,\varepsilon(T_F)\,\sigma_1``, so its
-solve is the minimum-norm step on the numerical range. The bounds that the test suite verifies for
+``m \times n`` matrix truncates at the rank cutoff ``\sqrt{m}\,\varepsilon(T_F)\,\sigma_1``, or at
+``\mathrm{rtol}\,\sigma_1`` with `SVDFactorization(; rtol)`, so its solve is the minimum-norm step
+on the numerical range. The bounds that the test suite verifies for
 each factor are on the page [Numerical Stability and Backward-Error Bounds](@ref stability).
 
 ```jldoctest linear

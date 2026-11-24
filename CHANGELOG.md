@@ -11,6 +11,25 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
+  value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
+  counts as zero: the factor's `rank`, `SolverStatus.rank` and the truncation of the solve follow
+  it, on the R1 square and rectangular SVDs, the host `DenseSVD`, the KernelAbstractions
+  `DeviceSVD` and the CUDA `gesvdj!` path with its Jacobi fallback. On CUDA a cutoff below the
+  sweep tolerance `√m · eps(R)`, such as `rtol = 0`, runs on the own Jacobi kernel in place of
+  `gesvdj!`, which returns a singular value far below `eps(R) · σ̂₁` as 0 in single precision, so
+  `rtol = 0` keeps every nonzero singular value on every route. The default `rtol = nothing` keeps
+  the cutoff `√m · eps(R) · σ̂₁` bit for bit, and `SVDFactorization()` stays an `isbits`
+  value of size 0, `=== SVDFactorization{Nothing}()`. The Jacobi sweep keeps `√m · eps(R)` as its
+  tolerance whatever `rtol` is. `rtol` is stored in `real(TF)` for a float `TF` and in `Float64`
+  for `TF = Nothing` and a precision marker, and the constructor refuses a stored value outside
+  `[0, 1)` or not finite with an `ArgumentError`; the factor converts `rtol` to its own real type.
+  `promote_linsolve` carries `rtol`, and `ToReal{R}` converts it to `R` and keeps `TF`, so that a
+  `Newton` with a `Float64` `rtol` enters a `Float32` kernel. `SVDFactorization` gains a second
+  type parameter, the type of `rtol`; `SVDFactorization{TF}` is now a `UnionAll`. The internal
+  `svd_rank` and `ka_svd!` take `rtol`, the CUDA extension's `_cusolver_svd_finish!` takes the
+  method, and `ka_factorize_svd!(fac, J, method)` takes the method as an optional third argument.
+
 - **`GMRES` orthogonalises the Arnoldi basis by classical Gram–Schmidt with a second pass
   (CGS2) by default.** Each inner iteration takes two reductions over the basis, `h₁ = V_jᴴ w` and
   `[V_j w₁]ᴴ w₁` for `h₂` and `s₁ = ‖w₁‖²`, in place of the `j + 1` of modified Gram–Schmidt; on a

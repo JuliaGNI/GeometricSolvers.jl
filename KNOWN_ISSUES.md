@@ -728,3 +728,27 @@
 - **kind:** found late
 - **found:** #106; a limit of the user's decision of 2026-11-22 (CGS2 as the default of `GMRES`),
   with its edges "else one `rnorm(w₂)`" and "the second pass always runs"
+
+### K104 · Two `SVDFactorization(BigFloat; rtol)` with the same `rtol` are not `===`
+
+- **location:** `src/linear/methods.jl:82` (the inner constructor of `SVDFactorization`)
+- **evidence:** `rtol` is stored in `real(TF)`, so for `TF = BigFloat` the field is a
+  `BigFloat`, which `===` compares by identity.
+  `SVDFactorization(BigFloat; rtol = 1e-9) === SVDFactorization(BigFloat; rtol = 1e-9)` gives
+  `false`, while the same call with `Float32` or `Float64` gives `true`. The factor reads only the
+  value, so the rank and the solve do not change.
+- **kind:** found late
+- **found:** 2026-11-23
+
+### K105 · No test observes whether a CUDA SVD runs on `gesvdj!` or on the own Jacobi kernel, so a mutant of the route comparison that changes only the route passes
+
+- **location:** `ext/GeometricSolversCUDAExt.jl:128` (the comparison of the rank cutoff with the
+  sweep tolerance in `factorize!!`)
+- **evidence:** the mutant `<` → `<=` moves the default `rtol = nothing` off `gesvdj!`, and the
+  mutant `true &&` never runs `gesvdj!`. Every row of the two `rtol` loops of
+  `test/gpu/cuda/runtests.jl`, run on the own kernel alone, passes 96 of 96, because both routes
+  give the same rank within rounding. The only observable is the zero `σ̂₂` that `gesvdj!` returns
+  in `Float32` for the fixture `1, 1e-10, 1e-14`. A seam that reports the route would catch both
+  mutants.
+- **kind:** missing test
+- **found:** 2026-11-23

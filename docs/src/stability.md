@@ -139,6 +139,11 @@ holds. For example, with ``T = \texttt{Float64}``, `SVDFactorization(Float32)` g
 `fac.rank == 2` for ``A = \operatorname{Diagonal}(1, 1, 10^{-9}, 0)``, whose rank is 3. The
 rank detection above and the bound below hold for the factor precision ``T`` only.
 
+`SVDFactorization(; rtol)` replaces the cutoff by ``\mathrm{rtol} \cdot \hat{\sigma}_1``, in each
+factor precision, and a singular value at or below it counts as zero. A cutoff above the default
+truncates singular values that are not rounding noise, and a cutoff below it keeps singular values
+that are.
+
 By Demmel and Veselić (1992) and Higham (2002, §20.4), the truncated pseudoinverse solve
 [`ldiv!!`](@ref) approximates the exact minimum-norm least-squares solution
 ``x_{\min} = V_{1:r} \Sigma_{1:r}^{-1} U_{1:r}^* b`` with relative forward error bounded by

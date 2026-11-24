@@ -1,5 +1,6 @@
 # `Newton` with a rank-deficient Jacobian: the truncated minimum-norm step of the SVD, with the
-# measured slope, on an `SVector`, an `Array` and a `JLArray`; the LU, which reports `SINGULAR`
+# measured slope, on an `SVector`, an `Array` and a `JLArray`; the rank that the status reports
+# for `SVDFactorization(; rtol)`; the LU, which reports `SINGULAR`
 # where its factorisation meets a zero pivot; and the zero Jacobian, whose SVD factor has rank 0.
 
 using GeometricSolvers
@@ -56,6 +57,29 @@ const STORAGES = (SVector, ARRAY_BACKENDS...)
         _, status = solve(prob, x0, Newton(; linsolve = LUFactorization(), globalization = g))
         @test status.code === SINGULAR
     end
+end
+
+# The linear system `A x = A [1, 2, 3]` with the singular values of `A` exactly `1, 1e-10, 1e-14`:
+# a diagonal with its columns permuted and signed. `rtol` decides how many directions the SVD
+# step keeps, and the status reports that rank.
+const A_RTOL = [0.0 0.0 1e-14; 1.0 0.0 0.0; 0.0 -1e-10 0.0]
+const B_RTOL = A_RTOL * [1.0, 2.0, 3.0]
+linear_r1(x, p) = SMatrix{3, 3}(A_RTOL) * x - SVector{3}(B_RTOL)
+linear_r3!(y, x, p) = (y .= A_RTOL * x .- B_RTOL; y)
+linear_jac_r1(x, p) = SMatrix{3, 3}(A_RTOL)
+linear_jac_r3!(J, x, p) = (J .= A_RTOL; J)
+
+@testset "the rank of SVDFactorization(; rtol) in the status, rtol = $rtol, $(nameof(S))" for (
+        rtol, r, xr) in ((nothing, 3, [1.0, 2.0, 3.0]), (1e-12, 2, [1.0, 2.0, 0.0]),
+        (1e-9, 1, [1.0, 0.0, 0.0])),
+    S in (SVector, Array)
+
+    prob, x0 = S === SVector ?
+               (NonlinearProblem(linear_r1, linear_jac_r1), zeros(SVector{3})) :
+               (NonlinearProblem(linear_r3!, linear_jac_r3!), zeros(3))
+    x, status = solve(prob, x0, Newton(; linsolve = SVDFactorization(; rtol)))
+    @test status.rank == r
+    @test isapprox(Vector(x), xr; rtol = 1e-12)
 end
 
 # A globalization that records the step kind `Newton` passes and takes the step of `Static`. The
