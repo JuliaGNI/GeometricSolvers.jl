@@ -191,6 +191,10 @@ system. Its fields are:
 - `rank`, `nullnorm` and `gradratio`: range and spectrum diagnostics of the last fresh
   factorisation.
 
+A least-squares solve that returns the start point of a step it discards, by the rule of
+[`solve!!`](@ref), counts in `iterations` the steps that reached that point, and carries the
+`stepnorm` of the last of them and the diagnostics of the factorisation at that point.
+
 The return codes are:
 
 | code | meaning |

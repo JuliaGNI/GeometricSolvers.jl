@@ -1,12 +1,12 @@
 # The measurement scripts of `scripts/hardware/` and `scripts/r2_throughput.jl` run to completion
 # at their smallest size: `ka_lu_large.jl` on `JLArray`, `sync_cost.jl` on the CPU and on
-# `JLArray`, `r3_lu_blas.jl` with OpenBLAS, and `r2_throughput.jl` on the CPU, whose SoA
-# right-hand sides must give the roots of the AoS ones. A device or a library that is not present
-# gives one line and no rows. Scalar indexing of a device array is disallowed, so a script that
-# reads a device array entry by entry fails here.
+# `JLArray`, `r3_lu_blas.jl` with OpenBLAS, `rl_host_lu.jl` on one thread, and `r2_throughput.jl`
+# on the CPU, whose SoA right-hand sides must give the roots of the AoS ones. A device or a library
+# that is not present gives one line and no rows. Scalar indexing of a device array is disallowed,
+# so a script that reads a device array entry by entry fails here.
 
 using GPUArraysCore: allowscalar
-using LinearAlgebra: I, norm
+using LinearAlgebra: BLAS, I, norm
 using Random: Xoshiro
 using Test
 
@@ -30,6 +30,10 @@ end
 
 module CusolverGetrf
 include(joinpath(@__DIR__, "..", "..", "scripts", "hardware", "cusolver_getrf.jl"))
+end
+
+module RLHostLU
+include(joinpath(@__DIR__, "..", "..", "scripts", "hardware", "rl_host_lu.jl"))
 end
 
 @testset "the median of the timed calls" begin
@@ -104,6 +108,54 @@ end
             "\nlibrary accelerate: not present (AppleAccelerate is not installed on the load " *
             "path); no rows\n", String(take!(buf)))
     end
+end
+
+@testset "rl_host_lu.jl runs on one thread at n = 8, and its verdict follows the rules" begin
+    @test_throws r"^ArgumentError: unknown thread setting \"2\"" RLHostLU.main(["2"]; io = devnull)
+    buf = IOBuffer()
+    # the setting `1` sets BLAS to one thread; the rest of the suite keeps its own count
+    nthreads = BLAS.get_num_threads()
+    rows = try
+        RLHostLU.main(["1", "4", "8", "1"]; io = buf)
+    finally
+        BLAS.set_num_threads(nthreads)
+    end
+    out = String(take!(buf))
+    @test occursin("# BLAS library: ", out)
+    @test occursin("# load: ", out)
+    @test [(r.T, r.n, r.threads, r.base) for r in rows] ==
+          [(T, 8, "1", 4) for T in RLHostLU.RL_ELTYPES]
+    for r in rows
+        @test r.recursion.median > 0 && r.getrf.median > 0
+        @test r.ipiv_equal
+        @test r.berr <= 8 * r.n * eps(real(r.T))
+    end
+    # each printed row reads back as the row the verdict takes
+    lines = filter(l -> startswith(l, "| ") && !startswith(l, "| T "), split(out, '\n'))
+    @test [(p.T, p.n, p.threads, p.ipiv_equal) for p in RLHostLU.parse_row.(lines)] ==
+          [(r.T, r.n, r.threads, r.ipiv_equal) for r in rows]
+
+    # a row runs once more where its median exceeds its minimum by more than 50 %
+    @test RLHostLU.noisy((median = 1.51, min = 1.0))
+    @test !RLHostLU.noisy((median = 1.5, min = 1.0))
+
+    # synthetic rows of both settings: `r` per `n`, the same in both unless `r_all` is given
+    function table(rs; r_all = rs, berr = 0.0, ns = [8, 16, 32, 64])
+        [(T = T, n = n, threads = s, r = (s == "1" ? rs : r_all)[i], berr = berr)
+         for T in RLHostLU.RL_ELTYPES, (i, n) in enumerate(ns), s in RLHostLU.RL_SETTINGS]
+    end
+    v = RLHostLU.rl_verdict(vec(table([0.5, 0.7, 0.85, 1.2])))
+    @test v.rule === :build && v.bound_ok
+    @test v.bands[Float64] == [(8, 32)]
+    @test RLHostLU.rl_verdict(vec(table([0.5, 0.8, 0.5, 1.2]))).rule === :between
+    @test RLHostLU.rl_verdict(vec(table([0.8, 0.8, 0.95, 1.2]))).rule === :stop
+    # the slower setting decides: one setting over 0.75 breaks the pair
+    r_all = [0.5, 0.9, 1.0, 1.0]
+    @test RLHostLU.rl_verdict(vec(table([0.5, 0.5, 1.0, 1.0]; r_all))).rule === :between
+    # a backward error over 8n·eps stops the build
+    @test RLHostLU.rl_verdict(vec(table([0.5, 0.5, 1.0, 1.0]; berr = 1.0))).rule === :stop
+    @test RLHostLU.rl_verdict(vec(table([0.5, 1.0, 0.5, 0.5]))).bands[Float64] ==
+          [(8, 8), (32, 64)]
 end
 
 @testset "ka_lu_large.jl runs on JLArray at n = 64" begin
