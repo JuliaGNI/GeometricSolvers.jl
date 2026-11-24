@@ -79,6 +79,31 @@ end
 
 const X0_IND = X_IND .+ [0.02, -0.03, 0.01, 0.02]
 
+# `S(x) = Σ (½ dᵢ xᵢ² + ¼ xᵢ⁴)` and its Hessian–vector product as loops that allocate nothing, for
+# the allocation count of a whole solve.
+struct QuarticAction{V}
+    d::V
+end
+
+function (a::QuarticAction)(x, p)
+    s = zero(eltype(x))
+    for i in eachindex(x)
+        s += a.d[i] * x[i]^2 / 2 + x[i]^4 / 4
+    end
+    return s
+end
+
+struct QuarticHVP{V}
+    d::V
+end
+
+function (h::QuarticHVP)(Jv, x, v, p)
+    for i in eachindex(Jv)
+        Jv[i] = (h.d[i] + 3 * x[i]^2) * v[i]
+    end
+    return Jv
+end
+
 # The same action on a state of six entries, of which `E = U = (2, 3, 4, 5)` are unknown: the
 # fixed entries 1 and 6 take no part in it.
 function indexed_problem(::Type{T}) where {T}
@@ -180,6 +205,34 @@ end
         @test info.iterations == 3
         @test !info.converged
         @test info.resnorm ≈ one(T) rtol = 8 * eps(T)
+        # the scale of b takes no part in the rank decision: the solution scales with b
+        for k in -8:4:8
+            s = T(10.0^k)
+            bs = s .* b
+            xs, infos = minresqlp_solve!(ws, op, bs, T(rnorm(bs)), zero(T), Int32(10))
+            @test rnorm(xs .- s .* AT(T[0.5, -1, 0])) <= 8 * eps(T) * rnorm(bs)
+            @test infos.iterations == 3
+        end
+    end
+
+    @testset "MINRES-QLP takes no rank decision from the scale of b, $T" for T in REAL_ELTYPES
+        # a nonsingular indefinite system with condition number 6
+        Q = Matrix(qr(randn(Xoshiro(3), 4, 4)).Q)
+        A = T.(Q * Diagonal([2.0, -1.0, 0.5, 3.0]) * Q')
+        A = (A + A') / 2
+        op = (y, v) -> (y .= A * v; y)
+        xe = [1.0, -1.0, 0.5, 2.0]
+        for k in -8:4:8
+            s = 10.0^k
+            b = A * T.(s .* xe)
+            ws = init_minresqlp_workspace(MINRESQLP(), b)
+            x, info = minresqlp_solve!(ws, op, b, T(rnorm(b)), zero(T), Int32(12))
+            @test !info.singular
+            # the forward error of a system with condition number 6, from the rounding of b and
+            # of the solve
+            xb = Float64.(A) \ Float64.(b)
+            @test norm(Float64.(x) .- xb) <= 6 * 8 * eps(T) * norm(xb)
+        end
     end
 
     @testset "MINRES-QLP stops on a zero right-hand side and on an invariant space, $T" for T in REAL_ELTYPES
@@ -221,24 +274,96 @@ end
         end
     end
 
-    @testset "MINRES-QLP against pinv on singular symmetric systems, Float64" begin
+    # A random symmetric matrix of order n in 3:12 with r in 1:n eigenvalues `3 randn` and the rest
+    # zero, a random right-hand side, and the condition number of the matrix on its range. The
+    # callers make the right-hand side compatible, `A b`, on odd trials.
+    function singular_system(rng)
+        n = rand(rng, 3:12)
+        r = rand(rng, 1:n)
+        Q = Matrix(qr(randn(rng, n, n)).Q)
+        λ = [3 .* randn(rng, r); zeros(n - r)]
+        A = Q * Diagonal(λ) * Q'
+        A = (A + A') / 2
+        b = randn(rng, n)
+        return A, b, maximum(abs, λ) / minimum(abs, λ[1:r])
+    end
+
+    function minresqlp_pinv_error(A, b, ::Type{T}) where {T}
+        AT, bT = T.(A), T.(b)
+        ws = init_minresqlp_workspace(MINRESQLP(), bT)
+        op = (y, v) -> (y .= AT * v; y)
+        x, info = minresqlp_solve!(ws, op, bT, rnorm(bT), eps(T), Int32(3 * length(b)))
+        xp = pinv(A; rtol = 1e-10) * b
+        return norm(Float64.(x) .- xp) / norm(xp), x, info
+    end
+
+    @testset "A whole solve is inferred and allocates nothing, $T" for T in REAL_ELTYPES
+        d = T[1, 1.5, 2, 0.5]
+        x₀ = T.(X0_IND)
+        prob = StationarityProblem(QuarticAction(d); b = -(d .* T.(X_IND) .+
+                                                           T.(X_IND) .^ 3))
+        jvp = JVPFunction(QuarticHVP(d))
+        for glob in (nothing, Backtracking(), DogLeg(), Steihaug())
+            lin = MINRESQLP(; forcing = FixedForcing(1e-6))
+            m = glob === nothing ? Newton(; linsolve = lin, jacobian = jvp) :
+                Newton(; linsolve = lin, globalization = glob, jacobian = jvp)
+            solver = init(prob, copy(x₀), m)
+            run = w -> (copyto!(w, x₀); solve!(solver, w))
+            x, st = @inferred run(similar(x₀))
+            @test st.code == SUCCESS
+            @test rnorm(x .- T.(X_IND)) <= sqrt(eps(T))
+            # `--check-bounds=yes`, which `Pkg.test` sets up to Julia 1.12, skips the measurement
+            if Base.JLOptions().check_bounds != 1
+                @test allocations(run, similar(x₀)) == 0
+            end
+        end
+    end
+
+    @testset "MINRES-QLP against pinv on singular symmetric systems, $T" for T in REAL_ELTYPES
         rng = Xoshiro(7)
         for trial in 1:60
-            n = rand(rng, 3:10)
-            r = rand(rng, 1:n)
-            Q = Matrix(qr(randn(rng, n, n)).Q)
-            λ = [3 .* randn(rng, r); zeros(n - r)]
-            A = Q * Diagonal(λ) * Q'
-            A = (A + A') / 2
-            b = randn(rng, n)
-            # odd trials are compatible, even ones have a component outside the range of A
+            A, b, cond = singular_system(rng)
             isodd(trial) && (b = A * b)
-            ws = init_minresqlp_workspace(MINRESQLP(), b)
-            op = (y, v) -> (y .= A * v; y)
-            x, _ = minresqlp_solve!(ws, op, b, rnorm(b), eps(), Int32(3n))
-            xp = pinv(A; rtol = 1e-10) * b
-            @test norm(x - xp) <= 1e-7 * norm(xp)
+            err, x, _ = minresqlp_pinv_error(A, b, T)
+            @test all(isfinite, x)
+            if isodd(trial)
+                # a compatible system: the forward error of a solve with this condition number
+                @test err <= 64 * eps(T) * cond
+            else
+                # an incompatible one: a bound of the rank threshold √eps(T) times the condition
+                # number, which every draw of this seed meets in both precisions
+                @test err <= sqrt(eps(T)) * cond
+            end
         end
+    end
+
+    @testset "MINRES-QLP on incompatible systems in Float32 stops early on a few" begin
+        # The limit that the docstring states: on an incompatible system, rounding in the Lanczos
+        # process can make a diagonal entry count as zero at √eps(Float32) ‖T̄‖ before the Krylov
+        # space holds the solution of minimum length. In Float64 every draw below is within
+        # 10⁻⁷ of pinv(A) b; in Float32 6 of the 150 are more than 10⁻³ from it, among them
+        # draws 100 and 272.
+        far = Dict(Float32 => 0, Float64 => 0)
+        stopped_far = 0
+        draws = 0
+        for T in REAL_ELTYPES
+            rng = Xoshiro(11)
+            for trial in 1:300
+                A, b, _ = singular_system(rng)
+                isodd(trial) && continue
+                T === Float32 && (draws += 1)
+                err, x, info = minresqlp_pinv_error(A, b, T)
+                @test all(isfinite, x)
+                if err > 1e-3
+                    far[T] += 1
+                    T === Float32 && info.singular && (stopped_far += 1)
+                end
+            end
+        end
+        @test far[Float64] == 0
+        @test 0 < far[Float32] <= draws ÷ 10
+        # each far result comes from a stop on an entry that counts as zero
+        @test stopped_far == far[Float32]
     end
 
     @testset "Clause 1: Newton with MINRESQLP on an indefinite Hessian, counted, $AT, $T" for T in REAL_ELTYPES,
@@ -278,6 +403,22 @@ end
         @test st2.code == SUCCESS
         @test rnorm(x2[2:5] .- T.(X_IND)) <= sqrt(eps(T))
         @test x2[1] == 9 && x2[6] == -4
+    end
+
+    @testset "Clause 1: Newton with MINRESQLP on an indefinite quadratic at every scale, $T" for T in REAL_ELTYPES
+        # eigenvalues about -1.04, 2.03 and 3.01, so a condition number of about 3
+        A = T[2 0.3 0; 0.3 -1 0.2; 0 0.2 3]
+        for k in -8:4:8
+            b = T.(10.0^k .* [1, 1, 1])
+            prob = StationarityProblem((x, p) -> sum(x .* (A * x)) / 2; b = b)
+            x, st = solve(prob, zeros(T, 3),
+                Newton(; linsolve = MINRESQLP(; forcing = FixedForcing(1e-6))))
+            xe = -(Float64.(A) \ Float64.(b))
+            @test st.code == SUCCESS
+            # the inner solve of a quadratic is exact after three products: one Newton step
+            @test st.iterations == 1
+            @test norm(Float64.(x) .- xe) <= 8 * eps(T) * 3 * norm(xe)
+        end
     end
 
     @testset "MINRESQLP refuses what it does not solve" begin
@@ -362,6 +503,30 @@ end
             # the first product ends the step
             @test count.n == 1
         end
+        # under DogLeg the Cauchy point and the trial take products after the inner solve: with
+        # a radius of 0.001 the inner solve takes four, the Cauchy point the fifth and sixth, and
+        # the first trial the seventh; a non-finite one of them ends the step too
+        for N in 5:7
+            calls = ProductCount(0)
+            nan_on_call = JVPFunction((Jv, x, v, p) -> begin
+                calls.n += 1
+                Jv .= (T.(D_IND) .+ 3 .* x .^ 2) .* v .+
+                      T(KAPPA) .* (v[PERM] .+ v[PERMINV])
+                calls.n == N && (Jv .= T(NaN))
+                Jv
+            end)
+            m = Newton(; linsolve = MINRESQLP(; forcing = FixedForcing(1e-8)),
+                globalization = DogLeg(; radius = 0.001), jacobian = nan_on_call)
+            solver = init(prob, T.(X0_IND), m)
+            state, rprob, u, Fu = first_state(solver)
+            calls.n = 0
+            u₊, F₊, state₊, info = step!!(
+                state, solver.method, rprob, copy(u), copy(Fu), nothing)
+            @test calls.n == N
+            @test info.code == NONFINITE
+            @test u₊ == u && F₊ == Fu
+            @test state₊.rule.radius == state.rule.radius
+        end
     end
 
     @testset "A step on a state that no start!! saw fails closed, $T" for T in REAL_ELTYPES
@@ -404,6 +569,26 @@ end
         _, _, _, info = step!!(state, solver.method, rprob, u, Fu, nothing)
         @test info.code == SUCCESS
         @test info.stepnorm < T(0.99) * newton_length
+    end
+
+    @testset "A line search records the linear residual of the step it accepted, $T" for T in REAL_ELTYPES
+        # one inner iteration from a start off the eigenvector leaves a linear residual of about
+        # 0.15 ‖F‖, and Backtracking cuts the step to about half of the direction
+        count = ProductCount(0)
+        m = Newton(; linsolve = MINRESQLP(; maxiter = 1, forcing = FixedForcing(1e-8)),
+            globalization = Backtracking(), jacobian = atan_jvp(count))
+        u₀ = T[1.3, 1.5, 1.7]
+        solver = init(atan_problem(Array, T), copy(u₀), m)
+        state, rprob, u, Fu = first_state(solver)
+        F₀ = copy(Fu)
+        _, _, state₊, info = step!!(state, solver.method, rprob, u, Fu, nothing)
+        d = state₊.ws.x
+        α = info.stepnorm / rnorm(d)
+        @test info.code == SUCCESS
+        @test 0 < α < T(0.9)
+        @test rnorm(F₀ .+ d ./ (1 .+ u₀ .^ 2)) > T(0.1) * rnorm(F₀)
+        # the residual ‖F + α J d‖, with the product formed here
+        @test state₊.ws.linres ≈ rnorm(F₀ .+ α .* d ./ (1 .+ u₀ .^ 2)) rtol = 8 * eps(T)
     end
 
     @testset "MINRESQLP counts a step that reaches its cap as a step failure, $T" for T in REAL_ELTYPES
@@ -601,6 +786,24 @@ end
         @test st.code == SUCCESS
         @test rnorm(x) <= sqrt(eps(T))
         @test st.jvp_calls == count.n
+    end
+
+    @testset "Steihaug at a scale of S whose cube overflows, $T" for T in REAL_ELTYPES
+        # with S scaled by s, F and J scale by s, so pᴴ J p of a direction p of the scale of F is
+        # of the scale s³, above floatmax(T), while every product is finite
+        s = floatmax(T)^T(0.4)
+        @test isinf(s^3) && isfinite(s^2)
+        count = ProductCount(0)
+        prob = StationarityProblem((x, p) -> s * sum(x .* atan.(x) .- log1p.(x .^ 2) ./ 2))
+        jvp = JVPFunction((Jv, x, v, p) -> (
+            count.n += 1; Jv .= s .* v ./ (1 .+ x .^ 2); Jv))
+        for glob in (Steihaug(), DogLeg())
+            m = Newton(; linsolve = MINRESQLP(; forcing = FixedForcing(1e-8)),
+                globalization = glob, jacobian = jvp)
+            x, st = solve(prob, fill(T(1.5), 3), m)
+            @test st.code == SUCCESS
+            @test rnorm(x) <= sqrt(eps(T))
+        end
     end
 
     @testset "Clause 4: Newton with GMRES on a StationarityProblem with E ≠ U, $AT, $T" for T in REAL_ELTYPES,

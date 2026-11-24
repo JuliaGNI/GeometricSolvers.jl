@@ -2054,15 +2054,30 @@ end
     return nothing
 end
 
+# The linear residual `‖F + α J d‖` of the step `α d` that a line search accepted, which the
+# Choice 1 forcing term of the next step reads; `α = stepnorm / ‖d‖`. The direction `d` minimises
+# `‖F + J d‖` over its Krylov space `K`, so the residual `r = F + J d` is orthogonal to `J K`, which
+# holds `J d`: `Fᴴ r = ‖r‖²`, and `‖F + α J d‖² = (1 - α)² ‖F‖² + α (2 - α) ‖r‖²` costs no product.
+# A direction whose last component counts as zero does not minimise over the whole space, and the
+# value is then an estimate. A full step keeps the residual of its direction.
+@inline function accepted_linres!(ws::MINRESQLPWorkspace{T, R}, stepnorm, dnorm, fnorm,
+        resnorm) where {T, R}
+    α = R(stepnorm) / R(dnorm)
+    (isfinite(α) && α != one(R)) || return nothing
+    ws.linres = hypot((one(R) - α) * R(fnorm), sqrt(α * (2 - α)) * R(resnorm))
+    return nothing
+end
+
 # The symmetric Jacobian of a `MINRESQLP` step as the operator of the factorised `DogLeg` loop:
 # `mul!!(y, J, v)` is the counted Hessian–vector product, and `J'` is `J`, so the Cauchy direction
-# `J' F` is one product.
+# `J' F` is one product. The loop checks every product for a non-finite entry.
 struct SymmetricJVP{O}
     op::O
 end
 
 Base.adjoint(J::SymmetricJVP) = J
 @inline mul!!(y::AbstractVecOrMat, J::SymmetricJVP, v) = J.op(y, v)
+@inline finite_product(::SymmetricJVP, y) = all(isfinite, y)
 
 # The step of a `Newton` with `MINRESQLP`: the inner solve and the globalization of its direction,
 # or the Steihaug step in its place. A line search gets the inexact step kind `InexactStep(η_ach)`,
@@ -2101,9 +2116,11 @@ Base.adjoint(J::SymmetricJVP) = J
         return x₊, F₊, with_merit(state₊, state.merit, info.fnorm), info
     end
     η_ach = iszero(fnorm) ? zero(R) : min(inner.resnorm / fnorm, η)
+    dnorm = R(rnorm(d))
     x₊, F₊, _, info, merit = globalize_merit!!(
         state.g, m.globalization, counted, x, Fx, d, p, state.jvpprep,
         InexactStep(R(η_ach)), state.merit)
+    accepted_linres!(ws, info.stepnorm, dnorm, fnorm, inner.resnorm)
     info = bump_failures(info, failures)
     return x₊, F₊, with_merit(state, merit, info.fnorm), info
 end

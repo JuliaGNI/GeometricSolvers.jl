@@ -978,7 +978,8 @@ so that a compat-only bump can be told apart from an interface change.
   new exported matrix-free linear method for `Newton` on a `StationarityProblem` with `E == U`.**
   It is MINRES-QLP (Choi, Paige and Saunders 2011, doi:10.1137/100787921) on the symmetric
   Hessian block that is the Jacobian, and it stores no Krylov basis. On a singular Hessian it
-  returns the minimum-length least-squares solution in the Krylov space. `E == U` compares the
+  returns the minimum-length least-squares solution in the Krylov space; on an incompatible system
+  in `Float32`, rounding can end the solve before that space holds it. `E == U` compares the
   index sets as the problem stores them, so the same indices in another order raise an
   `ArgumentError`; so do any other problem, a value iterate, a `preconditioner` other than
   `nothing`, factor reuse, a `Refinement` and a `LevenbergMarquardt` globalization. The product is
@@ -992,7 +993,8 @@ so that a compat-only bump can be told apart from an interface change.
   Steihaug())`.** It minimises the model `q(d) = Fᴴd + ½dᴴJd` of the action inside a trust radius;
   on negative curvature the step goes to the radius. A trial is accepted and the radius updated by
   the ratio rule of `DogLeg` on the unsquared `‖F‖`. A first conjugate-gradient direction of
-  negative curvature predicts an increase of `‖F‖` and is never accepted.
+  negative curvature predicts an increase of `‖F‖` and is never accepted, so a solve toward a root
+  where the Hessian is indefinite ends with `LINESEARCH_FAILED` from many starts close to it.
 
 - **`GMRES` solves a matrix-free `StationarityProblem` with any index sets `E` and `U`.** Before,
   `Newton` refused that case with an `ArgumentError`. A `jvp_eltype` other than `Nothing` is

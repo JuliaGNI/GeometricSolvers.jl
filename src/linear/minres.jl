@@ -9,10 +9,12 @@
 # change from one iteration to the next. A diagonal entry `γ` of `L_k` at most `√eps(R) ‖T̄_k‖`
 # counts as zero, its component of `u_k` is zero, and the iteration stops there: on a singular
 # Jacobian the result is the solution of minimum length of the least-squares problem in the Krylov
-# space. While the estimate `‖T̄_k‖ / min|γ|` of the condition number stays below
-# `minres_trancond` and no entry counts as zero, the solution is updated by the cheaper MINRES
-# recurrence `x += τ w`, and the first iteration past it moves to the QLP update, as Choi, Paige
-# and Saunders (2011, doi:10.1137/100787921) describe.
+# space, except where rounding makes an entry count as zero before that space holds it, which the
+# docstring states as the limit of the rule. The norm `‖T̄_k‖` is estimated from the entries of
+# `T̄_k` only, so `‖b‖` takes no part in it. While the estimate `‖T̄_k‖ / min|γ|` of the condition
+# number stays below `minres_trancond` and no entry counts as zero, the solution is updated by the
+# cheaper MINRES recurrence `x += τ w`, and the first iteration past it moves to the QLP update, as
+# Choi, Paige and Saunders (2011, doi:10.1137/100787921) describe.
 #
 # Every vector of length `n` is in the storage of the iterate, the loop allocates nothing after
 # `init_minresqlp_workspace`, and it indexes no entry of a vector, so the same code runs on a
@@ -38,8 +40,13 @@ The solve stores no Krylov basis: the Lanczos process keeps four vectors, and th
 more. It solves `J d = -F` to ``\\|F + J d\\| \\le \\eta_k \\|F\\|``. A diagonal entry of the
 reduced lower-triangular factor at most ``\\sqrt{\\varepsilon(R)}`` times the norm of the Lanczos
 matrix, which a singular `J` gives, counts as zero: the solve then returns the solution of minimum
-length of ``\\min \\|F + J d\\|`` over the Krylov space and ends. A product that is not finite ends
-the step with `NONFINITE`, and the iterate stays.
+length of ``\\min \\|F + J d\\|`` over the Krylov space and ends. The norm of the Lanczos matrix
+is estimated from its entries only, so the scale of `F` takes no part in that decision. An
+incompatible system, where `F` has a component outside the range of a singular `J`, is the limit of
+this rule: rounding in the Lanczos process can make an entry count as zero before the Krylov space
+holds the solution of minimum length, and the solve then ends early. In `Float32` the result can
+then be far from that solution, also where the nonzero eigenvalues are far from zero. A product
+that is not finite ends the step with `NONFINITE`, and the iterate stays.
 
 `E == U` compares the index sets as the problem stores them, so `E = (1, 2)` with `U = (2, 1)`
 gives a nonsymmetric Jacobian and raises an `ArgumentError`; so do a [`NonlinearProblem`](@ref)
@@ -200,7 +207,9 @@ function minresqlp_solve!(ws::MINRESQLPWorkspace{T, R}, op!, b, bnorm, tol,
             resnorm = R(NaN)
             break
         end
-        Anorm = max(Anorm, sqrt(βl * βl + α * α + βn * βn))
+        # the norm of column k of T̄_k, `(β_k, α_k, β_{k+1})`; `β₁ = ‖b‖` is no entry of T̄_k
+        βk = k > one(Int32) ? β : z
+        Anorm = max(Anorm, sqrt(βk * βk + α * α + βn * βn))
         # a vanishing Lanczos vector leaves an invariant Krylov space: with `β_{k+1} = 0` the
         # rotated residual below is zero, or the last component counts as zero, and either stops
         βn <= 8 * n * eps(R) * Anorm && (βn = z)

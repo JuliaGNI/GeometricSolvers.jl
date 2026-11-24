@@ -148,8 +148,9 @@ of the problem's automatic differentiation.
 
 [`MINRESQLP`](@ref) is the linear method of a `StationarityProblem` with `E == U`, whose Jacobian
 is a symmetric block of the Hessian of `S`: MINRES-QLP (Choi, Paige and Saunders 2011,
-doi:10.1137/100787921), with four Lanczos vectors and no Krylov basis. On a singular Hessian it returns the solution of minimum length
-of the least-squares problem in the Krylov space. It takes the forcing terms of `GMRES` and no
+doi:10.1137/100787921), with four Lanczos vectors and no Krylov basis. On a singular Hessian it
+returns the solution of minimum length of the least-squares problem in the Krylov space; on an
+incompatible system in `Float32`, rounding can end the solve before that space holds it. It takes the forcing terms of `GMRES` and no
 preconditioner, and the trust regions [`DogLeg`](@ref), whose Cauchy point takes two
 Hessian–vector products, and [`Steihaug`](@ref). These names are exported.
 

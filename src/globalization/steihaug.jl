@@ -30,7 +30,9 @@ The merit is ``\\|F\\|``, never `S`, so a step toward a saddle point of `S` is a
 reduces ``\\|F\\|``. A step that leaves along the first direction ``p = -F`` because it has negative
 curvature predicts an increase of ``\\|F\\|``: ``\\|F - t J F\\|`` grows with `t > 0` where
 ``F^H J F < 0``, so that trial is rejected at every radius, and the step returns
-`LINESEARCH_FAILED` after the radius falls to ``10^{-6}``.
+`LINESEARCH_FAILED` after the radius falls to ``10^{-6}``. Near a root where the Hessian is
+indefinite, ``F^H J F < 0`` holds on an open cone of iterates around it, so a solve toward such a
+root, a saddle point of `S`, ends with `LINESEARCH_FAILED` from many starts close to it.
 
 `radius` is the initial radius, positive and finite, stored and clamped as `DogLeg` does it. With
 `nothing`, the first step starts the radius at the length ``\\|F\\|^3 / (F^H J F)`` of the Cauchy
@@ -100,11 +102,17 @@ end
 # `‖F + J d‖`, for at most `maxiter` iterations, inside the radius `δ`; `δ = 0` sets the radius from
 # the first direction, as the docstring of `Steihaug` says. `g.d` holds the step and `g.r` its model
 # residual `F + J d` on return.
+#
+# `g.pv` holds the conjugate-gradient direction `p` scaled to unit length, `p̂ = p / ‖p‖`, so that
+# the product is one of a unit vector, as in `DogLeg`: the curvature `κ = p̂ᴴ J p̂` has the scale of
+# `J`, and no product of the scale of `F` with that of `J` occurs. The step along `p̂` is
+# `α = ‖r‖² / (κ ‖p‖)`, and `‖r‖ ≤ ‖p‖` keeps `‖r‖ (‖r‖ / ‖p‖)` finite.
 @inline function steihaug_cg!(g, A, Fx, fnorm::R, atol::R, maxiter::Int32, δ::R) where {R}
     d = fill!(g.d, zero(eltype(g.d)))
     r = copy!!(g.r, Fx)
-    p = map!!(-, g.pv, Fx)
-    rr = fnorm * fnorm
+    p = scale!!(g.pv, -inv(fnorm), Fx)
+    ρ = fnorm
+    pn = fnorm
     k = Int32(0)
     while k < maxiter
         k += one(Int32)
@@ -112,14 +120,14 @@ end
         κ = R(rdot(p, Jp))
         isfinite(κ) || return SteihaugCG{R}(δ, true, false, false, k)
         if iszero(δ)
-            # the length of the Cauchy step `rr / κ ‖p‖` along `p = -F`, or `‖F‖` without one
-            n₀ = κ > zero(R) ? (rr / κ) * fnorm : fnorm
+            # the length `‖F‖ / κ` of the Cauchy step along `-F`, or `‖F‖` without one
+            n₀ = κ > zero(R) ? fnorm / κ : fnorm
             lo = dogleg_lo(R)
             δ = n₀ < lo ? 2 * lo : dogleg_clamp(n₀)
         end
-        α = rr / κ
+        α = ρ * (ρ / pn) / κ
         # on negative curvature, and where the next iterate leaves the radius, the step ends on
-        # the boundary along `p`
+        # the boundary along `p̂`
         if κ <= zero(R) ||
            R(rnorm(d)) ^ 2 + α * (2 * R(rdot(d, p)) + α * R(norm2(p))) >= δ^2
             t = boundary_step(d, p, δ)
@@ -129,11 +137,13 @@ end
         end
         d .+= α .* p
         r .+= α .* Jp
-        rr₊ = R(norm2(r))
-        sqrt(rr₊) <= atol && return SteihaugCG{R}(δ, true, true, true, k)
-        β = rr₊ / rr
-        p .= β .* p .- r
-        rr = rr₊
+        ρ₊ = R(rnorm(r))
+        ρ₊ <= atol && return SteihaugCG{R}(δ, true, true, true, k)
+        # the next direction `β p - r` with `β = (‖r₊‖ / ‖r‖)²`, scaled to unit length
+        p .= ((ρ₊ / ρ)^2 * pn) .* p .- r
+        pn = R(rnorm(p))
+        p .= p ./ pn
+        ρ = ρ₊
     end
     return SteihaugCG{R}(δ, true, false, true, k)
 end
