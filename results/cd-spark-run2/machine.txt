@@ -1,0 +1,26 @@
+Mi 25. Nov 09:54:18 UTC 2026
+ 10:54:18 up 15 days,  1:26,  3 users,  load average: 0,04, 0,05, 0,00
+Linux pc-nmpp-nvspark 7.0.0-1019-nvidia #19~24.04.2-Ubuntu SMP PREEMPT_DYNAMIC Sun Sep  6 18:35:11 UTC 2 aarch64 aarch64 aarch64 GNU/Linux
+Wed Nov 25 10:54:18 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GB10                    On  |   0000000F:01:00.0 Off |                  N/A |
+| N/A   35C    P8              4W /  N/A  | Not Supported          |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            2555      G   /usr/lib/xorg/Xorg                       53MiB |
+|    0   N/A  N/A            3113      G   /usr/bin/gnome-shell                     18MiB |
++-----------------------------------------------------------------------------------------+
+julia version 1.13.4
+bf081204b9a146cb45a5eff257577be27437108b
