@@ -13,8 +13,10 @@ struct NewtonHomotopy end
 """
     FixedPointHomotopy()
 
-The fixed-point homotopy ``H(x, λ) = λ F(x) + (1 - λ)(x - x_0)`` of a [`Continuation`](@ref),
-whose path starts at `x₀` and whose `λ = 1` end is a root of `F`.
+The fixed-point homotopy ``H(x, λ) = λ F(x) / σ + (1 - λ)(x - x_0)`` of a
+[`Continuation`](@ref), with ``σ = \\|F(x_0)\\|_∞``, or `σ = 1` where `F(x₀) = 0`. Its path
+starts at `x₀`, and its `λ = 1` end is a root of `F`. The division by `σ` makes the path
+independent of a scale `s` of `F`: `s F` has the path of `F`.
 """
 struct FixedPointHomotopy end
 
@@ -136,10 +138,20 @@ function homotopy_residual!(H, ::NewtonHomotopy, F, x, λ, x₀, F₀, p)
     return H
 end
 
+# The scale `σ = ‖F₀‖∞` of the fixed-point homotopy, which cannot overflow for a finite `F₀`, or
+# one where `F₀ = 0`, where the path stays at the start.
+@inline function fixed_point_scale(F₀)
+    σ = maximum(abs, F₀)
+    return iszero(σ) ? one(σ) : σ
+end
+
+# `F` is divided by `σ` before `λ` multiplies it, so that no product of an unscaled `F` with `λ`
+# can overflow.
 function homotopy_residual!(H, ::FixedPointHomotopy, F, x, λ, x₀, F₀, p)
     Fx = F(x, p)
+    σ = fixed_point_scale(F₀)
     for i in eachindex(H)
-        H[i] = λ * Fx[i] + (1 - λ) * (x[i] - x₀[i])
+        H[i] = λ * (Fx[i] / σ) + (1 - λ) * (x[i] - x₀[i])
     end
     return H
 end
@@ -175,13 +187,14 @@ end
 function homotopy_jacobian!(A, ::FixedPointHomotopy, F, J, x, λ, x₀, F₀, p)
     Jx = J(x, p)
     n = length(F₀)
+    σ = fixed_point_scale(F₀)
     for j in 1:n, i in 1:n
 
-        A[i, j] = λ * Jx[i, j] + (i == j ? 1 - λ : zero(λ))
+        A[i, j] = λ * (Jx[i, j] / σ) + (i == j ? 1 - λ : zero(λ))
     end
     Fx = F(x, p)
     for i in 1:n
-        A[i, n + 1] = Fx[i] - (x[i] - x₀[i])
+        A[i, n + 1] = Fx[i] / σ - (x[i] - x₀[i])
     end
     return A
 end
@@ -231,6 +244,10 @@ length, and `accepted` whether the step was accepted. The vectors are the state'
 solve empties and fills them again.
 """
 continuation_steps(state::ContinuationState) = state.record
+# the state of a `StationarityProblem` solve holds the method's state as `inner`
+function continuation_steps(state::Union{StaticStationarityState, DenseStationarityState})
+    continuation_steps(state.inner)
+end
 continuation_steps(solver::NonlinearSolver) = continuation_steps(solver.state)
 
 @inline function init_state(m::Continuation, prob::CombinatorProblem, x, p)

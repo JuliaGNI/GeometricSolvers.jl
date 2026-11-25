@@ -887,14 +887,16 @@ end
         "a LeastSquaresProblem with more residuals than unknowns (m = $m_rows, n = $(length(x))) takes no factor in a lower precision than the element type $T of the iterate; a factor in $F moves the Gauss–Newton fixed point off the least-squares point"))
 end
 
-# The problems whose `F` is no gradient, which a `PseudoTransient` step refuses: its shift follows
-# the gradient flow of an action. Every other problem is taken.
-@inline function check_pseudotransient_problem(::Union{
-        NonlinearProblem, LeastSquaresProblem})
-    throw(ArgumentError(
-        "PseudoTransient solves a StationarityProblem: its shifted step follows the gradient flow of the action S, and the residual of a NonlinearProblem or a LeastSquaresProblem is no gradient; use another globalization"))
+# A `PseudoTransient` step takes only the problem that a `StationarityProblem` solve hands to its
+# method, the `_ReducedStationarityProblem`, whose `F` is the gradient of an action: its shift
+# follows the gradient flow of that action. Every other problem is refused, the problems that a
+# combinator builds included. `stationarity.jl` defines that type after this file, so the test is
+# an `isa` in the body and not a method signature.
+@inline function check_pseudotransient_problem(prob::AbstractNonlinearProblem)
+    prob isa _ReducedStationarityProblem || throw(ArgumentError(
+        "PseudoTransient solves a StationarityProblem: its shifted step follows the gradient flow of the action S, and the residual of any other problem is no gradient; use another globalization"))
+    return nothing
 end
-@inline check_pseudotransient_problem(::AbstractNonlinearProblem) = nothing
 
 # The state of every linear method, with the record of the best iterate where `best = true`. On a
 # `LeftPreconditionedProblem` the record would rank `‖rˡ‖₂` while `status.fnorm` is the global

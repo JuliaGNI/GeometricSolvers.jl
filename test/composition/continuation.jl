@@ -1,8 +1,9 @@
 # `Continuation`: the pseudo-arclength follower on the Newton, the fixed-point and a parameter
 # homotopy; the standard row that every other column fails; the two-fold cubic; a system with no
-# path to `λ = 1`; a non-finite start; the record of the steps and its step control; the residual
-# and the Jacobian of each homotopy; the refusals; and a linear system scaled to the ends of the
-# float range.
+# path to `λ = 1`; a non-finite start; the record of the steps and its step control, a failed
+# tangent among them, and the record of a `StationarityProblem` solve; the residual and the
+# Jacobian of each homotopy; the refusals; and a linear system scaled to the ends of the float
+# range.
 
 using ForwardDiff: ForwardDiff
 using JLArrays: JLArray
@@ -13,7 +14,8 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: Continuation, FixedPointHomotopy, LeastSquaresProblem,
                         NewtonHomotopy,
-                        NONFINITE, NonlinearProblem, ParameterHomotopy, STALLED, SUCCESS,
+                        NONFINITE, NonlinearProblem, ParameterHomotopy, STALLED,
+                        StationarityProblem, SUCCESS,
                         MAXITERS, bordered_solve!, continuation_steps, next_step_length,
                         path_corrector!, homotopy_jacobian!, homotopy_residual!, init,
                         solve, solve!
@@ -65,6 +67,16 @@ end
         # the last step is accepted past `λ = 1`, and no accepted step before it reaches 1
         @test steps.accepted[end] && steps.λ[end] >= 1
         @test all(<(1), steps.λ[steps.accepted][1:(end - 1)])
+        # a rejected step records the `λ` of its prediction, which differs from the `λ` of the
+        # accepted point it starts from, the start at `λ = 0` before the first accepted step
+        λ_from = zero(T)
+        for k in 1:n
+            if steps.accepted[k]
+                λ_from = steps.λ[k]
+            else
+                @test steps.λ[k] != λ_from
+            end
+        end
         # a rejected step halves the step length; a step after an accepted one keeps it or
         # doubles it, and some step doubles it
         for k in 1:(n - 1)
@@ -131,6 +143,8 @@ end
             # the solve ends on a rejected step whose halved length is below the minimum
             @test !steps.accepted[end]
             @test steps.h[end] / 2 < T(1e-6) <= steps.h[end]
+            # the step norm of the status is the length of that last step
+            @test status.stepnorm == steps.h[end]
             @test all(<(1), steps.λ)
             @test status.step_failures == count(.!steps.accepted)
             @test all(isfinite, x)
@@ -175,6 +189,41 @@ end
     end
 end
 
+@testset "a failed tangent at a corrected point rejects the step" begin
+    # On `x − 2`, whose Newton-homotopy path is `x = 2λ`, the Jacobian is called once by the
+    # start's corrector, once by the start's tangent, and then once by each step's corrector and
+    # once by the tangent at its corrected point. A `NaN` at the fourth call, the tangent of the
+    # first step, rejects that step and halves its length; the steps after it are accepted.
+    @testset "$T" for T in REAL_ELTYPES
+        calls = Ref(0)
+        J(x, p) = (calls[] += 1; calls[] == 4 ? T(NaN) : one(T))
+        solver = init(NonlinearProblem((x, p) -> x - 2, J), zero(T),
+            Continuation(NewtonHomotopy()))
+        x, status = solve!(solver)
+        steps = continuation_steps(solver)
+        @test status.code == SUCCESS && x == 2
+        @test !steps.accepted[1] && all(steps.accepted[2:end])
+        @test steps.h[2] == steps.h[1] / 2
+        @test status.step_failures == 1
+    end
+end
+
+@testset "the record of a StationarityProblem solve" begin
+    # the double well `S = (x₁² − 1)²/4 + x₂²/2`, whose gradient `(x₁³ − x₁, x₂)` has the root
+    # `(1, 0)` on the path from `(0.1, 1)`
+    S(x, p) = (x[1]^2 - 1)^2 / 4 + x[2]^2 / 2
+    @testset "$T $(typeof(x₀))" for T in REAL_ELTYPES,
+        x₀ in (T[0.1, 1], SVector{2, T}(0.1, 1))
+
+        solver = init(StationarityProblem(S), x₀, Continuation(FixedPointHomotopy()))
+        x, status = solve!(solver)
+        @test status.code == SUCCESS
+        @test isapprox(x, T[1, 0]; atol = sqrt(eps(T)))
+        steps = continuation_steps(solver)
+        @test !isempty(steps.λ) && steps.accepted[end] && steps.λ[end] >= 1
+    end
+end
+
 @testset "the bordered solve" begin
     @testset "$T" for T in REAL_ELTYPES
         r = T[3, 5]
@@ -201,6 +250,16 @@ end
         @test ok
         @test k == (T == Float64 ? 4 : 3)
         @test isapprox(ws.w, T[sqrt(T(2)), 1]; rtol = sqrt(eps(T)))
+        # on `x²` from 1.5, whose double root halves each correction, the corrector stops
+        # unconverged after its sixth iteration, at `1.5 / 2⁶`
+        G(x, q) = [x[1]^2]
+        JG(x, q) = reshape([2x[1]], 1, 1)
+        ws = (; F₀ = T[0], z = zeros(T, 2), w = zeros(T, 2), zp = T[1.5, 1], t = T[0, 1],
+            r = zeros(T, 2), A = zeros(T, 2, 2))
+        ok, k = path_corrector!(
+            ws, NewtonHomotopy(), G, JG, zeros(T, 1), nothing, T[1.5], nothing, 1)
+        @test !ok && k == 6
+        @test ws.w == T[1.5 / 2 ^ 6, 1]
     end
 end
 
@@ -260,7 +319,8 @@ end
 @testset "the residual and the Jacobian of each homotopy" begin
     # `F(x, p) = (x₁² − p x₂, x₁x₂)`, with `J = [2x₁ −p; x₂ x₁]`, at `x = (1.5, −0.5)` from
     # `x₀ = (0.25, 2)`, at `λ = 0.3` and `p = 2`. The residual and the Jacobian are given as
-    # callables `(x, p_λ) -> F` and `(x, p_λ) -> J`, as the solve passes them.
+    # callables `(x, p_λ) -> F` and `(x, p_λ) -> J`, as the solve passes them. The fixed-point
+    # homotopy divides `F` by `σ = ‖F(x₀)‖∞ = ‖(−63/16, 1/2)‖∞ = 63/16`.
     @testset "$T" for T in REAL_ELTYPES
         x₀ = T[0.25, 2]
         x = T[1.5, -0.5]
@@ -269,11 +329,12 @@ end
         J(x, p) = T[2x[1] -p; x[2] x[1]]
         p = T(2)
         F₀ = F(x₀, p)
+        σ = T(63) / 16
         tol = 8 * eps(T)
         for (h, Hλ, Hz) in (
             (NewtonHomotopy(), F(x, p) - (1 - λ) * F₀, [J(x, p) F₀]),
-            (FixedPointHomotopy(), λ * F(x, p) + (1 - λ) * (x - x₀),
-            [λ * J(x, p) + (1 - λ) * I F(x, p) - (x - x₀)]),
+            (FixedPointHomotopy(), λ * F(x, p) / σ + (1 - λ) * (x - x₀),
+            [λ * J(x, p) / σ + (1 - λ) * I F(x, p) / σ - (x - x₀)]),
             (ParameterHomotopy((p, λ) -> p + λ), F(x, p + λ),
             [J(x, p + λ) T[-x[2], 0]]))
             H = zeros(T, 2)
@@ -313,21 +374,27 @@ end
 end
 
 @testset "a linear system scaled to the ends of the float range" begin
-    # `F(x) = s (A x − b)`, whose root `A⁻¹ b = (1, −2)` does not depend on `s`. The path of the
-    # Newton homotopy does not depend on `s` either. The path of the fixed-point homotopy does: it
-    # turns from `x` to `λ` within `λ ~ 1/√s` of the start, which no step above `h_min` follows
-    # where `s` is large (`KNOWN_ISSUES.md`, K115), so that homotopy runs at `s = 1e-6` and `1e6`.
+    # `F(x) = s (A x − b)`, whose root `A⁻¹ b = (1, −2)` does not depend on `s`. Neither does the
+    # path of the Newton homotopy, nor that of the fixed-point homotopy, which divides `F` by
+    # `σ = ‖F(x₀)‖∞`. At `floatmax/8` the squares of `F(x₀)` overflow, and its ∞-norm does not.
     A = [3.0 1.0; 1.0 2.0]
     b = [1.0, -3.0]
     @testset "$T $(nameof(typeof(h))) s = $s" for T in REAL_ELTYPES,
-        (h, s) in [[(NewtonHomotopy(), s) for s in (4 * sqrt(floatmax(T)), floatmax(T) / 8)];
-                   [(FixedPointHomotopy(), T(s)) for s in (1e-6, 1e6)]]
-
+        h in (NewtonHomotopy(), FixedPointHomotopy()),
+        s in (T(1e-6), T(1e6), 4 * sqrt(floatmax(T)), floatmax(T) / 8)
         At, bt = T.(A), T.(b)
         F!(y, x, p) = (y .= s .* (At * x .- bt); nothing)
         x, status = solve(NonlinearProblem(F!), zeros(T, 2), Continuation(h);
             f_abstol = zero(T))
         @test status.code == SUCCESS
         @test isapprox(x, T[1, -2]; rtol = 64 * eps(T))
+    end
+    # a start at the root, where `F(x₀) = 0`: the path of the fixed-point homotopy stays at `x₀`
+    @testset "$T a start at the root" for T in REAL_ELTYPES
+        At, bt = T.(A), T.(b)
+        F!(y, x, p) = (y .= At * x .- bt; nothing)
+        x, status = solve(NonlinearProblem(F!), T[1, -2], Continuation(FixedPointHomotopy()))
+        @test status.code == SUCCESS
+        @test x == T[1, -2]
     end
 end

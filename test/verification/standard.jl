@@ -336,13 +336,15 @@ end
     @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 2010
     @test all(c -> c.code in codes, cells)
     # Every cell runs with max_iterations = 200. A fallback cell sums the iterations of its
-    # members, each of which runs with that cap.
+    # members, each of which runs with that cap, and a continuation cell adds the path steps to
+    # the iterations of its last corrector, which runs with that cap too.
     @test any(c -> c.code == "MAXITERS", cells)
     fallback = first(last(STANDARD_COLUMNS))
+    summed = (fallback, "Continuation FixedPointHomotopy")
     @test all(c -> c.code != "MAXITERS" || c.iterations == 200,
-        filter(c -> c.column != fallback, cells))
+        filter(c -> !(c.column in summed), cells))
     @test all(c -> c.code != "MAXITERS" || c.iterations >= 200,
-        filter(c -> c.column == fallback, cells))
+        filter(c -> c.column in summed, cells))
 
     # The fallback succeeds on every row on which one of its members succeeds from the same
     # start: the list of exceptions is empty, and no fallback cell throws.

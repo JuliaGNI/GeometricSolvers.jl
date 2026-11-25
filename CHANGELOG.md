@@ -1040,9 +1040,9 @@ so that a compat-only bump can be told apart from an interface change.
 - **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
   exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
   `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,
-  `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x) + (1 − λ)(x − x₀)`, or
-  `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's problem; the
-  `NonlinearProblem` holds no `λ`. A tangent predictor and a bordered Newton corrector follow the
+  `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x)/σ + (1 − λ)(x − x₀)` with
+  `σ = ‖F(x₀)‖∞`, or `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's
+  problem; the `NonlinearProblem` holds no `λ`. A tangent predictor and a bordered Newton corrector follow the
   path through a fold of `λ`, where a step in `λ` alone stops. A failed corrector halves the step,
   a corrector of at most 3 iterations doubles it up to `h_max`, and a step below `h_min` returns
   `STALLED`. `GeometricSolvers.continuation_steps(state)` reads `λ` and the length of every
@@ -1051,22 +1051,25 @@ so that a compat-only bump can be told apart from an interface change.
   from `100u0`, which every other column fails, in `Float32` and `Float64`, and the cubic
   `x³ − 3x − 5/2` from `−2.2` through both folds. It refuses a `ForwardDiff.Dual` input in `solve`,
   a `LeastSquaresProblem`, a complex or a device array iterate, and a member that forms no
-  Jacobian matrix, each with an `ArgumentError`. The path of the fixed-point homotopy depends on the
-  scale of `F`, and at a large scale it is not followed (K115).
+  Jacobian matrix, each with an `ArgumentError`. The division by `σ` makes the path of the
+  fixed-point homotopy independent of a scale of `F`: `F(x) = s (A x − b)` gives the same root at
+  `s = 4 √floatmax` and `floatmax/8` with both homotopies, in `Float32` and `Float64`.
 
 - **The standard test set has a fifteenth column, `Continuation FixedPointHomotopy`,** before the
-  `Fallback` column: 44 of 67 starts give `SUCCESS` in `Float32` and 48 of 67 in `Float64`. The
-  benchmark's pairing table gives it no paired method: SimpleNonlinearSolve's `SimpleHomotopySweep`
-  steps the parameter of a `HomotopyProblem` and stops at a fold of `λ`.
+  `Fallback` column: 46 of 67 starts give `SUCCESS` in `Float32` and 48 of 67 in `Float64`. The
+  benchmark pairs it with SimpleNonlinearSolve's `ArcLengthContinuation`, with
+  `SimpleNewtonRaphson` as its corrector, on the same homotopy; its arclength metric, its
+  predictor and its landing on `λ = 1` differ from the column's.
 
 - **`PseudoTransient(δ₀; δ_max = 1e12)` is a new exported globalization of `Newton` for a
-  `StationarityProblem`: pseudo-transient continuation.** Each step solves `(J + I/δ) d = −F` and is
-  accepted; `δ` starts at `δ₀` in each solve and follows the switched evolution relaxation
+  `StationarityProblem`: pseudo-transient continuation.** Each step solves `(J + I/δ) d = −F`,
+  with the regularisation `μ` of the `Newton` added to `1/δ`, and is accepted; `δ` starts at `δ₀` in each solve and follows the switched evolution relaxation
   `δₖ₊₁ = min(δₖ ‖F(xₖ)‖₂ / ‖F(xₖ₊₁)‖₂, δ_max)`. On the double well
   `S(x, y) = (x² − 1)²/4 + y²/2` from `(0.1, 1)`, `Newton()` converges to the saddle `(0, 0)` and
   `PseudoTransient(0.1)` to the minimum `(1, 0)`. A non-finite `δ`, `1/δ` or residual returns
-  `NONFINITE`; a `NonlinearProblem`, a `LeastSquaresProblem`, `reuse`, a refinement and a
-  `GMRES`, `MINRESQLP` or `KroneckerFactorization` linear method raise an `ArgumentError`.
+  `NONFINITE`; every problem other than a `StationarityProblem` (a `NonlinearProblem`, a
+  `LeastSquaresProblem`, the problem that `LeftPreconditioned` builds), `reuse`, a refinement and
+  a `GMRES`, `MINRESQLP` or `KroneckerFactorization` linear method raise an `ArgumentError`.
 
 - **`MINRESQLP(; maxiter = 30, forcing = EisenstatWalkerChoice2(), preconditioner = nothing)` is a
   new exported matrix-free linear method for `Newton` on a `StationarityProblem` with `E == U`.**

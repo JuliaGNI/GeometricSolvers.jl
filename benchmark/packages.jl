@@ -335,7 +335,9 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
         NoMethod("no nonlinear preconditioning")),
     "Continuation FixedPointHomotopy" => (gs_entry("Continuation FixedPointHomotopy"),
         NoMethod("no continuation method"),
-        NoMethod("`SimpleHomotopySweep` steps the parameter of a `HomotopyProblem` (natural-parameter continuation), which stops at a fold of λ; no pseudo-arclength follower"),
+        Paired("ArcLengthContinuation",
+            "pseudo-arclength continuation of the same homotopy `λ F(x)/σ + (1 − λ)(x − x₀)`, `σ = ‖F(x₀)‖∞`, with `SimpleNewtonRaphson` as its corrector and no Jacobian of `F` given; its arclength weighs `x` and `λ` by `θ = 0.5` where the column's is unweighted, it predicts along the secant of the last two points where the column predicts along the tangent, and it lands on `λ = 1` by a solve at fixed `λ` where the column runs `Newton` from the chord's point at `λ = 1`",
+            T -> (; alg = SNS.ArcLengthContinuation(; inner = SNS.SimpleNewtonRaphson()))),
         NoMethod("no continuation method")),
     "Fallback Newton DogLeg LevenbergMarquardt" => (
         gs_entry("Fallback Newton DogLeg LevenbergMarquardt"),
@@ -431,11 +433,50 @@ function package_call(::Val{:SimpleSolvers}, objs, c, J!, x0; tol)
     return (; passed, call)
 end
 
+"""
+    FixedPointHomotopyResidual(F, x0, σ)
+
+The out-of-place residual `H(u, p, λ)` of the fixed-point homotopy `λ F(u)/σ + (1 − λ)(u − x0)`
+of the residual `F(y, x, p)`, as a `HomotopyProblem` of SciMLBase calls it. `F` writes into a
+buffer of the element type of `u`, so that a `Counted` residual counts a dual call by `u` alone.
+It is out of place because the solve of `ArcLengthContinuation` wraps an in-place residual in
+function wrappers that the dual numbers of its corrector do not match: NonlinearSolveBase 2.55.1
+raises `NoFunctionWrapperFoundError`.
+"""
+struct FixedPointHomotopyResidual{C, X, R}
+    F::C
+    x0::X
+    σ::R
+end
+
+function (h::FixedPointHomotopyResidual)(u, p, λ)
+    Fu = similar(u)
+    h.F(Fu, u, p)
+    return @. λ * (Fu / h.σ) + (1 - λ) * (u - h.x0)
+end
+
+# SimpleNonlinearSolve's problem for `alg`: the problem of the residual `c` with the Jacobian
+# `J!`, or, for `ArcLengthContinuation`, the `HomotopyProblem` of the fixed-point homotopy of `c`
+# from `x0` that the column `Continuation FixedPointHomotopy` follows, with its `σ = ‖F(x0)‖∞`
+# (1 where `F(x0) = 0`).
+function sns_problem(alg, c, J!, x0)
+    f = SciMLBase.NonlinearFunction{true}(c; jac = J!)
+    return SciMLBase.NonlinearProblem(f, x0, nothing)
+end
+
+function sns_problem(::SNS.ArcLengthContinuation, c, J!, x0)
+    F0 = similar(x0)
+    c(F0, x0, nothing)
+    σ = maximum(abs, F0)
+    h = FixedPointHomotopyResidual(c, copy(x0), iszero(σ) ? one(σ) : σ)
+    T = eltype(x0)
+    return SciMLBase.HomotopyProblem(h, x0, nothing; λspan = (zero(T), one(T)))
+end
+
 function package_call(::Val{:SimpleNonlinearSolve}, objs, c, J!, x0; tol)
     passed = (; alg = objs.alg)
     call = function ()
-        f = SciMLBase.NonlinearFunction{true}(c; jac = J!)
-        sol = SciMLBase.solve(SciMLBase.NonlinearProblem(f, x0, nothing), passed.alg;
+        sol = SciMLBase.solve(sns_problem(passed.alg, c, J!, x0), passed.alg;
             abstol = tol, maxiters = MAX_ITERATIONS)
         (; x = sol.u, code = string(sol.retcode), ok = SciMLBase.successful_retcode(sol),
             iterations = "n/a")

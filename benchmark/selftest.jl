@@ -52,7 +52,7 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         @test PAIRING["Newton Static LU"][1].label == "Newton+Static+LUFactorization"
         @test PAIRING["Newton reuse 3 Backtracking LU"][1].label ==
               "Newton(3)+Backtracking+LUFactorization"
-        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 15 + 20
+        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 15 + 21
         # The nine `Newton` columns with a factorisation take the shared Jacobian, and the
         # GeometricSolvers adapter hands it to no other column: a Jacobian that throws reaches
         # the solve on those nine alone.
@@ -104,6 +104,22 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             c = run_cell(row, column, package)
             c.status == "ran" || continue
             @test c.success == (column != "Newton Static LU")
+        end
+    end
+
+    @testset "the continuation pairing follows the column's homotopy" begin
+        # `F(x) = (x₁² − 2 x₂, x₁ x₂)` from `x0 = (0.25, 2)`, where `σ = ‖F(x0)‖∞ = 63/16`, and
+        # from its root `(0, 0)`, where `σ = 1`; both homotopies at `u = (1.5, −0.5)`, `λ = 0.3`
+        F(y, x, p) = (y[1] = x[1]^2 - 2x[2]; y[2] = x[1] * x[2]; nothing)
+        Fq(x, p) = (y = similar(x); F(y, x, p); y)
+        alg = PAIRING["Continuation FixedPointHomotopy"][3].build(Float64).alg
+        u, λ = [1.5, -0.5], 0.3
+        for x0 in ([0.25, 2.0], [0.0, 0.0])
+            prob = sns_problem(alg, Counted(F), nothing, x0)
+            F0 = Fq(x0, nothing)
+            H = GS.homotopy_residual!(
+                similar(u), GS.FixedPointHomotopy(), Fq, u, λ, x0, F0, nothing)
+            @test isapprox(prob.f(u, nothing, λ), H; rtol = 8 * eps())
         end
     end
 

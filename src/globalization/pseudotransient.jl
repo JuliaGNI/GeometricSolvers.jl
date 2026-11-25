@@ -9,9 +9,10 @@ solves the shifted system
 \\left(J(x_k) + \\frac{1}{\\delta_k} I\\right) d_k = -F(x_k)
 ```
 
-and takes `x_{k+1} = x_k + d_k`; every step is accepted. A small pseudo-time step `δ` follows the
-gradient flow `ẋ = -∇S(x)`, which leaves a saddle of `S` along a direction of negative curvature,
-and a large one gives the Newton step. `δ` starts at `δ₀` in each solve and follows the switched
+and takes `x_{k+1} = x_k + d_k`; every step is accepted. The regularisation `μ` of the `Newton`
+adds to the shift: the step factorises ``J(x_k) + (μ + 1/δ_k) I``. A small pseudo-time step `δ`
+follows the gradient flow `ẋ = -∇S(x)`, which leaves a saddle of `S` along a direction of
+negative curvature, and a large one gives the Newton step. `δ` starts at `δ₀` in each solve and follows the switched
 evolution relaxation
 
 ```math
@@ -26,9 +27,11 @@ norm, so a short step never ends the solve as a stall.
 The parameters satisfy `0 < δ₀ ≤ δ_max < Inf`, else the constructor raises an `ArgumentError`;
 [`ToReal`](@ref) converts them to the real type of the iterate. `Newton` with a `PseudoTransient`
 takes no `reuse` and no refinement, and needs a factorising linear method: a [`GMRES`](@ref), a
-[`MINRESQLP`](@ref) or a [`KroneckerFactorization`](@ref) raises an `ArgumentError`. A
-[`NonlinearProblem`](@ref) or a [`LeastSquaresProblem`](@ref) raises an `ArgumentError` where
-the state is built: the shift follows the gradient flow of `S` only where `F` is a gradient.
+[`MINRESQLP`](@ref) or a [`KroneckerFactorization`](@ref) raises an `ArgumentError`. Every
+problem other than a `StationarityProblem` raises an `ArgumentError` where the state is built: a
+[`NonlinearProblem`](@ref), a [`LeastSquaresProblem`](@ref), and the problem that a combinator
+such as [`LeftPreconditioned`](@ref) builds. The shift follows the gradient flow of `S` only
+where `F` is a gradient.
 """
 struct PseudoTransient{R <: AbstractFloat}
     δ₀::R

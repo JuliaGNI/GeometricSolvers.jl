@@ -2,18 +2,23 @@
 # the double well whose saddle `Newton()` reaches and whose minimum the shifted steps reach, the
 # parameters and their validation, the rule state that each solve starts at `δ₀` and that a raw
 # step without `start!!` reads as `NaN`, the switched evolution relaxation of `δ` and its cap, a
-# non-finite residual, the refusals, and a linear gradient scaled to the ends of the float range.
+# non-finite residual, the refusals, a linear gradient scaled to the ends of the float range, and
+# the kernel path.
 
+using Adapt: Adapt
+using JET: JET, @test_opt
+using JLArrays: JLArray
+using KernelAbstractions: @Const, @index, @kernel, synchronize
 using LinearAlgebra: Diagonal, isposdef
 using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: KroneckerFactorization, LeastSquaresProblem, NONFINITE,
-                        NonlinearProblem, PseudoTransient, PseudoTimeStep, Refinement,
-                        SINGULAR,
-                        StationarityProblem, SUCCESS, init, init_state, residual!!, solve,
-                        solve!, start!!, step!!, with_rule
+using GeometricSolvers: KroneckerFactorization, LeastSquaresProblem, LeftPreconditioned,
+                        NONFINITE, NonlinearProblem, Options, PseudoTransient,
+                        PseudoTimeStep, Refinement, SINGULAR, StationarityProblem, SUCCESS,
+                        ToReal, init, init_state, residual!!, solve, solve!, solve!!,
+                        start!!, step!!, with_rule
 
 include("../helpers/matrix.jl")
 
@@ -87,6 +92,12 @@ end
         NonlinearProblem((x, p) -> x - 1), 0.0, m)
     lsq = LeastSquaresProblem((y, x, p) -> (y .= [x[1] - 1, x[1] - 2]; nothing), 2)
     @test_throws r"^ArgumentError: PseudoTransient solves a StationarityProblem" init(lsq, [0.0], m)
+    # the problem that a combinator builds from a `NonlinearProblem`: the preconditioned residual
+    # of `LeftPreconditioned` is no gradient either
+    @test_throws r"^ArgumentError: PseudoTransient solves a StationarityProblem" solve(
+        NonlinearProblem(F!), [0.0, 0.0], LeftPreconditioned(m, Newton()))
+    @test_throws r"^ArgumentError: PseudoTransient solves a StationarityProblem" solve(
+        NonlinearProblem(F!), [0.0, 0.0], LeftPreconditioned(Newton(), m))
 end
 
 @testset "the rule state and the evolution of δ" begin
@@ -192,4 +203,64 @@ end
         @test status.code == NONFINITE
         @test all(isfinite, x)
     end
+end
+
+# On a Julia it does not support, JET loads empty stubs that throw. JET 0.12 exports
+# `JET_AVAILABLE` to say so; JET 0.9 and 0.10 name the same flag `JET_LOADABLE`.
+const JET_WORKS = isdefined(JET, :JET_AVAILABLE) ? JET.JET_AVAILABLE : JET.JET_LOADABLE
+
+@kernel function pt_kernel!(codes, xs, prob, method, state₀, opt, @Const(x₀s))
+    i = @index(Global, Linear)
+    @inbounds begin
+        x, st, _ = solve!!(state₀, prob, x₀s[i], method, nothing, opt)
+        codes[i] = st.code
+        xs[i] = x
+    end
+end
+
+function pt_allocations(state::S, prob::P, x₀::X, m::M, opt::O) where {S, P, X, M, O}
+    (
+        solve!!(state, prob, x₀, m, nothing, opt); @allocated solve!!(
+            state, prob, x₀, m, nothing, opt))
+end
+allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
+
+@testset "the kernel path: host and kernel agree, inferred, allocation-free, $R" for R in REAL_ELTYPES
+    prob = StationarityProblem(well)
+    m = Adapt.adapt(ToReal{R}(), Newton(; globalization = PseudoTransient(0.1)))
+    opt = Options(R; max_iterations = 50)
+    x₀s = [SVector{2, R}(0.1, 1), SVector{2, R}(-0.1, 1), SVector{2, R}(0.5, -1),
+        SVector{2, R}(-3, 4)]
+    host = [solve!!(init_state(m, prob, x₀, nothing), prob, x₀, m, nothing, opt)
+            for x₀ in x₀s]
+    codes = Vector{GeometricSolvers.ReturnCode}(undef, 4)
+    xs = Vector{SVector{2, R}}(undef, 4)
+    state₀ = init_state(m, prob, x₀s[1], nothing)
+    @test isbits(m) && isbits(state₀)
+    pt_kernel!(KA_BACKEND)(codes, xs, prob, m, state₀, opt, x₀s; ndrange = 4)
+    synchronize(KA_BACKEND)
+    @test codes == [h[2].code for h in host]
+    @test xs == [h[1] for h in host]
+    @test all(==(SUCCESS), codes)
+
+    @test @inferred(solve!!(state₀, prob, x₀s[1], m, nothing, opt))[2].code == SUCCESS
+    # `--check-bounds=yes` lets the static factors' `MMatrix` escape to the heap, so a run that
+    # forces it skips this assertion
+    if Base.JLOptions().check_bounds != 1
+        @test pt_allocations(state₀, prob, x₀s[1], m, opt) == 0
+    end
+    # the control: the barrier sees an allocation where there is one
+    @test allocations(collect, x₀s[1]) > 0
+    if JET_WORKS
+        @test_opt solve!!(state₀, prob, x₀s[1], m, nothing, opt)
+    else
+        @test_skip JET_WORKS  # issue #8
+    end
+
+    # a device array, with an action that broadcasts: `S(x) = ‖x − 1‖²/2`, minimum at `(1, 1)`
+    S(x, p) = sum(abs2, x .- 1) / 2
+    x, status = solve(StationarityProblem(S), JLArray(R[0.1, 1]), m; max_iterations = 50)
+    @test status.code == SUCCESS
+    @test x isa JLArray{R}
+    @test isapprox(Array(x), R[1, 1]; atol = sqrt(eps(R)))
 end
