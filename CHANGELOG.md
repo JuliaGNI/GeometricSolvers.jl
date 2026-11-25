@@ -998,7 +998,8 @@ so that a compat-only bump can be told apart from an interface change.
 - **`LinearProblem(A)`, `init(prob, method)` and `solve!(solver, b)` solve a dense linear system
   for many right-hand sides after one factorisation.** `LinearProblem`, `LinearSolver`,
   `LinearStatus` and `refactorize!!` are exported. `LinearProblem(A)` holds a dense matrix in the
-  field `A`; a zero dimension or a sparse matrix raises an `ArgumentError`. `init` factorises with
+  field `A`; a zero dimension, a sparse matrix, and an `A` or a `b` with an axis that does not
+  start at 1 raise an `ArgumentError`. `init` factorises with
   `LUFactorization`, `QRFactorization`, `SVDFactorization`, `LDLTFactorization` or
   `CholeskyFactorization` and returns a `LinearSolver`; `GMRES`, `UMFPACKFactorization` and a
   precision marker such as `TF32` raise an `ArgumentError`. `solve!` returns `(x, status)` with an
