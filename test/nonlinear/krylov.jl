@@ -836,17 +836,12 @@ function count_product!(C, A)
         ARRAY_REDUCTIONS[] += 1
         push!(ADJOINT_OPERANDS, parent(A))
     end
+    return nothing
 end
 
 function LinearAlgebra.mul!(C::JLVector, A::JLOperand, B::JLVector, α::Number, β::Number)
     count_product!(C, A)
     S = Tuple{AbstractVector, AbstractVecOrMat, AbstractVector, Number, Number}
-    return invoke(LinearAlgebra.mul!, S, C, A, B, α, β)
-end
-
-function LinearAlgebra.mul!(C::JLMatrix, A::JLOperand, B::JLOperand, α::Number, β::Number)
-    count_product!(C, A)
-    S = Tuple{AbstractMatrix, AbstractVecOrMat, AbstractVecOrMat, Number, Number}
     return invoke(LinearAlgebra.mul!, S, C, A, B, α, β)
 end
 
