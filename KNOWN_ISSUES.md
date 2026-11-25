@@ -959,7 +959,9 @@
 ### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
 
 - **location:** `src/linear/factors.jl:855` (`rhs_exponent`), which `ldiv!!` of the dense,
-  device and static factors calls
+  device and static factors calls; `src/linear/linearproblem.jl:427, 468` (`wide_solve!`, the
+  same-type `m < n` solve of a dense or device `LinearSolver`), which does not call
+  `rhs_exponent`; and the static `SVDFactorization` solve of `m < n`
 - **evidence:** `rhs_exponent` gives `max(0, …)`, so a right-hand side divides by `2^k` only near
   `floatmax`. With `s = 2^10 · nextfloat(zero(R))`, `A = 3s · I(5)`, `A[3, 1] = A[1, 3] = s` and
   `b = fill(s, 5)`, whose solution `(1/4, 1/3, 1/4, 1/3, 1/3)` lies in the normal range,
@@ -970,9 +972,16 @@
   `ComplexF64`. The forward substitution forms `L₃₁ y₁ ≈ s/3`, a subnormal that rounds to a
   multiple of `nextfloat(zero(R))`, a relative error of up to `1.5 · 2^-10`. With the factor of
   `A` unscaled, on `bf08120`, the error is `1.4e-4` and `2.7e-4` (Julia 1.13.4).
-  `test/linear/linearproblem.jl` bounds this case by `2t/s = 2^-9`.
+  `test/linear/linearproblem.jl` bounds this case by `2t/s = 2^-9`. A wide system loses such a
+  right-hand side whole: with `A = fill(2.0^-1000, 1, 4)` and `b = [nextfloat(0.0)]`, whose
+  minimum-norm solution is `fill(2.0^-76, 4)`, `solve!` gives `x = 0` and `SUCCESS` for
+  `SVDFactorization()` and `QRFactorization()` on an `Array`, and for `SVDFactorization()` on an
+  `SMatrix` (the static QR solve gives `2^-76`); the same solves of `b · 2^1074`, scaled back by
+  `2^-1074`, give `fill(2.0^-76, 4)` exactly; `rhs_exponent(b) = 0` (Julia 1.13.4, PR #115 at
+  `3d1e53b`).
 - **kind:** defect
-- **found:** 2026-11-25, the K114 5 × 5 case, which the fix of K114 leaves at this limit
+- **found:** 2026-11-25, the K114 5 × 5 case, which the fix of K114 leaves at this limit; the
+  wide case from a review of PR #115
 
 ### K125 · The device `SVDFactorization(Float32)` of a `Float64` or `ComplexF64` matrix of subnormal entries gives `SINGULAR`
 
