@@ -795,14 +795,14 @@ end
 
 # The reductions of the Arnoldi process, counted at the array level on `JLArray`: every `sum` and
 # `maximum` of a `JLArray` or of a lazy broadcast over one is a `Base.mapreduce` of it, and every
-# matrix–vector product of `JLArray` storage is the five-argument `mul!` of `LinearAlgebra`, which
-# the three-argument one calls. A product with an adjoint or a transposed matrix, `Vᴴ w`, reduces
+# product of `JLArray` storage is the five-argument `mul!` of `LinearAlgebra`, which the
+# three-argument one calls. A product with an adjoint or a transposed matrix, `Vᴴ w`, reduces
 # over the length of the basis and counts as a reduction. A product with a plain matrix reduces
 # nothing: the counter records its destination, so that a test reads which vector it updated. The
-# product method is more specific than the generic one of `LinearAlgebra`, which it calls; no
-# method of GPUArrays takes these operands at five arguments, and the storage-level methods below
-# it differ between GPUArrays releases. The file deletes the methods after the tests that read
-# them.
+# product methods, one for a vector and one for a matrix destination, are more specific than the
+# generic ones of `LinearAlgebra`, which they call; no method of GPUArrays takes these operands at
+# five arguments, and the storage-level methods below them differ between GPUArrays releases. The
+# file deletes the methods after the tests that read them.
 const ARRAY_REDUCTIONS = Ref(0)
 const BROADCAST_REDUCTIONS = Ref(0)
 const ADJOINT_OPERANDS = Any[]
@@ -843,6 +843,38 @@ function LinearAlgebra.mul!(C::JLVector, A::JLOperand, B::JLVector, α::Number, 
     count_product!(C, A)
     S = Tuple{AbstractVector, AbstractVecOrMat, AbstractVector, Number, Number}
     return invoke(LinearAlgebra.mul!, S, C, A, B, α, β)
+end
+
+function LinearAlgebra.mul!(C::JLMatrix, A::JLOperand, B::JLOperand, α::Number, β::Number)
+    count_product!(C, A)
+    S = Tuple{AbstractMatrix, AbstractVecOrMat, AbstractVecOrMat, Number, Number}
+    return invoke(LinearAlgebra.mul!, S, C, A, B, α, β)
+end
+
+# The counters see every product of `JLArray` storage: no method of GPUArrays takes the call
+# first, whatever the release.
+@testset "The product counters see the products of JLArray storage" begin
+    A = JLArray(randn(Xoshiro(3), 6, 4))
+    x = JLArray(randn(Xoshiro(4), 6))
+    X = JLArray(randn(Xoshiro(5), 6, 2))
+    v = JLArray(randn(Xoshiro(6), 4))
+    V = JLArray(randn(Xoshiro(7), 4, 2))
+    for (C, B) in ((JLArray(zeros(4)), x), (JLArray(zeros(4, 2)), X)),
+        At in (A', transpose(A))
+
+        empty!(ADJOINT_OPERANDS)
+        reduced = ARRAY_REDUCTIONS[]
+        mul!(C, At, B)
+        @test ARRAY_REDUCTIONS[] - reduced == 1
+        @test only(ADJOINT_OPERANDS) === A
+    end
+    for (C, B) in ((JLArray(zeros(6)), v), (JLArray(zeros(6, 2)), V))
+        empty!(PLAIN_PRODUCTS)
+        reduced = ARRAY_REDUCTIONS[]
+        mul!(C, A, B)
+        @test ARRAY_REDUCTIONS[] == reduced
+        @test only(PLAIN_PRODUCTS) === C
+    end
 end
 
 # The product of a diagonal operator by broadcast, which reduces nothing, and which records the
