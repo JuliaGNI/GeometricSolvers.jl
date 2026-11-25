@@ -109,7 +109,8 @@ an `ArgumentError`. `x` has `n` entries in the element type of `A`: a new `SVect
 matrix, and the buffer `solver.x` for a dense or device matrix, which the next `solve!` overwrites.
 It is the solution, the least-squares solution or the minimum-norm solution that
 [`LinearProblem`](@ref) states for the shape of `A` and the method. Every entry of `x` is `NaN`
-where the status is `SINGULAR`, where `A` is not finite, and where `b` is not finite. [`refactorize!!`](@ref) factorises a new matrix with the solver.
+where the status is `SINGULAR`, where `A` is not finite, and where `b` is not finite.
+[`refactorize!!`](@ref) factorises a new matrix with the solver.
 
 On a static matrix the solver is a value, `isbits` for an `isbits` element type; on a dense or
 device array it holds the buffers that `solve!` and `refactorize!!` reuse.
