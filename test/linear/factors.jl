@@ -206,6 +206,54 @@ end
     end
 end
 
+@testset "ldexp2 of a ForwardDiff.Dual is exact at e = emax + 1, $R" for R in REAL_ELTYPES
+    # ForwardDiff scales the partial of `ldexp(x, e)` by `exp2(e)`, which is `Inf` here
+    emax = exponent(floatmax(R))
+    s = ldexp(one(R), -emax - 10)
+    for p in (s, zero(R), one(R) / 4)
+        d = GeometricSolvers.ldexp2(ForwardDiff.Dual(s, p), emax + 1)
+        @test isequal(ForwardDiff.value(d), GeometricSolvers.ldexp2(s, emax + 1))
+        @test isequal(ForwardDiff.partials(d, 1), GeometricSolvers.ldexp2(p, emax + 1))
+    end
+end
+
+@testset "Cholesky of a ForwardDiff.Dual matrix of subnormal entries, $R, $kind" for R in REAL_ELTYPES,
+    kind in (:static, :dense)
+
+    # `J(t) = s (A₀ + t·1·1ᵀ)` at `t = 0` and `b = s b₀`, `s = 2^(-emax - 10)`: the entries are
+    # exact subnormals below `2^-emax`, so the own-type Cholesky exponent is `-emax - 1`, and the
+    # factor multiplies `J` by `2^(emax + 1)`. The solution is that of `A₀`: `x = A₀⁻¹ b₀`,
+    # `ẋ = -A₀⁻¹ (1·1ᵀ) x`. The right-hand side is not scaled up (K124), so the solves form
+    # subnormal intermediates of the size `s |x|`, whose relative spacing is `u = 2^-1074 / s` in
+    # `Float64` and `2^-149 / s` in `Float32` (`2^-41`, `2^-12`). Each of the two solves with
+    # `A₀` that the partials pass multiplies that error by at most `κ = cond(A₀) ≈ 1.66`, so the
+    # bound is `8 κ² (eps(R) + u)`.
+    emax = exponent(floatmax(R))
+    s = ldexp(one(R), -emax - 10)
+    A₀ = [4 1; 1 5] .// 8
+    b₀ = [1, -2]
+    x = big.(A₀) \ big.(b₀)
+    ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
+    rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * (eps(R) + nextfloat(zero(R)) / s)
+    J = SMatrix{2, 2}(ForwardDiff.Dual.(R.(s .* A₀), s))
+    b = SVector{2}(ForwardDiff.Dual.(R.(s .* b₀), zero(R)))
+    M = CholeskyFactorization
+    if kind === :static
+        fac = factorize!!(nothing, M(), J)
+        y = ldiv!!(nothing, fac, b)
+    else
+        fac = factorize!!(dense_factor(M(), nothing, Vector(b), nothing), M(), Matrix(J))
+        y = ldiv!!(similar(Vector(b)), fac, Vector(b))
+    end
+    v = ForwardDiff.value.(y)
+    ẏ = map(a -> ForwardDiff.partials(a, 1), y)
+    @test returncode(fac) === SUCCESS
+    @test fac.scale_exponent == -emax - 1
+    @test all(isfinite, v) && all(isfinite, ẏ)
+    @test norm(v - x) <= rtol * norm(x)
+    @test norm(ẏ - ẋ) <= rtol * norm(ẋ)
+end
+
 @testset "a 0 × 0 matrix sets no scale in the static SVD" begin
     # the exponent of the empty matrix runs no reduction over its entries; the static SVD of it
     # throws later, at `σ[1]` (K127 of `KNOWN_ISSUES.md`)

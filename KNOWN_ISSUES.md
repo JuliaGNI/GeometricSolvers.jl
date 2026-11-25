@@ -779,7 +779,7 @@
   `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
   `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
   `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
-  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:796`), so
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:802`), so
   such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:404-405`) states
   the condition.
 - **kind:** docs
@@ -787,7 +787,7 @@
 
 ### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
 
-- **location:** `src/linear/factors.jl:780` (`factor_matrix`), and `src/linear/static/svd.jl:102`
+- **location:** `src/linear/factors.jl:786` (`factor_matrix`), and `src/linear/static/svd.jl:102`
   (`svd_matrix`) and `src/linear/static/svd_rect.jl:51` (`svd_rect_matrix`), which scale always
 - **evidence:** the scale exponent of every static factor is an `Int32` field, and
   `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
@@ -958,7 +958,7 @@
 
 ### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
 
-- **location:** `src/linear/factors.jl:849` (`rhs_exponent`), which `ldiv!!` of the dense,
+- **location:** `src/linear/factors.jl:855` (`rhs_exponent`), which `ldiv!!` of the dense,
   device and static factors calls
 - **evidence:** `rhs_exponent` gives `max(0, …)`, so a right-hand side divides by `2^k` only near
   `floatmax`. With `s = 2^10 · nextfloat(zero(R))`, `A = 3s · I(5)`, `A[3, 1] = A[1, 3] = s` and

@@ -10,11 +10,11 @@
 #
 # The algorithm guards against two numerical traps:
 #
-# - The squared norms of the sweep underflow for a subnormal entry, so the matrix is first
-#   divided by a power of two that brings its largest `|re|` or `|im|` into `[1, 2)`. The division
-#   is exact, so the factors are those of the original matrix up to that power of two. It is
-#   `ldexp2` per entry, not a product with `2^-e`: `ldexp(one(T), -exponent(m))` is `Inf` for a
-#   subnormal `m < 2^-exponent(floatmax(T))`, and an infinite prescale turns the matrix into `Inf`.
+# - The squared norms of the sweep underflow for a subnormal entry, so the matrix is first divided
+#   by a power of two that brings its largest `|re|` or `|im|` into `[1, 2)`. The division is
+#   exact, so the factors are those of the original matrix up to that power of two. It is `ldexp2`
+#   per entry, not a product with `2^-e`: `ldexp(one(T), -exponent(m))` is `Inf` for a subnormal
+#   `m < 2^-exponent(floatmax(T))`, and an infinite prescale turns the matrix into `Inf` and `NaN`.
 # - A pair of columns that hold nothing but rounding noise — the null directions of a
 #   rank-deficient matrix — is asked to become orthogonal to each other, and each rotation
 #   regenerates as much noise as it removes, so a per-pair relative test alone never terminates

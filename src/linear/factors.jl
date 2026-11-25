@@ -756,9 +756,15 @@ end
 @inline ldexp2(a::AbstractFloat, e::Integer) = ldexp(a, e)
 # Where `float(a)` is no `IEEEFloat`, such as a `ForwardDiff.Dual`, whose `float` is the `Dual`
 # itself, or the `BigFloat` of a `BigInt`, `ldexp` scales it, so the method never calls itself.
+# It scales in two halves of `e`: ForwardDiff multiplies the partials of `ldexp(x, e)` by
+# `exp2(e)`, which is `Inf` for an `e` above `emax`, the exponent of `floatmax`, such as the
+# `emax + 1` that the own-type Cholesky exponent `-emax - 1` divides by, while each half of an
+# `|e|` up to `2 emax` stays inside the range of `exp2`.
 @inline function ldexp2(a::Real, e::Integer)
     b = float(a)
-    return b isa Base.IEEEFloat ? ldexp2(b, e) : ldexp(b, e)
+    b isa Base.IEEEFloat && return ldexp2(b, e)
+    h = e >> 1
+    return ldexp(ldexp(b, h), e - h)
 end
 @inline ldexp2(a::Complex, e::Integer) = complex(ldexp2(real(a), e), ldexp2(imag(a), e))
 
