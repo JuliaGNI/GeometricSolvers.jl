@@ -160,8 +160,8 @@ end
     @test fd.scale_exponent == 0
 end
 
-@testset "the static Cholesky exponent of a matrix of subnormal entries, $T" for T in (
-    Float64, ComplexF64)
+@testset "the static Cholesky exponent of a matrix of subnormal entries, $T" for T in filter(
+    T -> real(T) === Float64, ELTYPES)
 
     # `cholesky_exponent` clamps to `-emax = -1023`: a factor of another element type keeps it,
     # and one of the matrix's own element type rounds it down to the even `-1024`
