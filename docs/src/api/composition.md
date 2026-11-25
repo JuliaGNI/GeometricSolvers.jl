@@ -25,6 +25,13 @@ combinator method raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` o
 member in turn, each from `x₀`, and stops at the first member that returns `SUCCESS`;
 [`fallback_member`](@ref) reads the index of the member whose result a solve returned.
 
+[`Continuation`](@ref) is a whole solve too: it follows the path of a homotopy from `(x₀, λ = 0)`
+to `λ = 1` by pseudo-arclength continuation, which passes a fold of `λ`, and solves `F(x) = 0`
+with its [`Newton`](@ref) member at `λ = 1`. The homotopy is the [`NewtonHomotopy`](@ref), the
+[`FixedPointHomotopy`](@ref), or a [`ParameterHomotopy`](@ref) in a parameter of the user's
+problem; [`continuation_steps`](@ref) reads `λ` and the length of every accepted and rejected
+step of the path.
+
 ```@docs
 Additive
 OptimalWeights
@@ -34,6 +41,13 @@ Repeat
 Switch
 Fallback
 fallback_member
+Continuation
+NewtonHomotopy
+FixedPointHomotopy
+ParameterHomotopy
+continuation_steps
+homotopy_residual!
+homotopy_jacobian!
 Anderson
 Broyden
 AndersonHistory

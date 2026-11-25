@@ -333,6 +333,10 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
         NoMethod("no nonlinear preconditioning"),
         NoMethod("no nonlinear preconditioning"),
         NoMethod("no nonlinear preconditioning")),
+    "Continuation FixedPointHomotopy" => (gs_entry("Continuation FixedPointHomotopy"),
+        NoMethod("no continuation method"),
+        NoMethod("`SimpleHomotopySweep` steps the parameter of a `HomotopyProblem` (natural-parameter continuation), which stops at a fold of λ; no pseudo-arclength follower"),
+        NoMethod("no continuation method")),
     "Fallback Newton DogLeg LevenbergMarquardt" => (
         gs_entry("Fallback Newton DogLeg LevenbergMarquardt"),
         NoMethod("no whole-solve fallback"),

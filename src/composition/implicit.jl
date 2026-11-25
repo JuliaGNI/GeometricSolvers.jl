@@ -7,7 +7,7 @@
 function solve_implicit(
         ::NonlinearProblem, x₀,
         method::Union{Additive, Multiplicative, Repeat, Switch, Anderson, Broyden,
-            Fallback, LeftPreconditioned, RAS}, p,
+            Fallback, LeftPreconditioned, RAS, Continuation}, p,
         options::Union{Nothing, Options}, kwargs)
     throw(ArgumentError(
         "solve does not accept ForwardDiff.Dual inputs for the combinator $(nameof(typeof(method))); implicit differentiation through a combinator is not implemented"))
@@ -19,7 +19,7 @@ end
 # `CombinatorProblem`; `init_state` refuses it.
 function init_state(
         method::Union{Additive, Multiplicative, Repeat, Switch, Anderson, Broyden,
-            Fallback, LeftPreconditioned, RAS},
+            Fallback, LeftPreconditioned, RAS, Continuation},
         ::LeastSquaresProblem, x, p)
     throw(ArgumentError(
         "the combinator $(nameof(typeof(method))) does not take a LeastSquaresProblem; solve it with GaussNewton() or Newton() and a QRFactorization() or SVDFactorization()"))

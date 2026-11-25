@@ -901,3 +901,18 @@
   `MINRESQLP` under both line searches.
 - **kind:** defect
 - **found:** 2026-11-25
+
+### K115 · `Continuation` on the fixed-point homotopy does not follow the path of `F` scaled by a large factor, which turns from `x` to `λ` within a step far below `h_min`
+
+- **location:** `src/composition/continuation.jl` (`FixedPointHomotopy`, `solve!!`)
+- **evidence:** `F(x) = s (A x − b)` with `A = [3 1; 1 2]`, `b = (1, −3)`, from `x₀ = 0` with
+  `Continuation(FixedPointHomotopy())` in `Float64`: `SUCCESS` in 14, 25, 29 and 44 iterations at
+  `s = 1e2`, `1e4`, `1e6` and `1e8`, and at `s = 4 √floatmax` `STALLED` after 45 path steps whose
+  last accepted point is `x ≈ (0.9999996, −1.9999994)` at `λ ≈ 4.2e-149`. The zero set
+  of `λ s (A x − b) + (1 − λ) x` leaves `x₀` along `x` and turns to `λ` where
+  `‖dx/dλ‖ ≈ 1`, at `λ` of order `1/√s`, so the corner has an arclength of that order; halving
+  from `h₀ = 0.1` to `h_min = 1e-6` does not resolve it. The Newton homotopy is invariant under the
+  scale and solves both large scales (`test/composition/continuation.jl`, "a linear system scaled
+  to the ends of the float range"). Julia 1.13.4, branch `continuation/part-co`.
+- **kind:** found late
+- **found:** 2026-11-25; the decided form `λF(x) + (1 − λ)(x − x₀)` of the fixed-point homotopy
