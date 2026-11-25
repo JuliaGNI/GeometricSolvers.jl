@@ -371,6 +371,20 @@ so that a compat-only bump can be told apart from an interface change.
   names the pivot 3, as LAPACK does, and checks the `-2` branch of `_mps_lu_finish!` on the factors
   of the same matrix, whose smallest `|aᵢᵢ|` and smallest `aᵢᵢ` are at different indices, so a
   `-2` mapping without the absolute value fails it.
+- **The GMRES count tests (`test/nonlinear/krylov.jl`) pass on GPUArrays 12.3.0.** From 12.3.0,
+  GPUArrays sends the six-argument storage-level matrix–vector `mul!` to its new
+  `GPUArrays.blas_gemv!` hook and no longer reaches the seven-argument `mul!`, where the tests
+  counted the matrix–vector products of the Arnoldi process; in a freshly resolved test
+  environment the counters read 0, and the count tests of CGS2 and MGS, of the GMRES refinement,
+  and of the update and the reduced direction failed (27 failures, 2 errors in six testsets). The
+  tests now count at the five-argument `LinearAlgebra.mul!`, through two methods: one for a
+  `JLArray` vector destination and one for a `JLArray` matrix destination, each with a plain,
+  adjoint or transposed `JLArray` operand. The counters therefore see every product of `JLArray`
+  storage, as the seven-argument counter did on GPUArrays 12.2.0; no method of GPUArrays takes
+  these operands at five arguments. A new testset, "The product counters see the products of
+  JLArray storage", checks that each counter sees its products, so that a later dispatch change
+  fails there. `test/nonlinear/krylov.jl` passes with GPUArrays 12.2.0 and 12.3.0. The change is in
+  the tests only: the package's results are unchanged, and it needs no `[compat]` bound.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
@@ -1080,7 +1094,8 @@ so that a compat-only bump can be told apart from an interface change.
 - **`LinearProblem(A)`, `init(prob, method)` and `solve!(solver, b)` solve a dense linear system
   for many right-hand sides after one factorisation.** `LinearProblem`, `LinearSolver`,
   `LinearStatus` and `refactorize!!` are exported. `LinearProblem(A)` holds a dense matrix in the
-  field `A`; a zero dimension or a sparse matrix raises an `ArgumentError`. `init` factorises with
+  field `A`; a zero dimension, a sparse matrix, and an `A` or a `b` with an axis that does not
+  start at 1 raise an `ArgumentError`. `init` factorises with
   `LUFactorization`, `QRFactorization`, `SVDFactorization`, `LDLTFactorization` or
   `CholeskyFactorization` and returns a `LinearSolver`; `GMRES`, `UMFPACKFactorization` and a
   precision marker such as `TF32` raise an `ArgumentError`. `solve!` returns `(x, status)` with an
@@ -1286,6 +1301,49 @@ so that a compat-only bump can be told apart from an interface change.
   SparseMatrixColorings and ADTypes with exact `[compat]` versions, and SparseArrays. `run_cell`
   takes a keyword `tol`, by default `sqrt(eps(T))`, so the correctness sweep gives the same cells.
   No source file changes.
+
+- **`benchmark/devices.jl` runs the R2 and R3 device rows of one machine.**
+  `benchmark/devices.jl <backend> <machine> <dir>` takes the pairs `cpu cpu`, `metal mac`,
+  `cuda spark`, `cuda rtx4090` and `rocm rx7900xtx`, loads the vendor package from the stacked
+  `test/gpu/<backend>` environment, and writes `devices-<machine>.csv` and `.txt`: Y1's 79
+  `Float32` rows in `solve_batch!` with four GeometricSolvers columns and in SimpleNonlinearSolve's
+  `SimpleNewtonRaphson` in a KernelAbstractions kernel, 64 copies each, against the host R1 solve
+  of the same method and start; an R2 throughput grid on the §10.E problem with up to 10⁷ systems;
+  the §10.E problem in R3 form with the device LU, a `Float32` LU of a `Float64` solve with and
+  without `Refinement`, and the host; and one LU factorisation and solve by the path of `solve` and
+  by the internal KernelAbstractions LU. `benchmark/device_problems.jl` holds the inline `MVector`
+  adapter, the `isbits` midpoint residuals, the §10.E problem, the band of each backend and the
+  classifier of a kernel that does not compile or throws. On Metal a run continues in a new process
+  when the device heap fills. The committed `devices-cpu.csv` and `.txt` are the run of the cpu
+  mode on the host; `benchmark/verify.jl` checks every device file and the report's Y3 tables, and
+  with `--all-cards` requires the files of the four cards. The environment adds
+  KernelAbstractions, StaticArrays and JLArrays with exact `[compat]` versions. No source file
+  changes.
+
+- **The four Lotka–Volterra midpoint rows of the device run execute in a kernel on `CPU()`.**
+  The `:iode` midpoint residual `MidpointResidual{:iode}` in `benchmark/device_problems.jl` passes
+  the iterate `V` to GeometricProblems' `ϑ` and `f` as `SVector(V)`, not as the `MVector` `V`, and
+  `benchmark/Project.toml` pins GeometricProblems `=0.10.2`, which differs from 0.10.0 in its
+  source only by an `@inline` on LotkaVolterra4d's `ϑ(Θ, t, q)`. Together the two keep the residual
+  of the rows of LotkaVolterra2d and LotkaVolterra4d at h = 0.01 and 0.1 off the heap, so the rows
+  run in a KernelAbstractions kernel instead of ending as a kernel error, except one cell:
+  `Picard Backtracking` at LotkaVolterra2d h = 0.1 still ends as a kernel error, from a heap
+  allocation in its first Picard step; with either change alone LotkaVolterra4d still allocates. A
+  self-test in `benchmark/selftest.jl` solves the four rows in a `CPU()` kernel with `solve_batch!`
+  and `Newton()` and expects `SUCCESS`. Y1's and Y2's committed tables are not regenerated, and
+  `benchmark/verify.jl benchmark/results` passes on them.
+
+- **The device rows of the four cards are committed, and the report's Y3 section covers them.**
+  `benchmark/results/` holds `devices-<machine>.csv` and `.txt` of the Apple M4 Max's GPU (Metal),
+  the NVIDIA GB10 and the RTX 4090 (CUDA) and the AMD Radeon RX 7900 XTX (ROCm), and
+  `benchmark/verify.jl benchmark/results --all-cards` passes on them. On ROCm every
+  SimpleNonlinearSolve cell within the band has the status `not run: SimpleNonlinearSolve kernel
+  faults on ROCm`, because SimpleNewtonRaphson's kernel faults with `hipErrorIllegalAddress` on
+  that card. `benchmark/REPORT.md` gives each card's version line,
+  correctness counts, throughput, R3 and LU rows, the cause of each status other than `ran`, and
+  one explanation for each of the 27 card cells whose verdict is `different root`, `device fails`
+  or `host fails`, from a host replay and the card's iterations and status. The report states that
+  the dispatched LU on ROCm is rocSOLVER's, through `GeometricSolversAMDGPUExt`.
 
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is

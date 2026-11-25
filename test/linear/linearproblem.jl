@@ -15,6 +15,7 @@ using GeometricSolvers
 using GeometricSolvers: NONFINITE, SINGULAR, SUCCESS, factor_eltype
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
+using KernelAbstractions: KernelAbstractions
 using LinearAlgebra: norm
 using SparseArrays: sparse
 using StaticArrays: SMatrix, SVector
@@ -387,6 +388,37 @@ end
             "a solver of a dense or device matrix takes no sparse matrix") refactorize!!(
             solver, sparse(A))
     end
+end
+
+# A host array whose axes start at 0, on the CPU backend, so that only the index check refuses it.
+struct ZeroBased{T, N} <: AbstractArray{T, N}
+    data::Array{T, N}
+end
+Base.size(a::ZeroBased) = size(a.data)
+Base.axes(a::ZeroBased) = map(n -> 0:(n - 1), size(a.data))
+Base.getindex(a::ZeroBased{T, N}, i::Vararg{Int, N}) where {T, N} = a.data[(i .+ 1)...]
+KernelAbstractions.get_backend(::ZeroBased) = KernelAbstractions.CPU()
+
+@testset "an offset b or A: $(nameof(typeof(method))), $m × $n" for (method, m, n) in (
+    (LUFactorization(), 3, 3), (QRFactorization(), 3, 3), (QRFactorization(), 5, 3),
+    (QRFactorization(), 3, 5), (SVDFactorization(), 3, 5))
+    A = wellcond(Float64, m, n)
+    solver = init(LinearProblem(A), method)
+    # the message of `Base.require_one_based_indexing`
+    @test_throws r"^ArgumentError: offset arrays are not supported but got an array with index other than 1$" solve!(
+        solver, ZeroBased(rhs(Float64, m)))
+    @test_throws r"^ArgumentError: offset arrays are not supported but got an array with index other than 1$" LinearProblem(ZeroBased(A))
+    @test_throws r"^ArgumentError: offset arrays are not supported but got an array with index other than 1$" refactorize!!(
+        solver, ZeroBased(A))
+end
+
+@testset "a b that aliases solver.x: $T" for T in ELTYPES
+    # the SVD of rank 0 writes a zero `x`; the finiteness of `b` is read before that write
+    solver = init(LinearProblem(zeros(T, 1, 2)), SVDFactorization())
+    fill!(solver.x, T(Inf))
+    x, st = solve!(solver, view(solver.x, 1:1))
+    @test st.code == NONFINITE
+    @test isnan_all(x)
 end
 
 @testset "a b of another length for an LU solver: $route" for route in ("SMatrix", "Array")
