@@ -2060,15 +2060,16 @@ end
 # holds `J d`: `Fᴴ r = ‖r‖²`, and `‖F + α J d‖² = (α - 1)² (‖F‖ - ‖r‖) (‖F‖ + ‖r‖) + ‖r‖²` costs no
 # product. Both terms are nonnegative for every `α ≥ 0`, also for a line search that accepts more
 # than twice the direction, and `‖r‖` enters as `min(‖r‖, ‖F‖)`, the bound that `Fᴴ r = ‖r‖²`
-# gives by Cauchy–Schwarz. A direction whose last component counts as zero does not minimise over
-# the whole space, and the value is then an estimate. A full step, and a direction of length zero, where `α` is not finite,
-# keep the residual of the direction.
+# gives by Cauchy–Schwarz. The two factors enter through their square roots, which do not overflow
+# for `‖F‖ ≤ floatmax / 2`. A direction whose last component counts as zero does not minimise over
+# the whole space, and the value is then an estimate. A full step, and a direction of length zero,
+# where `α` is not finite, keep the residual of the direction.
 @inline function accepted_linres!(ws::MINRESQLPWorkspace{T, R}, stepnorm, dnorm, fnorm,
         resnorm) where {T, R}
     α = R(stepnorm) / R(dnorm)
     (isfinite(α) && α != one(R)) || return nothing
     ρ = min(R(resnorm), R(fnorm))
-    ws.linres = hypot(abs(α - one(R)) * sqrt((R(fnorm) - ρ) * (R(fnorm) + ρ)), ρ)
+    ws.linres = hypot((α - one(R)) * sqrt(R(fnorm) - ρ) * sqrt(R(fnorm) + ρ), ρ)
     return nothing
 end
 

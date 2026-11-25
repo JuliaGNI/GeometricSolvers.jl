@@ -610,6 +610,12 @@ end
         GeometricSolvers.accepted_linres!(ws, T(2), one(T), one(T), nextfloat(one(T)))
         @test ws.linres == 1
 
+        # a residual norm above √floatmax, whose square overflows, gives the finite residual
+        ws = init_minresqlp_workspace(MINRESQLP(), zeros(T, 3))
+        f = 4 * sqrt(floatmax(T))
+        GeometricSolvers.accepted_linres!(ws, T(0.5), one(T), f, f / 2)
+        @test ws.linres ≈ f * sqrt(T(7) / 16) rtol = 8 * eps(T)
+
         # whole solves whose line search extends the step past 2d: for S = Σ cosh xᵢ from 10 the
         # direction is -tanh(10) ≈ -1 per entry, ten directions from the root, so Bisection
         # doubles its step. The fixed step of Static(2.5) maps x to x - 2.5 tanh x, which has the
