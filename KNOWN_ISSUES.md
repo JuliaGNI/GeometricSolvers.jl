@@ -1003,3 +1003,35 @@
   a `0 × 0` matrix give `SUCCESS`.
 - **kind:** found late
 - **found:** 2026-11-25
+
+### K129 · `_pinv_adj_mul_r1` does not scale a subnormal `w` up, so the products `Vᴴ w` of the Golub–Pereyra Jacobian run on subnormal numbers
+
+- **location:** `src/nonlinear/eliminate.jl:520` and `:543` (`_pinv_adj_mul_r1` of
+  `StaticRectSVD` and `StaticSVD`)
+- **evidence:** with `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, `Φ = 2^k A₀` and
+  `w = 2^k (1, -2, 0.5)`, `_pinv_adj_mul_r1(factorize!!(nothing, SVDFactorization(), Φ), Φ, w)`
+  at `k = -1060` in `Float64` (`k = -135` in `Float32`) has a relative error against the
+  `BigFloat` `Φᴴ \ w` of `2.89e-5` to `2.91e-5`, and `1.73e-5` to `1.74e-5` for the `3 × 2`
+  matrix `A₀[:, 1:2]` against `Φ (Φᴴ Φ)⁻¹ w`, in the four element types (`Φ = 2^k (1 + i/2) A₀`
+  in the complex ones), the same values on `bf08120` and on this branch (Julia 1.13.4). At
+  `k = -1026` (`-130`) the error is below `1.1e-15` (`5.8e-7`). The coefficients `vₖᴴ w` hold
+  only `k - exponent(nextfloat(zero(R)))` significant bits, 14 at `k = -1060` (`-135`). The
+  testset "(Φ⁺)ᴴ w from a static SVD at every scale exponent" of `test/nonlinear/eliminate.jl`
+  bounds this by `8 · 2^(exponent(nextfloat(zero(R))) - k)` beside `8 eps(R) κ`.
+- **kind:** defect
+- **found:** 2026-11-25, the fix of `_pinv_adj_mul_r1` for a static SVD exponent below
+  `-exponent(floatmax)`
+
+### K130 · The R3 `_pinv_adj_mul_r3!` of a `DenseSVD` in `Float32` of a `Float64` matrix near `2^-130` gives `NaN`
+
+- **location:** `src/nonlinear/eliminate.jl:1293` (`_pinv_adj_mul_r3!` of `DenseSVD`)
+- **evidence:** the method forms `scale = ldexp(one(R), -fac.scale_exponent)` with
+  `R = real(eltype(fac.tmp))`, `Float32` for `SVDFactorization(Float32)`. For
+  `Φ = 2^-130 A₀` in `Float64`, `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, the factor has
+  `scale_exponent = -128`, `2^128` is `Inf` in `Float32`, and
+  `_pinv_adj_mul_r3!(out, factorize!!(init_linear(m, nothing, w), m, Φ), w)` with
+  `w = 2^-130 (1, -2, 0.5)` gives `[NaN, -Inf, NaN]`, on `bf08120` and on this branch
+  (Julia 1.13.4). The `DeviceSVD` method at `:1310` forms the same product; that it gives `NaN`
+  is not verified.
+- **kind:** defect
+- **found:** 2026-11-25

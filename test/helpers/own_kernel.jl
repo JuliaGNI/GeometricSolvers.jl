@@ -9,8 +9,8 @@
 # the same-type Cholesky rows and the real SVD rows. The same-type LU and QR rows and the complex
 # SVD rows run it on a device only.
 #
-# `factorize!!` divides `J` by `2^e` where the element type of `J` is not that of the factors, and
-# a device `SVD` divides it always, so the `src/linear/ka/` kernels solve with the factors of
+# `factorize!!` divides `J` by `2^e` where the element type of `J` is not that of the factors, or
+# is and `e < 0`, and a device `SVD` divides it always, so the `src/linear/ka/` kernels solve with the factors of
 # `J / 2^e`; the solve for `J` is their result times `2^-e`, `e = fac.scale_exponent`. The solve
 # runs in the factor element type `F`, so the mixed `T ≠ TF` row converts `r` into `fac.rhs`, as
 # the `ldiv!!` of `src/linear/mixed.jl` does; that method also scales `r` by its largest entry,

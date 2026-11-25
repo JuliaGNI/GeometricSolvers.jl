@@ -3,7 +3,7 @@ using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JET: JET
 using JLArrays: JLArray
-using LinearAlgebra: norm
+using LinearAlgebra: cond, norm
 using Random: Xoshiro
 using StaticArrays: SMatrix, SVector
 using Test
@@ -1932,4 +1932,55 @@ end
     @test allocations(inner_at, y) == 0
     gather(ξ) = GS.pic_gather(grid, ξ, Δx, 8)
     @test allocations(gather, 1.1) == 0
+end
+
+# `(Φ⁺)ᴴ w` from the static SVD of `Φ = 2^k A₀`, at an exponent `e` of the factor's scale above 0,
+# in the normal range below 0, and below `-exponent(floatmax)`, where the static SVD of a matrix of
+# subnormal entries takes its exponent: `2^-e` is not representable there, and the scale must be
+# applied to each coefficient by `ldexp2`. The bound has a second term because `w` is not scaled up:
+# at a subnormal `k` the products `Vᴴ w` run on subnormal numbers and keep only
+# `k - exponent(nextfloat(zero(R)))` bits, a relative error of up to
+# `2^(exponent(nextfloat(zero(R))) - k)` (K129 in `KNOWN_ISSUES.md`).
+@testset "(Φ⁺)ᴴ w from a static SVD at every scale exponent, $T" for T in ELTYPES
+    R = real(T)
+    A₀ = [4.0 1.0 0.5; 1.0 5.0 0.25; 0.5 0.25 3.0]
+    B₀ = A₀[:, 1:2]
+    w₀ = [1.0, -2.0, 0.5]
+    lift(A) = T <: Complex ? A .+ im .* A ./ 2 : A
+    emax = exponent(floatmax(R))
+    ks = (emax - 23, -emax + 23, -emax - 3, exponent(nextfloat(zero(R))) + 14)
+    @testset "$(size(A, 1)) × $(size(A, 2)), k = $k" for A in (A₀, B₀), k in ks
+
+        m, n = size(A)
+        # exact: `2^k` is representable, and each entry has a mantissa of at most 3 bits
+        Φ = SMatrix{m, n, T}(T.(lift(A)) .* ldexp(one(R), k))
+        w = SVector{n, T}(T.(w₀[1:n]) .* ldexp(one(R), k))
+        out = GS._pinv_adj_mul_r1(GS.factorize!!(nothing, SVDFactorization(), Φ), Φ, w)
+        # `(Φ⁺)ᴴ w` in `BigFloat`: `Φᴴ \ w` for the square `Φ`, `Φ (Φᴴ Φ)⁻¹ w` for the 3 × 2 one
+        Φb = big.(Matrix(Φ))
+        ref = m == n ? Φb' \ big.(Vector(w)) : Φb * ((Φb' * Φb) \ big.(Vector(w)))
+        relerr = norm(big.(Vector(out)) - ref) / norm(ref)
+        @test all(isfinite, out)
+        @test relerr ≤
+              8 * (eps(R) * cond(A) + ldexp(one(R), exponent(nextfloat(zero(R))) - k))
+    end
+end
+
+# A `Float32` factor of a `Float64` matrix at `2^-130`: the factor's exponent `e` is below
+# `-exponent(floatmax(Float32))`, so the scale `2^-e` is not representable in `Float32` either. `w`
+# is a normal `Float64` vector, so the bound is the `Float32` one.
+@testset "(Φ⁺)ᴴ w from a Float32 static SVD of a $T matrix at 2^-130" for T in filter(
+    T -> real(T) === Float64, ELTYPES)
+    A₀ = [4.0 1.0 0.5; 1.0 5.0 0.25; 0.5 0.25 3.0]
+    lift(A) = T <: Complex ? A .+ im .* A ./ 2 : A
+    @testset "$(size(A, 1)) × $(size(A, 2))" for A in (A₀, A₀[:, 1:2])
+        m, n = size(A)
+        Φ = SMatrix{m, n, T}(T.(lift(A)) .* ldexp(1.0, -130))
+        w = SVector{n, T}(T[1.0, -2.0, 0.5][1:n] .* ldexp(1.0, -130))
+        out = GS._pinv_adj_mul_r1(GS.factorize!!(nothing, SVDFactorization(Float32), Φ), Φ, w)
+        Φb = big.(Matrix(Φ))
+        ref = m == n ? Φb' \ big.(Vector(w)) : Φb * ((Φb' * Φb) \ big.(Vector(w)))
+        @test all(isfinite, out)
+        @test norm(big.(Vector(out)) - ref) / norm(ref) ≤ 8 * eps(Float32) * cond(A)
+    end
 end

@@ -527,13 +527,12 @@ end
     e = getfield(fac, :scale_exponent)
     out = local_array(zero(SVector{M, T}))
     rk == 0 && return SVector{M, T}(out)
-    scale = ldexp(one(R), -e)
     @inbounds for k in 1:rk
         ck = zero(T)
         for i in 1:Ny
             ck += conj(T(V[i, k])) * w[i]
         end
-        ck = (ck * scale) / σ̂[k]
+        ck = ldexp2(ck, -e) / σ̂[k]
         for row in 1:M
             out[row] += T(U[row, k]) * ck
         end
@@ -551,13 +550,12 @@ end
     e = fac.scale_exponent
     out = local_array(zero(SVector{Ny, T}))
     rk == 0 && return SVector{Ny, T}(out)
-    scale = ldexp(one(R), -e)
     @inbounds for k in 1:rk
         ck = zero(T)
         for i in 1:Ny
             ck += conj(T(V[i, k])) * w[i]
         end
-        ck = (ck * scale) / σ̂[k]
+        ck = ldexp2(ck, -e) / σ̂[k]
         for row in 1:Ny
             out[row] += T(U[row, k]) * ck
         end
