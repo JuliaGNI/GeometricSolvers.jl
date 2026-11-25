@@ -10,11 +10,11 @@
 # SVD rows run it on a device only.
 #
 # `factorize!!` divides `J` by `2^e` where the element type of `J` is not that of the factors, or
-# is and `e < 0`, and a device `SVD` divides it always, so the `src/linear/ka/` kernels solve with the factors of
-# `J / 2^e`; the solve for `J` is their result times `2^-e`, `e = fac.scale_exponent`. The solve
-# runs in the factor element type `F`, so the mixed `T ≠ TF` row converts `r` into `fac.rhs`, as
-# the `ldiv!!` of `src/linear/mixed.jl` does; that method also scales `r` by its largest entry,
-# which changes no solution and which this reference leaves out.
+# is and `e < 0`, and a device `SVD` divides it always, so the `src/linear/ka/` kernels solve with
+# the factors of `J / 2^e`; the solve for `J` is their result times `2^-e`,
+# `e = fac.scale_exponent`. The solve runs in the factor element type `F`, so the mixed `T ≠ TF`
+# row converts `r` into `fac.rhs`, as the `ldiv!!` of `src/linear/mixed.jl` does; that method also
+# scales `r` by its largest entry, which changes no solution and which this reference leaves out.
 
 using LinearAlgebra: Diagonal, I, cond, opnorm
 using Random: Xoshiro

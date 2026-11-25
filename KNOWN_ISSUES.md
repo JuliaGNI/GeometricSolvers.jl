@@ -1035,3 +1035,26 @@
   is not verified.
 - **kind:** defect
 - **found:** 2026-11-25
+
+### K133 · `_pinv_adj_mul_r1` of a subnormal `Φ` and a normal `w` gives `NaN` where the true `(Φ⁺)ᴴ w` has entries above `floatmax`
+
+- **location:** `src/nonlinear/eliminate.jl:520` and `:543` (`_pinv_adj_mul_r1` of
+  `StaticRectSVD` and `StaticSVD`)
+- **evidence:**
+
+  ```julia
+  A₀ = [4.0 1.0 0.5; 1.0 5.0 0.25; 0.5 0.25 3.0]
+  Φ = SMatrix{3, 3, Float32}(Float32.(A₀) .* ldexp(1.0f0, -130))
+  w = SVector{3, Float32}(1, -2, 0.5)
+  GeometricSolvers._pinv_adj_mul_r1(factorize!!(nothing, SVDFactorization(), Φ), Φ, w)
+  ```
+
+  gives `[NaN, -Inf, NaN]`; the `BigFloat` `Φᴴ \ w` is `[Inf, -Inf, 2.01e38]` in `Float32`, and
+  `bf08120` gives `[Inf, -Inf, Inf]`. In `Float64` at `2^-1026` the same holds: `[NaN, -Inf, NaN]`
+  against `[Inf, -Inf, 1.06e308]`, `[Inf, -Inf, Inf]` on `bf08120`. At `2^-128` (`2^-1024`) the
+  result is finite and agrees with the reference to six (fifteen) digits on both (Julia 1.13.4).
+  Two entries of the true result lie above `floatmax`, so no finite result is right; the finite
+  third entry is lost on both.
+- **kind:** defect
+- **found:** 2026-11-25, the fix of `_pinv_adj_mul_r1` for a static SVD exponent below
+  `-exponent(floatmax)`
