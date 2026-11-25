@@ -373,7 +373,7 @@ end
 @testset "F(x₀) = 0 takes no product, $M" for M in FIXED_METHODS
     counts = FixedCounts(0)
     m = Newton(; linsolve = fixed(M), jacobian = JVPFunction(DiagonalJVP(counts)))
-    x, st = solve(NonlinearProblem(r5_diagonal!), ones(4), m)
+    _, st = solve(NonlinearProblem(r5_diagonal!), ones(4), m)
     @test st.code == SUCCESS
     @test st.iterations == 0
     @test counts.jvp == 0
@@ -390,7 +390,7 @@ end
     # the solve itself stops with a residual of `NaN` and a finite direction
     A = fill(NaN, 4, 4)
     ws = workspace(M, fixed(M), x₀)
-    d, info = linear_solve!(M, ws, CountingMatrix(A), nothing, x₀, 1e-6, 10)
+    _, info = linear_solve!(M, ws, CountingMatrix(A), nothing, x₀, 1e-6, 10)
     @test isnan(info.resnorm)
     @test !info.converged
 end
