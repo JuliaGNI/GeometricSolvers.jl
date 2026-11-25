@@ -12,7 +12,7 @@ using FiniteDiff: FiniteDiff
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: GPUArraysCore, AnyGPUArray, allowscalar
 using JLArrays: JLArrays, JLArray
-using LinearAlgebra: LinearAlgebra, Diagonal, I, mul!, norm, opnorm, qr
+using LinearAlgebra: LinearAlgebra, Adjoint, Diagonal, I, Transpose, mul!, norm, opnorm, qr
 using Random: Xoshiro
 using StaticArrays: SVector
 using Test
@@ -795,18 +795,24 @@ end
 
 # The reductions of the Arnoldi process, counted at the array level on `JLArray`: every `sum` and
 # `maximum` of a `JLArray` or of a lazy broadcast over one is a `Base.mapreduce` of it, and every
-# matrix–vector product of `JLArray` storage is the seven-argument `mul!` of `LinearAlgebra`. A
-# product with an adjoint or a transposed matrix, `Vᴴ w`, reduces over the length of the basis and
-# counts as a reduction. A product with a plain matrix reduces nothing: the counter records its
-# destination, which `mul!` receives as a one-column matrix on the storage of the vector, so that
-# a test reads which vector it updated. The methods are more specific than those of GPUArrays,
-# which they call, and the file deletes them after the tests that read them.
-const JLGPUArrays = JLArrays.GPUArrays
+# matrix–vector product of `JLArray` storage is the five-argument `mul!` of `LinearAlgebra`, which
+# the three-argument one calls. A product with an adjoint or a transposed matrix, `Vᴴ w`, reduces
+# over the length of the basis and counts as a reduction. A product with a plain matrix reduces
+# nothing: the counter records its destination, so that a test reads which vector it updated. The
+# product methods are more specific than the generic ones of `LinearAlgebra`, which they call; no
+# method of GPUArrays takes these operands at five arguments, and the storage-level methods below
+# them differ between GPUArrays releases. The file deletes the methods after the tests that read
+# them.
 const ARRAY_REDUCTIONS = Ref(0)
 const BROADCAST_REDUCTIONS = Ref(0)
 const ADJOINT_OPERANDS = Any[]
 const PLAIN_PRODUCTS = Any[]
 const AnyJL = Union{JLArray, SubArray{<:Any, <:Any, <:JLArray}}
+const JLVector = Union{JLArray{<:Any, 1}, SubArray{<:Any, 1, <:JLArray}}
+const JLMatrix = Union{JLArray{<:Any, 2}, SubArray{<:Any, 2, <:JLArray}}
+const JLVecOrMat = Union{JLVector, JLMatrix}
+const JLOperand = Union{
+    JLVecOrMat, Adjoint{<:Any, <:JLVecOrMat}, Transpose{<:Any, <:JLVecOrMat}}
 
 function Base.mapreduce(f, op, A::AnyJL; kwargs...)
     ARRAY_REDUCTIONS[] += 1
@@ -823,18 +829,25 @@ end
 # Whether the destination `C` of a product is the vector `u`, by its storage.
 is_storage_of(C, u) = Base.mightalias(C, u)
 
-function LinearAlgebra.mul!(
-        C::AnyJL, tA::AbstractChar, tB::AbstractChar, A::AnyJL, B::AnyJL,
-        α::Number, β::Number)
-    if tA == 'N'
+function count_product!(C, A)
+    if A isa JLVecOrMat
         push!(PLAIN_PRODUCTS, C)
     else
         ARRAY_REDUCTIONS[] += 1
-        push!(ADJOINT_OPERANDS, A)
+        push!(ADJOINT_OPERANDS, parent(A))
     end
-    S = JLGPUArrays.AnyStridedGPUVecOrMat
-    return invoke(LinearAlgebra.mul!, Tuple{S, Any, Any, S, S, Number, Number},
-        C, tA, tB, A, B, α, β)
+end
+
+function LinearAlgebra.mul!(C::JLVector, A::JLOperand, B::JLVector, α::Number, β::Number)
+    count_product!(C, A)
+    S = Tuple{AbstractVector, AbstractVecOrMat, AbstractVector, Number, Number}
+    return invoke(LinearAlgebra.mul!, S, C, A, B, α, β)
+end
+
+function LinearAlgebra.mul!(C::JLMatrix, A::JLOperand, B::JLOperand, α::Number, β::Number)
+    count_product!(C, A)
+    S = Tuple{AbstractMatrix, AbstractVecOrMat, AbstractVecOrMat, Number, Number}
+    return invoke(LinearAlgebra.mul!, S, C, A, B, α, β)
 end
 
 # The product of a diagonal operator by broadcast, which reduces nothing, and which records the
