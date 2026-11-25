@@ -59,14 +59,14 @@ corrector solves
 
 for at most 6 iterations, until ``\\|Δz\\|_2 \\le \\sqrt{\\varepsilon} \\max(1, \\|z\\|_2)``. The
 corrector fails on a singular or non-finite system, after six iterations, on a corrected point
-farther than `h` from the prediction, and on a corrected `λ < 0`, where the path has turned back to its start. A failed
-corrector, or a tangent at the corrected point whose bordered system is singular or not finite,
-rejects the step and halves `h`; a step whose corrector converges in at most 3
-iterations is accepted and doubles `h` up to `h_max`, and any other accepted step keeps `h`. The
-path passes a fold of `λ`, where ``H_x`` is singular, because the bordered matrix is not. Once an
-accepted step reaches `λ ≥ 1`, `x` is interpolated linearly to `λ = 1` between that point and the
-one before it, and [`solve!!`](@ref) with `method` from there, on the problem and the parameters at
-`λ = 1`, is the last corrector: its iterate is the result.
+farther than `h` from the prediction, and on a corrected `λ < 0`, where the path has turned back
+to its start. A failed corrector, or a tangent at the corrected point whose bordered system is
+singular or not finite, rejects the step and halves `h`; a step whose corrector converges in at
+most 3 iterations is accepted and doubles `h` up to `h_max`, and any other accepted step keeps
+`h`. The path passes a fold of `λ`, where ``H_x`` is singular, because the bordered matrix is
+not. Once an accepted step reaches `λ ≥ 1`, `x` is interpolated linearly to `λ = 1` between that
+point and the one before it, and [`solve!!`](@ref) with `method` from there, on the problem and
+the parameters at `λ = 1`, is the last corrector: its iterate is the result.
 
 The [`SolverStatus`](@ref) is that of the last corrector, with `iterations` the number of path
 steps, accepted and rejected, plus the corrector's iterations, and `step_failures` the rejected

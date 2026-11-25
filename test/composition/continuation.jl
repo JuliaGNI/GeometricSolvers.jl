@@ -1,10 +1,10 @@
 # `Continuation`: the pseudo-arclength follower on the Newton, the fixed-point and a parameter
-# homotopy; the standard row that every other column fails; the two-fold cubic; a system with no
-# path to `λ = 1`; a non-finite start; the record of the steps and its step control, a failed
-# tangent among them, and the record of a `StationarityProblem` solve; the residual and the
-# Jacobian of each homotopy; the refusals; a linear system scaled to the ends of the float range;
-# a start near the root; and the scale of the fixed-point homotopy where the Jacobian at the start
-# is zero or not finite.
+# homotopy; the standard row that every other column fails in `Float64`; the two-fold cubic; a
+# system with no path to `λ = 1`; a non-finite start; the record of the steps and its step
+# control, a failed tangent among them, and the record of a `StationarityProblem` solve; the
+# residual and the Jacobian of each homotopy; the refusals; a linear system scaled to the ends of
+# the float range; a start near the root; and the scale of the fixed-point homotopy where the
+# Jacobian at the start is zero or not finite.
 
 using ForwardDiff: ForwardDiff
 using JLArrays: JLArray

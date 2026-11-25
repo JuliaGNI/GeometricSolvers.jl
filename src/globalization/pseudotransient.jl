@@ -12,8 +12,8 @@ solves the shifted system
 and takes `x_{k+1} = x_k + d_k`; every step is accepted. The regularisation `μ` of the `Newton`
 adds to the shift: the step factorises ``J(x_k) + (μ + 1/δ_k) I``. A small pseudo-time step `δ`
 follows the gradient flow `ẋ = -∇S(x)`, which leaves a saddle of `S` along a direction of
-negative curvature, and a large one gives the Newton step. `δ` starts at `δ₀` in each solve and follows the switched
-evolution relaxation
+negative curvature, and a large one gives the Newton step. `δ` starts at `δ₀` in each solve and
+follows the switched evolution relaxation
 
 ```math
 \\delta_{k+1} = \\min\\!\\left(\\delta_k \\, \\frac{\\|F(x_k)\\|_2}{\\|F(x_{k+1})\\|_2}, \\; \\delta_{\\max}\\right),

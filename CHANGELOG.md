@@ -1049,9 +1049,9 @@ so that a compat-only bump can be told apart from an interface change.
   `STALLED`. `GeometricSolvers.continuation_steps(state)` reads `λ` and the length of every
   accepted and rejected step of the last solve, and the status counts the rejected steps in
   `step_failures`. It solves the Powell badly scaled function (problem 3 of the standard test set)
-  from `100u0`, which every other column fails, in `Float32` and `Float64`, and the cubic
-  `x³ − 3x − 5/2` from `−2.2` through both folds. It refuses a `ForwardDiff.Dual` input in `solve`,
-  a `LeastSquaresProblem`, a complex or a device array iterate, and a member that forms no
+  from `100u0` in `Float32` and `Float64`, where every other column fails in `Float64`, and the
+  cubic `x³ − 3x − 5/2` from `−2.2` through both folds. It refuses a `ForwardDiff.Dual` input in
+  `solve`, a `LeastSquaresProblem`, a complex or a device array iterate, and a member that forms no
   Jacobian matrix, each with an `ArgumentError`. The division by `σ` makes the path of the
   fixed-point homotopy independent of a scale of `F`: `F(x) = s (A x − b)` gives the same root at
   `s = 4 √floatmax` and `floatmax/8` with both homotopies, in `Float32` and `Float64`. Since `σ`
