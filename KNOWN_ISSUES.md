@@ -940,7 +940,9 @@
   singular, and the start's bordered system along `t = e_λ`, `[H_x F(x₀); 0 1]`, is singular too.
   The Newton-homotopy path leaves `(1, 0)` along `x` (Julia 1.13.4).
 - **kind:** found late
-- **found:** 2026-11-25
+- **found:** 2026-11-25; the limit of the decided start: a start whose bordered system at
+  `(x₀, 0)` along `e_λ` is singular (a fold of `λ` at the start) returns `STALLED` with no step
+  (the user's decision on part CO, 2026-11-25)
 
 ### K134 · `Newton()` returns `STALLED` from a start whose residual is already at round-off, because its default residual test is relative to `‖F(x₀)‖` alone
 

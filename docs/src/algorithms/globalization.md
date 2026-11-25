@@ -10,7 +10,8 @@ two kinds:
 - **line searches** ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref),
   [`StrongWolfe`](@ref)) search along the direction `d` on the merit
   ``\varphi(\alpha) = \|F(x + \alpha d)\|_2^2``. They serve [`Newton`](@ref) and [`Picard`](@ref).
-- **trust-region and damped steps** ([`DogLeg`](@ref), [`LevenbergMarquardt`](@ref)) change the
+- **trust-region and damped steps** ([`DogLeg`](@ref), [`LevenbergMarquardt`](@ref),
+  [`PseudoTransient`](@ref) for a `StationarityProblem`) change the
   direction itself and need the Jacobian and its factor. They serve [`Newton`](@ref) only, which
   keeps the radius or the damping parameter in its state.
 

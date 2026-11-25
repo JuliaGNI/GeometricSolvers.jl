@@ -73,10 +73,11 @@ steps, accepted and rejected, plus the corrector's iterations, and `step_failure
 steps plus the corrector's (each saturated at `typemax(Int32)`). A homotopy residual at
 `(x₀, 0)` that is not finite returns `NONFINITE` with no step taken; for the Newton and the
 fixed-point homotopy, a non-finite `F(x₀)` makes it so, and so does a non-finite scale `σ` of the
-fixed-point homotopy, which a non-finite `J(x₀)` gives. A
-start that the corrector cannot bring onto the path at `λ = 0` returns `STALLED` with no step. A
-halved `h` below `h_min` returns `STALLED`, and `max_iterations` path steps of the
-[`Options`](@ref) return `MAXITERS`; both return the last accepted point of the path, with
+fixed-point homotopy, which a non-finite `J(x₀)` gives. A start that the corrector cannot bring
+onto the path at `λ = 0` returns `STALLED` with no step; so does a start whose bordered system at
+`(x₀, 0)` along `e_λ` is singular, such as a fold of `λ` at the start of the Newton or the
+parameter homotopy, where `H_x(x₀, 0)` is singular. A halved `h` below `h_min` returns `STALLED`,
+and `max_iterations` path steps of the [`Options`](@ref) return `MAXITERS`; both return the last accepted point of the path, with
 `fnorm` the norm of `F` there at `λ = 1`, `stepnorm` the length of the last step, and
 `step_failures` the rejected steps. [`continuation_steps`](@ref) reads `λ` and the step length of
 every step of the last solve.

@@ -298,6 +298,14 @@ end
         x, status = solve!(solver)
         @test status.code == STALLED && status.iterations == 0 && x == T(0.5)
         @test isempty(continuation_steps(solver).λ)
+        # at a fold of `λ` at the start, `H_x(x₀, 0)` and the bordered system along `e_λ` are
+        # singular: the start takes no step
+        for x₀ in (one(T), -one(T))
+            solver = init(NonlinearProblem(cubic), x₀, Continuation(NewtonHomotopy()))
+            x, status = solve!(solver)
+            @test status.code == STALLED && status.iterations == 0 && x == x₀ &&
+                  isempty(continuation_steps(solver).λ)
+        end
     end
 end
 
