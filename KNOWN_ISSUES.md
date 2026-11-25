@@ -954,3 +954,20 @@
   point near the root, so a path that ends within round-off of the root can return `STALLED` too.
 - **kind:** found late
 - **found:** 2026-11-25
+
+### K135 · `Continuation` does not reach the root of the linear check `F(x) = s (A x − b)` at a subnormal scale `s`, where `Newton()` reaches it in `Float64`
+
+- **location:** `src/composition/continuation.jl:156` (`homotopy_residual!`; the fixed-point form
+  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:166`)
+- **evidence:** `A = [3 1; 1 2]`, `b = [1, −3]`, root `(1, −2)`, start `zeros(T, 2)`,
+  `f_abstol = 0`, at `s = 2^20 · nextfloat(zero(T))`. `Float64`:
+  `Continuation(FixedPointHomotopy())` returns `MAXITERS` at `(0.263, −0.628)`,
+  `Continuation(NewtonHomotopy())` returns `STALLED` at `(6.4e-7, −1.2e-6)`, and `Newton()` returns
+  `SUCCESS` at `(1.0000000000000002, −2.0)`. `Float32`: `Continuation(NewtonHomotopy())` returns
+  `STALLED` at `(1.2e-4, −1.4e-4)`; `Continuation(FixedPointHomotopy())` and `Newton()` return
+  `SUCCESS` with a relative error of about `1e-5` and `1e-4`. At `s = 1e-8`, `1e-20` and
+  `4 floatmin(T)` all three return `SUCCESS` at `(1, −2)` in both types (Julia 1.13.4, at
+  35ed7e8).
+- **kind:** found late
+- **found:** 2026-11-25; the homotopy forms that the part's spec decides (its clause 3), at a
+  scale outside those that its clauses and the scale row name
