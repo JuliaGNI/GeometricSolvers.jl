@@ -334,8 +334,8 @@ so that a compat-only bump can be told apart from an interface change.
   `GPUArrays.blas_gemv!` hook and no longer reaches the seven-argument `mul!`, where the tests
   counted the matrix–vector products of the Arnoldi process; in a freshly resolved test
   environment the counters read 0, and the CGS2 and MGS count tests failed (27 failures, 2
-  errors). The tests now count at the five-argument `LinearAlgebra.mul!`, through methods on
-  `JLArray` vector destinations with a plain, adjoint or transposed `JLArray` matrix operand; no
+  errors). The tests now count at the five-argument `LinearAlgebra.mul!`, through a method on a
+  `JLArray` vector destination with a plain, adjoint or transposed `JLArray` matrix operand; no
   method of GPUArrays takes these operands at five arguments. The tests pass with GPUArrays 12.2.0
   and 12.3.0. The change is in the tests only: the package's results are unchanged, and it needs no
   `[compat]` bound.

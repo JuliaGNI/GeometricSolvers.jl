@@ -799,9 +799,9 @@ end
 # the three-argument one calls. A product with an adjoint or a transposed matrix, `Vᴴ w`, reduces
 # over the length of the basis and counts as a reduction. A product with a plain matrix reduces
 # nothing: the counter records its destination, so that a test reads which vector it updated. The
-# product methods are more specific than the generic ones of `LinearAlgebra`, which they call; no
+# product method is more specific than the generic one of `LinearAlgebra`, which it calls; no
 # method of GPUArrays takes these operands at five arguments, and the storage-level methods below
-# them differ between GPUArrays releases. The file deletes the methods after the tests that read
+# it differ between GPUArrays releases. The file deletes the methods after the tests that read
 # them.
 const ARRAY_REDUCTIONS = Ref(0)
 const BROADCAST_REDUCTIONS = Ref(0)
