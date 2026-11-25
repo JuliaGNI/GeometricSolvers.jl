@@ -2057,15 +2057,18 @@ end
 # The linear residual `‖F + α J d‖` of the step `α d` that a line search accepted, which the
 # Choice 1 forcing term of the next step reads; `α = stepnorm / ‖d‖`. The direction `d` minimises
 # `‖F + J d‖` over its Krylov space `K`, so the residual `r = F + J d` is orthogonal to `J K`, which
-# holds `J d`: `Fᴴ r = ‖r‖²`, and `‖F + α J d‖² = (1 - α)² ‖F‖² + α (2 - α) ‖r‖²` costs no product.
-# A direction whose last component counts as zero does not minimise over the whole space, and the
-# value is then an estimate. A full step, and a direction of length zero, where `α` is not finite,
+# holds `J d`: `Fᴴ r = ‖r‖²`, and `‖F + α J d‖² = (α - 1)² (‖F‖ - ‖r‖) (‖F‖ + ‖r‖) + ‖r‖²` costs no
+# product. Both terms are nonnegative for every `α ≥ 0`, also for a line search that accepts more
+# than twice the direction, and `‖r‖` enters as `min(‖r‖, ‖F‖)`, the bound that `Fᴴ r = ‖r‖²`
+# gives by Cauchy–Schwarz. A direction whose last component counts as zero does not minimise over
+# the whole space, and the value is then an estimate. A full step, and a direction of length zero, where `α` is not finite,
 # keep the residual of the direction.
 @inline function accepted_linres!(ws::MINRESQLPWorkspace{T, R}, stepnorm, dnorm, fnorm,
         resnorm) where {T, R}
     α = R(stepnorm) / R(dnorm)
     (isfinite(α) && α != one(R)) || return nothing
-    ws.linres = hypot((one(R) - α) * R(fnorm), sqrt(α * (2 - α)) * R(resnorm))
+    ρ = min(R(resnorm), R(fnorm))
+    ws.linres = hypot(abs(α - one(R)) * sqrt((R(fnorm) - ρ) * (R(fnorm) + ρ)), ρ)
     return nothing
 end
 

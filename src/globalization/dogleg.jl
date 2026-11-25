@@ -97,7 +97,8 @@ end
 
 # Whether the product `y` of the model `J` is finite: `true` for a matrix, whose products the loop
 # does not check, and a check of every entry for an operator that defines a method. A product
-# that is not finite ends the step with `NONFINITE`, and the iterate and the radius stay.
+# that is not finite ends the step with `NONFINITE`: the iterate stays, and the radius is that of
+# the trial whose product was not finite.
 @inline finite_product(J, y) = true
 @inline function nonfinite_product(fnorm::R) where {R}
     return StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)

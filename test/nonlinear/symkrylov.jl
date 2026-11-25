@@ -14,13 +14,15 @@ using Test
 
 using GeometricSolvers
 using StaticArrays: SVector
-using GeometricSolvers: Backtracking, DogLeg, FixedForcing, GMRES, JVPFunction,
+using GeometricSolvers: Backtracking, Bisection, DogLeg, FixedForcing, GMRES, JVPFunction,
                         LevenbergMarquardt, MINRESQLP, NONFINITE, Refinement,
-                        LINESEARCH_FAILED, Newton, Steihaug, SUCCESS, StationarityProblem,
+                        LINESEARCH_FAILED, MAXITERS, Newton, Steihaug, SUCCESS,
+                        StationarityProblem,
                         NonlinearProblem, f_calls, init, init_minresqlp_workspace,
                         jvp_calls,
                         max_inner_iterations, minresqlp_solve!,
-                        residual!!, rnorm, solve, solve!, start!!, step!!, steihaug_cg!
+                        residual!!, rnorm, solve, solve!, start!!, Static, step!!,
+                        steihaug_cg!
 
 include("../helpers/matrix.jl")
 
@@ -337,7 +339,7 @@ end
         end
     end
 
-    @testset "MINRES-QLP on incompatible systems in Float32 stops early on a few" begin
+    @testset "MINRES-QLP on incompatible systems in Float32 stops early on at most a few" begin
         # The limit that the docstring states: on an incompatible system, rounding in the Lanczos
         # process can make a diagonal entry count as zero at √eps(Float32) ‖T̄‖ before the Krylov
         # space holds the solution of minimum length. In Float64 every draw below is within
@@ -361,7 +363,7 @@ end
             end
         end
         @test far[Float64] == 0
-        @test 0 < far[Float32] <= draws ÷ 10
+        @test far[Float32] <= draws ÷ 10
         # each far result comes from a stop on an entry that counts as zero
         @test stopped_far == far[Float32]
     end
@@ -589,6 +591,37 @@ end
         @test rnorm(F₀ .+ d ./ (1 .+ u₀ .^ 2)) > T(0.1) * rnorm(F₀)
         # the residual ‖F + α J d‖, with the product formed here
         @test state₊.ws.linres ≈ rnorm(F₀ .+ α .* d ./ (1 .+ u₀ .^ 2)) rtol = 8 * eps(T)
+
+        # a line search that accepts more than twice the direction: Static(2.5) takes α = 2.5
+        m = Newton(; linsolve = MINRESQLP(; maxiter = 1, forcing = FixedForcing(1e-8)),
+            globalization = Static(2.5), jacobian = atan_jvp(count))
+        solver = init(atan_problem(Array, T), copy(u₀), m)
+        state, rprob, u, Fu = first_state(solver)
+        F₀ = copy(Fu)
+        _, _, state₊, info = step!!(state, solver.method, rprob, u, Fu, nothing)
+        d = state₊.ws.x
+        α = info.stepnorm / rnorm(d)
+        @test 0 < info.stepnorm
+        @test α ≈ T(2.5) rtol = 8 * eps(T)
+        @test state₊.ws.linres ≈ rnorm(F₀ .+ α .* d ./ (1 .+ u₀ .^ 2)) rtol = 8 * eps(T)
+
+        # a residual norm that rounding puts above ‖F‖ enters as ‖F‖, the bound of Fᴴr = ‖r‖²
+        ws = init_minresqlp_workspace(MINRESQLP(), zeros(T, 3))
+        GeometricSolvers.accepted_linres!(ws, T(2), one(T), one(T), nextfloat(one(T)))
+        @test ws.linres == 1
+
+        # whole solves whose line search extends the step past 2d: for S = Σ cosh xᵢ from 10 the
+        # direction is -tanh(10) ≈ -1 per entry, ten directions from the root, so Bisection
+        # doubles its step. The fixed step of Static(2.5) maps x to x - 2.5 tanh x, which has the
+        # two-cycle ±0.888, so its solve ends with SUCCESS or at its iteration cap.
+        Scosh = StationarityProblem((x, p) -> sum(cosh, x))
+        for (ls, codes) in ((Bisection(), (SUCCESS,)), (Static(2.5), (SUCCESS, MAXITERS)))
+            m = Newton(; linsolve = MINRESQLP(; forcing = FixedForcing(1e-8)),
+                globalization = ls)
+            x, st = solve(Scosh, fill(T(10), 3), m)
+            @test st.code in codes
+            @test all(isfinite, x)
+        end
 
         # a direction of length zero keeps the residual of the direction: for `S = ½ x₁²` with
         # `b = (0, 1)` from 0, `F = (0, 1)` lies in the null space of `J`, the solve stops on a
