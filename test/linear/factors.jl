@@ -177,7 +177,7 @@ end
 
 @testset "a 0 × 0 matrix sets no scale in the static SVD" begin
     # the exponent of the empty matrix runs no reduction over its entries; the static SVD of it
-    # throws later, at `σ[1]` (K126 of `KNOWN_ISSUES.md`)
+    # throws later, at `σ[1]` (K127 of `KNOWN_ISSUES.md`)
     @test GeometricSolvers.svd_exponent(SMatrix{0, 0, Float64}()) == 0
     @test GeometricSolvers.svd_exponent(SMatrix{0, 0, ComplexF32}()) == 0
 end

@@ -991,7 +991,7 @@
 - **kind:** found late
 - **found:** 2026-11-25, issue #122
 
-### K126 · The static `SVDFactorization` of a `0 × 0` matrix throws `BoundsError`
+### K127 · The static `SVDFactorization` of a `0 × 0` matrix throws `BoundsError`
 
 - **location:** `src/linear/static/svd.jl:227` (`factorize!!` of `StaticSVD`, the cutoff
   `rank_tolerance(…) * σ[1]`)
