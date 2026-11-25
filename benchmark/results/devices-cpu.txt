@@ -1,0 +1,88 @@
+date: Fri Nov 20 23:38:42 UTC 2026
+uptime: 0:38  11 users, load averages: 2.81 3.18 6.95
+julia: 1.13.4
+threads: 16
+blas threads: 1
+device: host apple-m4
+driver: none
+band: none
+packages: GeometricSolvers 0.1.0, KernelAbstractions 0.10.7, StaticArrays 1.9.25, SimpleNonlinearSolve 2.14.6, JLArrays 0.5.0
+heap: standard,1,u0,-,-
+heap: standard,1,10u0,-,-
+heap: standard,1,100u0,-,-
+heap: standard,2,u0,-,-
+heap: standard,2,10u0,-,-
+heap: standard,2,100u0,-,-
+heap: standard,3,u0,-,-
+heap: standard,3,10u0,-,-
+heap: standard,3,100u0,-,-
+heap: standard,4,u0,-,-
+heap: standard,4,10u0,-,-
+heap: standard,4,100u0,-,-
+heap: standard,5,u0,-,-
+heap: standard,5,10u0,-,-
+heap: standard,5,100u0,-,-
+heap: standard,6,u0,-,-
+heap: standard,7,u0,-,-
+heap: standard,7,10u0,-,-
+heap: standard,7,100u0,-,-
+heap: standard,8,u0,-,-
+heap: standard,8,10u0,-,-
+heap: standard,8,100u0,-,-
+heap: standard,9,u0,-,-
+heap: standard,9,10u0,-,-
+heap: standard,9,100u0,-,-
+heap: standard,10,u0,-,-
+heap: standard,10,10u0,-,-
+heap: standard,10,100u0,-,-
+heap: standard,11,u0,-,-
+heap: standard,11,10u0,-,-
+heap: standard,11,100u0,-,-
+heap: standard,12,u0,-,-
+heap: standard,12,10u0,-,-
+heap: standard,12,100u0,-,-
+heap: standard,13,u0,-,-
+heap: standard,13,10u0,-,-
+heap: standard,13,100u0,-,-
+heap: standard,14,u0,-,-
+heap: standard,14,10u0,-,-
+heap: standard,14,100u0,-,-
+heap: standard,15,u0,-,-
+heap: standard,15,10u0,-,-
+heap: standard,15,100u0,-,-
+heap: standard,16,u0,-,-
+heap: standard,16,10u0,-,-
+heap: standard,16,100u0,-,-
+heap: standard,17,u0,-,-
+heap: standard,17,10u0,-,-
+heap: standard,17,100u0,-,-
+heap: standard,18,u0,-,-
+heap: standard,18,10u0,-,-
+heap: standard,18,100u0,-,-
+heap: standard,19,u0,-,-
+heap: standard,19,10u0,-,-
+heap: standard,19,100u0,-,-
+heap: standard,20,u0,-,-
+heap: standard,20,10u0,-,-
+heap: standard,20,100u0,-,-
+heap: standard,21,u0,-,-
+heap: standard,21,10u0,-,-
+heap: standard,21,100u0,-,-
+heap: standard,22,u0,-,-
+heap: standard,22,10u0,-,-
+heap: standard,22,100u0,-,-
+heap: standard,23,u0,-,-
+heap: standard,23,10u0,-,-
+heap: standard,23,100u0,-,-
+heap: midpoint,HarmonicOscillator h=0.1,V0,-,-
+heap: midpoint,HarmonicOscillator h=1.0,V0,-,-
+heap: midpoint,Pendulum h=0.1,V0,-,-
+heap: midpoint,Pendulum h=1.0,V0,-,-
+heap: midpoint,LotkaVolterra2d h=0.01,V0,-,-
+heap: midpoint,LotkaVolterra2d h=0.1,V0,-,-
+heap: midpoint,LotkaVolterra4d h=0.01,V0,-,-
+heap: midpoint,LotkaVolterra4d h=0.1,V0,-,-
+heap: midpoint,DoublePendulum h=0.01,V0,-,-
+heap: midpoint,DoublePendulum h=0.1,V0,-,-
+heap: midpoint,TodaLattice h=0.1,V0,-,-
+heap: midpoint,TodaLattice h=1.0,V0,-,-
