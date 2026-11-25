@@ -34,7 +34,8 @@ factor-reuse period `reuse`.
   `(x, Fx)` that the last `start!!` or `step!!` on its state returned, as in [`solve!!`](@ref).
   A line-search step on a state that no `start!!` saw, or that `solve!!` returned, returns
   `NONFINITE` and keeps its iterate, and so does a [`LevenbergMarquardt`](@ref) step, whose
-  damping parameter that state holds as `NaN`.
+  damping parameter that state holds as `NaN`, and a [`PseudoTransient`](@ref) step, whose
+  pseudo-time step it holds as `NaN`.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
   `AbstractADType`, or a custom Jacobian callable: `J(x, p)`, which returns the Jacobian, on a
   value iterate (a `Number` or a `StaticArray`), and `J!(J, x, p)`, which writes it into `J`, on
@@ -97,11 +98,12 @@ the norm of the global residual; its inner method takes `best = true`, which has
 `forcing` and `preconditioner` configure the [`GMRES`](@ref) of `linsolve`, `forcing` configures a
 [`MINRESQLP`](@ref) too, and a `Newton` that takes either of them with any other linear method, or
 a `preconditioner` with `MINRESQLP`, raises an `ArgumentError`. A `Newton` with `GMRES` or
-`MINRESQLP` forms no factor, so it takes no `reuse`, no [`Refinement`](@ref) and no
-[`LevenbergMarquardt`](@ref) globalization, and a [`DogLeg`](@ref) needs an unrestarted `GMRES`
-without a preconditioner. A [`Steihaug`](@ref) globalization needs a `MINRESQLP`. A
-[`JVPFunction`](@ref) in `jacobian` needs a `GMRES` or a `MINRESQLP`, because a factorising method
-needs a Jacobian matrix. Each refusal is an `ArgumentError`.
+`MINRESQLP` forms no factor, so it takes no `reuse`, no [`Refinement`](@ref), no
+[`LevenbergMarquardt`](@ref) and no [`PseudoTransient`](@ref) globalization, and a
+[`DogLeg`](@ref) needs an unrestarted `GMRES` without a preconditioner. A [`Steihaug`](@ref)
+globalization needs a `MINRESQLP`. A [`JVPFunction`](@ref) in `jacobian` needs a `GMRES` or a
+`MINRESQLP`, because a factorising method needs a Jacobian matrix. Each refusal is an
+`ArgumentError`.
 
 - `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
   the relative tolerance of every Newton step's inner solve.
@@ -611,11 +613,11 @@ end
 end
 
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
-# globalization workspace, the rule state of its reuse, its `DogLeg` or `Steihaug` or its
-# `LevenbergMarquardt`, the merit `norm2(Fx)` of the current residual for a line search (`nothing`
-# for any other globalization), the norm `‖Fx‖` of the current residual, the diagnostics of the
-# last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the
-# working-precision factor slot for mixed-precision promotion (`nothing` where the factorisation
+# globalization workspace, the rule state of its reuse, its `DogLeg` or `Steihaug`, its
+# `LevenbergMarquardt` or its `PseudoTransient`, the merit `norm2(Fx)` of the current residual for a
+# line search (`nothing` for any other globalization), the norm `‖Fx‖` of the current residual, the
+# diagnostics of the last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1),
+# the working-precision factor slot for mixed-precision promotion (`nothing` where the factorisation
 # runs in the working precision, and for `LevenbergMarquardt`, which promotes nothing), the
 # promotion flag, the count of consecutive slow steps a promotion waits for, the linear-solver
 # workspace, which only a [`GMRES`](@ref) or a [`MINRESQLP`](@ref) solve has (`nothing` for every

@@ -712,7 +712,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1899`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1980`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
