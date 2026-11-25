@@ -421,6 +421,50 @@ end
     @test isnan_all(x)
 end
 
+@testset "a b that overlaps solver.x in another order: the QR of Aᴴ with m < n" begin
+    solver = init(LinearProblem([1.0 0 0; 0 1 0]), QRFactorization())
+    solver.x .= [2.0, 3.0, 0.0]
+    x, st = solve!(solver, view(solver.x, 2:-1:1))
+    @test st.code == SUCCESS
+    @test x == [3.0, 2.0, 0.0]
+end
+
+# `b` is `x[m:-1:1]`, which a solve that writes `x[1]` before it reads `b[m]` overwrites; with
+# `m > n` it is `x[[n:-1:1; 1:(m - n)]]`, on the host alone, as a device array takes no index
+# vector. The solution of a fresh solver for a copy of `b` is the reference. With `m == n`, `b`
+# is also `x` itself.
+@testset "a b that overlaps solver.x in another order: $route, $T, $(nameof(typeof(method))), $m × $n" for route in map(
+        AT -> string(nameof(AT)), ARRAY_BACKENDS),
+    T in ELTYPES,
+    (method, m, n) in ((LUFactorization(), 4, 4), (QRFactorization(), 4, 4),
+        (SVDFactorization(), 4, 4), (LDLTFactorization(), 4, 4),
+        (CholeskyFactorization(), 4, 4), (LUFactorization(Float32), 4, 4),
+        (QRFactorization(), 5, 3), (SVDFactorization(), 5, 3),
+        (QRFactorization(Float32), 5, 3), (QRFactorization(), 3, 5),
+        (SVDFactorization(), 3, 5), (QRFactorization(Float32), 3, 5),
+        (SVDFactorization(Float32), 3, 5))
+
+    device_cholesky(route, method) && continue
+    device_wide_qr(route, method, m, n) && continue
+    route == "JLArray" && m > n && continue
+    A = m == n ? square_matrix(T, m, method) : wellcond(T, m, n)
+    solver = init(LinearProblem(onroute(route, A)), method)
+    copyto!(solver.x, onroute(route, rhs(T, n)))
+    b = view(solver.x, m > n ? [n:-1:1; 1:(m - n)] : (m:-1:1))
+    b_host = Vector(Array(b))
+    x_ref, st_ref = lp_solve(route, method, A, b_host)
+    x, st = solve!(solver, b)
+    @test st.code == st_ref.code == SUCCESS
+    @test isapprox(Vector(Array(x)), x_ref; rtol = 8 * eps(real(T)))
+    @test relerr(x_ref, xref(A, b_host)) <= 128 * eps(real(factor_eltype(method, T)))
+    if m == n
+        copyto!(solver.x, onroute(route, b_host))
+        x, st = solve!(solver, solver.x)
+        @test st.code == SUCCESS
+        @test isapprox(Vector(Array(x)), x_ref; rtol = 8 * eps(real(T)))
+    end
+end
+
 @testset "a b of another length for an LU solver: $route" for route in ("SMatrix", "Array")
     solver = init(LinearProblem(onroute(route, wellcond(Float64, 3, 3))), LUFactorization())
     @test_throws DimensionMismatch("the right-hand side has 4 entries, the matrix 3 rows") solve!(
