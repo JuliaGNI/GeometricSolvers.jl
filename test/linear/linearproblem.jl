@@ -16,6 +16,7 @@ using GeometricSolvers: NONFINITE, SINGULAR, SUCCESS, factor_eltype
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
 using LinearAlgebra: norm, opnorm
+using Random: Xoshiro, randn
 using SparseArrays: sparse
 using StaticArrays: SMatrix, SVector
 using Test
@@ -496,10 +497,11 @@ end
         (SVDFactorization(Float32), 5, 3))
 
     # Every factor in the element type of the matrix divides it by the power of two of its largest
-    # entry, so that it factorises a matrix in the normal range, and so does the `Float32` SVD of a
-    # `Float64` matrix, whose sweep squares the entries. The entries of `2^kA A₀` lie 4 bits above
-    # the smallest subnormal (`kA = -1070` in `Float64`, `-145` in `Float32`), and
-    # `b = 2^(kA + 70) b₀` and the solution lie in the normal range. The matrix rounded to the
+    # entry (Cholesky by the even power at or below it), so that it factorises a matrix in the
+    # normal range, and so does the `Float32` SVD of a `Float64` matrix, whose sweep squares the
+    # entries. The entries of `2^kA A₀` lie 4 bits above the smallest subnormal (`kA = -1070` in
+    # `Float64`, `-145` in `Float32`), and `b = 2^(kA + 70) b₀` and the solution lie in the normal
+    # range. The matrix rounded to the
     # subnormal grid keeps the diagonal dominance of `A₀`, so a backward-stable solve meets a
     # small multiple of `eps(RF) κ₁` against the solution in `BigFloat` of the rounded matrix, `RF`
     # the real type of the factor.
@@ -512,12 +514,15 @@ end
     @test all(a -> abs(real(a)) < floatmin(R) && abs(imag(a)) < floatmin(R), A)
     κ = cond1(A)
     @test κ <= 16
-    # the device `Float32` SVD of a `Float64` matrix gives `SINGULAR` here (K125 of
-    # `KNOWN_ISSUES.md`), so those rows are left out
-    route == "JLArray" && RF !== R && continue
     x, st, _ = lp_solve(route, method, A, b)
-    @test st.code == SUCCESS
-    @test relerr(x, xref(A, b)) <= 32 * eps(RF) * κ
+    if route == "JLArray" && RF !== R
+        # the device `Float32` SVD of a `Float64` matrix gives `SINGULAR` here
+        @test_broken st.code == SUCCESS  # issue #122, K125 in KNOWN_ISSUES.md
+        @test_broken relerr(x, xref(A, b)) <= 32 * eps(RF) * κ  # issue #122, K125 in KNOWN_ISSUES.md
+    else
+        @test st.code == SUCCESS
+        @test relerr(x, xref(A, b)) <= 32 * eps(RF) * κ
+    end
 end
 
 @testset "the Cholesky factor of a 5 × 5 matrix of subnormal entries and a subnormal b: $route, $T" for route in ROUTES,
@@ -557,6 +562,34 @@ end
     x, st, _ = lp_solve(route, CholeskyFactorization(), A, b)
     @test st.code == SUCCESS
     @test relerr(x, big.(T[-1, 2])) <= 4 * sqrt(t * floatmax(R))
+end
+
+@testset "a Cholesky factor in the element type of A · 2^-4 gives the bits of A: $route, $T" for route in ROUTES,
+    T in ELTYPES
+
+    # `A = Wᴴ W + 4I`, of a seeded `W`, has its largest entry in `[4, 32)` in these draws, so its
+    # own-type Cholesky factor copies it, and `A · 2^-4` has an exponent `e` between -2 and 0. The
+    # factor divides it by the even `2^(e & ~1)`, so it factorises `A` times a power of 4, whose
+    # Cholesky factor and solve are those of `A` times a power of two, bit for bit; an odd `e = -1`,
+    # which 26 of the 32 real and 14 of the 32 complex draws give, would factorise `A / 2` and round
+    # otherwise. A rate across the sweep, because a draw whose `e` is even gives the same bits under
+    # both rules.
+    rng = Xoshiro(20261125)
+    N = 32
+    same = 0
+    success = 0
+    for _ in 1:N
+        W = T <: Complex ? complex.(randn(rng, 4, 4), randn(rng, 4, 4)) : randn(rng, 4, 4)
+        Wb = big.(T.(W))
+        A = T.(Wb' * Wb + 4I)
+        b = T.(T <: Complex ? complex.(randn(rng, 4), randn(rng, 4)) : randn(rng, 4))
+        x0, st0, _ = lp_solve(route, CholeskyFactorization(), A, b)
+        x1, st1, _ = lp_solve(route, CholeskyFactorization(), pow2.(A, -4), pow2.(b, -4))
+        success += st0.code == SUCCESS
+        same += x1 == x0 && st1.code == st0.code
+    end
+    @test success == N
+    @test same >= 0.9 * N
 end
 
 @testset "A · 2^k and b · 2^j: $route, $R, $(nameof(typeof(method))), $m × $n" for route in ROUTES,
@@ -606,6 +639,17 @@ allocations(f::F, args::Vararg{Any, K}) where {F, K} = (f(args...); @allocated f
     end
     @test allocations(solve!, hsolver, hb) == 0
     @test allocations(refactorize!!, hsolver, A) == 0
+    # a matrix that the factor divides by `2^e` with `e < 0`: `A / 8`, and `2^-1070 A`, whose
+    # entries are subnormal
+    for k in (-3, -1070)
+        Ak = pow2.(A, k)
+        SAk = SMatrix{m, n}(Ak)
+        @inferred refactorize!!(solver, SAk)
+        if Base.JLOptions().check_bounds != 1
+            @test allocations(refactorize!!, solver, SAk) == 0
+        end
+        @test allocations(refactorize!!, hsolver, Ak) == 0
+    end
     @test allocations(collect, SVector(1.0, 2.0)) > 0
 end
 

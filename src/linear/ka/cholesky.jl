@@ -10,11 +10,11 @@ const KA_CHOLESKY_WORKGROUP = 64
 # test of the host `DenseCholesky` give it: where every entry of `J` is finite, the lower triangle
 # of `J / 2^e` with zeros above the diagonal, `e` the exponent of the largest |re| or |im| of the
 # strict lower triangle and |re| of the diagonal; where the element types of `J` and `A` agree,
-# only a negative exponent is taken and any other gives `e = 0`, and a zero lower triangle gives
-# `e = 0`; where an entry is not finite, `J` as it is in the factor element type, and `e = 0`.
-# `status` takes `[info, e]`, with `info = 1` for a non-finite `J` and 0 otherwise. Each work-item
-# reads and writes only the entries of its columns `tid`, `tid + G`, …, and reads each entry before
-# it writes it, so that `J` may be `A`.
+# only a negative exponent is taken, rounded down to an even one, and any other gives `e = 0`, and
+# a zero lower triangle gives `e = 0`; where an entry is not finite, `J` as it is in the factor
+# element type, and `e = 0`. `status` takes `[info, e]`, with `info = 1` for a non-finite `J` and
+# 0 otherwise. Each work-item reads and writes only the entries of its columns `tid`, `tid + G`, …,
+# and reads each entry before it writes it, so that `J` may be `A`.
 @kernel function ka_cholesky_load_kernel!(A, J, status, n::Int, ::Val{G}) where {G}
     tid = @index(Local, Linear)
     @uniform F = eltype(A)
@@ -56,7 +56,11 @@ const KA_CHOLESKY_WORKGROUP = 64
             if bad == Int32(0) && !iszero(m)
                 emax = exponent(floatmax(RJ))
                 em = Int32(clamp(frexp(m)[2] - 1, -emax, emax))
-                (F !== eltype(J) || em < Int32(0)) && (e = em)
+                if F !== eltype(J)
+                    e = em
+                elseif em < Int32(0)
+                    e = em & ~Int32(1)
+                end
             end
             l_ctrl[1] = e
             l_ctrl[2] = bad

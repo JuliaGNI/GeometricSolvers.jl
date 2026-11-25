@@ -24,7 +24,9 @@ overflows nor underflows in the factor type (for Cholesky, `e` is taken from the
 the real part of the diagonal alone). Where it is the element type of `J`, `J` is divided only for
 `e < 0`, so that a matrix of subnormal or near-`floatmin` entries is factorised in the normal
 range; for `e > 0`, the solve with the factor of `J / 2^e` would hold up to `2^e` times its
-solution, which can overflow near `floatmax`. A zero or non-finite `J` gives `e = 0`. A singular
+solution, which can overflow near `floatmax`. Cholesky then rounds `e` down to an even exponent,
+so that the factor of `J / 2^e` is that of `J` times the power of two `2^(-e/2)`. A zero or
+non-finite `J` gives `e = 0`. A singular
 `J` does not throw. LU
 records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, LDLᵀ the first
 zero pivot block (or `1` for a non-finite entry), Cholesky the order of the first leading minor
@@ -766,16 +768,19 @@ end
 # that flushes subnormals to zero. Where `F` is the element type of `J`, only `e < 0` divides, as
 # in `load_factors!`, so that a matrix of subnormal or near-`floatmin` entries is factorised in the
 # normal range; `e > 0` converts `J` as it is, and so does an `e` below the `Int32` range of the
-# factor's field, which only a `BigFloat` matrix reaches. Another `F` divides for every `e`, and
-# `Int32(e)` throws for an `e` outside that range. `e = 0`, which an empty, zero or non-finite `J`
-# gives, converts `J` as it is.
+# factor's field, which only a `BigFloat` matrix reaches. A Cholesky factor in the element type of
+# `J` rounds that `e < 0` down to an even exponent, `e & ~1`, as `load_factors!` does. Another `F`
+# divides for every `e`, and `Int32(e)` throws for an `e` outside that range. `e = 0`, which an
+# empty, zero or non-finite `J` gives, converts `J` as it is.
 function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T},
         scale_exponent::E = matrix_exponent) where {F, M, N, T, E}
     e = isempty(J) ? 0 : scale_exponent(J)
     if iszero(e) || (F === T && !(typemin(Int32) <= e < 0))
         return SMatrix{M, N, F}(J), Int32(0)
     end
-    return SMatrix{M, N, F}(map(a -> ldexp2(a, -e), SMatrix{M, N, T}(J))), Int32(e)
+    # a new name, not `e &= ~1`: a closure over a reassigned `e` boxes it
+    s = F === T && scale_exponent === cholesky_exponent ? e & ~1 : e
+    return SMatrix{M, N, F}(map(a -> ldexp2(a, -s), SMatrix{M, N, T}(J))), Int32(s)
 end
 
 # A mutable local copy of a static array for the scalar loops of the R1 kernels: an `MMatrix` or

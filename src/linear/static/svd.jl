@@ -82,10 +82,11 @@ end
     return A
 end
 
-# The exponent of the largest |re| or |im| of `J`, and 0 for a zero or non-finite `J`:
+# The exponent of the largest |re| or |im| of `J`, and 0 for an empty, zero or non-finite `J`:
 # `matrix_exponent`, and for a largest entry below `floatmin`, where `matrix_exponent` clamps, its
 # own `exponent`, which a subnormal has too. `ldexp2` divides by it exactly.
 function svd_exponent(J::StaticMatrix)
+    isempty(J) && return 0
     e = matrix_exponent(J)
     e == -exponent(floatmax(float(real(eltype(J))))) || return e
     return exponent(maximum(a -> max(abs(real(a)), abs(imag(a))), J))

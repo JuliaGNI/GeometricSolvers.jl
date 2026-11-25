@@ -160,6 +160,28 @@ end
     @test fd.scale_exponent == 0
 end
 
+@testset "the static Cholesky exponent of a matrix of subnormal entries, $T" for T in (
+    Float64, ComplexF64)
+
+    # `cholesky_exponent` clamps to `-emax = -1023`: a factor of another element type keeps it,
+    # and one of the matrix's own element type rounds it down to the even `-1024`
+    A = SMatrix{2, 2, T}(T[3 1; 1 3] * ldexp(1.0, -1060))
+    emax = exponent(floatmax(Float64))
+    fac = factorize!!(nothing, CholeskyFactorization(Float32), A)
+    @test returncode(fac) === SUCCESS
+    @test fac.scale_exponent == -emax
+    fac = factorize!!(nothing, CholeskyFactorization(), A)
+    @test returncode(fac) === SUCCESS
+    @test fac.scale_exponent == -emax - 1
+end
+
+@testset "a 0 × 0 matrix sets no scale in the static SVD" begin
+    # the exponent of the empty matrix runs no reduction over its entries; the static SVD of it
+    # throws later, at `σ[1]` (K126 of `KNOWN_ISSUES.md`)
+    @test GeometricSolvers.svd_exponent(SMatrix{0, 0, Float64}()) == 0
+    @test GeometricSolvers.svd_exponent(SMatrix{0, 0, ComplexF32}()) == 0
+end
+
 @testset "the same-type solve scales r by a power of two, $T" for T in REAL_ELTYPES
     @testset "$label, $M" for (label, J, b, xref, with_qr, atol) in extreme_rhs_systems(T),
         M in (SVDFactorization, QRFactorization, LUFactorization)

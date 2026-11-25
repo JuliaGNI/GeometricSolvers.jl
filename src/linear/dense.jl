@@ -195,9 +195,12 @@ end
 # has the element type of `J`, only `e < 0` divides, so that a matrix of subnormal or
 # near-`floatmin` entries is factorised in the normal range; `e > 0` copies `J`, because the solve
 # with the factor of `J / 2^e` and `r / 2^k` holds `2^(e - k)` times the solution before `ldiv!!`
-# scales it back, which can overflow near `floatmax`. Another element type divides for every `e`. `e = 0`, which an empty, zero or non-finite `J`
-# gives, copies `J` as it is. The division is `ldexp2`, which keeps a subnormal entry on a device
-# that flushes subnormals to zero.
+# scales it back, which can overflow near `floatmax`. A Cholesky factor of the element type of `J`
+# rounds that `e < 0` down to an even exponent, `e & ~1`, so that the factor of `J / 2^e` is that
+# of `J` times the power of two `2^(-e/2)`, and the solve of a normal-range `J` gives the bits of
+# the solve with the factor of `J`. Another element type divides for every `e`. `e = 0`, which an
+# empty, zero or non-finite `J` gives, copies `J` as it is. The division is `ldexp2`, which keeps a
+# subnormal entry on a device that flushes subnormals to zero.
 function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix,
         scale_exponent::E = matrix_exponent) where {F, E}
     e = isempty(J) ? 0 : scale_exponent(J)
@@ -205,6 +208,7 @@ function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix,
         J === A || copyto!(A, J)
         return 0
     end
+    eltype(J) === F && scale_exponent === cholesky_exponent && (e &= ~1)
     A .= ldexp2.(J, -e)
     return e
 end

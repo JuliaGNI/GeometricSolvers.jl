@@ -772,23 +772,23 @@
 
 ### K107 · The docstrings of `StaticLU`, `StaticSVD`, `StaticLDLT` and `StaticRectQR` say that the factor is `isbits` for every element type, which is false for `BigFloat`
 
-- **location:** `src/linear/factors.jl:122` (`StaticLU`), `:162` (`StaticSVD`), `:330`
+- **location:** `src/linear/factors.jl:129` (`StaticLU`), `:170` (`StaticSVD`), `:339`
   (`StaticLDLT`), `src/linear/static/qr_rect.jl:12` (`StaticRectQR`)
 - **evidence:** each docstring says that the size parameter makes the `SMatrix` field concrete,
   "so the factor is `isbits`", with no condition on `TF`.
   `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
   `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
   `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
-  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:742`), so
-  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:395-396`) states
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:791`), so
+  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:404-405`) states
   the condition.
 - **kind:** docs
 - **found:** #108
 
 ### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
 
-- **location:** `src/linear/factors.jl:734` (`factor_matrix`), and `src/linear/static/svd.jl:91`
-  and `src/linear/static/svd_rect.jl:53`, which scale always
+- **location:** `src/linear/factors.jl:775` (`factor_matrix`), and `src/linear/static/svd.jl:102`
+  (`svd_matrix`) and `src/linear/static/svd_rect.jl:51` (`svd_rect_matrix`), which scale always
 - **evidence:** the scale exponent of every static factor is an `Int32` field, and
   `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
   `A = SMatrix{2, 2, BigFloat}(big(2)^(big(2)^31 + 5) * [4 1; 1 5])`,
@@ -796,7 +796,8 @@
   `m = SVDFactorization()`, `LUFactorization(Float64)`, `CholeskyFactorization(Float64)` and
   `SVDFactorization(Float64)`, and returns a factor for `LUFactorization()`,
   `LDLTFactorization()`, `CholeskyFactorization()` and `QRFactorization()`, which do not scale a
-  matrix in its own element type (Julia 1.13.4, tree of `c6a2c4f`). `origin/main` has the same
+  matrix in its own element type whose exponent is positive or outside the `Int32` range (Julia
+  1.13.4, tree of `c6a2c4f`). `origin/main` has the same
   `Int32(e)` in `factor_matrix` and `svd.jl`.
 - **kind:** defect
 - **found:** #108
@@ -819,7 +820,7 @@
 
 ### K112 · OpenBLAS's `getrf!` gives a backward error of order one on a matrix whose entries are subnormal or near `floatmin`
 
-- **location:** `src/linear/dense.jl:258` (`factorize!!` for `DenseLU`, the `getrf!` path)
+- **location:** `src/linear/dense.jl:267` (`factorize!!` for `DenseLU`, the `getrf!` path)
 - **evidence:** `randn(Xoshiro(n), T, n, n)` scaled by `s`, and
   `‖A[p, :] − L U‖∞ / ‖A‖∞` in `BigFloat` (libopenblas64_ 0.3.30, Julia 1.13.4, Apple M4 Max):
   `LAPACK.getrf!` gives 0.51, 1.1 (`Float32`, `s = floatmin`, n = 8, 32), 0.79 (`Float64`,
@@ -879,7 +880,7 @@
 
 ### K117 · A same-type `ldiv!!` of a dense factor with vectors of two lengths throws a `TypeError`, not a `DimensionMismatch`
 
-- **location:** `src/linear/dense.jl:225` (the `T == TF` method of `ldiv!!` for every `DenseFactor`)
+- **location:** `src/linear/dense.jl:234` (the `T == TF` method of `ldiv!!` for every `DenseFactor`)
 - **evidence:** with `length(d) != length(r)` the method takes its branch for a rectangular factor
   and asserts `fac.rhs::AbstractVector{T}`, which is `nothing` for a square factor. A factor of
   `[4 0; 0 9]` in `Float32` with `CholeskyFactorization()` or `LUFactorization()`, solved with
@@ -957,7 +958,7 @@
 
 ### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
 
-- **location:** `src/linear/factors.jl:839` (`rhs_exponent`), which `ldiv!!` of the dense,
+- **location:** `src/linear/factors.jl:844` (`rhs_exponent`), which `ldiv!!` of the dense,
   device and static factors calls
 - **evidence:** `rhs_exponent` gives `max(0, …)`, so a right-hand side divides by `2^k` only near
   `floatmax`. With `s = 2^10 · nextfloat(zero(R))`, `A = 3s · I(5)`, `A[3, 1] = A[1, 3] = s` and
@@ -985,7 +986,20 @@
   `32 · eps(Float32) · κ₁` (Julia 1.13.4). The static SVD divides by the
   unclamped exponent of a subnormal largest entry (`svd_exponent` of
   `src/linear/static/svd.jl`). That the Jacobi sweep of the device kernel, in `Float32`, fails on
-  products of column norms below `floatmin(Float32)` is not verified. The testset leaves these
-  rows out.
+  products of column norms below `floatmin(Float32)` is not verified. The testset marks these
+  rows `@test_broken`.
+- **kind:** found late
+- **found:** 2026-11-25, issue #122
+
+### K126 · The static `SVDFactorization` of a `0 × 0` matrix throws `BoundsError`
+
+- **location:** `src/linear/static/svd.jl:227` (`factorize!!` of `StaticSVD`, the cutoff
+  `rank_tolerance(…) * σ[1]`)
+- **evidence:** `factorize!!(nothing, m, SMatrix{0, 0, Float64}())` throws
+  `BoundsError: attempt to access Tuple{} at index [1]` at that line, for `m = SVDFactorization()`
+  and `SVDFactorization(Float32)` (Julia 1.13.4). On `bf08120` the same calls throw earlier,
+  `ArgumentError: reducing over an empty collection`, from `matrix_exponent` in `svd_matrix`;
+  `svd_exponent` returns 0 for an empty matrix. The static LU, QR, LDLᵀ and Cholesky factors of
+  a `0 × 0` matrix give `SUCCESS`.
 - **kind:** found late
 - **found:** 2026-11-25
