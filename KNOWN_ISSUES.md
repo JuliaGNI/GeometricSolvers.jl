@@ -912,3 +912,16 @@
   The Newton-homotopy path leaves `(1, 0)` along `x` (Julia 1.13.4).
 - **kind:** found late
 - **found:** 2026-11-25
+
+### K117 · `Newton()` returns `STALLED` from a start whose residual is already at round-off, because its default residual test is relative to `‖F(x₀)‖` alone
+
+- **location:** `src/base/options.jl` (the defaults `f_abstol = 0`, `f_reltol = √eps`)
+- **evidence:** `F(x) = A x − b` with `A = T[3 1; 1 2] / 3` and `b = T[1, −3] / 3`, whose root lies
+  within a few ulps of `(1, −2)`, solved with `solve(NonlinearProblem(F!), x₀, Newton())` from the
+  289 starts `x₀ = (1, −2) + (k₁ eps(T), 2 k₂ eps(T))`, `k₁, k₂ ∈ −8:8`: all 289 return `STALLED`,
+  in `Float32` and in `Float64` (`origin/main` at `e7af5e7`, Julia 1.13.4). There `‖F(x₀)‖` is of
+  the order of `eps`, so the test `‖F‖ ≤ √eps ‖F(x₀)‖` asks for a residual below the round-off of
+  `F`, which no step reaches. The last corrector of a `Continuation` runs this `Newton` from a
+  point near the root, so a path that ends within round-off of the root can return `STALLED` too.
+- **kind:** found late
+- **found:** 2026-11-25

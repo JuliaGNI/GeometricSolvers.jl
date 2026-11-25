@@ -336,7 +336,7 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
     "Continuation FixedPointHomotopy" => (gs_entry("Continuation FixedPointHomotopy"),
         NoMethod("no continuation method"),
         Paired("ArcLengthContinuation",
-            "pseudo-arclength continuation of the same homotopy `λ F(x)/σ + (1 − λ)(x − x₀)`, `σ = ‖F(x₀)‖∞`, with `SimpleNewtonRaphson` as its corrector and no Jacobian of `F` given; its arclength weighs `x` and `λ` by `θ = 0.5` where the column's is unweighted, it predicts along the secant of the last two points where the column predicts along the tangent, and it lands on `λ = 1` by a solve at fixed `λ` where the column runs `Newton` from the chord's point at `λ = 1`",
+            "pseudo-arclength continuation of the same homotopy `λ F(x)/σ + (1 − λ)(x − x₀)`, `σ = max|J(x₀)|` from the benchmark's Jacobian, with `SimpleNewtonRaphson` as its corrector and no Jacobian of `F` given to it; its arclength weighs `x` and `λ` by `θ = 0.5` where the column's is unweighted, it predicts along the secant of the last two points where the column predicts along the tangent, and it lands on `λ = 1` by a solve at fixed `λ` where the column runs `Newton` from the chord's point at `λ = 1`",
             T -> (; alg = SNS.ArcLengthContinuation(; inner = SNS.SimpleNewtonRaphson()))),
         NoMethod("no continuation method")),
     "Fallback Newton DogLeg LevenbergMarquardt" => (
@@ -457,8 +457,8 @@ end
 
 # SimpleNonlinearSolve's problem for `alg`: the problem of the residual `c` with the Jacobian
 # `J!`, or, for `ArcLengthContinuation`, the `HomotopyProblem` of the fixed-point homotopy of `c`
-# from `x0` that the column `Continuation FixedPointHomotopy` follows, with its `σ = ‖F(x0)‖∞`
-# (1 where `F(x0) = 0`).
+# from `x0` that the column `Continuation FixedPointHomotopy` follows, with its `σ`: the largest
+# absolute entry of `J(x0)`, or of `F(x0)` where `J(x0) = 0`, or 1 where both are 0.
 function sns_problem(alg, c, J!, x0)
     f = SciMLBase.NonlinearFunction{true}(c; jac = J!)
     return SciMLBase.NonlinearProblem(f, x0, nothing)
@@ -467,7 +467,10 @@ end
 function sns_problem(::SNS.ArcLengthContinuation, c, J!, x0)
     F0 = similar(x0)
     c(F0, x0, nothing)
-    σ = maximum(abs, F0)
+    J0 = similar(x0, length(F0), length(x0))
+    J!(J0, x0, nothing)
+    σ = maximum(abs, J0)
+    σ = iszero(σ) ? maximum(abs, F0) : σ
     h = FixedPointHomotopyResidual(c, copy(x0), iszero(σ) ? one(σ) : σ)
     T = eltype(x0)
     return SciMLBase.HomotopyProblem(h, x0, nothing; λspan = (zero(T), one(T)))

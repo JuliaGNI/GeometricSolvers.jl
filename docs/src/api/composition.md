@@ -48,6 +48,7 @@ ParameterHomotopy
 continuation_steps
 homotopy_residual!
 homotopy_jacobian!
+homotopy_scale
 Anderson
 Broyden
 AndersonHistory

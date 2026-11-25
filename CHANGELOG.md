@@ -1040,9 +1040,10 @@ so that a compat-only bump can be told apart from an interface change.
 - **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
   exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
   `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,
-  `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x)/σ + (1 − λ)(x − x₀)` with
-  `σ = ‖F(x₀)‖∞`, or `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's
-  problem; the `NonlinearProblem` holds no `λ`. A tangent predictor and a bordered Newton corrector follow the
+  `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x)/σ + (1 − λ)(x − x₀)` with `σ` the
+  largest absolute entry of `J(x₀)`, or of `F(x₀)` where `J(x₀) = 0`, or 1 where both are 0, or
+  `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's problem; the
+  `NonlinearProblem` holds no `λ`. A tangent predictor and a bordered Newton corrector follow the
   path through a fold of `λ`, where a step in `λ` alone stops. A failed corrector halves the step,
   a corrector of at most 3 iterations doubles it up to `h_max`, and a step below `h_min` returns
   `STALLED`. `GeometricSolvers.continuation_steps(state)` reads `λ` and the length of every
@@ -1053,17 +1054,21 @@ so that a compat-only bump can be told apart from an interface change.
   a `LeastSquaresProblem`, a complex or a device array iterate, and a member that forms no
   Jacobian matrix, each with an `ArgumentError`. The division by `σ` makes the path of the
   fixed-point homotopy independent of a scale of `F`: `F(x) = s (A x − b)` gives the same root at
-  `s = 4 √floatmax` and `floatmax/8` with both homotopies, in `Float32` and `Float64`.
+  `s = 4 √floatmax` and `floatmax/8` with both homotopies, in `Float32` and `Float64`. Since `σ`
+  has the units of the Jacobian, the path from a start a few ulps from the root of `A x − b`
+  accepts every step and ends at that root; a non-finite `J(x₀)` returns `NONFINITE` with no
+  step.
 
 - **The standard test set has a fifteenth column, `Continuation FixedPointHomotopy`,** before the
-  `Fallback` column: 46 of 67 starts give `SUCCESS` in `Float32` and 48 of 67 in `Float64`. The
+  `Fallback` column: 43 of 67 starts give `SUCCESS` in `Float32` and 49 of 67 in `Float64`. The
   benchmark pairs it with SimpleNonlinearSolve's `ArcLengthContinuation`, with
   `SimpleNewtonRaphson` as its corrector, on the same homotopy; its arclength metric, its
   predictor and its landing on `λ = 1` differ from the column's.
 
 - **`PseudoTransient(δ₀; δ_max = 1e12)` is a new exported globalization of `Newton` for a
   `StationarityProblem`: pseudo-transient continuation.** Each step solves `(J + I/δ) d = −F`,
-  with the regularisation `μ` of the `Newton` added to `1/δ`, and is accepted; `δ` starts at `δ₀` in each solve and follows the switched evolution relaxation
+  with the regularisation `μ` of the `Newton` added to `1/δ`, and is accepted; `δ` starts at `δ₀`
+  in each solve and follows the switched evolution relaxation
   `δₖ₊₁ = min(δₖ ‖F(xₖ)‖₂ / ‖F(xₖ₊₁)‖₂, δ_max)`. On the double well
   `S(x, y) = (x² − 1)²/4 + y²/2` from `(0.1, 1)`, `Newton()` converges to the saddle `(0, 0)` and
   `PseudoTransient(0.1)` to the minimum `(1, 0)`. A non-finite `δ`, `1/δ` or residual returns

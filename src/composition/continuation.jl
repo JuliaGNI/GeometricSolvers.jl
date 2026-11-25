@@ -14,9 +14,12 @@ struct NewtonHomotopy end
     FixedPointHomotopy()
 
 The fixed-point homotopy ``H(x, λ) = λ F(x) / σ + (1 - λ)(x - x_0)`` of a
-[`Continuation`](@ref), with ``σ = \\|F(x_0)\\|_∞``, or `σ = 1` where `F(x₀) = 0`. Its path
-starts at `x₀`, and its `λ = 1` end is a root of `F`. The division by `σ` makes the path
-independent of a scale `s` of `F`: `s F` has the path of `F`.
+[`Continuation`](@ref), with `σ` the largest absolute entry of the Jacobian `J(x₀)` of `F` at the
+start, or of `F(x₀)` where `J(x₀) = 0`, or `σ = 1` where both are 0. Its path starts at `x₀`,
+and its `λ = 1` end is a root of `F`. The division by `σ` makes the path independent of a scale
+`s` of `F`: `s F` has the path of `F`. Since `σ` has the units of the Jacobian, the path leaves
+the start along `dx/dλ = −F(x₀)/σ`, which near a root of a well-conditioned `J` has the size of
+the distance of `x₀` from that root.
 """
 struct FixedPointHomotopy end
 
@@ -69,7 +72,8 @@ The [`SolverStatus`](@ref) is that of the last corrector, with `iterations` the 
 steps, accepted and rejected, plus the corrector's iterations, and `step_failures` the rejected
 steps plus the corrector's (each saturated at `typemax(Int32)`). A homotopy residual at
 `(x₀, 0)` that is not finite returns `NONFINITE` with no step taken; for the Newton and the
-fixed-point homotopy, a non-finite `F(x₀)` makes it so. A
+fixed-point homotopy, a non-finite `F(x₀)` makes it so, and so does a non-finite scale `σ` of the
+fixed-point homotopy, which a non-finite `J(x₀)` gives. A
 start that the corrector cannot bring onto the path at `λ = 0` returns `STALLED` with no step. A
 halved `h` below `h_min` returns `STALLED`, and `max_iterations` path steps of the
 [`Options`](@ref) return `MAXITERS`; both return the last accepted point of the path, with
@@ -124,13 +128,32 @@ Adapt.@adapt_structure Continuation
 @inline homotopy_parameters(h::ParameterHomotopy, p, λ) = h.map(p, λ)
 
 """
-    homotopy_residual!(H, homotopy, F, x, λ, x₀, F₀, p)
+    homotopy_scale(homotopy, J, x₀, F₀, p)
+
+The scale `σ` of `homotopy` at the start `x₀`, with `J(x, q)` the Jacobian of the problem and
+`F₀` the vector of `F(x₀, p)`: for the [`FixedPointHomotopy`](@ref) the largest absolute entry of
+`J(x₀, p)`, or of `F₀` where that is 0, or 1 where both are 0; for the other homotopies 1, which
+they do not read. A non-finite `J(x₀, p)` gives a non-finite `σ`.
+"""
+homotopy_scale(::Union{NewtonHomotopy, ParameterHomotopy}, J, x₀, F₀, p) = one(eltype(F₀))
+
+# The largest absolute entry cannot overflow for a finite `J(x₀, p)` or `F₀`, and `maximum`
+# returns `NaN` where an entry is `NaN`.
+function homotopy_scale(::FixedPointHomotopy, J, x₀, F₀, p)
+    σ = maximum(abs, J(x₀, p))
+    iszero(σ) || return σ
+    σ = maximum(abs, F₀)
+    return iszero(σ) ? one(σ) : σ
+end
+
+"""
+    homotopy_residual!(H, homotopy, F, x, λ, x₀, F₀, σ, p)
 
 Write the residual `H(x, λ)` of `homotopy` into the vector `H` and return it. `F(x, q)` is the
-residual of the problem with parameters `q`, `x₀` the start of the path and `F₀` the vector of
-`F(x₀, p)`.
+residual of the problem with parameters `q`, `x₀` the start of the path, `F₀` the vector of
+`F(x₀, p)` and `σ` the scale of [`homotopy_scale`](@ref).
 """
-function homotopy_residual!(H, ::NewtonHomotopy, F, x, λ, x₀, F₀, p)
+function homotopy_residual!(H, ::NewtonHomotopy, F, x, λ, x₀, F₀, σ, p)
     Fx = F(x, p)
     for i in eachindex(H)
         H[i] = Fx[i] - (1 - λ) * F₀[i]
@@ -138,25 +161,17 @@ function homotopy_residual!(H, ::NewtonHomotopy, F, x, λ, x₀, F₀, p)
     return H
 end
 
-# The scale `σ = ‖F₀‖∞` of the fixed-point homotopy, which cannot overflow for a finite `F₀`, or
-# one where `F₀ = 0`, where the path stays at the start.
-@inline function fixed_point_scale(F₀)
-    σ = maximum(abs, F₀)
-    return iszero(σ) ? one(σ) : σ
-end
-
 # `F` is divided by `σ` before `λ` multiplies it, so that no product of an unscaled `F` with `λ`
 # can overflow.
-function homotopy_residual!(H, ::FixedPointHomotopy, F, x, λ, x₀, F₀, p)
+function homotopy_residual!(H, ::FixedPointHomotopy, F, x, λ, x₀, F₀, σ, p)
     Fx = F(x, p)
-    σ = fixed_point_scale(F₀)
     for i in eachindex(H)
         H[i] = λ * (Fx[i] / σ) + (1 - λ) * (x[i] - x₀[i])
     end
     return H
 end
 
-function homotopy_residual!(H, h::ParameterHomotopy, F, x, λ, x₀, F₀, p)
+function homotopy_residual!(H, h::ParameterHomotopy, F, x, λ, x₀, F₀, σ, p)
     Fx = F(x, h.map(p, λ))
     for i in eachindex(H)
         H[i] = Fx[i]
@@ -165,13 +180,13 @@ function homotopy_residual!(H, h::ParameterHomotopy, F, x, λ, x₀, F₀, p)
 end
 
 """
-    homotopy_jacobian!(A, homotopy, F, J, x, λ, x₀, F₀, p)
+    homotopy_jacobian!(A, homotopy, F, J, x, λ, x₀, F₀, σ, p)
 
 Write the `n × (n + 1)` Jacobian ``[H_x \\; H_λ]`` of `homotopy` at `(x, λ)` into the first `n`
 rows of `A` and return `A`. `J(x, q)` is the Jacobian of the problem with parameters `q`, and the
 other arguments are those of [`homotopy_residual!`](@ref).
 """
-function homotopy_jacobian!(A, ::NewtonHomotopy, F, J, x, λ, x₀, F₀, p)
+function homotopy_jacobian!(A, ::NewtonHomotopy, F, J, x, λ, x₀, F₀, σ, p)
     Jx = J(x, p)
     n = length(F₀)
     for j in 1:n, i in 1:n
@@ -184,10 +199,9 @@ function homotopy_jacobian!(A, ::NewtonHomotopy, F, J, x, λ, x₀, F₀, p)
     return A
 end
 
-function homotopy_jacobian!(A, ::FixedPointHomotopy, F, J, x, λ, x₀, F₀, p)
+function homotopy_jacobian!(A, ::FixedPointHomotopy, F, J, x, λ, x₀, F₀, σ, p)
     Jx = J(x, p)
     n = length(F₀)
-    σ = fixed_point_scale(F₀)
     for j in 1:n, i in 1:n
 
         A[i, j] = λ * (Jx[i, j] / σ) + (i == j ? 1 - λ : zero(λ))
@@ -199,7 +213,7 @@ function homotopy_jacobian!(A, ::FixedPointHomotopy, F, J, x, λ, x₀, F₀, p)
     return A
 end
 
-function homotopy_jacobian!(A, h::ParameterHomotopy, F, J, x, λ, x₀, F₀, p)
+function homotopy_jacobian!(A, h::ParameterHomotopy, F, J, x, λ, x₀, F₀, σ, p)
     Jx = J(x, h.map(p, λ))
     n = length(F₀)
     for j in 1:n, i in 1:n
@@ -260,8 +274,9 @@ continuation_steps(solver::NonlinearSolver) = continuation_steps(solver.state)
     n = length(x)
     member = init_state(m.method, prob, x, homotopy_parameters(m.homotopy, p, one(R)))
     ws = (;
-        F₀ = zeros(T, n), z = zeros(T, n + 1), w = zeros(T, n + 1), zp = zeros(T, n + 1),
-        t = zeros(T, n + 1), r = zeros(T, n + 1), A = zeros(T, n + 1, n + 1))
+        F₀ = zeros(T, n), σ = Ref(one(T)), z = zeros(T, n + 1), w = zeros(T, n + 1),
+        zp = zeros(T, n + 1), t = zeros(T, n + 1), r = zeros(T, n + 1),
+        A = zeros(T, n + 1, n + 1))
     record = (; λ = R[], h = R[], accepted = Bool[])
     return ContinuationState(member, buffer(x), buffer(x), buffer(x), ws, record)
 end
@@ -285,7 +300,7 @@ end
 # `false`, with `t` unchanged, where the bordered system is singular or not finite.
 function path_tangent!(ws, z, h, F, J, xw, x, x₀, p, n)
     xz = path_iterate(xw, x, z, n)
-    homotopy_jacobian!(ws.A, h, F, J, xz, z[n + 1], x₀, ws.F₀, p)
+    homotopy_jacobian!(ws.A, h, F, J, xz, z[n + 1], x₀, ws.F₀, ws.σ[], p)
     for j in 1:(n + 1)
         ws.A[n + 1, j] = ws.t[j]
     end
@@ -307,12 +322,12 @@ function path_corrector!(ws, h, F, J, xw, x, x₀, p, n)
     for k in 1:6
         xk = path_iterate(xw, x, ws.w, n)
         λ = ws.w[n + 1]
-        homotopy_residual!(view(ws.r, 1:n), h, F, xk, λ, x₀, ws.F₀, p)
+        homotopy_residual!(view(ws.r, 1:n), h, F, xk, λ, x₀, ws.F₀, ws.σ[], p)
         ws.r[n + 1] = zero(T)
         for j in 1:(n + 1)
             ws.r[n + 1] += ws.t[j] * (ws.w[j] - ws.zp[j])
         end
-        homotopy_jacobian!(ws.A, h, F, J, xk, λ, x₀, ws.F₀, p)
+        homotopy_jacobian!(ws.A, h, F, J, xk, λ, x₀, ws.F₀, ws.σ[], p)
         for j in 1:(n + 1)
             ws.A[n + 1, j] = ws.t[j]
         end
@@ -348,15 +363,18 @@ function solve!!(
     J = (x, q) -> jacobian!!(state.member.J, state.member.jacprep, prob, x, q)
     xs = copy!!(state.x₀, x₀)
     xw = state.xw
-    # the start: the residual at `λ = 1`, which is `F(x₀, p)` but for a parameter homotopy, and
-    # the homotopy residual at `λ = 0`, which a non-finite `F(x₀, p)` makes non-finite for the
-    # Newton and the fixed-point homotopy (`0 · Inf` is `NaN`)
+    # the start: the residual at `λ = 1`, which is `F(x₀, p)` but for a parameter homotopy, the
+    # scale of the homotopy, and the homotopy residual at `λ = 0`, which a non-finite `F(x₀, p)`
+    # makes non-finite for the Newton and the fixed-point homotopy (`0 · Inf` is `NaN`)
     F₁ = F(x₀, p₁)
     f₁ = R(rnorm(F₁))
     for i in 1:n
         ws.F₀[i] = F₁[i]
     end
-    if !all(isfinite, homotopy_residual!(view(ws.r, 1:n), h, F, x₀, zero(T), xs, ws.F₀, p))
+    ws.σ[] = homotopy_scale(h, J, x₀, ws.F₀, p)
+    if !isfinite(ws.σ[]) ||
+       !all(isfinite, homotopy_residual!(
+        view(ws.r, 1:n), h, F, x₀, zero(T), xs, ws.F₀, ws.σ[], p))
         return x₀, path_status(NONFINITE, 0, f₁, zero(R), 0), state
     end
     # the start on the path: the corrector at `λ = 0`, along `t = e_λ`, which a start on the path
