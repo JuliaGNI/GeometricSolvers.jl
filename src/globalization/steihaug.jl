@@ -26,13 +26,16 @@ ratio ``ρ = \\mathrm{ared} / \\mathrm{pred}``, ``ρ < 0.1`` sets ``δ`` to
 ``ρ > 0.75`` on the boundary sets it to ``\\min(4δ, 10^{10})``. An accepted step other than an
 interior step sets `limited` in its [`StepInfo`](@ref).
 
-The merit is ``\\|F\\|``, never `S`, so a step toward a saddle point of `S` is accepted where it
-reduces ``\\|F\\|``. A step that leaves along the first direction ``p = -F`` because it has negative
-curvature predicts an increase of ``\\|F\\|``: ``\\|F - t J F\\|`` grows with `t > 0` where
-``F^H J F < 0``, so that trial is rejected at every radius, and the step returns
-`LINESEARCH_FAILED` after the radius falls to ``10^{-6}``. Near a root where the Hessian is
-indefinite, ``F^H J F < 0`` holds on an open cone of iterates around it, so a solve toward such a
-root, a saddle point of `S`, ends with `LINESEARCH_FAILED` from many starts close to it.
+The conjugate gradients minimise the model of `S`, and a trial is accepted on the merit
+``\\|F\\|``, never on `S`, so a step toward a saddle point of `S` is accepted where it reduces
+``\\|F\\|``. A step that decreases the model of `S` along a direction of negative curvature can
+increase ``\\|F + J d\\|``: a step that leaves along the first direction ``p = -F`` because it
+has negative curvature predicts an increase of ``\\|F\\|``, since ``\\|F - t J F\\|`` grows with
+`t > 0` where ``F^H J F < 0``, so that trial is rejected at every radius, and the step returns
+`LINESEARCH_FAILED` after the radius falls to ``10^{-6}``. This is the limit of `Steihaug`: a
+solve does not converge to a root where the Hessian of `S` is indefinite, a saddle point of `S`,
+also from a start close to it, and ends with `LINESEARCH_FAILED`. [`DogLeg`](@ref) with
+`MINRESQLP` does not have this limit: its Cauchy step along ``-J F`` reduces ``\\|F + J d\\|``.
 
 `radius` is the initial radius, positive and finite, stored and clamped as `DogLeg` does it. With
 `nothing`, the first step starts the radius at the length ``\\|F\\|^3 / (F^H J F)`` of the Cauchy

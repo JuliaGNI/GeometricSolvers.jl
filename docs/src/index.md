@@ -44,7 +44,7 @@ true
 
 - [Nonlinear methods](@ref nonlinear): [`Newton`](@ref), [`GaussNewton`](@ref),
   [`Picard`](@ref), factor reuse and implicit differentiation.
-- [Globalization](@ref globalization): line searches, the dogleg trust region and
+- [Globalization](@ref globalization): line searches, the dogleg and Steihaug trust regions and
   Levenberg–Marquardt.
 - [Linear solvers](@ref linear): static, dense, device and sparse factorisations, and the
   matrix-free [`GMRES`](@ref) and [`MINRESQLP`](@ref).

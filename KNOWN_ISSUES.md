@@ -889,7 +889,7 @@
 - **kind:** missing test
 - **found:** 2026-11-24
 
-### K114 · A line search returns `NONFINITE` at a start whose residual norm is finite but above `√floatmax`, because its merit `norm2(F)` overflows
+### K128 · A line search returns `NONFINITE` at a start whose residual norm is finite but above `√floatmax`, because its merit `norm2(F)` overflows
 
 - **location:** `src/globalization/linefunction.jl:85` (`start_merit`; the trial merit at `:36`)
 - **evidence:** `NonlinearProblem((F, x, _) -> (F .= sinh.(x); nothing))` from
@@ -902,7 +902,36 @@
 - **kind:** defect
 - **found:** 2026-11-25
 
-### K116 · `Continuation` from a start at a fold of its homotopy returns `STALLED` with no step, although a path to `λ = 1` leaves that start
+### K131 · A solve with `Steihaug` does not converge to a root where the Hessian of `S` is indefinite, also from a start close to it, and ends with `LINESEARCH_FAILED`
+
+- **location:** `src/globalization/steihaug.jl:173` (the conjugate gradients on the model of `S`
+  in `steihaug_step!!`; the acceptance on `‖F‖` at `:192`)
+- **evidence:** the indefinite problem `indefinite_problem` of `test/nonlinear/symkrylov.jl`
+  (Hessian eigenvalues at the root −0.998, −0.412, 1.78, 2.30), `Float64`,
+  `Newton(; linsolve = MINRESQLP())`, 20 random starts (`Xoshiro(1)`) at each distance 1e-2,
+  1e-4 and 1e-6 from the root: `DogLeg()` gives `SUCCESS` 20/20 at each distance, `Steihaug()`
+  gives `LINESEARCH_FAILED` 20/20 at each distance (Julia 1.13.4, `--check-bounds=auto`, at
+  32374d0). The conjugate gradients minimise the model `q(d) = Fᴴd + ½dᴴJd` of `S`, and a trial
+  is accepted on `‖F‖`: a step along a direction of negative curvature decreases `q` and can
+  increase `‖F + J d‖`, so `pred ≤ 0` and every trial is rejected down to the radius `10⁻⁶`.
+- **kind:** defect
+- **found:** #121; the limit of the decided form, conjugate gradients on the model of `S`
+
+### K132 · After a rejected interior step, `Steihaug` and `DogLeg` evaluate `F` again at the same point, until the radius falls below the norm of the step
+
+- **location:** `src/globalization/steihaug.jl:211` (`run = !(interior && dnorm < δ)` in
+  `steihaug_step!!`; in `DogLeg`, `src/globalization/dogleg.jl:195` and `:316`)
+- **evidence:** one step of the atan action (residual `atan.(x)`) from `fill(1.5, 3)` with
+  `MINRESQLP(; forcing = FixedForcing(1e-3))`, radius 100 and the `JVPFunction`
+  `v ./ (1 .+ x .^ 2)`, `Float64`: `Steihaug` and `DogLeg` each evaluate `F` 4 times at 2
+  distinct points, 3 times at the rejected Newton step (`x₁ = −1.694…`) and once at the accepted
+  boundary step of norm 1.5625; `f_calls` grows by 4 in the step (Julia 1.13.4, at 32374d0). The
+  testset "The radius rules of Steihaug, $T" in `test/nonlinear/symkrylov.jl` asserts this step,
+  issue #123.
+- **kind:** defect
+- **found:** #121, issue #123
+
+### K133 · `Continuation` from a start at a fold of its homotopy returns `STALLED` with no step, although a path to `λ = 1` leaves that start
 
 - **location:** `src/composition/continuation.jl` (`solve!!`, the start's corrector and tangent)
 - **evidence:** `solve(NonlinearProblem((x, p) -> x^3 - 3x - 5/2), 1.0,
@@ -913,7 +942,7 @@
 - **kind:** found late
 - **found:** 2026-11-25
 
-### K117 · `Newton()` returns `STALLED` from a start whose residual is already at round-off, because its default residual test is relative to `‖F(x₀)‖` alone
+### K134 · `Newton()` returns `STALLED` from a start whose residual is already at round-off, because its default residual test is relative to `‖F(x₀)‖` alone
 
 - **location:** `src/base/options.jl` (the defaults `f_abstol = 0`, `f_reltol = √eps`)
 - **evidence:** `F(x) = A x − b` with `A = T[3 1; 1 2] / 3` and `b = T[1, −3] / 3`, whose root lies

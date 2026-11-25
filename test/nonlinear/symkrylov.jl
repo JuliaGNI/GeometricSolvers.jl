@@ -259,6 +259,30 @@ end
         end
     end
 
+    @testset "MINRES-QLP updates by the QLP columns on a nonsingular system" begin
+        # A condition estimate above `minres_trancond` with no pivot that counts as zero runs the
+        # later iterations on the QLP update. Only `Float64` has such systems: in `Float32` a pivot
+        # below `√eps ‖A‖` counts as zero first.
+        n = 8
+        for c in (1.6e7, 6e7), seed in 1:2
+
+            rng = Xoshiro(seed)
+            Q = Matrix(qr(randn(rng, n, n)).Q)
+            λ = [(-1.0)^(i + 1) * c^((i - 1) / (n - 1)) for i in 1:n]
+            A = Q * Diagonal(λ) * Q'
+            A = (A + A') / 2
+            b = randn(rng, n)
+            op = (y, v) -> (y .= A * v; y)
+            ws = init_minresqlp_workspace(MINRESQLP(), b)
+            x, info = minresqlp_solve!(ws, op, b, rnorm(b), 0.0, Int32(3n))
+            @test !info.singular
+            @test info.iterations == 3n
+            # the forward error of a solve with condition number `c`, against a BigFloat solve
+            xb = Float64.(big.(A) \ big.(b))
+            @test norm(x .- xb) <= 8 * c * eps(Float64) * norm(xb)
+        end
+    end
+
     @testset "MINRES-QLP stops on a zero right-hand side and on an invariant space, $T" for T in REAL_ELTYPES
         ws = init_minresqlp_workspace(MINRESQLP(), zeros(T, 3))
         A = T.(Diagonal([2.0, -1.0, 3.0]))
@@ -941,7 +965,8 @@ end
         @test info.code == SUCCESS
         @test info.limited
         @test abs(info.stepnorm - δ) <= 8 * eps(T) * δ
-        # the inner iterations, the two products of the Cauchy point and one per trial
+        # every product is counted: the inner iterations, the two products of the Cauchy point and
+        # one per trial, so at least the first two terms
         @test state₊.ws.jvp_calls == count.n
         @test count.n >= state₊.ws.iterations + 2
         # a solve converges and counts every product

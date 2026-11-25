@@ -184,7 +184,7 @@ Jacobian–vector product, from automatic differentiation or from a [`JVPFunctio
 | a right preconditioner with methods of [`refresh!`](@ref) and [`apply_preconditioner!`](@ref) | an operator that is refreshed once per Newton step and applied before every product |
 | [`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) | as in R1 |
 | [`DogLeg`](@ref) | as in R1; it runs on the Arnoldi relation of one unrestarted cycle without a preconditioner |
-| [`Steihaug`](@ref) | `linsolve = MINRESQLP()`; truncated conjugate gradients on the model of the action, accepted by the ratio of `DogLeg` on ``\|F\|``, so a first direction of negative curvature is never accepted; near a root where the Hessian is indefinite that holds on an open cone of iterates, and a solve from there ends with `LINESEARCH_FAILED` |
+| [`Steihaug`](@ref) | `linsolve = MINRESQLP()`; truncated conjugate gradients that minimise the model of the action `S`, with trials accepted by the ratio of `DogLeg` on ``\|F\|``; a solve does not converge to a root where the Hessian of `S` is indefinite, also from a start close to it, and ends with `LINESEARCH_FAILED`; `DogLeg` does not have this limit |
 
 **Conditions of the regime.** R5 applies to a large system whose Jacobian no array can hold. A
 `GMRES` solve takes no factor reuse, no [`Refinement`](@ref), no [`LevenbergMarquardt`](@ref) and
