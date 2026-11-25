@@ -1036,6 +1036,24 @@ end
     end
 end
 
+# An `MVector` iterate is a value iterate as an `SVector` is: the record of `best = true` keeps an
+# immutable copy, so the state stays `isbits`, and the restored iterate is an `MVector` again.
+@testset "the R1 state of best = true is isbits for an MVector iterate" begin
+    prob = NonlinearProblem(best_nr)
+    m = Newton(; best = true)
+    opt = Options(Float64; max_iterations = 8)
+    @test isbits(init_state(Newton(), prob, MVector(0.5), nothing))
+    @test isbits(init_state(m, prob, MVector(0.5), nothing))
+    x₀ = MVector(0.5)
+    x, st, state = solve!!(init_state(m, prob, x₀, nothing), prob, x₀, m, nothing, opt)
+    @test isbits(state)
+    @test x isa MVector{1, Float64}
+    @test st.code == MAXITERS
+    @test best_close(st.fnorm, BEST_NR_F[7])
+    @test best_close(x[1]^2 + 1, BEST_NR_F[7])
+    @test x₀ == MVector(0.5)
+end
+
 @testset "an array solve with best = true or MaxNorm allocates no more than best = false" begin
     prob = NonlinearProblem(best_nr!)
     function allocated(m, opt)
@@ -1054,20 +1072,13 @@ end
 # `status.fnorm` is the global `‖F‖₂`, so it refuses `best = true` at any depth of the outer
 # method. An inner `Newton` is only stepped, so its `best = true` is taken and changes nothing.
 @testset "LeftPreconditioned refuses an outer Newton with best = true" begin
-    names_best(f) =
-        try
-            f()
-            false
-        catch e
-            e isa ArgumentError && occursin("best", e.msg) &&
-                occursin("LeftPreconditioned", e.msg)
-        end
+    refusal = r"^ArgumentError: LeftPreconditioned does not take a Newton with best = true as its outer method"
     prob = NonlinearProblem(best_nr!)
     pic = Picard(; damping = 0.5)
     for outer in (Newton(; best = true), Repeat(Newton(; best = true), 1))
         m = LeftPreconditioned(outer, pic)
-        @test names_best(() -> solve(prob, [0.5], m; max_iterations = 1))
-        @test names_best(() -> init(prob, [0.5], m))
+        @test_throws refusal solve(prob, [0.5], m; max_iterations = 1)
+        @test_throws refusal init(prob, [0.5], m)
     end
     _, st = solve(prob, [0.5], LeftPreconditioned(Newton(), pic); max_iterations = 1)
     @test st.code == MAXITERS

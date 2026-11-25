@@ -8,7 +8,7 @@
 # `μ_max` and the finite damping it keeps there, the rejection of a non-finite trial residual and
 # of a non-finite damped step, the refusal of the stacked solve on a device array and of a sparse
 # `jacobian_prototype`, the stacked step against the closed form in `Complex{BigFloat}`, the
-# standard reference column and the eleven cells that the standard set excepts, the storage and
+# standard reference column and the ten cells that the standard set excepts, the storage and
 # allocations of the state and of every path, and the solve of a `StationarityProblem`.
 #
 # The cases that need the step in closed form take a linear problem with an analytic `J` and one
@@ -607,20 +607,23 @@ end
         @test last(lm_column).globalization isa LevenbergMarquardt
     end
 
-    @testset "Check 1b: the eleven cells the standard set excepts (Done when 1)" begin
+    @testset "Check 1b: the ten cells the standard set excepts (Done when 1)" begin
         # `Done when 1` reads: on every full-rank problem of the standard set where `Newton()` with
         # `Backtracking()` returns `SUCCESS`, the `"Newton LevenbergMarquardt SVD"` cell returns
-        # `SUCCESS` too, except at the eleven cells below. Each is a case the specification states:
-        # P1 at `u0` and P8 at `u0`, in both precisions; P11 at `u0`, in both; P15 and P16 at `u0`
-        # and `10u0` in `Float64`; and P3 at `u0` in `Float32`. The reference column is `Newton()`
-        # with its default `LUFactorization()`, so that no column is chosen to fit the outcome.
+        # `SUCCESS` too, except at the ten cells below. Each is a case the specification states:
+        # P1 at `u0`, in both precisions; P8 at `u0` in `Float64`; P11 at `u0`, in both; P15 and
+        # P16 at `u0` and `10u0` in `Float64`; and P3 at `u0` in `Float32`. The reference column is
+        # `Newton()` with its default `LUFactorization()`, so that no column is chosen to fit the
+        # outcome. At P8 `u0` in `Float32`, the reference column ends `LINESEARCH_FAILED` under the
+        # recursive LU of `LUFactorization()` (the row is flagged unstable), so the clause does not
+        # apply there.
         excepted = Set([(1, "u0", Float32), (1, "u0", Float64),
-            (8, "u0", Float32), (8, "u0", Float64),
+            (8, "u0", Float64),
             (11, "u0", Float32), (11, "u0", Float64),
             (15, "u0", Float64), (15, "10u0", Float64),
             (16, "u0", Float64), (16, "10u0", Float64),
             (3, "u0", Float32)])
-        @test length(excepted) == 11
+        @test length(excepted) == 10
         column(name) = last(STANDARD_COLUMNS[findfirst(c -> first(c) == name, STANDARD_COLUMNS)])
         @test column("Newton Backtracking LU").linsolve isa LUFactorization
 
@@ -633,7 +636,7 @@ end
             @test cell.code != "SUCCESS"
         end
 
-        # ... and the eleven are the whole of the difference: a cell where the reference column
+        # ... and the ten are the whole of the difference: a cell where the reference column
         # succeeds and the damped SVD column does not is one of them, so that no failure of the
         # damping lies outside the cells the specification states.
         reference_ok = Set((c.problem, c.start, c.eltype)
@@ -645,7 +648,7 @@ end
         @test setdiff(reference_ok, svd_ok) ==
               Set((problem, start, string(T)) for (problem, start, T) in excepted)
 
-        # The eleventh cell, run: problem 3 (Powell badly scaled, full rank at its root) from `u0`
+        # The last cell, run: problem 3 (Powell badly scaled, full rank at its root) from `u0`
         # in `Float32`. `Newton()` with `Backtracking()` returns `SUCCESS`, while the `Float32` SVD
         # truncates `J` to rank one and the damped SVD step stalls at `‖F‖ = 6.7e-3`; the same
         # damping on the stacked QR and LU steps returns `SUCCESS`.

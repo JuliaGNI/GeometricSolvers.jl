@@ -139,7 +139,10 @@ Every type in this section is `isbits`, so a kernel can hold it, and every real 
 range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
 ``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return; a
 solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has factorised afresh
-at the iterate it returns.
+at the iterate it returns. Where such a solve returns the start point of a step it discards, the
+status carries the diagnostics of the factorisation at that point, not those of the later
+re-measure at the end of the step; its `iterations` counts the steps that reached that point, and
+its `stepnorm` is that of the last of them.
 With `regularization = μ ≠ 0`, `rank` and `nullnorm` describe ``J(x_k) + μ I`` and `gradratio`
 describes ``J(x_k)``, so the classification below holds for `μ = 0` only.
 For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1`, and `rank = 1`

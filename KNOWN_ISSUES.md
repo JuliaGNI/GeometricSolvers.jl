@@ -800,3 +800,91 @@
   `Int32(e)` in `factor_matrix` and `svd.jl`.
 - **kind:** defect
 - **found:** #108
+
+### K109 · No public solve is known to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.promoted` on that return
+
+- **location:** `src/nonlinear/solver.jl:83` (`discarded_step_status`, which takes `promoted`
+  from the status after `record` folds in the discarded step)
+- **evidence:** a trace of the loop of `solve!!` up to the discard return, on the
+  mirror-symmetric saddle problem (b) of the testset "a step that leaves a stationary start point
+  returns the start point" under seven globalizations, six perturbations and `Float64` and
+  `Float32` discards a step in 77 of 84 solves, and records `info.promoted == false` on each of
+  them (Julia 1.13.4, tree of `126ea3b`). The step-rule failures of a discarded step are
+  witnessed (`StrongWolfe(; maxiter = 1)` gives `step_failures == 1`, `Bisection(; maxiter = 1)`
+  gives `2`), and the promotion takes the same path, but only the unit test of
+  `discarded_step_status` with synthetic statuses reaches `promoted == true` there.
+- **kind:** missing test
+- **found:** 2026-11-24, a limit of the decision that tests the promotion on this return with
+  synthetic statuses only
+
+### K110 · The static LU and QR factors solve a subnormal matrix with `SUCCESS` and a large error, and the static `SVDFactorization(Float32)` gives `SINGULAR`
+
+- **location:** `src/linear/static/lu.jl:24`, `src/linear/static/qr.jl:9`,
+  `src/linear/static/qr_rect.jl:28`, `src/linear/static/svd.jl:171`
+- **evidence:** with `A = ldexp.(wellcond(Float64, 4, 4), -1070)` (`κ ≤ 3`) and
+  `b = ldexp.(rhs(Float64, 4), -1000)` (`wellcond` and `rhs` of `test/linear/linearproblem.jl`),
+  `factorize!!(nothing, method, SMatrix{4, 4}(A))` and `ldiv!!` give `SUCCESS` with a relative
+  error of 0.038 for `LUFactorization()` and 0.035 for `QRFactorization()` against the `BigFloat`
+  solution, `SUCCESS` and 3.1e-16 for `SVDFactorization()`, and `SINGULAR` for
+  `SVDFactorization(Float32)` (Julia 1.13.4). The static LU and QR scale a matrix only for a
+  factorisation type other than its element type (`factor_matrix`), so they factorise this matrix
+  unscaled. A `LinearProblem` of a static matrix takes these factors: its `3 × 5` QR gives
+  `SUCCESS` and 0.02, its `Float32` SVD `SINGULAR`. The `LinearSolver` of a dense or device
+  `m < n` system divides `Aᴴ` by `2^e` before it factorises it, and solves this matrix;
+  `test/linear/linearproblem.jl` leaves the subnormal matrix out of the static rows of its
+  scale-exponent testset for this reason.
+- **kind:** defect
+- **found:** 2026-11-24
+
+### K111 · The host and device LU, QR, LDLᵀ and Cholesky factors in the element type of the matrix solve a subnormal matrix with `SUCCESS` and a large error, or give `NONFINITE`
+
+- **location:** `src/linear/dense.jl:197` (`load_factors!`), which `factorize!!` of the host
+  factors in `src/linear/dense.jl` and of the device factors in `src/linear/ka/lu.jl:140`,
+  `src/linear/ka/qr.jl:153` and `src/linear/ka/ldlt.jl:385` calls
+- **evidence:** `load_factors!` copies a matrix unscaled where the factor element type is that of
+  the matrix, and divides it by `2^e` only otherwise. With
+  `A = ldexp.(wellcond(Float64, m, n), -1070)` (`spd(Float64, 4)` in place of `wellcond` for LDLᵀ
+  and Cholesky) and `b = ldexp.(rhs(Float64, m), -1000)`, the helpers of
+  `test/linear/linearproblem.jl`, `solve!(init(LinearProblem(A), method), b)` on a host `Array`
+  gives `SUCCESS` with a relative error against the `BigFloat` solution of 0.022 for
+  `LUFactorization()` 4 × 4, 0.029 for `QRFactorization()` 4 × 4, 0.028 for `QRFactorization()`
+  5 × 3 and 0.0098 for `CholeskyFactorization()` 4 × 4, and `NONFINITE` for
+  `LDLTFactorization()` 4 × 4.
+  `SVDFactorization()` gives 3.0e-16 (4 × 4) and 2.0e-16 (5 × 3), and the `3 × 5`
+  `QRFactorization()`, whose `Aᴴ` the `LinearSolver` divides by `2^e` before it factorises it,
+  5.3e-16 (Julia 1.13.4, tree of `b1896d0`). `test/linear/linearproblem.jl` tests the subnormal
+  matrix for `m < n` alone.
+- **kind:** defect
+- **found:** #115
+
+### K112 · OpenBLAS's `getrf!` gives a backward error of order one on a matrix whose entries are subnormal or near `floatmin`
+
+- **location:** `src/linear/dense.jl:258` (`factorize!!` for `DenseLU`, the `getrf!` path)
+- **evidence:** `randn(Xoshiro(n), T, n, n)` scaled by `s`, and
+  `‖A[p, :] − L U‖∞ / ‖A‖∞` in `BigFloat` (libopenblas64_ 0.3.30, Julia 1.13.4, Apple M4 Max):
+  `LAPACK.getrf!` gives 0.51, 1.1 (`Float32`, `s = floatmin`, n = 8, 32), 0.79 (`Float64`,
+  `s = floatmin`, n = 32) and 0.56–0.80 (`s = 2^20 · nextfloat(0)`, n = 8, 32, 64, both types);
+  `recursive_lu!` on the same matrices gives 1.2e-16 to 1.4e-6, the round-off of the subnormal
+  range. At `s = floatmin` and n = 64, `getrf!` gives 2.8e-7 (`Float32`) and 4.9e-16 (`Float64`),
+  of the recursion's size.
+  The `2 × 2` matrix `[s 1; s/2 1]` with `s = 4 · nextfloat(0)` keeps the multiplier `s/2`
+  unscaled in `getrf!`'s factor, where LAPACK's reference `getf2` divides it by the pivot. An
+  `n × n` Jacobian at such a scale in its own element type reaches `getrf!` unscaled for every `n`
+  outside the band of `use_recursive_lu`.
+- **kind:** upstream
+- **found:** 2026-11-24
+
+### K113 · The outer iteration counts of Check 6 in `test/composition/preconditioning.jl` are round-off sensitive, so a change of the block factor's round-off moves them across their bounds
+
+- **location:** `test/composition/preconditioning.jl:1083` (the testset "Check 6: the P8 counts
+  and the parallel schedule"; the NKS-RAS bound at `:1113`, the RASPEN bound at `:1136`)
+- **evidence:** a probe of 64 starts 1 ulp from `x0` (record of 2026-11-24): with `getrf!` as the
+  dense block factor, `Float64` RASPEN takes 4–9 outer iterations and
+  `Float32` NKS-RAS ends `MAXITERS` from 3 of the 64 starts; with `recursive_lu!` in the band
+  `8 ≤ n ≤ 32`, RASPEN takes 4–7 and every `Float32` solve ends `SUCCESS`. From `x0` itself,
+  `Float64` RASPEN takes 7 outer iterations under `recursive_lu!`, so a RASPEN bound of `<= 6`
+  fails. The RASPEN bound is `<= 9`, the top of the spread under `getrf!`; the NKS-RAS bound is
+  `<= 6`. The follow-up is a robust Check 6: a start or a `λ` whose measured spread of
+  outer iterations lies inside the bounds.
+- **kind:** missing test
+- **found:** 2026-11-24

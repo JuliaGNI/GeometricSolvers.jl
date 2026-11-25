@@ -11,6 +11,48 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
+  `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
+  factor's element type, runs `recursive_lu!` (`src/linear/recursive_lu.jl`) in place of
+  `LAPACK.getrf!`: a recursion over halves of the columns, an unblocked kernel on panels of at
+  most 16 columns, and BLAS `trsm!` and `gemm!` for the rest. It pivots by LAPACK's rule, the
+  first entry of largest `|Re| + |Im|`, writes `ipiv` and `info` in LAPACK's convention (`info`
+  is the first pivot that is exactly zero in its own arithmetic), and allocates nothing,
+  so `getrs!`, `reuse`, `ldiv!!` and the mixed-precision solve are unchanged. Every other `n`,
+  `ComplexF32` and a non-BLAS element type keep `getrf!` or the generic `lu!`. The band is where
+  `scripts/hardware/rl_host_lu.jl` (new) measured the recursion at `r = t(recursion)/t(getrf!) ≤
+  0.90` with BLAS on one thread and on all threads, on an Apple M4 Max with OpenBLAS 0.3.30 and
+  Julia 1.13.4, commit `35c0c75`; `Float64` gave `r` = 0.52, 0.37 and 0.60 at `n` = 8, 16 and 32
+  on one thread. At a subnormal pivot the recursion divides each multiplier, as LAPACK's `getf2`;
+  OpenBLAS's `getrf!` left the multiplier of such a `2 × 2` test matrix unscaled (K112). Because
+  the recursion's factor differs from `getrf!`'s in round-off,
+  `test/verification/standard_reference.csv` is regenerated, 169 rows: 144 change only `fnorm`,
+  the residual norm where the solve ends, and 25 change the code, the counts or the `unstable`
+  flag. Nineteen change the code or the iteration
+  count, all of them cells that the old and the new table flag `unstable`: 8/u0/`Float32`
+  `Newton Backtracking LU` (SUCCESS in 13 → LINESEARCH_FAILED in 11) and `Newton StrongWolfe LU`
+  (SUCCESS → LINESEARCH_FAILED, 6), 8/u0/`Float32` and 8/100u0/`Float32` `Newton reuse 3
+  Backtracking LU` (17 → 14, 175 → 150), 11/u0/`Float32` `Newton DogLeg LU` (21 → 26),
+  11/10u0/`Float32` `Newton Static LU` (MAXITERS in 200 → SUCCESS in 178), `Newton Backtracking
+  LU` (29 → 68), `Newton StrongWolfe LU` (LINESEARCH_FAILED in 43 → STALLED in 37) and `Fallback
+  Newton DogLeg LevenbergMarquardt` (215 → 178), 11/100u0/`Float32` `Newton Static LU` (MAXITERS
+  in 200 → SUCCESS in 107), `Newton Backtracking LU` (12 → 16), `Newton StrongWolfe LU`
+  (LINESEARCH_FAILED in 23 → STALLED in 19), `Newton reuse 3 Backtracking LU` (37 → 43) and
+  `Fallback Newton DogLeg LevenbergMarquardt` (215 → 107), 11/10u0/`Float64` and
+  11/100u0/`Float64` `Newton reuse 3 Backtracking LU` (32 → 33, 25 → 26), 11/100u0/`Float64`
+  `Newton StrongWolfe LU` (LINESEARCH_FAILED → STALLED, 45), 12/10u0/`Float32` `LeftPreconditioned
+  Picard Backtracking Newton` (2 → 1) and 14/10u0/`Float64` `Newton Bisection LU` (147 → 150).
+  11/10u0/`Float32` `Newton reuse 3 Backtracking LU` changes only its residual evaluations
+  (100 → 90). The `unstable` flag changes from true to false in five cells, 12/100u0/`Float32` in
+  the columns `Newton Static LU`, `Newton Backtracking LU`, `Newton Bisection LU`, `Newton
+  StrongWolfe LU` and `Newton reuse 3 Backtracking LU`, which stay SINGULAR at the first iteration:
+  no perturbed run of the marker moves from that outcome any more. The table's comparison of the
+  old and the new table reports 0 cells that differ. The check that `Newton LevenbergMarquardt
+  SVD` returns `SUCCESS` wherever `Newton Backtracking LU` does, except at the cells that its
+  specification states (`test/globalization/levenbergmarquardt.jl`), lists ten cells in place of
+  eleven: 8/u0/`Float32` leaves the list, because `Newton Backtracking LU` no longer returns
+  `SUCCESS` there.
+
 - **`init(prob, x₀)` and `solve(prob, x₀)` run on a `NonlinearProblem` and a `LeastSquaresProblem`
   with no method, and the new exported `default_method(prob, x₀)` names the method they take.**
   Both calls forward to `init(prob, x₀, default_method(prob, x₀), nothing; kwargs...)` and
@@ -28,6 +70,27 @@ so that a compat-only bump can be told apart from an interface change.
   it. `docs/src/guide.md` states the rules in one table. The tests are `test/nonlinear/default.jl`,
   in `nonlinear`; `test/nonlinear/commonsolve.jl` counts `NonlinearProblem` and
   `LeastSquaresProblem` among the first arguments of the package's `init` and `solve` methods.
+
+- **A least-squares solve returns the start point of a step that leaves a stationary point.** On
+  a `LeastSquaresProblem`, where the stationarity test passes on the factorisation that a step
+  takes at its start point `x_k`, `k ≥ 1`, and fails when `solve!!` re-measures it at the end of
+  the step, the solve returns `x_k` with `SUCCESS` and `status.stationary == true`, and no longer
+  goes on from the end of the step. The status is that of `x_k`: its `fnorm` and `stepnorm`, the
+  iterations that reached it and the diagnostics of its factorisation, while `step_failures` and
+  `promoted` still count the discarded step; `min_iterations` is read for `x_k`. At a saddle of
+  `‖F‖²` that the Gauss–Newton model reads as a minimum, such as the saddle that a
+  mirror-symmetric problem has on its symmetry set, the rule applies with every method and
+  globalization, so a solve whose step starts at such a saddle, with a factorisation taken there,
+  now ends there. A step along a reused factor (`reuse > 1`) carries the diagnostics of an earlier
+  point, so the rule does not fire at its start point and the solve goes on past a stationary
+  `x_k`. With `DogLeg` and with a line search capped at one iteration, whether the solve ended
+  there or ran on past it depended on rounding: a perturbation of the data by a few ULPs changed
+  the outcome. A solve that left such a saddle for a point of lower `‖F‖` ends at the saddle
+  instead, because the rule reads the stationarity test, not `‖F‖`; on the mirror-symmetric test
+  problem this holds for the default `GaussNewton()`, among others. The step from `x₀` is kept, and
+  every other problem type is unchanged. An array iterate keeps `x_k` and its
+  residual in two buffers that `init_state` allocates, so `solve!!` allocates nothing; `NewtonState`
+  gains the field `kept` for them.
 
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
@@ -1040,8 +1103,42 @@ so that a compat-only bump can be told apart from an interface change.
   keep their norm through `ToReal` and the batch tolerance; only the inner solves of
   `BatchEliminated` read it, and the inner iteration of the other two tests the 2-norm. The max
   norm is the new internal reduction `GeometricSolvers.rmaxnorm`, one `maximum(abs, ·)` with no
-  scalar indexing, so it runs on a device array and in a kernel;
-  `GeometricSolvers.stopping_norm(n, a)` gives `rnorm` or `rmaxnorm` by the norm `n`.
+  scalar indexing, so it runs on a device array and in a kernel.
+
+- **`LinearProblem(A)`, `init(prob, method)` and `solve!(solver, b)` solve a dense linear system
+  for many right-hand sides after one factorisation.** `LinearProblem`, `LinearSolver`,
+  `LinearStatus` and `refactorize!!` are exported. `LinearProblem(A)` holds a dense matrix in the
+  field `A`; a zero dimension or a sparse matrix raises an `ArgumentError`. `init` factorises with
+  `LUFactorization`, `QRFactorization`, `SVDFactorization`, `LDLTFactorization` or
+  `CholeskyFactorization` and returns a `LinearSolver`; `GMRES`, `UMFPACKFactorization` and a
+  precision marker such as `TF32` raise an `ArgumentError`. `solve!` returns `(x, status)` with an
+  `isbits` `LinearStatus` of `code::ReturnCode` and `rank::Int32`. A static matrix (R1) gives a
+  new `SVector` result and a solver that is `isbits` for an `isbits` element type, and `init`,
+  `solve!` and `refactorize!!` are inferred and allocation-free for a `Float64` `SMatrix`. Any
+  other dense `AbstractMatrix`, on the host or a device (R3), returns the buffer `solver.x`, which
+  the next `solve!` overwrites; on a `Float64` host `Array`, `solve!` and `refactorize!!` allocate
+  nothing after a warm-up. The object adds no kernel. `m == n` takes every factor type, and
+  `CholeskyFactorization` on a device raises an `ArgumentError`. `m > n` is the least-squares
+  solution through QR or SVD, the minimum-norm one where the SVD rank is below `n`; LU, LDLᵀ and
+  Cholesky raise an `ArgumentError` for `m ≠ n`. `m < n` is the minimum-norm solution through the
+  SVD of `Aᴴ` truncated at its rank, on every route, or through a QR of `Aᴴ`, `x = Q R⁻ᴴ b`, on a
+  static matrix and a host array; QR with `m < n` on a device array raises an `ArgumentError`. The
+  QR path is not rank-revealing: its `rank` is -1, and an exact zero on the diagonal of `R` gives
+  `SINGULAR`. The default SVD cutoff is that of the factored matrix with `max(m, n)` rows,
+  `√max(m, n) · eps(R) · σ₁`; `SVDFactorization(; rtol)` sets `rtol · σ₁`. The factors take
+  `factor_eltype(method, eltype(A))` and `x` is in `eltype(A)`; a lower precision divides `b` by
+  its largest absolute entry before the conversion, for `m < n` too, and there is no iterative
+  refinement. `SINGULAR` (factor `info ≠ 0`) gives `x` all `NaN` and `rank` -1. A non-finite `A` is
+  not factorised and gives `NONFINITE`, `rank` -1 and `x` all `NaN`; a non-finite `b` gives
+  `NONFINITE` and `x` all `NaN`, and a non-finite `x` gives `NONFINITE`. `rank` is the SVD rank
+  and -1 for every other factor. `refactorize!!(solver, A)` takes the same size (else
+  `DimensionMismatch`), element type and backend (else `ArgumentError`); it returns a new value on
+  R1, where the old solver still solves its matrix, and the same buffers, `x` included, on R3.
+  `LinearProblem` clashes with `SciMLBase.LinearProblem` for a caller that uses both packages, as
+  `NonlinearProblem` does; such a caller qualifies the name. Tests are in
+  `test/linear/linearproblem.jl` (core group), `test/devices/metal_linearproblem.jl` (metal group)
+  and a testset in `test/gpu/cuda/runtests.jl` that leaves out the `m > n` QR (K91 of
+  `KNOWN_ISSUES.md`); the API page has a section "Linear-solve object".
 
 - **`KroneckerFactorization(; block = LUFactorization())` solves the Newton steps of the stage
   system of an implicit Runge–Kutta method.** With the stage matrix `A = V Λ V⁻¹`, `Newton`

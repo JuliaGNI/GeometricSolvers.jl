@@ -594,15 +594,17 @@ end
 # last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the
 # working-precision factor slot for mixed-precision promotion (`nothing` where the factorisation
 # runs in the working precision, and for `LevenbergMarquardt`, which promotes nothing), the
-# promotion flag, the count of consecutive slow steps a promotion waits for, and the linear-solver
+# promotion flag, the count of consecutive slow steps a promotion waits for, the linear-solver
 # workspace, which only a [`GMRES`](@ref) or a [`MINRESQLP`](@ref) solve has (`nothing` for every
-# factorising method). For a value iterate the
+# factorising method), and the slots that `solve!!` copies the start point of a step and its
+# residual into (two buffers for an array iterate of a `LeastSquaresProblem`, `(nothing, nothing)`
+# otherwise). For a value iterate the
 # workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The factor
 # slot is the storage that each factorisation writes into; only a step with reuse stores the factor
 # it returns, because only such a step reads it again. The norm is `NaN` on a state that no
 # `start!!` saw or that `solve!!` returned. The last field is the record of the best iterate, a
 # `BestIterate` under `best = true` and `nothing` else.
-struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, BR}
+struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS, BR}
     jacprep::JP
     jvpprep::VP
     Fx::FX
@@ -619,33 +621,24 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, BR}
     promoted::Bool
     slow_steps::Int32
     ws::WS
+    kept::KS
     best::BR
 end
 
-# The state of a factorising method, whose linear solve keeps no workspace of its own: the fifteen
-# fields of a state whose linear method forms and factorises a Jacobian.
-@inline function NewtonState(jacprep::JP, jvpprep::VP, Fx::FX, d::D, fac::FAC, J::JM, g::G,
-        rule::RS, merit::PH, fnorm::R, diag::DG, refbuf::RB, fac_T::FT, promoted::Bool,
-        slow_steps::Int32) where {JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT}
+# A state with no slots for the start point of a step and no record of the best iterate: the
+# fields up to the workspace `ws`, which defaults to `nothing` for a factorising method, whose
+# linear solve keeps no workspace of its own.
+@inline function NewtonState(jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag,
+        refbuf, fac_T, promoted::Bool, slow_steps::Int32, ws = nothing)
     return NewtonState(
-        jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf,
-        fac_T, promoted, slow_steps, nothing)
-end
-
-# The state with no record of the best iterate: the sixteen fields before it.
-@inline function NewtonState(jacprep::JP, jvpprep::VP, Fx::FX, d::D, fac::FAC, J::JM, g::G,
-        rule::RS, merit::PH, fnorm::R, diag::DG, refbuf::RB, fac_T::FT, promoted::Bool,
-        slow_steps::Int32, ws::WS) where {
-        JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS}
-    return NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, Nothing}(
         jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf, fac_T,
-        promoted, slow_steps, ws, nothing)
+        promoted, slow_steps, ws, (nothing, nothing), nothing)
 end
 
 # The record of the best iterate of a solve under `best = true`: the iterate `x`, its residual
-# `Fx` and its norm `fnorm`. For a value iterate `x` is the value and `Fx` is `nothing`, so the
-# record is `isbits`; for an array iterate both are copies that the record owns. `fnorm` is `NaN`
-# until `start!!` sets it to the norm of the start.
+# `Fx` and its norm `fnorm`. For a value iterate `x` is the value, an `SVector` for an `MVector`
+# iterate, and `Fx` is `nothing`, so the record is `isbits`; for an array iterate both are copies
+# that the record owns. `fnorm` is `NaN` until `start!!` sets it to the norm of the start.
 struct BestIterate{X, FX, R <: Real}
     x::X
     Fx::FX
@@ -658,13 +651,21 @@ end
     return BestIterate(best_slot(x), best_slot(Fx), real(eltype(x))(NaN))
 end
 @inline best_slot(x::Union{Number, StaticArray}) = x
+@inline best_slot(x::StaticVector) = SVector(x)
 @inline best_slot(x::AbstractArray) = similar(x)
 @inline best_slot(::Nothing) = nothing
+
+# The iterate `x` in the record's slot, and the record's iterate `b` in the type of `x`: a static
+# vector is kept as an `SVector`, which an `MVector` iterate takes back as an `MVector`.
+@inline keep_iterate!!(slot, x) = copy!!(slot, x)
+@inline keep_iterate!!(::StaticVector, x::StaticVector) = SVector(x)
+@inline restore_iterate!!(x, b) = copy!!(x, b)
+@inline restore_iterate!!(x::StaticVector, b::StaticVector) = convert(typeof(x), b)
 
 @inline function with_best(s::NewtonState, best)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, best)
 end
 
 # The record after an iterate `x` with residual `Fx` and norm `fnorm`: it takes `x` where `fnorm`
@@ -684,17 +685,19 @@ end
 @inline function restore_best(b::BestIterate, x, Fx, status::SolverStatus)
     should_restore_best(status, b.fnorm) || return x, status
     restore_residual!!(Fx, b.Fx)
-    return copy!!(x, b.x), with_fnorm(status, b.fnorm)
+    return restore_iterate!!(x, b.x), with_fnorm(status, b.fnorm)
 end
 @inline restore_residual!!(Fx, ::Nothing) = nothing
 @inline restore_residual!!(Fx, slot) = copy!!(Fx, slot)
 
 @inline state_gradratio(state::NewtonState) = state.diag.gradratio
 @inline state_jnorm(state::NewtonState) = state.diag.jnorm
+@inline step_start_buffers(state::NewtonState) = state.kept
 
 # The state whose diagnostics measure the stationarity test at `(x, Fx)`: `solve!!` re-measures
-# them at the iterate it returns, because a step's diagnostics are those of the last fresh
-# factorisation, at the start of that step. Every other method and problem keeps its reading.
+# them at the end of a step before it returns that iterate on the test, because a step's
+# diagnostics are those of the last fresh factorisation, at the start of that step. Every other
+# method and problem keeps its reading.
 @inline refresh_diagnostics!!(state, method, prob, x, Fx, p) = state
 @inline function refresh_diagnostics!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing}, prob::LeastSquaresProblem,
@@ -723,13 +726,13 @@ end
 @inline function with_factor(s::NewtonState, fac)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
 end
 
 @inline function with_factor_T(s::NewtonState, fac_T)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws, s.best)
+        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
 end
 
 @inline function update_stored_factor(
@@ -745,7 +748,7 @@ end
 @inline function with_rule(s::NewtonState, rule)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
 end
 
 # The merit of the current residual and its norm: the two values a step returns, or that a solve
@@ -754,19 +757,19 @@ end
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit,
         oftype(s.fnorm, fnorm), s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
 end
 
 @inline function with_diag(s::NewtonState, diag)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
 end
 
 @inline function with_mixed(s::NewtonState, promoted::Bool, slow_steps::Int32)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, promoted, slow_steps, s.ws, s.best)
+        s.refbuf, s.fac_T, promoted, slow_steps, s.ws, s.kept, s.best)
 end
 
 # ─── A `Number` iterate on the one-entry vector path ─────────────────────────
@@ -930,10 +933,11 @@ end
                 nothing
         zero_promoted_factors!(fac_T)
         refbuf = init_refinement(m.refinement, x)
+        kept = prob isa LeastSquaresProblem ? (buffer(x), buffer(Fx)) : (nothing, nothing)
         return NewtonState(
             jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, fac_T, x, Fx),
             init_globalization(m.globalization, m.linsolve, x, Fx), rule, merit, R(NaN),
-            diag, refbuf, fac_T, false, Int32(0), nothing)
+            diag, refbuf, fac_T, false, Int32(0), nothing, kept, nothing)
     end
 end
 
@@ -1020,7 +1024,7 @@ end
 
 @inline start_best(::Nothing, x, Fx, fnorm₀) = nothing
 @inline function start_best(b::BestIterate, x, Fx, fnorm₀)
-    return BestIterate(copy!!(b.x, x), keep_residual!!(b.Fx, Fx), oftype(b.fnorm, fnorm₀))
+    return BestIterate(keep_iterate!!(b.x, x), keep_residual!!(b.Fx, Fx), oftype(b.fnorm, fnorm₀))
 end
 
 # The state that `solve!!` returns carries the merit and the norm of `init_state` again. A step on

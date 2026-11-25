@@ -458,25 +458,20 @@ function elim_best_r!(y, x, p)
     return y
 end
 
-names_best(f) =
-    try
-        f()
-        false
-    catch e
-        e isa ArgumentError && occursin("best", e.msg)
-    end
+const elim_refusal = r"^ArgumentError: BlockEliminated and VariableProjection take no outer Newton with best = true"
+const batch_refusal = r"^ArgumentError: a BatchEliminated problem takes no outer Newton with best = true"
 
 @testset "an outer Newton with best = true is refused, $route" for route in (:SVector, :Vector)
     static = route === :SVector
     x0 = static ? SVector(0.5, 0.5, 1.5) : [0.5, 0.5, 1.5]
     be = BlockEliminated(NonlinearProblem(static ? elim_best_f : elim_best_f!), (1, 2))
     m = Newton(; linsolve = SVDFactorization(), best = true)
-    @test names_best(() -> solve(be, x0, m))
-    @test names_best(() -> init(be, x0, m))
+    @test_throws elim_refusal solve(be, x0, m)
+    @test_throws elim_refusal init(be, x0, m)
     vp = VariableProjection(LeastSquaresProblem(static ? elim_best_r : elim_best_r!, 4), (
         1, 2))
-    @test names_best(() -> solve(vp, x0, GaussNewton(; linsolve = SVDFactorization(),
-        best = true)))
+    @test_throws elim_refusal solve(vp, x0, GaussNewton(; linsolve = SVDFactorization(),
+        best = true))
     x, st = solve(be, x0, Newton(; linsolve = SVDFactorization()))
     @test st.code == SUCCESS
     @test all(abs.(collect(x) .- [2.0, 4.0, 2.0]) .<= 1e-8)
@@ -485,8 +480,8 @@ end
 @testset "a BatchEliminated outer Newton with best = true is refused" begin
     prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 8, N_p = 16)
     m = Newton(; linsolve = GMRES(; maxiter = 16), best = true)
-    @test names_best(() -> init(prob, E0, m))
-    @test names_best(() -> solve(prob, E0, m))
+    @test_throws batch_refusal init(prob, E0, m)
+    @test_throws batch_refusal solve(prob, E0, m)
     @test init(prob, E0, Newton(; linsolve = GMRES(; maxiter = 16))) isa GS.NonlinearSolver
 end
 

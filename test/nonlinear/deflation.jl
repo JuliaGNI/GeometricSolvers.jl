@@ -704,22 +704,16 @@ end
 # The best iterate of a `Newton` ranks `‖M F‖₂`, while `status.fnorm` of a deflated solve is the
 # inner `‖F‖₂`, so a `Deflated` problem refuses `best = true` at every entry point.
 @testset "A Newton with best = true is refused, naming best" begin
-    names_best(f) =
-        try
-            f()
-            false
-        catch e
-            e isa ArgumentError && occursin("best", e.msg)
-        end
+    refusal = r"^ArgumentError: Deflated takes no Newton with best = true"
     m = Newton(; best = true)
-    @test names_best(() -> solve(Deflated(NonlinearProblem((x, p) -> x .* x .- 4), (2.0,)),
-        1.0, m))
+    @test_throws refusal solve(Deflated(NonlinearProblem((x, p) -> x .* x .- 4), (2.0,)),
+        1.0, m)
     def = Deflated(p2_problem_ad(), (SVector(1.0, 2.0),))
     x0 = SVector(0.8, 1.7)
-    @test names_best(() -> solve(def, x0, m))
-    @test names_best(() -> init(def, x0, m))
-    @test names_best(() -> solve_batch!(fill(x0, 2), def, m))
-    @test names_best(() -> solve(def, x0, Newton(; globalization = Backtracking(), best = true)))
+    @test_throws refusal solve(def, x0, m)
+    @test_throws refusal init(def, x0, m)
+    @test_throws refusal solve_batch!(fill(x0, 2), def, m)
+    @test_throws refusal solve(def, x0, Newton(; globalization = Backtracking(), best = true))
     @test GS.isconverged(last(solve(def, x0, Newton(; globalization = Backtracking()))))
 end
 
@@ -752,6 +746,20 @@ end
         @test st.code == SUCCESS
         @test st.iterations == 0
         @test x == x0
+    end
+    # far from the root the deflation factor is the subnormal shift, so the deflated residual is
+    # near `1e-310` while the inner residual is 1: the max-norm test takes `f_abstol = 2` as the
+    # 2-norm test does, without forming the overflowing reciprocal of the factor
+    one!(y, x, p) = (y .= one(eltype(x)); y)
+    for (prob, x0) in (
+        (Deflated(NonlinearProblem((x, p) -> one(x)), (0.0,); shift = 1e-310), 1e160),
+        (Deflated(NonlinearProblem(one!), ([0.0],); shift = 1e-310), [1e160]))
+        for n in (L2Norm(), MaxNorm())
+            x, st = solve(prob, x0, Newton(); f_abstol = 2.0, f_reltol = 0.0, norm = n,
+                max_iterations = 0)
+            @test st.code == SUCCESS
+            @test st.fnorm ≈ 1 rtol = 8eps()
+        end
     end
 end
 
