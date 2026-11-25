@@ -51,12 +51,12 @@ that is not finite ends the step with `NONFINITE`, and the iterate stays.
 `E == U` compares the index sets as the problem stores them, so `E = (1, 2)` with `U = (2, 1)`
 gives a nonsymmetric Jacobian and raises an `ArgumentError`; so do a [`NonlinearProblem`](@ref)
 or any other problem, whose Jacobian is not known to be symmetric and which [`GMRES`](@ref)
-takes, and a value iterate (a `Number` or a `StaticArray`). The product comes from the `jacobian` of the
-`Newton`: a [`JVPFunction`](@ref) on the unknowns `x[U]`, or by default the Hessian–vector product
-of the problem's automatic differentiation. `MINRESQLP` takes no preconditioner: a `preconditioner`
-other than `nothing`, here or in [`Newton`](@ref), raises an `ArgumentError`, and so do
-`maxiter < 1`, a factor reuse, a [`Refinement`](@ref) and a [`LevenbergMarquardt`](@ref)
-globalization. A [`DogLeg`](@ref) takes its Cauchy point from two Hessian–vector products and its
+takes, and a value iterate (a `Number` or a `StaticArray`). The product comes from the `jacobian`
+of the `Newton`: a [`JVPFunction`](@ref) on the unknowns `x[U]`, or by default the Hessian–vector
+product of the problem's automatic differentiation. `MINRESQLP` takes no preconditioner: a
+`preconditioner` other than `nothing`, here or in [`Newton`](@ref), raises an `ArgumentError`,
+and so do `maxiter < 1`, a factor reuse, a [`Refinement`](@ref) and a
+[`LevenbergMarquardt`](@ref) globalization. A [`DogLeg`](@ref) takes its Cauchy point from two Hessian–vector products and its
 predicted reduction from one more per trial, and [`Steihaug`](@ref) replaces the inner solve by its
 truncated conjugate gradients.
 """

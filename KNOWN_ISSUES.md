@@ -353,11 +353,11 @@
 
 ### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
 
-- **location:** `src/nonlinear/stationarity.jl:410` (`_init_stationarity_state`),
+- **location:** `src/nonlinear/stationarity.jl:458` (`_init_stationarity_state`),
   `src/ad/hessian.jl:316-317` (`_build_pos_maps`)
 - **evidence:** With `prob = @allowscalar StationarityProblem(S, JLArray([1, 2]), JLArray([1, 2]))`
   and `allowscalar(false)`, `solve(prob, JLArray([1.0, 1.0]), Newton())` raises "Scalar indexing
-  is disallowed" at `stationarity.jl:410` (`Int[Int(i) for i in prob.U]`), and
+  is disallowed" at `stationarity.jl:458` (`Int[Int(i) for i in prob.U]`), and
   `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:316`,
   where `prepare_ad` copies `E` and `U` to the host by iteration. The same problems with host
   index sets `[1, 2]` and a `JLArray` iterate return `SUCCESS` (merge of `main` into `task/ay`,
@@ -712,7 +712,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1742`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1901`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -888,3 +888,16 @@
   outer iterations lies inside the bounds.
 - **kind:** missing test
 - **found:** 2026-11-24
+
+### K114 · A line search returns `NONFINITE` at a start whose residual norm is finite but above `√floatmax`, because its merit `norm2(F)` overflows
+
+- **location:** `src/globalization/linefunction.jl:85` (`start_merit`; the trial merit at `:36`)
+- **evidence:** `NonlinearProblem((F, x, _) -> (F .= sinh.(x); nothing))` from
+  `fill(50.0f0, 3)`: `‖F‖ = √3 sinh(50) ≈ 4.5e21` is finite in `Float32`, and
+  `norm2(F) = Inf32`. `solve` with `Newton(; globalization = Backtracking())` and with
+  `Bisection()` returns `NONFINITE` after 1 iteration with a finite iterate; with `Static(1.0)` it
+  returns `SUCCESS` after 8 iterations (`origin/main` at `e7af5e7`, Julia 1.13.4). The same start
+  as `StationarityProblem((x, p) -> sum(cosh, x))` gives `NONFINITE` with `GMRES` and with
+  `MINRESQLP` under both line searches.
+- **kind:** defect
+- **found:** 2026-11-25

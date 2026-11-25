@@ -2,11 +2,11 @@
     Steihaug(; radius = nothing)
 
 The trust-region globalization of [`Newton`](@ref) by truncated conjugate gradients (Steihaug
-1983, doi:10.1137/0720042): `Newton(; linsolve = MINRESQLP(), globalization = Steihaug())`. It solves the symmetric
-system of a [`StationarityProblem`](@ref) with `E == U`, and needs the linear method
-[`MINRESQLP`](@ref), whose `maxiter` caps the conjugate-gradient iterations of a step and whose
-forcing term sets their relative tolerance ``\\eta_k``; the conjugate gradients take the place of
-the MINRES-QLP solve. Any other linear method raises an `ArgumentError` in the constructor of
+1983, doi:10.1137/0720042): `Newton(; linsolve = MINRESQLP(), globalization = Steihaug())`. It
+solves the symmetric system of a [`StationarityProblem`](@ref) with `E == U`, and needs the linear
+method [`MINRESQLP`](@ref), whose `maxiter` caps the conjugate-gradient iterations of a step and
+whose forcing term sets their relative tolerance ``\\eta_k``; the conjugate gradients take the
+place of the MINRES-QLP solve. Any other linear method raises an `ArgumentError` in the constructor of
 `Newton`, and so does a factor reuse.
 
 The step minimises the quadratic model ``q(d) = F^H d + \\tfrac12 d^H J d`` of the action `S`
