@@ -893,22 +893,25 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:293` (the zero-step end of `solve!!`, which returns
-  `SUCCESS` where the stationarity test holds), `src/globalization/dogleg.jl`
+- **location:** `src/nonlinear/solver.jl:277` (the stationarity test of `solve!!` after a step,
+  which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
+  at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
   stationary start point returns the start point" in `test/nonlinear/leastsquares.jl`, with
   `GaussNewton(; globalization = DogLeg())`, six perturbations of the data by a few ULPs and
   `SVector`, `Array` and `JLArray` iterates, the solve returns the first iterate near the saddle
   (`u = 1`, `|v|` from `6.0f-6` to `1.2f-5` in `Float32` and from `5.6e-12` to `2.2e-11` in
-  `Float64`, where the minima are near `v = ±1`), with `SUCCESS`, `stationary == true` and
-  `iterations == 2` in 9 of the 18 `Float32` solves (perturbations 1–3) and 15 of the 18
-  `Float64` solves (perturbations 1–5); the other solves reach a minimum near `v = ±1`. The tree
-  of `8eddb7c` gives the same outcome in each of the 216 solves of the six methods of that
-  testset (Julia 1.13.4). The model reduction of the step from the first iterate is at the
-  rounding level of `‖r‖`, so `DogLeg` rejects the step, and the zero step ends the solve on the
-  stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ g_tol`, which holds at the saddle. That test reads no
-  curvature, so it cannot tell the saddle from a minimum. The testset asserts for each `DogLeg`
-  solve only that its status holds for the point it returns, not that it reaches a minimum.
+  `Float64`, where the minima are near `v = ±1`), with `SUCCESS`, `stationary == true`,
+  `iterations == 2` and `step_failures == 1` in 9 of the 18 `Float32` solves (perturbations 1–3)
+  and 15 of the 18 `Float64` solves (perturbations 1–5); the other solves reach a minimum near
+  `v = ±1`. The tree of `8eddb7c` gives the same outcome in each of the 216 solves of the six
+  methods of that testset (Julia 1.13.4). The model reduction of the step from the first iterate
+  is at the rounding level of `‖r‖`, so `DogLeg` rejects every trial down to the floor of its
+  radius and returns `LINESEARCH_FAILED` with a zero step. `solve!!` stops on such a step only
+  where the stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ g_tol` fails, and that test holds at the
+  saddle, so the solve ends on it with `SUCCESS`. That test reads no curvature, so it cannot tell
+  the saddle from a minimum. The testset asserts for each `DogLeg` solve only that its status
+  holds for the point it returns, not that it reaches a minimum.
 - **kind:** defect
 - **found:** 2026-11-25, the review of the branch that returns the step start only where the
   discarded step does not lower `‖F‖`
