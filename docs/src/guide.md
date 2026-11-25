@@ -17,7 +17,7 @@ iterate with a matrix-free linear solver:
 | **R1** value semantics | `Number` or `SVector` | [`solve`](@ref) | a factorisation of a static matrix |
 | **R2** batched | an array of `Number` or `SVector`, one entry per system | [`solve_batch!`](@ref) | a factorisation of a static matrix, per system |
 | **R3** in place | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | a factorisation of a dense or sparse matrix |
-| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref), with no Jacobian matrix |
+| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref) or [`MINRESQLP`](@ref), with no Jacobian matrix |
 
 `Newton()` takes `linsolve = LUFactorization()` and `globalization = Static()` unless the caller
 gives others (see [Nonlinear methods](@ref nonlinear)).
@@ -171,9 +171,9 @@ true
 
 ## R5: one system without a Jacobian matrix
 
-**Methods.** [`Newton`](@ref) with `linsolve = GMRES()` holds no ``n \times n`` Jacobian. Each
-inner iteration of [`GMRES`](@ref) takes one Jacobian–vector product, from automatic
-differentiation or from a [`JVPFunction`](@ref).
+**Methods.** [`Newton`](@ref) with `linsolve = GMRES()` or `MINRESQLP()` holds no
+``n \times n`` Jacobian. Each inner iteration of [`GMRES`](@ref) or [`MINRESQLP`](@ref) takes one
+Jacobian–vector product, from automatic differentiation or from a [`JVPFunction`](@ref).
 
 | method or option | condition |
 |:--|:--|

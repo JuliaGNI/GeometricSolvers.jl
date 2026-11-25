@@ -6,7 +6,7 @@ CurrentModule = GeometricSolvers
 
 The linear solver of a [`Newton`](@ref) step is its `linsolve`. A linear-solver method is a
 [`LinearMethod`](@ref): either a factorisation, which the state factorises into a factor of the
-type that the iterate selects, or the matrix-free [`GMRES`](@ref).
+type that the iterate selects, or the matrix-free [`GMRES`](@ref) or [`MINRESQLP`](@ref).
 
 ## Factorisation methods
 

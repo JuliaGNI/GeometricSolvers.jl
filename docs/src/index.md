@@ -47,7 +47,7 @@ true
 - [Globalization](@ref globalization): line searches, the dogleg trust region and
   Levenberg–Marquardt.
 - [Linear solvers](@ref linear): static, dense, device and sparse factorisations, and the
-  matrix-free [`GMRES`](@ref).
+  matrix-free [`GMRES`](@ref) and [`MINRESQLP`](@ref).
 - [Automatic differentiation](@ref ad): ForwardDiff, DifferentiationInterface and sparse
   Jacobians.
 - [Composition and preconditioning](@ref composition): combinators, Anderson and Broyden
