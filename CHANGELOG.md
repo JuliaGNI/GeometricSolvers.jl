@@ -1075,8 +1075,7 @@ so that a compat-only bump can be told apart from an interface change.
   keep their norm through `ToReal` and the batch tolerance; only the inner solves of
   `BatchEliminated` read it, and the inner iteration of the other two tests the 2-norm. The max
   norm is the new internal reduction `GeometricSolvers.rmaxnorm`, one `maximum(abs, ·)` with no
-  scalar indexing, so it runs on a device array and in a kernel;
-  `GeometricSolvers.stopping_norm(n, a)` gives `rnorm` or `rmaxnorm` by the norm `n`.
+  scalar indexing, so it runs on a device array and in a kernel.
 
 - **`LinearProblem(A)`, `init(prob, method)` and `solve!(solver, b)` solve a dense linear system
   for many right-hand sides after one factorisation.** `LinearProblem`, `LinearSolver`,
