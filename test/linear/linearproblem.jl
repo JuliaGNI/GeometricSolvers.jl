@@ -549,12 +549,12 @@ end
     T in ELTYPES
 
     # The exact solution of `[2t t; t t] x = (0, t)` is `(-1, 2)`. The factor of `A / 2^e` lies in
-    # the normal range, `e` the exponent of `2t` clamped to `-exponent(floatmax(R))`, but the
-    # right-hand side `(0, t)` is not scaled up, so the forward substitution gives an entry of the
-    # size of `t / √(t 2^-e) = √(t 2^e)`, a subnormal whose spacing `t` is a relative error of
-    # `√(t 2^-e) < √(t floatmax(R))`: `2^-25` in `Float64`, `2^-10.5` in `Float32`, of which the
-    # bound allows 4. The factor of `A` unscaled loses `L₂₁² = t/2` below the smallest subnormal and
-    # gives `(-0.5, 1)`, a relative error of 0.5.
+    # the normal range, `e` the exponent of `2t` clamped to `-exponent(floatmax(R))` and rounded
+    # down to an even one, but the right-hand side `(0, t)` is not scaled up, so the forward
+    # substitution gives an entry of the size of `t / √(t 2^-e) = √(t 2^e)`, a subnormal whose
+    # spacing `t` is a relative error of `√(t 2^-e) ≈ √(t floatmax(R))`: `2^-25` in `Float64`,
+    # `2^-10.5` in `Float32`, of which the bound allows 4. The factor of `A` unscaled loses
+    # `L₂₁² = t/2` below the smallest subnormal and gives `(-0.5, 1)`, a relative error of 0.5.
     R = real(T)
     t = nextfloat(zero(R))
     A = T[2t t; t t]

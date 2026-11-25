@@ -515,9 +515,9 @@ end
 
 # --- DenseCholesky ---
 
-# The scale of a factor in another element type is taken from the entries that the factorisation
-# reads, the lower triangle and the real diagonal (`cholesky_exponent`). A non-finite entry of `J`
-# anywhere is refused before the factorisation: `potrf` reads the lower triangle only and returns
+# The scale of the factor is taken from the entries that the factorisation reads, the lower
+# triangle and the real diagonal (`cholesky_exponent`). A non-finite entry of `J` anywhere is
+# refused before the factorisation: `potrf` reads the lower triangle only and returns
 # `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8). The
 # test is on `J`, not on the factor buffer, where an entry above the diagonal or an imaginary part
 # of the diagonal can overflow in the conversion and is not read. `potrf` leaves the upper triangle

@@ -964,7 +964,7 @@
   `floatmax`. With `s = 2^10 · nextfloat(zero(R))`, `A = 3s · I(5)`, `A[3, 1] = A[1, 3] = s` and
   `b = fill(s, 5)`, whose solution `(1/4, 1/3, 1/4, 1/3, 1/3)` lies in the normal range,
   `solve!(init(LinearProblem(A), CholeskyFactorization()), b)` gives `SUCCESS`, a factor of
-  `A / 2^e` in the normal range (`e = -1023` in `Float64`, `-127` in `Float32`), and a relative
+  `A / 2^e` in the normal range (`e = -1024` in `Float64`, `-128` in `Float32`), and a relative
   error against the `BigFloat` solution of `1.9e-4` in the 2-norm and `3.7e-4` in the maximum
   norm, on `SMatrix`, `Array` and `JLArray` in `Float32`, `Float64`, `ComplexF32` and
   `ComplexF64`. The forward substitution forms `L₃₁ y₁ ≈ s/3`, a subnormal that rounds to a
