@@ -889,7 +889,7 @@
 - **kind:** missing test
 - **found:** 2026-11-24
 
-### K114 · A line search returns `NONFINITE` at a start whose residual norm is finite but above `√floatmax`, because its merit `norm2(F)` overflows
+### K128 · A line search returns `NONFINITE` at a start whose residual norm is finite but above `√floatmax`, because its merit `norm2(F)` overflows
 
 - **location:** `src/globalization/linefunction.jl:85` (`start_merit`; the trial merit at `:36`)
 - **evidence:** `NonlinearProblem((F, x, _) -> (F .= sinh.(x); nothing))` from
