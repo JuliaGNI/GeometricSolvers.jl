@@ -49,9 +49,9 @@ end
 end
 
 function svd_rect_matrix(::Type{F}, J::StaticMatrix{M, N, T}) where {F, M, N, T}
-    e = matrix_exponent(J)
+    e = svd_exponent(J)
     S = SMatrix{M, N, T}(J)
-    return SMatrix{M, N, F}(iszero(e) ? S : S * ldexp(one(float(real(T))), -e)), Int32(e)
+    return SMatrix{M, N, F}(iszero(e) ? S : map(a -> ldexp2(a, -e), S)), Int32(e)
 end
 
 @inline function rect_column_norm2(A::StaticMatrix{M, N, F}, j) where {M, N, F}

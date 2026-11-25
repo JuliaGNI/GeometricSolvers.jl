@@ -15,7 +15,7 @@ using GeometricSolvers
 using GeometricSolvers: NONFINITE, SINGULAR, SUCCESS, factor_eltype
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
-using LinearAlgebra: norm
+using LinearAlgebra: norm, opnorm
 using SparseArrays: sparse
 using StaticArrays: SMatrix, SVector
 using Test
@@ -73,6 +73,17 @@ function xref(A::AbstractMatrix, b::AbstractVector)
 end
 
 relerr(x, xr) = Float64(norm(big.(Vector(x)) - xr) / norm(xr))
+
+# `a · 2^k`, by component for a complex `a`, exact unless it leaves the floating-point range.
+pow2(a::Real, k::Integer) = ldexp(a, k)
+pow2(a::Complex, k::Integer) = complex(ldexp(real(a), k), ldexp(imag(a), k))
+
+# `κ₁(A) = ‖A‖₁ ‖A⁺‖₁` of the matrix as it is rounded, in `BigFloat`, for `m ≥ n` of full rank.
+function cond1(A::AbstractMatrix)
+    Ab = big.(Matrix(A))
+    P = size(Ab, 1) == size(Ab, 2) ? inv(Ab) : (Ab' * Ab) \ Matrix(Ab')
+    return Float64(opnorm(Ab, 1) * opnorm(P, 1))
+end
 
 # The truncated pseudo-inverse solution of the fixture with the singular values `σ` at rank `r`:
 # the tall fixture `F` gives `x[j] = conj(ph_j) b[perm[j]] / σ_j`, its adjoint
@@ -460,12 +471,8 @@ end
 
     # The factor of a dense or device array divides `Aᴴ / 2^e` by a power of two of its own, which
     # the solve adds to `e`: where the largest entry of `A / 2^e` rounds up to 2 in a `Float32`
-    # factor, and where `A` is subnormal. The static factors scale `A` themselves, the QR only for a
-    # factor element type other than that of `A`; their QR in the element type of `A` and their
-    # `Float32` SVD lose the accuracy of a subnormal matrix here and on the square path (K110 of
-    # `KNOWN_ISSUES.md`), so that matrix is left out of every static row.
+    # factor, and where `A` is subnormal. The static factors scale `Aᴴ` themselves.
     device_wide_qr(route, method, 3, 5) && continue
-    route == "SMatrix" && A_kind == "subnormal" && continue
     A = wellcond(Float64, 3, 5)
     b = rhs(Float64, 3)
     if A_kind == "subnormal"
@@ -478,6 +485,78 @@ end
     x, st, _ = lp_solve(route, method, A, b)
     @test st.code == SUCCESS
     @test relerr(x, xref(A, b)) <= 64 * eps(factor_eltype(method, Float64))
+end
+
+@testset "a subnormal matrix: $route, $T, $(nameof(typeof(method))), $m × $n" for route in ROUTES,
+    T in ELTYPES,
+    (method, m, n) in ((LUFactorization(), 4, 4), (QRFactorization(), 4, 4),
+        (SVDFactorization(), 4, 4), (LDLTFactorization(), 4, 4),
+        (CholeskyFactorization(), 4, 4), (QRFactorization(), 5, 3),
+        (SVDFactorization(), 5, 3), (SVDFactorization(Float32), 4, 4),
+        (SVDFactorization(Float32), 5, 3))
+
+    # Every factor in the element type of the matrix divides it by the power of two of its largest
+    # entry, so that it factorises a matrix in the normal range, and so does the `Float32` SVD of a
+    # `Float64` matrix, whose sweep squares the entries. The entries of `2^kA A₀` lie 4 bits above
+    # the smallest subnormal (`kA = -1070` in `Float64`, `-145` in `Float32`), and
+    # `b = 2^(kA + 70) b₀` and the solution lie in the normal range. The matrix rounded to the
+    # subnormal grid keeps the diagonal dominance of `A₀`, so a backward-stable solve meets a
+    # small multiple of `eps(RF) κ₁` against the solution in `BigFloat` of the rounded matrix, `RF`
+    # the real type of the factor.
+    R = real(T)
+    RF = real(factor_eltype(method, T))
+    kA = exponent(nextfloat(zero(R))) + 4
+    A0 = m == n ? square_matrix(T, n, method) : wellcond(T, m, n)
+    A = pow2.(A0, kA)
+    b = pow2.(rhs(T, m), kA + 70)
+    @test all(a -> abs(real(a)) < floatmin(R) && abs(imag(a)) < floatmin(R), A)
+    κ = cond1(A)
+    @test κ <= 16
+    # the device `Float32` SVD of a `Float64` matrix gives `SINGULAR` here (K125 of
+    # `KNOWN_ISSUES.md`), so those rows are left out
+    route == "JLArray" && RF !== R && continue
+    x, st, _ = lp_solve(route, method, A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 32 * eps(RF) * κ
+end
+
+@testset "the Cholesky factor of a 5 × 5 matrix of subnormal entries and a subnormal b: $route, $T" for route in ROUTES,
+    T in ELTYPES
+
+    # `A = 3s I + s (e₁e₃ᵀ + e₃e₁ᵀ)` and `b = s (1, …, 1)` with `s = 2^10 t`, `t = nextfloat(0)`:
+    # the solution `(1/4, 1/3, 1/4, 1/3, 1/3)` lies in the normal range. The factor of `A / 2^e`
+    # does too, but `b` is not scaled up (K124 of `KNOWN_ISSUES.md`), so the triangular solves
+    # form products of the size of `s/3` on the subnormal grid of spacing `t`, each with a relative
+    # error of up to `1.5 t/s`. The error stays below `2t/s = 2^-9`; it is `1.9e-4` here, in every
+    # element type.
+    R = real(T)
+    t = nextfloat(zero(R))
+    s = ldexp(t, 10)
+    A = Matrix{T}(3s * I(5))
+    A[3, 1] = A[1, 3] = s
+    b = fill(T(s), 5)
+    x, st, _ = lp_solve(route, CholeskyFactorization(), A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 2 * t / s
+end
+
+@testset "the Cholesky factor of [2t t; t t] with t = nextfloat(0): $route, $T" for route in ROUTES,
+    T in ELTYPES
+
+    # The exact solution of `[2t t; t t] x = (0, t)` is `(-1, 2)`. The factor of `A / 2^e` lies in
+    # the normal range, `e` the exponent of `2t` clamped to `-exponent(floatmax(R))`, but the
+    # right-hand side `(0, t)` is not scaled up, so the forward substitution gives an entry of the
+    # size of `t / √(t 2^-e) = √(t 2^e)`, a subnormal whose spacing `t` is a relative error of
+    # `√(t 2^-e) < √(t floatmax(R))`: `2^-25` in `Float64`, `2^-10.5` in `Float32`, of which the
+    # bound allows 4. The factor of `A` unscaled loses `L₂₁² = t/2` below the smallest subnormal and
+    # gives `(-0.5, 1)`, a relative error of 0.5.
+    R = real(T)
+    t = nextfloat(zero(R))
+    A = T[2t t; t t]
+    b = T[0, t]
+    x, st, _ = lp_solve(route, CholeskyFactorization(), A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, big.(T[-1, 2])) <= 4 * sqrt(t * floatmax(R))
 end
 
 @testset "A · 2^k and b · 2^j: $route, $R, $(nameof(typeof(method))), $m × $n" for route in ROUTES,

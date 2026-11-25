@@ -9,8 +9,9 @@ const KA_CHOLESKY_WORKGROUP = 64
 # `J` into the factor buffer `A`, as `load_factors!` with `cholesky_exponent` and the finiteness
 # test of the host `DenseCholesky` give it: where every entry of `J` is finite, the lower triangle
 # of `J / 2^e` with zeros above the diagonal, `e` the exponent of the largest |re| or |im| of the
-# strict lower triangle and |re| of the diagonal where the element types differ and 0 where they
-# agree; where an entry is not finite, `J` as it is in the factor element type, and `e = 0`.
+# strict lower triangle and |re| of the diagonal; where the element types of `J` and `A` agree,
+# only a negative exponent is taken and any other gives `e = 0`, and a zero lower triangle gives
+# `e = 0`; where an entry is not finite, `J` as it is in the factor element type, and `e = 0`.
 # `status` takes `[info, e]`, with `info = 1` for a non-finite `J` and 0 otherwise. Each work-item
 # reads and writes only the entries of its columns `tid`, `tid + G`, …, and reads each entry before
 # it writes it, so that `J` may be `A`.
@@ -52,9 +53,10 @@ const KA_CHOLESKY_WORKGROUP = 64
             # `frexp(m)[2] - 1` is `exponent(m)` for a finite nonzero `m`, and has no `DomainError`
             # branch, which a kernel compiles to a trap
             e = Int32(0)
-            if F !== eltype(J) && bad == Int32(0) && !iszero(m)
+            if bad == Int32(0) && !iszero(m)
                 emax = exponent(floatmax(RJ))
-                e = Int32(clamp(frexp(m)[2] - 1, -emax, emax))
+                em = Int32(clamp(frexp(m)[2] - 1, -emax, emax))
+                (F !== eltype(J) || em < Int32(0)) && (e = em)
             end
             l_ctrl[1] = e
             l_ctrl[2] = bad

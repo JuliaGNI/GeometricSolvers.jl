@@ -11,6 +11,32 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **A factor in the matrix's own element type divides a matrix whose largest entry lies below 1
+  by the power of two of that entry, so a matrix of subnormal or near-`floatmin` entries is
+  factorised in the normal range.** `load_factors!` (host `DenseLU`, `DenseQR`, `DenseLDLT`,
+  `DenseCholesky` and the device LU, QR and LDLᵀ), the static `factor_matrix` and the load kernel
+  of `DeviceCholesky` divide by `2^e`, `e = scale_exponent(J)`, for `e < 0`; for `e ≥ 0` they keep
+  the copy, bit for bit, because with `e > 0` the solve would hold up to `2^e` times its solution,
+  which overflows near `floatmax`. A factor of another element type divides for every `e`, as
+  before, and a static factor still copies an own-type `BigFloat` matrix whose exponent lies
+  outside the `Int32` range (K108). The static SVD divides by the exponent of a subnormal
+  largest entry, which `matrix_exponent` clamps to `-exponent(floatmax)`, so its largest entry
+  lies in `[1, 2)` also there (`svd_exponent`, `src/linear/static/svd.jl`). A matrix
+  `2^-1070 A₀` (`2^-145 A₀` in `Float32`) then solves on `SMatrix`, `Array` and `JLArray` in the
+  four element types within `32 eps κ₁`, `eps` of the factor's type (testset "a subnormal matrix" of `test/linear/linearproblem.jl`), where LU, QR
+  and Cholesky gave `SUCCESS` with a large error, LDLᵀ `NONFINITE`, and the static
+  `SVDFactorization(Float32)` `SINGULAR`. The Cholesky solve of `[2t t; t t]`,
+  `t = nextfloat(0)`, gives `(-1, 2)` within `4 √(t floatmax)`, `2^-23` in `Float64`, where it
+  gave `(-0.5, 1)`. This closes K110, K111 and K114. Two limits stay: a subnormal right-hand
+  side is not scaled up (K124), and the device `SVDFactorization(Float32)` of a subnormal
+  `Float64` matrix gives `SINGULAR` (K125). A static LU, QR or LDLᵀ of a `0 × 0` matrix in
+  another factor type, which threw an `ArgumentError` from the empty reduction, gives `SUCCESS`
+  and `e = 0`. In a probe of 1 024 normal-range solves (every
+  route, element type and factor, at scales `2^-60` to `2^40`; Julia 1.13.4, against
+  `bf08120`), 988 give the same bits and 36 differ, all Cholesky solves of a matrix with `e < 0`
+  (at the scales `2^-3` and `2^-7`), by at most 1.5 `eps` of `max |x|`; every return code is the same, and
+  `test/verification/standard_reference.csv` is unchanged.
+
 - **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
   `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
   factor's element type, runs `recursive_lu!` (`src/linear/recursive_lu.jl`) in place of

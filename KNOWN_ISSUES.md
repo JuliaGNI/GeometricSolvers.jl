@@ -817,46 +817,6 @@
 - **found:** 2026-11-24, a limit of the decision that tests the promotion on this return with
   synthetic statuses only
 
-### K110 · The static LU and QR factors solve a subnormal matrix with `SUCCESS` and a large error, and the static `SVDFactorization(Float32)` gives `SINGULAR`
-
-- **location:** `src/linear/static/lu.jl:24`, `src/linear/static/qr.jl:9`,
-  `src/linear/static/qr_rect.jl:28`, `src/linear/static/svd.jl:171`
-- **evidence:** with `A = ldexp.(wellcond(Float64, 4, 4), -1070)` (`κ ≤ 3`) and
-  `b = ldexp.(rhs(Float64, 4), -1000)` (`wellcond` and `rhs` of `test/linear/linearproblem.jl`),
-  `factorize!!(nothing, method, SMatrix{4, 4}(A))` and `ldiv!!` give `SUCCESS` with a relative
-  error of 0.038 for `LUFactorization()` and 0.035 for `QRFactorization()` against the `BigFloat`
-  solution, `SUCCESS` and 3.1e-16 for `SVDFactorization()`, and `SINGULAR` for
-  `SVDFactorization(Float32)` (Julia 1.13.4). The static LU and QR scale a matrix only for a
-  factorisation type other than its element type (`factor_matrix`), so they factorise this matrix
-  unscaled. A `LinearProblem` of a static matrix takes these factors: its `3 × 5` QR gives
-  `SUCCESS` and 0.02, its `Float32` SVD `SINGULAR`. The `LinearSolver` of a dense or device
-  `m < n` system divides `Aᴴ` by `2^e` before it factorises it, and solves this matrix;
-  `test/linear/linearproblem.jl` leaves the subnormal matrix out of the static rows of its
-  scale-exponent testset for this reason.
-- **kind:** defect
-- **found:** 2026-11-24
-
-### K111 · The host and device LU, QR, LDLᵀ and Cholesky factors in the element type of the matrix solve a subnormal matrix with `SUCCESS` and a large error, or give `NONFINITE`
-
-- **location:** `src/linear/dense.jl:197` (`load_factors!`), which `factorize!!` of the host
-  factors in `src/linear/dense.jl` and of the device factors in `src/linear/ka/lu.jl:140`,
-  `src/linear/ka/qr.jl:153` and `src/linear/ka/ldlt.jl:385` calls
-- **evidence:** `load_factors!` copies a matrix unscaled where the factor element type is that of
-  the matrix, and divides it by `2^e` only otherwise. With
-  `A = ldexp.(wellcond(Float64, m, n), -1070)` (`spd(Float64, 4)` in place of `wellcond` for LDLᵀ
-  and Cholesky) and `b = ldexp.(rhs(Float64, m), -1000)`, the helpers of
-  `test/linear/linearproblem.jl`, `solve!(init(LinearProblem(A), method), b)` on a host `Array`
-  gives `SUCCESS` with a relative error against the `BigFloat` solution of 0.022 for
-  `LUFactorization()` 4 × 4, 0.029 for `QRFactorization()` 4 × 4, 0.028 for `QRFactorization()`
-  5 × 3 and 0.0098 for `CholeskyFactorization()` 4 × 4, and `NONFINITE` for
-  `LDLTFactorization()` 4 × 4.
-  `SVDFactorization()` gives 3.0e-16 (4 × 4) and 2.0e-16 (5 × 3), and the `3 × 5`
-  `QRFactorization()`, whose `Aᴴ` the `LinearSolver` divides by `2^e` before it factorises it,
-  5.3e-16 (Julia 1.13.4, tree of `b1896d0`). `test/linear/linearproblem.jl` tests the subnormal
-  matrix for `m < n` alone.
-- **kind:** defect
-- **found:** #115
-
 ### K112 · OpenBLAS's `getrf!` gives a backward error of order one on a matrix whose entries are subnormal or near `floatmin`
 
 - **location:** `src/linear/dense.jl:258` (`factorize!!` for `DenseLU`, the `getrf!` path)
@@ -869,8 +829,10 @@
   of the recursion's size.
   The `2 × 2` matrix `[s 1; s/2 1]` with `s = 4 · nextfloat(0)` keeps the multiplier `s/2`
   unscaled in `getrf!`'s factor, where LAPACK's reference `getf2` divides it by the pivot. An
-  `n × n` Jacobian at such a scale in its own element type reaches `getrf!` unscaled for every `n`
-  outside the band of `use_recursive_lu`.
+  `n × n` Jacobian in its own element type whose largest entry is 1 or above, with entries at such
+  a scale beside it as in that `2 × 2` matrix, reaches `getrf!` unscaled for every `n` outside the
+  band of `use_recursive_lu`; one whose largest entry lies below 1 is divided by the power of two
+  of that entry first (`load_factors!`).
 - **kind:** upstream
 - **found:** 2026-11-24
 
@@ -888,28 +850,6 @@
   outer iterations lies inside the bounds.
 - **kind:** missing test
 - **found:** 2026-11-24
-
-### K114 · A Cholesky factor in the matrix's own element type takes no power-of-two scale, so the solve with a matrix of subnormal entries can have an O(1) relative error with `info = 0`
-
-- **location:** `src/linear/dense.jl:516-536` (`factorize!!` of `DenseCholesky`), and
-  `src/linear/ka/cholesky.jl:55` (the load kernel of `DeviceCholesky`)
-- **evidence:** the error is O(1), with `info = 0` and `SUCCESS`. With `t = nextfloat(zero(R))`,
-  `A = [2t t; t t]` and `b = [0, t]`, the exact solution is `[-1, 2]`. `CholeskyFactorization()`
-  gives `info = 0`, `scale_exponent = 0` and `x ≈ [-0.5, 1.0]`, a relative error of `0.5` in the
-  maximum norm, for the host `DenseCholesky` and for a `DeviceCholesky` on a `JLArray`, in
-  `Float32`, `Float64`, `ComplexF32` and `ComplexF64`. The trailing update `L₂₁² = t/2` lies below
-  the smallest subnormal and rounds to zero, so the factor holds `L₂₂² = t` in place of `t/2`, the
-  factor of `[2t t; t 1.5t]`. Julia 1.13.4, JLArrays 0.5.0, tree of `2390f50`. A milder case:
-  with `s = 2^10 * nextfloat(zero(R))`, `A = 3s * I(5)` and `A[3, 1] = A[1, 3] = s`,
-  `CholeskyFactorization()` gives `info = 0`, `scale_exponent = 0` and, for `b = fill(s, 5)`, a
-  solution with a relative error of `2.7e-4` in the maximum norm against the `BigFloat` solve, in
-  `Float32`, `Float64`, `ComplexF32` and `ComplexF64`. LAPACK's `cholesky(Hermitian(A, :L)) \ b`
-  gives the same `2.7e-4`. For `b = ones(5)` the solution is not finite, and the exact solution also
-  lies above `floatmax` (`2.3e41` in `Float32`). Julia 1.13.4, tree of `2ddfd8f`. A `DeviceCholesky`
-  on a `JLArray` gives the same `info`, `scale_exponent` and `2.7e-4` in the four element types
-  (tree of `49a1752`).
-- **kind:** found late
-- **found:** #113
 
 ### K115 · The own KA LU solve does not check the length of the vector against the order of the factor
 
@@ -1014,3 +954,38 @@
   `main`.
 - **kind:** defect
 - **found:** #113
+
+### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
+
+- **location:** `src/linear/factors.jl:839` (`rhs_exponent`), which `ldiv!!` of the dense,
+  device and static factors calls
+- **evidence:** `rhs_exponent` gives `max(0, …)`, so a right-hand side divides by `2^k` only near
+  `floatmax`. With `s = 2^10 · nextfloat(zero(R))`, `A = 3s · I(5)`, `A[3, 1] = A[1, 3] = s` and
+  `b = fill(s, 5)`, whose solution `(1/4, 1/3, 1/4, 1/3, 1/3)` lies in the normal range,
+  `solve!(init(LinearProblem(A), CholeskyFactorization()), b)` gives `SUCCESS`, a factor of
+  `A / 2^e` in the normal range (`e = -1023` in `Float64`, `-127` in `Float32`), and a relative
+  error against the `BigFloat` solution of `1.9e-4` in the 2-norm and `3.7e-4` in the maximum
+  norm, on `SMatrix`, `Array` and `JLArray` in `Float32`, `Float64`, `ComplexF32` and
+  `ComplexF64`. The forward substitution forms `L₃₁ y₁ ≈ s/3`, a subnormal that rounds to a
+  multiple of `nextfloat(zero(R))`, a relative error of up to `1.5 · 2^-10`. With the factor of
+  `A` unscaled, on `bf08120`, the error is `1.4e-4` and `2.7e-4` (Julia 1.13.4).
+  `test/linear/linearproblem.jl` bounds this case by `2t/s = 2^-9`.
+- **kind:** defect
+- **found:** 2026-11-25, the K114 5 × 5 case, which the fix of K114 leaves at this limit
+
+### K125 · The device `SVDFactorization(Float32)` of a `Float64` or `ComplexF64` matrix of subnormal entries gives `SINGULAR`
+
+- **location:** `src/linear/ka/svd.jl:236` (`ka_factorize_svd!`)
+- **evidence:** `ka_factorize_svd!` divides `J` by `2^e` with `e = matrix_exponent(J)`, which is
+  clamped to `-exponent(floatmax)`, `-1023` in `Float64`; the largest entry of `J / 2^e` is then
+  near `2^-43`, not in `[1, 2)`. With `A = 2^-1070 · A₀`, `A₀` the `4 × 4` and `5 × 3` matrices
+  of the testset "a subnormal matrix" of `test/linear/linearproblem.jl` (`κ₁ ≤ 16`), a
+  `LinearProblem` on a `JLArray` with `SVDFactorization(Float32)` gives `SINGULAR` in `Float64`
+  and `ComplexF64`, where the static and the host factors give `SUCCESS` within
+  `32 · eps(Float32) · κ₁` (Julia 1.13.4). The static SVD divides by the
+  unclamped exponent of a subnormal largest entry (`svd_exponent` of
+  `src/linear/static/svd.jl`). That the Jacobi sweep of the device kernel, in `Float32`, fails on
+  products of column norms below `floatmin(Float32)` is not verified. The testset leaves these
+  rows out.
+- **kind:** found late
+- **found:** 2026-11-25

@@ -11,11 +11,10 @@
 # The algorithm guards against two numerical traps:
 #
 # - The squared norms of the sweep underflow for a subnormal entry, so the matrix is first
-#   divided by a power of two that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close
-#   as the exponent range allows. The division is exact, so the factors are those of the original
-#   matrix up to that power of two. The exponent is clamped to the range of the type, because
-#   `ldexp(one(T), -exponent(m) - 1)` is `Inf` for a subnormal `m`, and an infinite prescale
-#   turns the whole matrix into `Inf`.
+#   divided by a power of two that brings its largest `|re|` or `|im|` into `[1, 2)`. The division
+#   is exact, so the factors are those of the original matrix up to that power of two. It is
+#   `ldexp2` per entry, not a product with `2^-e`: `ldexp(one(T), -exponent(m))` is `Inf` for a
+#   subnormal `m`, and an infinite prescale turns the whole matrix into `Inf`.
 # - A pair of columns that hold nothing but rounding noise — the null directions of a
 #   rank-deficient matrix — is asked to become orthogonal to each other, and each rotation
 #   regenerates as much noise as it removes, so a per-pair relative test alone never terminates
@@ -83,19 +82,28 @@ end
     return A
 end
 
-# `J` in the factor element type `F` as an `SMatrix`, and the exponent `e` of the power of two
-# `2^e` that it was divided by, chosen so that its largest |re| or |im| lies in [1, 2), or as
-# close as the exponent range allows: the largest entry of the result is below 2, and above
-# `floatmin` wherever the type allows it, so that the squares of the sweep neither overflow nor
-# underflow. `factor_matrix` of `factors.jl` is the same rule for `T ≠ TF` alone; the sweep needs
-# it at `TF = T` too, because it squares the entries. Dividing in `T` before the conversion is
-# what keeps a `Float64` matrix below the `Float32` range solvable at `TF = Float32`.
-function svd_matrix(::Type{F}, J::StaticMatrix{N, N, T}) where {F, N, T}
+# The exponent of the largest |re| or |im| of `J`, and 0 for a zero or non-finite `J`:
+# `matrix_exponent`, and for a largest entry below `floatmin`, where `matrix_exponent` clamps, its
+# own `exponent`, which a subnormal has too. `ldexp2` divides by it exactly.
+function svd_exponent(J::StaticMatrix)
     e = matrix_exponent(J)
+    e == -exponent(floatmax(float(real(eltype(J))))) || return e
+    return exponent(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
+end
+
+# `J` in the factor element type `F` as an `SMatrix`, and the exponent `e` of the power of two
+# `2^e` that it was divided by, `svd_exponent(J)`, so that its largest |re| or |im| lies in [1, 2),
+# also for a matrix of subnormal entries: the squares of the sweep neither overflow nor underflow.
+# `factor_matrix` of `factors.jl` divides a matrix in the factor's own element type only for
+# `e < 0`, and only as far as the exponent range allows; the sweep divides at every `e`, because it
+# squares the entries. Dividing in `T` before the conversion is what keeps a `Float64` matrix below
+# the `Float32` range solvable at `TF = Float32`.
+function svd_matrix(::Type{F}, J::StaticMatrix{N, N, T}) where {F, N, T}
+    e = svd_exponent(J)
     S = SMatrix{N, N, T}(J)
     # one return type for both branches: a `Union` of two static types here would make the
     # `MMatrix` below a runtime type construction, and the factorisation allocate
-    return SMatrix{N, N, F}(iszero(e) ? S : S * ldexp(one(float(real(T))), -e)), Int32(e)
+    return SMatrix{N, N, F}(iszero(e) ? S : map(a -> ldexp2(a, -e), S)), Int32(e)
 end
 
 # The squared norm of column `j` through the reduction seam of `reductions.jl`: the column is

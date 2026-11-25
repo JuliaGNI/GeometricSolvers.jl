@@ -1,5 +1,5 @@
 using GeometricSolvers
-using GeometricSolvers: factorize!!, ldiv!!, returncode, StaticLU, StaticQR
+using GeometricSolvers: dense_factor, factorize!!, ldiv!!, returncode, StaticLU, StaticQR
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -126,6 +126,38 @@ end
           bound(A20, T, TF)
     # without a conversion there is no division
     @test factorize!!(nothing, M(), real(T)(1e40) * A).scale_exponent == 0
+end
+
+@testset "a BigFloat matrix whose exponent lies outside Int32 is factorised unscaled, $M" for M in (
+    LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization)
+
+    # A factor in the matrix's own element type divides it by `2^e` only for `e < 0`, and keeps
+    # `J` as it is where `e` does not fit the `Int32` field of the static factor: for
+    # `e = ±(2^31 + 7)`, `factorize!!` returns a factor with `scale_exponent = 0` and solves.
+    for k in (2^31 + 5, -(2^31 + 9))
+        s = ldexp(big(1.0), k)
+        A = SMatrix{2, 2, BigFloat}(s * big.([4 1; 1 5]))
+        fac = factorize!!(nothing, M(), A)
+        @test returncode(fac) === SUCCESS
+        @test fac.scale_exponent == 0
+        x = ldiv!!(nothing, fac, SVector{2, BigFloat}(A * SVector(big(1.0), big(-2.0))))
+        @test isapprox(x, [1, -2]; rtol = 64 * eps(BigFloat))
+    end
+end
+
+@testset "a 0 × 0 matrix sets no scale, $M($TF)" for M in (
+        LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization),
+    TF in (nothing, Float32)
+
+    # The static and the dense host factor of the empty matrix: `e = 0`, and no reduction runs
+    # over its entries, in the matrix's element type and in another.
+    m = TF === nothing ? M() : M(TF)
+    fs = factorize!!(nothing, m, SMatrix{0, 0, Float64}())
+    @test returncode(fs) === SUCCESS
+    @test fs.scale_exponent == 0
+    fd = factorize!!(dense_factor(m, nothing, Float64[], nothing), m, zeros(0, 0))
+    @test returncode(fd) === SUCCESS
+    @test fd.scale_exponent == 0
 end
 
 @testset "the same-type solve scales r by a power of two, $T" for T in REAL_ELTYPES

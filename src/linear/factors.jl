@@ -21,7 +21,10 @@ factors, [`factor_eltype`](@ref). Where that is not the element type of `J`, `J`
 by the power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
 exponent range allows, and `e` is kept in the factor, so that the overall scale of `J` neither
 overflows nor underflows in the factor type (for Cholesky, `e` is taken from the lower triangle and
-the real part of the diagonal alone). A zero or non-finite `J` gives `e = 0`. A singular
+the real part of the diagonal alone). Where it is the element type of `J`, `J` is divided only for
+`e < 0`, so that a matrix of subnormal or near-`floatmin` entries is factorised in the normal
+range; for `e > 0`, the solve with the factor of `J / 2^e` would hold up to `2^e` times its
+solution, which can overflow near `floatmax`. A zero or non-finite `J` gives `e = 0`. A singular
 `J` does not throw. LU
 records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, LDLᵀ the first
 zero pivot block (or `1` for a non-finite entry), Cholesky the order of the first leading minor
@@ -38,11 +41,11 @@ For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@re
 [`DenseSVD`](@ref), [`DenseLDLT`](@ref), [`DenseCholesky`](@ref), [`DeviceLU`](@ref),
 [`DeviceQR`](@ref), [`DeviceSVD`](@ref), [`DeviceLDLT`](@ref) or [`DeviceCholesky`](@ref) built
 by [`init_linear`](@ref).
-`J` is written into `fac.factors`, divided by `2^e` as for a static matrix where its element type
-is not that of `fac.factors`, and `fac.factors` is factorised in
-place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
-divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors` on the host before
-`gesvd`, and into `fac.U` on a device before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
+`J` is written into `fac.factors`, divided by `2^e` as for a static matrix, and `fac.factors` is
+factorised in place; `J === fac.factors` takes the same division in place. A [`DenseSVD`](@ref)
+or [`DeviceSVD`](@ref) divides `J` by `2^e` unconditionally, `J === fac.factors` too: into
+`fac.factors` on the host before `gesvd`, and into `fac.U` on a device before the one-sided Jacobi
+sweep. For [`DenseSVD`](@ref),
 `info` is `1` where `J` has a non-finite entry, which is refused before `gesvd` and
 leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
 singular value of `J / 2^e` is not finite; for [`DeviceSVD`](@ref) it is `1` where the Jacobi
@@ -755,16 +758,24 @@ end
 @inline abs_bits(x::T) where {T <: Base.IEEEFloat} = reinterpret(Unsigned, x) &
                                                      ~Base.sign_mask(T)
 
-# `J` in the factor element type `F`, as an `SMatrix`, which keeps the conversion off the heap, and
-# the exponent `e` of the power of two that `J` was divided by: 0 where `F` is the element type of
-# `J`, else `scale_exponent(J)`: by default `matrix_exponent`, the exponent of the largest |re| or
-# |im| of `J`, which takes no `abs` that can overflow. `e` is clamped to the exponent range, so that
-# `2^-e` is a float and the product with it is exact.
+# `J / 2^e` in the factor element type `F`, as an `SMatrix`, which keeps the conversion off the
+# heap, and the exponent `e` of the power of two that `J` was divided by, with
+# `e = scale_exponent(J)`: by default `matrix_exponent`, the exponent of the largest |re| or |im| of
+# `J`, which takes no `abs` that can overflow. `e` is clamped to the exponent range, so that the
+# division is exact in the normal range; it is `ldexp2`, which keeps a subnormal entry on a device
+# that flushes subnormals to zero. Where `F` is the element type of `J`, only `e < 0` divides, as
+# in `load_factors!`, so that a matrix of subnormal or near-`floatmin` entries is factorised in the
+# normal range; `e > 0` converts `J` as it is, and so does an `e` below the `Int32` range of the
+# factor's field, which only a `BigFloat` matrix reaches. Another `F` divides for every `e`, and
+# `Int32(e)` throws for an `e` outside that range. `e = 0`, which an empty, zero or non-finite `J`
+# gives, converts `J` as it is.
 function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T},
         scale_exponent::E = matrix_exponent) where {F, M, N, T, E}
-    F === T && return SMatrix{M, N, F}(J), Int32(0)
-    e = scale_exponent(J)
-    return SMatrix{M, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
+    e = isempty(J) ? 0 : scale_exponent(J)
+    if iszero(e) || (F === T && !(typemin(Int32) <= e < 0))
+        return SMatrix{M, N, F}(J), Int32(0)
+    end
+    return SMatrix{M, N, F}(map(a -> ldexp2(a, -e), SMatrix{M, N, T}(J))), Int32(e)
 end
 
 # A mutable local copy of a static array for the scalar loops of the R1 kernels: an `MMatrix` or

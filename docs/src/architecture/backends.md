@@ -141,8 +141,9 @@ A vendor method replaces only `factorize!!` and the back substitution of its fac
 scaling by a power of two, the mixed-precision solve and the status handling are the same on
 every backend. The own Cholesky kernel is one workgroup of 64 work-items, as the LDLT kernel is;
 the vendor `potrf` methods take its load kernel first, which refuses a non-finite matrix with
-`info = 1` before `potrf` and divides a matrix of another element type than the factor by its
-power of two.
+`info = 1` before `potrf` and divides the matrix by its power of two, as `load_factors!` does: a
+matrix of another element type than the factor for every exponent, and one of the factor's own
+element type for a negative exponent.
 
 The factor that a sparse R3 solve uses, on a sparse `jacobian_prototype`:
 

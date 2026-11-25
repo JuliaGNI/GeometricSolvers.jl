@@ -189,18 +189,23 @@ function qr_zero_diag(R::AbstractMatrix)
     return 0
 end
 
-# `J` into the factor buffer `A`, and the exponent `e` of the power of two that it was divided by,
-# as `factor_matrix` does for R1: 0 where `J` has the element type of `A`, which is then copied,
-# else `scale_exponent(J)`: `matrix_exponent` by default, or `cholesky_exponent` for the entries
-# that a Cholesky factorisation reads.
+# `J / 2^e` into the factor buffer `A`, and the exponent `e` of the power of two that it was
+# divided by, as `factor_matrix` does for R1, with `e = scale_exponent(J)`: `matrix_exponent` by
+# default, or `cholesky_exponent` for the entries that a Cholesky factorisation reads. Where `A`
+# has the element type of `J`, only `e < 0` divides, so that a matrix of subnormal or
+# near-`floatmin` entries is factorised in the normal range; `e > 0` copies `J`, because the solve
+# with the factor of `J / 2^e` and `r / 2^k` holds `2^(e - k)` times the solution before `ldiv!!`
+# scales it back, which can overflow near `floatmax`. Another element type divides for every `e`. `e = 0`, which an empty, zero or non-finite `J`
+# gives, copies `J` as it is. The division is `ldexp2`, which keeps a subnormal entry on a device
+# that flushes subnormals to zero.
 function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix,
         scale_exponent::E = matrix_exponent) where {F, E}
-    if eltype(J) === F || isempty(J)
+    e = isempty(J) ? 0 : scale_exponent(J)
+    if iszero(e) || (eltype(J) === F && e > 0)
         J === A || copyto!(A, J)
         return 0
     end
-    e = scale_exponent(J)
-    A .= J .* ldexp(one(float(real(eltype(J)))), -e)
+    A .= ldexp2.(J, -e)
     return e
 end
 
