@@ -776,8 +776,8 @@ max_inner_iterations(ws::GMRESWorkspace) = ws.max_inner
 
 The number of evaluations of the residual `F` that the last solve of `solver` made, for a
 [`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref) or
-[`MINRESQLP`](@ref): the count that
-[`SolverStatus`](@ref) records, saturated there at `typemax(Int16)` and exact here below it.
+[`MINRESQLP`](@ref): the count that [`SolverStatus`](@ref) records, saturated there at
+`typemax(Int16)` and exact here below it.
 """
 function f_calls end
 
@@ -788,8 +788,8 @@ f_calls(ws::GMRESWorkspace) = ws.f_calls
 
 The number of Jacobian–vector products that the last solve of `solver` made, for a
 [`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref) or
-[`MINRESQLP`](@ref): the count that
-[`SolverStatus`](@ref) records, saturated there at `typemax(Int16)` and exact here below it.
+[`MINRESQLP`](@ref): the count that [`SolverStatus`](@ref) records, saturated there at
+`typemax(Int16)` and exact here below it.
 """
 function jvp_calls end
 

@@ -11,10 +11,9 @@ matrix-free [`GMRES`](@ref) and [`MINRESQLP`](@ref), or [`KroneckerFactorization
 stage system of an implicit Runge–Kutta method), globalization `globalization` ([`Static`](@ref),
 [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust regions
 [`DogLeg`](@ref) and [`Steihaug`](@ref) or the damped step [`LevenbergMarquardt`](@ref)),
-Jacobian selector `jacobian`,
-iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
-[`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
-`reuse`.
+Jacobian selector `jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref),
+[`Refinement`](@ref) or [`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and
+factor-reuse period `reuse`.
 
 # Fields
 
@@ -598,12 +597,11 @@ end
 # workspace, which only a [`GMRES`](@ref) or a [`MINRESQLP`](@ref) solve has (`nothing` for every
 # factorising method), and the slots that `solve!!` copies the start point of a step and its
 # residual into (two buffers for an array iterate of a `LeastSquaresProblem`, `(nothing, nothing)`
-# otherwise). For a value iterate the
-# workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The factor
-# slot is the storage that each factorisation writes into; only a step with reuse stores the factor
-# it returns, because only such a step reads it again. The norm is `NaN` on a state that no
-# `start!!` saw or that `solve!!` returned. The last field is the record of the best iterate, a
-# `BestIterate` under `best = true` and `nothing` else.
+# otherwise). For a value iterate the workspace slots are `nothing`, and so is the factor slot
+# unless the factor is reused. The factor slot is the storage that each factorisation writes into;
+# only a step with reuse stores the factor it returns, because only such a step reads it again.
+# The norm is `NaN` on a state that no `start!!` saw or that `solve!!` returned. The last field is
+# the record of the best iterate, a `BestIterate` under `best = true` and `nothing` else.
 struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS, BR}
     jacprep::JP
     jvpprep::VP
