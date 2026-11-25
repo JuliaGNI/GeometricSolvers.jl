@@ -15,6 +15,7 @@ using GeometricSolvers
 using GeometricSolvers: NONFINITE, SINGULAR, SUCCESS, factor_eltype
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
+using KernelAbstractions: KernelAbstractions
 using LinearAlgebra: norm, opnorm
 using Random: Xoshiro, randn
 using SparseArrays: sparse
@@ -398,6 +399,80 @@ end
         @test_throws ArgumentError(
             "a solver of a dense or device matrix takes no sparse matrix") refactorize!!(
             solver, sparse(A))
+    end
+end
+
+# A host array whose axes start at 0, on the CPU backend, so that only the index check refuses it.
+struct ZeroBased{T, N} <: AbstractArray{T, N}
+    data::Array{T, N}
+end
+Base.size(a::ZeroBased) = size(a.data)
+Base.axes(a::ZeroBased) = map(n -> 0:(n - 1), size(a.data))
+Base.getindex(a::ZeroBased{T, N}, i::Vararg{Int, N}) where {T, N} = a.data[(i .+ 1)...]
+KernelAbstractions.get_backend(::ZeroBased) = KernelAbstractions.CPU()
+
+@testset "an offset b or A: $(nameof(typeof(method))), $m × $n" for (method, m, n) in (
+    (LUFactorization(), 3, 3), (QRFactorization(), 3, 3), (QRFactorization(), 5, 3),
+    (QRFactorization(), 3, 5), (SVDFactorization(), 3, 5))
+    A = wellcond(Float64, m, n)
+    solver = init(LinearProblem(A), method)
+    # the message of `Base.require_one_based_indexing`
+    @test_throws r"^ArgumentError: offset arrays are not supported but got an array with index other than 1$" solve!(
+        solver, ZeroBased(rhs(Float64, m)))
+    @test_throws r"^ArgumentError: offset arrays are not supported but got an array with index other than 1$" LinearProblem(ZeroBased(A))
+    @test_throws r"^ArgumentError: offset arrays are not supported but got an array with index other than 1$" refactorize!!(
+        solver, ZeroBased(A))
+end
+
+@testset "a b that aliases solver.x: $T" for T in ELTYPES
+    # the SVD of rank 0 writes a zero `x`; the finiteness of `b` is read before that write
+    solver = init(LinearProblem(zeros(T, 1, 2)), SVDFactorization())
+    fill!(solver.x, T(Inf))
+    x, st = solve!(solver, view(solver.x, 1:1))
+    @test st.code == NONFINITE
+    @test isnan_all(x)
+end
+
+@testset "a b that overlaps solver.x in another order: the QR of Aᴴ with m < n" begin
+    solver = init(LinearProblem([1.0 0 0; 0 1 0]), QRFactorization())
+    solver.x .= [2.0, 3.0, 0.0]
+    x, st = solve!(solver, view(solver.x, 2:-1:1))
+    @test st.code == SUCCESS
+    @test x == [3.0, 2.0, 0.0]
+end
+
+# `b` is `x[m:-1:1]`, which a solve that writes `x[1]` before it reads `b[m]` overwrites; with
+# `m > n` it is `x[[n:-1:1; 1:(m - n)]]`, on the host alone, as a device array takes no index
+# vector. The solution of a fresh solver for a copy of `b` is the reference. With `m == n`, `b`
+# is also `x` itself.
+@testset "a b that overlaps solver.x in another order: $route, $T, $(nameof(typeof(method))), $m × $n" for route in map(
+        AT -> string(nameof(AT)), ARRAY_BACKENDS),
+    T in ELTYPES,
+    (method, m, n) in ((LUFactorization(), 4, 4), (QRFactorization(), 4, 4),
+        (SVDFactorization(), 4, 4), (LDLTFactorization(), 4, 4),
+        (CholeskyFactorization(), 4, 4), (LUFactorization(Float32), 4, 4),
+        (QRFactorization(), 5, 3), (SVDFactorization(), 5, 3),
+        (QRFactorization(Float32), 5, 3), (QRFactorization(), 3, 5),
+        (SVDFactorization(), 3, 5), (QRFactorization(Float32), 3, 5),
+        (SVDFactorization(Float32), 3, 5))
+
+    device_wide_qr(route, method, m, n) && continue
+    route == "JLArray" && m > n && continue
+    A = m == n ? square_matrix(T, m, method) : wellcond(T, m, n)
+    solver = init(LinearProblem(onroute(route, A)), method)
+    copyto!(solver.x, onroute(route, rhs(T, n)))
+    b = view(solver.x, m > n ? [n:-1:1; 1:(m - n)] : (m:-1:1))
+    b_host = Vector(Array(b))
+    x_ref, st_ref = lp_solve(route, method, A, b_host)
+    x, st = solve!(solver, b)
+    @test st.code == st_ref.code == SUCCESS
+    @test isapprox(Vector(Array(x)), x_ref; rtol = 8 * eps(real(T)))
+    @test relerr(x_ref, xref(A, b_host)) <= 128 * eps(real(factor_eltype(method, T)))
+    if m == n
+        copyto!(solver.x, onroute(route, b_host))
+        x, st = solve!(solver, solver.x)
+        @test st.code == SUCCESS
+        @test isapprox(Vector(Array(x)), x_ref; rtol = 8 * eps(real(T)))
     end
 end
 
