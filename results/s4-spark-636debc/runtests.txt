@@ -1,0 +1,50 @@
+HEAD=636debc9c6d694e0ecec54de23b45b731f2d37e8
+Test Summary:                                                                  | Pass  Total  Time
+GeometricSolversCUDAExt extension loading, dispatch, and CUDA census alignment |   88     88  0.1s
+Test Summary:                                                         | Pass  Total  Time
+GeometricSolversCUDSSExt extension loading, dispatch and JET: Float32 |   54     54  5.5s
+Test Summary:                                                         | Pass  Total  Time
+GeometricSolversCUDSSExt extension loading, dispatch and JET: Float64 |   54     54  0.2s
+Test Summary:                                                            | Pass  Total  Time
+GeometricSolversCUDSSExt extension loading, dispatch and JET: ComplexF32 |   54     54  0.2s
+Test Summary:                                                            | Pass  Total  Time
+GeometricSolversCUDSSExt extension loading, dispatch and JET: ComplexF64 |   54     54  0.1s
+Test Summary:                                        | Pass  Total   Time
+CUDA cuSOLVER agreement with own KA kernels at n = 1 |   60     60  24.5s
+Test Summary:                                         | Pass  Total  Time
+CUDA cuSOLVER agreement with own KA kernels at n = 16 |   60     60  3.9s
+Test Summary:                                          | Pass  Total  Time
+CUDA cuSOLVER agreement with own KA kernels at n = 256 |   60     60  1.2s
+Test Summary:                                             | Pass  Total      Time
+CUDA cuSOLVER large-n LU, QR, SVD, and mixed TF = Float32 |  144    144  32m48.1s
+Test Summary:                                                                                  | Pass  Total  Time
+CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: Float32 |   89     89  0.9s
+Test Summary:                                                                                  | Pass  Total  Time
+CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: Float64 |   89     89  0.7s
+Test Summary:                                                                                     | Pass  Total  Time
+CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: ComplexF32 |   89     89  0.9s
+Test Summary:                                                                                     | Pass  Total  Time
+CUDA cuSOLVER 0x0, singular, prescaling, rank-deficient, non-finite, and KA fallbacks: ComplexF64 |   89     89  0.8s
+Test Summary:                | Pass  Total   Time
+CUDA capability census probe |   16     16  13.8s
+Test Summary:                                                 | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 125, T = Float32 |   52     52  7.0s
+Test Summary:                                                 | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 125, T = Float64 |   52     52  3.5s
+Test Summary:                                                    | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 125, T = ComplexF32 |   52     52  4.0s
+Test Summary:                                                    | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 125, T = ComplexF64 |   52     52  3.6s
+Test Summary:                                                 | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 768, T = Float32 |   52     52  1.7s
+Test Summary:                                                 | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 768, T = Float64 |   52     52  1.4s
+Test Summary:                                                    | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 768, T = ComplexF32 |   52     52  5.6s
+Test Summary:                                                    | Pass  Total  Time
+cuDSS sparse LU through LUFactorization: N = 768, T = ComplexF64 |   52     52  5.6s
+Test Summary:                  | Pass  Total  Time
+LinearProblem on CUDA: Float32 |   33     33  2.3s
+Test Summary:                  | Pass  Total  Time
+LinearProblem on CUDA: Float64 |   33     33  1.0s
+EXIT=0
