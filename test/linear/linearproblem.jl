@@ -444,7 +444,6 @@ end
         (SVDFactorization(), 3, 5), (QRFactorization(Float32), 3, 5),
         (SVDFactorization(Float32), 3, 5))
 
-    device_cholesky(route, method) && continue
     device_wide_qr(route, method, m, n) && continue
     route == "JLArray" && m > n && continue
     A = m == n ? square_matrix(T, m, method) : wellcond(T, m, n)
