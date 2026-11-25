@@ -91,9 +91,8 @@ so that a compat-only bump can be told apart from an interface change.
   minimum. A step along a reused factor (`reuse > 1`) carries the diagnostics of an earlier
   point, so the rule does not fire at its start point and the solve goes on past a stationary
   `x_k`. The step from `x₀` is kept, and every other problem type is unchanged. An array iterate
-  keeps `x_k` and its
-  residual in two buffers that `init_state` allocates, so `solve!!` allocates nothing; `NewtonState`
-  gains the field `kept` for them.
+  keeps `x_k` and its residual in two buffers that `init_state` allocates, so `solve!!` allocates
+  nothing; `NewtonState` gains the field `kept` for them.
 
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,

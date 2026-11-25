@@ -1204,8 +1204,8 @@ end
     # the gradient of ‖r‖²/2 by g_tol ‖J‖_F ‖r‖, at most about 0.22 g_tol, and the curvature in
     # v there is about 4, so |v| is within g_tol of √(1 − 1/m). With `DogLeg` the model
     # reduction of the step from the first iterate is at the rounding level of ‖r‖, so rounding
-    # decides whether it rejects the step, and the zero step
-    # ends the solve at the first iterate, or accepts it and goes on to a minimum. With
+    # decides whether it rejects the step, and the zero step ends the solve at the first iterate,
+    # or accepts it and goes on to a minimum. With
     # `StrongWolfe(; maxiter = 1)` and `Bisection(; maxiter = 1)` the perturbation decides
     # whether the solve ends on a failed line search or at a minimum. Each solve of these three
     # asserts that its status holds for the point it returns.

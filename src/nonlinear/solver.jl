@@ -206,27 +206,24 @@ of its last fresh factorisation, at the start of the step, so the ratio is re-me
 iterate the solve returns before it ends on this test. Where that re-measure fails, but the
 factorisation that the step took at its start point `x_k` passes the test, with `k ≥ 1` and
 `k ≥ options.min_iterations`, and the step does not lower `‖F‖`, the solve returns `x_k` with
-`SUCCESS` and
-`status.stationary == true`, and the step is discarded: the status counts the `k` iterations that
-reached `x_k` and carries the `fnorm` and `stepnorm` of `x_k` and the diagnostics of its
-factorisation, while the step-rule failures and the promotion of the discarded step still count
-in `status.step_failures` and `status.promoted`. A step that lowers `‖F‖` shows that `x_k` is
-no minimum, such as a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum, so the
+`SUCCESS` and `status.stationary == true`, and the step is discarded: the status counts the `k`
+iterations that reached `x_k` and carries the `fnorm` and `stepnorm` of `x_k` and the diagnostics
+of its factorisation, while the step-rule failures and the promotion of the discarded step still
+count in `status.step_failures` and `status.promoted`. A step that lowers `‖F‖` shows that `x_k`
+is no minimum, such as a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum, so the
 solve goes on from the end of that step; an equal `‖F‖` returns `x_k`. The step from `x₀` is
-always kept. A step
-along a reused factor takes no factorisation at its start point unless it falls back to a fresh
-one there, after a failed line search or refinement; without one, it carries the diagnostics
-that the solve tested at `x_k` before, which failed, so it is kept. When neither test holds
-after a step that is neither `STALLED` nor `limited`, a step test that holds returns `STALLED`
-at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate where the next step
-would start — unless the stationarity test, re-measured at that iterate, holds, which a
-nonzero-residual least-squares minimum reaches with a step of any length, a zero one included;
-`min_iterations` bounds both. After a `STALLED` step only the residual and
-stationarity tests apply,
-and `options.max_stalls` consecutive `STALLED` steps return `STALLED`. After a step whose
-`limited` is set only the residual and stationarity tests apply too, because a radius or a
-damping, not the distance to a root, sets its norm; such a step is not a stall. Reaching
-`options.max_iterations` without convergence returns `MAXITERS`.
+always kept. A step along a reused factor takes no factorisation at its start point unless it
+falls back to a fresh one there, after a failed line search or refinement; without one, it
+carries the diagnostics that the solve tested at `x_k` before, which failed, so it is kept. When
+neither test holds after a step that is neither `STALLED` nor `limited`, a step test that holds
+returns `STALLED` at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate
+where the next step would start — unless the stationarity test, re-measured at that iterate,
+holds, which a nonzero-residual least-squares minimum reaches with a step of any length, a zero
+one included; `min_iterations` bounds both. After a `STALLED` step only the residual and
+stationarity tests apply, and `options.max_stalls` consecutive `STALLED` steps return `STALLED`.
+After a step whose `limited` is set only the residual and stationarity tests apply too, because a
+radius or a damping, not the distance to a root, sets its norm; such a step is not a stall.
+Reaching `options.max_iterations` without convergence returns `MAXITERS`.
 """
 function solve!!(
         state, prob::AbstractNonlinearProblem, x₀, method, p = nothing,
@@ -281,9 +278,9 @@ function solve!!(
                 return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
             # the step left, without lowering `‖F‖`, a start point that its factorisation there
-            # reads stationary: the solve
-            # returns that point, with its status, in which the failures and the promotion of the
-            # discarded step still count, and the state that carries its diagnostics
+            # reads stationary: the solve returns that point, with its status, in which the
+            # failures and the promotion of the discarded step still count, and the state that
+            # carries its diagnostics
             if keeps_step_start(prob, options, state_step, status_k, status)
                 x = copy!!(x, x_k)
                 Fx = copy!!(Fx, F_k)
