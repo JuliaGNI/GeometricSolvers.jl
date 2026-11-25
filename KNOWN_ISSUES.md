@@ -959,7 +959,7 @@
 ### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
 
 - **location:** `src/linear/factors.jl:855` (`rhs_exponent`), which `ldiv!!` of the dense,
-  device and static factors calls; `src/linear/linearproblem.jl:427, 468` (`wide_solve!`, the
+  device and static factors calls; `src/linear/linearproblem.jl:436, 477` (`wide_solve!`, the
   same-type `m < n` solve of a dense or device `LinearSolver`), which does not call
   `rhs_exponent`; and the static `SVDFactorization` solve of `m < n`
 - **evidence:** `rhs_exponent` gives `max(0, …)`, so a right-hand side divides by `2^k` only near
