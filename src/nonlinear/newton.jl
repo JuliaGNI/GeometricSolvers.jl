@@ -5,26 +5,28 @@
 
 Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) and, as
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
-`linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref), [`QRFactorization`](@ref),
-[`SVDFactorization`](@ref) or the matrix-free [`GMRES`](@ref)), globalization `globalization`
-([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the
-trust region [`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector
-`jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
+`linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
+[`CholeskyFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref), the
+matrix-free [`GMRES`](@ref), or [`KroneckerFactorization`](@ref) for the stage system of an
+implicit Runge–Kutta method), globalization `globalization` ([`Static`](@ref),
+[`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust region
+[`DogLeg`](@ref) or the damped step [`LevenbergMarquardt`](@ref)), Jacobian selector `jacobian`,
+iterative refinement `refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or
 [`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and factor-reuse period
 `reuse`.
 
 # Fields
 
-- `linsolve::L`: the linear-solver method. A [`LeastSquaresProblem`](@ref) takes neither
-  [`LUFactorization`](@ref) nor [`LDLTFactorization`](@ref) outside the stacked
-  [`LevenbergMarquardt`](@ref) step. With more residuals than unknowns it takes no factor in a
-  lower precision than the element type of the iterate, because a Gauss–Newton step with such a
-  factor stops off the least-squares point; a factor in the same or a higher precision is taken,
-  and the stacked `LevenbergMarquardt` step, which reads no factor, takes any. Each refusal raises
-  an `ArgumentError` where the state is built. A factor in a higher precision on more residuals
-  than unknowns is not promoted to the working precision after a stall: at a nonzero-residual
-  least-squares point ``\\|F + J d\\| \\approx \\|F\\|``, which on a square problem reads as a stall.
-  It is promoted where the factorisation fails.
+- `linsolve::L`: the linear-solver method. A [`LeastSquaresProblem`](@ref) takes none of
+  [`LUFactorization`](@ref), [`LDLTFactorization`](@ref) and [`CholeskyFactorization`](@ref)
+  outside the stacked [`LevenbergMarquardt`](@ref) step. With more residuals than unknowns it
+  takes no factor in a lower precision than the element type of the iterate, because a
+  Gauss–Newton step with such a factor stops off the least-squares point; a factor in the same or
+  a higher precision is taken, and the stacked `LevenbergMarquardt` step, which reads no factor,
+  takes any. Each refusal raises an `ArgumentError` where the state is built. A factor in a higher
+  precision on more residuals than unknowns is not promoted to the working precision after a
+  stall: at a nonzero-residual least-squares point ``\\|F + J d\\| \\approx \\|F\\|``, which on a
+  square problem reads as a stall. It is promoted where the factorisation fails.
 - `globalization::G`: the globalization method. A line search takes its merit at `α = 0` from
   the state, where [`start!!`](@ref) sets it to `norm2(F(x₀))` and each [`step!!`](@ref) to the
   merit of the residual it returns. A `step!!` with a line search therefore takes only the
@@ -154,7 +156,7 @@ function Newton(;
         f = forcing === nothing ? g.forcing : forcing
         P = preconditioner === nothing ? g.preconditioner : preconditioner
         linsolve = GMRES{typeof(f), typeof(P), g.jvp_eltype}(
-            g.maxiter, g.restart, f, P, g.jvp_eltype)
+            g.maxiter, g.restart, f, P, g.jvp_eltype, g.mgs)
     end
     return Newton(linsolve, globalization, jacobian, ref, reg, r)
 end
@@ -268,6 +270,19 @@ end
     return StaticLDLT{1, TF, 1}(z, piv, Int32(0), Int32(0), true)
 end
 
+@inline function empty_static_factor(ls::CholeskyFactorization{P}, ::StaticVector{
+        N, T}) where {P, N, T}
+    TF = factor_eltype(ls, T)
+    return StaticCholesky{N, TF, N * N}(zeros(SMatrix{N, N, TF}), Int32(0), Int32(0))
+end
+
+@inline function empty_static_factor(
+        ls::CholeskyFactorization{P}, ::T) where {P, T <: Number}
+    TF = factor_eltype(ls, T)
+    z = SMatrix{1, 1, TF, 1}((zero(TF),))
+    return StaticCholesky{1, TF, 1}(z, Int32(0), Int32(0))
+end
+
 @inline function empty_static_factor(ls::QRFactorization{P}, ::StaticVector{
         N, T}) where {P, N, T}
     TF = factor_eltype(ls, T)
@@ -348,18 +363,23 @@ end
 """
     has_sparse_factor(method::LinearMethod, x)
 
-Whether a package extension builds a sparse factor of `method` on the iterate `x` from a detected
-Jacobian pattern: `false` by default. The `GeometricSolversSparspakExt` extension returns `true`
-for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
+Whether `init_linear` builds a sparse factor of `method` on the iterate `x` from a detected
+Jacobian pattern: `false` by default. It is `true` for [`UMFPACKFactorization`](@ref) on a
+`Vector{Float64}` or `Vector{ComplexF64}`, and the `GeometricSolversSparspakExt` extension returns
+`true` for an [`LUFactorization`](@ref) whose factor element type is `T` on a `Vector{T}`,
 `T <: AbstractFloat`. Where it is `false`, a detected pattern gives the dense factor, as a solve
 with no pattern does; an explicit `jacobian_prototype` does not consult it.
 """
 @inline has_sparse_factor(::LinearMethod, x) = false
 
+# Refuse, at `init`, an iterate that `method` builds no factor for, also where the step builds its
+# factor later: no refusal by default.
+@inline check_factor_iterate(::LinearMethod, x) = nothing
+
 # The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
 # detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor. A
-# `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the one sparse
-# factor, `SparspakLU`, is square, so the `m × n` factor of a least-squares problem is dense.
+# `LeastSquaresProblem` has neither, because `jacobian_pattern` is `nothing` for it: the sparse
+# factors are square, so the `m × n` factor of a least-squares problem is dense.
 @inline function factor_pattern(ls, prob, x, jacprep)
     P = jacobian_pattern(prob, jacprep)
     P === nothing || jacobian_prototype(prob) !== nothing || has_sparse_factor(ls, x) ||
@@ -381,8 +401,9 @@ end
 # element type decides it also for the factor in the working precision that a mixed-precision
 # solve promotes to, so that both factors and the Jacobian buffer share one layout. `regularize!!`
 # writes `μ` onto the diagonal of `J`, so under `μ ≠ 0` a detected pattern without the whole
-# structural diagonal gives the dense factor. A `LevenbergMarquardt` step reads no sparse factor
-# (see `check_lm_iterate`), so a detected pattern gives it the dense factor and Jacobian buffer.
+# structural diagonal gives the dense factor, or the `ArgumentError` of a method that has no dense
+# factor. A `LevenbergMarquardt` step reads no sparse factor (see `check_lm_iterate`), so a
+# detected pattern gives it the dense factor and Jacobian buffer, or that `ArgumentError`.
 @inline function newton_pattern(m::Newton, prob, x, jacprep)
     P = factor_pattern(m.linsolve, prob, x, jacprep)
     m.globalization isa LevenbergMarquardt && jacobian_prototype(prob) === nothing &&
@@ -394,7 +415,8 @@ end
 
 # The factor of `ls` for a Newton solve with `m`: `m.linsolve`, or its promotion to the working
 # precision. A pattern that the `init_factor` of `ls` would take and `newton_pattern` rejects gives
-# the dense factor, and every other case the `init_factor` of `ls`.
+# the dense factor, or the `ArgumentError` of a method that has no dense factor, and every other
+# case the `init_factor` of `ls`.
 @inline function init_newton_factor(
         m::Newton, ls, prob, x::Union{StaticVector, Number}, p, jacprep)
     return init_factor(ls, prob, x, p, jacprep)
@@ -419,7 +441,7 @@ end
             return fac_T.factors
         end
     end
-    if fac.factors isa SparseArrays.SparseMatrixCSC
+    if fac.factors isa SparseArrays.AbstractSparseMatrix
         return similar(fac.factors, eltype(x))
     end
     return buffer(x, eltype(x), length(Fx), length(x))
@@ -519,13 +541,15 @@ end
 # factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the working-precision
 # factor slot for mixed-precision promotion (`nothing` where the factorisation runs in the working
 # precision, and for `LevenbergMarquardt`, which promotes nothing), the promotion flag, the
-# count of consecutive slow steps a promotion waits for, and the linear-solver workspace, which
-# only a [`GMRES`](@ref) solve has (`nothing` for every factorising method). For a value iterate the
+# count of consecutive slow steps a promotion waits for, the linear-solver workspace, which
+# only a [`GMRES`](@ref) solve has (`nothing` for every factorising method), and the slots that
+# `solve!!` copies the start point of a step and its residual into (two buffers for an array
+# iterate of a `LeastSquaresProblem`, `(nothing, nothing)` otherwise). For a value iterate the
 # workspace slots are `nothing`, and so is the factor slot unless the factor is reused. The factor
 # slot is the storage that each factorisation writes into; only a step with reuse stores the factor
 # it returns, because only such a step reads it again. The norm is `NaN` on a state that no
 # `start!!` saw or that `solve!!` returned.
-struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS}
+struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS}
     jacprep::JP
     jvpprep::VP
     Fx::FX
@@ -542,24 +566,26 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS}
     promoted::Bool
     slow_steps::Int32
     ws::WS
+    kept::KS
 end
 
-# The state of a factorising method, whose linear solve keeps no workspace of its own: the fifteen
-# fields of a state whose linear method forms and factorises a Jacobian.
-@inline function NewtonState(jacprep::JP, jvpprep::VP, Fx::FX, d::D, fac::FAC, J::JM, g::G,
-        rule::RS, merit::PH, fnorm::R, diag::DG, refbuf::RB, fac_T::FT, promoted::Bool,
-        slow_steps::Int32) where {JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT}
-    return NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, Nothing}(
+# A state with no slots for the start point of a step: the fields up to the workspace `ws`, which
+# defaults to `nothing` for a factorising method, whose linear solve keeps no workspace of its own.
+@inline function NewtonState(jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag,
+        refbuf, fac_T, promoted::Bool, slow_steps::Int32, ws = nothing)
+    return NewtonState(
         jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf, fac_T,
-        promoted, slow_steps, nothing)
+        promoted, slow_steps, ws, (nothing, nothing))
 end
 
 @inline state_gradratio(state::NewtonState) = state.diag.gradratio
 @inline state_jnorm(state::NewtonState) = state.diag.jnorm
+@inline step_start_buffers(state::NewtonState) = state.kept
 
 # The state whose diagnostics measure the stationarity test at `(x, Fx)`: `solve!!` re-measures
-# them at the iterate it returns, because a step's diagnostics are those of the last fresh
-# factorisation, at the start of that step. Every other method and problem keeps its reading.
+# them at the end of a step before it returns that iterate on the test, because a step's
+# diagnostics are those of the last fresh factorisation, at the start of that step. Every other
+# method and problem keeps its reading.
 @inline refresh_diagnostics!!(state, method, prob, x, Fx, p) = state
 @inline function refresh_diagnostics!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing}, prob::LeastSquaresProblem,
@@ -588,13 +614,13 @@ end
 @inline function with_factor(s::NewtonState, fac)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function with_factor_T(s::NewtonState, fac_T)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function update_stored_factor(
@@ -610,7 +636,7 @@ end
 @inline function with_rule(s::NewtonState, rule)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 # The merit of the current residual and its norm: the two values a step returns, or that a solve
@@ -619,19 +645,19 @@ end
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit,
         oftype(s.fnorm, fnorm), s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function with_diag(s::NewtonState, diag)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept)
 end
 
 @inline function with_mixed(s::NewtonState, promoted::Bool, slow_steps::Int32)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, promoted, slow_steps, s.ws)
+        s.refbuf, s.fac_T, promoted, slow_steps, s.ws, s.kept)
 end
 
 # ─── A `Number` iterate on the one-entry vector path ─────────────────────────
@@ -729,8 +755,10 @@ end
 
 @inline function init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     m.linsolve isa GMRES && return init_gmres_state(m, m.linsolve, prob, x, p)
+    m.linsolve isa KroneckerFactorization &&
+        return init_kronecker_state(m, m.linsolve, prob, x, p)
     if prob isa LeastSquaresProblem &&
-       m.linsolve isa Union{LUFactorization, LDLTFactorization} &&
+       m.linsolve isa Union{LUFactorization, LDLTFactorization, CholeskyFactorization} &&
        !(m.globalization isa LevenbergMarquardt)
         throw(ArgumentError(
             "LeastSquaresProblem does not support $(nameof(typeof(m.linsolve))); use QRFactorization() or SVDFactorization()"))
@@ -740,6 +768,7 @@ end
     if prob isa LeastSquaresProblem && is_refining(m.refinement)
         throw(ArgumentError("LeastSquaresProblem does not support refinement"))
     end
+    check_factor_iterate(m.linsolve, x)
     m.globalization isa LevenbergMarquardt &&
         check_lm_iterate(m.globalization, m.linsolve, prob, x)
     Fx = if x isa Union{StaticArray, Number}
@@ -780,10 +809,11 @@ end
                 nothing
         zero_promoted_factors!(fac_T)
         refbuf = init_refinement(m.refinement, x)
+        kept = prob isa LeastSquaresProblem ? (buffer(x), buffer(Fx)) : (nothing, nothing)
         return NewtonState(
             jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, fac_T, x, Fx),
             init_globalization(m.globalization, m.linsolve, x, Fx), rule, merit, R(NaN),
-            diag, refbuf, fac_T, false, Int32(0), nothing)
+            diag, refbuf, fac_T, false, Int32(0), nothing, kept)
     end
 end
 
@@ -1244,7 +1274,7 @@ end
         bnorm = R(rnorm(b))
         (isfinite(bnorm) && !iszero(bnorm)) || break
         δd, info = gmres_solve!(
-            refbuf.ws, op, nothing, b, bnorm, tol, m_cap - used, m_cap - used)
+            refbuf.ws, op, nothing, b, bnorm, tol, m_cap - used, m_cap - used; mgs = true)
         used += Int(info.iterations)
         axpby!!(cand, one(T), cand, one(T), δd)
     end
@@ -1714,7 +1744,7 @@ end
     map!!(-, ws.bb, Fx)
     op = R5Operator(state.jvpprep, prob, x, p)
     _, info = gmres_solve!(
-        ws, op, g.preconditioner, ws.bb, fnorm, η, maxiter, g.restart)
+        ws, op, g.preconditioner, ws.bb, fnorm, η, maxiter, g.restart; mgs = g.mgs)
     ws.gmres_iterations = info.iterations
     ws.max_inner = max(ws.max_inner, info.iterations)
     ws.linres = info.resnorm
@@ -1794,3 +1824,71 @@ end
     "f_calls reads the count of a Newton with GMRES; this solve keeps none"))
 @inline jvp_calls(::Nothing) = throw(ArgumentError(
     "jvp_calls reads the count of a Newton with GMRES; this solve keeps none"))
+
+# ─── The Kronecker stage solver ──────────────────────────────────────────────
+#
+# A `Newton` whose linear method is a `KroneckerFactorization` solves the stage system that a
+# `NonlinearProblem` with `stage_matrix` carries. Its state holds the `n × n` Jacobian of the vector
+# field in place of the `s n × s n` Jacobian of the stacked residual, and its factor holds the `s`
+# blocks of `I - h A ⊗ J`. Every step body of `Newton` runs unchanged: only the factorisation of a
+# refresh, `newton_factor`, has a method of its own.
+
+# The state of a `Newton` with `KroneckerFactorization`: no Jacobian preparation, the product of the
+# stacked residual by forward mode for a line search, which measures its slope, and none for
+# `Static`.
+function init_kronecker_state(
+        m::Newton, k::KroneckerFactorization{TF}, prob, x, p) where {TF}
+    x isa Union{Number, StaticArray} && throw(ArgumentError(
+        "KroneckerFactorization solves the stage system in place, and a value iterate (a Number or a StaticArray) has no Kronecker solve; pass a Vector"))
+    x isa AbstractGPUArray && throw(ArgumentError(
+        "KroneckerFactorization has no device factor, so a device iterate has no Kronecker solve; pass a Vector"))
+    TF === Nothing || throw(ArgumentError(
+        "KroneckerFactorization takes no factorisation precision: its blocks factorise in the working precision"))
+    m.globalization isa DogLeg && throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no DogLeg globalization: its trial loop needs the Jacobian of the stacked residual"))
+    m.globalization isa LevenbergMarquardt && throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no LevenbergMarquardt globalization: its damped step needs the Jacobian of the stacked residual"))
+    is_refining(m.refinement) && throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no refinement: its blocks factorise in the working precision"))
+    iszero(m.regularization) || throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no regularization: a shift of I - h A ⊗ J has no block form"))
+    m.jacobian === nothing || throw(ArgumentError(
+        "Newton with KroneckerFactorization takes no jacobian: it reads the Jacobian of the vector field from the problem's stage_jacobian"))
+    A = stage_matrix(prob)
+    A === nothing && throw(ArgumentError(
+        "KroneckerFactorization needs a NonlinearProblem with stage_matrix and stage_jacobian"))
+    hasproperty(p, :h) || throw(ArgumentError(
+        "KroneckerFactorization reads the step from p.h, and the parameters have no property h"))
+    fac = kronecker_factor(k.block, A, x)
+    T = eltype(x)
+    R = real(T)
+    n = length(x) ÷ size(A, 1)
+    Fx = buffer(x)
+    jvpprep = m.globalization isa Static ? nothing :
+              prepare_jvp(AutoForwardDiff(), prob, Fx, x, p)
+    return NewtonState(
+        nothing, jvpprep, Fx, buffer(x), fac, similar(x, T, n, n),
+        init_globalization(m.globalization, k, x, Fx), newton_rule(m, x),
+        init_merit(m.globalization, x), R(NaN), NewtonDiagnostics(R), nothing, nothing, false,
+        Int32(0))
+end
+
+# The refresh of a Kronecker step: `jac!` writes the Jacobian of the field into the state, and the
+# blocks are factorised at the step `p.h`. The diagnostics are those of a factor without a rank.
+@inline function newton_factor(
+        m::Newton{<:KroneckerFactorization}, state::NewtonState, prob, x, Fx, p)
+    R = real(eltype(x))
+    stage_jacobian(prob)(state.J, x, p)
+    fac = factorize_stages!!(state.fac, m.linsolve.block, state.J, R(p.h))
+    return state.J, fac, NewtonDiagnostics(R)
+end
+
+# The tangent solve of implicit differentiation factorises the Jacobian of the stacked residual,
+# which a `Newton` with `KroneckerFactorization` never forms, so `solve` refuses a dual input for
+# it before the primal solve, as it does for `GMRES`.
+function solve_implicit(
+        ::NonlinearProblem, x₀, method::Newton{<:KroneckerFactorization}, p,
+        options::Union{Nothing, Options}, kwargs)
+    throw(ArgumentError(
+        "solve does not accept ForwardDiff.Dual inputs for a Newton with KroneckerFactorization; its tangent solve needs the Jacobian of the stacked residual, which this solver does not form"))
+end

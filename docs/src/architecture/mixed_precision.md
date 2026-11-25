@@ -19,10 +19,13 @@ the limit (Kelley 2022; Higham and Mary 2022).
 ## The factorisation precision is a type parameter
 
 `LUFactorization(Float32)` is `LUFactorization{Float32}()`, and the same holds for
-[`LDLTFactorization`](@ref), [`QRFactorization`](@ref) and [`SVDFactorization`](@ref). The
-default `LUFactorization()` is `LUFactorization{Nothing}()`, which factorises in `T`. For a complex
-problem the precision stays real: `LUFactorization(Float32)` factorises a `ComplexF64` Jacobian in
-`ComplexF32`. [`factor_eltype`](@ref) gives the element type of the factors:
+[`LDLTFactorization`](@ref), [`CholeskyFactorization`](@ref), [`QRFactorization`](@ref) and
+[`SVDFactorization`](@ref). A matrix that is positive definite in the working precision can fail to
+be positive definite in a lower `TF`; the factor is then `SINGULAR`, as any other failed
+factorisation in `TF`. The default `LUFactorization()` is `LUFactorization{Nothing}()`, which
+factorises in `T`. For a complex problem the precision stays real: `LUFactorization(Float32)`
+factorises a `ComplexF64` Jacobian in `ComplexF32`. [`factor_eltype`](@ref) gives the element type
+of the factors:
 
 ```jldoctest mixed
 julia> using GeometricSolvers

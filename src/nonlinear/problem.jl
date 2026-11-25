@@ -22,6 +22,8 @@ abstract type AbstractNonlinearProblem end
     NonlinearProblem(F, J; jacobian_prototype = nothing)
     NonlinearProblem(F, J; jacobian_prototype = nothing,
         block_residuals = nothing, block_jacobians = nothing)
+    NonlinearProblem(F, J; jacobian_prototype = nothing,
+        stage_matrix = nothing, stage_jacobian = nothing)
 
 The residual `F` of a nonlinear system, optionally its derivative `J`, and optionally a matrix
 `jacobian_prototype` giving the storage type and sparsity pattern of the Jacobian. With no
@@ -36,6 +38,14 @@ them. `J` stays as the caller gives it; [`RAS`](@ref) reads the block functions 
 method the global ones. `block_jacobians` without `block_residuals`, and the two of different
 lengths, raise an `ArgumentError`.
 
+With `stage_matrix = A` and `stage_jacobian = jac!` given, `F` is the residual
+`Z - h (A ⊗ I) f(yₙ + Z)` of the stage system of an implicit Runge–Kutta method in the stacked
+stage increments `Z`, the problem's `F` is the [`StageResidual`](@ref) that holds the three, and
+[`KroneckerFactorization`](@ref) solves its Newton steps. `jac!(J, Z, p)` writes the `n × n`
+Jacobian of the vector field into `J`, at a point that the caller chooses from `Z` and `p`, and the
+step `h` is read as `p.h`. One of the two without the other, and either with `block_residuals` or
+`block_jacobians`, raise an `ArgumentError`.
+
 The call form follows the storage of the iterate, and [`residual!!`](@ref) selects it on the
 storage alone: with no buffer slot the call is `F(x, p)`, for a `Number`, an `MVector` — which
 counts as a value — and an `Array` alike. `J` is the derivative of `F`, which
@@ -46,13 +56,17 @@ factorisation from that pattern and `AutoSparse` uses its sparsity pattern direc
 then comes from an analytic `J` or an `AutoSparse` `jacobian`: `AutoForwardDiff()`, which is the
 source of `Newton(; jacobian = nothing)` without `J`, writes a dense Jacobian only, so `Newton`
 with it and a sparse prototype raises `ArgumentError` when it initialises. A linear
-solver exists only for a real host `Vector` iterate with a `SparseMatrixCSC{<:Any, Int}`
-prototype, with `Sparspak` loaded and an `LUFactorization` in the iterate's element type; a
+solver exists for a host `Vector` iterate with a `SparseMatrixCSC{<:Any, Int}` prototype in two
+configurations: a real iterate with `Sparspak` loaded and an `LUFactorization` in the iterate's
+element type, and a `Float64` or `ComplexF64` iterate with [`UMFPACKFactorization`](@ref); a
 `QRFactorization`, an `SVDFactorization` and a dense prototype raise `MethodError` when `Newton`
-initialises. On a device iterate, `Newton(; jacobian = nothing)` with an analytic `J` raises
-`MethodError` from the factor, and an `AutoSparse` `jacobian` raises `ArgumentError` in
-[`prepare_ad`](@ref) first, as any back end other than `AutoForwardDiff()` does. `Picard` and a
-static or batched iterate ignore the prototype.
+initialises, and `ArgumentError` with `UMFPACKFactorization`. With `CUDA` and `CUDSS` loaded, a
+`CuVector` iterate with a `CuSparseMatrixCSR` prototype and an `LUFactorization` in its element
+type has the cuDSS factor. On a device iterate with a `SparseMatrixCSC` prototype,
+`Newton(; jacobian = nothing)` with an analytic `J` raises `MethodError` from the factor, or
+`ArgumentError` with `UMFPACKFactorization`, and an `AutoSparse` `jacobian` raises
+`ArgumentError` in [`prepare_ad`](@ref) first, as any back end other than `AutoForwardDiff()`
+does. `Picard` and a static or batched iterate ignore the prototype.
 
 ```jldoctest
 julia> prob = NonlinearProblem((x, p) -> x .* x .- 4);
@@ -72,7 +86,16 @@ struct NonlinearProblem{F, J, P <: Union{Nothing, AbstractMatrix}} <:
 end
 
 function NonlinearProblem(F, J = nothing; jacobian_prototype = nothing,
-        block_residuals = nothing, block_jacobians = nothing)
+        block_residuals = nothing, block_jacobians = nothing,
+        stage_matrix = nothing, stage_jacobian = nothing)
+    if stage_matrix !== nothing || stage_jacobian !== nothing
+        (stage_matrix === nothing || stage_jacobian === nothing) && throw(ArgumentError(
+            "NonlinearProblem takes stage_matrix and stage_jacobian together"))
+        (block_residuals === nothing && block_jacobians === nothing) || throw(ArgumentError(
+            "NonlinearProblem takes either block_residuals or stage_matrix, not both"))
+        return NonlinearProblem(
+            StageResidual(F, stage_matrix, stage_jacobian), J, jacobian_prototype)
+    end
     if block_residuals === nothing
         block_jacobians === nothing || throw(ArgumentError(
             "NonlinearProblem takes block_jacobians only together with block_residuals"))
@@ -145,6 +168,48 @@ function block_jacobian(prob::AbstractNonlinearProblem, i::Integer)
     J = block_jacobians(prob)
     return J === nothing ? nothing : J[i]
 end
+
+"""
+    StageResidual(F, stage_matrix, stage_jacobian)
+
+The residual of a [`NonlinearProblem`](@ref) that also carries the structure of the stage system
+of an implicit Runge–Kutta method: the residual `F` of the stacked stage increments, the `s × s`
+stage matrix `A` of the tableau, and the Jacobian `jac!(J, Z, p)` of the vector field, which writes
+an `n × n` matrix into `J` for the stacked iterate `Z` of `s n` entries. A call forwards every
+argument to `F` unchanged, so every method reads the stacked residual; a [`Newton`](@ref) with
+[`KroneckerFactorization`](@ref) reads `A` and `jac!` through [`stage_matrix`](@ref) and
+[`stage_jacobian`](@ref) instead of a Jacobian of `F`.
+"""
+struct StageResidual{Fg, MA, JS} <: Function
+    F::Fg
+    stage_matrix::MA
+    stage_jacobian::JS
+end
+
+@inline (r::StageResidual)(args...) = r.F(args...)
+
+"""
+    stage_matrix(prob)
+
+The stage matrix `A` of `prob`, or `nothing` when `prob` carries none: a problem built without
+the `stage_matrix` keyword, and any problem that is not a [`NonlinearProblem`](@ref), gives
+`nothing`.
+"""
+function stage_matrix(prob::NonlinearProblem)
+    return prob.F isa StageResidual ? prob.F.stage_matrix : nothing
+end
+stage_matrix(::AbstractNonlinearProblem) = nothing
+
+"""
+    stage_jacobian(prob)
+
+The Jacobian `jac!(J, Z, p)` of the vector field of `prob`, or `nothing` when `prob` carries none,
+as for [`stage_matrix`](@ref).
+"""
+function stage_jacobian(prob::NonlinearProblem)
+    return prob.F isa StageResidual ? prob.F.stage_jacobian : nothing
+end
+stage_jacobian(::AbstractNonlinearProblem) = nothing
 
 """
     jacobian_prototype(prob)

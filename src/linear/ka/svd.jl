@@ -1,10 +1,10 @@
 # KernelAbstractions parallel round-robin one-sided Jacobi SVD for DeviceSVD on AbstractGPUArray.
 #
-# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `jacobi_rotation` and `jacobi_pair` from
-# `src/linear/static/svd.jl`. `fac.U` holds the working columns during the sweep, `fac.V` holds
-# the right singular vectors `V`, `fac.flag` is the 1-element `Int32` rotation flag, and `fac.σ̂`
-# holds the squared column norms during the sweep and the sorted scaled singular values `σ̂` of
-# `J / 2^e` after it.
+# Reuses `JACOBI_MAX_SWEEPS`, `jacobi_tolerance`, `rank_tolerance`, `jacobi_rotation` and
+# `jacobi_pair` from `src/linear/static/svd.jl`. `fac.U` holds the working columns during the
+# sweep, `fac.V` holds the right singular vectors `V`, `fac.flag` is the 1-element `Int32`
+# rotation flag, and `fac.σ̂` holds the squared column norms during the sweep and the sorted
+# scaled singular values `σ̂` of `J / 2^e` after it.
 
 using KernelAbstractions: @localmem, @synchronize
 
@@ -150,13 +150,13 @@ end
 end
 
 @kernel function ka_jacobi_finalize_svd_kernel!(
-        U, S, VT, @Const(V), @Const(σ̂), m_rows::Int, n::Int, e::Int, tol)
+        U, S, VT, @Const(V), @Const(σ̂), m_rows::Int, n::Int, e::Int, cut)
     j = @index(Global, Linear)
     @inbounds if j <= n
         F = eltype(U)
         σj = σ̂[j]
         S[j] = ldexp2(σj, e)
-        if σj > tol * σ̂[1]
+        if σj > cut * σ̂[1]
             for i in 1:m_rows
                 U[i, j] = U[i, j] / σj
             end
@@ -175,10 +175,13 @@ const KA_SVD_WORKGROUP = 32
 
 function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVector{R},
         VT::AbstractMatrix{F}, flag::AbstractVector{Int32}, σ̂::AbstractVector{R},
-        e::Int, neg_e::Int) where {F, R}
+        e::Int, neg_e::Int, rtol) where {F, R}
     m_rows, n = size(U, 1), size(U, 2)
     backend = get_backend(U)
+    # `tol` is the tolerance of the sweep alone; `cut`, the rank cutoff of `rtol` in `R`, goes to
+    # the kernel that zeroes the columns of `U` past the rank
     tol = jacobi_tolerance(m_rows, R)
+    cut = rank_tolerance(rtol, m_rows, R)
     m = n + Int(isodd(n))
     n_pairs = m ÷ 2
     converged = n <= 1
@@ -212,17 +215,19 @@ function ka_svd!(U::AbstractGPUArray{F, 2}, V::AbstractMatrix{F}, S::AbstractVec
         ka_jacobi_sort_columns_kernel!(backend)(σ̂, U, V, m_rows, n; ndrange = 1)
     end
     ka_jacobi_finalize_svd_kernel!(backend)(
-        U, S, VT, V, σ̂, m_rows, n, e, tol; ndrange = n)
+        U, S, VT, V, σ̂, m_rows, n, e, cut; ndrange = n)
     isgpu(backend) && synchronize(backend)
     # the status and the rank from one host read of the sorted `σ̂`, and no scalar read of a
     # device array: `info` reports a sweep that did not converge or a singular value that is
     # not finite, and the rank is then 0
     σ̂_host = Array(σ̂)
     ok = converged && all(isfinite, σ̂_host)
-    return ok ? 0 : 1, ok ? svd_rank(σ̂_host, m_rows) : 0
+    return ok ? 0 : 1, ok ? svd_rank(σ̂_host, m_rows, rtol) : 0
 end
 
-function ka_factorize_svd!(fac::DeviceSVD, J::AbstractMatrix)
+# `method` carries the rank cutoff `rtol`; the default is the cutoff of `SVDFactorization()`.
+function ka_factorize_svd!(
+        fac::DeviceSVD, J::AbstractMatrix, method::SVDFactorization = SVDFactorization())
     n = size(fac.U, 2)
     n == 0 && return DeviceSVD(
         fac.factors, fac.U, fac.S, fac.VT, fac.V, fac.σ̂, fac.flag, fac.tmp, fac.rhs,
@@ -236,14 +241,15 @@ function ka_factorize_svd!(fac::DeviceSVD, J::AbstractMatrix)
         fac.U .= ldexp2.(J, -e)
         neg_e = 0
     end
-    info, rank = ka_svd!(fac.U, fac.V, fac.S, fac.VT, fac.flag, fac.σ̂, e, neg_e)
+    info, rank = ka_svd!(
+        fac.U, fac.V, fac.S, fac.VT, fac.flag, fac.σ̂, e, neg_e, method.rtol)
     return DeviceSVD(
         fac.factors, fac.U, fac.S, fac.VT, fac.V, fac.σ̂, fac.flag, fac.tmp, fac.rhs,
         info, rank, e)
 end
 
-function factorize!!(fac::DeviceSVD, ::SVDFactorization, J::AbstractMatrix)
-    return ka_factorize_svd!(fac, J)
+function factorize!!(fac::DeviceSVD, method::SVDFactorization, J::AbstractMatrix)
+    return ka_factorize_svd!(fac, J, method)
 end
 
 @kernel function ka_svd_ut_mul_kernel!(

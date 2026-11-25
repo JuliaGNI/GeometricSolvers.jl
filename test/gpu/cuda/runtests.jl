@@ -1,21 +1,29 @@
-# The tests of `GeometricSolversCUDAExt`, run by hand on a machine with a CUDA device:
-# `julia --project=test/gpu/cuda test/gpu/cuda/runtests.jl`. The extension loading and dispatch
-# rows run without a device; every row that factorises runs where `CUDA.functional()`.
+# The tests of `GeometricSolversCUDAExt` and `GeometricSolversCUDSSExt`, run by hand on a machine
+# with a CUDA device: `julia --project=test/gpu/cuda test/gpu/cuda/runtests.jl`. The extension
+# loading, dispatch and JET rows run without a device; every row that factorises runs where
+# `CUDA.functional()`.
 
 using CUDA
+using CUDSS: CUDSS, CudssSolver
+using CUDSS.cuSPARSE: CuSparseMatrixCSR
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, Diagonal, I, LU, cond, lu!, norm, opnorm, qr, qr!, svd!
+using JET: JET
+using LinearAlgebra: BLAS, Diagonal, I, LU, cond, lu!, mul!, norm, opnorm, qr, qr!, svd!
 using Random: Xoshiro
+using SparseArrays: SparseArrays, SparseMatrixCSC, nonzeros, nzrange, rowvals, sparse
 using Test
 
 using GeometricSolvers
 using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
-using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization, SVDFactorization
-using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!,
-                        ka_factorize_lu!, ka_factorize_qr!, ka_factorize_svd!, ldiv!!,
-                        returncode
+using GeometricSolvers: LUFactorization, NonlinearProblem, QRFactorization,
+                        SVDFactorization,
+                        UMFPACKFactorization
+using GeometricSolvers: SINGULAR, SUCCESS, backsolve!, dense_factor, factorize!!, init,
+                        init_linear, ka_factorize_lu!, ka_factorize_qr!, ka_factorize_svd!,
+                        ldiv!!, returncode, solve!
 
 include("../../helpers/own_kernel.jl")
+include("../../helpers/sparse_problems.jl")
 
 @testset "GeometricSolversCUDAExt extension loading, dispatch, and CUDA census alignment" begin
     ext_cuda = Base.get_extension(GeometricSolvers, :GeometricSolversCUDAExt)
@@ -96,6 +104,42 @@ include("../../helpers/own_kernel.jl")
     end
 end
 
+@testset "GeometricSolversCUDSSExt extension loading, dispatch and JET: $T" for T in (
+    Float32, Float64, ComplexF32, ComplexF64)
+    ext = Base.get_extension(GeometricSolvers, :GeometricSolversCUDSSExt)
+    @test ext !== nothing
+    for Ti in (Int32, Int64), Mem in (CUDA.DeviceMemory, CUDA.UnifiedMemory)
+
+        Mat = CuSparseMatrixCSR{T, Ti}
+        Vec = CuArray{T, 1, Mem}
+        Fac = ext.CUDSSLU{T, Mat, CudssSolver{T, Ti}}
+        @test which(init_linear, (LUFactorization{Nothing}, Mat, Vec)).module === ext
+        @test which(init_linear, (LUFactorization{real(T)}, Mat, Vec)).module === ext
+        @test which(factorize!!, (Fac, LUFactorization{Nothing}, Mat)).module === ext
+        @test which(ldiv!!, (Vec, Fac, Vec)).module === ext
+        @test which(returncode, (Fac,)).module === ext
+        @test which(GeometricSolvers.factor_diagnostics,
+            (Vec, Fac, Vec, real(T))).module === ext
+        # a `CuSparseMatrixCSR` prototype takes the default of every other prototype, `Newton()`
+        @test which(default_method, (NonlinearProblem{Nothing, Nothing, Mat}, Vec)) ===
+              which(default_method, (NonlinearProblem{Nothing, Nothing, Nothing}, Vec))
+        JET.test_call(init_linear, (LUFactorization{Nothing}, Mat, Vec); target_modules = (ext,))
+        JET.test_call(factorize!!, (Fac, LUFactorization{Nothing}, Mat); target_modules = (ext,))
+        JET.test_call(ldiv!!, (Vec, Fac, Vec); target_modules = (ext,))
+        # a solve with no reuse keeps the factor that `init` built in its state, so the record of
+        # the analysis is a cell that every factor of one `init_linear` shares
+        @test fieldtype(Fac, :analyses) === Base.RefValue{Int}
+        # a step that reads the Jacobian after the factorisation keeps a sparse Jacobian buffer
+        for m in (Newton(; globalization = DogLeg()), Newton(; refinement = Refinement()))
+            @test only(Base.return_types(GeometricSolvers.init_newton_J,
+                (typeof(m), Fac, Nothing, Vec, Vec))) <: CuSparseMatrixCSR
+        end
+    end
+    # a dense device iterate keeps the dense factor of the CUDA extension
+    @test which(init_linear, (LUFactorization{Nothing}, Nothing, CuArray{T, 1})).module ===
+          GeometricSolvers
+end
+
 if CUDA.functional()
     allowscalar(false)
     old_blas_threads = BLAS.get_num_threads()
@@ -116,7 +160,7 @@ if CUDA.functional()
     @testset "CUDA cuSOLVER agreement with own KA kernels at n = $n" for n in (1, 16, 256)
         @testset "T = $T" for T in CUDA_BLAS_ELTYPES
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             @test κ <= 10.0
             epsT = Float64(eps(real(T)))
             bound = 8 * n * epsT * κ
@@ -166,7 +210,7 @@ if CUDA.functional()
         for T in CUDA_BLAS_ELTYPES
             let n = 10^4
                 A_cpu, b_cpu = cuda_well_conditioned(T, n)
-                κ = Float64(cond(A_cpu, Inf))
+                κ = Float64(cuda_well_conditioned_cond(A_cpu))
                 @test κ <= 10.0
                 epsT = Float64(eps(real(T)))
                 dA = CuArray(A_cpu)
@@ -208,7 +252,7 @@ if CUDA.functional()
         for T in CUDA_BLAS_ELTYPES
             let n = 10^3
                 A_cpu, b_cpu = cuda_well_conditioned(T, n)
-                κ = Float64(cond(A_cpu, Inf))
+                κ = Float64(cuda_well_conditioned_cond(A_cpu))
                 @test κ <= 10.0
                 epsT = Float64(eps(real(T)))
                 dA = CuArray(A_cpu)
@@ -245,7 +289,7 @@ if CUDA.functional()
         for T in (Float64, ComplexF64), n in (1, 16, 10^4)
 
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             bound = 8 * n * Float64(eps(Float32)) * κ
             dA = CuArray(A_cpu)
             db = CuArray(b_cpu)
@@ -286,7 +330,7 @@ if CUDA.functional()
         for T in (Float64, ComplexF64), n in (1, 16, 10^3)
 
             A_cpu, b_cpu = cuda_well_conditioned(T, n)
-            κ = Float64(cond(A_cpu, Inf))
+            κ = Float64(cuda_well_conditioned_cond(A_cpu))
             bound = 8 * n * Float64(eps(Float32)) * κ
             dA = CuArray(A_cpu)
             db = CuArray(b_cpu)
@@ -385,12 +429,51 @@ if CUDA.functional()
         fill!(fac_svd_fb.σ̂, zero(RT))
         fill!(fac_svd_fb.V, zero(T))
         fac_svd_fb = ext_cuda._cusolver_svd_finish!(
-            fac_svd_fb, dA_ok, fac_svd_fb.U, fac_svd_fb.σ̂, fac_svd_fb.V, 1, 0)
+            fac_svd_fb, SVDFactorization(), dA_ok, fac_svd_fb.U, fac_svd_fb.σ̂, fac_svd_fb.V,
+            1, 0)
         @test fac_svd_fb.info == 0
         @test fac_svd_fb.rank == 2
         @test returncode(fac_svd_fb) === SUCCESS
         ldiv!!(dx_ok, fac_svd_fb, CuArray(T[5, 4]))
         @test isapprox(Array(dx_ok), T[1, 1]; rtol = 16 * eps(RT))
+
+        # SVDFactorization(; rtol) through `factorize!!` and on the Jacobi fallback of `gesvdj!`:
+        # the singular values 1, 1e-10, 1e-14, a diagonal with its columns permuted and signed,
+        # whose default rank is 1 in Float32 and 3 in Float64. In single precision `gesvdj!`
+        # returns 1e-10 and 1e-14 as 0, so a cutoff below the sweep tolerance (rtol 1e-9, 1e-12
+        # and 0 in Float32, rtol 0 in Float64) runs on the own Jacobi kernel.
+        A_rt = zeros(T, 3, 3)
+        A_rt[2, 1], A_rt[3, 2], A_rt[1, 3] = 1, -1e-10, 1e-14
+        x_rt = CuArray(zeros(T, 3))
+        prob_rt = NonlinearProblem(x_rt, cuda_noop)
+        for (m_rt, r_rt) in ((SVDFactorization(), RT === Float32 ? 1 : 3),
+            (SVDFactorization(; rtol = 1e-9), 1), (SVDFactorization(; rtol = 1e-12), 2),
+            (SVDFactorization(; rtol = 0), 3))
+            fac_rt = factorize!!(dense_factor(m_rt, prob_rt, x_rt, nothing), m_rt, CuArray(A_rt))
+            @test fac_rt.info == 0
+            @test fac_rt.rank == r_rt
+            @test all(iszero, Array(fac_rt.U)[:, (r_rt + 1):end])
+            fac_fb = dense_factor(m_rt, prob_rt, x_rt, nothing)
+            fac_fb = ext_cuda._cusolver_svd_finish!(
+                fac_fb, m_rt, CuArray(A_rt), fac_fb.U, fac_fb.σ̂, fac_fb.V, 1, 0)
+            @test fac_fb.info == 0
+            @test fac_fb.rank == r_rt
+            @test all(iszero, Array(fac_fb.U)[:, (r_rt + 1):end])
+        end
+
+        # The singular values 1, 1e-3, 1e-5, which `gesvdj!` resolves in every element type: the
+        # cutoffs 1e-2 and 1e-4 lie above the sweep tolerance and run on `gesvdj!`, rtol 0 on the
+        # own Jacobi kernel
+        A_rtb = zeros(T, 3, 3)
+        A_rtb[2, 1], A_rtb[3, 2], A_rtb[1, 3] = 1, -1e-3, 1e-5
+        for (m_rt, r_rt) in ((SVDFactorization(), 3), (SVDFactorization(; rtol = 1e-2), 1),
+            (SVDFactorization(; rtol = 1e-4), 2), (SVDFactorization(; rtol = 0), 3))
+            fac_rt = factorize!!(
+                dense_factor(m_rt, prob_rt, x_rt, nothing), m_rt, CuArray(A_rtb))
+            @test fac_rt.info == 0
+            @test fac_rt.rank == r_rt
+            @test all(iszero, Array(fac_rt.U)[:, (r_rt + 1):end])
+        end
 
         # SVD prescaling on a subnormal input
         m_svd = SVDFactorization()
@@ -495,6 +578,122 @@ if CUDA.functional()
             xd = Ad \ bd
             @test relerr(Aref * ComplexF64.(Array(xd)), ComplexF64.(b)) <= tol
         end
+    end
+
+    # The CSR arrays of a host `SparseMatrixCSC` `A`, `(rowptr, colval, nzval)`, and the position in
+    # `nzval` of each diagonal entry, which the residual's Jacobian adds to.
+    function csr_arrays(A::SparseMatrixCSC)
+        At = sparse(transpose(A))
+        diagpos = [only(k for k in nzrange(At, i) if rowvals(At)[k] == i)
+                   for i in axes(A, 1)]
+        return At.colptr, At.rowval, nonzeros(At), diagpos
+    end
+
+    # The residual `F(z) = A z + p z.^3 / 5 - b` and its analytic Jacobian, which writes the
+    # nonzeros of `J`, the pattern of `A`, as `nzA`, the nonzeros of `A`, plus `3 p z.^2 / 5` at
+    # `diagpos`.
+    function cubic_sparse_problem(A, nzA, diagpos, b)
+        F!(r, z, p) = (mul!(r, A, z); r .+= p .* z .^ 3 ./ 5 .- b; r)
+        function J!(J, z, p)
+            nz = nonzeros(J)
+            copyto!(nz, nzA)
+            view(nz, diagpos) .+= (3 * p / 5) .* z .^ 2
+            return J
+        end
+        return NonlinearProblem(F!, J!; jacobian_prototype = A)
+    end
+
+    @testset "cuDSS sparse LU through LUFactorization: N = $N, T = $T" for N in (125, 768),
+        T in CUDA_BLAS_ELTYPES
+
+        ext = Base.get_extension(GeometricSolvers, :GeometricSolversCUDSSExt)
+        R = real(T)
+        rng = Xoshiro(0x5eed)
+        Ah = _sparse_block_matrix(N, T)
+        n = size(Ah, 1)
+        p = one(R)
+        z_star = T <: Complex ? T.(randn(rng, n) .+ im .* randn(rng, n)) ./ 4 :
+                 T.(randn(rng, n)) ./ 4
+        b = Ah * z_star .+ p .* z_star .^ 3 ./ 5
+        z0 = z_star .+ one(R) / 5
+        rowptr, colval, nzval, diagpos = csr_arrays(Ah)
+        Ad = CuSparseMatrixCSR{T, Int32}(CuArray{Int32}(rowptr), CuArray{Int32}(colval),
+            CuArray(nzval), size(Ah))
+        prob_d = cubic_sparse_problem(Ad, CuArray(nzval), CuArray(diagpos), CuArray(b))
+        tol = R === Float32 ? 1.0f-4 : 1e-10
+        @test default_method(prob_d, CuArray(z0)) === Newton()
+
+        solver = init(prob_d, CuArray(z0), Newton(), p; f_abstol = tol, f_reltol = zero(R))
+        fac0 = solver.state.fac
+        @test fac0 isa ext.CUDSSLU{T}
+        @test fac0.analyses[] == 0
+        @test solver.state.J === fac0.factors
+        x, st = solve!(solver)
+        @test st.code === SUCCESS
+        @test st.iterations >= 2
+        @test Array(x) != z0
+        # every step factorised, and only the first analysed
+        @test solver.state.fac.analyses[] == 1
+        @test isapprox(Array(x), z_star; rtol = R === Float32 ? 1.0f-3 : 1e-9)
+
+        # The linear solves at the root, at the start and at the planted solution agree with
+        # UMFPACK on the host copy of the Jacobian, in `Float64` or `ComplexF64` for a `Float32`
+        # or `ComplexF32` `T`, within `8n·eps(T)·κ∞`; three more refactorisations keep the one
+        # analysis.
+        W = T <: Complex ? ComplexF64 : Float64
+        function test_umfpack_agreement(solver, z)
+            Jd = copy(solver.state.J)
+            prob_d.J(Jd, z, p)
+            fac = factorize!!(solver.state.fac, LUFactorization(), Jd)
+            @test returncode(fac) === SUCCESS
+            @test fac.analyses[] == 1
+            rhs = T <: Complex ? T.(range(0.1, 1.0; length = n) .+ im) :
+                  T.(range(0.1, 1.0; length = n))
+            d = Array(ldiv!!(CuArray(zero(rhs)), fac, CuArray(rhs)))
+            # the CSR arrays of `J` are the CSC arrays of its transpose
+            Jt = SparseMatrixCSC(n, n, rowptr, colval, Array(Jd.nzVal))
+            Jw = SparseMatrixCSC{W, Int}(sparse(transpose(Jt)))
+            fac_h = factorize!!(init_linear(UMFPACKFactorization(), Jw, zeros(W, n)),
+                UMFPACKFactorization(), Jw)
+            d_ref = ldiv!!(zeros(W, n), fac_h, W.(rhs))
+            κ = cond(Matrix(Jw), Inf)
+            @test norm(W.(d) - d_ref, Inf) / norm(d_ref, Inf) <= 8 * n * eps(R) * κ
+        end
+        for z in (x, CuArray(z0), CuArray(z_star))
+            test_umfpack_agreement(solver, z)
+        end
+
+        # a `DogLeg` trial loop and a refinement read `J` after the factorisation, so they keep a
+        # sparse buffer of the factor's pattern apart from the factor's matrix
+        for m in (Newton(; globalization = DogLeg()), Newton(; refinement = Refinement()))
+            solver_m = init(prob_d, CuArray(z0), m, p; f_abstol = tol, f_reltol = zero(R))
+            @test solver_m.state.J isa CuSparseMatrixCSR{T, Int32}
+            @test solver_m.state.J !== solver_m.state.fac.factors
+            x_m, st_m = solve!(solver_m)
+            @test st_m.code === SUCCESS
+            @test Array(x_m) != z0
+            @test solver_m.state.fac.analyses[] == 1
+            @test isapprox(Array(x_m), z_star; rtol = R === Float32 ? 1.0f-3 : 1e-9)
+            for z in (x_m, CuArray(z0), CuArray(z_star))
+                test_umfpack_agreement(solver_m, z)
+            end
+        end
+
+        # a non-finite entry gives `SINGULAR` without a cuDSS call; mixed precision and another
+        # pattern raise
+        Jn = copy(solver.state.J)
+        CUDA.@allowscalar Jn.nzVal[1] = T(NaN)
+        fac_n = factorize!!(solver.state.fac, LUFactorization(), Jn)
+        @test returncode(fac_n) === SINGULAR
+        @test fac_n.analyses[] == 1
+        @test_throws r"^ArgumentError: sparse LUFactorization with a CuSparseMatrixCSR" init(
+            prob_d, CuArray(z0),
+            Newton(; linsolve = LUFactorization(R === Float64 ? Float32 :
+                                           Float64)), p)
+        Ad2 = CuSparseMatrixCSR{T, Int32}(CuArray{Int32}(1:(n + 1)), CuArray{Int32}(1:n),
+            CUDA.ones(T, n), (n, n))
+        @test_throws r"^ArgumentError: sparse Jacobian sparsity pattern differs" factorize!!(
+            solver.state.fac, LUFactorization(), Ad2)
     end
 
     BLAS.set_num_threads(old_blas_threads)

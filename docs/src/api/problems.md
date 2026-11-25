@@ -53,6 +53,18 @@ block_residual
 block_jacobian
 ```
 
+A [`NonlinearProblem`](@ref) built with the `stage_matrix` and `stage_jacobian` keywords carries
+the stage system of an implicit Runge–Kutta method: its `F` is then a [`StageResidual`](@ref) that
+forwards every call to the stacked residual, and the stage matrix and the Jacobian of the vector
+field are read with [`stage_matrix`](@ref) and [`stage_jacobian`](@ref), which a [`Newton`](@ref)
+with [`KroneckerFactorization`](@ref) does. These names are exported.
+
+```@docs
+StageResidual
+stage_matrix
+stage_jacobian
+```
+
 ### Reduced-space elimination with a batch inside the residual
 
 [`BatchEliminated`](@ref) eliminates a whole batch of independent inner systems *from the residual
@@ -127,7 +139,10 @@ Every type in this section is `isbits`, so a kernel can hold it, and every real 
 range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
 ``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return; a
 solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has factorised afresh
-at the iterate it returns.
+at the iterate it returns. Where such a solve returns the start point of a step it discards, the
+status carries the diagnostics of the factorisation at that point, not those of the later
+re-measure at the end of the step; its `iterations` counts the steps that reached that point, and
+its `stepnorm` is that of the last of them.
 With `regularization = μ ≠ 0`, `rank` and `nullnorm` describe ``J(x_k) + μ I`` and `gradratio`
 describes ``J(x_k)``, so the classification below holds for `μ = 0` only.
 For `n ≥ 2` (for `n = 1`, a nonzero scalar Jacobian always gives `gradratio = 1`, and `rank = 1`
@@ -180,3 +195,18 @@ closed set `abstol`, `reltol`, `maxiters` and `options`: `abstol` maps to `f_abs
 `f_reltol = 0` when `reltol` is not given), `reltol` maps to `f_reltol`, `maxiters` maps to
 `max_iterations`, and `options` passes an [`Options`](@ref) alone; any other keyword, or `options`
 together with another keyword, raises an `ArgumentError`.
+
+## IntervalArithmetic extension
+
+When [IntervalArithmetic](https://github.com/JuliaIntervals/IntervalArithmetic.jl) is loaded, the
+package extension `GeometricSolversIntervalArithmeticExt` adds a method of [`certify`](@ref) for a
+[`NonlinearProblem`](@ref) and an iterate `x` that is a real floating-point `Number`, a
+`StaticVector` or a host `Vector`. It runs Krawczyk's test in intervals of the element type of `x`
+and returns `(certified, enclosure, guaranteed)`: whether a box around `x` holds exactly one root,
+an enclosure of that root, and whether IntervalArithmetic guarantees the intervals of `F(x)` and
+`J(X)`. `certify` is `public` and not exported (`GeometricSolvers.certify`); without the extension
+it has no method.
+
+```@docs
+certify
+```

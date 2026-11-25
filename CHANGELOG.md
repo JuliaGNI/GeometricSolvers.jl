@@ -11,6 +11,127 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`init(prob, x₀)` and `solve(prob, x₀)` run on a `NonlinearProblem` and a `LeastSquaresProblem`
+  with no method, and the new exported `default_method(prob, x₀)` names the method they take.**
+  Both calls forward to `init(prob, x₀, default_method(prob, x₀), nothing; kwargs...)` and
+  `solve(prob, x₀, default_method(prob, x₀), nothing; kwargs...)`; before, they raised
+  `MethodError`. A `NonlinearProblem` with a `SparseMatrixCSC` `jacobian_prototype` on a
+  `Vector{Float64}` or `Vector{ComplexF64}` iterate takes
+  `Newton(; linsolve = UMFPACKFactorization())`, so it solves without Sparspak; a
+  `LeastSquaresProblem` takes `GaussNewton()`; every other `NonlinearProblem` and a
+  `StationarityProblem` take `Newton()`, whose `LUFactorization()` selects its factor from the
+  storage. No default is matrix-free or a combinator. Every call that names a method, and the
+  no-method calls of a `StationarityProblem`, a `Deflated{<:StationarityProblem}`, a
+  `Reparametrized`, a `BlockEliminated` and a `VariableProjection`, which take `Newton()`, return
+  what they returned. On each of the 67 problem starts of the standard test set the default is
+  `Newton()`, the method of the column `Newton Static LU`, so the standard table has no column for
+  it. `docs/src/guide.md` states the rules in one table. The tests are `test/nonlinear/default.jl`,
+  in `nonlinear`; `test/nonlinear/commonsolve.jl` counts `NonlinearProblem` and
+  `LeastSquaresProblem` among the first arguments of the package's `init` and `solve` methods.
+
+- **A least-squares solve returns the start point of a step that leaves a stationary point.** On
+  a `LeastSquaresProblem`, where the stationarity test passes on the factorisation that a step
+  takes at its start point `x_k`, `k ≥ 1`, and fails when `solve!!` re-measures it at the end of
+  the step, the solve returns `x_k` with `SUCCESS` and `status.stationary == true`, and no longer
+  goes on from the end of the step. The status is that of `x_k`: its `fnorm` and `stepnorm`, the
+  iterations that reached it and the diagnostics of its factorisation, while `step_failures` and
+  `promoted` still count the discarded step; `min_iterations` is read for `x_k`. At a saddle of
+  `‖F‖²` that the Gauss–Newton model reads as a minimum, such as the saddle that a
+  mirror-symmetric problem has on its symmetry set, the rule applies with every method and
+  globalization, so a solve whose step starts at such a saddle, with a factorisation taken there,
+  now ends there. A step along a reused factor (`reuse > 1`) carries the diagnostics of an earlier
+  point, so the rule does not fire at its start point and the solve goes on past a stationary
+  `x_k`. With `DogLeg` and with a line search capped at one iteration, whether the solve ended
+  there or ran on past it depended on rounding: a perturbation of the data by a few ULPs changed
+  the outcome. A solve that left such a saddle for a point of lower `‖F‖` ends at the saddle
+  instead, because the rule reads the stationarity test, not `‖F‖`; on the mirror-symmetric test
+  problem this holds for the default `GaussNewton()`, among others. The step from `x₀` is kept, and
+  every other problem type is unchanged. An array iterate keeps `x_k` and its
+  residual in two buffers that `init_state` allocates, so `solve!!` allocates nothing; `NewtonState`
+  gains the field `kept` for them.
+
+- **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
+  value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
+  counts as zero: the factor's `rank`, `SolverStatus.rank` and the truncation of the solve follow
+  it, on the R1 square and rectangular SVDs, the host `DenseSVD`, the KernelAbstractions
+  `DeviceSVD` and the CUDA `gesvdj!` path with its Jacobi fallback. On CUDA a cutoff below the
+  sweep tolerance `√m · eps(R)`, such as `rtol = 0`, runs on the own Jacobi kernel in place of
+  `gesvdj!`, which returns a singular value far below `eps(R) · σ̂₁` as 0 in single precision, so
+  `rtol = 0` keeps every nonzero singular value on every route. The default `rtol = nothing` keeps
+  the cutoff `√m · eps(R) · σ̂₁` bit for bit, and `SVDFactorization()` stays an `isbits`
+  value of size 0, `=== SVDFactorization{Nothing}()`. The Jacobi sweep keeps `√m · eps(R)` as its
+  tolerance whatever `rtol` is. `rtol` is stored in `real(TF)` for a float `TF` and in `Float64`
+  for `TF = Nothing` and a precision marker, and the constructor refuses a stored value outside
+  `[0, 1)` or not finite with an `ArgumentError`; the factor converts `rtol` to its own real type.
+  `promote_linsolve` carries `rtol`, and `ToReal{R}` converts it to `R` and keeps `TF`, so that a
+  `Newton` with a `Float64` `rtol` enters a `Float32` kernel. `SVDFactorization` gains a second
+  type parameter, the type of `rtol`; `SVDFactorization{TF}` is now a `UnionAll`. The internal
+  `svd_rank` and `ka_svd!` take `rtol`, the CUDA extension's `_cusolver_svd_finish!` takes the
+  method, and `ka_factorize_svd!(fac, J, method)` takes the method as an optional third argument.
+
+- **`GMRES` orthogonalises the Arnoldi basis by classical Gram–Schmidt with a second pass
+  (CGS2) by default.** Each inner iteration takes two reductions over the basis, `h₁ = V_jᴴ w` and
+  `[V_j w₁]ᴴ w₁` for `h₂` and `s₁ = ‖w₁‖²`, in place of the `j + 1` of modified Gram–Schmidt; on a
+  device each reduction is a synchronisation. The norm of `w₂` is `√(s₁ − ‖h₂‖²)` where `s₁` is
+  finite, at least `n·floatmin` and `‖h₂‖² ≤ s₁/2`, and `rnorm(w₂)`, a third reduction, elsewhere.
+  Breakdown stays `iszero(H[j+1, j])`. `GMRES(; mgs = true)` selects modified Gram–Schmidt, the
+  previous behaviour: the projections, the update `u += V_j y` one column at a time and the
+  rebuilt direction are unchanged. `GMRES` has a new field `mgs::Bool`, which the positional
+  constructor that `adapt` uses takes as a sixth argument and `Newton(; forcing, preconditioner)`
+  keeps when it rebuilds the method; `gmres_solve!` takes the keyword `mgs = false`. The inner
+  GMRES of `GMRESRefinement` keeps modified Gram–Schmidt whatever `GMRES` selects. On the CGS2
+  path the solution update `u += V_j y` of a cycle and `reduced_direction!`, the direction the
+  matrix-free `DogLeg` rebuilds, are one matrix–vector product each, through a new device vector
+  `hd` and host vector `hh` in `GMRESWorkspace` (new type parameter `HD`); `reduced_direction!`
+  follows the path of the last solve on the workspace, which its new field `mgs` records. The
+  tests count reductions at the array level on `JLArray` and measure `‖I − VᴴV‖₂ ≤ 32·eps(R)` for
+  CGS2 on a normal matrix with spectrum log-spaced in [1, 10⁸] (n = 200, m = 30, five seeds,
+  `Float32`, `Float64`, `ComplexF32`, `ComplexF64`), against a one-pass control above
+  `1000·eps(R)`; modified Gram–Schmidt misses that bound for all five seeds in every element type.
+  Because the CGS2 basis and the one-product update differ from those of modified Gram–Schmidt in
+  round-off, the `Newton Backtracking GMRES` column of `test/verification/standard_reference.csv`
+  is regenerated, 98 rows: 82 change only `fnorm`, the residual norm where the solve ends, and 16
+  change the code, the counts or the `unstable` flag. Fourteen change the code or the counts:
+  1/100u0/`Float32` (STALLED → LINESEARCH_FAILED), 1/100u0/`Float64`, 1/10u0/`Float32`,
+  3/u0/`Float32`, 6/u0 in both types, 11/u0 in both types, 11/10u0/`Float64`, 11/100u0/`Float32`
+  (SUCCESS in 24 iterations, not 25), 21/u0/`Float32`, 21/10u0/`Float32` (LINESEARCH_FAILED →
+  STALLED), 21/10u0/`Float64` (133 → 132 residual evaluations) and 22/100u0/`Float32`. The
+  `unstable` flag changes in five: 1/100u0 in both types, 1/10u0/`Float32` and
+  3/100u0/`Float64` from true to false, and 18/u0/`Float32` from false to true; 3/100u0/`Float64`
+  and 18/u0/`Float32` change nothing else.
+  `scripts/standard/update_reference.jl` reports 0 cells that differ under the table's comparison.
+
+- **`UMFPACKFactorization()` adds the sparse LU of UMFPACK, and the package extension
+  `GeometricSolversCUDSSExt` the sparse LU of cuDSS.** `UMFPACKFactorization` is a new exported
+  linear-solver method. On a host `Vector{Float64}` or `Vector{ComplexF64}` iterate with a
+  `SparseMatrixCSC{<:Any, Int}` pattern, from a `jacobian_prototype` or a detected `AutoSparse`
+  pattern, `init_linear` builds the new factor `UMFPACKLU` from `SparseArrays`, with no package to
+  load. Its first `factorize!!` runs UMFPACK's symbolic analysis, and every later one reuses it
+  (`fac.lu.symbolic` stays the same object). A singular Jacobian gives `info = 1` and `SINGULAR`
+  without throwing, and so does a non-finite entry, which is refused before UMFPACK. `init` raises
+  `ArgumentError` for a `Float32` or `ComplexF32` iterate, which the standard library would promote
+  to `Float64` in silence, and for a problem with no sparse pattern, such as one on a static or
+  scalar iterate. `has_sparse_factor` is `true` for it on `Float64` and `ComplexF64`.
+  `LUFactorization()` on a `SparseMatrixCSC` prototype keeps the Sparspak factor. UMFPACK is
+  distributed under the GPL with `SparseArrays`.
+  With `CUDA` and `CUDSS` loaded, `LUFactorization()` on a `CuSparseMatrixCSR{T}` prototype and a
+  `CuVector{T}` iterate, `T <: LinearAlgebra.BlasFloat`, gets a cuDSS factor: the analysis runs at
+  the first `factorize!!` and later steps refactorise, a non-finite entry or a nonzero cuDSS `info`
+  gives `SINGULAR`, and mixed precision raises `ArgumentError`. Its Jacobian comes from an analytic
+  `J`. `Project.toml` adds `CUDSS` under `[weakdeps]`, `[extensions]` and `[compat]` (`1`).
+  The tests are `test/linear/sparse.jl`, in `core`, whose solves agree with Sparspak (real) or the
+  dense `lu` (complex) within `8n·eps(T)·κ∞`, and the cuDSS rows of
+  `test/gpu/cuda/runtests.jl`: the dispatch and JET rows run without a device, and the solve rows,
+  which compare with UMFPACK on the host copy and count one analysis per solver, run by hand on a
+  CUDA device. `sparse_bracket_problem` in `test/helpers/sparse_problems.jl` takes a complex
+  element type.
+
+- **The `KernelAbstractions` LDLᵀ path has no serial kernels.** `ka_ldlt_factor_serial_kernel!`
+  and `ka_ldlt_backsolve_serial_kernel!` are removed: `ka_ldlt!` and `ka_ldlt_backsolve!` take an
+  `AbstractGPUArray`, whose backend is never `CPU`, so the workgroup kernel ran at every `n` and the
+  serial branch was unreachable. The factorisation and the solve are unchanged. The comment of the
+  zero-diagonal sweep in `test/linear/ldlt.jl` now says that the workgroup kernel runs at every `n`.
+
 - **The package extension `GeometricSolversAMDGPUExt` factorises dense LU and QR with rocSOLVER on
   ROCm.** When `AMDGPU` is loaded, `factorize!!` and `backsolve!` for `DeviceLU` and `DeviceQR` on
   `ROCMatrix{T}`, `T <: LinearAlgebra.BlasFloat`, call `AMDGPU.rocSOLVER.getrf!` (`info` the first
@@ -28,6 +149,15 @@ so that a compat-only bump can be told apart from an interface change.
   rocSOLVER's complex `geqrf!` above n = 128 gives `NaN` for a matrix with a column that has nothing
   below its diagonal (K96), so the complex QR assertions of the agreement rows at n = 10⁴ are
   marked broken.
+
+- **The by-hand CUDA and ROCm suites compute `κ∞` of their large agreement matrix in closed
+  form.** Above n = 256, `cuda_well_conditioned` returns a block-diagonal matrix, two `16 × 16`
+  corner blocks around a diagonal. The new `cuda_well_conditioned_cond` in
+  `test/helpers/own_kernel.jl` takes `κ∞` from the blocks, after a check of that structure, in
+  place of `cond(A, Inf)`, which inverts the dense `n × n` matrix on one BLAS thread for each
+  element type at n = 10³ and 10⁴. Up to n = 256 it calls `cond(A, Inf)`. The asserted bounds do not
+  change: `scripts/well_conditioned_cond.jl` checks the closed form against `cond(A, Inf)` within
+  `8 eps` for the four BLAS element types at n = 300 and 1000.
 
 - **The test suite runs its files in parallel, with ParallelTestRunner.** `test/runtests.jl`
   takes the parallel form of the test convention: one table `TESTS` of group, label and path, and
@@ -864,6 +994,99 @@ so that a compat-only bump can be told apart from an interface change.
   iterations. 138 cells are flagged `unstable`, 133 before.
 
 ### New Features
+
+- **`KroneckerFactorization(; block = LUFactorization())` solves the Newton steps of the stage
+  system of an implicit Runge–Kutta method.** With the stage matrix `A = V Λ V⁻¹`, `Newton`
+  factorises `s` blocks `γᵢ I − J` of size `n × n`, `γᵢ = 1/(h λᵢ)`, in place of one `s·n × s·n`
+  Jacobian. For a real element type `T` a real eigenvalue takes one block in `T` and a
+  complex-conjugate pair one block in `complex(T)`, so Gauss and Radau IIA with `s` stages have
+  `⌊s/2⌋` complex and `s mod 2` real blocks; a complex `T` takes `s` blocks in `T`. `block` is the
+  method of each block: any method that factorises a general square matrix in the working
+  precision, such as `LUFactorization`, `QRFactorization` or `SVDFactorization`.
+  The constructor raises an `ArgumentError` for a `CholeskyFactorization` or `LDLTFactorization`
+  block, which reads one triangle of a block that is in general not Hermitian, and for an
+  `UMFPACKFactorization` block, which needs a sparse pattern. `NonlinearProblem` takes the
+  keywords `stage_matrix = A` and `stage_jacobian = jac!`, where `jac!(J, Z, p)` writes the `n × n`
+  Jacobian of the vector field, and wraps the residual in the new exported `StageResidual`, read
+  with the new exported accessors `stage_matrix(prob)` and `stage_jacobian(prob)`. The step `h` is
+  read from `p.h`. The `reuse` rule of `Newton` governs when the blocks are refactorised, and
+  `jac!` is called at each refactorisation. `h = 0` gives the identity Newton matrix; a non-finite
+  `J` or `h` gives `NONFINITE`, and a singular block gives `SINGULAR`. `init` raises an
+  `ArgumentError` for a stage matrix whose eigenvector matrix has
+  `cond(V) > max(eps(real(T)), eps(Float64))^(-1/2)`, which refuses a non-diagonalisable `A` such
+  as an SDIRK tableau (Gauss with 6 stages, `cond(V) ≈ 603`, is accepted); the eigendecomposition
+  runs in `Float64`, so a wider `real(T)` such as `BigFloat` has that bound and each Newton
+  direction is accurate to `Float64` only; for a singular, non-square or, with real
+  `T`, complex `A`; for a value or device iterate; for `DogLeg`, `LevenbergMarquardt`, a
+  refinement, `regularization > 0`, a `jacobian` keyword, and a factorisation precision
+  `TF ≠ Nothing`. `solve` raises an `ArgumentError` for a `ForwardDiff.Dual` in `x₀` or `p` with
+  this linear method, because the tangent solve of implicit differentiation needs the Jacobian of
+  the stacked residual. The tests are in `test/nonlinear/kronecker.jl`.
+
+- **`CholeskyFactorization()` and `CholeskyFactorization(TF)` factorise a Hermitian (real
+  symmetric) positive definite Jacobian as `L Lᴴ`, without pivoting.** The R1 factor
+  `StaticCholesky` is a scalar loop, `isbits` and allocation-free for an `isbits` element type such
+  as the BLAS types; with `BigFloat` entries it is neither, because the factor holds `BigFloat`
+  values and their arithmetic allocates. The host factor `DenseCholesky` calls LAPACK
+  `potrf`/`potrs` for a `BlasFloat` element type and the same loop for another, such as `BigFloat`.
+  Both read the lower triangle and the real part of the diagonal, take the power-of-two scale of a
+  factor in another element type from these entries alone, and hold `L` with zeros above the
+  diagonal. A matrix that is not positive definite in the factorisation precision gives
+  `info = k`, the order of its first leading minor that is not positive, and `SINGULAR`, with
+  no fallback to another factorisation; a non-finite entry anywhere gives `info = 1` before
+  `potrf`, which itself returns 0 for a `NaN` below the diagonal of the first column (OpenBLAS
+  0.3.30). A factor in `TF` below the working precision that fails takes the existing promotion of
+  `Newton` to the working precision, unchanged: with `CholeskyFactorization(Float32)`, the Jacobian
+  `[1 1; 1 1 + 1e-9]` has a zero pivot in `Float32`, and the step factorises it in `Float64`. A
+  `LeastSquaresProblem` takes the method only in the stacked `LevenbergMarquardt` step, as it takes
+  `LDLTFactorization`, and a device array iterate raises an `ArgumentError`, because the method has
+  no device factor. The tests are in `test/linear/cholesky.jl`, and the LDLᵀ rows of
+  `test/nonlinear/leastsquares.jl`, `gmres_ir.jl` and `refinement.jl` have Cholesky twins. The
+  standard test set has no Cholesky column, as it has no LDLᵀ column.
+
+- **Verified root certificates, `GeometricSolvers.certify`, with the package extension
+  `GeometricSolversIntervalArithmeticExt`.** When `IntervalArithmetic` is loaded,
+  `certify(prob::NonlinearProblem, x, p = nothing)` runs Krawczyk's test in intervals of the element
+  type of `x` and returns `(certified, enclosure, guaranteed)`, one concrete
+  `NamedTuple` type for both outcomes: `enclosure` holds the one root in the tested box when
+  `certified`, and `guaranteed` reports IntervalArithmetic's NG flag on `F(x)` and `J(X)`, which a
+  certificate does not require. Every hypothesis of the test is read from `F`: ForwardDiff
+  differentiates `F` for the inverse `Y` at `x` and for the interval Jacobian `J(X)` on each box,
+  and the problem's `J` is not read. `F` must accept floats, intervals and ForwardDiff duals of
+  both; an error of `F` (such as a `DomainError` of `log` at a negative float `x`) is not caught.
+  It takes a real floating-point `Number`, a `StaticVector` and a host `Vector`. On each box the
+  test evaluates `F(X)` as well as `J(X)`; a singular Jacobian at `x`, a non-finite `x`, ten failed
+  boxes, and an interval of `F(X)` or `J(X)` that is unbounded or decorated below `dac` give
+  `certified == false` without a throw, so a residual undefined, not continuous, or with a kink on
+  the box is refused. `certify` is a `public` stub with no method without the extension, and is
+  not exported. On the standard test set, problems 1, 4, 17 and 22 certify at
+  their roots in `Float32` and `Float64`, each enclosure holding the root in `BigFloat`; their
+  starts `u0`, and problem 20 at its double root `5`, do not. `Project.toml` adds
+  `IntervalArithmetic` under `[weakdeps]`, `[extensions]` and `[compat]` (`1.0.14`); the tests are
+  in `test/nonlinear/certify.jl`.
+
+- **`Fallback(m₁, m₂, ...)` (exported) runs the whole solve of each member in turn and stops at
+  the first `SUCCESS`.** Each member runs its own `solve!!` from `x₀`, with the full `Options` and
+  its own state; an array `x₀` is kept in the state and copied back before each later member, so a
+  member's result is that of its solve alone from `x₀`. Every code but `SUCCESS` moves on, and a
+  member's exception is not caught. The status is the succeeding member's, else the last
+  member's, with `iterations` and `step_failures` summed (saturated at `typemax(Int32)`),
+  `promoted` or-ed and the call counts `0`; the unexported `GeometricSolvers.fallback_member`
+  reads the index of that member from the returned state. `Fallback()` raises an `ArgumentError`.
+  `Fallback` joins the combinators that refuse a `ForwardDiff.Dual` input in `solve` and a
+  `LeastSquaresProblem` in `init_state`, and its `solve!!` takes only the problems that a
+  combinator's `init_state` takes, so it is not ambiguous with the one-variable
+  `LeastSquaresProblem` method. With
+  `isbits` members it is `isbits`, and its R1 state too. The standard test set gains the column
+  `"Fallback Newton DogLeg LevenbergMarquardt"`, the `Fallback` of the methods of the columns
+  `"Newton Static LU"`, `"Newton DogLeg LU"` and `"Newton LevenbergMarquardt SVD"`: 134 cells, so
+  `test/verification/standard_reference.csv` holds 1876. It returns `SUCCESS` on 66 of 67 starts
+  in `Float32` and 61 of 67 in `Float64`, on every start where one of its members does, and
+  throws on none; 15 of its cells are flagged `unstable`. No other cell changes. A `MAXITERS`
+  cell of the column counts the iterations of every member, up to 600. In `benchmark/`, the
+  pairing table gives the column no method of SimpleSolvers, SimpleNonlinearSolve or NLsolve
+  ("no whole-solve fallback"), and `benchmark/REPORT.md` and `benchmark/results/` stay the record
+  of their 13-column run.
 
 - **A manual page on the methods of each regime (`docs/src/guide.md`, "Methods by regime").** For
   R1, R2, R3 and the matrix-free R5, it lists the exported methods that run there and the

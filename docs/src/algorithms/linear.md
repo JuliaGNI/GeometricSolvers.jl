@@ -14,6 +14,7 @@ type that the iterate selects, or the matrix-free [`GMRES`](@ref).
 |:--|:--|:--|
 | [`LUFactorization`](@ref) | LU with partial pivoting | square |
 | [`LDLTFactorization`](@ref) | Bunch–Kaufman ``L D L^\mathsf{T}`` or ``L D L^\mathsf{H}`` with ``1 \times 1`` and ``2 \times 2`` pivots | symmetric or Hermitian, reads the lower triangle of a real matrix and both triangles of a complex one |
+| [`CholeskyFactorization`](@ref) | Cholesky ``L L^\mathsf{H}`` without pivoting (LAPACK `potrf` on the host) | Hermitian or real symmetric positive definite, reads the lower triangle and the real part of the diagonal |
 | [`QRFactorization`](@ref) | Householder QR | square, or ``m \times n`` with ``m \ge n`` for least squares |
 | [`SVDFactorization`](@ref) | one-sided Jacobi SVD (static, device) or LAPACK `gesvd` (host) | square or ``m \ge n``, rank-revealing |
 
@@ -24,16 +25,16 @@ type parameter `TF` of the method, so the method stays `isbits` and enters a ker
 
 The type of the iterate selects the factor:
 
-| iterate | LU | LDLT | QR | SVD |
-|:--|:--|:--|:--|:--|
-| `Number`, `SVector` (R1, R2) | [`StaticLU`](@ref) | [`StaticLDLT`](@ref) | [`StaticQR`](@ref), [`StaticRectQR`](@ref) | [`StaticSVD`](@ref), [`StaticRectSVD`](@ref) |
-| host `Vector` (R3) | [`DenseLU`](@ref) | [`DenseLDLT`](@ref) | [`DenseQR`](@ref) | [`DenseSVD`](@ref) |
-| GPU array (R3) | [`DeviceLU`](@ref) | [`DeviceLDLT`](@ref) | [`DeviceQR`](@ref) | [`DeviceSVD`](@ref) |
+| iterate | LU | LDLT | Cholesky | QR | SVD |
+|:--|:--|:--|:--|:--|:--|
+| `Number`, `SVector` (R1, R2) | [`StaticLU`](@ref) | [`StaticLDLT`](@ref) | [`StaticCholesky`](@ref) | [`StaticQR`](@ref), [`StaticRectQR`](@ref) | [`StaticSVD`](@ref), [`StaticRectSVD`](@ref) |
+| host `Vector` (R3) | [`DenseLU`](@ref) | [`DenseLDLT`](@ref) | [`DenseCholesky`](@ref) | [`DenseQR`](@ref) | [`DenseSVD`](@ref) |
+| GPU array (R3) | [`DeviceLU`](@ref) | [`DeviceLDLT`](@ref) | none: `ArgumentError` | [`DeviceQR`](@ref) | [`DeviceSVD`](@ref) |
 
 - The **static factors** are scalar loops over `SMatrix` data with `Int32` pivots. They return
-  new `isbits` values, so they run in one GPU thread.
-- The **dense factors** call LAPACK (`getrf`, `sytrf`/`hetrf`, `geqrf`, `gesvd`) on buffers
-  that [`init`](@ref) allocates once.
+  new values, `isbits` for an `isbits` element type, so they run in one GPU thread.
+- The **dense factors** call LAPACK (`getrf`, `sytrf`/`hetrf`, `potrf`, `geqrf`, `gesvd`) on
+  buffers that [`init`](@ref) allocates once.
 - The **device factors** are KernelAbstractions kernels: panel pivoting and trailing updates
   for LU, column-norm reductions and reflector application for QR, the Bunch–Kaufman pivots for
   LDLT, and parallel one-sided Jacobi sweeps for the SVD. On CUDA and Metal, vendor libraries
@@ -42,8 +43,9 @@ The type of the iterate selects the factor:
 A numerical failure of a factorisation does not throw: a zero pivot gives the status `SINGULAR`.
 A configuration or pattern error can throw an `ArgumentError`, for example a sparse factor whose
 pattern the regularisation changes. The SVD of an
-``m \times n`` matrix truncates at the rank cutoff ``\sqrt{m}\,\varepsilon(T_F)\,\sigma_1``, so its
-solve is the minimum-norm step on the numerical range. The bounds that the test suite verifies for
+``m \times n`` matrix truncates at the rank cutoff ``\sqrt{m}\,\varepsilon(T_F)\,\sigma_1``, or at
+``\mathrm{rtol}\,\sigma_1`` with `SVDFactorization(; rtol)`, so its solve is the minimum-norm step
+on the numerical range. The bounds that the test suite verifies for
 each factor are on the page [Numerical Stability and Backward-Error Bounds](@ref stability).
 
 ```jldoctest linear
@@ -81,6 +83,12 @@ With an [`SVDFactorization`](@ref), the status reports the numerical rank of the
 - [`LUFactorization`](@ref) for a general square Jacobian.
 - [`LDLTFactorization`](@ref) for a symmetric or Hermitian Jacobian; it needs about half the
   work of LU and handles an indefinite matrix with its ``2 \times 2`` pivots.
+- [`CholeskyFactorization`](@ref) for a Hermitian or real symmetric Jacobian that is positive
+  definite at every iterate, such as the Hessian of a [`StationarityProblem`](@ref) with `E == U`,
+  or ``J + \mu I`` with a Hermitian positive semidefinite ``J`` and ``\mu > 0``. It takes no
+  pivots, and a Jacobian that is not positive definite gives `SINGULAR`, with the order of the
+  first leading minor that is not positive in `info`. It runs on a host `Array` and in R1 and R2;
+  in R3 a GPU array raises an `ArgumentError`.
 - [`QRFactorization`](@ref) for a least-squares problem, and where an orthogonal factorisation is
   wanted.
 - [`SVDFactorization`](@ref) for a rank-deficient or nearly singular Jacobian. It costs more than
@@ -136,8 +144,13 @@ julia> nameof(typeof(solver.state.fac))
 :SparspakLU
 ```
 
+[`UMFPACKFactorization`](@ref) gives the sparse LU of UMFPACK, from `SparseArrays`, on the same
+pattern for a host `Vector{Float64}` or `Vector{ComplexF64}` iterate, with no package to load; it
+raises `ArgumentError` at `init` for another element type and for a problem with no sparse pattern.
+With `CUDA` and `CUDSS` loaded, an [`LUFactorization`](@ref) on a `CuVector` iterate with a
+`CuSparseMatrixCSR` `jacobian_prototype` and an analytic `J!` gives the sparse LU of cuDSS.
 [`QRFactorization`](@ref), [`SVDFactorization`](@ref), a factorisation precision other than the
-element type of the iterate, a complex iterate and a device iterate have no sparse factor. The
+element type of the iterate, and every other complex or device iterate have no sparse factor. The
 section [Factorisation and solve](@ref) of the API lists which configurations take a detected
 pattern and which raise an error.
 

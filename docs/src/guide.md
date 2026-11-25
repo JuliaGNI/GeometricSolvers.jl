@@ -22,6 +22,29 @@ iterate with a matrix-free linear solver:
 `Newton()` takes `linsolve = LUFactorization()` and `globalization = Static()` unless the caller
 gives others (see [Nonlinear methods](@ref nonlinear)).
 
+## The method of a call that names none
+
+[`init`](@ref)`(prob, x₀)` and [`solve`](@ref)`(prob, x₀)` on a [`NonlinearProblem`](@ref), a
+[`StationarityProblem`](@ref) or a [`LeastSquaresProblem`](@ref) take the method
+[`default_method`](@ref)`(prob, x₀)` and the parameters `p = nothing`. The method follows from the problem type, its `jacobian_prototype` and
+the storage of the iterate:
+
+| problem | iterate | method |
+|:--|:--|:--|
+| [`NonlinearProblem`](@ref) with a `SparseMatrixCSC` `jacobian_prototype` | a `Vector{Float64}` or a `Vector{ComplexF64}` | `Newton(; linsolve = UMFPACKFactorization())` |
+| [`NonlinearProblem`](@ref), every other prototype and iterate | any other | `Newton()` |
+| [`StationarityProblem`](@ref) | any | `Newton()` |
+| [`LeastSquaresProblem`](@ref) | any | [`GaussNewton`](@ref)`()` |
+
+The rules read no size. The `LUFactorization()` of `Newton()` selects its factor from the storage
+of the Jacobian: a static factor in R1, and on a dense array the factor that
+[What runs where](@ref) lists for its array type. A `SparseMatrixCSC` prototype on any other
+iterate takes `Newton()` as well: a `Vector{Float32}` gets the Sparspak factor where Sparspak is
+loaded, and `init` raises otherwise, as it does when the caller names `Newton()`. A
+`CuSparseMatrixCSR` prototype takes `Newton()`, which has the cuDSS factor where `CUDA` and
+`CUDSS` are loaded (see [Sparse direct solves](@ref sparse)). The default method is never
+matrix-free and never a combinator: the problem carries no information that selects either.
+
 ## R1: one small system as a value
 
 **Methods.**
@@ -30,6 +53,7 @@ gives others (see [Nonlinear methods](@ref nonlinear)).
 |:--|:--|
 | [`Newton`](@ref) with [`LUFactorization`](@ref) | a square Jacobian |
 | [`Newton`](@ref) with [`LDLTFactorization`](@ref) | a symmetric or Hermitian Jacobian; a real Jacobian is read from the lower triangle only, a complex one must be given in full, because both triangles decide between ``L D L^\mathsf{T}`` and ``L D L^\mathsf{H}`` |
+| [`Newton`](@ref) with [`CholeskyFactorization`](@ref) | a Hermitian (real symmetric) positive definite Jacobian at every iterate, read from the lower triangle; a Jacobian that is not positive definite gives `SINGULAR`; in R3 a host `Array` only, a device array raises an `ArgumentError` |
 | [`Newton`](@ref) with [`QRFactorization`](@ref) | a square Jacobian, or a [`LeastSquaresProblem`](@ref) |
 | [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian, or a [`LeastSquaresProblem`](@ref); the status reports the numerical rank |
 | [`Newton`](@ref) with `regularization = μ` | a singular or nearly singular Jacobian, where the step of ``J + \mu I`` is acceptable |
@@ -39,6 +63,7 @@ gives others (see [Nonlinear methods](@ref nonlinear)).
 | [`Picard`](@ref) | ``I - \omega J`` is a contraction; it needs no Jacobian, and the rate is linear |
 | [`Anderson`](@ref), [`Broyden`](@ref) | a fixed-point iteration whose map is cheap and whose Jacobian is expensive or unavailable; in R1 the depth is `1 ≤ m ≤ 4` |
 | [`Additive`](@ref), [`Multiplicative`](@ref), [`Repeat`](@ref), [`Switch`](@ref) | members that run in R1, and a problem that is not a [`LeastSquaresProblem`](@ref) |
+| [`Fallback`](@ref) | members that run in R1, and a problem that is not a [`LeastSquaresProblem`](@ref); each member solves from ``x_0`` in turn until one returns `SUCCESS` |
 
 **Globalizations.** [`Static`](@ref) applies close to the solution. [`Backtracking`](@ref),
 [`Bisection`](@ref) and [`StrongWolfe`](@ref) search along the direction from a distant start.
@@ -109,6 +134,7 @@ true
 | method | condition |
 |:--|:--|
 | [`LUFactorization`](@ref) on a sparse `jacobian_prototype` | a host `Vector` iterate of a real element type, Sparspak loaded, the element type of the iterate as the factorisation precision, and a Jacobian from an analytic `J!` that writes the nonzeros of the prototype or from `jacobian = AutoSparse(...)` (see [Sparse direct solves](@ref sparse)) |
+| [`KroneckerFactorization`](@ref) | the stage system of an implicit Runge–Kutta method, from a [`NonlinearProblem`](@ref) with `stage_matrix` and `stage_jacobian`, whose stage matrix is diagonalisable with `cond(V) ≤ max(eps(real(T)), eps(Float64))^(-1/2)` and invertible; a host array iterate, [`Static`](@ref) or a line search, and the step `h` in `p.h` |
 | [`RAS`](@ref) | local nonlinearities that a [`BlockPartition`](@ref) isolates, and one local residual per block |
 | [`LeftPreconditioned`](@ref) | an inner step `N` whose fixed points are the wanted roots; each trial point of the outer globalization costs one inner step, and with [`RAS`](@ref) it needs converged local solves |
 
@@ -120,8 +146,10 @@ refactorises in the working type. [Mixed precision](@ref mixed) gives the condit
 **Conditions of the regime.** [`init`](@ref) allocates each buffer once, so a system that is solved
 more than once goes through [`init`](@ref) and [`solve!`](@ref). On a device array the
 factorisation methods run on device kernels. On CUDA, [`LUFactorization`](@ref),
-[`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types; on
-Metal, [`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
+[`QRFactorization`](@ref) and [`SVDFactorization`](@ref) call cuSOLVER for BLAS element types,
+except an [`SVDFactorization`](@ref) whose `rtol` lies below its default cutoff `√m · eps(R)`,
+with `m` the row count and `R` the real type of the factor, which runs on the own kernel; on Metal,
+[`LUFactorization`](@ref) calls Metal Performance Shaders for `Float32` (see
 [What runs where](@ref)). The residual of a device solve indexes no scalars. On a device array,
 [`LevenbergMarquardt`](@ref) runs with [`SVDFactorization`](@ref) and `scaling = :none` only, and
 the sparse LU does not run. This page runs no device example.

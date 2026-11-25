@@ -60,6 +60,11 @@ julia> isapprox(x, SVector(1.0, 1.0); atol = 1e-2)
 true
 ```
 
+The test reads the factorisation that a step takes at its start point. Where the test passes
+there and fails at the end of the step, the solve returns the start point of the step, unless that
+point is `x₀`. A step that leaves a saddle of ``\|F\|^2``, which the Gauss–Newton model reads as a
+minimum, so ends the solve at the saddle; [`solve!!`](@ref) states the rule.
+
 [`LevenbergMarquardt`](@ref) is the damped globalization of the same step; see
 [Globalization](@ref globalization).
 

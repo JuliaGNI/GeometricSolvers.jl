@@ -15,6 +15,7 @@ using KernelAbstractions: CPU, KernelAbstractions, @Const, @index, @kernel, allo
                           get_backend, synchronize
 using LinearAlgebra: BLAS, BlasFloat, BlasInt, LAPACK, LU, QR, RowMaximum, diagind, givens,
                      ldiv!, lu!, mul!, qr!
+using LinearAlgebra: cond, eigen
 using SparseArrays: SparseArrays
 using StaticArrays: MMatrix, MVector, SMatrix, SizedMatrix, SizedVector, StaticArray,
                     StaticMatrix, StaticVector, SVector,
@@ -30,7 +31,10 @@ export ReturnCode, SUCCESS, STALLED, MAXITERS, SINGULAR, NONFINITE, LINESEARCH_F
 export SolverStatus, StepInfo, Options, stopping_test
 export NonlinearProblem, StationarityProblem, LeastSquaresProblem, Reparametrized, Deflated,
        BlockEliminated, VariableProjection
-export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization
+export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization,
+       CholeskyFactorization
+export KroneckerFactorization, StageResidual, stage_matrix, stage_jacobian
+export UMFPACKFactorization
 export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
@@ -38,9 +42,10 @@ export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice
        FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
        PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
+export default_method
 export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
-export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Anderson,
-       Broyden
+export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Fallback,
+       Anderson, Broyden
 export BlockResidual, block_residuals, block_jacobians, block_residual, block_jacobian
 export BlockPartition, RAS, RASState, ras_prolongate!, ras_sweep!!, ras_counts
 export LeftPreconditioned, LeftPreconditionedState, LeftPreconditionedProblem,
@@ -49,7 +54,7 @@ export solve_batch!
 export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summary,
        deposited_moments, eliminated_indices, reset_batch!
 
-public solve!!, sciml_retcode
+public solve!!, sciml_retcode, certify
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -62,18 +67,21 @@ include("linear/methods.jl")
 include("linear/factors.jl")
 include("linear/static/lu.jl")
 include("linear/static/ldlt.jl")
+include("linear/static/cholesky.jl")
 include("linear/static/qr.jl")
 include("linear/static/qr_rect.jl")
 include("linear/static/svd.jl")
 include("linear/static/svd_rect.jl")
 include("linear/static/eigen.jl")
 include("linear/dense.jl")
+include("linear/sparse.jl")
 include("linear/ka/lu.jl")
 include("linear/ka/ldlt.jl")
 include("linear/ka/qr.jl")
 include("linear/ka/svd.jl")
 include("linear/mixed.jl")
 include("linear/gmres.jl")
+include("linear/kronecker.jl")
 
 include("globalization/linesearch.jl")
 include("globalization/static.jl")
@@ -103,12 +111,15 @@ include("ad/hessian.jl")
 include("nonlinear/reparametrized.jl")
 include("nonlinear/deflation.jl")
 include("nonlinear/eliminate.jl")
+include("nonlinear/certify.jl")
+include("nonlinear/default.jl")
 
 include("composition/weights.jl")
 include("composition/additive.jl")
 include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
+include("composition/fallback.jl")
 include("composition/anderson.jl")
 include("composition/ras.jl")
 include("composition/preconditioning.jl")
