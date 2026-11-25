@@ -1062,8 +1062,8 @@ so that a compat-only bump can be told apart from an interface change.
 - **`GMRES` solves a matrix-free `StationarityProblem` with any index sets `E` and `U`.** Before,
   `Newton` refused that case with an `ArgumentError`. With the problem's automatic-differentiation
   product, a `jvp_eltype` other than `Nothing` is refused there with an `ArgumentError`, since that
-  Hessian–vector product is formed in the element type of the state. `f_calls`, `jvp_calls` and `max_inner_iterations` now read the counts of a
-  stationarity solver.
+  Hessian–vector product is formed in the element type of the state. `f_calls`, `jvp_calls` and
+  `max_inner_iterations` now read the counts of a stationarity solver.
 
 - **`Newton(; best = true)` returns the iterate of the smallest `‖F‖₂` of a solve that fails.**
   The solve keeps the iterate of the smallest `‖F(x)‖₂` among `x₀` and every iterate that a step
