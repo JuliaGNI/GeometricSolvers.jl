@@ -537,8 +537,8 @@ end
 # between `1 / √n` and 1, scales `status.fnorm` to the inner max norm. The reciprocal `1 / M` is
 # never formed, as it overflows where `M` is subnormal. A zero residual has no ratio, and its max
 # norm is zero under any factor.
-@inline function test_status(n::MaxNorm, state, def::Deflated, x, Fx, raw, status)
-    maxnorm = stopping_norm(n, Fx)
+@inline function test_status(::MaxNorm, state, def::Deflated, x, Fx, raw, status)
+    maxnorm = rmaxnorm(Fx)
     iszero(raw.fnorm) && return with_fnorm(status, maxnorm)
     return with_fnorm(status, (maxnorm / raw.fnorm) * status.fnorm)
 end

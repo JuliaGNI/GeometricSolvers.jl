@@ -1255,6 +1255,29 @@ end
                 end
             end
         end
+        failures_b === nothing && continue
+        # `best = true` keeps the step start: the return of the discarded step has the code
+        # `SUCCESS`, so the record, which holds the lower norm of the discarded step, is not
+        # restored over it
+        x_ref, st_ref = results[1]
+        alg_best = GaussNewton(; globalization = alg_b.globalization, best = true)
+        best_results = Any[solve(LeastSquaresProblem(rb_s, Jb_s), x0_b, alg_best)]
+        for AT in ARRAY_BACKENDS
+            solver = init(LeastSquaresProblem(rb_d!, Jb_d!, 3), AT(zeros(T, 2)), alg_best)
+            push!(best_results, solve!(solver))
+            @test solver.state.best.fnorm < st_ref.fnorm
+        end
+        for (x, st) in best_results
+            @testset "(b) best = true, $gname, d₁ = $d₁, d₂ = $d₂, $(typeof(x))" begin
+                xb = SVector{2, T}(Array(x))
+                @test st.code === SUCCESS
+                @test st.stationary === true
+                @test st.iterations == 1
+                @test all(isapprox.(xb, x_ref; rtol = 8 * eps(T)))
+                @test isapprox(st.fnorm, st_ref.fnorm; rtol = 8 * eps(T))
+                @test isapprox(st.fnorm, norm(rb_s(xb, nothing)); rtol = 8 * eps(T))
+            end
+        end
     end
 end
 

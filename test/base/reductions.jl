@@ -1,4 +1,4 @@
-using GeometricSolvers: norm2, rnorm, rdot, rmaxnorm, stopping_norm, L2Norm, MaxNorm
+using GeometricSolvers: norm2, rnorm, rdot, rmaxnorm
 using ForwardDiff: ForwardDiff, Dual
 using JET: JET, @test_opt
 using JLArrays: JLArray
@@ -275,17 +275,6 @@ end
         @test rmaxnorm(AT(b)) === maximum(abs, b)
     end
     @test rmaxnorm(T(-3)) === R(3)
-end
-
-@testset "stopping_norm dispatches on the norm: $T, $(AT)" for T in ELTYPES,
-    AT in ARRAY_BACKENDS
-
-    a = AT(T <: Complex ? T[3 + 4im, -1, 2im] : T[3, -4, 1])
-    @test stopping_norm(MaxNorm(), a) === rmaxnorm(a)
-    @test stopping_norm(L2Norm(), a) === rnorm(a)
-    s = SVector{2}(T[3, -4])
-    @test stopping_norm(MaxNorm(), s) === real(T)(4)
-    @test stopping_norm(L2Norm(), s) === rnorm(s)
 end
 
 @testset "rmaxnorm of an SVector behind a barrier allocates nothing, $T" for T in ELTYPES

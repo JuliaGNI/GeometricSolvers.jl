@@ -67,17 +67,6 @@ array alike. It needs no scaling, so it is finite wherever the largest modulus i
 rmaxnorm(a) = real(eltype(a))(maximum(abs, a))
 
 """
-    stopping_norm(n::StoppingNorm, a)
-
-The norm `n` of `a` in `real(eltype(a))`: [`rnorm`](@ref) for [`L2Norm`](@ref) and
-[`rmaxnorm`](@ref) for [`MaxNorm`](@ref). The residual test of [`solve!!`](@ref) takes the
-max norm of [`Options`](@ref) through it; under `L2Norm()` it reads `status.fnorm`, which is
-the 2-norm of the residual already.
-"""
-@inline stopping_norm(::L2Norm, a) = rnorm(a)
-@inline stopping_norm(::MaxNorm, a) = rmaxnorm(a)
-
-"""
     rdot(a, b)
 
 The real part of the inner product, ``\\mathrm{Re} \\sum_i \\bar{a}_i b_i``, in
