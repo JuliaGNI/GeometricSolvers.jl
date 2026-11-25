@@ -959,8 +959,8 @@
 
 ### K135 · `Continuation` does not reach the root of the linear check `F(x) = s (A x − b)` at a subnormal scale `s`, where `Newton()` reaches it in `Float64`
 
-- **location:** `src/composition/continuation.jl:156` (`homotopy_residual!`; the fixed-point form
-  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:166`)
+- **location:** `src/composition/continuation.jl:157` (`homotopy_residual!`; the fixed-point form
+  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:167`)
 - **evidence:** `A = [3 1; 1 2]`, `b = [1, −3]`, root `(1, −2)`, start `zeros(T, 2)`,
   `f_abstol = 0`, at `s = 2^20 · nextfloat(zero(T))`. `Float64`:
   `Continuation(FixedPointHomotopy())` returns `MAXITERS` at `(0.263, −0.628)`,

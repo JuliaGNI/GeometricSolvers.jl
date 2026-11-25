@@ -77,10 +77,10 @@ fixed-point homotopy, which a non-finite `J(x₀)` gives. A start that the corre
 onto the path at `λ = 0` returns `STALLED` with no step; so does a start whose bordered system at
 `(x₀, 0)` along `e_λ` is singular, such as a fold of `λ` at the start of the Newton or the
 parameter homotopy, where `H_x(x₀, 0)` is singular. A halved `h` below `h_min` returns `STALLED`,
-and `max_iterations` path steps of the [`Options`](@ref) return `MAXITERS`; both return the last accepted point of the path, with
-`fnorm` the norm of `F` there at `λ = 1`, `stepnorm` the length of the last step, and
-`step_failures` the rejected steps. [`continuation_steps`](@ref) reads `λ` and the step length of
-every step of the last solve.
+and `max_iterations` path steps of the [`Options`](@ref) return `MAXITERS`; both return the last
+accepted point of the path, with `fnorm` the norm of `F` there at `λ = 1`, `stepnorm` the length
+of the last step, and `step_failures` the rejected steps. [`continuation_steps`](@ref) reads `λ`
+and the step length of every step of the last solve.
 
 `method` is a [`Newton`](@ref) whose step forms the Jacobian matrix: its Jacobian source gives
 ``H_x``, and a [`GMRES`](@ref), a [`MINRESQLP`](@ref) or a [`KroneckerFactorization`](@ref)
