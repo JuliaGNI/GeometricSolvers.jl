@@ -101,7 +101,7 @@ end
         u₀ = copy(u)
         u₊, F₊, _, info = step!!(s.inner, m, s.rprob, u, Fx, nothing)
         @test info.code == NONFINITE
-        @test u₊ == u₀
+        @test u₊ == u₀ && F₊ == Fx
         # `start!!` sets `δ₀`, and each step multiplies `δ` by `‖F(xₖ)‖ / ‖F(xₖ₊₁)‖`, capped at
         # `δ_max`; the step solves `(J + I/δ) d = −F` and accepts it
         inner = start!!(s.inner, m, s.rprob, u, Fx, nothing, sqrt(sum(abs2, Fx)))

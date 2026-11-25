@@ -234,6 +234,7 @@ end
             x, status = solve!(solver)
             @test status.code == NONFINITE
             @test status.iterations == 0
+            @test isnan(only(x))
             @test isempty(continuation_steps(solver).λ)
         end
     end
