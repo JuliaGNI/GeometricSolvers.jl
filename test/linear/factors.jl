@@ -1,5 +1,7 @@
+using ForwardDiff: ForwardDiff
 using GeometricSolvers
 using GeometricSolvers: dense_factor, factorize!!, ldiv!!, returncode, StaticLU, StaticQR
+using LinearAlgebra: cond, norm
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -173,6 +175,35 @@ end
     fac = factorize!!(nothing, CholeskyFactorization(), A)
     @test returncode(fac) === SUCCESS
     @test fac.scale_exponent == -emax - 1
+end
+
+@testset "a ForwardDiff.Dual matrix below 1 in its own element type, $M, $R" for M in (
+        LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization),
+    R in REAL_ELTYPES
+
+    # `J(t) = A₀ + t·1·1ᵀ` at `t = 0`, `A₀ = 2^-3 [4 1; 1 5]`: its largest entry is below 1, so
+    # the own-type factor divides it by `2^e`, `e = -1` (`-2` for Cholesky, whose exponent is
+    # even), which `ldexp2` does for a `Dual` too.
+    # The reference is the BigFloat solve: `x = A₀⁻¹ b`, `ẋ = -A₀⁻¹ (1·1ᵀ) x`. The bound is
+    # `8 κ² eps(R)`, `κ = cond(A₀) ≈ 1.66`: the value has an error of order `κ eps(R)`, and the
+    # partials pass two solves with `A₀`, of order `κ² eps(R)`.
+    A₀ = [4 1; 1 5] .// 8
+    b₀ = [1, -2]
+    x = big.(A₀) \ big.(b₀)
+    ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
+    rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * eps(R)
+    J = SMatrix{2, 2}(ForwardDiff.Dual.(R.(A₀), one(R)))
+    b = SVector{2}(ForwardDiff.Dual.(R.(b₀), zero(R)))
+    fs = factorize!!(nothing, M(), J)
+    xs = ldiv!!(nothing, fs, b)
+    fd = factorize!!(dense_factor(M(), nothing, Vector(b), nothing), M(), Matrix(J))
+    xd = ldiv!!(similar(Vector(b)), fd, Vector(b))
+    for (fac, y) in ((fs, xs), (fd, xd))
+        @test returncode(fac) === SUCCESS
+        @test fac.scale_exponent == (M === CholeskyFactorization ? -2 : -1)
+        @test norm(ForwardDiff.value.(y) - x) <= rtol * norm(x)
+        @test norm(map(a -> ForwardDiff.partials(a, 1), y) - ẋ) <= rtol * norm(ẋ)
+    end
 end
 
 @testset "a 0 × 0 matrix sets no scale in the static SVD" begin

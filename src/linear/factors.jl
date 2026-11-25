@@ -754,7 +754,12 @@ singular_values(fac::StaticSVD) = map(a -> ldexp2(a, fac.scale_exponent), fac.σ
     end
 end
 @inline ldexp2(a::AbstractFloat, e::Integer) = ldexp(a, e)
-@inline ldexp2(a::Real, e::Integer) = ldexp2(float(a), e)
+# Where `float(a)` is no `IEEEFloat`, such as a `ForwardDiff.Dual`, whose `float` is the `Dual`
+# itself, or the `BigFloat` of a `BigInt`, `ldexp` scales it, so the method never calls itself.
+@inline function ldexp2(a::Real, e::Integer)
+    b = float(a)
+    return b isa Base.IEEEFloat ? ldexp2(b, e) : ldexp(b, e)
+end
 @inline ldexp2(a::Complex, e::Integer) = complex(ldexp2(real(a), e), ldexp2(imag(a), e))
 
 @inline abs_bits(x::T) where {T <: Base.IEEEFloat} = reinterpret(Unsigned, x) &

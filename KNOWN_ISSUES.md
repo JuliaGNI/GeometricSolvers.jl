@@ -779,7 +779,7 @@
   `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
   `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
   `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
-  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:791`), so
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:796`), so
   such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:404-405`) states
   the condition.
 - **kind:** docs
@@ -787,7 +787,7 @@
 
 ### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
 
-- **location:** `src/linear/factors.jl:775` (`factor_matrix`), and `src/linear/static/svd.jl:102`
+- **location:** `src/linear/factors.jl:780` (`factor_matrix`), and `src/linear/static/svd.jl:102`
   (`svd_matrix`) and `src/linear/static/svd_rect.jl:51` (`svd_rect_matrix`), which scale always
 - **evidence:** the scale exponent of every static factor is an `Int32` field, and
   `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
@@ -958,7 +958,7 @@
 
 ### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
 
-- **location:** `src/linear/factors.jl:844` (`rhs_exponent`), which `ldiv!!` of the dense,
+- **location:** `src/linear/factors.jl:849` (`rhs_exponent`), which `ldiv!!` of the dense,
   device and static factors calls
 - **evidence:** `rhs_exponent` gives `max(0, …)`, so a right-hand side divides by `2^k` only near
   `floatmax`. With `s = 2^10 · nextfloat(zero(R))`, `A = 3s · I(5)`, `A[3, 1] = A[1, 3] = s` and
@@ -1013,7 +1013,7 @@
   at `k = -1060` in `Float64` (`k = -135` in `Float32`) has a relative error against the
   `BigFloat` `Φᴴ \ w` of `2.89e-5` to `2.91e-5`, and `1.73e-5` to `1.74e-5` for the `3 × 2`
   matrix `A₀[:, 1:2]` against `Φ (Φᴴ Φ)⁻¹ w`, in the four element types (`Φ = 2^k (1 + i/2) A₀`
-  in the complex ones), the same values on `bf08120` and on this branch (Julia 1.13.4). At
+  in the complex ones), the same values on `bf08120` and on `091997c` (Julia 1.13.4). At
   `k = -1026` (`-130`) the error is below `1.1e-15` (`5.8e-7`). The coefficients `vₖᴴ w` hold
   only `k - exponent(nextfloat(zero(R)))` significant bits, 14 at `k = -1060` (`-135`). The
   testset "(Φ⁺)ᴴ w from a static SVD at every scale exponent" of `test/nonlinear/eliminate.jl`
@@ -1030,7 +1030,7 @@
   `Φ = 2^-130 A₀` in `Float64`, `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, the factor has
   `scale_exponent = -128`, `2^128` is `Inf` in `Float32`, and
   `_pinv_adj_mul_r3!(out, factorize!!(init_linear(m, nothing, w), m, Φ), w)` with
-  `w = 2^-130 (1, -2, 0.5)` gives `[NaN, -Inf, NaN]`, on `bf08120` and on this branch
+  `w = 2^-130 (1, -2, 0.5)` gives `[NaN, -Inf, NaN]`, on `bf08120` and on `091997c`
   (Julia 1.13.4). The `DeviceSVD` method at `:1310` forms the same product; that it gives `NaN`
   is not verified.
 - **kind:** defect
@@ -1049,12 +1049,13 @@
   GeometricSolvers._pinv_adj_mul_r1(factorize!!(nothing, SVDFactorization(), Φ), Φ, w)
   ```
 
-  gives `[NaN, -Inf, NaN]`; the `BigFloat` `Φᴴ \ w` is `[Inf, -Inf, 2.01e38]` in `Float32`, and
-  `bf08120` gives `[Inf, -Inf, Inf]`. In `Float64` at `2^-1026` the same holds: `[NaN, -Inf, NaN]`
-  against `[Inf, -Inf, 1.06e308]`, `[Inf, -Inf, Inf]` on `bf08120`. At `2^-128` (`2^-1024`) the
-  result is finite and agrees with the reference to six (fifteen) digits on both (Julia 1.13.4).
-  Two entries of the true result lie above `floatmax`, so no finite result is right; the finite
-  third entry is lost on both.
+  gives `[NaN, -Inf, NaN]` on `091997c`; the `BigFloat` `Φᴴ \ w` is `[Inf, -Inf, 2.01e38]` in
+  `Float32`, and `bf08120` gives `[Inf, -Inf, Inf]`. In `Float64` at `2^-1026` the same holds:
+  `[NaN, -Inf, NaN]` on `091997c` against `[Inf, -Inf, 1.06e308]`, `[Inf, -Inf, Inf]` on
+  `bf08120`. At `2^-128` (`2^-1024`) the result is finite and agrees with the reference to six
+  (fifteen) digits on `bf08120` and on `091997c` (Julia 1.13.4). Two entries of the true result
+  lie above `floatmax`, so no finite result is right; the finite third entry is lost on `bf08120`
+  and on `091997c`.
 - **kind:** defect
 - **found:** 2026-11-25, the fix of `_pinv_adj_mul_r1` for a static SVD exponent below
   `-exponent(floatmax)`
