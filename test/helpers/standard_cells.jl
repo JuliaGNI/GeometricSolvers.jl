@@ -214,7 +214,7 @@ or `Broyden` method, which solves no linear system for its direction, and for a 
 `GMRES`, whose step passes no direction through `refine!!`.
 """
 function perturbed_direction(m::Newton, seed)
-    m.linsolve isa GMRES && return nothing
+    GeometricSolvers.matrix_free(m.linsolve) && return nothing
     Newton(
         m.linsolve, m.globalization, m.jacobian, PerturbedDirection(seed), m.regularization,
         m.reuse)

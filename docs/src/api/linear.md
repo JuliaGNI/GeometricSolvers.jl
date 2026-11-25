@@ -172,11 +172,26 @@ returns the solution of minimum length of the least-squares problem in the Krylo
 incompatible system in `Float32`, rounding can end the solve before that space holds it. It
 takes the forcing terms of `GMRES` and no preconditioner, and the trust regions
 [`DogLeg`](@ref), whose Cauchy point takes two Hessian–vector products, and [`Steihaug`](@ref).
-These names are exported.
+
+[`BiCGStab`](@ref) and [`DQGMRES`](@ref) solve the step of a `Newton` with storage that does not
+grow with the iteration count. `BiCGStab` (van der Vorst 1992, doi:10.1137/0913035) keeps eight
+vectors, takes two products per iteration and minimises no residual; where one of its four
+divisors is exactly zero, it stops and returns the last finite iterate with no convergence.
+`DQGMRES` (Saad and Wu 1996,
+doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8) orthogonalises each Krylov vector against the last
+`min(memory, n)` and takes one product per iteration; its residual is quasi-minimal, and with
+`memory` at least the iteration count its iterate is that of unrestarted `GMRES` with modified
+Gram–Schmidt. Both take the forcing terms and the right preconditioner of `GMRES`, the line
+searches and [`Static`](@ref), and no [`DogLeg`](@ref). [`matrix_free`](@ref) is the trait that
+marks a linear method of this section, and a `Newton` reads it for its refusals and keywords.
+These names are exported, except `matrix_free`, which is public.
 
 ```@docs
 GMRES
 MINRESQLP
+BiCGStab
+DQGMRES
+matrix_free
 AbstractForcingTerm
 EisenstatWalkerChoice2
 EisenstatWalkerChoice1

@@ -42,6 +42,7 @@ export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt, Steihaug
 export PseudoTransient
 export MINRESQLP
+export BiCGStab, DQGMRES
 export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice1,
        FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
@@ -61,6 +62,7 @@ export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summa
 
 public solve!!, sciml_retcode, certify
 public continuation_steps
+public matrix_free
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -89,6 +91,8 @@ include("linear/ka/svd.jl")
 include("linear/mixed.jl")
 include("linear/gmres.jl")
 include("linear/minres.jl")
+include("linear/bicgstab.jl")
+include("linear/dqgmres.jl")
 include("linear/kronecker.jl")
 include("linear/linearproblem.jl")
 

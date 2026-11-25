@@ -3516,10 +3516,13 @@ end
         "a BatchEliminated problem takes no outer Newton with best = true: the solve leaves the " *
         "inner solutions and the moments of the batch at the last evaluation"))
     g = m.linsolve
-    g isa GMRES || throw(ArgumentError(
+    matrix_free(g) || throw(ArgumentError(
         "a BatchEliminated problem takes a Newton with GMRES: the outer Jacobian is matrix-free, " *
         "and its product is the precision-matched directional difference of the batch; got " *
         "linsolve = $(typeof(g))"))
+    g isa GMRES || throw(ArgumentError(
+        "a BatchEliminated problem takes GMRES among the matrix-free linear methods: its outer " *
+        "step reads the GMRES workspace; got linsolve = $(typeof(g))"))
     j = m.jacobian
     (j === nothing || j isa AutoForwardDiff || j isa JVPFunction) || throw(ArgumentError(
         "a BatchEliminated problem forms its Jacobian–vector product as the directional " *

@@ -171,14 +171,17 @@ true
 
 ## R5: one system without a Jacobian matrix
 
-**Methods.** [`Newton`](@ref) with `linsolve = GMRES()` or `MINRESQLP()` holds no
-``n \times n`` Jacobian. Each inner iteration of [`GMRES`](@ref) or [`MINRESQLP`](@ref) takes one
-Jacobian–vector product, from automatic differentiation or from a [`JVPFunction`](@ref).
+**Methods.** [`Newton`](@ref) with `linsolve = GMRES()`, `BiCGStab()`, `DQGMRES()` or
+`MINRESQLP()` holds no ``n \times n`` Jacobian. Each inner iteration of [`GMRES`](@ref),
+[`DQGMRES`](@ref) or [`MINRESQLP`](@ref) takes one Jacobian–vector product, and each of
+[`BiCGStab`](@ref) two, from automatic differentiation or from a [`JVPFunction`](@ref).
 
 | method or option | condition |
 |:--|:--|
 | [`GMRES`](@ref) | an `AbstractVector` iterate, on the host or on a device, and the square system of a [`NonlinearProblem`](@ref) or of a [`StationarityProblem`](@ref), with any index sets `E` and `U` |
 | [`MINRESQLP`](@ref) | an `AbstractVector` iterate of a real element type and a [`StationarityProblem`](@ref) with `E == U`, the same indices in the same order, whose Jacobian is symmetric and may be indefinite or singular; no preconditioner; under [`DogLeg`](@ref) the Cauchy point takes two Hessian–vector products |
+| [`BiCGStab`](@ref) | as `GMRES`, with storage of eight vectors whatever the iteration count and two products per iteration; no minimal residual; no [`DogLeg`](@ref) |
+| [`DQGMRES`](@ref) | as `GMRES`, with storage of `min(memory, n) + 1` basis vectors and `min(memory, n)` directions whatever the iteration count and one product per iteration; a quasi-minimal residual; no [`DogLeg`](@ref) |
 | [`EisenstatWalkerChoice2`](@ref) (the default), [`EisenstatWalkerChoice1`](@ref) | an inner tolerance that is loose far from the root and tight near it |
 | [`FixedForcing`](@ref)`(η)` | a constant inner tolerance `η` |
 | a right preconditioner with methods of [`refresh!`](@ref) and [`apply_preconditioner!`](@ref) | an operator that is refreshed once per Newton step and applied before every product |
@@ -187,10 +190,11 @@ Jacobian–vector product, from automatic differentiation or from a [`JVPFunctio
 | [`Steihaug`](@ref) | `linsolve = MINRESQLP()`; truncated conjugate gradients that minimise the model of the action `S`, with trials accepted by the ratio of `DogLeg` on ``\|F\|``; a solve does not converge to a root where the Hessian of `S` is indefinite, also from a start close to it, and ends with `LINESEARCH_FAILED`; `DogLeg` does not have this limit |
 
 **Conditions of the regime.** R5 applies to a large system whose Jacobian no array can hold. A
-`GMRES` solve takes no factor reuse, no [`Refinement`](@ref), no [`LevenbergMarquardt`](@ref) and
-no [`LeastSquaresProblem`](@ref), and it has no implicit differentiation; each of them raises an
-`ArgumentError`. A `Newton` with `GMRES` is not the outer method of a
-[`LeftPreconditioned`](@ref), and raises an `ArgumentError` there; it can be the inner method.
+`GMRES`, `BiCGStab` or `DQGMRES` solve takes no factor reuse, no [`Refinement`](@ref), no
+[`LevenbergMarquardt`](@ref) and no [`LeastSquaresProblem`](@ref), and it has no implicit
+differentiation; each of them raises an `ArgumentError`. A `Newton` with one of them is not the
+outer method of a [`LeftPreconditioned`](@ref), and raises an `ArgumentError` there; it can be the
+inner method.
 On a device array no factor is formed. [`f_calls`](@ref) and [`jvp_calls`](@ref) count the
 evaluations of the last solve.
 

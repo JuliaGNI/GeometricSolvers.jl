@@ -16,13 +16,13 @@ its globalization. Its keywords are:
 
 | keyword | default | meaning |
 |:--|:--|:--|
-| `linsolve` | `LUFactorization()` | the [linear solver](@ref linear): a factorisation, [`GMRES`](@ref) or [`MINRESQLP`](@ref) |
+| `linsolve` | `LUFactorization()` | the [linear solver](@ref linear): a factorisation, [`GMRES`](@ref), [`BiCGStab`](@ref), [`DQGMRES`](@ref) or [`MINRESQLP`](@ref) |
 | `globalization` | `Static()` | the [globalization](@ref globalization): a line search, [`DogLeg`](@ref), [`Steihaug`](@ref) or [`LevenbergMarquardt`](@ref) |
-| `jacobian` | `nothing` | the Jacobian source: `nothing` (the problem's `J`, else `AutoForwardDiff()`), an ADTypes back end, a callable (`J(x, p)` on a value iterate, `J!(J, x, p)` on an array) except with `GMRES` or `MINRESQLP`, or a [`JVPFunction`](@ref) for `GMRES` or `MINRESQLP` |
+| `jacobian` | `nothing` | the Jacobian source: `nothing` (the problem's `J`, else `AutoForwardDiff()`), an ADTypes back end, a callable (`J(x, p)` on a value iterate, `J!(J, x, p)` on an array) except with a matrix-free linear method, or a [`JVPFunction`](@ref) for a matrix-free linear method ([`matrix_free`](@ref)) |
 | `refinement` | `NoRefinement()` | iterative refinement of the direction: [`Refinement`](@ref) or [`GMRESRefinement`](@ref), see [Mixed precision](@ref mixed) |
 | `regularization` | `0` | the diagonal shift ``\mu`` of ``J + \mu I`` |
 | `reuse` | `nothing` | the factor-reuse period `k` |
-| `forcing`, `preconditioner` | `nothing` | the forcing term and the right preconditioner of a `GMRES`; the forcing term of a `MINRESQLP` |
+| `forcing`, `preconditioner` | `nothing` | the forcing term and the right preconditioner of a `GMRES`, `BiCGStab` or `DQGMRES`; the forcing term of a `MINRESQLP` |
 | `best` | `false` | return the iterate of the smallest ``\|F\|_2`` of a solve that ends without `SUCCESS` |
 
 ```jldoctest nonlinear
@@ -148,8 +148,8 @@ true
 
 A non-`SUCCESS` primal solve returns `NaN` partials. The accuracy of the tangent is that of the
 factor element type of `linsolve`. [`init`](@ref) and [`solve!`](@ref) refuse dual inputs. A
-[`StationarityProblem`](@ref), a [`LeastSquaresProblem`](@ref), a matrix-free [`GMRES`](@ref)
-solve, the combinators and the preconditioning methods have no implicit differentiation, and
+[`StationarityProblem`](@ref), a [`LeastSquaresProblem`](@ref), a matrix-free solve
+([`matrix_free`](@ref)), the combinators and the preconditioning methods have no implicit differentiation, and
 `solve` raises an `ArgumentError` for a dual input there. A [`Deflated`](@ref) problem
 differentiates the undeflated problem at the root it found.
 

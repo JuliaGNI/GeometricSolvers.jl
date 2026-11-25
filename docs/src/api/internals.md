@@ -66,6 +66,10 @@ GMRESWorkspace
 init_gmres_workspace
 GMRESInfo
 gmres_solve!
+init_bicgstab_workspace
+bicgstab_solve!
+init_dqgmres_workspace
+dqgmres_solve!
 gmres_ir!!
 promote_lu_factors!
 arnoldi_dot

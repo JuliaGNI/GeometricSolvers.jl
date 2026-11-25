@@ -37,8 +37,9 @@ end
     JVPFunction(jvp!)
 
 The Jacobian–vector product of a matrix-free problem, as the `jacobian` field of a
-[`Newton`](@ref) with [`GMRES`](@ref) or [`MINRESQLP`](@ref) takes it: `jvp!(Jv, x, v, p)` writes
-``J v`` into `Jv`, output first, as [`jvp!!`](@ref) takes it. On a [`StationarityProblem`](@ref)
+[`Newton`](@ref) with a matrix-free linear method ([`matrix_free`](@ref)) takes it:
+`jvp!(Jv, x, v, p)` writes ``J v`` into `Jv`, output first, as [`jvp!!`](@ref) takes it. On a
+[`StationarityProblem`](@ref)
 it is the product on the unknowns `x[U]`. A problem that no array can hold the Jacobian of — an
 expensive residual whose every column costs a full evaluation, or a device array — solves through
 it:

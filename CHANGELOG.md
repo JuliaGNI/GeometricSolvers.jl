@@ -1037,6 +1037,37 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
+  20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
+  storage does not grow with the iteration count.** `BiCGStab` is the right-preconditioned
+  BiCGStab of van der Vorst (1992, doi:10.1137/0913035): eight vectors, two Jacobian–vector
+  products per iteration and one where the half step meets the tolerance, and no residual
+  minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
+  finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
+  direction; no `ReturnCode` is added. Its recurrence runs on the right-hand side scaled to unit
+  norm and forms `ω` from `‖t‖`, so a system scaled to `4√floatmax` or `floatmax/8` keeps its
+  solution. `DQGMRES` is the right-preconditioned DQGMRES of Saad and Wu (1996,
+  doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8): one product per
+  iteration, a quasi-minimal residual over a window of `min(memory, n)` vectors, `min(memory, n)
+  + 1` basis vectors and `min(memory, n)` directions; with `memory` at least the iteration count
+  its iterate is that of unrestarted `GMRES` with modified Gram–Schmidt. Both take the forcing
+  terms and the right preconditioner of `GMRES`, the `forcing` and `preconditioner` keywords of
+  `Newton`, `Static` and the line searches, on `Array`, `JLArray` and a device array, and count
+  `f_calls` and `jvp_calls` exactly. `DogLeg`, whose trial loop reads the Arnoldi relation of
+  `GMRES`, `reuse`, `Refinement`, `LevenbergMarquardt`, `PseudoTransient`, a `ForwardDiff.Dual`
+  input to `solve`, a `BatchEliminated` problem and `memory < 1` raise an `ArgumentError`.
+
+- **`GeometricSolvers.matrix_free(method)` is a new public trait: `true` for `GMRES`, `BiCGStab`,
+  `DQGMRES` and `MINRESQLP`, `false` for every other linear method.** `Newton` reads it in place of
+  a test for `GMRES` in its refusals of reuse, refinement, `LevenbergMarquardt` and
+  `PseudoTransient`, in its `forcing` and `preconditioner` keywords and where its state is built,
+  a `BatchEliminated` problem reads it before it refuses every method but `GMRES`, and `solve`
+  reads it for the refusal of a `ForwardDiff.Dual` input. A `Newton` with `GMRES` or `MINRESQLP`
+  keeps every behaviour. The messages of the refusals of reuse, refinement and
+  `LevenbergMarquardt` with `GMRES`, of a `Dual` input, and of `max_inner_iterations`, `f_calls`
+  and `jvp_calls` on a solve that keeps no count name a matrix-free linear method in place of
+  `GMRES`.
+
 - **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
   exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
   `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,

@@ -7,8 +7,9 @@ Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) an
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
 `linsolve` ([`LUFactorization`](@ref), [`LDLTFactorization`](@ref),
 [`CholeskyFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref), the
-matrix-free [`GMRES`](@ref) and [`MINRESQLP`](@ref), or [`KroneckerFactorization`](@ref) for the
-stage system of an implicit Runge–Kutta method), globalization `globalization` ([`Static`](@ref),
+matrix-free [`GMRES`](@ref), [`BiCGStab`](@ref), [`DQGMRES`](@ref) and [`MINRESQLP`](@ref), or
+[`KroneckerFactorization`](@ref) for the stage system of an implicit Runge–Kutta method),
+globalization `globalization` ([`Static`](@ref),
 [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust regions
 [`DogLeg`](@ref) and [`Steihaug`](@ref), the damped step [`LevenbergMarquardt`](@ref) or, for a
 [`StationarityProblem`](@ref), the pseudo-transient continuation [`PseudoTransient`](@ref)),
@@ -39,8 +40,9 @@ factor-reuse period `reuse`.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
   `AbstractADType`, or a custom Jacobian callable: `J(x, p)`, which returns the Jacobian, on a
   value iterate (a `Number` or a `StaticArray`), and `J!(J, x, p)`, which writes it into `J`, on
-  an array. A `Newton` with [`GMRES`](@ref) refuses a callable with an `ArgumentError`, because a
-  GMRES solve forms no Jacobian matrix. `AutoForwardDiff()` writes a dense
+  an array. A `Newton` with a matrix-free linear method ([`matrix_free`](@ref)) refuses a
+  callable with an `ArgumentError`, because its solve forms no Jacobian matrix.
+  `AutoForwardDiff()` writes a dense
   Jacobian only, so with a sparse `jacobian_prototype` it raises an `ArgumentError` where the state
   is built; such a problem takes an analytic `J` or an `AutoSparse` back end. Adapting `Newton` with
   [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
@@ -93,17 +95,18 @@ method of a [`BlockEliminated`](@ref), [`VariableProjection`](@ref) or
 combinator there, because the record would rank the preconditioned residual and `status.fnorm` is
 the norm of the global residual; its inner method takes `best = true`, which has no effect there.
 
-# Keywords of a `GMRES` linear method
+# Keywords of a matrix-free linear method
 
-`forcing` and `preconditioner` configure the [`GMRES`](@ref) of `linsolve`, `forcing` configures a
-[`MINRESQLP`](@ref) too, and a `Newton` that takes either of them with any other linear method, or
-a `preconditioner` with `MINRESQLP`, raises an `ArgumentError`. A `Newton` with `GMRES` or
-`MINRESQLP` forms no factor, so it takes no `reuse`, no [`Refinement`](@ref), no
+`forcing` and `preconditioner` configure the [`GMRES`](@ref), [`BiCGStab`](@ref) or
+[`DQGMRES`](@ref) of `linsolve`, `forcing` configures a [`MINRESQLP`](@ref) too, and a `Newton`
+that takes either of them with any other linear method, or a `preconditioner` with `MINRESQLP`,
+raises an `ArgumentError`. A `Newton` with a matrix-free linear method ([`matrix_free`](@ref))
+forms no factor, so it takes no `reuse`, no [`Refinement`](@ref), no
 [`LevenbergMarquardt`](@ref) and no [`PseudoTransient`](@ref) globalization, and a
-[`DogLeg`](@ref) needs an unrestarted `GMRES` without a preconditioner. A [`Steihaug`](@ref)
-globalization needs a `MINRESQLP`. A [`JVPFunction`](@ref) in `jacobian` needs a `GMRES` or a
-`MINRESQLP`, because a factorising method needs a Jacobian matrix. Each refusal is an
-`ArgumentError`.
+[`DogLeg`](@ref) needs an unrestarted `GMRES` without a preconditioner or a `MINRESQLP`. A
+[`Steihaug`](@ref) globalization needs a `MINRESQLP`. A [`JVPFunction`](@ref) in `jacobian` needs
+a matrix-free linear method, because a factorising method needs a Jacobian matrix. Each refusal
+is an `ArgumentError`.
 
 - `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
   the relative tolerance of every Newton step's inner solve.
@@ -146,29 +149,31 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
         if globalization isa PseudoTransient
             is_refining(refinement) &&
                 throw(ArgumentError("Newton with a PseudoTransient globalization takes no refinement; use refinement = NoRefinement()"))
-            linsolve isa Union{GMRES, MINRESQLP, KroneckerFactorization} &&
+            (matrix_free(linsolve) || linsolve isa KroneckerFactorization) &&
                 throw(ArgumentError("Newton with a PseudoTransient globalization needs a factorising linear method other than KroneckerFactorization: its step factorises the shifted Jacobian J + I/δ"))
         end
-        if linsolve isa GMRES
-            reuse === nothing ||
-                throw(ArgumentError("Newton with GMRES takes no factor reuse: a GMRES step has no factor"))
-            is_refining(refinement) &&
-                throw(ArgumentError("Newton with GMRES takes no refinement: a GMRES step has no factor to refine against"))
-            if globalization isa DogLeg
-                linsolve.restart == linsolve.maxiter ||
-                    throw(ArgumentError("Newton with a DogLeg globalization needs unrestarted GMRES: restart must equal maxiter"))
-                linsolve.preconditioner === nothing ||
-                    throw(ArgumentError("Newton with a DogLeg globalization takes a GMRES without a preconditioner"))
-            end
-            globalization isa LevenbergMarquardt &&
-                throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a GMRES solve does not form"))
-        elseif linsolve isa MINRESQLP
+        if linsolve isa MINRESQLP
             reuse === nothing ||
                 throw(ArgumentError("Newton with MINRESQLP takes no factor reuse: a MINRESQLP step has no factor"))
             is_refining(refinement) &&
                 throw(ArgumentError("Newton with MINRESQLP takes no refinement: a MINRESQLP step has no factor to refine against"))
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a MINRESQLP solve does not form"))
+        elseif matrix_free(linsolve)
+            reuse === nothing ||
+                throw(ArgumentError("Newton with a matrix-free linear method takes no factor reuse: its step has no factor"))
+            is_refining(refinement) &&
+                throw(ArgumentError("Newton with a matrix-free linear method takes no refinement: its step has no factor to refine against"))
+            if globalization isa DogLeg
+                linsolve isa GMRES ||
+                    throw(ArgumentError("Newton with a DogLeg globalization needs GMRES among the matrix-free linear methods: its trial loop reads the Arnoldi relation of the GMRES solve"))
+                linsolve.restart == linsolve.maxiter ||
+                    throw(ArgumentError("Newton with a DogLeg globalization needs unrestarted GMRES: restart must equal maxiter"))
+                linsolve.preconditioner === nothing ||
+                    throw(ArgumentError("Newton with a DogLeg globalization takes a GMRES without a preconditioner"))
+            end
+            globalization isa LevenbergMarquardt &&
+                throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a matrix-free solve does not form"))
         elseif jacobian isa JVPFunction
             throw(ArgumentError("Newton with a JVPFunction needs linsolve = GMRES(...) or MINRESQLP(...): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give"))
         end
@@ -204,21 +209,37 @@ function Newton(;
     reg = float(regularization)
     r = reuse === nothing ? nothing : Int32(reuse)
     ref = refinement isa Bool ? (refinement ? Refinement() : NoRefinement()) : refinement
-    if linsolve isa MINRESQLP && (forcing !== nothing || preconditioner !== nothing)
-        preconditioner === nothing || throw(ArgumentError(
-            "MINRESQLP takes no preconditioner: pass preconditioner = nothing, or use GMRES"))
-        f = forcing === nothing ? linsolve.forcing : forcing
-        linsolve = MINRESQLP(linsolve.maxiter, f)
-    elseif forcing !== nothing || preconditioner !== nothing
-        linsolve isa GMRES || throw(ArgumentError(
-            "the forcing and preconditioner keywords of Newton configure a GMRES linear method, and forcing a MINRESQLP one; pass them to GMRES, or set linsolve = GMRES(...)"))
-        g = linsolve
-        f = forcing === nothing ? g.forcing : forcing
-        P = preconditioner === nothing ? g.preconditioner : preconditioner
-        linsolve = GMRES{typeof(f), typeof(P), g.jvp_eltype}(
-            g.maxiter, g.restart, f, P, g.jvp_eltype, g.mgs)
+    if forcing !== nothing || preconditioner !== nothing
+        matrix_free(linsolve) || throw(ArgumentError(
+            "the forcing and preconditioner keywords of Newton configure a GMRES, BiCGStab or DQGMRES linear method, and forcing a MINRESQLP one; pass them to the method, or set linsolve = GMRES(...)"))
+        linsolve = with_forcing(linsolve, forcing, preconditioner)
     end
     return Newton(linsolve, globalization, jacobian, ref, reg, r, Val(best))
+end
+
+# A matrix-free linear method with the forcing term `forcing` and the right preconditioner
+# `preconditioner` in place of its own, where each is not `nothing`, and every other field kept.
+# `MINRESQLP` takes no preconditioner.
+@inline function with_forcing(g::GMRES, forcing, preconditioner)
+    f = forcing === nothing ? g.forcing : forcing
+    P = preconditioner === nothing ? g.preconditioner : preconditioner
+    return GMRES{typeof(f), typeof(P), g.jvp_eltype}(
+        g.maxiter, g.restart, f, P, g.jvp_eltype, g.mgs)
+end
+@inline function with_forcing(g::BiCGStab, forcing, preconditioner)
+    f = forcing === nothing ? g.forcing : forcing
+    P = preconditioner === nothing ? g.preconditioner : preconditioner
+    return BiCGStab(g.maxiter, f, P)
+end
+@inline function with_forcing(g::DQGMRES, forcing, preconditioner)
+    f = forcing === nothing ? g.forcing : forcing
+    P = preconditioner === nothing ? g.preconditioner : preconditioner
+    return DQGMRES(g.maxiter, g.memory, f, P)
+end
+@inline function with_forcing(g::MINRESQLP, forcing, preconditioner)
+    preconditioner === nothing || throw(ArgumentError(
+        "MINRESQLP takes no preconditioner: pass preconditioner = nothing, or use GMRES"))
+    return MINRESQLP(g.maxiter, forcing === nothing ? g.forcing : forcing)
 end
 
 """
@@ -436,6 +457,21 @@ with no pattern does; an explicit `jacobian_prototype` does not consult it.
 # Refuse, at `init`, an iterate that `method` builds no factor for, also where the step builds its
 # factor later: no refusal by default.
 @inline check_factor_iterate(::LinearMethod, x) = nothing
+
+"""
+    matrix_free(method::LinearMethod)
+
+Whether a [`Newton`](@ref) with the linear method `method` solves its step through
+Jacobian–vector products alone and forms no Jacobian matrix: `false` by default, and `true` for
+[`GMRES`](@ref), [`BiCGStab`](@ref), [`DQGMRES`](@ref) and [`MINRESQLP`](@ref). Where it is
+`true`, the `Newton` takes no factor reuse and no [`Refinement`](@ref), its `forcing` keyword
+configures the method, and so does its `preconditioner` keyword for every method but
+`MINRESQLP`, a [`JVPFunction`](@ref) is a `jacobian` it takes, and `solve` refuses a
+`ForwardDiff.Dual` in `x₀` or `p`. A method that extends it to `true` brings the workspace and the
+step of its solve.
+"""
+@inline matrix_free(::LinearMethod) = false
+@inline matrix_free(::Union{GMRES, BiCGStab, DQGMRES, MINRESQLP}) = true
 
 # The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
 # detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor. A
@@ -913,8 +949,8 @@ end
 
 @inline function newton_init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     m.globalization isa PseudoTransient && check_pseudotransient_problem(prob)
-    m.linsolve isa GMRES && return init_gmres_state(m, m.linsolve, prob, x, p)
     m.linsolve isa MINRESQLP && return init_minresqlp_state(m, m.linsolve, prob, x, p)
+    matrix_free(m.linsolve) && return init_gmres_state(m, m.linsolve, prob, x, p)
     m.linsolve isa KroneckerFactorization &&
         return init_kronecker_state(m, m.linsolve, prob, x, p)
     if prob isa LeastSquaresProblem &&
@@ -1921,21 +1957,24 @@ end
 @inline gmres_problem(::NonlinearProblem) = true
 @inline gmres_problem(prob) = false
 
-# The state of a `Newton` with `GMRES` at the iterate `x`: no Jacobian matrix, no factor and no
-# factorization slot, a Jacobian–vector preparation, the workspace of the globalization, and the
-# linear-solver workspace that every other body reads.
-@inline function init_gmres_state(m::Newton, g::GMRES{F, P, TJ},
-        prob::AbstractNonlinearProblem, x, p) where {F, P, TJ}
+# The state of a `Newton` with `GMRES`, `BiCGStab` or `DQGMRES` at the iterate `x`: no Jacobian
+# matrix, no factor and no factorization slot, a Jacobian–vector preparation, the workspace of the
+# globalization, and the linear-solver workspace that every other body reads. The messages name
+# the method, and the workspace and the element type of the product are the method's.
+@inline function init_gmres_state(m::Newton, g::LinearMethod,
+        prob::AbstractNonlinearProblem, x, p)
+    name = nameof(typeof(g))
     (x isa AbstractVector && !(x isa StaticArray)) || throw(ArgumentError(
-        "a Newton with GMRES solves an array linear system: the iterate must be an AbstractVector and not a value iterate, which is a Number or a StaticArray"))
+        "a Newton with $name solves an array linear system: the iterate must be an AbstractVector and not a value iterate, which is a Number or a StaticArray"))
     prob isa LeftPreconditionedProblem && throw(ArgumentError(
-        "LeftPreconditioned does not take a Newton with GMRES as its outer method: a Newton with GMRES solves a NonlinearProblem, and the outer method solves the preconditioned residual; use a Newton with a factorization, such as the default LUFactorization(), or a Picard as the outer method, or put the Newton with GMRES in the inner method"))
+        "LeftPreconditioned does not take a Newton with $name as its outer method: a Newton with $name solves a NonlinearProblem, and the outer method solves the preconditioned residual; use a Newton with a factorization, such as the default LUFactorization(), or a Picard as the outer method, or put the Newton with $name in the inner method"))
     gmres_problem(prob) || throw(ArgumentError(
-        "a Newton with GMRES solves the square system of a NonlinearProblem or a StationarityProblem; a LeastSquaresProblem takes QRFactorization() or SVDFactorization()"))
+        "a Newton with $name solves the square system of a NonlinearProblem or a StationarityProblem; a LeastSquaresProblem takes QRFactorization() or SVDFactorization()"))
     T = eltype(x)
     R = real(T)
+    TJ = krylov_jvp_eltype(g)
     Fx = buffer(x)
-    ws = init_gmres_workspace(g, x)
+    ws = init_krylov_workspace(g, x)
     # a product in `jvp_eltype` is prepared on the iterate's own `TJ` slots, so the residual it
     # differentiates and the function it was prepared for share one element type
     prep = TJ === Nothing ? newton_jvp_prep(m, prob, Fx, x, p) :
@@ -1954,6 +1993,15 @@ end
 @inline function r5_jvp(prep, ws, ::GMRES{F, P, TJ}) where {F, P, TJ}
     return TJ === Nothing ? R5JVP(prep, ws) : R5JVP{typeof(prep), typeof(ws), TJ}(prep, ws)
 end
+@inline r5_jvp(prep, ws, ::Union{BiCGStab, DQGMRES}) = R5JVP(prep, ws)
+
+# The element type of the product of a matrix-free method, `Nothing` for the working type: only
+# `GMRES` takes another, and the linear-solver workspace of each method.
+@inline krylov_jvp_eltype(::GMRES{F, P, TJ}) where {F, P, TJ} = TJ
+@inline krylov_jvp_eltype(::Union{BiCGStab, DQGMRES}) = Nothing
+@inline init_krylov_workspace(g::GMRES, x) = init_gmres_workspace(g, x)
+@inline init_krylov_workspace(g::BiCGStab, x) = init_bicgstab_workspace(g, x)
+@inline init_krylov_workspace(g::DQGMRES, x) = init_dqgmres_workspace(g, x)
 
 # The direction of one R5 step: the forcing term of the step, the refresh of the right
 # preconditioner, and the inner solve, capped at `maxiter` inner iterations. It returns whether the
@@ -2049,11 +2097,11 @@ end
 
 # `nothing` is the linear-solver workspace of a solve that keeps no count.
 @inline max_inner_iterations(::Nothing) = throw(ArgumentError(
-    "max_inner_iterations reads the count of a Newton with GMRES or MINRESQLP; this solve keeps none"))
+    "max_inner_iterations reads the count of a Newton with a matrix-free linear method; this solve keeps none"))
 @inline f_calls(::Nothing) = throw(ArgumentError(
-    "f_calls reads the count of a Newton with GMRES or MINRESQLP; this solve keeps none"))
+    "f_calls reads the count of a Newton with a matrix-free linear method; this solve keeps none"))
 @inline jvp_calls(::Nothing) = throw(ArgumentError(
-    "jvp_calls reads the count of a Newton with GMRES or MINRESQLP; this solve keeps none"))
+    "jvp_calls reads the count of a Newton with a matrix-free linear method; this solve keeps none"))
 
 # ─── R5 on a symmetric Jacobian: MINRES-QLP and Steihaug ─────────────────────
 #
@@ -2209,6 +2257,82 @@ Base.adjoint(J::SymmetricJVP) = J
         state.g, m.globalization, counted, x, Fx, d, p, state.jvpprep,
         InexactStep(R(η_ach)), state.merit)
     accepted_linres!(ws, info.stepnorm, dnorm, fnorm, inner.resnorm)
+    info = bump_failures(info, failures)
+    return x₊, F₊, with_merit(state, merit, info.fnorm), info
+end
+
+# ─── R5 with fixed storage: BiCGStab and DQGMRES ─────────────────────────────
+#
+# A `Newton` whose linear method is a `BiCGStab` or a `DQGMRES` has the state of a `GMRES` solve,
+# with the workspace of its method in the workspace slot, so `start!!`, `finish!!` and
+# `newton_step!!` reach these bodies through the methods of the workspace hooks on those types. The
+# step globalizes the direction with a line search or `Static`; a `DogLeg` is refused where the
+# `Newton` is built.
+
+const FixedKrylovWorkspace = Union{BiCGStabWorkspace, DQGMRESWorkspace}
+
+@inline gmres_counts(ws::FixedKrylovWorkspace) = (ws.f_calls, ws.jvp_calls)
+
+@inline function reset_gmres!(ws::FixedKrylovWorkspace, fnorm₀)
+    R = typeof(ws.prev_fnorm)
+    ws.f_calls = Int32(1)
+    ws.jvp_calls = Int32(0)
+    ws.iterations = Int32(0)
+    ws.max_inner = Int32(0)
+    ws.step = Int32(0)
+    ws.prev_fnorm = R(fnorm₀)
+    ws.last_eta = zero(R)
+    ws.linres = zero(R)
+    return nothing
+end
+
+@inline function close_gmres!(ws::FixedKrylovWorkspace)
+    R = typeof(ws.prev_fnorm)
+    ws.prev_fnorm = R(NaN)
+    ws.last_eta = R(NaN)
+    ws.linres = R(NaN)
+    return nothing
+end
+
+@inline krylov_solve!(
+    ws::BiCGStabWorkspace, op, P, b, bnorm, tol, maxiter) = bicgstab_solve!(
+    ws, op, P, b, bnorm, tol, maxiter)
+@inline krylov_solve!(ws::DQGMRESWorkspace, op, P, b, bnorm, tol, maxiter) = dqgmres_solve!(
+    ws, op, P, b, bnorm, tol, maxiter)
+
+# The step of a `Newton` with `BiCGStab` or `DQGMRES`: the forcing term of the step, the refresh of
+# the right preconditioner, the inner solve, and the globalization of its direction under the
+# inexact step kind `InexactStep(η_ach)`, as for `GMRES`. Neither method has a relation that gives
+# the linear residual of a shortened step without a product, so the Choice 1 forcing term of the
+# next step reads the residual of the direction, as after a restarted `GMRES` solve.
+@inline function gmres_step!!(state::NewtonState, ws::FixedKrylovWorkspace,
+        m::Newton, g::Union{BiCGStab, DQGMRES}, prob, x, Fx, p)
+    R = real(eltype(x))
+    fnorm = R(residual_norm(Fx, state.merit, state.fnorm))
+    # a value that `start!!` sets is `NaN` on a state it did not see, so a step reads no state of
+    # an earlier solve
+    (isfinite(fnorm) && isfinite(ws.prev_fnorm) && isfinite(ws.last_eta)) ||
+        return x, Fx, state, StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+    η = R(compute_forcing(g.forcing, ws.step, fnorm, ws.prev_fnorm, ws.last_eta, ws.linres))
+    refresh!(g.preconditioner, prob, x, Fx, p)
+    map!!(-, ws.bb, Fx)
+    op = R5Operator(state.jvpprep, prob, x, p)
+    d, inner = krylov_solve!(ws, op, g.preconditioner, ws.bb, fnorm, η, g.maxiter)
+    ws.iterations = inner.iterations
+    ws.max_inner = max(ws.max_inner, inner.iterations)
+    ws.linres = inner.resnorm
+    ws.last_eta = η
+    ws.prev_fnorm = fnorm
+    ws.step += one(Int32)
+    failures = inner.iterations >= g.maxiter && !inner.converged ? Int32(1) : Int32(0)
+    # a non-finite product leaves a residual of `NaN`: the step ends before a globalization reads
+    # the direction
+    (isfinite(inner.resnorm) && all(isfinite, d)) ||
+        return x, Fx, state, StepInfo{R}(NONFINITE, fnorm, zero(R), failures, false, false)
+    η_ach = iszero(fnorm) ? zero(R) : min(inner.resnorm / fnorm, η)
+    x₊, F₊, _, info, merit = globalize_merit!!(
+        state.g, m.globalization, counting_problem(prob, ws), x, Fx, d, p, state.jvpprep,
+        InexactStep(R(η_ach)), state.merit)
     info = bump_failures(info, failures)
     return x₊, F₊, with_merit(state, merit, info.fnorm), info
 end
