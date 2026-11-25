@@ -215,6 +215,28 @@ end
             @test rnorm(xs .- s .* AT(T[0.5, -1, 0])) <= 8 * eps(T) * rnorm(bs)
             @test infos.iterations == 3
         end
+        # A and b scaled together above √floatmax(T): the norm of a Lanczos column is formed
+        # without overflow, so the rank decision and the solution stay those of s = 1
+        for s in (T(4) * sqrt(floatmax(T)), floatmax(T) / 8)
+            As = AT(s .* T[2 0 0; 0 -1 0; 0 0 0])
+            bs = AT(s .* T[1, 1, 1])
+            wss = init_minresqlp_workspace(MINRESQLP(), bs)
+            xs, infos = minresqlp_solve!(
+                wss, (y, v) -> (y .= As * v; y), bs, T(rnorm(bs)), zero(T), Int32(10))
+            @test rnorm(xs .- AT(T[0.5, -1, 0])) <= 8 * eps(T) * sqrt(T(3))
+            @test infos.iterations == 3
+        end
+    end
+
+    @testset "Newton with MINRES-QLP solves at a Hessian norm above √floatmax, $T" for T in REAL_ELTYPES
+        # S = Σ cosh xᵢ from cosh(x0) > 4√floatmax(T): the Hessian diag(cosh xᵢ) has a finite norm
+        # whose square overflows
+        S = StationarityProblem((x, p) -> sum(cosh, x))
+        x0 = T === Float32 ? T(50) : T(700)
+        m = Newton(; linsolve = MINRESQLP(), globalization = Static(1.0))
+        x, st = solve(S, fill(x0, 3), m)
+        @test st.code == SUCCESS
+        @test all(isfinite, x)
     end
 
     @testset "MINRES-QLP takes no rank decision from the scale of b, $T" for T in REAL_ELTYPES

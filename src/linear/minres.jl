@@ -209,7 +209,7 @@ function minresqlp_solve!(ws::MINRESQLPWorkspace{T, R}, op!, b, bnorm, tol,
         end
         # the norm of column k of T̄_k, `(β_k, α_k, β_{k+1})`; `β₁ = ‖b‖` is no entry of T̄_k
         βk = k > one(Int32) ? β : z
-        Anorm = max(Anorm, sqrt(βk * βk + α * α + βn * βn))
+        Anorm = max(Anorm, hypot(βk, α, βn))
         # a vanishing Lanczos vector leaves an invariant Krylov space: with `β_{k+1} = 0` the
         # rotated residual below is zero, or the last component counts as zero, and either stops
         βn <= 8 * n * eps(R) * Anorm && (βn = z)
