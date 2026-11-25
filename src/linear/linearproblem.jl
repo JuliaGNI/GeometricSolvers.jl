@@ -107,9 +107,11 @@ matrix, and an array of the same `get_backend` for a dense or device solver. Ano
 a `DimensionMismatch`, and another element type or storage, or an axis that does not start at 1,
 an `ArgumentError`. `x` has `n` entries in the element type of `A`: a new `SVector` for a static
 matrix, and the buffer `solver.x` for a dense or device matrix, which the next `solve!` overwrites.
-It is the solution, the least-squares solution or the minimum-norm solution that
-[`LinearProblem`](@ref) states for the shape of `A` and the method. Every entry of `x` is `NaN`
-where the status is `SINGULAR`, where `A` is not finite, and where `b` is not finite.
+`b` may be `solver.x` itself; a `b` that shares memory with `solver.x` otherwise, such as a view
+of it, is copied before the solve, which allocates. `x` is the solution, the least-squares
+solution or the minimum-norm solution that [`LinearProblem`](@ref) states for the shape of `A`
+and the method. Every entry of `x` is `NaN` where the status is `SINGULAR`, where `A` is not
+finite, and where `b` is not finite.
 [`refactorize!!`](@ref) factorises a new matrix with the solver.
 
 On a static matrix the solver is a value, `isbits` for an `isbits` element type; on a dense or
@@ -313,6 +315,9 @@ function solve!(s::ArrayLinearSolver{T, W}, b::AbstractVector) where {T, W}
     returncode(fac) == SUCCESS || return fill!(x, T(NaN)), LinearStatus(SINGULAR, Int32(-1))
     # read before the solve writes `x`, which `b` may alias
     finite_b = all(isfinite, b)
+    # the substitutions and a device copy write an entry of `x` before they read every entry of `b`,
+    # so a `b` that overlaps `x` and is not `x` itself is solved from a copy
+    b === x || (b = Base.unalias(x, b))
     if W
         wide_solve!(x, fac, b, s.y, s.scale_exponent + fac.scale_exponent)
     else
