@@ -76,23 +76,23 @@ so that a compat-only bump can be told apart from an interface change.
   factorisation that a step takes at its start point `x_k`, `k ≥ 1`, and fails when `solve!!`
   re-measures it at the end of the step, and the step does not lower `‖F‖`
   (`‖F(x_{k+1})‖ ≥ ‖F(x_k)‖`, an equal norm included), the solve returns `x_k` with `SUCCESS` and
-  `status.stationary == true`, and no longer goes on from the end of the step. The status is that
+  `status.stationary == true`, and does not go on from the end of the step. The status is that
   of `x_k`: its `fnorm` and `stepnorm`, the iterations that reached it and the diagnostics of its
   factorisation, while `step_failures` and `promoted` still count the discarded step;
   `min_iterations` is read for `x_k`. A step that lowers `‖F‖` shows that `x_k` is no minimum, so
-  the solve goes on from its end as before. On a mirror-symmetric test problem, whose saddle of
+  the solve goes on from its end. On a mirror-symmetric test problem, whose saddle of
   `‖F‖²` on the symmetry set the Gauss–Newton model reads as a minimum, the step from an iterate
-  near the saddle lowers `‖F‖`. On that problem, with six perturbations of its data by a
-  few ULPs, `Float32` and `Float64`, and `SVector`, `Array` and `JLArray` iterates, the default
-  `GaussNewton()`, `StrongWolfe()`, `LevenbergMarquardt`, `DogLeg`, and `StrongWolfe` and
-  `Bisection` capped at one iteration give the end point, the code, `stationary`, the iteration
-  count and `fnorm` of 8eddb7c, the commit before the rule, in each of the 216 solves; with
-  `DogLeg` and the capped line searches the perturbation decides whether the solve ends at a
-  minimum. A step along a reused factor (`reuse > 1`) carries the diagnostics of an earlier
-  point, so the rule does not fire at its start point and the solve goes on past a stationary
-  `x_k`. The step from `x₀` is kept, and every other problem type is unchanged. An array iterate
-  keeps `x_k` and its residual in two buffers that `init_state` allocates, so `solve!!` allocates
-  nothing; `NewtonState` gains the field `kept` for them.
+  near the saddle lowers `‖F‖`, so the rule does not fire there. On that problem, with six
+  perturbations of its data by a few ULPs, `Float32` and `Float64`, and `SVector`, `Array` and
+  `JLArray` iterates, the default `GaussNewton()`, `StrongWolfe()`, `LevenbergMarquardt`,
+  `DogLeg`, and `StrongWolfe` and `Bisection` capped at one iteration end at the point, with the
+  code, `stationary`, iteration count and `fnorm`, that the same solve reaches without the rule,
+  in each of the 216 solves; with `DogLeg` and the capped line searches the perturbation decides
+  whether the solve ends at a minimum. A step along a reused factor (`reuse > 1`) carries the
+  diagnostics of an earlier point, so the rule does not fire at its start point and the solve goes
+  on past a stationary `x_k`. The step from `x₀` is kept, and every other problem type is
+  unchanged. An array iterate keeps `x_k` and its residual in two buffers that `init_state`
+  allocates, so `solve!!` allocates nothing; `NewtonState` gains the field `kept` for them.
 
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,

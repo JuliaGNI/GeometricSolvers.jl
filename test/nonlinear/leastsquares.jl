@@ -1208,20 +1208,24 @@ end
     # or accepts it and goes on to a minimum. With `StrongWolfe(; maxiter = 1)` and
     # `Bisection(; maxiter = 1)` the perturbation decides whether the solve ends on a failed line
     # search or at a minimum. Each solve of these three asserts that its status holds for the
-    # point it returns.
+    # point it returns, and a `SUCCESS` of the two capped line searches is a minimum.
     perturbations = ((one(T), nextfloat(one(T))), (nextfloat(one(T)), one(T)),
         (prevfloat(one(T)), one(T)), (one(T), nextfloat(one(T), 2)),
         (prevfloat(one(T)), nextfloat(one(T))), (nextfloat(one(T), 3), prevfloat(one(T))))
     m_dogleg = T === Float64 ? T(1e5) : T(200)
     # a device array takes `LevenbergMarquardt` with an SVD factorisation only
     lm = GaussNewton(; globalization = LevenbergMarquardt(), linsolve = SVDFactorization())
-    # the method, m, and whether every solve reaches a minimum
-    for (alg_b, m_b, reaches_minimum) in ((GaussNewton(), m_dogleg, true),
-            (GaussNewton(; globalization = StrongWolfe()), m_dogleg, true),
-            (lm, T === Float64 ? T(1e3) : T(200), true),
-            (GaussNewton(; globalization = DogLeg()), m_dogleg, false),
-            (GaussNewton(; globalization = StrongWolfe(; maxiter = 1)), m_dogleg, false),
-            (GaussNewton(; globalization = Bisection(; maxiter = 1)), m_dogleg, false)),
+    strongwolfe_1 = GaussNewton(; globalization = StrongWolfe(; maxiter = 1))
+    bisection_1 = GaussNewton(; globalization = Bisection(; maxiter = 1))
+    # the method, m, whether every solve reaches a minimum, and whether every `SUCCESS` is one;
+    # `DogLeg` can return `SUCCESS` at the saddle (K126)
+    for (alg_b, m_b, reaches_minimum, success_at_minimum) in (
+            (GaussNewton(), m_dogleg, true, true),
+            (GaussNewton(; globalization = StrongWolfe()), m_dogleg, true, true),
+            (lm, T === Float64 ? T(1e3) : T(200), true, true),
+            (GaussNewton(; globalization = DogLeg()), m_dogleg, false, false),
+            (strongwolfe_1, m_dogleg, false, true),
+            (bisection_1, m_dogleg, false, true)),
         (d₁, d₂) in perturbations
 
         c_b = sqrt(2 / m_b)
@@ -1269,6 +1273,10 @@ end
                     @test abs(abs(xb[2]) - sqrt(1 - 1 / m_b)) <= g_tol
                     @test abs(xb[2]) >= one(T) / 2
                     @test ratio_b <= g_tol
+                elseif success_at_minimum && st.code === SUCCESS
+                    # a `SUCCESS` is a minimum near v = ±1, not the saddle at v ≈ 0
+                    @test abs(xb[1] - one(T)) <= sqrt(eps(T))
+                    @test abs(xb[2]) >= one(T) / 2
                 end
             end
         end
@@ -1322,9 +1330,9 @@ end
                 @test isapprox(st.fnorm, fnorm_c(xc); rtol = 8 * eps(T))
                 if best
                     # the record holds the start t = 1, of lower ‖r‖ than the returned t = 0
-                    @test isapprox(solver.state.best.fnorm, fnorm_c(one(T)); rtol = 8 *
-                                                                                    eps(T))
-                    @test solver.state.best.fnorm < st.fnorm
+                    fnorm_best = solver.state.best.fnorm
+                    @test isapprox(fnorm_best, fnorm_c(one(T)); rtol = 8 * eps(T))
+                    @test fnorm_best < st.fnorm
                 end
             end
         end
