@@ -1056,8 +1056,12 @@ so that a compat-only bump can be told apart from an interface change.
   Steihaug())`.** It minimises the model `q(d) = Fᴴd + ½dᴴJd` of the action inside a trust radius;
   on negative curvature the step goes to the radius. A trial is accepted and the radius updated by
   the ratio rule of `DogLeg` on the unsquared `‖F‖`. A first conjugate-gradient direction of
-  negative curvature predicts an increase of `‖F‖` and is never accepted, so a solve toward a root
-  where the Hessian is indefinite ends with `LINESEARCH_FAILED` from many starts close to it.
+  negative curvature predicts an increase of `‖F‖` and is never accepted, so a solve with
+  `Steihaug` does not converge to a root where the Hessian of `S` is indefinite, also from a start
+  close to it, and ends with `LINESEARCH_FAILED` (K131). `DogLeg` with `MINRESQLP` does not have
+  this limit: on the indefinite problem of `test/nonlinear/symkrylov.jl` in `Float64`, 20 starts
+  at each distance 1e-2, 1e-4 and 1e-6 from the root end `SUCCESS` 20/20 with `DogLeg` and
+  `LINESEARCH_FAILED` 20/20 with `Steihaug`.
 
 - **`GMRES` solves a matrix-free `StationarityProblem` with any index sets `E` and `U`.** Before,
   `Newton` refused that case with an `ArgumentError`. With the problem's automatic-differentiation
