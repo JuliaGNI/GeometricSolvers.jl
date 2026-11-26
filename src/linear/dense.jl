@@ -222,7 +222,7 @@ const DenseFactor{A} = Union{
 # that solution times `2^(k + t - e)`.
 function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
         r::AbstractVector{T}) where {T <: Number}
-    k = rhs_exponent(r)
+    k = rhs_exponent(r, fac.scale_exponent)
     t = if length(r) == length(d)
         if iszero(k)
             d === r || copyto!(d, r)

@@ -130,20 +130,25 @@ end
     @test factorize!!(nothing, M(), real(T)(1e40) * A).scale_exponent == 0
 end
 
-@testset "a BigFloat matrix whose exponent lies outside Int32 is factorised unscaled, $M" for M in (
-    LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization)
+# The matrix needs a `BigFloat` exponent outside `Int32`. MPFR's largest exponent,
+# `get_emax_max()`, exceeds `typemax(Int32)` only where its exponent type `long` has 64 bits; on
+# Windows `long` has 32 bits, and the CI job there gives `SINGULAR` and `NaN` for these matrices.
+if Base.MPFR.get_emax_max() > typemax(Int32)
+    @testset "a BigFloat matrix whose exponent lies outside Int32 is factorised unscaled, $M" for M in (
+        LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization)
 
-    # A factor in the matrix's own element type divides it by `2^e` only for `e < 0`, and keeps
-    # `J` as it is where `e` does not fit the `Int32` field of the static factor: for
-    # `e = ±(2^31 + 7)`, `factorize!!` returns a factor with `scale_exponent = 0` and solves.
-    for k in (2^31 + 5, -(2^31 + 9))
-        s = ldexp(big(1.0), k)
-        A = SMatrix{2, 2, BigFloat}(s * big.([4 1; 1 5]))
-        fac = factorize!!(nothing, M(), A)
-        @test returncode(fac) === SUCCESS
-        @test fac.scale_exponent == 0
-        x = ldiv!!(nothing, fac, SVector{2, BigFloat}(A * SVector(big(1.0), big(-2.0))))
-        @test isapprox(x, [1, -2]; rtol = 64 * eps(BigFloat))
+        # A factor in the matrix's own element type divides it by `2^e` only for `e < 0`, and keeps
+        # `J` as it is where `e` does not fit the `Int32` field of the static factor: for
+        # `e = ±(2^31 + 7)`, `factorize!!` returns a factor with `scale_exponent = 0` and solves.
+        for k in (2^31 + 5, -(2^31 + 9))
+            s = ldexp(big(1.0), k)
+            A = SMatrix{2, 2, BigFloat}(s * big.([4 1; 1 5]))
+            fac = factorize!!(nothing, M(), A)
+            @test returncode(fac) === SUCCESS
+            @test fac.scale_exponent == 0
+            x = ldiv!!(nothing, fac, SVector{2, BigFloat}(A * SVector(big(1.0), big(-2.0))))
+            @test isapprox(x, [1, -2]; rtol = 64 * eps(BigFloat))
+        end
     end
 end
 
@@ -223,18 +228,17 @@ end
     # `J(t) = s (A₀ + t·1·1ᵀ)` at `t = 0` and `b = s b₀`, `s = 2^(-emax - 10)`: the entries are
     # exact subnormals below `2^-emax`, so the own-type Cholesky exponent is `-emax - 1`, and the
     # factor multiplies `J` by `2^(emax + 1)`. The solution is that of `A₀`: `x = A₀⁻¹ b₀`,
-    # `ẋ = -A₀⁻¹ (1·1ᵀ) x`. The right-hand side is not scaled up (K124), so the solves form
-    # subnormal intermediates of the size `s |x|`, whose relative spacing is `u = 2^-1074 / s` in
-    # `Float64` and `2^-149 / s` in `Float32` (`2^-41`, `2^-12`). Each of the two solves with
-    # `A₀` that the partials pass multiplies that error by at most `κ = cond(A₀) ≈ 1.66`, so the
-    # bound is `8 κ² (eps(R) + u)`.
+    # `ẋ = -A₀⁻¹ (1·1ᵀ) x`. The solve lifts the right-hand side with the matrix, by
+    # `2^(emax + 1)`, so it runs in the normal range. Each of the two solves with `A₀` that the
+    # partials pass multiplies the rounding error by at most `κ = cond(A₀) ≈ 1.66`, so the bound
+    # is `8 κ² eps(R)`.
     emax = exponent(floatmax(R))
     s = ldexp(one(R), -emax - 10)
     A₀ = [4 1; 1 5] .// 8
     b₀ = [1, -2]
     x = big.(A₀) \ big.(b₀)
     ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
-    rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * (eps(R) + nextfloat(zero(R)) / s)
+    rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * eps(R)
     J = SMatrix{2, 2}(ForwardDiff.Dual.(R.(s .* A₀), s))
     b = SVector{2}(ForwardDiff.Dual.(R.(s .* b₀), zero(R)))
     M = CholeskyFactorization
@@ -268,7 +272,7 @@ end
     ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
     M = CholeskyFactorization
     for (s, e) in ((R(8), 0), (one(R), -2), (ldexp(one(R), -emax - 10), -emax - 1))
-        rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * (eps(R) + nextfloat(zero(R)) / s)
+        rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * eps(R)
         J = ForwardDiff.Dual.(R.(s .* A₀), s)
         b = ForwardDiff.Dual.(R.(s .* b₀), zero(R))
         fh = factorize!!(dense_factor(M(), nothing, b, nothing), M(), J)

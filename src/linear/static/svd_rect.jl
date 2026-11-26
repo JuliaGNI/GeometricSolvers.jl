@@ -214,7 +214,7 @@ function ldiv!!(
         ::Union{Nothing, StaticVector{N}},
         fac::StaticRectSVD{M, N, TF},
         r::StaticVector{M, TF}) where {M, N, TF}
-    k = rhs_exponent(r)
+    k = rhs_exponent(r, getfield(fac, :scale_exponent))
     r̂ = iszero(k) ? SVector{M, TF}(r) : map(a -> ldexp2(a, -k), SVector{M, TF}(r))
     d, t = backsolve_shifted(fac, r̂)
     return unscale(fac, d, k + t)

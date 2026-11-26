@@ -1984,3 +1984,25 @@ end
         @test norm(big.(Vector(out)) - ref) / norm(ref) ≤ 8 * eps(Float32) * cond(A)
     end
 end
+
+# A `Float64` factor of a `Float32` matrix whose largest entry has the exponent `e = -2`: the
+# coefficient `vₖᴴ w` of `w = 2^126 w₀` times `2^-e` is `2^128` and leaves the `Float32` range,
+# while the coefficient over the scaled singular value, `2^128 / 1.5` and `2^128 / 1.8`, and the
+# result are finite. The scale is applied in the wider type of the factor, before the division.
+# A complex `T` takes `w₀ = 1 + i`, whose parts each reach `2^128`.
+@testset "(Φ⁺)ᴴ w from a Float64 static SVD of a $T matrix, a coefficient above floatmax(Float32)" for T in filter(
+    T -> real(T) === Float32, ELTYPES)
+    w₀ = T <: Complex ? T(1 + im) : one(T)
+    @testset "$(size(A, 1)) × $(size(A, 2))" for A in ([0.375;;], [0.375; 0.25;;])
+        m, n = size(A)
+        Φ = SMatrix{m, n, T}(T.(A))
+        w = SVector{n, T}(fill(w₀ * ldexp(1.0f0, 126), n))
+        fac = GS.factorize!!(nothing, SVDFactorization(Float64), Φ)
+        @test fac.scale_exponent == -2
+        out = GS._pinv_adj_mul_r1(fac, Φ, w)
+        Φb = big.(Matrix(Φ))
+        ref = m == n ? Φb' \ big.(Vector(w)) : Φb * ((Φb' * Φb) \ big.(Vector(w)))
+        @test all(isfinite, out)
+        @test norm(big.(Vector(out)) - ref) / norm(ref) ≤ 8 * eps(Float32) * cond(A)
+    end
+end

@@ -605,10 +605,10 @@ end
 
     # `A = 3s I + s (e₁e₃ᵀ + e₃e₁ᵀ)` and `b = s (1, …, 1)` with `s = 2^10 t`, `t = nextfloat(0)`:
     # the solution `(1/4, 1/3, 1/4, 1/3, 1/3)` lies in the normal range. The factor of `A / 2^e`
-    # does too, but `b` is not scaled up (K124 of `KNOWN_ISSUES.md`), so the triangular solves
-    # form products of the size of `s/3` on the subnormal grid of spacing `t`, each with a relative
-    # error of up to `1.5 t/s`. The error stays below `2t/s = 2^-9`; it is `1.9e-4` here, in every
-    # element type.
+    # does too, and the solve lifts `b` by the same `2^-e`, so the triangular solves run in the
+    # normal range and meet a small multiple of `eps(R) κ₁`. Solved with `b` as it is, they form
+    # products of the size of `s/3` on the subnormal grid of spacing `t`, each with a relative
+    # error of up to `1.5 t/s`, `1.9e-4` here.
     R = real(T)
     t = nextfloat(zero(R))
     s = ldexp(t, 10)
@@ -617,7 +617,7 @@ end
     b = fill(T(s), 5)
     x, st, _ = lp_solve(route, CholeskyFactorization(), A, b)
     @test st.code == SUCCESS
-    @test relerr(x, xref(A, b)) <= 2 * t / s
+    @test relerr(x, xref(A, b)) <= 8 * eps(R) * cond1(A)
 end
 
 @testset "the Cholesky factor of [2t t; t t] with t = nextfloat(0): $route, $T" for route in ROUTES,
@@ -625,18 +625,77 @@ end
 
     # The exact solution of `[2t t; t t] x = (0, t)` is `(-1, 2)`. The factor of `A / 2^e` lies in
     # the normal range, `e` the exponent of `2t` clamped to `-exponent(floatmax(R))` and rounded
-    # down to an even one, but the right-hand side `(0, t)` is not scaled up, so the forward
-    # substitution gives an entry of the size of `t / √(t 2^-e) = √(t 2^e)`, a subnormal whose
-    # spacing `t` is a relative error of `√(t 2^-e) ≈ √(t floatmax(R))`: `2^-25` in `Float64`,
-    # `2^-10.5` in `Float32`, of which the bound allows 4. The factor of `A` unscaled loses
-    # `L₂₁² = t/2` below the smallest subnormal and gives `(-0.5, 1)`, a relative error of 0.5.
+    # down to an even one, and the solve lifts the right-hand side `(0, t)` by the same `2^-e`, so
+    # it runs in the normal range and meets a small multiple of `eps(R) κ₁`. Solved with `(0, t)`
+    # as it is, the forward substitution gives an entry of the size of `√(t 2^e)`, a subnormal whose
+    # spacing `t` is a relative error of `√(t 2^-e) ≈ √(t floatmax(R))`. The factor of `A` unscaled
+    # loses `L₂₁² = t/2` below the smallest subnormal and gives `(-0.5, 1)`, a relative error of 0.5.
     R = real(T)
     t = nextfloat(zero(R))
     A = T[2t t; t t]
     b = T[0, t]
     x, st, _ = lp_solve(route, CholeskyFactorization(), A, b)
     @test st.code == SUCCESS
-    @test relerr(x, big.(T[-1, 2])) <= 4 * sqrt(t * floatmax(R))
+    @test relerr(x, big.(T[-1, 2])) <= 8 * eps(R) * cond1(A)
+end
+
+const SMALL_SYSTEMS = (
+    ([3.0;;], [1.0]), ([2.25;;], [1.0]), ([2.0 1.0; 1.0 2.0], [1.0, -2.0]),
+    ([2.0 1.0; 1.0 2.0], [7.0, -3.0]))
+
+@testset "a subnormal b with a matrix near floatmin: $route, $T, $(nameof(typeof(method))), A₀ = $A₀, b₀ = $b₀, kA = $j - emax" for route in ROUTES,
+    T in ELTYPES,
+    method in SQUARE,
+    (A₀, b₀) in SMALL_SYSTEMS,
+    j in (23, 1)
+
+    # `A = 2^kA A₀`, `kA = j - emax`, is in the normal range, but its largest entry has an exponent
+    # `e < 0` far below zero, and `b = t b₀`, `t = nextfloat(0)`, is subnormal; the solution `A⁻¹ b`
+    # lies in the normal range. The own-type factor holds `A / 2^e` and the solve divides `b` by
+    # `2^k` with `k = e`, which lifts it into the normal range by the same power of two, exactly,
+    # so that the triangular solves run in the normal range and the solve meets a small multiple of
+    # `eps(R) κ₁`. A complex `T` takes `b (1 + i)`.
+    R = real(T)
+    t = nextfloat(zero(R))
+    A = T.(pow2.(R.(A₀), j - exponent(floatmax(R))))
+    b = T.(R.(b₀) .* t) .* (T <: Complex ? T(1 + im) : one(T))
+    κ = cond1(A)
+    x, st, _ = lp_solve(route, method, A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
+end
+
+@testset "a subnormal b with a tall matrix near floatmin: $route, $T, $(nameof(typeof(method)))" for route in ROUTES,
+    T in ELTYPES,
+    method in filter(M -> M isa Union{QRFactorization, SVDFactorization}, SQUARE)
+
+    # The least-squares solve of the same-type QR and SVD factor of a `3 × 2` matrix at
+    # `2^(23 - emax)` and a subnormal `b`: the solve lifts `b` with the matrix, as for a square one.
+    R = real(T)
+    t = nextfloat(zero(R))
+    A = T.(pow2.(R[2 1; 1 2; 1 1], -exponent(floatmax(R)) + 23))
+    b = T.(R[1, -2, 3] .* t)
+    κ = cond1(A)
+    x, st, _ = lp_solve(route, method, A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
+end
+
+@testset "a b near floatmax with a matrix of exponent below 0: $route, $T, $(nameof(typeof(method)))" for route in ROUTES,
+    T in ELTYPES,
+    method in SQUARE
+
+    # `A = [2 1; 1 2] / 4` has the exponent `e = -1` (`-2` for the even Cholesky one), and
+    # `b = 0.6 floatmax (1, 1)` gives the finite solution `0.8 floatmax (1, 1)`. Lifting `b` by `2^-e`
+    # would overflow; the headroom bound divides it by `2^3` instead, and the solve stays finite.
+    R = real(T)
+    A = T.(R[2 1; 1 2] ./ 4)
+    b = fill(T(R(0.6) * floatmax(R)), 2)
+    κ = cond1(A)
+    x, st, _ = lp_solve(route, method, A, b)
+    @test st.code == SUCCESS
+    @test all(isfinite, x)
+    @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
 end
 
 @testset "a Cholesky factor in the element type of A · 2^-4 gives the bits of A: $route, $T" for route in ROUTES,

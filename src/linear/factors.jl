@@ -79,11 +79,13 @@ solution of `A d = r`, the minimum-norm one where an SVD factor has numerical ra
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
-type of `r` is the element type of the factors, the solve runs directly in it. There a finite,
-nonzero `r` whose largest `|re|` or `|im|` is within a few bits of `floatmax` (`2 + ⌈log2 N⌉`
-bits for `N` entries) is divided by the smallest power of two `2^k` that leaves that headroom; any
-other `r` is solved as it is. This keeps `Qᴴ r` and `Uᴴ r`, which the QR and SVD solves form
-first, finite. The SVD, whose factors are those of `J / 2^e`, then divides the coordinates
+type of `r` is the element type of the factors, the solve runs directly in it. There `r` is
+divided by a power of two `2^k`: `k = min(e, 0)`, with `e` the exponent of
+[`factorize!!`](@ref), so that a factor with `e < 0` lifts `r` by `2^-e` with the matrix and a
+small `r` keeps its bits in the solve. Where `r / 2^k` has a largest `|re|` or `|im|` within a few
+bits of `floatmax` (`2 + ⌈log2 N⌉` bits for `N` entries), `k` is instead the smallest exponent
+that leaves that headroom. This keeps `Qᴴ r` and `Uᴴ r`, which the QR and SVD solves form first,
+finite. The SVD, whose factors are those of `J / 2^e`, then divides the coordinates
 `Uᴴ r` by its singular values times the smallest power of two `2^t` that keeps the coordinates
 the same headroom below `floatmax`; `t` is 0 wherever they are already below it, and for LU and
 QR. The step is multiplied by `2^(k + t - e)`, in one rounding, with `e` the exponent of
@@ -858,20 +860,22 @@ function cholesky_exponent(J::AbstractMatrix)
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
 end
 
-# The exponent `k ≥ 0` of the power of two `2^k` that the same-type solve divides the right-hand
-# side `r` by, the smallest one with which this bound keeps `Qᴴ r` and `Uᴴ r` of the QR and SVD
-# solves finite: their entries sum `N` products of an entry of `r` with a factor of modulus at most
-# 1, a complex one up to twice the largest |re| or |im| of `r`, so the largest |re| or |im| of
-# `r / 2^k` is held below `2^(emax - 1 - ⌈log2 N⌉)`, with `emax` the exponent of `floatmax`, and
-# each |re| and |im| of `Qᴴ r` and `Uᴴ r` below `2^emax`. An `r` below the first bound is not
-# scaled, and an `r` above it is divided by at most `2 + ⌈log2 N⌉` bits, so that only a small
-# entry of such an `r`, within that many bits of the subnormal range, can lose bits to the scaling,
-# and the large entries keep a scaled solution far above the subnormal range. 0 for a zero,
-# non-finite or empty `r`.
-function rhs_exponent(r::AbstractVector)
+# The exponent `k` of the power of two `2^k` that the same-type solve divides the right-hand side
+# `r` by, for the factors of `J / 2^e`. `k = min(e, 0)` where that keeps the bound below: a factor
+# with `e < 0` then lifts `r` by `2^-e` with the matrix, and the solve gives `x` itself rather than
+# `2^e x`, which can be subnormal. The bound keeps `Qᴴ r` and `Uᴴ r` of the QR and SVD solves
+# finite: their entries sum `N` products of an entry of `r` with a factor of modulus at most 1, a
+# complex one up to twice the largest |re| or |im| of `r`, so the largest |re| or |im| of `r / 2^k`
+# is held below `2^(emax - 1 - ⌈log2 N⌉)`, with `emax` the exponent of `floatmax`, and each |re|
+# and |im| of `Qᴴ r` and `Uᴴ r` below `2^emax`. Where `min(e, 0)` breaks the bound, `k` is the
+# smallest exponent that keeps it, which divides an `r` above the bound by at most `2 + ⌈log2 N⌉`
+# bits, so that only a small entry of such an `r`, within that many bits of the subnormal range,
+# can lose bits to the scaling, and the large entries keep a scaled solution far above the
+# subnormal range. 0 for an empty `r`; a zero or non-finite `r` counts as of exponent 0.
+function rhs_exponent(r::AbstractVector, e::Integer)
     isempty(r) && return 0
     emax = exponent(floatmax(float(real(eltype(r)))))
-    return max(0, matrix_exponent(r) - (emax - headroom(length(r))))
+    return max(min(e, 0), matrix_exponent(r) - (emax - headroom(length(r))))
 end
 
 # The bits `2 + ⌈log2 n⌉` that `rhs_exponent` and `divisor_exponent` keep below `floatmax`, for
@@ -919,7 +923,7 @@ const StaticFac{N, TF} = Union{
     StaticLUQR{N, TF}, StaticSVDLDLT{N, TF}, StaticCholesky{N, TF}}
 
 function ldiv!!(::Nothing, fac::StaticFac{N, TF}, r::StaticVector{N, TF}) where {N, TF}
-    k = rhs_exponent(r)
+    k = rhs_exponent(r, fac.scale_exponent)
     r̂ = iszero(k) ? SVector{N, TF}(r) : map(a -> ldexp2(a, -k), SVector{N, TF}(r))
     d, t = backsolve_shifted(fac, r̂)
     return unscale(fac, d, k + t)
