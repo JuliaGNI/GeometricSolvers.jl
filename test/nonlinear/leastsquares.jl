@@ -1118,14 +1118,21 @@ end
 
     # Only a LeastSquaresProblem returns the start point: the same stationary diagnostics, those
     # that the solve above returned with t = 0, and the same status after one step leave every
-    # other problem type to the loop as it is.
+    # other problem type to the loop as it is. The step start is returned only where the step
+    # does not lower ‖F‖: an equal norm or a higher one, not a norm one ulp lower.
     solver_a = init(prob_d, ones(T, 1), GaussNewton())
     solve!(solver_a)
     status_1 = GeometricSolvers.SolverStatus{T}(
         SUCCESS, Int32(1), one(T), one(T), Int32(0), false, false)
-    @test GeometricSolvers.keeps_step_start(prob_d, Options(T), solver_a.state, status_1)
+    status_after(fnorm) = GeometricSolvers.SolverStatus{T}(
+        SUCCESS, Int32(2), fnorm, one(T), Int32(0), false, false)
+    for (fnorm₊, keeps) in ((one(T), true), (nextfloat(one(T)), true), (T(2), true),
+        (prevfloat(one(T)), false), (one(T) / 2, false))
+        @test GeometricSolvers.keeps_step_start(
+            prob_d, Options(T), solver_a.state, status_1, status_after(fnorm₊)) === keeps
+    end
     @test !GeometricSolvers.keeps_step_start(
-        NonlinearProblem(r_d!), Options(T), solver_a.state, status_1)
+        NonlinearProblem(r_d!), Options(T), solver_a.state, status_1, status_after(T(2)))
 
     # The status of the returned start point: the iterations, `fnorm` and `stepnorm` of the start
     # point, and the step-rule failures and the promotion of the discarded step too.
@@ -1186,29 +1193,39 @@ end
     # v ≈ (d₁ − d₂) / 2, so the first step from the symmetric start (0, 0) reaches
     # (1, m (d₂ − d₁) / 2), whose ratio is about m |d₂ − d₁|, and the Gauss–Newton step from
     # there multiplies that by m. With m = 1e5 in Float64 and m = 200 in Float32, the first
-    # iterate passes the test and the end of that step fails it. The model reduction of the step
-    # is at the rounding level of ‖r‖, so rounding decides whether `DogLeg` accepts it: where it
-    # rejects it, the zero step ends the solve at the first iterate; where it accepts it, the
-    # solve returns the first iterate instead of going on to a minimum. `LevenbergMarquardt`
-    # damps the steps, so u reaches 1 over several steps while the distance in v from the saddle
-    # grows by at most m per step; with m = 1e3 in Float64 and m = 200 in Float32 an iterate
-    # near the saddle passes the test, and the next step fails it. With `StrongWolfe(; maxiter = 1)`
-    # and `Bisection(; maxiter = 1)` the second step is a failed line search that still lowers the
-    # merit; the solve discards it and returns the first iterate, and the failures of the discarded
-    # step count: one in all, and two under `Bisection`, whose first step fails once too.
+    # iterate passes the test and the end of that step fails it. That step lowers ‖r‖, which
+    # shows that the first iterate is no minimum, so the solve does not return it and goes on
+    # from the end of the step. `LevenbergMarquardt` damps the steps, so u reaches 1 over several
+    # steps while the distance in v from the saddle grows by at most m per step; with m = 1e3 in
+    # Float64 and m = 200 in Float32 an iterate near the saddle passes the test, and the next
+    # step fails it and lowers ‖r‖. The default `GaussNewton()`, `StrongWolfe()` and
+    # `LevenbergMarquardt` reach a minimum near v = ±1 on every solve, at |v| = √(1 − 1/m) for
+    # d₁ = d₂ = 1, which the perturbations move by a few ULPs. A ratio of at most g_tol bounds
+    # the gradient of ‖r‖²/2 by g_tol ‖J‖_F ‖r‖, at most about 0.22 g_tol, and the curvature in
+    # v there is about 4, so |v| is within g_tol of √(1 − 1/m). With `DogLeg` the model
+    # reduction of the step from the first iterate is at the rounding level of ‖r‖, so rounding
+    # decides whether it rejects the step, and the zero step ends the solve at the first iterate,
+    # or accepts it and goes on to a minimum. With `StrongWolfe(; maxiter = 1)` and
+    # `Bisection(; maxiter = 1)` the perturbation decides whether the solve ends on a failed line
+    # search or at a minimum. Each solve of these three asserts that its status holds for the
+    # point it returns, and a `SUCCESS` of the two capped line searches is a minimum.
     perturbations = ((one(T), nextfloat(one(T))), (nextfloat(one(T)), one(T)),
         (prevfloat(one(T)), one(T)), (one(T), nextfloat(one(T), 2)),
         (prevfloat(one(T)), nextfloat(one(T))), (nextfloat(one(T), 3), prevfloat(one(T))))
     m_dogleg = T === Float64 ? T(1e5) : T(200)
-    dogleg = GaussNewton(; globalization = DogLeg())
     # a device array takes `LevenbergMarquardt` with an SVD factorisation only
     lm = GaussNewton(; globalization = LevenbergMarquardt(), linsolve = SVDFactorization())
-    strongwolfe = GaussNewton(; globalization = StrongWolfe(; maxiter = 1))
-    bisection = GaussNewton(; globalization = Bisection(; maxiter = 1))
-    # the method, m and the step-rule failures of a solve that discards its second step
-    for (alg_b, m_b, failures_b) in ((dogleg, m_dogleg, nothing),
-            (lm, T === Float64 ? T(1e3) : T(200), nothing),
-            (strongwolfe, m_dogleg, 1), (bisection, m_dogleg, 2)),
+    strongwolfe_1 = GaussNewton(; globalization = StrongWolfe(; maxiter = 1))
+    bisection_1 = GaussNewton(; globalization = Bisection(; maxiter = 1))
+    # the method, m, whether every solve reaches a minimum, and whether every `SUCCESS` is one;
+    # `DogLeg` can return `SUCCESS` at the saddle (K126)
+    for (alg_b, m_b, reaches_minimum, success_at_minimum) in (
+            (GaussNewton(), m_dogleg, true, true),
+            (GaussNewton(; globalization = StrongWolfe()), m_dogleg, true, true),
+            (lm, T === Float64 ? T(1e3) : T(200), true, true),
+            (GaussNewton(; globalization = DogLeg()), m_dogleg, false, false),
+            (strongwolfe_1, m_dogleg, false, true),
+            (bisection_1, m_dogleg, false, true)),
         (d₁, d₂) in perturbations
 
         c_b = sqrt(2 / m_b)
@@ -1241,41 +1258,82 @@ end
         end
         gname = nameof(typeof(alg_b.globalization))
         for (x, st) in results
-            @testset "(b) $gname, d₁ = $d₁, d₂ = $d₂, $(typeof(x))" begin
+            @testset "(b) $gname, a minimum = $reaches_minimum, d₁ = $d₁, d₂ = $d₂, $(typeof(x))" begin
                 xb = SVector{2, T}(Array(x))
-                @test st.code === SUCCESS
-                @test st.stationary === true
-                # at the saddle: the minima are near v = ±1
-                @test abs(xb[1] - one(T)) <= sqrt(eps(T))
-                @test abs(xb[2]) <= g_tol
-                @test lsq_ratio(rb_s, Jb_s, xb) <= g_tol
-                if failures_b !== nothing
-                    @test st.iterations == 1
-                    @test st.step_failures == failures_b
+                ratio_b = lsq_ratio(rb_s, Jb_s, xb)
+                # the status holds for the point the solve returns
+                @test st.stationary === (ratio_b <= g_tol)
+                @test !st.stationary || st.code === SUCCESS
+                @test isapprox(st.fnorm, norm(rb_s(xb, nothing)); rtol = 8 * eps(T))
+                if reaches_minimum
+                    # a minimum near v = ±1, not the saddle at v ≈ 0
+                    @test st.code === SUCCESS
+                    @test st.stationary === true
+                    @test abs(xb[1] - one(T)) <= sqrt(eps(T))
+                    @test abs(abs(xb[2]) - sqrt(1 - 1 / m_b)) <= g_tol
+                    @test abs(xb[2]) >= one(T) / 2
+                    @test ratio_b <= g_tol
+                elseif success_at_minimum && st.code === SUCCESS
+                    # a `SUCCESS` is a minimum near v = ±1, not the saddle at v ≈ 0
+                    @test abs(xb[1] - one(T)) <= sqrt(eps(T))
+                    @test abs(xb[2]) >= one(T) / 2
                 end
             end
         end
-        failures_b === nothing && continue
-        # `best = true` keeps the step start: the return of the discarded step has the code
-        # `SUCCESS`, so the record, which holds the lower norm of the discarded step, is not
-        # restored over it
-        x_ref, st_ref = results[1]
-        alg_best = GaussNewton(; globalization = alg_b.globalization, best = true)
-        best_results = Any[solve(LeastSquaresProblem(rb_s, Jb_s), x0_b, alg_best)]
+    end
+
+    # (c) r(t) = (c exp(L(t)), exp(M(t))) with the L and c of (a) and M(t) = −6t⁴ + 5t⁵, so
+    # M(0) = 0, M′(0) = M″(0) = M‴(0) = 0, M(1) = −1 and M′(1) = 1. The Gauss–Newton step from
+    # t = 1 is −1, because both entries of r have the logarithmic derivative 1 there, and the step
+    # from t = 0 is −1 / L′(0) = −1, because M′ vanishes to third order at 0. So the solve from
+    # t = 1 visits t = 0 and t = −1, as in (a): t = 0 reads stationary, the step from it raises
+    # ‖r‖ from about 1 to about c e²⁹, and the solve returns t = 0. The start t = 1 has the lower
+    # ‖r‖ ≈ e⁻¹ and the ratio 1, so the step from it is kept. With `best = true` the record holds
+    # that start, and the return of t = 0 has the code `SUCCESS`, so the record is not restored
+    # over it. The return of a step start needs a step that does not lower ‖r‖, and a start of
+    # lower ‖r‖ than the step start needs a step that raises it: the full steps of `Static`, the
+    # globalization of `GaussNewton()`, do both here.
+    M(t) = -6 * t^4 + 5 * t^5
+    dM(t) = -24 * t^3 + 25 * t^4
+    rc_s(x, p) = SVector(r1(x[1]), exp(M(x[1])))
+    Jc_s(x, p) = SMatrix{2, 1, T, 2}(r1(x[1]) * dL(x[1]), exp(M(x[1])) * dM(x[1]))
+    function rc_d!(r, x, p)
+        view(r, 1:1) .= r1.(x)
+        view(r, 2:2) .= exp.(M.(x))
+        return r
+    end
+    function Jc_d!(J, x, p)
+        view(J, 1:1, 1) .= r1.(x) .* dL.(x)
+        view(J, 2:2, 1) .= exp.(M.(x)) .* dM.(x)
+        return J
+    end
+    fnorm_c(t) = norm(rc_s(SVector{1, T}(t), nothing))
+    ratio_c(t) = lsq_ratio(rc_s, Jc_s, SVector{1, T}(t))
+    @test ratio_c(one(T)) > g_tol
+    @test ratio_c(zero(T)) <= g_tol
+    @test ratio_c(-one(T)) > g_tol
+    @test fnorm_c(one(T)) < fnorm_c(zero(T)) < fnorm_c(-one(T))
+    for best in (false, true)
+        alg_c = GaussNewton(; best)
+        solvers = Any[init(LeastSquaresProblem(rc_s, Jc_s), SVector{1, T}(one(T)), alg_c)]
         for AT in ARRAY_BACKENDS
-            solver = init(LeastSquaresProblem(rb_d!, Jb_d!, 3), AT(zeros(T, 2)), alg_best)
-            push!(best_results, solve!(solver))
-            @test solver.state.best.fnorm < st_ref.fnorm
+            push!(solvers, init(LeastSquaresProblem(rc_d!, Jc_d!, 2), AT(ones(T, 1)), alg_c))
         end
-        for (x, st) in best_results
-            @testset "(b) best = true, $gname, d₁ = $d₁, d₂ = $d₂, $(typeof(x))" begin
-                xb = SVector{2, T}(Array(x))
+        for solver in solvers
+            @testset "(c) best = $best, $(typeof(solver.x))" begin
+                x, st = solve!(solver)
+                xc = Array(x)[1]
                 @test st.code === SUCCESS
                 @test st.stationary === true
                 @test st.iterations == 1
-                @test all(isapprox.(xb, x_ref; rtol = 8 * eps(T)))
-                @test isapprox(st.fnorm, st_ref.fnorm; rtol = 8 * eps(T))
-                @test isapprox(st.fnorm, norm(rb_s(xb, nothing)); rtol = 8 * eps(T))
+                @test abs(xc) <= 8 * eps(T)
+                @test isapprox(st.fnorm, fnorm_c(xc); rtol = 8 * eps(T))
+                if best
+                    # the record holds the start t = 1, of lower ‖r‖ than the returned t = 0
+                    fnorm_best = solver.state.best.fnorm
+                    @test isapprox(fnorm_best, fnorm_c(one(T)); rtol = 8 * eps(T))
+                    @test fnorm_best < st.fnorm
+                end
             end
         end
     end

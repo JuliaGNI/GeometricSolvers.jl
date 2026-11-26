@@ -17,8 +17,8 @@ using GeometricSolvers
 using GeometricSolvers: KroneckerFactorization, LeastSquaresProblem, LeftPreconditioned,
                         NONFINITE, NonlinearProblem, Options, PseudoTransient,
                         PseudoTimeStep, Refinement, SINGULAR, StationarityProblem, SUCCESS,
-                        ToReal, init, init_state, residual!!, solve, solve!, solve!!,
-                        start!!, step!!, with_rule
+                        ToReal, init, init_state, pt_next_step, residual!!, solve, solve!,
+                        solve!!, start!!, step!!, with_rule
 
 include("../helpers/matrix.jl")
 
@@ -98,6 +98,13 @@ end
         NonlinearProblem(F!), [0.0, 0.0], LeftPreconditioned(m, Newton()))
     @test_throws r"^ArgumentError: PseudoTransient solves a StationarityProblem" solve(
         NonlinearProblem(F!), [0.0, 0.0], LeftPreconditioned(Newton(), m))
+    # a `StationarityProblem` with `E ≠ U`, whose residual is no gradient, is taken, and the
+    # shifted steps reach a root of `F`: `S = x₁² x₂ + x₂³/3 − x₁` with `E = [1]` and `U = [2]`
+    # gives `F(x₂) = 2 x₁ x₂ − 1`, whose root at `x₁ = 1/2` is `x₂ = 1`
+    S(x, p) = x[1]^2 * x[2] + x[2]^3 / 3 - x[1]
+    x, status = solve(StationarityProblem(S; E = [1], U = [2]), [0.5, 2.0], m)
+    @test status.code == SUCCESS
+    @test x[1] == 0.5 && isapprox(x[2], 1; atol = sqrt(eps()))
 end
 
 @testset "the rule state and the evolution of δ" begin
@@ -138,6 +145,23 @@ end
         @test isnan(solver.state.inner.rule.δ)
         x′, status′ = solve!(solver, T[0.1, 1])
         @test x′ == x && status′.iterations == status.iterations
+    end
+end
+
+@testset "the evolution of δ at the ends of the float range" begin
+    # `δ ‖F(xₖ)‖ / ‖F(xₖ₊₁)‖` where the ratio alone underflows to zero, `floatmin / √floatmax`,
+    # or overflows, `√floatmax / floatmin`, while `δ₊` is a normal number below the cap; the
+    # reference is the product in `BigFloat`, rounded once
+    @testset "$T" for T in (Float16, REAL_ELTYPES...)
+        pt = PseudoTransient(T, one(T); δ_max = floatmax(T) / 4)
+        M = sqrt(floatmax(T))
+        for (δ, f, f₊) in ((floatmax(T) / 4, floatmin(T), M), (floatmin(T), M, floatmin(T)))
+            expected = T(big(δ) * big(f) / big(f₊))
+            @test isfinite(expected) && expected >= floatmin(T) && expected < pt.δ_max
+            @test isapprox(pt_next_step(pt, δ, f, f₊), expected; rtol = 8 * eps(T))
+        end
+        # a residual of zero after the step gives the cap
+        @test pt_next_step(pt, one(T), one(T), zero(T)) == pt.δ_max
     end
 end
 

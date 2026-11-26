@@ -943,13 +943,14 @@ end
 end
 
 # A `PseudoTransient` step takes only the problem that a `StationarityProblem` solve hands to its
-# method, the `_ReducedStationarityProblem`, whose `F` is the gradient of an action: its shift
-# follows the gradient flow of that action. Every other problem is refused, the problems that a
-# combinator builds included. `stationarity.jl` defines that type after this file, so the test is
-# an `isa` in the body and not a method signature.
+# method, the `_ReducedStationarityProblem`. Where `E == U` its `F` is the gradient of the action
+# in the unknowns, and the shift follows the gradient flow of that action; for other index sets
+# `F` is no gradient, and the shifted steps still aim at a root of `F`. Every other problem is
+# refused, the problems that a combinator builds included. `stationarity.jl` defines that type
+# after this file, so the test is an `isa` in the body and not a method signature.
 @inline function check_pseudotransient_problem(prob::AbstractNonlinearProblem)
     prob isa _ReducedStationarityProblem || throw(ArgumentError(
-        "PseudoTransient solves a StationarityProblem: its shifted step follows the gradient flow of the action S, and the residual of any other problem is no gradient; use another globalization"))
+        "PseudoTransient solves a StationarityProblem: its shifted step follows the gradient flow of the action S where E == U, and the residual of a problem of another type is no gradient; use another globalization"))
     return nothing
 end
 

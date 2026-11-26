@@ -71,26 +71,28 @@ so that a compat-only bump can be told apart from an interface change.
   in `nonlinear`; `test/nonlinear/commonsolve.jl` counts `NonlinearProblem` and
   `LeastSquaresProblem` among the first arguments of the package's `init` and `solve` methods.
 
-- **A least-squares solve returns the start point of a step that leaves a stationary point.** On
-  a `LeastSquaresProblem`, where the stationarity test passes on the factorisation that a step
-  takes at its start point `x_k`, `k ≥ 1`, and fails when `solve!!` re-measures it at the end of
-  the step, the solve returns `x_k` with `SUCCESS` and `status.stationary == true`, and no longer
-  goes on from the end of the step. The status is that of `x_k`: its `fnorm` and `stepnorm`, the
-  iterations that reached it and the diagnostics of its factorisation, while `step_failures` and
-  `promoted` still count the discarded step; `min_iterations` is read for `x_k`. At a saddle of
-  `‖F‖²` that the Gauss–Newton model reads as a minimum, such as the saddle that a
-  mirror-symmetric problem has on its symmetry set, the rule applies with every method and
-  globalization, so a solve whose step starts at such a saddle, with a factorisation taken there,
-  now ends there. A step along a reused factor (`reuse > 1`) carries the diagnostics of an earlier
-  point, so the rule does not fire at its start point and the solve goes on past a stationary
-  `x_k`. With `DogLeg` and with a line search capped at one iteration, whether the solve ended
-  there or ran on past it depended on rounding: a perturbation of the data by a few ULPs changed
-  the outcome. A solve that left such a saddle for a point of lower `‖F‖` ends at the saddle
-  instead, because the rule reads the stationarity test, not `‖F‖`; on the mirror-symmetric test
-  problem this holds for the default `GaussNewton()`, among others. The step from `x₀` is kept, and
-  every other problem type is unchanged. An array iterate keeps `x_k` and its
-  residual in two buffers that `init_state` allocates, so `solve!!` allocates nothing; `NewtonState`
-  gains the field `kept` for them.
+- **A least-squares solve returns the start point of a step that leaves a stationary point
+  without lowering `‖F‖`.** On a `LeastSquaresProblem`, where the stationarity test passes on the
+  factorisation that a step takes at its start point `x_k`, `k ≥ 1`, and fails when `solve!!`
+  re-measures it at the end of the step, and the step does not lower `‖F‖`
+  (`‖F(x_{k+1})‖ ≥ ‖F(x_k)‖`, an equal norm included), the solve returns `x_k` with `SUCCESS` and
+  `status.stationary == true`, and does not go on from the end of the step. The status is that
+  of `x_k`: its `fnorm` and `stepnorm`, the iterations that reached it and the diagnostics of its
+  factorisation, while `step_failures` and `promoted` still count the discarded step;
+  `min_iterations` is read for `x_k`. A step that lowers `‖F‖` shows that `x_k` is no minimum, so
+  the solve goes on from its end. On a mirror-symmetric test problem, whose saddle of
+  `‖F‖²` on the symmetry set the Gauss–Newton model reads as a minimum, the step from an iterate
+  near the saddle lowers `‖F‖`, so the rule does not fire there. On that problem, with six
+  perturbations of its data by a few ULPs, `Float32` and `Float64`, and `SVector`, `Array` and
+  `JLArray` iterates, the default `GaussNewton()`, `StrongWolfe()`, `LevenbergMarquardt`,
+  `DogLeg`, and `StrongWolfe` and `Bisection` capped at one iteration end at the point, with the
+  code, `stationary`, iteration count and `fnorm`, that the same solve reaches without the rule,
+  in each of the 216 solves; with `DogLeg` and the capped line searches the perturbation decides
+  whether the solve ends at a minimum. A step along a reused factor (`reuse > 1`) carries the
+  diagnostics of an earlier point, so the rule does not fire at its start point and the solve goes
+  on past a stationary `x_k`. The step from `x₀` is kept, and every other problem type is
+  unchanged. An array iterate keeps `x_k` and its residual in two buffers that `init_state`
+  allocates, so `solve!!` allocates nothing; `NewtonState` gains the field `kept` for them.
 
 - **`SVDFactorization(; rtol)` and `SVDFactorization(TF; rtol)` set the rank cutoff.** A singular
   value at or below `rtol · σ̂₁`, with `σ̂₁` the largest singular value of the prescaled `J / 2^e`,
@@ -371,6 +373,20 @@ so that a compat-only bump can be told apart from an interface change.
   names the pivot 3, as LAPACK does, and checks the `-2` branch of `_mps_lu_finish!` on the factors
   of the same matrix, whose smallest `|aᵢᵢ|` and smallest `aᵢᵢ` are at different indices, so a
   `-2` mapping without the absolute value fails it.
+- **The GMRES count tests (`test/nonlinear/krylov.jl`) pass on GPUArrays 12.3.0.** From 12.3.0,
+  GPUArrays sends the six-argument storage-level matrix–vector `mul!` to its new
+  `GPUArrays.blas_gemv!` hook and no longer reaches the seven-argument `mul!`, where the tests
+  counted the matrix–vector products of the Arnoldi process; in a freshly resolved test
+  environment the counters read 0, and the count tests of CGS2 and MGS, of the GMRES refinement,
+  and of the update and the reduced direction failed (27 failures, 2 errors in six testsets). The
+  tests now count at the five-argument `LinearAlgebra.mul!`, through two methods: one for a
+  `JLArray` vector destination and one for a `JLArray` matrix destination, each with a plain,
+  adjoint or transposed `JLArray` operand. The counters therefore see every product of `JLArray`
+  storage, as the seven-argument counter did on GPUArrays 12.2.0; no method of GPUArrays takes
+  these operands at five arguments. A new testset, "The product counters see the products of
+  JLArray storage", checks that each counter sees its products, so that a later dispatch change
+  fails there. `test/nonlinear/krylov.jl` passes with GPUArrays 12.2.0 and 12.3.0. The change is in
+  the tests only: the package's results are unchanged, and it needs no `[compat]` bound.
 - **`rnorm` works on a device array whose norm is finite but whose sum of squares is not.** Its
   scaled path summed through a closure that carried the accumulation type as a field, and a device
   kernel argument must be `isbits`, so `rnorm` threw `KernelError: passing non-bitstype argument`
@@ -1228,7 +1244,8 @@ so that a compat-only bump can be told apart from an interface change.
 - **`LinearProblem(A)`, `init(prob, method)` and `solve!(solver, b)` solve a dense linear system
   for many right-hand sides after one factorisation.** `LinearProblem`, `LinearSolver`,
   `LinearStatus` and `refactorize!!` are exported. `LinearProblem(A)` holds a dense matrix in the
-  field `A`; a zero dimension or a sparse matrix raises an `ArgumentError`. `init` factorises with
+  field `A`; a zero dimension, a sparse matrix, and an `A` or a `b` with an axis that does not
+  start at 1 raise an `ArgumentError`. `init` factorises with
   `LUFactorization`, `QRFactorization`, `SVDFactorization`, `LDLTFactorization` or
   `CholeskyFactorization` and returns a `LinearSolver`; `GMRES`, `UMFPACKFactorization` and a
   precision marker such as `TF32` raise an `ArgumentError`. `solve!` returns `(x, status)` with an
@@ -1237,8 +1254,10 @@ so that a compat-only bump can be told apart from an interface change.
   `solve!` and `refactorize!!` are inferred and allocation-free for a `Float64` `SMatrix`. Any
   other dense `AbstractMatrix`, on the host or a device (R3), returns the buffer `solver.x`, which
   the next `solve!` overwrites; on a `Float64` host `Array`, `solve!` and `refactorize!!` allocate
-  nothing after a warm-up. The object adds no kernel. `m == n` takes every factor type, and
-  `CholeskyFactorization` on a device raises an `ArgumentError`. `m > n` is the least-squares
+  nothing after a warm-up. A `b` that shares memory with `solver.x` and is not `solver.x` itself,
+  such as a view of it, is copied before the solve, which allocates one copy of `b`;
+  `b === solver.x` is solved in place. The object adds no kernel. `m == n` takes every factor type,
+  on the host and on a device. `m > n` is the least-squares
   solution through QR or SVD, the minimum-norm one where the SVD rank is below `n`; LU, LDLᵀ and
   Cholesky raise an `ArgumentError` for `m ≠ n`. `m < n` is the minimum-norm solution through the
   SVD of `Aᴴ` truncated at its rank, on every route, or through a QR of `Aᴴ`, `x = Q R⁻ᴴ b`, on a
@@ -1304,10 +1323,29 @@ so that a compat-only bump can be told apart from an interface change.
   `Newton` to the working precision, unchanged: with `CholeskyFactorization(Float32)`, the Jacobian
   `[1 1; 1 1 + 1e-9]` has a zero pivot in `Float32`, and the step factorises it in `Float64`. A
   `LeastSquaresProblem` takes the method only in the stacked `LevenbergMarquardt` step, as it takes
-  `LDLTFactorization`, and a device array iterate raises an `ArgumentError`, because the method has
-  no device factor. The tests are in `test/linear/cholesky.jl`, and the LDLᵀ rows of
+  `LDLTFactorization`. The tests are in `test/linear/cholesky.jl`, and the LDLᵀ rows of
   `test/nonlinear/leastsquares.jl`, `gmres_ir.jl` and `refinement.jl` have Cholesky twins. The
   standard test set has no Cholesky column, as it has no LDLᵀ column.
+
+- **`CholeskyFactorization` factorises on a device array, as the factor `DeviceCholesky`.** The
+  own KernelAbstractions kernels run in one workgroup of 64 work-items, as the LDLᵀ kernel does, on
+  every device array and element type that no vendor method below takes, `JLArray` and Metal's
+  `Float32` and `ComplexF32` included: a load kernel refuses a matrix with a non-finite entry
+  anywhere with `info = 1`, takes the power-of-two scale of a factor in another element type from
+  the lower triangle and the real diagonal, and writes zeros above the diagonal; a factor kernel
+  runs the column loop, each work-item taking the trailing columns `k + tid, k + tid + 64, …`; and
+  the status is read back once. On a `CuMatrix` and a `ROCMatrix` of a `BlasFloat` element type,
+  the CUDA and AMDGPU extensions call cuSOLVER and rocSOLVER `potrf`/`potrs` after the same load
+  kernel. The status is the host factor's: `info = k` for the first leading minor that is not
+  positive, `SINGULAR`, and `n = 0` launches nothing and gives `SUCCESS`. On both paths,
+  `backsolve!` refuses a vector whose length is not the order of the factor, the empty vector
+  included, with a `DimensionMismatch`. The JLArray rows of `test/linear/cholesky.jl` agree with
+  `DenseCholesky` at `n = 1, 4, 64, 65, 128`; the Metal rows are in `test/devices/metal_ka.jl`, and
+  the cuSOLVER and rocSOLVER rows, which compare the vendor factor with the own kernel, in
+  `test/gpu/cuda/runtests.jl` and `test/gpu/rocm/runtests.jl`. A `LinearProblem` of a device
+  array takes `CholeskyFactorization` too, in place of the `ArgumentError` it raised without a
+  device factor; `test/linear/linearproblem.jl` runs it on `JLArray`, and the Metal and CUDA
+  `LinearProblem` testsets each add a Cholesky row.
 
 - **Verified root certificates, `GeometricSolvers.certify`, with the package extension
   `GeometricSolversIntervalArithmeticExt`.** When `IntervalArithmetic` is loaded,
@@ -1415,6 +1453,49 @@ so that a compat-only bump can be told apart from an interface change.
   SparseMatrixColorings and ADTypes with exact `[compat]` versions, and SparseArrays. `run_cell`
   takes a keyword `tol`, by default `sqrt(eps(T))`, so the correctness sweep gives the same cells.
   No source file changes.
+
+- **`benchmark/devices.jl` runs the R2 and R3 device rows of one machine.**
+  `benchmark/devices.jl <backend> <machine> <dir>` takes the pairs `cpu cpu`, `metal mac`,
+  `cuda spark`, `cuda rtx4090` and `rocm rx7900xtx`, loads the vendor package from the stacked
+  `test/gpu/<backend>` environment, and writes `devices-<machine>.csv` and `.txt`: Y1's 79
+  `Float32` rows in `solve_batch!` with four GeometricSolvers columns and in SimpleNonlinearSolve's
+  `SimpleNewtonRaphson` in a KernelAbstractions kernel, 64 copies each, against the host R1 solve
+  of the same method and start; an R2 throughput grid on the §10.E problem with up to 10⁷ systems;
+  the §10.E problem in R3 form with the device LU, a `Float32` LU of a `Float64` solve with and
+  without `Refinement`, and the host; and one LU factorisation and solve by the path of `solve` and
+  by the internal KernelAbstractions LU. `benchmark/device_problems.jl` holds the inline `MVector`
+  adapter, the `isbits` midpoint residuals, the §10.E problem, the band of each backend and the
+  classifier of a kernel that does not compile or throws. On Metal a run continues in a new process
+  when the device heap fills. The committed `devices-cpu.csv` and `.txt` are the run of the cpu
+  mode on the host; `benchmark/verify.jl` checks every device file and the report's Y3 tables, and
+  with `--all-cards` requires the files of the four cards. The environment adds
+  KernelAbstractions, StaticArrays and JLArrays with exact `[compat]` versions. No source file
+  changes.
+
+- **The four Lotka–Volterra midpoint rows of the device run execute in a kernel on `CPU()`.**
+  The `:iode` midpoint residual `MidpointResidual{:iode}` in `benchmark/device_problems.jl` passes
+  the iterate `V` to GeometricProblems' `ϑ` and `f` as `SVector(V)`, not as the `MVector` `V`, and
+  `benchmark/Project.toml` pins GeometricProblems `=0.10.2`, which differs from 0.10.0 in its
+  source only by an `@inline` on LotkaVolterra4d's `ϑ(Θ, t, q)`. Together the two keep the residual
+  of the rows of LotkaVolterra2d and LotkaVolterra4d at h = 0.01 and 0.1 off the heap, so the rows
+  run in a KernelAbstractions kernel instead of ending as a kernel error, except one cell:
+  `Picard Backtracking` at LotkaVolterra2d h = 0.1 still ends as a kernel error, from a heap
+  allocation in its first Picard step; with either change alone LotkaVolterra4d still allocates. A
+  self-test in `benchmark/selftest.jl` solves the four rows in a `CPU()` kernel with `solve_batch!`
+  and `Newton()` and expects `SUCCESS`. Y1's and Y2's committed tables are not regenerated, and
+  `benchmark/verify.jl benchmark/results` passes on them.
+
+- **The device rows of the four cards are committed, and the report's Y3 section covers them.**
+  `benchmark/results/` holds `devices-<machine>.csv` and `.txt` of the Apple M4 Max's GPU (Metal),
+  the NVIDIA GB10 and the RTX 4090 (CUDA) and the AMD Radeon RX 7900 XTX (ROCm), and
+  `benchmark/verify.jl benchmark/results --all-cards` passes on them. On ROCm every
+  SimpleNonlinearSolve cell within the band has the status `not run: SimpleNonlinearSolve kernel
+  faults on ROCm`, because SimpleNewtonRaphson's kernel faults with `hipErrorIllegalAddress` on
+  that card. `benchmark/REPORT.md` gives each card's version line,
+  correctness counts, throughput, R3 and LU rows, the cause of each status other than `ran`, and
+  one explanation for each of the 27 card cells whose verdict is `different root`, `device fails`
+  or `host fails`, from a host replay and the card's iterations and status. The report states that
+  the dispatched LU on ROCm is rocSOLVER's, through `GeometricSolversAMDGPUExt`.
 
 - **`scripts/defect_correction_r5.jl` compares three variants of the matrix-free Newton–GMRES
   regime (R5) on one nonlinear reaction–diffusion system.** The system is
