@@ -629,10 +629,10 @@ end
     # down to an even one, and the solve lifts the right-hand side `(0, t)` by `2^-k`, `k` the
     # exponent of `t` clamped to `-exponent(floatmax(R))` and then to `[min(e, 0), 0]` (here
     # `e + 1`), so it runs in the normal range on `2^(e - k) x = x / 2` and meets a small multiple
-    # of `eps(R) κ₁`. Solved with `(0, t)`
-    # as it is, the forward substitution gives an entry of the size of `√(t 2^e)`, a subnormal whose
-    # spacing `t` is a relative error of `√(t 2^-e) ≈ √(t floatmax(R))`. The factor of `A` unscaled
-    # loses `L₂₁² = t/2` below the smallest subnormal and gives `(-0.5, 1)`, a relative error of 0.5.
+    # of `eps(R) κ₁`. Solved with `(0, t)` as it is, the forward substitution gives an entry of the
+    # size of `√(t 2^e)`, a subnormal whose spacing `t` is a relative error of
+    # `√(t 2^-e) ≈ √(t floatmax(R))`. The factor of `A` unscaled loses `L₂₁² = t/2` below the
+    # smallest subnormal and gives `(-0.5, 1)`, a relative error of 0.5.
     R = real(T)
     t = nextfloat(zero(R))
     A = T[2t t; t t]
