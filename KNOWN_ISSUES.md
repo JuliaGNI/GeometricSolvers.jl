@@ -1008,7 +1008,7 @@
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
   `Static()`, `Backtracking()` in a fresh process with `--check-bounds=auto` (Julia 1.13.4, at
-  b2c3bba). The cause is in the two default constructors, which date from before `BiCGStab` and
-  `DQGMRES`, so the `GMRES` step shares it.
+  b2c3bba). The cause is in the two default constructors and not in a step, so the `GMRES` step
+  infers the same union.
 - **kind:** defect
 - **found:** PR #127
