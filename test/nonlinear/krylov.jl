@@ -2002,6 +2002,42 @@ end
     end
 end
 
+@testset "The age of the preconditioner after a step" begin
+    FA = GeometricSolvers.FactorAge
+    rule = GeometricSolvers.preconditioner_rule
+    STALLED = GeometricSolvers.STALLED
+    P = ScaledRightPreconditioner(Ref(Int32(0)), 2.0)
+    m = Newton(; reuse = 3, linsolve = GMRES(; preconditioner = P))
+    # a refresh starts a period, also an early one at a nonzero age: the next refresh is due
+    # three steps after it
+    @test rule(FA(Int32(0), false), m, true, SUCCESS, Int32(0)) === FA(Int32(1), false)
+    @test rule(FA(Int32(2), true), m, true, SUCCESS, Int32(0)) === FA(Int32(1), false)
+    @test rule(FA(Int32(1), false), m, false, SUCCESS, Int32(0)) === FA(Int32(2), false)
+    @test rule(FA(Int32(2), false), m, false, SUCCESS, Int32(0)) === FA(Int32(0), false)
+    # a step that stalled or whose inner solve reached its cap asks for a refresh at the next one
+    @test rule(FA(Int32(1), false), m, false, SUCCESS, Int32(1)) === FA(Int32(2), true)
+    @test rule(FA(Int32(1), false), m, false, STALLED, Int32(0)) === FA(Int32(2), true)
+    # a period of one step refreshes at every step
+    m1 = Newton(; reuse = 1, linsolve = GMRES(; preconditioner = P))
+    @test rule(FA(Int32(0), false), m1, true, SUCCESS, Int32(0)) === FA(Int32(0), false)
+    # without reuse the rule state is that of the globalization, unchanged
+    @test rule(nothing, Newton(; linsolve = GMRES()), true, SUCCESS, Int32(1)) === nothing
+end
+
+@testset "A reduced-basis breakdown on a singular operator stops without convergence, mgs = $mgs" for mgs in (false, true)
+    # `b = e₁` is exact in Float32 and `J e₁ = 0`, so the first Arnoldi step breaks down exactly;
+    # the true residual is `‖b‖`, and the solve stops there rather than restart to its cap
+    jd = [0.0, 1.0, 2.0]
+    b = [1.0, 0.0, 0.0]
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 10, restart = 3, basis_eltype = Float32), zeros(3))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-8, Int32(10), Int32(3); mgs)
+    @test info.breakdown
+    @test !info.converged
+    @test info.iterations == 1
+    @test info.resnorm == 1.0
+end
+
 @testset "reuse takes a GMRES with a preconditioner only" begin
     P = ScaledRightPreconditioner(Ref(Int32(0)), 2.0)
     msg = r"^ArgumentError: Newton with a matrix-free linear method takes no factor reuse"
@@ -2089,6 +2125,38 @@ end
             @test abs(ηs[k] - ref) <= 100 * u
         end
     end
+end
+
+# The bytes of one inner solve with the preconditioner `P`, through a function barrier that calls
+# the solve once before it measures.
+function preconditioned_allocations(ws, op, P, b, β, tol, maxiter, restart; mgs)
+    gmres_solve!(ws, op, P, b, β, tol, maxiter, restart; mgs)
+    return @allocated gmres_solve!(ws, op, P, b, β, tol, maxiter, restart; mgs)
+end
+
+@testset "The flexible and the reduced-basis solves allocate nothing after init on Array, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    Base.JLOptions().check_bounds == 1 && continue
+    R = real(T)
+    TB = T === Float64 ? Float32 : Float16
+    prob = r5_affine()
+    P = ScaledRightPreconditioner(Ref(Int32(0)), T(2))
+    for g in (GMRES(; maxiter = 4, preconditioner = P, flexible = true, mgs),
+        GMRES(; maxiter = 4, restart = 2, preconditioner = P, flexible = true, mgs),
+        GMRES(; maxiter = 4, basis_eltype = TB, mgs))
+        solver = init(prob, zeros(T, 4), Newton(; linsolve = g))
+        ws = solver.state.ws
+        op = GeometricSolvers.R5Operator(solver.state.jvpprep, prob, zeros(T, 4), nothing)
+        b = T.(.-R5_B4)
+        β = rnorm(b)
+        @test preconditioned_allocations(
+            ws, op, g.preconditioner, b, β, R(1e-10), Int32(4), g.restart; mgs) == 0
+        @inferred gmres_solve!(
+            ws, op, g.preconditioner, b, β, R(1e-10), Int32(4), g.restart; mgs)
+    end
+    # the control: the helper sees an allocation
+    @test (@allocated similar(zeros(T, 4))) > 0
 end
 
 @testset "The scale rows: A and b at 4√floatmax and floatmax/8, mgs = $mgs, $T" for T in REAL_ELTYPES,

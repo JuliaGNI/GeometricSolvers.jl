@@ -996,7 +996,7 @@
 - **kind:** docs
 - **found:** 2026-11-26
 
-### K138 · The test of the summary of the standard test set finds the line of a column by its name and a space, so a column whose name is another column's name, a space and more matches two lines
+### K139 · The test of the summary of the standard test set finds the line of a column by its name and a space, so a column whose name is another column's name, a space and more matches two lines
 
 - **location:** `test/verification/standard.jl:399`
 - **evidence:** `only(filter(startswith(column * " "), split(summary, "\n")))` raises
