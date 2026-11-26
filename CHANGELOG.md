@@ -19,9 +19,13 @@ so that a compat-only bump can be told apart from an interface change.
   the copy, bit for bit, because with `e > 0` the solve would hold up to `2^e` times its solution,
   which overflows near `floatmax`. A Cholesky factor in the matrix's own element type rounds that
   `e < 0` down to an even exponent, so that its factor is that of `J` times a power of two and
-  the solve of a normal-range matrix keeps its bits. A factor of another element type divides for
-  every `e`, as before, and a static factor still copies an own-type `BigFloat` matrix whose
-  exponent lies outside the `Int32` range (K108). The static SVD divides by the exponent of a
+  the solve of a normal-range matrix keeps its bits. The load kernel of `DeviceCholesky` takes the
+  largest entry and its exponent from the bits (`abs_bits`, `bits_exponent`), not from `abs`,
+  `max` and `frexp`, because the Apple GPU flushes subnormals to zero in its arithmetic: there a
+  `Float32` matrix of subnormal entries read as zero, kept `e = 0` and gave `SINGULAR`. A factor
+  of another element type divides for every `e`, as before, and a static factor still copies an
+  own-type `BigFloat` matrix whose exponent lies outside the `Int32` range (K108). The static SVD
+  divides by the exponent of a
   subnormal largest entry, which `matrix_exponent` clamps to `-exponent(floatmax)`, so its
   largest entry lies in `[1, 2)` also there (`svd_exponent`, `src/linear/static/svd.jl`). A
   matrix `2^-1070 A₀` (`2^-145 A₀` in `Float32`) then solves on `SMatrix`, `Array` and `JLArray`

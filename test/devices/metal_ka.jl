@@ -177,6 +177,29 @@ if Metal.functional() && !on_virtual_gpu()
         end
     end
 
+    # The Apple GPU flushes subnormals to zero in its arithmetic, so the load kernel reads the
+    # largest entry and its exponent from the bits: a matrix of subnormal entries takes the host's
+    # scale and factorises in the normal range.
+    @testset "Metal KA Cholesky of a matrix of subnormal entries: $T" for T in METAL_ELTYPES
+        W = T <: Real ? T[2 0.3 0 0; 0.3 2 0.3 0; 0 0.3 2 0.3; 0 0 0.3 2] :
+            T[2 0.3+0.1im 0 0; 0.3 2 0.3im 0; 0 0.3 2 0.3-0.2im; 0 0 0.3 2]
+        A0 = W' * W
+        κ = Float64(cond(A0, 1))
+        @test κ <= 16
+        kA = exponent(nextfloat(0.0f0)) + 4
+        A = GeometricSolvers.ldexp2.(A0, kA)
+        b = GeometricSolvers.ldexp2.(T[1, 2, 3, 4], kA + 70)
+        @test maximum(a -> max(abs(real(a)), abs(imag(a))), A) < floatmin(Float32)
+        xref = big.(A) \ big.(b)
+        m = CholeskyFactorization()
+        fh = factorize!!(dense_factor(m, nothing, b, nothing), m, A)
+        fac = factorize!!(dense_factor(m, nothing, MtlArray(b), nothing), m, MtlArray(A))
+        @test returncode(fac) === SUCCESS
+        @test fac.scale_exponent == fh.scale_exponent < 0
+        x = Array(ldiv!!(similar(MtlArray(b)), fac, MtlArray(b)))
+        @test Float64(norm(big.(x) - xref) / norm(xref)) <= 32 * eps(Float32) * 16
+    end
+
     @testset "Metal KA SVD agrees with CPU LAPACK gesvd at n = $n" for n in (1, 16, 10^3)
         @testset "T = $T" for T in METAL_ELTYPES
             m = SVDFactorization()

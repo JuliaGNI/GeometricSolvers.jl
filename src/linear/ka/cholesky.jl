@@ -6,34 +6,50 @@
 
 const KA_CHOLESKY_WORKGROUP = 64
 
+# The exponent of the finite nonzero float of type `R` whose magnitude has the bits `u`, as
+# `exponent` gives it, from the bits alone: a subnormal `u · 2^(1 - bias - p)`, `p` the significand
+# bits, has its leading bit at `8 sizeof(u) - 1 - leading_zeros(u)`. A device that flushes
+# subnormals to zero in its arithmetic, as the Apple GPU does, gives `exponent` and `frexp` of a
+# subnormal as those of zero; the bits keep it. No `DomainError` branch, which a kernel compiles to
+# a trap.
+@inline function bits_exponent(::Type{R}, u::Unsigned) where {R <: Base.IEEEFloat}
+    p = Base.significand_bits(R)
+    bias = Base.exponent_bias(R)
+    k = Int(u >> p)
+    return k > 0 ? k - bias : 8 * sizeof(u) - leading_zeros(u) - bias - p
+end
+
 # `J` into the factor buffer `A`, as `load_factors!` with `cholesky_exponent` and the finiteness
 # test of the host `DenseCholesky` give it: where every entry of `J` is finite, the lower triangle
 # of `J / 2^e` with zeros above the diagonal, `e` the exponent of the largest |re| or |im| of the
 # strict lower triangle and |re| of the diagonal; where the element types of `J` and `A` agree,
 # only a negative exponent is taken, rounded down to an even one, and any other gives `e = 0`, and
 # a zero lower triangle gives `e = 0`; where an entry is not finite, `J` as it is in the factor
-# element type, and `e = 0`. `status` takes `[info, e]`, with `info = 1` for a non-finite `J` and
-# 0 otherwise. Each work-item reads and writes only the entries of its columns `tid`, `tid + G`, …,
-# and reads each entry before it writes it, so that `J` may be `A`.
+# element type, and `e = 0`. The largest entry is the largest of the magnitude bits, `abs_bits`,
+# and its exponent is `bits_exponent`, so that a device that flushes subnormals to zero reads a
+# subnormal entry as the host does. `status` takes `[info, e]`, with `info = 1` for a non-finite
+# `J` and 0 otherwise. Each work-item reads and writes only the entries of its columns `tid`,
+# `tid + G`, …, and reads each entry before it writes it, so that `J` may be `A`.
 @kernel function ka_cholesky_load_kernel!(A, J, status, n::Int, ::Val{G}) where {G}
     tid = @index(Local, Linear)
     @uniform F = eltype(A)
     @uniform RJ = real(eltype(J))
+    @uniform U = typeof(abs_bits(zero(RJ)))
     l_bad = @localmem Int32 (G,)
-    l_max = @localmem RJ (G,)
+    l_max = @localmem U (G,)
     l_ctrl = @localmem Int32 (2,)
     @inbounds begin
         bad = Int32(0)
-        m = zero(RJ)
+        m = zero(U)
         j = tid
         while j <= n
             for i in 1:n
                 a = J[i, j]
                 isfinite(a) || (bad = Int32(1))
                 if i > j
-                    m = max(m, abs(real(a)), abs(imag(a)))
+                    m = max(m, abs_bits(real(a)), abs_bits(imag(a)))
                 elseif i == j
-                    m = max(m, abs(real(a)))
+                    m = max(m, abs_bits(real(a)))
                 end
             end
             j += G
@@ -45,17 +61,15 @@ const KA_CHOLESKY_WORKGROUP = 64
     if tid == 1
         @inbounds begin
             bad = Int32(0)
-            m = zero(RJ)
+            m = zero(U)
             for t in 1:G
                 bad = max(bad, l_bad[t])
                 m = max(m, l_max[t])
             end
-            # `frexp(m)[2] - 1` is `exponent(m)` for a finite nonzero `m`, and has no `DomainError`
-            # branch, which a kernel compiles to a trap
             e = Int32(0)
             if bad == Int32(0) && !iszero(m)
                 emax = exponent(floatmax(RJ))
-                em = Int32(clamp(frexp(m)[2] - 1, -emax, emax))
+                em = Int32(clamp(bits_exponent(RJ, m), -emax, emax))
                 if F !== eltype(J)
                     e = em
                 elseif em < Int32(0)
