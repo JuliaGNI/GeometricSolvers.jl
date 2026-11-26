@@ -1024,18 +1024,3 @@
   `Newton Backtracking Float32-basis GMRES`, so no column of the table meets the case.
 - **kind:** defect
 - **found:** 2026-11-26
-
-### K140 · The JLArray testsets of `test/nonlinear/krylov.jl` that count the reductions and the plain products of the GMRES paths count none of the matrix–vector products, and fail
-
-- **location:** `test/nonlinear/krylov.jl:826` (the counting `mul!` overload)
-- **evidence:** `run-tests.jl <repository> test/nonlinear/krylov.jl` on the base `460bd37` gives
-  791 passed, 27 failed and 2 errored, at lines 868, 883, 914, 921, 930, 935, 956, 984, 1007,
-  1020 and 1021, for example `Evaluated: [0, 0, 0, 0, 0] == [2, 2, 2, 2, 2]`; the two errors are
-  `only(PLAIN_PRODUCTS)` on an empty list. The overload takes the 7-argument
-  `mul!(C, tA, tB, A, B, α, β)`. The test environment resolves JLArrays 0.5.0 and GPUArrays
-  12.3.0, which defines its own 6-argument matrix–vector method,
-  `mul!(C::AnyStridedGPUVector, tA::AbstractChar, A, B, a, b)`
-  (`GPUArrays/src/host/linalg.jl:735`). Not checked: that the products of the paths reach that
-  method and not the overload.
-- **kind:** upstream
-- **found:** 2026-11-26

@@ -1883,12 +1883,14 @@ end
         GMRES(; basis_eltype = Float16), zeros(ComplexF32, 4)).V) === ComplexF16
     # a complex solve on a reduced basis reaches a tolerance below the round-off of the basis type
     # on its true residual
-    for (T, TB, tol) in ((ComplexF64, Float32, 1e-12), (ComplexF32, Float16, 1.0f-5)),
-        mgs in (false, true)
+    for T in filter(T -> T <: Complex, ELTYPES), mgs in (false, true)
 
+        TB = real(T) === Float64 ? Float32 : Float16
+        tol = real(T) === Float64 ? 1e-12 : 1.0f-5
         A = T.(FG_A6) .+ T(0.3im) .* T.(FG_A6')
         b = T.(FG_B6) .- T(0.5im)
         ws = init_gmres_workspace(GMRES(; maxiter = 40, basis_eltype = TB), zeros(T, 6))
+        @test sizeof(real(eltype(ws.V))) < sizeof(real(T))
         op = (Jv, v) -> (mul!(Jv, A, v); Jv)
         d, info = gmres_solve!(
             ws, op, nothing, b, rnorm(b), tol, Int32(40), Int32(40); mgs)
