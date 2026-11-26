@@ -14,7 +14,9 @@ stationarity problems and nonlinear least-squares problems in three regimes: val
 `Number` or an `SVector` (R1), batches with `solve_batch!` on the CPU or a GPU (R2), and in place
 on a host or device array (R3), with a matrix-free variant through `GMRES` or `MINRESQLP`. The
 entries below record the development before this release; there is no earlier release to compare
-with, and a "breaking" entry names a change against an earlier state of `main`.
+with, and a "breaking" entry names a change against an earlier state of `main`. The entries on the
+test layout and the Metal workflow state the test groups and the required checks of this release,
+which closes `K94` in `KNOWN_ISSUES.md`.
 
 ### Changed
 
@@ -1813,14 +1815,14 @@ with, and a "breaking" entry names a change against an earlier state of `main`.
 - The test suite follows the shared layout. The test dependencies move from `[extras]` and
   `[targets]` to `test/Project.toml`, with their bounds; `Adapt`, which the tests use directly,
   takes its bound from `Project.toml` alone, and `Documenter` is new. `test/runtests.jl` selects
-  the groups `core`, `slow` and `metal` from `ARGS`, and the next entry gives the groups of a run
-  with empty `ARGS`. `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to
-  `test/quality/aqua.jl` and `test/quality/jet.jl`, the line-function fixture moves to
-  `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
-  docstring doctests. No file of `test/gpu/` moves.
+  its test groups from `ARGS`, and the next entry gives the groups of a run with empty `ARGS`.
+  `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to `test/quality/aqua.jl` and
+  `test/quality/jet.jl`, the line-function fixture moves to `test/helpers/linefunctions.jl`, and
+  the new `test/quality/doctests.jl`, the one file of the group `doctests`, runs the docstring
+  doctests. No file of `test/gpu/` moves.
 - A default test run on an Apple-silicon Mac runs the Metal device tests. When `ARGS` is empty,
-  `test/runtests.jl` runs the groups `core`, `slow` and `metal` on an Apple-silicon Mac and `core`
-  and `slow` everywhere else. The new `test/devices/metal.jl`, in the `metal` group, includes
+  `test/runtests.jl` runs the groups that `test/ci-groups.toml` lists, and on an Apple-silicon Mac
+  the group `metal` after them. The new `test/devices/metal.jl`, in the `metal` group, includes
   `test/gpu/runtests.jl` and runs its Metal case, the `axpy` kernel in `Float32` and `Float16`;
   `test/gpu/` stays the separate suite for a run by hand, and `test/gpu/README.md` and the header
   of `test/gpu/runtests.jl` say that the Metal case alone has device CI. Where
@@ -1828,8 +1830,8 @@ with, and a "breaking" entry names a change against an earlier state of `main`.
   (`@test_skip Metal.functional()`), also under `test_args = ["metal"]`. Metal (1.10 or later) is
   a test dependency on every platform; it installs on Linux and Windows, and no default run there
   loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and
-  `1` Julia versions, and a step before the tests fails that job where Metal is not functional. The
-  job is not a required check.
+  `1` Julia versions, and a step before the tests fails that job where Metal is not functional. Its
+  two jobs are required checks.
 - The `Adapt` floor is 4.7.3. Metal 1.12, which the test environments take, needs `GPUArrays`
   12.1, and that needs Adapt 4.7.3, so a test environment with `Metal = "1.12"` does not resolve
   with Adapt held below it.
