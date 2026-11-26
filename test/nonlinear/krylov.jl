@@ -1940,13 +1940,18 @@ end
 end
 
 @testset "The attainable accuracy of a Float32 basis against the CGS2 bound of LLD2022" begin
-    # Lindquist, Luszczek and Dongarra (2022), Theorem 1 and its simplification: one cycle of
-    # `j` CGS2 iterations in a precision of unit roundoff `u` attains the normwise backward error
-    # of the exact cycle plus `(4 j^{3/2} + 30 j + 3 p j^{1/2} + 3 c₁(n, j)) u`, with
-    # `c₁(n, j) = n j` and `p = 1` nonzero per row of a diagonal Jacobian. The cycle with the
-    # Float64 basis stands for the exact one.
+    # Lindquist, Luszczek and Dongarra (2022), the simplified form of Theorem 1 (p. 1029): one
+    # cycle of `j` CGSR iterations in a precision of unit roundoff `u` attains a normwise backward
+    # error of at most 1.1 times that of the exact cycle plus
+    # `(4 j^{3/2} + 30 j + 3 p j^{1/2} + 3 c₁(n, j)) u`, with the norm ‖A‖_F. Three readings make
+    # it a number: the paper gives `c₁(n, j)` only as O(n j), and this test takes `n j`; it does
+    # not define `p`, and this test takes the largest number of nonzeros in a row of the
+    # Jacobian, 1 for a diagonal one; the cycle with the Float64 basis stands for the exact one.
+    # The test drops the factor 1.1 to 1, so it asserts more than the theorem. The paper proves the
+    # bound for CGSR only; the MGS rows check the same number.
     jd, b = r5_diagonal_system(FG_DIAGONAL_X)
     n = length(b)
+    p = 1
     op = (Jv, v) -> (Jv .= jd .* v; Jv)
     backward(d) = rnorm(b .- jd .* d) / (norm(jd) * rnorm(d) + rnorm(b))
     for j in (4, 8), mgs in (false, true)
@@ -1958,14 +1963,23 @@ end
             ws32, op, nothing, b, rnorm(b), 0.0, Int32(j), Int32(j); mgs)
         @test info.iterations == j
         u = eps(Float32) / 2
-        bound = (4 * j^1.5 + 30 * j + 3 * sqrt(j) + 3 * n * j) * u
+        bound = (4 * j^1.5 + 30 * j + 3 * p * sqrt(j) + 3 * n * j) * u
         @test backward(copy(d32)) <= backward(copy(d64)) + bound
     end
-    # with the true residual at the end of each cycle, the restarts reach the working precision
-    ws = init_gmres_workspace(GMRES(; maxiter = 40, restart = 4, basis_eltype = Float32), zeros(n))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-13, Int32(40), Int32(4))
-    @test info.converged
-    @test rnorm(b .- jd .* d) <= 1e-13 * rnorm(b)
+    # with the true residual at the end of each cycle and the update `u += V y` in Float64, the
+    # restarts reach the working precision (Lindquist, Luszczek and Dongarra 2022, §3; Aliaga
+    # et al. 2020, §6.2), within 34 iterations at every point; a residual of the Givens recurrence
+    # in its place reports convergence at a true residual near 2e-8 for `restart = 2` and
+    # `tol = 1e-14`, and an update in Float32 stops near 3e-8
+    for mgs in (false, true), restart in (2, 4), tol in (1e-13, 1e-14)
+        ws = init_gmres_workspace(
+            GMRES(; maxiter = 60, restart, basis_eltype = Float32), zeros(n))
+        d, info = gmres_solve!(
+            ws, op, nothing, b, rnorm(b), tol, Int32(60), Int32(restart); mgs)
+        @test info.converged
+        @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+        @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(Float64))
+    end
 end
 
 @testset "Newton(; reuse = k) refreshes a GMRES preconditioner once per k steps, mgs = $mgs, $T" for T in REAL_ELTYPES,
