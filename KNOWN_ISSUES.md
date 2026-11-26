@@ -995,3 +995,20 @@
   for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
 - **kind:** docs
 - **found:** 2026-11-26
+
+### K138 · A matrix-free Newton step with a `Float32` iterate and the default `Static()` or `Backtracking()` infers `Union{StepInfo{Float32}, StepInfo{Float64}}`
+
+- **location:** `src/globalization/static.jl:20` (`Static(α::Real = 1.0)`),
+  `src/globalization/backtracking.jl:46` (`Backtracking(; c₁ = 1e-4, p = 0.5)`)
+- **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
+  `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
+  while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2047` for `GMRES`, `:2290` for `BiCGStab` and
+  `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
+  step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
+  and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
+  `Static()`, `Backtracking()` in a fresh process with `--check-bounds=auto` (Julia 1.13.4, at
+  b2c3bba). The cause is in the two default constructors, which date from before `BiCGStab` and
+  `DQGMRES`, so the `GMRES` step shares it.
+- **kind:** defect
+- **found:** PR #127
