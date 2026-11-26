@@ -11,6 +11,16 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **The README describes the package and gives five examples.** It states the three regimes and
+  how the storage of the initial iterate selects one, the matrix-free regime, the families of
+  methods, the problem types and the package extensions, with links to the documentation, and
+  replaces the line that called the package early-stage with a pre-1.0 status line. The examples
+  are a scalar and an `SVector` solve (R1), an in-place `Newton` with `Backtracking` through
+  `init` and `solve!` (R3), a batch with `solve_batch!` on the CPU (R2), a least-squares fit with
+  `GaussNewton` and with `LevenbergMarquardt`, and a matrix-free Newton–GMRES solve; the output
+  under each is that of a run of the block. A sixth block, a batch on a GPU, is marked as not
+  run. The Development section is unchanged and stays at the end.
+
 - **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
   `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
   factor's element type, runs `recursive_lu!` (`src/linear/recursive_lu.jl`) in place of
