@@ -13,8 +13,8 @@ Jacobian–vector products. The `jacobian` field of [`Newton`](@ref) selects the
 | `AutoForwardDiff()` | ForwardDiff, in the forms below |
 | another ADTypes back end | DifferentiationInterface, on a host `Array` iterate |
 | `AutoSparse(...)` | DifferentiationInterface with a sparsity pattern and a colouring |
-| a callable, `J(x, p)` on a value iterate and `J!(J, x, p)` on an array | the caller's Jacobian operator; a [`GMRES`](@ref) solve refuses it with an `ArgumentError` |
-| [`JVPFunction`](@ref)`(jvp!)` | the caller's product, for a [`GMRES`](@ref) solve |
+| a callable, `J(x, p)` on a value iterate and `J!(J, x, p)` on an array | the caller's Jacobian operator; a [`GMRES`](@ref) or [`MINRESQLP`](@ref) solve refuses it with an `ArgumentError` |
+| [`JVPFunction`](@ref)`(jvp!)` | the caller's product, for a [`GMRES`](@ref) or [`MINRESQLP`](@ref) solve |
 
 [`prepare_ad`](@ref) builds the preparation once, at [`init`](@ref), from the back end and the
 storage of the iterate. [`jacobian!!`](@ref), [`jvp!!`](@ref) and [`gradient_hessian!!`](@ref)

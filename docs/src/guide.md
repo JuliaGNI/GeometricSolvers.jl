@@ -17,7 +17,7 @@ iterate with a matrix-free linear solver:
 | **R1** value semantics | `Number` or `SVector` | [`solve`](@ref) | a factorisation of a static matrix |
 | **R2** batched | an array of `Number` or `SVector`, one entry per system | [`solve_batch!`](@ref) | a factorisation of a static matrix, per system |
 | **R3** in place | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | a factorisation of a dense or sparse matrix |
-| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref), with no Jacobian matrix |
+| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref) or [`MINRESQLP`](@ref), with no Jacobian matrix |
 
 `Newton()` takes `linsolve = LUFactorization()` and `globalization = Static()` unless the caller
 gives others (see [Nonlinear methods](@ref nonlinear)).
@@ -171,18 +171,20 @@ true
 
 ## R5: one system without a Jacobian matrix
 
-**Methods.** [`Newton`](@ref) with `linsolve = GMRES()` holds no ``n \times n`` Jacobian. Each
-inner iteration of [`GMRES`](@ref) takes one Jacobian–vector product, from automatic
-differentiation or from a [`JVPFunction`](@ref).
+**Methods.** [`Newton`](@ref) with `linsolve = GMRES()` or `MINRESQLP()` holds no
+``n \times n`` Jacobian. Each inner iteration of [`GMRES`](@ref) or [`MINRESQLP`](@ref) takes one
+Jacobian–vector product, from automatic differentiation or from a [`JVPFunction`](@ref).
 
 | method or option | condition |
 |:--|:--|
-| [`GMRES`](@ref) | an `AbstractVector` iterate, on the host or on a device, and the square system of a [`NonlinearProblem`](@ref) |
+| [`GMRES`](@ref) | an `AbstractVector` iterate, on the host or on a device, and the square system of a [`NonlinearProblem`](@ref) or of a [`StationarityProblem`](@ref), with any index sets `E` and `U` |
+| [`MINRESQLP`](@ref) | an `AbstractVector` iterate of a real element type and a [`StationarityProblem`](@ref) with `E == U`, the same indices in the same order, whose Jacobian is symmetric and may be indefinite or singular; no preconditioner; under [`DogLeg`](@ref) the Cauchy point takes two Hessian–vector products |
 | [`EisenstatWalkerChoice2`](@ref) (the default), [`EisenstatWalkerChoice1`](@ref) | an inner tolerance that is loose far from the root and tight near it |
 | [`FixedForcing`](@ref)`(η)` | a constant inner tolerance `η` |
 | a right preconditioner with methods of [`refresh!`](@ref) and [`apply_preconditioner!`](@ref) | an operator that is refreshed once per Newton step and applied before every product |
 | [`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) | as in R1 |
 | [`DogLeg`](@ref) | as in R1; it runs on the Arnoldi relation of one unrestarted cycle without a preconditioner |
+| [`Steihaug`](@ref) | `linsolve = MINRESQLP()`; truncated conjugate gradients that minimise the model of the action `S`, with trials accepted by the ratio of `DogLeg` on ``\|F\|``; a solve does not converge to a root where the Hessian of `S` is indefinite, also from a start close to it, and ends with `LINESEARCH_FAILED`; `DogLeg` does not have this limit |
 
 **Conditions of the regime.** R5 applies to a large system whose Jacobian no array can hold. A
 `GMRES` solve takes no factor reuse, no [`Refinement`](@ref), no [`LevenbergMarquardt`](@ref) and

@@ -1101,6 +1101,38 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`MINRESQLP(; maxiter = 30, forcing = EisenstatWalkerChoice2(), preconditioner = nothing)` is a
+  new exported matrix-free linear method for `Newton` on a `StationarityProblem` with `E == U`.**
+  It is MINRES-QLP (Choi, Paige and Saunders 2011, doi:10.1137/100787921) on the symmetric
+  Hessian block that is the Jacobian, and it stores no Krylov basis. On a singular Hessian it
+  returns the minimum-length least-squares solution in the Krylov space; on an incompatible system
+  in `Float32`, rounding can end the solve before that space holds it. `E == U` compares the
+  index sets as the problem stores them, so the same indices in another order raise an
+  `ArgumentError`; so do any other problem, a value iterate, a `preconditioner` other than
+  `nothing`, factor reuse, a `Refinement` and a `LevenbergMarquardt` globalization. The product is
+  a `JVPFunction` on the unknowns or, by default, the problem's automatic-differentiation
+  Hessian–vector product. `status.f_calls` and `status.jvp_calls` count the residual evaluations
+  and products exactly. `DogLeg` takes it, with its Cauchy point from two Hessian–vector products.
+  The `forcing` keyword of `Newton` configures it.
+
+- **`Steihaug(; radius = nothing)` is a new exported globalization: truncated conjugate gradients
+  (Steihaug 1983, doi:10.1137/0720042) for `Newton(; linsolve = MINRESQLP(), globalization =
+  Steihaug())`.** It minimises the model `q(d) = Fᴴd + ½dᴴJd` of the action inside a trust radius;
+  on negative curvature the step goes to the radius. A trial is accepted and the radius updated by
+  the ratio rule of `DogLeg` on the unsquared `‖F‖`. A first conjugate-gradient direction of
+  negative curvature predicts an increase of `‖F‖` and is never accepted, so a solve with
+  `Steihaug` does not converge to a root where the Hessian of `S` is indefinite, also from a start
+  close to it, and ends with `LINESEARCH_FAILED` (K131). `DogLeg` with `MINRESQLP` does not have
+  this limit: on the indefinite problem of `test/nonlinear/symkrylov.jl` in `Float64`, 20 starts
+  at each distance 1e-2, 1e-4 and 1e-6 from the root end `SUCCESS` 20/20 with `DogLeg` and
+  `LINESEARCH_FAILED` 20/20 with `Steihaug`.
+
+- **`GMRES` solves a matrix-free `StationarityProblem` with any index sets `E` and `U`.** Before,
+  `Newton` refused that case with an `ArgumentError`. With the problem's automatic-differentiation
+  product, a `jvp_eltype` other than `Nothing` is refused there with an `ArgumentError`, since that
+  Hessian–vector product is formed in the element type of the state. `f_calls`, `jvp_calls` and
+  `max_inner_iterations` now read the counts of a stationarity solver.
+
 - **`Newton(; best = true)` returns the iterate of the smallest `‖F‖₂` of a solve that fails.**
   The solve keeps the iterate of the smallest `‖F(x)‖₂` among `x₀` and every iterate that a step
   returns, the earliest of equal norms, and `finish!!` returns it in place of the last iterate

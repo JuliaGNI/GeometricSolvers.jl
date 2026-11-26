@@ -761,9 +761,11 @@ end
 """
     max_inner_iterations(solver)
 
-The largest count of GMRES inner iterations of any Newton step of the last solve of `solver`, a
-[`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref). It is at most
-the `maxiter` of the linear method.
+The largest count of inner iterations of any Newton step of the last solve of `solver`, a
+[`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref) or
+[`MINRESQLP`](@ref). It is at most the `maxiter` of the linear method, except under a
+[`Steihaug`](@ref) globalization, where the count of a step adds the conjugate-gradient iterations
+of every run of its trial loop.
 """
 function max_inner_iterations end
 
@@ -773,8 +775,9 @@ max_inner_iterations(ws::GMRESWorkspace) = ws.max_inner
     f_calls(solver)
 
 The number of evaluations of the residual `F` that the last solve of `solver` made, for a
-[`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref): the count that
-[`SolverStatus`](@ref) records, saturated there at `typemax(Int16)` and exact here below it.
+[`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref) or
+[`MINRESQLP`](@ref): the count that [`SolverStatus`](@ref) records, saturated there at
+`typemax(Int16)` and exact here below it.
 """
 function f_calls end
 
@@ -784,8 +787,9 @@ f_calls(ws::GMRESWorkspace) = ws.f_calls
     jvp_calls(solver)
 
 The number of Jacobian–vector products that the last solve of `solver` made, for a
-[`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref): the count that
-[`SolverStatus`](@ref) records, saturated there at `typemax(Int16)` and exact here below it.
+[`NonlinearSolver`](@ref) whose method is a [`Newton`](@ref) with [`GMRES`](@ref) or
+[`MINRESQLP`](@ref): the count that [`SolverStatus`](@ref) records, saturated there at
+`typemax(Int16)` and exact here below it.
 """
 function jvp_calls end
 
