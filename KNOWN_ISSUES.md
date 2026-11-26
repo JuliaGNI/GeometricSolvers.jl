@@ -1045,7 +1045,7 @@
 - **kind:** defect
 - **found:** 2026-11-25
 
-### K133 · `_pinv_adj_mul_r1` of a subnormal `Φ` and a normal `w` gives `NaN` where the true `(Φ⁺)ᴴ w` has entries above `floatmax`
+### K137 · `_pinv_adj_mul_r1` of a subnormal `Φ` and a normal `w` gives `NaN` where the true `(Φ⁺)ᴴ w` has entries above `floatmax`
 
 - **location:** `src/nonlinear/eliminate.jl:520` and `:543` (`_pinv_adj_mul_r1` of
   `StaticRectSVD` and `StaticSVD`)

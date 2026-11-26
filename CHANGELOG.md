@@ -46,7 +46,7 @@ so that a compat-only bump can be told apart from an interface change.
   stay: a subnormal right-hand side is not scaled up (K124), nor is a subnormal `w` of
   `_pinv_adj_mul_r1` (K129), the device `SVDFactorization(Float32)` of a subnormal `Float64`
   matrix gives `SINGULAR` (K125), and `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where
-  `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K133). A static
+  `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K137). A static
   LU, QR or LDLᵀ of a `0 × 0` matrix in another factor type, which threw an `ArgumentError` from
   the empty reduction, gives `SUCCESS` and `e = 0`. Two probes against `bf08120`, Julia 1.13.4:
   of 1 024 normal-range solves (every route, element type and factor, at scales `2^-60` to
