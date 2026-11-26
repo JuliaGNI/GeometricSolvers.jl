@@ -445,7 +445,7 @@ end
     A, b = nonsymmetric(T)
     b[2] = T(Inf)
     ws = workspace(M, fixed(M), b)
-    d, info = linear_solve!(M, ws, CountingMatrix(A), nothing, b, T(1e-6), 10)
+    _, info = linear_solve!(M, ws, CountingMatrix(A), nothing, b, T(1e-6), 10)
     @test !info.converged
     @test isnan(info.resnorm)
 end
