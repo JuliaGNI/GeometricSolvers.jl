@@ -45,19 +45,19 @@ so that a compat-only bump can be told apart from an interface change.
   matrix" of `test/linear/linearproblem.jl`), where LU, QR and Cholesky gave `SUCCESS` with a
   large error, LDLᵀ `NONFINITE`, and the static `SVDFactorization(Float32)` `SINGULAR`. The
   same-type `ldiv!!` of a factor with `e < 0` lifts a small right-hand side with the matrix: it
-  divides `r` by `2^k`, `k` the exponent of `r` clamped to `[e, 0]`, unless the headroom of
-  `rhs_exponent` below `floatmax` needs a larger `k`, so that a subnormal `r` keeps its bits
+  divides `r` by `2^k`, `k` the exponent of `r` clamped to `-exponent(floatmax)` and then to
+  `[e, 0]`, unless the headroom of `rhs_exponent` below `floatmax` needs a larger `k`, so that a
+  subnormal `r` keeps its bits
   (testsets "a subnormal b with a matrix near floatmin" and "a b near floatmax with a matrix of
   exponent below 0" of `test/linear/linearproblem.jl`). `r` is not lifted past the exponent 0, so
   the solve holds `2^(e - k) x`, never larger than the solution `x`, and the LU back substitution
   of `2^kA W`, `W` the Wilkinson growth matrix of size `n`, `kA < 0`, stays finite for a solution
   near `floatmax / 2^n`, as on `main` (testset "the LU solve of 2^kA W …"). A factor with
-  `e ≥ 0` solves as before, bit for bit. The static QR and SVD solves of `m < n` and the dense QR one take the same `k` for
-  `b` (testsets "m < n, …"): they took `b` as it is, which lost a subnormal `b` to 0 or to a
-  power of two of the solution and gave `NaN` or `NONFINITE` for some `b` near `floatmax`; the
-  1 260 rows with `b` in the normal range of a sweep of these solves keep their bits, but five
-  `ComplexF32` static SVD rows, which move by 2 ulp with the same `k`, and 20 static QR rows of
-  a solution above `floatmax`, `NONFINITE` before and after. The
+  `e ≥ 0` solves as before, bit for bit. The static QR and SVD solves of `m < n` and the dense
+  QR one take the same `k` for `b` (testsets "m < n, …"): they took `b` as it is, which lost a
+  subnormal `b` to 0 or to a power of two of the solution, and the dense QR solve of
+  `[2 1 0; 1 2 1]` and `b = 2^(emax - 1) (1, -2)` gave `NONFINITE` (testset "m < n, the dense QR
+  of a matrix of exponent above 0 and a b near floatmax"). The
   Cholesky solve of `[2t t; t t]`, `t = nextfloat(0)`, gives `(-1, 2)` within `8 eps κ₁`, where
   it gave `(-0.5, 1)`. The R1 Golub–Pereyra reduced Jacobian of
   `VariableProjection` (`_pinv_adj_mul_r1`) applies the static SVD's exponent to each coefficient

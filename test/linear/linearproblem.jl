@@ -605,10 +605,11 @@ end
 
     # `A = 3s I + s (e₁e₃ᵀ + e₃e₁ᵀ)` and `b = s (1, …, 1)` with `s = 2^10 t`, `t = nextfloat(0)`:
     # the solution `(1/4, 1/3, 1/4, 1/3, 1/3)` lies in the normal range. The factor of `A / 2^e`
-    # does too, and the solve lifts `b` by the same `2^-e`, so the triangular solves run in the
-    # normal range and meet a small multiple of `eps(R) κ₁`. Solved with `b` as it is, they form
-    # products of the size of `s/3` on the subnormal grid of spacing `t`, each with a relative
-    # error of up to `1.5 t/s`, `1.9e-4` here.
+    # does too, and the solve lifts `b` by `2^-k`, `k` the exponent of `b` clamped to
+    # `-exponent(floatmax(R))` and then to `[min(e, 0), 0]` (here `e + 1`), so the triangular
+    # solves run in the normal range on `2^(e - k) x = x / 2` and meet a small multiple of
+    # `eps(R) κ₁`. Solved with `b` as it is, they form products of the size of `s/3` on the
+    # subnormal grid of spacing `t`, each with a relative error of up to `1.5 t/s`, `1.9e-4` here.
     R = real(T)
     t = nextfloat(zero(R))
     s = ldexp(t, 10)
@@ -625,8 +626,10 @@ end
 
     # The exact solution of `[2t t; t t] x = (0, t)` is `(-1, 2)`. The factor of `A / 2^e` lies in
     # the normal range, `e` the exponent of `2t` clamped to `-exponent(floatmax(R))` and rounded
-    # down to an even one, and the solve lifts the right-hand side `(0, t)` by the same `2^-e`, so
-    # it runs in the normal range and meets a small multiple of `eps(R) κ₁`. Solved with `(0, t)`
+    # down to an even one, and the solve lifts the right-hand side `(0, t)` by `2^-k`, `k` the
+    # exponent of `t` clamped to `-exponent(floatmax(R))` and then to `[min(e, 0), 0]` (here
+    # `e + 1`), so it runs in the normal range on `2^(e - k) x = x / 2` and meets a small multiple
+    # of `eps(R) κ₁`. Solved with `(0, t)`
     # as it is, the forward substitution gives an entry of the size of `√(t 2^e)`, a subnormal whose
     # spacing `t` is a relative error of `√(t 2^-e) ≈ √(t floatmax(R))`. The factor of `A` unscaled
     # loses `L₂₁² = t/2` below the smallest subnormal and gives `(-0.5, 1)`, a relative error of 0.5.
@@ -730,6 +733,22 @@ end
     b = fill(T(R(0.6) * floatmax(R)), 2)
     κ = cond1(Matrix(A'))
     x, st, _ = lp_solve(route, QRFactorization(), A, b)
+    @test st.code == SUCCESS
+    @test all(isfinite, x)
+    @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
+end
+
+@testset "m < n, the dense QR of a matrix of exponent above 0 and a b near floatmax: $T" for T in ELTYPES
+
+    # `A = [2 1 0; 1 2 1]` has the exponent `e = 1`, and `b = 2^(emax - 1) (1, -2)` gives the
+    # finite minimum-norm solution `2^(emax - 1) (1, -1, -1)`. Solved with `b` as it is, the solve
+    # overflows; the headroom bound divides `b` by `2^k`, `k = 3`, and the result is multiplied by
+    # `2^(k - e)`.
+    R = real(T)
+    A = T.(R[2 1 0; 1 2 1])
+    b = T.(ldexp.(R[1, -2], exponent(floatmax(R)) - 1))
+    κ = cond1(Matrix(A'))
+    x, st, _ = lp_solve("Array", QRFactorization(), A, b)
     @test st.code == SUCCESS
     @test all(isfinite, x)
     @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
