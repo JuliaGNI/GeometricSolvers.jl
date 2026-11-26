@@ -61,9 +61,10 @@ true
 ```
 
 The test reads the factorisation that a step takes at its start point. Where the test passes
-there and fails at the end of the step, the solve returns the start point of the step, unless that
-point is `x₀`. A step that leaves a saddle of ``\|F\|^2``, which the Gauss–Newton model reads as a
-minimum, so ends the solve at the saddle; [`solve!!`](@ref) states the rule.
+there and fails at the end of the step, and the step does not lower ``\|F\|``, the solve returns
+the start point of the step, unless that point is `x₀`. A step that lowers ``\|F\|`` shows that its
+start point is no minimum, such as a saddle of ``\|F\|^2`` that the Gauss–Newton model reads as a
+minimum, so the solve goes on from the end of that step; [`solve!!`](@ref) states the rule.
 
 [`LevenbergMarquardt`](@ref) is the damped globalization of the same step; see
 [Globalization](@ref globalization).
