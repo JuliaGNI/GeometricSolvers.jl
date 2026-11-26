@@ -801,21 +801,23 @@
 - **kind:** defect
 - **found:** #108
 
-### K109 · No public solve is known to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.promoted` on that return
+### K109 · No public solve is known to fail a step rule or to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.step_failures` and `status.promoted` on that return
 
-- **location:** `src/nonlinear/solver.jl:83` (`discarded_step_status`, which takes `promoted`
-  from the status after `record` folds in the discarded step)
-- **evidence:** a trace of the loop of `solve!!` up to the discard return, on the
-  mirror-symmetric saddle problem (b) of the testset "a step that leaves a stationary start point
-  returns the start point" under seven globalizations, six perturbations and `Float64` and
-  `Float32` discards a step in 77 of 84 solves, and records `info.promoted == false` on each of
-  them (Julia 1.13.4, tree of `126ea3b`). The step-rule failures of a discarded step are
-  witnessed (`StrongWolfe(; maxiter = 1)` gives `step_failures == 1`, `Bisection(; maxiter = 1)`
-  gives `2`), and the promotion takes the same path, but only the unit test of
-  `discarded_step_status` with synthetic statuses reaches `promoted == true` there.
+- **location:** `src/nonlinear/solver.jl:83` (`discarded_step_status`, which takes
+  `step_failures` and `promoted` from the status after `record` folds in the discarded step)
+- **evidence:** the solve discards only a step that does not lower `‖F‖`. A count of the calls
+  of `discarded_step_status` on the mirror-symmetric saddle problem (b) of the testset "a step
+  that leaves a stationary start point returns the start point", under `Static`, `Backtracking`,
+  `StrongWolfe`, `StrongWolfe(; maxiter = 1)`, `Bisection(; maxiter = 1)`, `DogLeg` and
+  `LevenbergMarquardt`, six perturbations and `Float64` and `Float32`, on `SVector` iterates,
+  finds no discard in the 84 solves (Julia 1.13.4). The solves of that
+  testset that discard a step, on the problems (a) and (c), take the full steps of `Static`, which
+  fail no step rule and do not promote, so only the unit test of `discarded_step_status` with
+  synthetic statuses reaches `step_failures == 2` and `promoted == true` there.
 - **kind:** missing test
 - **found:** 2026-11-24, a limit of the decision that tests the promotion on this return with
-  synthetic statuses only
+  synthetic statuses only; 2026-11-25 for the step-rule failures, a limit of the decision that
+  the solve discards only a step that does not lower `‖F‖`
 
 ### K110 · The static LU and QR factors solve a subnormal matrix with `SUCCESS` and a large error, and the static `SVDFactorization(Float32)` gives `SINGULAR`
 
@@ -1014,6 +1016,31 @@
   `main`.
 - **kind:** defect
 - **found:** #113
+
+### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
+
+- **location:** `src/nonlinear/solver.jl:277` (the stationarity test of `solve!!` after a step,
+  which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
+  at the floor of the radius)
+- **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
+  stationary start point returns the start point" in `test/nonlinear/leastsquares.jl`, with
+  `GaussNewton(; globalization = DogLeg())`, six perturbations of the data by a few ULPs and
+  `SVector`, `Array` and `JLArray` iterates, the solve returns the first iterate near the saddle
+  (`u = 1`, `|v|` from `6.0f-6` to `1.2f-5` in `Float32` and from `5.6e-12` to `2.2e-11` in
+  `Float64`, where the minima are near `v = ±1`), with `SUCCESS`, `stationary == true`,
+  `iterations == 2` and `step_failures == 1` in 9 of the 18 `Float32` solves (perturbations 1–3)
+  and 15 of the 18 `Float64` solves (perturbations 1–5); the other solves reach a minimum near
+  `v = ±1`. The tree of `8eddb7c` gives the same outcome in each of the 216 solves of the six
+  methods of that testset (Julia 1.13.4). The model reduction of the step from the first iterate
+  is at the rounding level of `‖r‖`, so `DogLeg` rejects every trial down to the floor of its
+  radius and returns `LINESEARCH_FAILED` with a zero step. `solve!!` stops on such a step only
+  where the stationarity test `‖Jᴴ F‖ / (‖J‖_F ‖F‖) ≤ g_tol` fails, and that test holds at the
+  saddle, so the solve ends on it with `SUCCESS`. That test reads no curvature, so it cannot tell
+  the saddle from a minimum. The testset asserts for each `DogLeg` solve only that its status
+  holds for the point it returns, not that it reaches a minimum.
+- **kind:** defect
+- **found:** 2026-11-25, the review of the branch that returns the step start only where the
+  discarded step does not lower `‖F‖`
 
 ### K128 · A line search returns `NONFINITE` at a start whose residual norm is finite but above `√floatmax`, because its merit `norm2(F)` overflows
 
