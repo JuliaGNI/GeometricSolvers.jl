@@ -1060,7 +1060,8 @@ so that a compat-only bump can be told apart from an interface change.
   `Newton(; reuse = k)` with a `GMRES` that has a preconditioner refreshes it at the first step,
   every `k` steps after and at the step after a `STALLED` step or an inner solve that reached its
   cap, with no retry within a step; without a preconditioner, and with `BiCGStab`, `DQGMRES` or
-  `MINRESQLP`, `reuse` still raises an `ArgumentError`, whose message now names the exception.
+  `MINRESQLP`, `reuse` still raises an `ArgumentError`. The message of the refusal for a
+  matrix-free method other than `MINRESQLP` now names the exception.
 
 - **The standard test set has one more column, `Newton Backtracking Float32-basis GMRES`,** after
   `Newton Backtracking DQGMRES`: 18 columns and 2412 cells. Its 134 cells are new in
