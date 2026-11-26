@@ -23,8 +23,7 @@ one of [`LUFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`
 `nothing` or a float type. Another method, such as [`GMRES`](@ref), and a precision marker such as
 [`TF32`](@ref) raise an `ArgumentError`.
 
-- `m == n`: every factor type; [`CholeskyFactorization`](@ref) on a device array raises an
-  `ArgumentError`, because it has no device factor.
+- `m == n`: every factor type, on the host and on a device array.
 - `m > n`: the least-squares solution through `QRFactorization` and `SVDFactorization`, the
   minimum-norm one where the rank of the SVD is below `n`. `LUFactorization`,
   `LDLTFactorization` and `CholeskyFactorization` raise an `ArgumentError` for `m ≠ n`.
@@ -104,12 +103,15 @@ The factorised [`LinearProblem`](@ref) that `init(prob, method)` returns.
 solves `A x = b` with its factors and returns the solution `x` and a [`LinearStatus`](@ref). `b`
 has `m` entries, the element type of `A` and its storage: a static vector for a solver of a static
 matrix, and an array of the same `get_backend` for a dense or device solver. Another length raises
-a `DimensionMismatch`, and another element type or storage an `ArgumentError`. `x` has `n` entries
-in the element type of `A`: a new `SVector` for a static matrix, and the buffer `solver.x` for a
-dense or device matrix, which the next `solve!` overwrites. It is the solution, the least-squares
-solution or the minimum-norm solution that [`LinearProblem`](@ref) states for the shape of `A` and
-the method. Every entry of `x` is `NaN` where the status is `SINGULAR`, where `A` is not finite,
-and where `b` is not finite. [`refactorize!!`](@ref) factorises a new matrix with the solver.
+a `DimensionMismatch`, and another element type or storage, or an axis that does not start at 1,
+an `ArgumentError`. `x` has `n` entries in the element type of `A`: a new `SVector` for a static
+matrix, and the buffer `solver.x` for a dense or device matrix, which the next `solve!` overwrites.
+`b` may be `solver.x` itself; a `b` that shares memory with `solver.x` otherwise, such as a view
+of it, is copied before the solve, which allocates. `x` is the solution, the least-squares
+solution or the minimum-norm solution that [`LinearProblem`](@ref) states for the shape of `A`
+and the method. Every entry of `x` is `NaN` where the status is `SINGULAR`, where `A` is not
+finite, and where `b` is not finite.
+[`refactorize!!`](@ref) factorises a new matrix with the solver.
 
 On a static matrix the solver is a value, `isbits` for an `isbits` element type; on a dense or
 device array it holds the buffers that `solve!` and `refactorize!!` reuse.
@@ -278,6 +280,7 @@ function check_rhs(s::LinearSolver{T}, b::AbstractVector) where {T}
         "the right-hand side has $(length(b)) entries, the matrix $(s.m) rows"))
     eltype(b) === T || throw(ArgumentError(
         "the right-hand side has the element type $(eltype(b)), the matrix $T"))
+    Base.require_one_based_indexing(b)
     return nothing
 end
 
@@ -309,12 +312,17 @@ function solve!(s::ArrayLinearSolver{T, W}, b::AbstractVector) where {T, W}
     s.finite || return fill!(x, T(NaN)), LinearStatus(NONFINITE, Int32(-1))
     fac = s.factor
     returncode(fac) == SUCCESS || return fill!(x, T(NaN)), LinearStatus(SINGULAR, Int32(-1))
+    # read before the solve writes `x`, which `b` may alias
+    finite_b = all(isfinite, b)
+    # the substitutions and a device copy write an entry of `x` before they read every entry of `b`,
+    # so a `b` that overlaps `x` and is not `x` itself is solved from a copy
+    b === x || (b = Base.unalias(x, b))
     if W
         wide_solve!(x, fac, b, s.y, s.scale_exponent + fac.scale_exponent)
     else
         ldiv!!(x, fac, b)
     end
-    all(isfinite, b) || fill!(x, T(NaN))
+    finite_b || fill!(x, T(NaN))
     return x, LinearStatus(all(isfinite, x) ? SUCCESS : NONFINITE, factor_rank(fac))
 end
 

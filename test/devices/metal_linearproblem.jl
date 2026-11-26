@@ -56,9 +56,10 @@ if Metal.functional() && !on_virtual_gpu()
 
     @testset "LinearProblem on Metal: $(nameof(typeof(method))), $m × $n" for (method, m, n) in (
         (LUFactorization(), 4, 4), (QRFactorization(), 4, 4), (SVDFactorization(), 4, 4),
-        (LDLTFactorization(), 4, 4), (QRFactorization(), 5, 3), (SVDFactorization(), 5, 3),
-        (SVDFactorization(), 3, 5))
-        A = method isa LDLTFactorization ? metal_spd(4) : phase_free_wellcond(m, n)
+        (LDLTFactorization(), 4, 4), (CholeskyFactorization(), 4, 4),
+        (QRFactorization(), 5, 3), (SVDFactorization(), 5, 3), (SVDFactorization(), 3, 5))
+        A = method isa Union{LDLTFactorization, CholeskyFactorization} ? metal_spd(4) :
+            phase_free_wellcond(m, n)
         b = Float32.(1:m)
         solver = init(LinearProblem(MtlArray(A)), method)
         x, st = solve!(solver, MtlArray(b))
