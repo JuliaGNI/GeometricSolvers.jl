@@ -22,8 +22,12 @@ which each method applies.
 
 ### Three regimes
 
-A solve takes a problem, an initial iterate `x₀`, a method and the parameters `p`. The storage of
-`x₀` selects the regime of the solve. The problem has no flag for it.
+A solve takes a problem, an initial iterate `x₀`, a method and the parameters `p`. The entry point
+and the storage of `x₀` select the regime of the solve; the problem has no flag for it.
+`solve_batch!` always solves a batch (R2): it treats each entry of its array as a system of its
+own. `solve` takes R1 for a `Number` or an `SVector` and R3 for any other vector, so a
+`Vector{Float64}` is one system of `n` unknowns for `solve` and `n` scalar systems for
+`solve_batch!`.
 
 | regime | iterate `x₀` | entry point | where it runs |
 |:--|:--|:--|:--|
