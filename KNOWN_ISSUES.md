@@ -704,7 +704,7 @@
 
 ### K103 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
 
-- **location:** `src/linear/gmres.jl:547` (`linres` from the rotated right-hand side)
+- **location:** `src/linear/gmres.jl:599` (`linres` from the rotated right-hand side)
 - **evidence:** with `rng = Xoshiro(1)`, `A = T.(Diagonal(1:6) + 0.1 randn(rng, 6, 6))`, then
   `b = T.(randn(rng, 6))`, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32`
   reports `resnorm = 8.7e-17`, while the true residual is `‖b − A d‖ = 5.8e-8 ‖b‖`; in `Float64`
@@ -976,7 +976,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1041` (`stored_factors`), `:1057` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1055` (`stored_factors`), `:1071` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -991,10 +991,27 @@
 - **location:** `test/nonlinear/krylov.jl:1334`
 - **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
   them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
-  (`src/nonlinear/newton.jl:211–214`, `with_forcing`). The comment was already false at `9023f76`,
+  (`src/nonlinear/newton.jl:218–221`, `with_forcing`). The comment was already false at `9023f76`,
   for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
 - **kind:** docs
 - **found:** 2026-11-26
+
+### K138 · A matrix-free Newton step with a `Float32` iterate and the default `Static()` or `Backtracking()` infers `Union{StepInfo{Float32}, StepInfo{Float64}}`
+
+- **location:** `src/globalization/static.jl:20` (`Static(α::Real = 1.0)`),
+  `src/globalization/backtracking.jl:46` (`Backtracking(; c₁ = 1e-4, p = 0.5)`)
+- **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
+  `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
+  while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2080` for `GMRES`, `:2325` for `BiCGStab` and
+  `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
+  step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
+  and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
+  `Static()`, `Backtracking()` in a fresh process with `--check-bounds=auto` (Julia 1.13.4, at
+  b2c3bba). The cause is in the two default constructors and not in a step, so the `GMRES` step
+  infers the same union.
+- **kind:** defect
+- **found:** PR #127
 
 ### K139 · The test of the summary of the standard test set finds the line of a column by its name and a space, so a column whose name is another column's name, a space and more matches two lines
 

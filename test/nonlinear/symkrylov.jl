@@ -1,6 +1,6 @@
 # R5 on a symmetric Jacobian: the MINRES-QLP linear method of a matrix-free `StationarityProblem`
 # with `E == U`, the Steihaug trust region on the model of `S`, the matrix-free `DogLeg` on it,
-# and `GMRES` on a `StationarityProblem` with `E ≠ U`.
+# and `GMRES`, `BiCGStab` and `DQGMRES` on a `StationarityProblem` with `E ≠ U`.
 #
 # Each solve runs over `REAL_ELTYPES`, and the matrix-free ones on `Array` and `JLArray`. The
 # actions of the device leg reach their entries by gathers and reductions only, since `x[i]` is
@@ -14,7 +14,9 @@ using Test
 
 using GeometricSolvers
 using StaticArrays: SVector
-using GeometricSolvers: Backtracking, Bisection, DogLeg, FixedForcing, GMRES, JVPFunction,
+using GeometricSolvers: Backtracking, BiCGStab, Bisection, DogLeg, DQGMRES, FixedForcing,
+                        GMRES,
+                        JVPFunction,
                         LevenbergMarquardt, MINRESQLP, NONFINITE, Refinement,
                         LINESEARCH_FAILED, MAXITERS, Newton, Steihaug, SUCCESS,
                         StationarityProblem,
@@ -941,6 +943,23 @@ end
             @test_throws r"^ArgumentError: a Newton with MINRESQLP solves the symmetric system of a StationarityProblem with E == U, the same indices in the same order; got E = \[1, 2\] and U = \[3, 4\], whose Jacobian is not symmetric: use GMRES\(\)$" solve(
                 prob, copy(x₀), Newton(; linsolve = MINRESQLP()))
         end
+    end
+
+    @testset "Newton with $(nameof(M)) on a StationarityProblem with E ≠ U, $AT, $T" for M in (
+            BiCGStab, DQGMRES),
+        T in REAL_ELTYPES, AT in ARRAY_BACKENDS
+        count = ProductCount(0)
+        prob = nonsymmetric_problem(AT, T)
+        x₀ = AT(T[0.7, -1.3, 0.6, -0.3])
+        m = Newton(; linsolve = M(; forcing = FixedForcing(1e-6)),
+            jacobian = nonsymmetric_jvp(AT, T, count))
+        x, st = solve(prob, copy(x₀), m)
+        @test st.code == SUCCESS
+        @test rnorm(Array(x)[3:4] .- T.(U_NONSYM)) <= sqrt(eps(T))
+        # the entries outside U stay
+        @test Array(x)[1:2] == T[0.7, -1.3]
+        @test st.jvp_calls == count.n
+        @test st.jvp_calls > 0
     end
 
     @testset "GMRES on a StationarityProblem refuses a jvp_eltype" begin
