@@ -87,9 +87,9 @@ Adapt.@adapt_structure DQGMRES
 
 # The workspace of one DQGMRES solve: the ring `V` of `m + 1` basis vectors and the ring `P` of `m`
 # directions, the solution `d`, the preconditioned basis vector `z`, the product `w` and the
-# right-hand side `bb`, in the storage of the iterate; on the host the band `c` of `m + 2` entries of
-# the current Hessenberg column, rows `j - m` to `j + 1`, and the rings `cs` and `sn` of the last
-# `m` rotations; and the counters of a solve, as in `MINRESQLPWorkspace`.
+# right-hand side `bb`, in the storage of the iterate; on the host the band `c` of `m + 2` entries
+# of the current Hessenberg column, rows `j - m` to `j + 1`, and the rings `cs` and `sn` of the
+# last `m` rotations; and the counters of a solve, as in `MINRESQLPWorkspace`.
 mutable struct DQGMRESWorkspace{T, R <: Real, M, V, SR, ST}
     V::M
     P::M

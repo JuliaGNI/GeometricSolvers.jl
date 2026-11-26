@@ -72,9 +72,9 @@ Adapt.@adapt_structure BiCGStab
 
 # The workspace of one BiCGStab solve: the solution `d`, the residual `r` of the scaled
 # recurrence, which holds `s` after the half step, the shadow residual `rh`, the direction `p`, its
-# preconditioned `ph`, the product `v = J ph`, the preconditioned half-step residual `sh`, its product
-# `t`, and the right-hand side `bb`, all in the storage of the iterate; and the counters of a solve,
-# as in `MINRESQLPWorkspace`.
+# preconditioned `ph`, the product `v = J ph`, the preconditioned half-step residual `sh`, its
+# product `t`, and the right-hand side `bb`, all in the storage of the iterate; and the counters of
+# a solve, as in `MINRESQLPWorkspace`.
 mutable struct BiCGStabWorkspace{T, R <: Real, V}
     d::V
     r::V

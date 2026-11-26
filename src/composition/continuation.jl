@@ -88,7 +88,8 @@ and the step length of every step of the last solve.
 lengths satisfy `0 < h_min ≤ h₀ ≤ h_max`, with `h_min` and `h₀` finite, else the constructor
 raises an `ArgumentError`; [`ToReal`](@ref) converts them to the real type of the iterate. The
 path and its bordered systems are dense, in `Vector` and `Matrix` storage of the iterate's
-element type, so a solve allocates; the iterate is real and on the host, and a complex or a device array iterate raises an `ArgumentError` in `init_state`.
+element type, so a solve allocates; the iterate is real and on the host, and a complex or a
+device array iterate raises an `ArgumentError` in `init_state`.
 Like every combinator, `Continuation` refuses a `ForwardDiff.Dual` in `x₀` or `p` in
 [`solve`](@ref) and a [`LeastSquaresProblem`](@ref) in `init_state`.
 """

@@ -100,7 +100,7 @@ function array_sizes(ws)
      if getfield(ws, f) isa AbstractArray]
 end
 
-# ─── Clause 1: the Newton step to the forcing tolerance ─────────────────────
+# ─── The Newton step to the forcing tolerance ───────────────────────────────
 
 @testset "The Newton step meets the forcing tolerance on the true residual, $M, $AT, $T" for M in FIXED_METHODS,
     T in REAL_ELTYPES, AT in ARRAY_BACKENDS
@@ -130,7 +130,7 @@ end
     @test norm(Array(x) .- 1) <= 100 * sqrt(eps(T))
 end
 
-# ─── Clause 2: products per iteration, and a fixed workspace ────────────────
+# ─── Products per iteration, and a fixed workspace ──────────────────────────
 
 @testset "BiCGStab takes two products per iteration, DQGMRES one, $T" for T in REAL_ELTYPES
     A, b = nonsymmetric(T)
@@ -207,7 +207,7 @@ end
     @test 0 < GeometricSolvers.max_inner_iterations(solver) <= 20
 end
 
-# ─── Clause 3: the four guards of BiCGStab ──────────────────────────────────
+# ─── The four guards of BiCGStab ────────────────────────────────────────────
 
 # Each system makes one scalar of the recurrence exactly zero in Float32 and in Float64: `σ = r̂ᴴv`
 # at the first product, `tᴴt` and `ω` at the second, and `ρ = r̂ᴴr` after the first iteration. In
@@ -610,7 +610,7 @@ end
     inner = bb -> linear_solve!(M, ws, op, nothing, bb, T(1e-10), 8)
     @inferred linear_solve!(M, ws, op, nothing, b, T(1e-10), 8)
     @test allocations(collect, b) > 0
-    # `--check-bounds=yes`, which `Pkg.test` sets up to Julia 1.12, skips the measurement
+    # skipped where a run forces `--check-bounds=yes`
     if Base.JLOptions().check_bounds != 1
         @test allocations(inner, b) == 0
     end
@@ -661,7 +661,7 @@ end
     @test norm(d - x_true) <= 1000 * tol * norm(x_true)
 end
 
-# ─── Clause 4 and 5: the refusals of the trait ───────────────────────────────
+# ─── The refusals of the trait ──────────────────────────────────────────────
 
 @testset "The matrix_free trait" begin
     @test matrix_free(GMRES())
@@ -699,7 +699,8 @@ end
         block)
 end
 
-# The refusals of the state of a `Newton` with `GMRES` name the method.
+# The refusals of the state that a `Newton` with `BiCGStab` or `DQGMRES` shares with `GMRES` name
+# the method.
 @testset "Newton with $M refuses what has no square vector system" for M in FIXED_METHODS
     name = string(nameof(M))
     m = Newton(; linsolve = fixed(M))

@@ -9,13 +9,12 @@ Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) an
 [`CholeskyFactorization`](@ref), [`QRFactorization`](@ref), [`SVDFactorization`](@ref), the
 matrix-free [`GMRES`](@ref), [`BiCGStab`](@ref), [`DQGMRES`](@ref) and [`MINRESQLP`](@ref), or
 [`KroneckerFactorization`](@ref) for the stage system of an implicit Runge–Kutta method),
-globalization `globalization` ([`Static`](@ref),
-[`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust regions
-[`DogLeg`](@ref) and [`Steihaug`](@ref), the damped step [`LevenbergMarquardt`](@ref) or, for a
-[`StationarityProblem`](@ref), the pseudo-transient continuation [`PseudoTransient`](@ref)),
-Jacobian selector `jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref),
-[`Refinement`](@ref) or [`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and
-factor-reuse period `reuse`.
+globalization `globalization` ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref),
+[`StrongWolfe`](@ref), the trust regions [`DogLeg`](@ref) and [`Steihaug`](@ref), the damped
+step [`LevenbergMarquardt`](@ref) or, for a [`StationarityProblem`](@ref), the pseudo-transient
+continuation [`PseudoTransient`](@ref)), Jacobian selector `jacobian`, iterative refinement
+`refinement` ([`NoRefinement`](@ref), [`Refinement`](@ref) or [`GMRESRefinement`](@ref)),
+diagonal regularisation `regularization`, and factor-reuse period `reuse`.
 
 # Fields
 
@@ -42,11 +41,11 @@ factor-reuse period `reuse`.
   value iterate (a `Number` or a `StaticArray`), and `J!(J, x, p)`, which writes it into `J`, on
   an array. A `Newton` with a matrix-free linear method ([`matrix_free`](@ref)) refuses a
   callable with an `ArgumentError`, because its solve forms no Jacobian matrix.
-  `AutoForwardDiff()` writes a dense
-  Jacobian only, so with a sparse `jacobian_prototype` it raises an `ArgumentError` where the state
-  is built; such a problem takes an analytic `J` or an `AutoSparse` back end. Adapting `Newton` with
-  [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`) converts floating-point values captured inside a
-  `jacobian` closure to `R`, while a function with no captured floats passes through unchanged.
+  `AutoForwardDiff()` writes a dense Jacobian only, so with a sparse `jacobian_prototype` it
+  raises an `ArgumentError` where the state is built; such a problem takes an analytic `J` or an
+  `AutoSparse` back end. Adapting `Newton` with [`ToReal`](@ref) (`adapt(ToReal{R}(), m)`)
+  converts floating-point values captured inside a `jacobian` closure to `R`, while a function
+  with no captured floats passes through unchanged.
 - `refinement::RF`: the refinement setting ([`NoRefinement`](@ref), [`Refinement`](@ref) or
   [`GMRESRefinement`](@ref)). A `Refinement` refines the direction of the system that the factor
   solves, the regularised ``(J + μ I) d = -F`` when `μ > 0`; a `GMRESRefinement` runs the same

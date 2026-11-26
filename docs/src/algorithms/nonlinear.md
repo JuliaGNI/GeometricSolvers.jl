@@ -149,9 +149,9 @@ true
 A non-`SUCCESS` primal solve returns `NaN` partials. The accuracy of the tangent is that of the
 factor element type of `linsolve`. [`init`](@ref) and [`solve!`](@ref) refuse dual inputs. A
 [`StationarityProblem`](@ref), a [`LeastSquaresProblem`](@ref), a matrix-free solve
-([`matrix_free`](@ref)), the combinators and the preconditioning methods have no implicit differentiation, and
-`solve` raises an `ArgumentError` for a dual input there. A [`Deflated`](@ref) problem
-differentiates the undeflated problem at the root it found.
+([`matrix_free`](@ref)), the combinators and the preconditioning methods have no implicit
+differentiation, and `solve` raises an `ArgumentError` for a dual input there. A
+[`Deflated`](@ref) problem differentiates the undeflated problem at the root it found.
 
 ## Methods on the other pages
 
