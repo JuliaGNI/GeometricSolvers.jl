@@ -2113,9 +2113,14 @@ end
 # that type. Under a `Steihaug` globalization the truncated conjugate gradients take the place of
 # the MINRES-QLP solve, and the workspace keeps the counts.
 
-@inline gmres_counts(ws::MINRESQLPWorkspace) = (ws.f_calls, ws.jvp_calls)
+# The workspaces whose counters and forcing record these hooks keep in the fields of the same
+# names: those of `MINRESQLP`, `BiCGStab` and `DQGMRES`.
+const CountedKrylovWorkspace{T, R} = Union{
+    MINRESQLPWorkspace{T, R}, BiCGStabWorkspace{T, R}, DQGMRESWorkspace{T, R}}
 
-@inline function reset_gmres!(ws::MINRESQLPWorkspace{T, R}, fnorm₀) where {T, R}
+@inline gmres_counts(ws::CountedKrylovWorkspace) = (ws.f_calls, ws.jvp_calls)
+
+@inline function reset_gmres!(ws::CountedKrylovWorkspace{T, R}, fnorm₀) where {T, R}
     ws.f_calls = Int32(1)
     ws.jvp_calls = Int32(0)
     ws.iterations = Int32(0)
@@ -2127,7 +2132,7 @@ end
     return nothing
 end
 
-@inline function close_gmres!(ws::MINRESQLPWorkspace{T, R}) where {T, R}
+@inline function close_gmres!(ws::CountedKrylovWorkspace{T, R}) where {T, R}
     ws.prev_fnorm = R(NaN)
     ws.last_eta = R(NaN)
     ws.linres = R(NaN)
@@ -2175,7 +2180,7 @@ end
 
 # The record of one step on the workspace: its inner iterations, its linear residual, its forcing
 # term and its residual norm, which the forcing term of the next step reads.
-@inline function record_inner!(ws::MINRESQLPWorkspace{T, R}, iterations, linres, η,
+@inline function record_inner!(ws::CountedKrylovWorkspace{T, R}, iterations, linres, η,
         fnorm) where {T, R}
     ws.iterations = Int32(iterations)
     ws.max_inner = max(ws.max_inner, Int32(iterations))
@@ -2272,29 +2277,6 @@ end
 
 const FixedKrylovWorkspace = Union{BiCGStabWorkspace, DQGMRESWorkspace}
 
-@inline gmres_counts(ws::FixedKrylovWorkspace) = (ws.f_calls, ws.jvp_calls)
-
-@inline function reset_gmres!(ws::FixedKrylovWorkspace, fnorm₀)
-    R = typeof(ws.prev_fnorm)
-    ws.f_calls = Int32(1)
-    ws.jvp_calls = Int32(0)
-    ws.iterations = Int32(0)
-    ws.max_inner = Int32(0)
-    ws.step = Int32(0)
-    ws.prev_fnorm = R(fnorm₀)
-    ws.last_eta = zero(R)
-    ws.linres = zero(R)
-    return nothing
-end
-
-@inline function close_gmres!(ws::FixedKrylovWorkspace)
-    R = typeof(ws.prev_fnorm)
-    ws.prev_fnorm = R(NaN)
-    ws.last_eta = R(NaN)
-    ws.linres = R(NaN)
-    return nothing
-end
-
 @inline krylov_solve!(
     ws::BiCGStabWorkspace, op, P, b, bnorm, tol, maxiter) = bicgstab_solve!(
     ws, op, P, b, bnorm, tol, maxiter)
@@ -2319,12 +2301,7 @@ end
     map!!(-, ws.bb, Fx)
     op = R5Operator(state.jvpprep, prob, x, p)
     d, inner = krylov_solve!(ws, op, g.preconditioner, ws.bb, fnorm, η, g.maxiter)
-    ws.iterations = inner.iterations
-    ws.max_inner = max(ws.max_inner, inner.iterations)
-    ws.linres = inner.resnorm
-    ws.last_eta = η
-    ws.prev_fnorm = fnorm
-    ws.step += one(Int32)
+    record_inner!(ws, inner.iterations, inner.resnorm, η, fnorm)
     failures = inner.iterations >= g.maxiter && !inner.converged ? Int32(1) : Int32(0)
     # a non-finite product leaves a residual of `NaN`: the step ends before a globalization reads
     # the direction

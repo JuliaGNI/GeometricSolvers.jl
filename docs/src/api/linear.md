@@ -174,7 +174,7 @@ takes the forcing terms of `GMRES` and no preconditioner, and the trust regions
 [`DogLeg`](@ref), whose Cauchy point takes two Hessian–vector products, and [`Steihaug`](@ref).
 
 [`BiCGStab`](@ref) and [`DQGMRES`](@ref) solve the step of a `Newton` with storage that does not
-grow with the iteration count. `BiCGStab` (van der Vorst 1992, doi:10.1137/0913035) keeps eight
+grow with the iteration count. `BiCGStab` (van der Vorst 1992, doi:10.1137/0913035) keeps nine
 vectors, takes two products per iteration and minimises no residual; where one of its four
 divisors is exactly zero, it stops and returns the last finite iterate with no convergence.
 `DQGMRES` (Saad and Wu 1996,

@@ -237,12 +237,30 @@ const GUARD_SYSTEMS = (
     @test isapprox(info.resnorm, norm(b - A * d); rtol = 8 * eps(T), atol = 8 * eps(T))
 end
 
+# The same systems as the Newton problems `F(x) = A x - b` from zero: the step goes on with the
+# direction of the guard, as after a `GMRES` breakdown on a singular operator. On the `ω` system the
+# direction `α p̂ = e₁` leaves `‖b - A d‖ = ‖b‖`, and the line search takes the forcing term as the
+# attained tolerance, which the ratio `1` of the direction exceeds; the solve then succeeds.
+@testset "The Newton step goes on after the BiCGStab guard on $name, $T" for (name, (
+        A0, b0)) in GUARD_SYSTEMS,
+    T in REAL_ELTYPES
+
+    A = T.(A0)
+    b = T.(b0)
+    prob = NonlinearProblem((r, x, q) -> (mul!(r, A, x); r .-= b; r))
+    x, st = solve(prob, zeros(T, length(b)),
+        Newton(; linsolve = BiCGStab(), globalization = Backtracking()); max_iterations = 5)
+    @test st.code != NONFINITE
+    @test all(isfinite, x)
+    name == "ω" && @test st.code == SUCCESS
+end
+
 # ─── The conjugated inner products ──────────────────────────────────────────
 
 # One BiCGStab iteration from zero: `α = bᴴb / bᴴAb`, `s = b - α A b`, `t = A s` and the
 # least-squares `ω = tᴴs / tᴴt`, whose residual `s - ω t` is the smallest along `t`. An inner
 # product without the conjugate gives another `α` or `ω`, and a larger residual.
-@testset "BiCGStab conjugates its inner products, $T" for T in (ComplexF32, ComplexF64)
+@testset "BiCGStab conjugates its inner products, $T" for T in filter(T -> T <: Complex, ELTYPES)
     A = T[2+1im 1-2im 0; 0.5im 3 -1+1im; 1 -1im 1+2im]
     b = T[1 + 2im, -1im, 2 - 1im]
     α = dot(b, b) / dot(b, A * b)
@@ -256,6 +274,25 @@ end
     @test info.iterations == 1
     @test isapprox(norm(b - A * d), expected; rtol = 100 * eps(real(T)))
     @test isapprox(info.resnorm, expected; rtol = 100 * eps(real(T)))
+end
+
+# `ρ₊ = r̂ᴴr` enters from the second iteration on, through `β`. On the complex system of the full
+# DQGMRES window below, the conjugated recurrence meets `1e-5` within `CONJUGATED_CAP` iterations;
+# without the conjugate it takes more than 40 in both precisions.
+const CONJUGATED_CAP = 12
+
+@testset "BiCGStab conjugates ρ over several iterations, $T" for T in filter(
+    T -> T <: Complex, ELTYPES)
+    A, b = nonsymmetric(T)
+    A = A .+ T(0.5im) .* transpose(A)
+    b = b .+ T(1im) .* reverse(b)
+    tol = real(T)(1e-5)
+    ws = init_bicgstab_workspace(BiCGStab(), b)
+    d, info = bicgstab_solve!(ws, CountingMatrix(A), nothing, b, rnorm(b), tol,
+        CONJUGATED_CAP)
+    @test info.converged
+    @test info.iterations > 1
+    @test norm(b - A * d) <= 2 * tol * norm(b)
 end
 
 # ─── The right preconditioner ───────────────────────────────────────────────
@@ -291,20 +328,22 @@ end
     @test norm(b - A * d) <= 2 * tol * norm(b)
 end
 
-@testset "The forcing and preconditioner keywords of Newton take $M" for M in FIXED_METHODS
-    P = DiagonalRightPreconditioner(Ref(0), [2.0, 0.5, 3.0, 1.5, 0.25, 4.0, 1.0, 2.0])
+@testset "The forcing and preconditioner keywords of Newton take $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    P = DiagonalRightPreconditioner(Ref(0), T[2, 0.5, 3, 1.5, 0.25, 4, 1, 2])
     g = M === DQGMRES ? DQGMRES(; maxiter = 7, memory = 3) : BiCGStab(; maxiter = 7)
-    m = Newton(; linsolve = g, forcing = FixedForcing(0.01), preconditioner = P)
+    m = Newton(; linsolve = g, forcing = FixedForcing(T(0.01)), preconditioner = P)
     @test m.linsolve isa M
     @test m.linsolve.maxiter == 7
-    @test m.linsolve.forcing === FixedForcing(0.01)
+    @test m.linsolve.forcing === FixedForcing(T(0.01))
     @test m.linsolve.preconditioner === P
     M === DQGMRES && @test m.linsolve.memory == 3
     # one refresh per Newton step, and the preconditioned solve reaches the root
-    x, st = solve(NonlinearProblem(r5_diagonal!), fill(2.0, 8), m)
+    x, st = solve(NonlinearProblem(r5_diagonal!), fill(T(2), 8), m)
     @test st.code == SUCCESS
     @test P.count[] == st.iterations
-    @test norm(x .- 1) <= 1e-6
+    @test norm(x .- 1) <= 100 * sqrt(eps(T))
 end
 
 # ─── The DQGMRES window ──────────────────────────────────────────────────────
@@ -370,29 +409,45 @@ end
     @test info.iterations == 0
 end
 
-@testset "F(x₀) = 0 takes no product, $M" for M in FIXED_METHODS
+@testset "F(x₀) = 0 takes no product, $M, $T" for M in FIXED_METHODS, T in REAL_ELTYPES
+
     counts = FixedCounts(0)
     m = Newton(; linsolve = fixed(M), jacobian = JVPFunction(DiagonalJVP(counts)))
-    _, st = solve(NonlinearProblem(r5_diagonal!), ones(4), m)
+    _, st = solve(NonlinearProblem(r5_diagonal!), ones(T, 4), m)
     @test st.code == SUCCESS
     @test st.iterations == 0
     @test counts.jvp == 0
     @test st.jvp_calls == 0
 end
 
-@testset "A NaN product gives NONFINITE and a finite iterate, $M" for M in FIXED_METHODS
-    jvp! = (Jv, x, v, q) -> (Jv .= NaN; Jv)
+@testset "A NaN product gives NONFINITE and a finite iterate, $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    jvp! = (Jv, x, v, q) -> (Jv .= T(NaN); Jv)
     m = Newton(; linsolve = fixed(M), jacobian = JVPFunction(jvp!))
-    x₀ = fill(2.0, 4)
+    x₀ = fill(T(2), 4)
     x, st = solve(NonlinearProblem(r5_diagonal!), copy(x₀), m)
     @test st.code == NONFINITE
     @test x == x₀
     # the solve itself stops with a residual of `NaN` and a finite direction
-    A = fill(NaN, 4, 4)
+    A = fill(T(NaN), 4, 4)
     ws = workspace(M, fixed(M), x₀)
-    _, info = linear_solve!(M, ws, CountingMatrix(A), nothing, x₀, 1e-6, 10)
+    _, info = linear_solve!(M, ws, CountingMatrix(A), nothing, x₀, T(1e-6), 10)
     @test isnan(info.resnorm)
     @test !info.converged
+end
+
+# An infinite entry of `b` gives `‖b‖ = Inf`, so that no residual meets `tol ⋅ ‖b‖`: the solve
+# reports no convergence and a residual of `NaN`.
+@testset "An infinite right-hand side does not converge, $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    A, b = nonsymmetric(T)
+    b[2] = T(Inf)
+    ws = workspace(M, fixed(M), b)
+    d, info = linear_solve!(M, ws, CountingMatrix(A), nothing, b, T(1e-6), 10)
+    @test !info.converged
+    @test isnan(info.resnorm)
 end
 
 # An operator whose product number `bad` is `NaN` and every other is `A v`.
@@ -473,15 +528,45 @@ end
     @test isapprox(d, b ./ 2; rtol = 8 * eps(T))
 end
 
-@testset "A step at the cap counts a step-rule failure, $M" for M in FIXED_METHODS
-    x₀ = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 0.25, 1.25]
-    m = Newton(; linsolve = fixed(M; maxiter = 1, forcing = FixedForcing(1e-10)))
+# `F = atan(x)` from `1.3`: the full Newton step overshoots to a residual `0.94` of the first. A
+# one-dimensional solve with one product is exact, so the attained tolerance is zero, and the
+# inexact test with `c₁ = 0.5` bounds the full step by `1 - c₁ = 0.5`, which rejects it; the
+# forcing term `0.9` in its place would give `1 - c₁ (1 - 0.9) = 0.95`, which accepts it.
+@testset "The line search takes the attained tolerance, $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    prob = NonlinearProblem((r, x, q) -> (r .= atan.(x); r))
+    x₀ = T[1.3]
+    m = Newton(; linsolve = fixed(M; maxiter = 4, forcing = FixedForcing(T(0.9))),
+        globalization = Backtracking(; c₁ = T(0.5), p = T(0.5)))
+    solver = init(prob, copy(x₀), m)
+    Fx = atan.(x₀)
+    fnorm₀ = rnorm(Fx)
+    state = start!!(solver.state, m, prob, x₀, Fx, nothing, fnorm₀)
+    x₁, Fx₁, state₁, info = step!!(state, m, prob, copy(x₀), copy(Fx), nothing)
+    d = state₁.ws.d
+    @test info.code == SUCCESS
+    @test abs(Fx[1] + d[1] / (1 + x₀[1]^2)) <= 4 * eps(T) * fnorm₀
+    # the full step, which the forcing term's bound accepts and the attained tolerance's rejects
+    ratio = abs(atan(x₀[1] + d[1])) / fnorm₀
+    @test 1 - m.globalization.c₁ < ratio <= 1 - m.globalization.c₁ * (1 - T(0.9))
+    # so the accepted step is a backtracked one
+    α = (x₁[1] - x₀[1]) / d[1]
+    @test zero(T) < α < one(T)
+    @test rnorm(Fx₁) <= (1 - m.globalization.c₁ * α) * fnorm₀ + 4 * eps(T) * fnorm₀
+end
+
+@testset "A step at the cap counts a step-rule failure, $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    x₀ = T[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 0.25, 1.25]
+    m = Newton(; linsolve = fixed(M; maxiter = 1, forcing = FixedForcing(T(1e-10))))
     solver = init(NonlinearProblem(r5_diagonal!), copy(x₀), m)
     _, st = solve!(solver, copy(x₀))
     @test st.step_failures >= 1
     @test GeometricSolvers.max_inner_iterations(solver) == 1
     # a cap that the solve meets counts none
-    m = Newton(; linsolve = fixed(M; maxiter = 20, forcing = FixedForcing(1e-6)))
+    m = Newton(; linsolve = fixed(M; maxiter = 20, forcing = FixedForcing(T(1e-6))))
     _, st = solve(NonlinearProblem(r5_diagonal!), copy(x₀), m)
     @test st.code == SUCCESS
     @test st.step_failures == 0
@@ -489,8 +574,10 @@ end
 
 # `start!!` sets the values that a step reads, and `init` leaves them `NaN`, so a step on a state
 # that no `start!!` saw fails closed and keeps its iterate.
-@testset "A step without start!! fails closed, $M" for M in FIXED_METHODS
-    x₀ = fill(2.0, 4)
+@testset "A step without start!! fails closed, $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    x₀ = fill(T(2), 4)
     m = Newton(; linsolve = fixed(M))
     prob = NonlinearProblem(r5_diagonal!)
     state = init(prob, copy(x₀), m).state

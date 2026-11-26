@@ -180,7 +180,7 @@ true
 |:--|:--|
 | [`GMRES`](@ref) | an `AbstractVector` iterate, on the host or on a device, and the square system of a [`NonlinearProblem`](@ref) or of a [`StationarityProblem`](@ref), with any index sets `E` and `U` |
 | [`MINRESQLP`](@ref) | an `AbstractVector` iterate of a real element type and a [`StationarityProblem`](@ref) with `E == U`, the same indices in the same order, whose Jacobian is symmetric and may be indefinite or singular; no preconditioner; under [`DogLeg`](@ref) the Cauchy point takes two Hessian–vector products |
-| [`BiCGStab`](@ref) | as `GMRES`, with storage of eight vectors whatever the iteration count and two products per iteration; no minimal residual; no [`DogLeg`](@ref) |
+| [`BiCGStab`](@ref) | as `GMRES`, with storage of nine vectors whatever the iteration count and two products per iteration; no minimal residual; no [`DogLeg`](@ref) |
 | [`DQGMRES`](@ref) | as `GMRES`, with storage of `min(memory, n) + 1` basis vectors and `min(memory, n)` directions whatever the iteration count and one product per iteration; a quasi-minimal residual; no [`DogLeg`](@ref) |
 | [`EisenstatWalkerChoice2`](@ref) (the default), [`EisenstatWalkerChoice1`](@ref) | an inner tolerance that is loose far from the root and tight near it |
 | [`FixedForcing`](@ref)`(η)` | a constant inner tolerance `η` |

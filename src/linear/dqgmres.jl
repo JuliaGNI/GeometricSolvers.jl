@@ -146,7 +146,8 @@ The orthogonalisation takes the conjugated inner product of [`arnoldi_dot`](@ref
 iterate is supported, and the rotations are those of `gmres_solve!`. A Krylov vector of norm zero
 ends the solve with `breakdown = true`; a rotated diagonal entry of zero leaves the solution of
 the last iteration, whose residual bound the solve reports, with no convergence. A norm that is not
-finite ends the solve with a residual of `NaN`. `b = 0` takes no product.
+finite, `bnorm` included, ends the solve with a residual of `NaN` and no convergence. `b = 0` takes
+no product.
 """
 function dqgmres_solve!(ws::DQGMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
         maxiter) where {T, R}
@@ -157,6 +158,8 @@ function dqgmres_solve!(ws::DQGMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
     fill!(d, zero(T))
     j = 0
     iszero(β₀) && return d, GMRESInfo{R}(Int32(0), zero(R), β₀, true, false)
+    # `β₀ = Inf` makes the tolerance `atol` infinite, which every residual would meet
+    isfinite(β₀) || return d, GMRESInfo{R}(Int32(0), R(NaN), β₀, false, false)
     @views ws.V[:, 1] .= b ./ β₀
     g = T(β₀)
     resnorm = β₀

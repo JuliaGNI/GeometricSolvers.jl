@@ -1,7 +1,7 @@
 # R5 matrix-free Newton–Krylov with fixed storage: the right-preconditioned BiCGStab of van der
 # Vorst (1992, doi:10.1137/0913035), a linear method of `Newton` beside `GMRES`.
 #
-# The iteration keeps eight vectors of the length of the iterate and no basis, takes two
+# The iteration keeps nine vectors of the length of the iterate and no basis, takes two
 # Jacobian–vector products per iteration and one where the half step already meets the tolerance,
 # and minimises no residual. The recurrence runs on the right-hand side scaled to unit norm, so
 # that its scalars stay near the scale of the system, and `‖t‖` takes the place of `tᴴt`, which
@@ -29,7 +29,7 @@ as for [`GMRES`](@ref).
 - `preconditioner::P`: the right preconditioner, `nothing` for none; the solve forms
   ``J M^{-1} u = -F`` and returns ``d = M^{-1} u``.
 
-The solve stores eight vectors of the length of the iterate, whatever the iteration count, and
+The solve stores nine vectors of the length of the iterate, whatever the iteration count, and
 minimises no residual: its residual norm need not decrease from one iteration to the next. It
 stops where ``\\|F + J d\\| \\le \\eta_k \\|F\\|`` by its recurrence. Four scalars of the
 recurrence divide: ``\\sigma = \\hat r^H v``, ``\\|t\\|``, ``\\omega`` and ``\\rho = \\hat r^H r``.
@@ -112,9 +112,6 @@ end
 # the element type of `b`: `aᴴb / c` without the product `aᴴb`, which can overflow where the
 # quotient does not. A lazy broadcast, as in `arnoldi_dot`.
 function scaled_dot(a, b, c)
-    axes(a) == axes(b) ||
-        throw(DimensionMismatch("scaled_dot arguments have different axes"))
-    isempty(a) && return zero(eltype(b))
     products = Broadcast.instantiate(Broadcast.broadcasted((x, y) -> conj(x / c) * y, a, b))
     return sum(products)
 end

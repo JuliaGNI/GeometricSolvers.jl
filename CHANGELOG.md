@@ -1040,7 +1040,7 @@ so that a compat-only bump can be told apart from an interface change.
 - **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
   20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
   storage does not grow with the iteration count.** `BiCGStab` is the right-preconditioned
-  BiCGStab of van der Vorst (1992, doi:10.1137/0913035): eight vectors, two Jacobian–vector
+  BiCGStab of van der Vorst (1992, doi:10.1137/0913035): nine vectors, two Jacobian–vector
   products per iteration and one where the half step meets the tolerance, and no residual
   minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
   finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
