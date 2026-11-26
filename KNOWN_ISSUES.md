@@ -958,20 +958,22 @@
 - **kind:** defect
 - **found:** #113
 
-### K124 · The solve of an `m < n` system does not scale a subnormal right-hand side up, so it loses the bits below the smallest subnormal
+### K124 · The SVD solve of an `m < n` system and the dense QR one do not scale a subnormal right-hand side up, so they lose the bits below the smallest subnormal
 
-- **location:** `src/linear/linearproblem.jl:436, 477` (`wide_solve!`, the same-type `m < n`
-  solve of a dense or device `LinearSolver`) and `:377, 387` (`static_wide_solve`, the static
-  `SVDFactorization` and `QRFactorization` solve of `m < n`), which do not call `rhs_exponent`
+- **location:** `src/linear/linearproblem.jl:446, 487` (`wide_solve!`, the same-type `m < n`
+  solve of a dense or device `LinearSolver`) and `:384` (`wide_rhs_exponent` of the static
+  `SVDFactorization` solve of `m < n`, which keeps `b` as it is)
 - **evidence:** with `A = fill(2.0^-1000, 1, 4)` and `b = [nextfloat(0.0)]`, whose minimum-norm
   solution is `fill(2.0^-76, 4)`, `solve!(init(LinearProblem(A), method), b)` gives `x = 0` and
-  `SUCCESS` for `SVDFactorization()` and `QRFactorization()` on an `Array` and on an `SMatrix`
-  (Julia 1.13.4, PR #125 at `ed0e445` and at `c87aca8`); `main`
-  at `ae2a0db` gives the same, except for the static QR solve, which gives `fill(2.0^-76, 4)`.
-  The same solves of `b · 2^1074`, scaled back by `2^-1074`, give `fill(2.0^-76, 4)` exactly
-  (PR #115 at `3d1e53b`). The square and tall solves lift such a right-hand side with the
-  matrix: the 5 × 5 Cholesky case of `test/linear/linearproblem.jl`, which lost up to `3.7e-4`
-  in the maximum norm, meets `8 eps(R) κ₁`.
+  `SUCCESS` for `SVDFactorization()` on an `SMatrix`, an `Array` and a `JLArray`, and for
+  `QRFactorization()` on an `Array`; with `A = 2^(23 - emax) [2 1 0; 1 2 1]` and
+  `b = t (1, -2)`, `t = nextfloat(zero(R))`, the relative error is `0.289` on the same routes,
+  in `Float32`, `Float64` and `ComplexF64`, the same on `main` at `ae2a0db` and on PR #125 at
+  `9067ba3` (Julia 1.13.4). The same solves of `b · 2^1074`, scaled back by `2^-1074`, give
+  `fill(2.0^-76, 4)` exactly (PR #115 at `3d1e53b`). The square and tall solves, and the static
+  QR solve of `m < n`, lift such a right-hand side with the matrix: there both cases meet
+  `32 eps(R) κ₁`, and the 5 × 5 Cholesky case of `test/linear/linearproblem.jl`, which lost up
+  to `3.7e-4` in the maximum norm, meets `8 eps(R) κ₁`.
 - **kind:** defect
 - **found:** 2026-11-25, the K114 5 × 5 case; the wide case from a review of PR #115
 

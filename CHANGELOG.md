@@ -49,6 +49,9 @@ so that a compat-only bump can be told apart from an interface change.
   needs a larger `k`, so that a subnormal `r` keeps its bits (testsets "a subnormal b with a
   matrix near floatmin" and "a b near floatmax with a matrix of exponent below 0" of
   `test/linear/linearproblem.jl`); a factor with `e ≥ 0` solves as before, bit for bit. The
+  static QR solve of `m < n` takes the same `k` for `b` (testsets "m < n, the static QR of …"):
+  it took `b` as it is, which gave `NaN` for some `b` near `floatmax`, and keeps its bits for
+  every other `b` with `e ≥ 0`. The
   Cholesky solve of `[2t t; t t]`, `t = nextfloat(0)`, gives `(-1, 2)` within `8 eps κ₁`, where
   it gave `(-0.5, 1)`. The R1 Golub–Pereyra reduced Jacobian of
   `VariableProjection` (`_pinv_adj_mul_r1`) applies the static SVD's exponent to each coefficient
@@ -56,8 +59,8 @@ so that a compat-only bump can be told apart from an interface change.
   overflows for `e` below `-exponent(floatmax)`; the static
   `SVDFactorization(Float32)` of a `Float64` matrix at `2^-130`, which gives `NaN` there on
   `bf08120`, gives a result within `8 eps(Float32) κ`. This closes K110, K111 and K114. Five limits
-  stay: the solve of an `m < n` system does not scale a subnormal right-hand side up (K124),
-  nor is a subnormal `w` of
+  stay: the SVD solve of an `m < n` system and the dense QR one do not scale a subnormal
+  right-hand side up (K124), nor is a subnormal `w` of
   `_pinv_adj_mul_r1` (K129), the device `SVDFactorization(Float32)` of a subnormal `Float64`
   matrix gives `SINGULAR` (K125), `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where
   `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K140), and a `Dual`
