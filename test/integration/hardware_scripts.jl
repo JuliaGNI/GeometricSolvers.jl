@@ -287,11 +287,10 @@ end
         5, 5; recycle = true)
 
     # synthetic rows of the full grid: `r` per cell from `ratio`, recycling below no recycling
-    col(products; converged = true) = (; products, converged)
     function grid(ratio; norec = 1.0, conv = (_...) -> (true, true))
-        [(N = N, m = m, k = k, η = η, gmres = col(1000; converged = conv(N, m, k, η)[1]),
-             norec = col(round(Int, 1000 * norec)),
-             rec = col(round(Int, 1000 * ratio(N, m, k, η));
+        [(N = N, m = m, k = k, η = η, gmres = cc(1000; converged = conv(N, m, k, η)[1]),
+             norec = cc(round(Int, 1000 * norec)),
+             rec = cc(round(Int, 1000 * ratio(N, m, k, η));
                  converged = conv(N, m, k, η)[2]))
          for N in RecyclingSpike.RC_NS,
         m in RecyclingSpike.RC_MS, k in RecyclingSpike.RC_KS,
@@ -320,7 +319,7 @@ end
     @test verdict(grid((N, m, k, η) -> N == 125 ? 1.0 : 0.5;
         conv = (N, m, k, η) -> (true, N == 125))).rule === :stop
     @test verdict(grid((_...) -> 0.5)[1:(end - 1)]).rule === :not_evaluated
-    nc = RecyclingSpike.cell_text(col(7; converged = false))
+    nc = RecyclingSpike.cell_text(cc(7; converged = false))
     @test nc == "no convergence"
 end
 
