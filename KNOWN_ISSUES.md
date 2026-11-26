@@ -353,12 +353,12 @@
 
 ### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
 
-- **location:** `src/nonlinear/stationarity.jl:458` (`_init_stationarity_state`),
-  `src/ad/hessian.jl:316-317` (`_build_pos_maps`)
+- **location:** `src/nonlinear/stationarity.jl:483` (`_init_stationarity_state`),
+  `src/ad/hessian.jl:318-319` (`_build_pos_maps`)
 - **evidence:** With `prob = @allowscalar StationarityProblem(S, JLArray([1, 2]), JLArray([1, 2]))`
   and `allowscalar(false)`, `solve(prob, JLArray([1.0, 1.0]), Newton())` raises "Scalar indexing
-  is disallowed" at `stationarity.jl:458` (`Int[Int(i) for i in prob.U]`), and
-  `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:316`,
+  is disallowed" at `stationarity.jl:483` (`Int[Int(i) for i in prob.U]`), and
+  `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:318`,
   where `prepare_ad` copies `E` and `U` to the host by iteration. The same problems with host
   index sets `[1, 2]` and a `JLArray` iterate return `SUCCESS` (merge of `main` into `task/ay`,
   Julia 1.13.3). The constructor also checks for duplicates by scalar indexing, so
@@ -1112,8 +1112,8 @@
 
 ### K135 · `Continuation` does not reach the root of the linear check `F(x) = s (A x − b)` at a subnormal scale `s`, where `Newton()` reaches it in `Float64`
 
-- **location:** `src/composition/continuation.jl:175` (`homotopy_residual!`; the fixed-point form
-  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:185`)
+- **location:** `src/composition/continuation.jl:177` (`homotopy_residual!`; the fixed-point form
+  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:187`)
 - **evidence:** `A = [3 1; 1 2]`, `b = [1, −3]`, root `(1, −2)`, start `zeros(T, 2)`,
   `f_abstol = 0`, at `s = 2^20 · nextfloat(zero(T))`. `Float64`:
   `Continuation(FixedPointHomotopy())` returns `MAXITERS` at `(0.263, −0.628)`,
@@ -1126,3 +1126,19 @@
 - **kind:** found late
 - **found:** 2026-11-25; the homotopy forms that the part's spec decides (its clause 3), at a
   scale outside those that its clauses and the scale row name
+
+### K136 · A `StationarityProblem` evaluates a callable datum at the parameters `p` of the solve, which a `ParameterHomotopy` maps before its problem reads them
+
+- **location:** `src/nonlinear/stationarity.jl` (`_init_stationarity_state`, the `solve!!` of a
+  `DenseStationarityState` and `_solve_stationarity_solver!`, which evaluate `b(p)` to check its
+  length and fill the datum buffer)
+- **evidence:** With `h = ParameterHomotopy((p, λ) -> p.a + λ * (p.b - p.a))` and
+  `p = (a = 0.5, b = 2.0)`, `solve(StationarityProblem((x, q) -> x^4 / 4 + x^2 / 2; b = q -> q),
+  0.0, Continuation(h), p)` raises `MethodError: no method matching _static_datum(…, ::Float64,
+  ::@NamedTuple{a::Float64, b::Float64})`, and `solve(StationarityProblem((x, q) -> sum(abs2, x) /
+  2; b = q -> [q, q]), zeros(2), Continuation(h), p)` raises `MethodError: Cannot convert an
+  object of type @NamedTuple{a::Float64, b::Float64} to an object of type Float64`. The path
+  itself evaluates `b` at `map(p, λ)` only; a map with `map(p, 0) = p`, such as
+  `(p, λ) -> p + 3λ / 2`, solves (Julia 1.13.4).
+- **kind:** defect
+- **found:** PR #126, the round that evaluates a callable datum at `map(p, λ)`

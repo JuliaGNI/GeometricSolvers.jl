@@ -1059,7 +1059,18 @@ so that a compat-only bump can be told apart from an interface change.
   `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x)/σ + (1 − λ)(x − x₀)` with `σ` the
   largest absolute entry of `J(x₀)`, or of `F(x₀)` where `J(x₀) = 0`, or 1 where both are 0, or
   `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's problem; the
-  `NonlinearProblem` holds no `λ`. A tangent predictor and a bordered Newton corrector follow the
+  `NonlinearProblem` holds no `λ`. On a `StationarityProblem`, a callable datum `b(p)`, from
+  `prob.b` or from the `b` keyword of `solve`, `init` or `solve!`, is evaluated at `map(p, λ)`
+  along the path and at the last corrector too: the internal reduced problem holds `b` unevaluated,
+  and the reduced residual evaluates it at the parameters it is called with. For
+  `StationarityProblem((x, p) -> x^2 / 2; b = p -> p)` from `p = 0.0`, `x₀ = 0.0` and
+  `ParameterHomotopy((p, λ) -> p + λ)` the solve ends at `−1.0`, the root that `Newton()` finds at
+  `p = 1.0`, where it would otherwise return a `SUCCESS` at `0.0`, the root for `b` at the start
+  parameters. A non-callable datum is unchanged. Since the callable runs at every residual
+  evaluation in place of once per solve, an R3 (`Vector`) `solve!` with `Newton` and a callable
+  that returns a new array allocates, 160 bytes on a quadratic of two equations where it
+  allocated none; an R3 callable that writes into a buffer, and an R1 (`SVector`, `Number`)
+  `solve`, allocate nothing, as before. A tangent predictor and a bordered Newton corrector follow the
   path through a fold of `λ`, where a step in `λ` alone stops. A failed corrector halves the step,
   a corrector of at most 3 iterations doubles it up to `h_max`, and a step below `h_min` returns
   `STALLED`. `GeometricSolvers.continuation_steps(state)` reads `λ` and the length of every
