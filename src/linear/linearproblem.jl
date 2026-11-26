@@ -356,15 +356,18 @@ end
 
 @inline static_solve(fac, b, ::Val{false}, ::Type{T}) where {T} = ldiv!!(nothing, fac, b)
 
-# `x = z · 2^-e` of the solution `z` in `TF` of `Aᴴ / 2^e`, or, where `b` was divided by its largest
-# absolute entry `s = frac · 2^ex` before it was converted to `TF`, `z · frac · 2^(ex - e)` in one
-# rounding, converted to `T`.
+# `x = z · 2^(k - e)` of the solution `z` in `TF` of `Aᴴ / 2^e` and `b / 2^k`, with
+# `k = wide_rhs_exponent(fac, b, e)`, or, where `b` was divided by its largest absolute entry
+# `s = frac · 2^ex` before it was converted to `TF`, `z · frac · 2^(ex - e)` in one rounding,
+# converted to `T`.
 @inline function static_solve(fac::Union{StaticRectQR{N, M, TF}, StaticRectSVD{N, M, TF}},
         b::StaticVector{M}, ::Val{true}, ::Type{T}) where {N, M, TF, T}
     e = Int(getfield(fac, :scale_exponent))
     if TF === T
-        z = static_wide_solve(fac, SVector{M, TF}(b))
-        return iszero(e) ? z : map(a -> ldexp2(a, -e), z)
+        k = wide_rhs_exponent(fac, b, e)
+        r = iszero(k) ? SVector{M, TF}(b) : map(a -> ldexp2(a, -k), SVector{M, TF}(b))
+        z = static_wide_solve(fac, r)
+        return iszero(k - e) ? z : map(a -> ldexp2(a, k - e), z)
     end
     s = maximum(abs, b)
     iszero(s) && return zero(SVector{N, T})
@@ -372,6 +375,13 @@ end
     frac, ex = frexp(s)
     return map(a -> T(ldexp2(a * frac, ex - e)), z)
 end
+
+# The exponent `k` that the same-type `m < n` solve divides `b` by: for the QR of `Aᴴ / 2^e` the
+# `rhs_exponent` of the square and tall solves, which lifts `b` with the matrix where `e < 0`,
+# so that its forward substitution `Rᴴ y = b / 2^k` runs on the scale of the solution; the SVD
+# takes `b` as it is (K124 of `KNOWN_ISSUES.md`).
+wide_rhs_exponent(::StaticRectQR, b, e::Int) = rhs_exponent(b, e)
+wide_rhs_exponent(::StaticRectSVD, b, ::Int) = 0
 
 # `U Σ⁺ Vᴴ r` of the SVD `U Σ Vᴴ` of `Aᴴ / 2^e`, truncated at its rank.
 @inline function static_wide_solve(

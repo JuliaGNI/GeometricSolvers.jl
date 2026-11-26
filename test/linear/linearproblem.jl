@@ -698,6 +698,36 @@ end
     @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
 end
 
+@testset "m < n, the static QR of a matrix near floatmin and a subnormal b: $T, $(size(A₀, 1)) × $(size(A₀, 2))" for T in ELTYPES,
+    (A₀, b₀) in (([1.0 1.0 1.0 1.0], [1.0]), ([2.0 1.0 0.0; 1.0 2.0 1.0], [1.0, -2.0]))
+
+    # The QR of `Aᴴ / 2^e` of `A = 2^(23 - emax) A₀` and `b = t b₀`, `t = nextfloat(0)`: the
+    # minimum-norm solution lies in the normal range, and the solve lifts `b` by `2^-e` with the
+    # matrix, so that the forward substitution `Rᴴ y = b / 2^k` runs in the normal range.
+    R = real(T)
+    t = nextfloat(zero(R))
+    A = T.(pow2.(R.(A₀), 23 - exponent(floatmax(R))))
+    b = T.(R.(b₀) .* t)
+    κ = cond1(Matrix(A'))
+    x, st, _ = lp_solve("SMatrix", QRFactorization(), A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
+end
+
+@testset "m < n, the static QR of a matrix of exponent below 0 and a b near floatmax: $T" for T in ELTYPES
+    # `A = [2 1 0; 1 2 1] / 4` has the exponent `e = -1`, and `b = 0.6 floatmax (1, 1)` gives the
+    # finite minimum-norm solution `0.6 floatmax · 4/14 (5, 4, 1)`. Lifting `b` by `2^-e` would
+    # overflow; the headroom bound divides it by `2^3` instead, and the solve stays finite.
+    R = real(T)
+    A = T.(R[2 1 0; 1 2 1] ./ 4)
+    b = fill(T(R(0.6) * floatmax(R)), 2)
+    κ = cond1(Matrix(A'))
+    x, st, _ = lp_solve("SMatrix", QRFactorization(), A, b)
+    @test st.code == SUCCESS
+    @test all(isfinite, x)
+    @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
+end
+
 @testset "a Cholesky factor in the element type of A · 2^-4 gives the bits of A: $route, $T" for route in ROUTES,
     T in ELTYPES
 
