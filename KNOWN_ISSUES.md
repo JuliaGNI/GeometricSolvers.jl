@@ -353,11 +353,11 @@
 
 ### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
 
-- **location:** `src/nonlinear/stationarity.jl:410` (`_init_stationarity_state`),
+- **location:** `src/nonlinear/stationarity.jl:458` (`_init_stationarity_state`),
   `src/ad/hessian.jl:316-317` (`_build_pos_maps`)
 - **evidence:** With `prob = @allowscalar StationarityProblem(S, JLArray([1, 2]), JLArray([1, 2]))`
   and `allowscalar(false)`, `solve(prob, JLArray([1.0, 1.0]), Newton())` raises "Scalar indexing
-  is disallowed" at `stationarity.jl:410` (`Int[Int(i) for i in prob.U]`), and
+  is disallowed" at `stationarity.jl:458` (`Int[Int(i) for i in prob.U]`), and
   `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:316`,
   where `prepare_ad` copies `E` and `U` to the host by iteration. The same problems with host
   index sets `[1, 2]` and a `JLArray` iterate return `SUCCESS` (merge of `main` into `task/ay`,
@@ -712,7 +712,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1742`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1899`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1041,3 +1041,45 @@
 - **kind:** defect
 - **found:** 2026-11-25, the review of the branch that returns the step start only where the
   discarded step does not lower `‖F‖`
+
+### K128 · A line search returns `NONFINITE` at a start whose residual norm is finite but above `√floatmax`, because its merit `norm2(F)` overflows
+
+- **location:** `src/globalization/linefunction.jl:85` (`start_merit`; the trial merit at `:36`)
+- **evidence:** `NonlinearProblem((F, x, _) -> (F .= sinh.(x); nothing))` from
+  `fill(50.0f0, 3)`: `‖F‖ = √3 sinh(50) ≈ 4.5e21` is finite in `Float32`, and
+  `norm2(F) = Inf32`. `solve` with `Newton(; globalization = Backtracking())` and with
+  `Bisection()` returns `NONFINITE` after 1 iteration with a finite iterate; with `Static(1.0)` it
+  returns `SUCCESS` after 8 iterations (`origin/main` at `e7af5e7`, Julia 1.13.4). The same start
+  as `StationarityProblem((x, p) -> sum(cosh, x))` gives `NONFINITE` with `GMRES` and with
+  `MINRESQLP` under both line searches.
+- **kind:** defect
+- **found:** 2026-11-25
+
+### K131 · A solve with `Steihaug` does not converge to a root where the Hessian of `S` is indefinite, also from a start close to it, and ends with `LINESEARCH_FAILED`
+
+- **location:** `src/globalization/steihaug.jl:173` (the conjugate gradients on the model of `S`
+  in `steihaug_step!!`; the acceptance on `‖F‖` at `:192`)
+- **evidence:** the indefinite problem `indefinite_problem` of `test/nonlinear/symkrylov.jl`
+  (Hessian eigenvalues at the root −0.998, −0.412, 1.78, 2.30), `Float64`,
+  `Newton(; linsolve = MINRESQLP())`, 20 random starts (`Xoshiro(1)`) at each distance 1e-2,
+  1e-4 and 1e-6 from the root: `DogLeg()` gives `SUCCESS` 20/20 at each distance, `Steihaug()`
+  gives `LINESEARCH_FAILED` 20/20 at each distance (Julia 1.13.4, `--check-bounds=auto`, at
+  32374d0). The conjugate gradients minimise the model `q(d) = Fᴴd + ½dᴴJd` of `S`, and a trial
+  is accepted on `‖F‖`: a step along a direction of negative curvature decreases `q` and can
+  increase `‖F + J d‖`, so `pred ≤ 0` and every trial is rejected down to the radius `10⁻⁶`.
+- **kind:** defect
+- **found:** #121; the limit of the decided form, conjugate gradients on the model of `S`
+
+### K132 · After a rejected interior step, `Steihaug` and `DogLeg` evaluate `F` again at the same point, until the radius falls below the norm of the step
+
+- **location:** `src/globalization/steihaug.jl:211` (`run = !(interior && dnorm < δ)` in
+  `steihaug_step!!`; in `DogLeg`, `src/globalization/dogleg.jl:195` and `:316`)
+- **evidence:** one step of the atan action (residual `atan.(x)`) from `fill(1.5, 3)` with
+  `MINRESQLP(; forcing = FixedForcing(1e-3))`, radius 100 and the `JVPFunction`
+  `v ./ (1 .+ x .^ 2)`, `Float64`: `Steihaug` and `DogLeg` each evaluate `F` 4 times at 2
+  distinct points, 3 times at the rejected Newton step (`x₁ = −1.694…`) and once at the accepted
+  boundary step of norm 1.5625; `f_calls` grows by 4 in the step (Julia 1.13.4, at 32374d0). The
+  testset "The radius rules of Steihaug, $T" in `test/nonlinear/symkrylov.jl` asserts this step,
+  issue #123.
+- **kind:** defect
+- **found:** #121, issue #123
