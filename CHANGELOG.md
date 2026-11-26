@@ -51,8 +51,8 @@ so that a compat-only bump can be told apart from an interface change.
   exponent below 0" of `test/linear/linearproblem.jl`). `r` is not lifted past the exponent 0, so
   the solve holds `2^(e - k) x`, never larger than the solution `x`, and the LU back substitution
   of `2^kA W`, `W` the Wilkinson growth matrix of size `n`, `kA < 0`, stays finite for a solution
-  near `floatmax / 2^n`, as on `main` (testset "the LU solve of 2^kA W …"). A factor with `e ≥ 0` solves as before, bit
-  for bit. The static QR and SVD solves of `m < n` and the dense QR one take the same `k` for
+  near `floatmax / 2^n`, as on `main` (testset "the LU solve of 2^kA W …"). A factor with
+  `e ≥ 0` solves as before, bit for bit. The static QR and SVD solves of `m < n` and the dense QR one take the same `k` for
   `b` (testsets "m < n, …"): they took `b` as it is, which lost a subnormal `b` to 0 or to a
   power of two of the solution and gave `NaN` or `NONFINITE` for some `b` near `floatmax`; the
   1 260 rows with `b` in the normal range of a sweep of these solves keep their bits, but five

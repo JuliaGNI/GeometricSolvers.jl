@@ -85,16 +85,16 @@ clamped to `[min(e, 0), 0]`, with `e` the exponent of [`factorize!!`](@ref), so 
 with `e < 0` lifts a small `r` with the matrix, by up to `2^-e` and never past the exponent 0,
 and a small `r` keeps its bits in the solve. Where `r / 2^k` has a largest `|re|` or `|im|`
 within a few bits of `floatmax` (`2 + ⌈log2 N⌉` bits for `N` entries), `k` is instead the
-smallest exponent that leaves that headroom. This keeps `Qᴴ r` and `Uᴴ r`, which the QR and SVD solves form first,
-finite. The SVD, whose factors are those of `J / 2^e`, then divides the coordinates
-`Uᴴ r` by its singular values times the smallest power of two `2^t` that keeps the coordinates
-the same headroom below `floatmax`; `t` is 0 wherever they are already below it, and for LU and
-QR. The step is multiplied by `2^(k + t - e)`, in one rounding, with `e` the exponent of
-[`factorize!!`](@ref), so that the SVD step does not overflow where it is representable. The LU
-and QR solves can still overflow in the triangular solve for such an `r`. An entry of `r` within
-`k` bits of the subnormal range can lose those bits to the division, and a coordinate within `t`
-bits of it to the SVD's. The step still overflows on every route where the solution itself
-exceeds `floatmax`.
+smallest exponent that leaves that headroom. This keeps `Qᴴ r` and `Uᴴ r`, which the QR and
+SVD solves form first, finite. The SVD, whose factors are those of `J / 2^e`, then divides the
+coordinates `Uᴴ r` by its singular values times the smallest power of two `2^t` that keeps the
+coordinates the same headroom below `floatmax`; `t` is 0 wherever they are already below it,
+and for LU and QR. The step is multiplied by `2^(k + t - e)`, in one rounding, with `e` the
+exponent of [`factorize!!`](@ref), so that the SVD step does not overflow where it is
+representable. The LU and QR solves can still overflow in the triangular solve for such an `r`.
+An entry of `r` within `k` bits of the subnormal range can lose those bits to the division, and
+a coordinate within `t` bits of it to the SVD's. The step still overflows on every route where
+the solution itself exceeds `floatmax`.
 Where the element types differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, *Newton's Method in Three Precisions*, Pacific
