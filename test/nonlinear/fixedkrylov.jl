@@ -1,8 +1,9 @@
 # R5 matrix-free Newton–Krylov with the fixed-memory methods `BiCGStab` and `DQGMRES`: the Newton
-# step to the forcing tolerance on the true residual, the products per iteration, the fixed
-# workspace, the four breakdown guards of `BiCGStab`, the conjugated inner products, the right
-# preconditioner, the DQGMRES window, the scale of the scalar recurrences, and the refusals of the
-# `matrix_free` trait, in `Newton`, `Continuation` and `KroneckerFactorization`.
+# step to the forcing tolerance on the true residual, the forcing record of each step, the
+# products per iteration, the fixed workspace, the four breakdown guards of `BiCGStab`, the
+# conjugated inner products, the right preconditioner, the DQGMRES window, the scale of the scalar
+# recurrences, and the refusals of the `matrix_free` trait, in `Newton`, `Continuation` and
+# `KroneckerFactorization`.
 #
 # The Newton solves run on `Array` and on `JLArray` (a CPU array that refuses scalar indexing) in
 # `REAL_ELTYPES`.
@@ -10,13 +11,13 @@
 using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
-using LinearAlgebra: LinearAlgebra, dot, mul!, norm
+using LinearAlgebra: LinearAlgebra, Diagonal, dot, mul!, norm
 using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, BiCGStab, DQGMRES, DogLeg, FixedForcing, GMRES,
-                        JVPFunction,
+using GeometricSolvers: Backtracking, BiCGStab, DQGMRES, DogLeg, EisenstatWalkerChoice1,
+                        FixedForcing, GMRES, JVPFunction, Static, compute_forcing,
                         LeastSquaresProblem, LeftPreconditioned, LevenbergMarquardt,
                         LUFactorization, MINRESQLP, NONFINITE, NonlinearProblem, Newton,
                         PseudoTransient,
@@ -128,6 +129,51 @@ end
     x, st = solve(prob, copy(x₀), m)
     @test st.code == SUCCESS
     @test norm(Array(x) .- 1) <= 100 * sqrt(eps(T))
+end
+
+# The record of each step, which the Choice 1 forcing term of the next step reads: the step count,
+# `‖F‖` of the step, its `η` and its linear residual. The residual `F = A x + x³/4 - b` of the
+# nonsymmetric `A` has the Jacobian `A + 3/4 Diagonal(x²)`, and the inner solves of steps 1 and 2
+# stop on the forcing test with a linear residual well above zero. `η₀ = 0.1` keeps the safeguard
+# `η^φ` below `0.1` at step 2, and the smaller `η` of step 2 keeps it there at step 3, so each `η`
+# after the first is the ratio of the rule. The full step of `Static` makes `d = x₊ - x` the
+# direction of the inner solve, and a DQGMRES window as wide as its cap makes its residual the true
+# one.
+@testset "Each step records the forcing term of the next, $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    A, b = nonsymmetric(T)
+    F!(r, x, q) = (mul!(r, A, x); r .+= x .^ 3 ./ 4 .- b; r)
+    J(x) = A + Diagonal(3 .* x .^ 2 ./ 4)
+    forcing = EisenstatWalkerChoice1(T; η₀ = 0.1, η_max = 0.9)
+    g = M === DQGMRES ? DQGMRES(; maxiter = 30, memory = 30, forcing) :
+        BiCGStab(; maxiter = 30, forcing)
+    m = Newton(; linsolve = g, globalization = Static())
+    prob = NonlinearProblem(F!)
+    x = T[1, -1, 2, 0.5, -0.5, 1.5]
+    solver = init(prob, copy(x), m)
+    Fx = F!(similar(x), x, nothing)
+    state = start!!(solver.state, m, prob, x, Fx, nothing, rnorm(Fx))
+    fprev, ηprev, ℓprev = zero(T), zero(T), zero(T)
+    for k in 1:3
+        fk = norm(Fx)
+        x₊, _, state, info = step!!(state, m, prob, copy(x), copy(Fx), nothing)
+        @test info.code == SUCCESS
+        ws = state.ws
+        @test ws.step == k
+        @test isapprox(ws.prev_fnorm, fk; rtol = 8 * eps(T))
+        # `η` of the step from the norms and the true linear residual of the step before
+        η = compute_forcing(forcing, k - 1, fk, fprev, ηprev, ℓprev)
+        @test isapprox(ws.last_eta, η; rtol = sqrt(eps(T)))
+        d = x₊ .- x
+        @test norm(d) > 0
+        ℓ = norm(Fx .+ J(x) * d)
+        # the residual is not zero, so a record that drops it gives another `η`
+        k < 3 && @test ℓ >= 10 * sqrt(eps(T)) * fk
+        fprev, ηprev, ℓprev = fk, ws.last_eta, ℓ
+        x = x₊
+        Fx = F!(similar(x), x, nothing)
+    end
 end
 
 # ─── Products per iteration, and a fixed workspace ──────────────────────────
@@ -340,10 +386,17 @@ end
     @test m.linsolve.preconditioner === P
     M === DQGMRES && @test m.linsolve.memory == 3
     # one refresh per Newton step, and the preconditioned solve reaches the root
-    x, st = solve(NonlinearProblem(r5_diagonal!), fill(T(2), 8), m)
+    x₀ = fill(T(2), 8)
+    x, st = solve(NonlinearProblem(r5_diagonal!), copy(x₀), m)
     @test st.code == SUCCESS
     @test P.count[] == st.iterations
-    @test norm(x .- 1) <= 100 * sqrt(eps(T))
+    @test st.fnorm <= sqrt(eps(T)) * rnorm(r5_diagonal!(similar(x₀), x₀, nothing))
+    # `F_i = x_i³ + 2x_i - 3` has `F_i(1) = 0` and `F_i' = 3x_i² + 2 ≥ 2`, so the mean value theorem
+    # gives `|x_i - 1| ≤ |F_i(x)| / 2`. `F` evaluated in `T` is off by at most a few `eps(T)` times
+    # the sum of the magnitudes of its terms.
+    Fx = r5_diagonal!(similar(x), x, nothing)
+    rounding = 8 * eps(T) * norm(abs.(x) .^ 3 .+ 2 .* abs.(x) .+ 3)
+    @test norm(x .- 1) <= (norm(Fx) + rounding) / 2
 end
 
 # ─── The DQGMRES window ──────────────────────────────────────────────────────
