@@ -5,6 +5,8 @@ using Adapt: Adapt
 using ADTypes: AutoForwardDiff
 using ForwardDiff: ForwardDiff
 using JET: JET
+using JLArrays: JLArray
+using LinearAlgebra: I, norm
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -396,6 +398,109 @@ end
             @test solver_allocated(prob, x₀, m, p) == 0
         end
     end
+end
+
+# The stopping norm of `Options`: the residual test reads `‖F(x)‖∞` under `MaxNorm()`, and
+# `status.fnorm` stays `‖F(x)‖₂` under every norm. Each fixture runs on a value iterate, an `Array`
+# and a `JLArray`, which refuses scalar indexing.
+norm_iterate(::Nothing, v) = SVector{length(v)}(v)
+norm_iterate(::Type{B}, v) where {B} = B(v)
+norm_problem(::Nothing, f, f!) = NonlinearProblem(f)
+norm_problem(::Type, f, f!) = NonlinearProblem(f!)
+const NORM_ROUTES = (nothing, ARRAY_BACKENDS...)
+
+norm_lin(x, p) = x .- p
+norm_lin!(y, x, p) = (y .= x .- p; y)
+
+@testset "MaxNorm: the residual test reads ‖F‖∞, status.fnorm ‖F‖₂, $B" for B in NORM_ROUTES
+    prob = norm_problem(B, norm_lin, norm_lin!)
+    x₀ = norm_iterate(B, [0.0, 0.0])
+    p = norm_iterate(B, [3.0, 4.0])
+    # ‖F(x₀)‖∞ = 4 ≤ 4.5 < 5 = ‖F(x₀)‖₂
+    x, st = solve(prob, x₀, Newton(), p; f_abstol = 4.5, f_reltol = 0, norm = MaxNorm())
+    @test st.code == SUCCESS
+    @test st.iterations == 0
+    @test st.fnorm == 5.0
+    @test Array(x) == [0.0, 0.0]
+    _, st = solve(prob, x₀, Newton(), p; f_abstol = 4.5, f_reltol = 0, norm = L2Norm())
+    @test st.code == SUCCESS
+    @test st.iterations == 1
+    _, st = solve(prob, x₀, Newton(), p; f_abstol = 4.5, f_reltol = 0)
+    @test st.iterations == 1
+end
+
+# The chord fixture: `F(x) = x - c` with the constant Jacobian `(I - G)⁻¹`, so that the error
+# `e = x - c` follows `e₊ = G e` and `F(x_k) = e_k`. From `e₀ = (1, 1)`:
+#   k = 0: (1, 1)        ‖·‖∞ = 1,    ‖·‖₂ = 1.4142
+#   k = 1: (0.8, 0)      ‖·‖∞ = 0.8,  ‖·‖₂ = 0.8
+#   k = 2: (0.6, 0.6)    ‖·‖∞ = 0.6,  ‖·‖₂ = 0.8485
+#   k = 3: (0.48, 0)     ‖·‖∞ = 0.48, ‖·‖₂ = 0.48
+# so `f_abstol = 0.7` holds at k = 3 in the 2-norm and at k = 2 in the max norm, and
+# `f_reltol = 0.65` at k = 1 in the 2-norm, at k = 2 in the max norm, and at k = 1 for a test that
+# divides the max norm by the 2-norm of the start.
+const NORM_CHORD_G = SMatrix{2, 2}(0.75, 0.75, 0.05, -0.75)
+const NORM_CHORD_M = inv(SMatrix{2, 2, Float64}(I) - NORM_CHORD_G)
+const NORM_CHORD_C = [1.0, 2.0]
+norm_chord_J(x, p) = NORM_CHORD_M
+norm_chord_J!(J, x, p) = (copyto!(J, Matrix(NORM_CHORD_M)); J)
+norm_chord_newton(::Nothing) = Newton(; jacobian = norm_chord_J)
+norm_chord_newton(::Type) = Newton(; jacobian = norm_chord_J!)
+
+@testset "MaxNorm on the chord fixture, $B" for B in NORM_ROUTES
+    prob = norm_problem(B, norm_lin, norm_lin!)
+    x₀ = norm_iterate(B, NORM_CHORD_C .+ 1)
+    p = norm_iterate(B, NORM_CHORD_C)
+    m = norm_chord_newton(B)
+    for (tol, k_max, k_two) in (((f_abstol = 0.7, f_reltol = 0), 2, 3),
+        ((f_abstol = 0, f_reltol = 0.65), 2, 1))
+        x, st = solve(prob, x₀, m, p; tol..., norm = MaxNorm())
+        @test st.code == SUCCESS
+        @test st.iterations == k_max
+        @test abs(st.fnorm - norm([0.6, 0.6])) <= 1e-14
+        @test all(abs.(Array(x) .- NORM_CHORD_C .- [0.6, 0.6]) .<= 1e-14)
+        _, st₂ = solve(prob, x₀, m, p; tol...)
+        @test st₂.code == SUCCESS
+        @test st₂.iterations == k_two
+        _, st_l2 = solve(prob, x₀, m, p; tol..., norm = L2Norm())
+        @test st_l2 === st₂
+    end
+end
+
+# Every method reads the norm: `Picard` on `F(x) = (I - G)(x - c)`, whose error follows `e₊ = G e`.
+const NORM_PICARD_A = SMatrix{2, 2, Float64}(I) - NORM_CHORD_G
+norm_picard(x, p) = NORM_PICARD_A * (x - p)
+norm_picard!(y, x, p) = (y .= Matrix(NORM_PICARD_A) * (x .- p); y)
+norm_picard!(y::JLArray, x, p) = (y .= JLArray(Matrix(NORM_PICARD_A)) * (x .- p); y)
+
+@testset "MaxNorm reaches Picard, $B" for B in NORM_ROUTES
+    prob = norm_problem(B, norm_picard, norm_picard!)
+    x₀ = norm_iterate(B, NORM_CHORD_C .+ 1)
+    p = norm_iterate(B, NORM_CHORD_C)
+    # the first k at which each norm of `F_k = A Gᵏ e₀` is at most 0.61, on the host
+    e = [1.0, 1.0]
+    k_inf = k_two = -1
+    for k in 0:30
+        F = Matrix(NORM_PICARD_A) * e
+        k_inf < 0 && maximum(abs, F) <= 0.61 && (k_inf = k)
+        k_two < 0 && norm(F) <= 0.61 && (k_two = k)
+        e = Matrix(NORM_CHORD_G) * e
+    end
+    @test k_inf != k_two
+    _, st = solve(prob, x₀, Picard(), p; f_abstol = 0.61, f_reltol = 0, norm = MaxNorm())
+    @test st.code == SUCCESS
+    @test st.iterations == k_inf
+    _, st = solve(prob, x₀, Picard(), p; f_abstol = 0.61, f_reltol = 0)
+    @test st.code == SUCCESS
+    @test st.iterations == k_two
+end
+
+@testset "MaxNorm: init and solve! read the norm of their options" begin
+    prob = NonlinearProblem(norm_lin!)
+    solver = init(prob, [0.0, 0.0], Newton(), [3.0, 4.0];
+        f_abstol = 4.5, f_reltol = 0, norm = MaxNorm())
+    @test solver.options.norm === MaxNorm()
+    _, st = solve!(solver)
+    @test st.code == SUCCESS && st.iterations == 0 && st.fnorm == 5.0
 end
 
 @testset "JET.@test_opt on solve for Newton() and Picard()" begin

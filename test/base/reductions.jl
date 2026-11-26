@@ -1,4 +1,4 @@
-using GeometricSolvers: norm2, rnorm, rdot
+using GeometricSolvers: norm2, rnorm, rdot, rmaxnorm
 using ForwardDiff: ForwardDiff, Dual
 using JET: JET, @test_opt
 using JLArrays: JLArray
@@ -245,6 +245,44 @@ allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))
         @test allocations(rnorm, x) == 0
     end
     @test allocations(rnorm, randn(Xoshiro(1), T, 100)) == 0
+end
+
+@testset "rmaxnorm is the largest modulus in real(T): $T, $(AT)" for T in ELTYPES,
+    AT in ARRAY_BACKENDS
+
+    R = real(T)
+    a = T <: Complex ? T[3 + 4im, -1, 2im] : T[3, -4, 1]
+    @test rmaxnorm(AT(a)) === R(T <: Complex ? 5 : 4)
+    @test rmaxnorm(SVector{3}(a)) === rmaxnorm(AT(a))
+    # the empty array, and the hostile entries of the exponent range
+    @test rmaxnorm(AT(T[])) === zero(R)
+    @test rmaxnorm(AT(T[-zero(R), zero(R)])) === zero(R)
+    @test rmaxnorm(AT(T[nextfloat(zero(R)), floatmin(R)])) === floatmin(R)
+    @test rmaxnorm(AT(T[eps(R), -one(R)])) === one(R)
+    # no overflow where the 2-norm overflows: rnorm scales, rmaxnorm needs no scaling
+    @test rmaxnorm(AT(fill(T(floatmax(R)), 4))) === floatmax(R)
+    @test rmaxnorm(AT(T[floatmax(R) / 2, -floatmax(R)])) === floatmax(R)
+    # a NaN entry gives NaN wherever it sits, and an Inf entry and no NaN gives Inf
+    for v in (T[1, NaN, 2], T[NaN, 1, 2], T[1, 2, NaN], T[Inf, NaN], T[NaN, Inf])
+        @test isnan(rmaxnorm(AT(v)))
+        @test isnan(rmaxnorm(SVector{length(v)}(v)))
+    end
+    @test rmaxnorm(AT(T[1, -Inf])) === R(Inf)
+    @test rmaxnorm(SVector{2}(T[Inf, 1])) === R(Inf)
+    # the scale family: the largest modulus of the scaled entries, with no scaling of its own
+    for k in -8:4:8
+        b = R(10.0^k) .* a
+        @test rmaxnorm(AT(b)) === maximum(abs, b)
+    end
+    @test rmaxnorm(T(-3)) === R(3)
+end
+
+@testset "rmaxnorm of an SVector behind a barrier allocates nothing, $T" for T in ELTYPES
+    x = SVector{4}(T[1, -2, 3, 0])
+    @test @inferred(rmaxnorm(x)) isa real(T)
+    @test allocations(rmaxnorm, x) == 0
+    @test allocations(rmaxnorm, T[1, -2, 3, 0]) == 0
+    @test allocations(collect, x) > 0    # the control
 end
 
 # The scaled path needs a floating-point `R`: it converts its scaled sum back to an integer `R`,

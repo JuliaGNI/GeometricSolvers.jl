@@ -70,10 +70,12 @@ end
 """
     GaussNewton(; linsolve = QRFactorization(), globalization = Static(),
                   jacobian = nothing, refinement = NoRefinement(),
-                  regularization = 0, reuse = nothing)
+                  regularization = 0, reuse = nothing, best = false)
 
 Gauss–Newton method for [`LeastSquaresProblem`](@ref) and [`NonlinearProblem`](@ref). Returns a
-[`Newton`](@ref) solver configured with `linsolve = QRFactorization()` by default.
+[`Newton`](@ref) solver configured with `linsolve = QRFactorization()` by default. With
+`best = true` it returns the iterate of the smallest ``\\|F(x)\\|_2`` of a solve that ends without
+`SUCCESS`, as the best iterate of [`Newton`](@ref) describes.
 """
 function GaussNewton(;
         linsolve = QRFactorization(),
@@ -81,6 +83,8 @@ function GaussNewton(;
         jacobian = nothing,
         refinement = NoRefinement(),
         regularization::Real = 0,
-        reuse::Union{Nothing, Integer} = nothing)
-    return Newton(; linsolve, globalization, jacobian, refinement, regularization, reuse)
+        reuse::Union{Nothing, Integer} = nothing,
+        best::Bool = false)
+    return Newton(;
+        linsolve, globalization, jacobian, refinement, regularization, reuse, best)
 end

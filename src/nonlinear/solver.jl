@@ -94,6 +94,24 @@ end
 # `fnorm` to the norm of its inner residual.
 @inline converged_status(state, prob, x, status) = status
 
+# `status` with its residual norm replaced by `fnorm`, and every other field kept.
+@inline function with_fnorm(status::SolverStatus{R}, fnorm::R) where {R}
+    return SolverStatus{R}(
+        status.code, status.f_calls, status.iterations, fnorm, status.stepnorm,
+        status.step_failures, status.promoted, status.stationary, status.jvp_calls,
+        status.rank, status.nullnorm, status.gradratio)
+end
+
+# The status that the residual test of `solve!!` reads at `x`, whose residual is `Fx`: `status`,
+# which `converged_status` gave from `raw`, under `L2Norm`; under `MaxNorm`, the status that
+# `converged_status` gives from `raw` with the max norm of `Fx`, so that a `Deflated` problem tests
+# its inner residual in the max norm too. Under `MaxNorm` a `Deflated` problem has a method of its
+# own, which reuses the factor that `status` holds.
+@inline test_status(::L2Norm, state, prob, x, Fx, raw, status) = status
+@inline function test_status(::MaxNorm, state, prob, x, Fx, raw, status)
+    return converged_status(state, prob, x, with_fnorm(raw, rmaxnorm(Fx)))
+end
+
 @inline function stationary_converged(
         ::AbstractNonlinearProblem, ::Options{R}, state, ::SolverStatus{R}) where {R}
     return false
@@ -155,7 +173,10 @@ p)` and `fnorm₀ = rnorm(Fx)`, and calls [`start!!`](@ref) once, which resets t
 of the method (the reuse age and the stalled flag under factor reuse, the radius under
 [`DogLeg`](@ref), the damping parameter under [`LevenbergMarquardt`](@ref), and the anchor merit
 of a line search). Every return goes through
-[`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns.
+[`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns. The residual test
+reads the [`StoppingNorm`](@ref) of `options`: under [`MaxNorm`](@ref), `solve!!` takes one
+[`rmaxnorm`](@ref) of the residual at the start and after each step that reaches the test, and
+`status.fnorm` stays the 2-norm of the residual.
 
 When `fnorm₀` is not finite — an entry of `Fx` is not finite, or `‖F‖` is above `floatmax` — it
 returns `NONFINITE` with `0` iterations. When the residual test of [`Options`](@ref) already holds
@@ -208,13 +229,15 @@ function solve!!(
     Fx = primal_residual!!(residual_buffer(state), prob, x, p)
     fnorm₀ = rnorm(Fx)
     state = start!!(state, method, prob, x, Fx, p, fnorm₀)
-    status = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false, false)
+    status₀ = SolverStatus{R}(SUCCESS, Int32(0), fnorm₀, zero(R), Int32(0), false, false)
     if !isfinite(fnorm₀)
-        return finish!!(state, method, prob, x, Fx, end_status(status, NONFINITE))
+        return finish!!(state, method, prob, x, Fx, end_status(status₀, NONFINITE))
     end
-    status = converged_status(state, prob, x, status)
-    ftest₀ = status.fnorm
-    if residual_converged(options, status, ftest₀)
+    status = converged_status(state, prob, x, status₀)
+    # the residual test reads the norm of `options`, and `status.fnorm` stays the 2-norm
+    tested = test_status(options.norm, state, prob, x, Fx, status₀, status)
+    ftest₀ = tested.fnorm
+    if residual_converged(options, tested, ftest₀)
         return finish!!(state, method, prob, x, Fx, status)
     end
     if options.max_iterations == Int32(0)
@@ -229,7 +252,8 @@ function solve!!(
         status_k = status
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
         state_step = state
-        status = converged_status(state, prob, x, record(status, info))
+        recorded = record(status, info)
+        status = converged_status(state, prob, x, recorded)
         if info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS
             return finish!!(state, method, prob, x, Fx, status)
         end
@@ -237,7 +261,8 @@ function solve!!(
            !stationary_converged(prob, options, state, status)
             return finish!!(state, method, prob, x, Fx, status)
         end
-        if residual_converged(options, status, ftest₀)
+        tested = test_status(options.norm, state, prob, x, Fx, recorded, status)
+        if residual_converged(options, tested, ftest₀)
             return finish!!(state, method, prob, x, Fx, ok_status(status))
         end
         # the diagnostics are re-measured at `x` at most once per step

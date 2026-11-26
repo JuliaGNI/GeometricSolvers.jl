@@ -414,6 +414,77 @@ end
     @test eltype(vp_f32.prob.F(SVector(1.0f0, 2.0f0), nothing)) === Float32
 end
 
+# The inner options keep their stopping norm wherever the package rebuilds them.
+@testset "the inner options keep their norm" begin
+    shift = 2.0
+    prob_cap = NonlinearProblem((x, p) -> SVector(x[1] - shift, x[2] - shift))
+    max_opt = Options(Float64; f_abstol = 1e-5, g_tol = 1e-3, norm = MaxNorm())
+    elim = BlockEliminated(prob_cap, (1,); outer = (2,), inner_options = max_opt)
+    elim_f32 = Adapt.adapt(ToReal{Float32}(), elim)
+    @test elim_f32.inner_options isa Options{Float32}
+    @test elim_f32.inner_options.norm === MaxNorm()
+    @test elim_f32.inner_options.f_abstol === 1.0f-5
+    @test elim_f32.inner_options.g_tol === 1.0f-3
+    ls_cap = LeastSquaresProblem((x, p) -> SVector(x[1] - shift, x[2] - shift, x[1] + x[2]), 3)
+    vp = VariableProjection(ls_cap, (1,); outer = (2,), inner_options = max_opt)
+    @test Adapt.adapt(ToReal{Float32}(), vp).inner_options.norm === MaxNorm()
+    @test Adapt.adapt(ToReal{Float32}(),
+        BlockEliminated(prob_cap, (1,); outer = (2,),
+            inner_options = Options(Float64))).inner_options.norm === L2Norm()
+
+    inner = NonlinearProblem((y, c) -> y .- c)
+    moments() = DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2))
+    bb = BatchEliminated((F, x, m, s) -> F, inner, [SVector(0.0) for _ in 1:3],
+        (m, Y, s, ps) -> m, moments();
+        inner_options = Options(Float64; max_iterations = 7, g_tol = 1e-3, norm = MaxNorm()))
+    options = GS._batch_inner_options(bb, 1e-6)
+    @test options.norm === MaxNorm()
+    @test options.f_abstol == 1e-6 && options.f_reltol == 0
+    @test options.max_iterations == 7
+    # the batch's inner options take the default `g_tol`, not the template's
+    @test options.g_tol === sqrt(eps(Float64))
+    b2 = BatchEliminated((F, x, m, s) -> F, inner, [SVector(0.0) for _ in 1:3],
+        (m, Y, s, ps) -> m, moments())
+    @test GS._batch_inner_options(b2, 1e-6).norm === L2Norm()
+end
+
+# The outer solve of an eliminated problem discards the iterate that the outer `finish!!` returns,
+# so an outer `Newton(; best = true)` is refused, with a message that names `best`.
+elim_best_f(x, p) = SVector(x[1] - x[3], x[2] - 2 * x[3], x[3] * x[3] - 4)
+elim_best_f!(y, x, p) = (y .= (x[1] - x[3], x[2] - 2 * x[3], x[3] * x[3] - 4); y)
+elim_best_r(x, p) = SVector(x[1] - x[3], x[2] - 2 * x[3], x[3] * x[3] - 4, x[1] * x[3] - 4)
+function elim_best_r!(y, x, p)
+    y .= (x[1] - x[3], x[2] - 2 * x[3], x[3] * x[3] - 4, x[1] * x[3] - 4)
+    return y
+end
+
+const elim_refusal = r"^ArgumentError: BlockEliminated and VariableProjection take no outer Newton with best = true"
+const batch_refusal = r"^ArgumentError: a BatchEliminated problem takes no outer Newton with best = true"
+
+@testset "an outer Newton with best = true is refused, $route" for route in (:SVector, :Vector)
+    static = route === :SVector
+    x0 = static ? SVector(0.5, 0.5, 1.5) : [0.5, 0.5, 1.5]
+    be = BlockEliminated(NonlinearProblem(static ? elim_best_f : elim_best_f!), (1, 2))
+    m = Newton(; linsolve = SVDFactorization(), best = true)
+    @test_throws elim_refusal solve(be, x0, m)
+    @test_throws elim_refusal init(be, x0, m)
+    vp = VariableProjection(LeastSquaresProblem(static ? elim_best_r : elim_best_r!, 4), (
+        1, 2))
+    @test_throws elim_refusal solve(vp, x0, GaussNewton(; linsolve = SVDFactorization(),
+        best = true))
+    x, st = solve(be, x0, Newton(; linsolve = SVDFactorization()))
+    @test st.code == SUCCESS
+    @test all(abs.(collect(x) .- [2.0, 4.0, 2.0]) .<= 1e-8)
+end
+
+@testset "a BatchEliminated outer Newton with best = true is refused" begin
+    prob, E0 = GS.make_pic_elimination_problem(Float64, Float64; N_x = 8, N_p = 16)
+    m = Newton(; linsolve = GMRES(; maxiter = 16), best = true)
+    @test_throws batch_refusal init(prob, E0, m)
+    @test_throws batch_refusal solve(prob, E0, m)
+    @test init(prob, E0, Newton(; linsolve = GMRES(; maxiter = 16))) isa GS.NonlinearSolver
+end
+
 @testset "Check 1: Separable exponential fit over 100 seeded starts" begin
     prob_exp5 = LeastSquaresProblem(r_exp5, 21)
     vp_kaufman = VariableProjection(prob_exp5, 1:3; outer = 4:5, jacobian_mode = :kaufman)

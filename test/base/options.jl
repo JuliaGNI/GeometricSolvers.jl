@@ -32,7 +32,8 @@ end
     for name in (:f_abstol, :f_reltol, :x_abstol, :x_reltol)
         @test getfield(opt, name) isa Float32
     end
-    @test all(T -> T === Float32 || T === Int32, fieldtypes(typeof(opt)))
+    @test all(T -> T === Float32 || T === Int32 || T <: GeometricSolvers.StoppingNorm,
+        fieldtypes(typeof(opt)))
     @test opt.f_abstol === 1.0f-9
     @test opt.max_stalls === Int32(5)
 end
@@ -157,4 +158,52 @@ end
     # a zero step is no step, at any iteration
     st = SolverStatus{Float64}(MAXITERS, Int32(1), 1.0, 0.0, Int32(0), false)
     @test !step_converged(opt, st, 1.0)
+end
+
+# The stopping norm is a type parameter of `Options` and a field of no size, so `Options` stays
+# `isbits` at the size of its other fields, 56 bytes in `Float64` and 32 in `Float32`.
+@testset "the norm of Options(T; norm), $T" for T in ELTYPES
+    R = real(T)
+    opt = Options(T)
+    opt_max = Options(T; norm = MaxNorm())
+    @test opt.norm === L2Norm()
+    @test opt_max.norm === MaxNorm()
+    @test opt isa Options{R} && opt_max isa Options{R}
+    @test typeof(opt) !== typeof(opt_max)
+    @test isbits(opt) && isbits(opt_max)
+    @test sizeof(opt) == sizeof(opt_max) == (R === Float32 ? 32 : 56)
+    @test Options(T; norm = L2Norm()) === opt
+    @test GeometricSolvers.check_options(T, opt_max) === nothing
+end
+
+@testset "the norm keyword takes a StoppingNorm only" begin
+    @test_throws r"^TypeError: in keyword argument norm, expected GeometricSolvers\.StoppingNorm, got a value of type Int64$" Options(
+        Float64; norm = 1)
+    @test_throws r"^TypeError: in keyword argument norm, expected GeometricSolvers\.StoppingNorm, got a value of type Symbol$" Options(
+        Float64; norm = :max)
+    @test L2Norm() isa GeometricSolvers.StoppingNorm
+    @test MaxNorm() isa GeometricSolvers.StoppingNorm
+    @test Base.isexported(GeometricSolvers, :L2Norm)
+    @test Base.isexported(GeometricSolvers, :MaxNorm)
+    @test !Base.isexported(GeometricSolvers, :StoppingNorm)
+end
+
+@testset "the positional Options{R} constructors take the norm" begin
+    o = Options(
+        Float64; f_abstol = 1e-3, max_iterations = 7, g_tol = 1e-5, norm = MaxNorm())
+    # seven arguments give `L2Norm()` and `g_tol = √eps(R)`
+    o7 = Options{Float64}(o.f_abstol, o.f_reltol, o.x_abstol, o.x_reltol,
+        o.min_iterations, o.max_iterations, o.max_stalls)
+    @test o7.norm === L2Norm()
+    @test o7.g_tol === sqrt(eps(Float64))
+    # eight arguments give `L2Norm()`, and a ninth sets the norm
+    o8 = Options{Float32}(o.f_abstol, o.f_reltol, o.x_abstol, o.x_reltol,
+        o.min_iterations, o.max_iterations, o.max_stalls, o.g_tol)
+    @test o8 isa Options{Float32}
+    @test o8.norm === L2Norm()
+    @test o8.g_tol === 1.0f-5
+    o9 = Options{Float32}(o.f_abstol, o.f_reltol, o.x_abstol, o.x_reltol,
+        o.min_iterations, o.max_iterations, o.max_stalls, o.g_tol, o.norm)
+    @test o9.norm === MaxNorm()
+    @test o9.f_abstol === 1.0f-3 && o9.max_iterations === Int32(7)
 end
