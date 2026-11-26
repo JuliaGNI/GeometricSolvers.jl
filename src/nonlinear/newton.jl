@@ -796,6 +796,7 @@ end
 
 @inline state_gradratio(state::NewtonState) = state.diag.gradratio
 @inline state_jnorm(state::NewtonState) = state.diag.jnorm
+@inline state_rank(state::NewtonState) = state.diag.rank
 @inline step_start_buffers(state::NewtonState) = state.kept
 
 # The state whose diagnostics measure the stationarity test at `(x, Fx)`: `solve!!` re-measures

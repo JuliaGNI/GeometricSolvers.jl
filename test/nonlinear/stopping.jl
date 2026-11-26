@@ -130,6 +130,25 @@ end
     @test stopping_test(st_res) == :residual
 end
 
+@testset "the rate test reads an SVD factor of full column rank, $T" for T in REAL_ELTYPES
+    # the problem above, along an SVD factor, which reports its rank `1`: the rate test ends the
+    # solve as along an LU factor, which reports no rank. A rank-deficient SVD factor, of check 2
+    # in `test/nonlinear/diagnostics.jl`, leaves the solve to the step test.
+    opt = Options(T; f_reltol = 0, x_abstol = T(1e-4))
+    svd = GeometricSolvers.SVDFactorization()
+    _, st = solve(linear_problem(T(99) / 100), one(T),
+        Newton(; jacobian = (x, p) -> one(T), linsolve = svd); options = opt)
+    @test st.code == SUCCESS
+    @test st.rank == 1
+    @test stopping_test(st) == :contraction
+    @test st.iterations == 3
+    _, st_v = solve(NonlinearProblem((x, p) -> T(99) / 100 * x), SVector{1, T}(1),
+        Newton(; jacobian = (x, p) -> SMatrix{1, 1, T}(1), linsolve = svd); options = opt)
+    @test st_v.code == SUCCESS
+    @test st_v.rank == 1
+    @test stopping_test(st_v) == :contraction
+end
+
 @testset "the stationarity test comes before the rate test, $T" for T in REAL_ELTYPES
     # `r(x) = (x² - 2, x - 1)` has no root, and Gauss–Newton converges to its least-squares point
     # at a linear rate: the solve ends on the stationarity test, also where the rate test holds
@@ -210,6 +229,37 @@ end
     @test st_plain.code == SUCCESS
     @test st_plain.contracted
     @test st_plain.iterations == 2
+end
+
+# A method whose steps from `x₀ = 1` go to `1/2`, `1/4`, `-1/4` and back to `1/4`: the step norms
+# `1/2`, `1/4`, `1/2` and `1/2` have the rates `1/2`, `2` and `1`, all exact. Each step reports
+# `SUCCESS` and the flag `limited`.
+struct CycleStep
+    limited::Bool
+end
+GeometricSolvers.init_state(::CycleStep, prob, x, p) = nothing
+function GeometricSolvers.step!!(state, m::CycleStep, prob, x, Fx, p)
+    T = typeof(x)
+    x₊ = x == 1 ? T(1) / 2 : x == T(1) / 2 ? T(1) / 4 : x == T(1) / 4 ? -T(1) / 4 : T(1) / 4
+    F₊ = prob.F(x₊, p)
+    return x₊, F₊, state,
+    StepInfo{T}(SUCCESS, abs(F₊), abs(x₊ - x), Int32(0), false, m.limited)
+end
+
+@testset "the round-off stop skips a limited step, $T" for T in REAL_ELTYPES
+    # the third step has the rate `2` after a step of rate `1/2`: the round-off stop ends the solve
+    # there, unless a radius limits the steps
+    prob = linear_problem(one(T))
+    opt = Options(T; f_reltol = 0, roundoff = true, max_iterations = 5)
+    x, st = solve(prob, one(T), CycleStep(false); options = opt)
+    @test st.code == STALLED
+    @test st.iterations == 3
+    @test st.rate == 2
+    @test x == -T(1) / 4
+    _, st_limited = solve(prob, one(T), CycleStep(true); options = opt)
+    @test st_limited.code == MAXITERS
+    @test st_limited.iterations == 5
+    @test !st_limited.contracted
 end
 
 @testset "a NaN rate never stops a solve" begin
@@ -400,6 +450,13 @@ end
     @test x == 0
     @test calls[] == 2
     @test !st.reused
+    # the same refresh under `reuse = 3` without `keep_factor`, whose factor would step twice
+    calls[] = 0
+    x_3, st_3 = solve(linear_problem(one(T)), T(2), Newton(; jacobian = J, reuse = 3))
+    @test st_3.code == SUCCESS
+    @test st_3.iterations == 3
+    @test x_3 == 0
+    @test calls[] == 2
     # the same refresh where the factorisation runs in `Float32` below the working precision
     if T === Float64
         calls[] = 0
@@ -414,6 +471,21 @@ end
 
 # A preconditioner that the rule state of its `GMRES` names and that no step applies here.
 struct UnappliedPreconditioner end
+
+@testset "reused names the factor of the last step, $T" for T in REAL_ELTYPES
+    # the contraction of rate `1/4` along the constant Jacobian `1`: under `reuse = 3` the second
+    # step steps along the factor of the first, and under `reuse = 1` each step factorises
+    prob = linear_problem(T(3) / 4)
+    J = (x, p) -> one(T)
+    _, st_3 = solve(prob, one(T), Newton(; jacobian = J, reuse = 3);
+        options = capped_options(T, 2))
+    @test st_3.iterations == 2
+    @test st_3.reused
+    _, st_1 = solve(prob, one(T), Newton(; jacobian = J, reuse = 1);
+        options = capped_options(T, 2))
+    @test st_1.iterations == 2
+    @test !st_1.reused
+end
 
 @testset "a GMRES step records whether it reused its preconditioner" begin
     # the rule state after a step of a `Newton` with a preconditioned `GMRES` and `reuse = 3`,
@@ -522,25 +594,92 @@ end
     # working precision `Float64`. Each solve converges in two steps with a last rate below
     # `10⁻³`, which would keep the factor, but the next solve starts unpromoted and does not read
     # the `Float64` factor: it factorises afresh, and promotes again.
-    calls = Ref(0)
+    # The Jacobian records the points it is read at, so that the factorisation at the first step of
+    # each solve, at `x₀`, shows.
+    points = SVector{2, Float64}[]
     A = SMatrix{2, 2}(1.0, 1.0, 1.0, 1.0 + 1e-9)
     F(x, p) = A * x - p .+ 1e-3 .* x .^ 3
-    J(x, p) = A + SMatrix{2, 2}(3e-3 * x[1]^2, 0.0, 0.0, 3e-3 * x[2]^2)
+    J(x, p) = (push!(points, x); A + SMatrix{2, 2}(3e-3 * x[1]^2, 0.0, 0.0, 3e-3 * x[2]^2))
     m = Newton(;
-        jacobian = CountingJacobian(J, calls), linsolve = LUFactorization(Float32),
-        reuse = 5, keep_factor = true)
+        jacobian = J, linsolve = LUFactorization(Float32), reuse = 3, keep_factor = true)
     b = SVector(2.0, 2.0 + 1e-9)
     x₀ = SVector(0.0, 0.0)
     solver = init(NonlinearProblem(F), x₀, m, b)
     for _ in 1:3
-        before = calls[]
+        empty!(points)
         _, st = solve!(solver, x₀, b)
         @test st.code == SUCCESS
         @test st.promoted
         @test st.iterations == 2
         @test st.rate <= 1e-3
         @test !st.reused
-        @test calls[] - before == 2
+        @test length(points) == 2
+        @test count(==(x₀), points) == 1
+    end
+end
+
+@testset "eliminated inner options keep κ and the round-off flag" begin
+    opt = Options(Float64; kappa = 1 / 4, roundoff = true)
+    prob = NonlinearProblem((x, p) -> SVector(x[1] - 2, x[2] - 2))
+    elim = GeometricSolvers.BlockEliminated(prob, (1,); outer = (2,), inner_options = opt)
+    inner_f32 = Adapt.adapt(GeometricSolvers.ToReal{Float32}(), elim).inner_options
+    @test inner_f32 isa Options{Float32}
+    @test inner_f32.kappa === 0.25f0
+    @test inner_f32.roundoff === true
+    moments = GeometricSolvers.DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2))
+    batch = GeometricSolvers.BatchEliminated((F, x, m, s) -> F,
+        NonlinearProblem((y, c) -> y .- c), [SVector(0.0) for _ in 1:3],
+        (m, Y, s, ps) -> m, moments; inner_options = opt)
+    inner = GeometricSolvers._batch_inner_options(batch, 1e-6)
+    @test inner.kappa === 0.25
+    @test inner.roundoff === true
+end
+
+@testset "refactorize drops the outer factor of an eliminated problem" begin
+    F(x, p) = SVector(x[1]^2 - x[2], x[2]^3 + x[2] - 2 + x[1] / 10)
+    F!(y, x, p) = (y .= F(x, p); y)
+    for (prob, x₀) in ((NonlinearProblem(F), SVector(0.5, 0.5)),
+        (NonlinearProblem(F!), [0.5, 0.5]))
+        elim = GeometricSolvers.BlockEliminated(prob, [1]; outer = [2])
+        solver = init(elim, copy(x₀), Newton(; reuse = 10, keep_factor = true))
+        x, st = solve!(solver)
+        @test st.code == SUCCESS
+        _, st₂ = solve!(solver, x .+ 1e-9)
+        @test st₂.code == SUCCESS
+        @test solver.state.outer_state.rule.age > 0
+        dropped = GeometricSolvers.refactorize!!(solver.state, solver.method)
+        @test dropped.outer_state.rule.age == 0
+        _, st₃ = solve!(solver, x .+ 1e-9; refactorize = true)
+        @test st₃.code == SUCCESS
+    end
+end
+
+# The stationary points of `a⁴/4 - a²/2 + c²(1 + a²)/2` are `(0, 0)` and `(±1, 0)`.
+stationary_action(x, p) = x[1]^4 / 4 - x[1]^2 / 2 + x[2]^2 * (1 + x[1]^2) / 2
+
+@testset "solve! on a stationarity problem takes refactorize" begin
+    prob = GeometricSolvers.StationarityProblem(stationary_action)
+    m = Newton(; globalization = GeometricSolvers.Backtracking(), reuse = 10, keep_factor = true)
+    for (root, x₀, x_near) in (
+        (SVector(0.0, 0.0), SVector(0.1, 0.3), SVector(1.0, 0.0) .+ 1e-9),
+        ([0.0, 0.0], [0.1, 0.3], [1.0, 0.0] .+ 1e-9))
+        deflated = GeometricSolvers.Deflated(prob, (root,))
+        # the solve with no arguments starts at the solver's own iterate
+        x, st = solve!(init(deflated, copy(x₀), m))
+        @test st isa SolverStatus{Float64}
+        @test st.code == SUCCESS
+        @test isapprox(abs(x[1]), 1; atol = 1e-8)
+        # a solve of one step from close to the root `(1, 0)` keeps its factor; the next solve steps
+        # along it, unless it passes `refactorize = true`
+        for problem in (prob, deflated), refactorize in (false, true)
+
+            solver = init(problem, copy(x₀), m)
+            _, st₁ = solve!(solver, copy(x_near))
+            @test st₁.iterations == 1
+            _, st₂ = solve!(solver, copy(x_near); refactorize)
+            @test st₂.iterations == 1
+            @test st₂.reused == !refactorize
+        end
     end
 end
 

@@ -60,6 +60,16 @@ and for an array iterate it writes that iterate into `x` and returns `x`. [`Newt
 
 @inline state_gradratio(state) = NaN
 @inline state_jnorm(state) = 0
+@inline state_rank(state) = Int32(-1)
+
+# Whether the last fresh factor of `state` lets the rate test end a solve at the iterate `x`: a
+# factor that reports no rank (`-1`: no factorisation, an LU or QR factor, a failed SVD factor) or
+# a rank equal to the length of `x`, the columns of the Jacobian. Along a rank-deficient SVD factor
+# the steps contract onto a least-squares point that need not be a root, so the step test decides.
+@inline function rate_test_rank(state, x)
+    rank = state_rank(state)
+    return rank == Int32(-1) || rank == length(x)
+end
 
 # The statuses that `solve!!` closes a solve with: the code, the counts and the norms of `status`
 # and its rate, and whether the solve converged by the stationarity or the rate test.
@@ -247,7 +257,8 @@ Reaching `options.max_iterations` without convergence returns `MAXITERS`.
 
 [`record`](@ref) measures the rate ``θ_k = \\|Δ_k\\| / \\|Δ_{k-1}\\|`` of each step into
 `status.rate`. The rate test of [`Options`](@ref) joins the step test: after a step that is
-neither `STALLED` nor `limited`, where the residual test fails and the rate test holds, the solve
+neither `STALLED` nor `limited`, where the residual test fails and the rate test holds, along a
+last fresh factor that reports no rank or full column rank, the solve
 returns `SUCCESS` with `status.contracted == true`, unless the stationarity test, re-measured at
 that iterate, holds, which returns `SUCCESS` with `status.stationary == true`. Under
 `options.roundoff` the round-off stop joins the step test too: it returns `STALLED` at that
@@ -324,7 +335,8 @@ function solve!!(
         # neither stalled nor were limited.
         steptested = !(info.code == STALLED || info.limited)
         xnorm = steptested ? R(rnorm(x)) : R(NaN)
-        contracted = steptested && rate_converged(options, status, xnorm)
+        contracted = steptested && rate_test_rank(state, x) &&
+                     rate_converged(options, status, xnorm)
         if contracted ||
            steptested &&
            (step_converged(options, status, xnorm) ||
@@ -456,8 +468,9 @@ refuses after `refactorize = true` has dropped the factor.
 
 With `refactorize = true`, the first step of the solve factorises afresh. A [`Newton`](@ref) with
 `keep_factor = true` otherwise starts on the factor that the last solve kept; a caller that changes
-the problem between two calls, such as an integrator that changes its step size, passes it. For a
-method that keeps no factor across its steps, the keyword changes nothing.
+the problem between two calls, such as an integrator that changes its step size, passes it. On an
+eliminated problem it drops the factor of the outer solve. For a method that keeps no factor across
+its steps, the keyword changes nothing.
 """
 function solve!(solver::NonlinearSolver; b = nothing, refactorize::Bool = false)
     return solve!(solver, solver.x, solver.p; b, refactorize)

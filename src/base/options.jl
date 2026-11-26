@@ -148,7 +148,9 @@ the residual test fails, a step of rate ``θ_k < 1`` with
 ``θ_k / (1 - θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)`` returns `SUCCESS` with
 `status.contracted == true`. The left side estimates the distance of `x` to the limit of a
 contraction of rate ``θ_k``. The rate is `NaN` at the first step and after a step of zero norm, and
-a `NaN` rate passes no test.
+a `NaN` rate passes no test. The test reads only a solve whose last fresh factor reports no rank
+(`status.rank == -1`, as an LU or a QR factor does) or full column rank: along a rank-deficient
+SVD factor the steps can contract onto a point that is no root, and the step test decides.
 
 **The round-off stop is off by default.** With `roundoff = true`, the first step of rate
 ``θ_k ≥ 1`` after a step of rate ``θ_{k-1} < 1`` returns `STALLED` with the iterate it reached

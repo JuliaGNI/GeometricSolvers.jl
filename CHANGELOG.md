@@ -19,14 +19,18 @@ so that a compat-only bump can be told apart from an interface change.
   where the residual test fails, a step of rate `θₖ < 1` with
   `θₖ / (1 - θₖ) ‖Δₖ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)` returns `SUCCESS` with the new flag
   `status.contracted`, unless the stationarity test holds there, and `stopping_test` returns
-  `:contraction`. So `SUCCESS` no longer comes from the residual and stationarity tests alone. The
+  `:contraction`; the test reads no step whose last fresh factor is a rank-deficient SVD factor,
+  so a least-squares point with no root still returns `STALLED`. So `SUCCESS` no longer comes from the residual and stationarity tests alone. The
   new `Options` field `kappa` is `κ`, default `1/10`, and a value outside `(0, 1)` in `real(T)`
   raises an `ArgumentError`. The new flag `roundoff`, default `false`, returns `STALLED` at the
   first step of rate `θₖ ≥ 1` after a step of rate below `1` (Hairer, McLachlan and Razakarivony
   2008, *BIT Numer. Math.* 48, p. 235). The new `Newton` keyword `keep_factor`, which needs
   `reuse`, keeps the factor and its age from one solve of a `NonlinearSolver` to the next after a
   `SUCCESS` in one step or with a last rate `θ ≤ 10⁻³`, not after a promoted solve, and
-  `solve!(solver, x, p; refactorize = true)` drops it, as after a change of the step size. Under
+  `solve!(solver, x, p; refactorize = true)` drops it, as after a change of the step size, also on
+  a stationarity, a deflated stationarity and an eliminated problem (there the outer factor); the
+  `solve!` of a `ReparametrizedSolver` takes no such keyword (K140). The inner options of a
+  `BlockEliminated` and a `BatchEliminated` keep `kappa` and `roundoff`. Under
   `reuse`, a step along a reused factor or preconditioner of rate `θ ≥ 1` refreshes it at the next
   step, and the new flag `status.reused` reports a last step along a reused factor.
   `SolverStatus` grows from 36 to 44 bytes in `Float32` and from 56 to 72 in `Float64`, and

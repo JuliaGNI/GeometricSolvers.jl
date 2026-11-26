@@ -302,7 +302,8 @@ end
     R = typeof(f_abs)
     return Options{R}(
         f_abs, f_rel, x_abs, x_rel,
-        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t, opt.norm)
+        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t, opt.norm,
+        Adapt.adapt(to, opt.kappa), opt.roundoff)
 end
 
 function Adapt.adapt_structure(
@@ -2253,6 +2254,16 @@ struct DenseElimState{OST, WS <: Union{BlockElimPrep, VarProPrep}, OP}
     oprob::OP
 end
 
+# The factor that `solve!(…; refactorize = true)` drops is that of the outer solve.
+@inline function refactorize!!(st::StaticElimState, m)
+    return StaticElimState(
+        refactorize!!(st.outer_state, m), st.inner_state, st.y_warm, st.z_curr,
+        st.fnorm_z_prev, st.Y, st.Z, st.E_y, st.E_z, st.init_failures)
+end
+@inline function refactorize!!(st::DenseElimState, m)
+    return DenseElimState(refactorize!!(st.outer_state, m), st.ws, st.oprob)
+end
+
 @inline residual_buffer(::StaticElimState) = nothing
 @inline residual_buffer(st::DenseElimState) = _ElimResBuffer(st.ws)
 
@@ -3344,7 +3355,8 @@ end
     RIn, _ = _batch_real_types(prob)
     t = prob.inner_options
     return Options{RIn}(tol, zero(RIn), t.x_abstol, t.x_reltol,
-        t.min_iterations, t.max_iterations, t.max_stalls, sqrt(eps(RIn)), t.norm)
+        t.min_iterations, t.max_iterations, t.max_stalls, sqrt(eps(RIn)), t.norm,
+        t.kappa, t.roundoff)
 end
 
 # One inner batch solve from the warm start `prob.Y` at the tolerance `tol`, with the shared

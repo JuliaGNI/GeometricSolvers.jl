@@ -782,6 +782,14 @@ struct DenseDeflatedState{ST, DP, U}
     u_work::U
 end
 
+# The factor of a deflated stationarity solve is that of its solve over the unknowns.
+@inline function refactorize!!(s::StaticDeflatedState, m)
+    return StaticDeflatedState(refactorize!!(s.inner, m))
+end
+@inline function refactorize!!(s::DenseDeflatedState, m)
+    return DenseDeflatedState(refactorize!!(s.inner, m), s.dprob, s.u_work)
+end
+
 # The `U` entries of the full-state roots: the unknown part the distance is taken on.
 @inline function _deflated_roots_r1(def::Deflated{<:StationarityProblem})
     U = def.prob.U
@@ -980,7 +988,8 @@ end
 # full state, as `solve!` on the problem itself does, and carries the per-solve datum `b`.
 function solve!(
         solver::NonlinearSolver{T, P, M, O, S, X, Q}, x, p = solver.p;
-        b = nothing) where {T, P <: Deflated{<:StationarityProblem}, M, O, S, X, Q}
+        b = nothing, refactorize::Bool = false) where {
+        T, P <: Deflated{<:StationarityProblem}, M, O, S, X, Q}
     if has_dual_type(typeof(x)) || has_dual_type(typeof(p))
         throw(ArgumentError(
             "solve! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
@@ -995,6 +1004,7 @@ function solve!(
     p isa Q || throw(ArgumentError(
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
+    refactorize && (solver.state = refactorize!!(solver.state, solver.method))
     solver.x = x
     solver.p = p
     x₊, status, state = solve!!(

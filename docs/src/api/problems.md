@@ -113,8 +113,8 @@ primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while
 [`NonlinearSolver`](@ref) (or a [`ReparametrizedSolver`](@ref) for a [`Reparametrized`](@ref)
 problem) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
-with other `p` of the same types, in place into an array `x`; with `refactorize = true` its first
-step factorises afresh, where a [`Newton`](@ref) with `keep_factor = true` would otherwise start on
+with other `p` of the same types, in place into an array `x`; on a [`NonlinearSolver`](@ref), with
+`refactorize = true` its first step factorises afresh, where a [`Newton`](@ref) with `keep_factor = true` would otherwise start on
 the factor of the last solve. `init`, `solve!` and `solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
 `solve!(init(args...))` returns what `solve(args...)` returns on primal inputs. [`solve!!`](@ref) takes a solver
@@ -166,7 +166,8 @@ The residual test of [`Options`](@ref) reads the 2-norm of the residual, or with
 Each step's rate ``θ_k = \|Δ_k\| / \|Δ_{k-1}\|`` goes into `status.rate`. The rate test of
 [`Options`](@ref) joins the step test: a step of rate ``θ_k < 1`` with
 ``θ_k / (1 - θ_k) \|Δ_k\| ≤ κ \max(x_{abstol}, x_{reltol} \|x\|)`` returns `SUCCESS` with
-`status.contracted` set, and [`stopping_test`](@ref) then returns `:contraction`. With
+`status.contracted` set, and [`stopping_test`](@ref) then returns `:contraction`; it reads no step
+along a rank-deficient SVD factor (`0 ≤ status.rank < length(x)`). With
 `roundoff = true`, a step whose increment stops decreasing returns `STALLED` at the iterate it
 reached. `status.reused` is set where the last step of a [`Newton`](@ref) solve with `reuse`
 stepped along a reused factor.
