@@ -12,7 +12,7 @@ GeometricSolvers
 
 GeometricSolvers provides line searches, linear solvers and nonlinear solvers that run on the CPU
 and on CUDA, ROCm and Metal devices through KernelAbstractions. One solver loop serves three
-regimes, which the storage of the initial iterate selects:
+regimes, which the entry point and the storage of the initial iterate select:
 
 - **R1**: a `Number` or an `SVector`, with value semantics, on the host or in one GPU thread,
 - **R2**: a batch of small systems, one work-item per system on the CPU or a GPU, through
