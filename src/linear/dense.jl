@@ -206,7 +206,7 @@ end
 
 const DenseFactor{A} = Union{
     DenseLU{A}, DenseQR{A}, DenseSVD{A}, DenseLDLT{A}, DenseCholesky{A},
-    DeviceLU{A}, DeviceQR{A}, DeviceSVD{A}, DeviceLDLT{A}}
+    DeviceLU{A}, DeviceQR{A}, DeviceSVD{A}, DeviceLDLT{A}, DeviceCholesky{A}}
 
 # The `T == TF` method: `d` takes `r / 2^k`, `rhs_exponent` of `factors.jl`, `backsolve_shifted!`
 # solves with the factors of `J / 2^e` in place, an SVD dividing by `σ̂ 2^t`, and the step for `J` is

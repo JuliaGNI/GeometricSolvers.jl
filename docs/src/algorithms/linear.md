@@ -14,7 +14,7 @@ type that the iterate selects, or the matrix-free [`GMRES`](@ref).
 |:--|:--|:--|
 | [`LUFactorization`](@ref) | LU with partial pivoting | square |
 | [`LDLTFactorization`](@ref) | Bunch–Kaufman ``L D L^\mathsf{T}`` or ``L D L^\mathsf{H}`` with ``1 \times 1`` and ``2 \times 2`` pivots | symmetric or Hermitian, reads the lower triangle of a real matrix and both triangles of a complex one |
-| [`CholeskyFactorization`](@ref) | Cholesky ``L L^\mathsf{H}`` without pivoting (LAPACK `potrf` on the host) | Hermitian or real symmetric positive definite, reads the lower triangle and the real part of the diagonal |
+| [`CholeskyFactorization`](@ref) | Cholesky ``L L^\mathsf{H}`` without pivoting | Hermitian or real symmetric positive definite, reads the lower triangle and the real part of the diagonal |
 | [`QRFactorization`](@ref) | Householder QR | square, or ``m \times n`` with ``m \ge n`` for least squares |
 | [`SVDFactorization`](@ref) | one-sided Jacobi SVD (static, device) or LAPACK `gesvd` (host) | square or ``m \ge n``, rank-revealing |
 
@@ -29,7 +29,7 @@ The type of the iterate selects the factor:
 |:--|:--|:--|:--|:--|:--|
 | `Number`, `SVector` (R1, R2) | [`StaticLU`](@ref) | [`StaticLDLT`](@ref) | [`StaticCholesky`](@ref) | [`StaticQR`](@ref), [`StaticRectQR`](@ref) | [`StaticSVD`](@ref), [`StaticRectSVD`](@ref) |
 | host `Vector` (R3) | [`DenseLU`](@ref) | [`DenseLDLT`](@ref) | [`DenseCholesky`](@ref) | [`DenseQR`](@ref) | [`DenseSVD`](@ref) |
-| GPU array (R3) | [`DeviceLU`](@ref) | [`DeviceLDLT`](@ref) | none: `ArgumentError` | [`DeviceQR`](@ref) | [`DeviceSVD`](@ref) |
+| GPU array (R3) | [`DeviceLU`](@ref) | [`DeviceLDLT`](@ref) | [`DeviceCholesky`](@ref) | [`DeviceQR`](@ref) | [`DeviceSVD`](@ref) |
 
 - The **static factors** are scalar loops over `SMatrix` data with `Int32` pivots. They return
   new values, `isbits` for an `isbits` element type, so they run in one GPU thread.
@@ -39,8 +39,9 @@ The type of the iterate selects the factor:
   [CPU and GPU backends](@ref backends).
 - The **device factors** are KernelAbstractions kernels: panel pivoting and trailing updates
   for LU, column-norm reductions and reflector application for QR, the Bunch–Kaufman pivots for
-  LDLT, and parallel one-sided Jacobi sweeps for the SVD. On CUDA and Metal, vendor libraries
-  replace some of them; see [CPU and GPU backends](@ref backends).
+  LDLT, a column loop with a shared trailing update in one workgroup for Cholesky, and parallel
+  one-sided Jacobi sweeps for the SVD. On CUDA, ROCm and Metal, vendor libraries replace some of
+  them; see [CPU and GPU backends](@ref backends).
 
 A numerical failure of a factorisation does not throw: a zero pivot gives the status `SINGULAR`.
 A configuration or pattern error can throw an `ArgumentError`, for example a sparse factor whose
@@ -89,8 +90,8 @@ With an [`SVDFactorization`](@ref), the status reports the numerical rank of the
   definite at every iterate, such as the Hessian of a [`StationarityProblem`](@ref) with `E == U`,
   or ``J + \mu I`` with a Hermitian positive semidefinite ``J`` and ``\mu > 0``. It takes no
   pivots, and a Jacobian that is not positive definite gives `SINGULAR`, with the order of the
-  first leading minor that is not positive in `info`. It runs on a host `Array` and in R1 and R2;
-  in R3 a GPU array raises an `ArgumentError`.
+  first leading minor that is not positive in `info`. It runs in R1 and R2, and in R3 on a host
+  `Array` and on a GPU array.
 - [`QRFactorization`](@ref) for a least-squares problem, and where an orthogonal factorisation is
   wanted.
 - [`SVDFactorization`](@ref) for a rank-deficient or nearly singular Jacobian. It costs more than

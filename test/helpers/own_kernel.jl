@@ -1,11 +1,13 @@
 # The reference solve of the vendor fast-path tests, `own_kernel_ldiv!`, the matrix they run it
-# on, `cuda_well_conditioned`, and its `κ∞`, `cuda_well_conditioned_cond`.
+# on, `cuda_well_conditioned`, its `κ∞`, `cuda_well_conditioned_cond`, and the Hermitian positive
+# definite matrix of the Cholesky rows, `cuda_hpd`.
 #
 # Every agreement row of `test/devices/metal_vendor.jl`, `test/gpu/cuda/runtests.jl` and
 # `test/gpu/rocm/runtests.jl` takes its reference from `own_kernel_ldiv!`.
 # `test/devices/own_kernel.jl` checks it against the host solve on a `JLArray`, in an ordinary
-# run: both of its branches and all three backsolves, through the mixed LU and QR rows and the
-# real SVD rows. The same-type LU and QR rows and the complex SVD rows run it on a device only.
+# run: both of its branches and all four backsolves, through the mixed LU, QR and Cholesky rows,
+# the same-type Cholesky rows and the real SVD rows. The same-type LU and QR rows and the complex
+# SVD rows run it on a device only.
 #
 # `factorize!!` divides `J` by `2^e` where the element type of `J` is not that of the factors, and
 # a device `SVD` divides it always, so the `src/linear/ka/` kernels solve with the factors of
@@ -17,8 +19,9 @@
 using LinearAlgebra: Diagonal, I, cond, opnorm
 using Random: Xoshiro
 
-using GeometricSolvers: DeviceLU, DeviceQR, DeviceSVD
-using GeometricSolvers: ka_lu_backsolve!, ka_qr_backsolve!, ka_svd_backsolve!, ldexp2
+using GeometricSolvers: DeviceCholesky, DeviceLU, DeviceQR, DeviceSVD
+using GeometricSolvers: ka_cholesky_backsolve!, ka_lu_backsolve!, ka_qr_backsolve!,
+                        ka_svd_backsolve!, ldexp2
 
 # The `n × n` matrix and right-hand side of the vendor agreement tests: `randn` with `2n` on the
 # diagonal, so that `κ∞` stays below the 10 that the rows assert; above `n = 256` a diagonal matrix
@@ -60,11 +63,21 @@ function cuda_well_conditioned_cond(A::AbstractMatrix)
     return norm_A * norm_inv
 end
 
+# The seeded Hermitian positive definite `n × n` matrix `G Gᴴ / n + I` and right-hand side of the
+# Cholesky agreement tests.
+function cuda_hpd(::Type{T}, n::Int, seed::Integer = 0xc401) where {T}
+    rng = Xoshiro(seed + n)
+    G = randn(rng, T, n, n)
+    A = G * G' / n + Matrix{T}(I, n, n)
+    return (A + A') / 2, randn(rng, T, n)
+end
+
 # The `src/` kernel that solves with the factors of `fac`, in the factor element type `F`: the
 # device kernels of `src/linear/ka/`, called on the factor's own buffers.
 own_kernel_backsolve!(fac::DeviceLU, d) = (ka_lu_backsolve!(fac.factors, fac.ipiv, d); d)
 own_kernel_backsolve!(fac::DeviceQR, d) = (ka_qr_backsolve!(fac.factors, fac.τ, d); d)
 own_kernel_backsolve!(fac::DeviceSVD, d) = (ka_svd_backsolve!(fac, d, d, false); d)
+own_kernel_backsolve!(fac::DeviceCholesky, d) = (ka_cholesky_backsolve!(fac.factors, d); d)
 
 """
     own_kernel_ldiv!(d, fac, r)

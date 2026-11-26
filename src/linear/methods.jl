@@ -145,8 +145,9 @@ is not positive definite in the factorisation precision gives `info = k`, the or
 leading minor that is not positive, and `SINGULAR`, without throwing; a non-finite entry anywhere
 in the matrix gives `info = 1`. A host `Array` iterate factorises with LAPACK `potrf` for a
 `LinearAlgebra.BlasFloat` element type and with a generic loop for the others; a static iterate
-always takes the generic loop. A device array iterate raises an `ArgumentError`, because the
-factorisation has no device factor.
+always takes the generic loop. A device array iterate factorises with the KernelAbstractions
+kernels of [`DeviceCholesky`](@ref), in one workgroup, and with cuSOLVER or rocSOLVER `potrf` on a
+`CuArray` or a `ROCArray` whose factor element type is a `BlasFloat`.
 """
 struct CholeskyFactorization{TF <: FactorisationPrecision} <: LinearMethod{TF} end
 
