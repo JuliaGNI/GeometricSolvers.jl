@@ -209,7 +209,9 @@ end
         abs(d) <= abs(x) / 2 && break
     end
     @test k == 4
-    x₄, st = solve(prob, T(10), Newton(); x_reltol = 0.5, f_reltol = 1e-12)
+    # `kappa = 1e-6` keeps the rate test of the same steps off, which under the default
+    # `κ = 1/10` and `x_reltol = 0.5` returns `SUCCESS` before the step test holds
+    x₄, st = solve(prob, T(10), Newton(); x_reltol = 0.5, f_reltol = 1e-12, kappa = 1e-6)
     @test st.code == STALLED
     @test st.iterations == k
     @test x₄ ≈ x rtol = 8 * eps(R)
@@ -217,7 +219,8 @@ end
     @test st.fnorm > R(0.08)
     # `min_iterations` bounds the step test
     _, st₆ = solve(
-        prob, T(10), Newton(); x_reltol = 0.5, f_reltol = 1e-12, min_iterations = 6)
+        prob, T(10), Newton(); x_reltol = 0.5, f_reltol = 1e-12, kappa = 1e-6,
+        min_iterations = 6)
     @test st₆.code == STALLED
     @test st₆.iterations == 6
     # a step that a radius cuts is no step test: from 1 on x - 2, DogLeg's radius starts at 1e-6

@@ -205,8 +205,8 @@ end
     end
 
     @testset "Check 1: the status fields keep the size of the struct" begin
-        @test sizeof(SolverStatus{Float32}) == 36
-        @test sizeof(SolverStatus{Float64}) == 56
+        @test sizeof(SolverStatus{Float32}) == 44
+        @test sizeof(SolverStatus{Float64}) == 72
         @test isbitstype(SolverStatus{Float64})
         @test fieldoffset(SolverStatus{Float64}, :f_calls) == 2
         @test fieldoffset(SolverStatus{Float64}, :jvp_calls) == 30
@@ -2088,16 +2088,25 @@ end
     m = Newton(; reuse = 3, linsolve = GMRES(; preconditioner = P))
     # a refresh starts a period, also an early one at a nonzero age: the next refresh is due
     # three steps after it
-    @test rule(FA(Int32(0), false), m, true, SUCCESS, Int32(0)) === FA(Int32(1), false)
-    @test rule(FA(Int32(2), true), m, true, SUCCESS, Int32(0)) === FA(Int32(1), false)
-    @test rule(FA(Int32(1), false), m, false, SUCCESS, Int32(0)) === FA(Int32(2), false)
-    @test rule(FA(Int32(2), false), m, false, SUCCESS, Int32(0)) === FA(Int32(0), false)
+    # the third field records whether the step stepped along a preconditioner that an earlier step
+    # refreshed
+    @test rule(FA(Int32(0), false, false), m, true, SUCCESS, Int32(0)) ===
+          FA(Int32(1), false, false)
+    @test rule(FA(Int32(2), true, true), m, true, SUCCESS, Int32(0)) ===
+          FA(Int32(1), false, false)
+    @test rule(FA(Int32(1), false, false), m, false, SUCCESS, Int32(0)) ===
+          FA(Int32(2), false, true)
+    @test rule(FA(Int32(2), false, true), m, false, SUCCESS, Int32(0)) ===
+          FA(Int32(0), false, true)
     # a step that stalled or whose inner solve reached its cap asks for a refresh at the next one
-    @test rule(FA(Int32(1), false), m, false, SUCCESS, Int32(1)) === FA(Int32(2), true)
-    @test rule(FA(Int32(1), false), m, false, STALLED, Int32(0)) === FA(Int32(2), true)
+    @test rule(FA(Int32(1), false, false), m, false, SUCCESS, Int32(1)) ===
+          FA(Int32(2), true, true)
+    @test rule(FA(Int32(1), false, false), m, false, STALLED, Int32(0)) ===
+          FA(Int32(2), true, true)
     # a period of one step refreshes at every step
     m1 = Newton(; reuse = 1, linsolve = GMRES(; preconditioner = P))
-    @test rule(FA(Int32(0), false), m1, true, SUCCESS, Int32(0)) === FA(Int32(0), false)
+    @test rule(FA(Int32(0), false, false), m1, true, SUCCESS, Int32(0)) ===
+          FA(Int32(0), false, false)
     # without reuse the rule state is that of the globalization, unchanged
     @test rule(nothing, Newton(; linsolve = GMRES()), true, SUCCESS, Int32(1)) === nothing
 end

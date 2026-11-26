@@ -11,6 +11,30 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **A solve can return `SUCCESS` through a contraction-rate test, and a `Newton` factor can
+  survive a sequence of solves.** `record` measures the rate `θₖ = ‖Δₖ‖ / ‖Δₖ₋₁‖` of each step
+  into the new field `SolverStatus.rate` (`NaN` at the first step and after a step of zero norm).
+  The rate test joins the step test of `Options` (Hairer and Wanner 1996, *Solving Ordinary
+  Differential Equations II*, (8.9)–(8.10)): after a step that is neither `STALLED` nor limited,
+  where the residual test fails, a step of rate `θₖ < 1` with
+  `θₖ / (1 - θₖ) ‖Δₖ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)` returns `SUCCESS` with the new flag
+  `status.contracted`, unless the stationarity test holds there, and `stopping_test` returns
+  `:contraction`. So `SUCCESS` no longer comes from the residual and stationarity tests alone. The
+  new `Options` field `kappa` is `κ`, default `1/10`, and a value outside `(0, 1)` in `real(T)`
+  raises an `ArgumentError`. The new flag `roundoff`, default `false`, returns `STALLED` at the
+  first step of rate `θₖ ≥ 1` after a step of rate below `1` (Hairer, McLachlan and Razakarivony
+  2008, *BIT Numer. Math.* 48, p. 235). The new `Newton` keyword `keep_factor`, which needs
+  `reuse`, keeps the factor and its age from one solve of a `NonlinearSolver` to the next after a
+  `SUCCESS` in one step or with a last rate `θ ≤ 10⁻³`, not after a promoted solve, and
+  `solve!(solver, x, p; refactorize = true)` drops it, as after a change of the step size. Under
+  `reuse`, a step along a reused factor or preconditioner of rate `θ ≥ 1` refreshes it at the next
+  step, and the new flag `status.reused` reports a last step along a reused factor.
+  `SolverStatus` grows from 36 to 44 bytes in `Float32` and from 56 to 72 in `Float64`, and
+  `Options` from 32 to 40 and from 56 to 72; both stay `isbits`. The step-test testset of
+  `test/nonlinear/solver.jl` sets `kappa = 1e-6`, because under `κ = 1/10` and `x_reltol = 0.5`
+  the rate test returns `SUCCESS` before its step test holds. New tests:
+  `test/nonlinear/stopping.jl`.
+
 - **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
   `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
   factor's element type, runs `recursive_lu!` (`src/linear/recursive_lu.jl`) in place of

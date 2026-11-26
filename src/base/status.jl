@@ -33,6 +33,14 @@ is in `R = real(T)` for the element type `T` of the iterate.
 - `gradratio::R`: ``\\|J(x_k)^H F(x_k)\\| / (\\|J(x_k)\\|_F \\|F(x_k)\\|)`` at the iterate
   ``x_k`` of the last fresh factorisation, `zero(R)` when ``\\|J(x_k)\\|_F = 0`` or
   ``\\|F(x_k)\\| = 0``, or `R(NaN)` when no Jacobian was factorised.
+- `rate::R`: the rate ``θ_k = \\|Δ_k\\| / \\|Δ_{k-1}\\|`` of the last step ``Δ_k`` against the
+  step before it, which the rate test of [`Options`](@ref) reads; `R(NaN)` after 0 or 1 steps and
+  after a step that followed a step of zero norm.
+- `contracted::Bool`: the solve converged by the rate test of [`Options`](@ref).
+- `reused::Bool`: the last step of a [`Newton`](@ref) solve with `reuse = k` stepped along a
+  factor that an earlier step factorised, of this solve or, with `keep_factor = true`, of an
+  earlier one; for a `GMRES` with a preconditioner, along a preconditioner that an earlier step
+  refreshed.
 
 The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
 ``x`` at return; a solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has
@@ -72,6 +80,19 @@ struct SolverStatus{R <: Real}
     rank::Int32
     nullnorm::R
     gradratio::R
+    rate::R
+    contracted::Bool
+    reused::Bool
+end
+
+# The fields up to `gradratio`, with no rate, not contracted and not reused.
+@inline function SolverStatus{R}(
+        code::ReturnCode, f_calls::Int16, iterations::Int32, fnorm::R, stepnorm::R,
+        step_failures::Int32, promoted::Bool, stationary::Bool, jvp_calls::Int16,
+        rank::Int32, nullnorm::R, gradratio::R) where {R <: Real}
+    return SolverStatus{R}(
+        code, f_calls, iterations, fnorm, stepnorm, step_failures, promoted, stationary,
+        jvp_calls, rank, nullnorm, gradratio, R(NaN), false, false)
 end
 
 """
@@ -127,19 +148,21 @@ end
     return SolverStatus{R}(
         status.code, sat16(f_calls), status.iterations, status.fnorm, status.stepnorm,
         status.step_failures, status.promoted, status.stationary, sat16(jvp_calls),
-        status.rank, status.nullnorm, status.gradratio)
+        status.rank, status.nullnorm, status.gradratio, status.rate, status.contracted,
+        status.reused)
 end
 
 """
     stopping_test(status::SolverStatus)
 
 Name the stopping test that ended a converged solve: `:stationarity` when `status.stationary`
-is set, `:residual` when the solve converged by the residual test, and `:none` when the solve
-did not converge.
+is set, `:contraction` when `status.contracted` is set, `:residual` when the solve converged by
+the residual test, and `:none` when the solve did not converge.
 """
 @inline function stopping_test(status::SolverStatus)
     isconverged(status) || return :none
-    return status.stationary ? :stationarity : :residual
+    status.stationary && return :stationarity
+    return status.contracted ? :contraction : :residual
 end
 
 """
@@ -172,10 +195,13 @@ end
     record(status::SolverStatus{R}, info::StepInfo{R})
 
 Fold the result of one step into the status: count the iteration, take the code and the norms of
-the step, add its failures, keep `promoted` once it is set, and preserve `stationary`, `rank`,
-`nullnorm` and `gradratio`.
+the step, add its failures, keep `promoted` once it is set, measure the rate
+`info.stepnorm / status.stepnorm` of the step against the step before it (`NaN` where that step
+has zero norm, which the start of a solve has), and preserve `stationary`, `rank`, `nullnorm`,
+`gradratio`, `contracted` and `reused`.
 """
 function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
+    rate = status.stepnorm > zero(R) ? info.stepnorm / status.stepnorm : R(NaN)
     SolverStatus{R}(info.code,
         status.f_calls,
         status.iterations + one(Int32),
@@ -187,7 +213,10 @@ function record(status::SolverStatus{R}, info::StepInfo{R}) where {R}
         status.jvp_calls,
         status.rank,
         status.nullnorm,
-        status.gradratio)
+        status.gradratio,
+        rate,
+        status.contracted,
+        status.reused)
 end
 
 const ReturnCodeCounts = NamedTuple{

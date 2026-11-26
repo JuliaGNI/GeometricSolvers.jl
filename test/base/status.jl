@@ -21,7 +21,7 @@ end
     @test isbits(info)
     @test isbitstype(SolverStatus{R})
     @test isbitstype(StepInfo{R})
-    @test sizeof(SolverStatus{R}) == (R === Float32 ? 36 : 56)
+    @test sizeof(SolverStatus{R}) == (R === Float32 ? 44 : 72)
     @test st.rank === Int32(-1)
     @test st.nullnorm === R(NaN)
     @test st.gradratio === R(NaN)

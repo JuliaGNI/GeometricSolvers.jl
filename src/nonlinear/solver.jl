@@ -61,33 +61,53 @@ and for an array iterate it writes that iterate into `x` and returns `x`. [`Newt
 @inline state_gradratio(state) = NaN
 @inline state_jnorm(state) = 0
 
-@inline function ok_status(status::SolverStatus{R}) where {R}
+# The statuses that `solve!!` closes a solve with: the code, the counts and the norms of `status`
+# and its rate, and whether the solve converged by the stationarity or the rate test.
+@inline function closing_status(status::SolverStatus{R}, code::ReturnCode,
+        stationary::Bool, contracted::Bool) where {R}
     return SolverStatus{R}(
-        SUCCESS, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted, false)
+        code, Int16(0), status.iterations, status.fnorm, status.stepnorm,
+        status.step_failures, status.promoted, stationary, Int16(0), Int32(-1), R(NaN), R(NaN),
+        status.rate, contracted, false)
 end
 
-@inline function stationary_status(status::SolverStatus{R}) where {R}
-    return SolverStatus{R}(
-        SUCCESS, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted, true)
-end
+@inline ok_status(status::SolverStatus) = closing_status(status, SUCCESS, false, false)
+@inline stationary_status(status::SolverStatus) = closing_status(status, SUCCESS, true, false)
+@inline contracted_status(status::SolverStatus) = closing_status(status, SUCCESS, false, true)
 
 # The status of a solve that returns the start point `x_k` of a step it discards: `SUCCESS` and
-# stationary, with the iterations, `fnorm` and `stepnorm` of `status_k` at `x_k`, and the
+# stationary, with the iterations, `fnorm`, `stepnorm` and rate of `status_k` at `x_k`, and the
 # step-rule failures and the promotion of `status`, into which `record` folded the discarded step.
 @inline function discarded_step_status(
         status_k::SolverStatus{R}, status::SolverStatus{R}) where {R}
     return SolverStatus{R}(
-        SUCCESS, status_k.iterations, status_k.fnorm, status_k.stepnorm,
-        status.step_failures, status.promoted, true)
+        SUCCESS, Int16(0), status_k.iterations, status_k.fnorm, status_k.stepnorm,
+        status.step_failures, status.promoted, true, Int16(0), Int32(-1), R(NaN), R(NaN),
+        status_k.rate, false, false)
 end
 
-@inline function end_status(status::SolverStatus{R}, code::ReturnCode) where {R}
+@inline end_status(status::SolverStatus, code::ReturnCode) = closing_status(
+    status, code, false, false)
+
+# `status` with the rate of `recorded`, the status that `record` returned for the same step: a
+# problem whose `converged_status` builds a status of its own keeps the rate of the step.
+@inline function with_rate(status::SolverStatus{R}, recorded::SolverStatus{R}) where {R}
     return SolverStatus{R}(
-        code, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted, false)
+        status.code, status.f_calls, status.iterations, status.fnorm, status.stepnorm,
+        status.step_failures, status.promoted, status.stationary, status.jvp_calls,
+        status.rank, status.nullnorm, status.gradratio, recorded.rate, status.contracted,
+        status.reused)
 end
+
+# The state after a step of rate `rate`, which `record` measured: a method whose next step reads
+# the rate, as a `Newton` with `reuse` does to refresh its factor, takes it here. The default keeps
+# `state`.
+@inline observe_rate!!(state, method, rate) = state
+
+# The state of a solve whose next step factorises afresh, which `solve!(solver, x, p;
+# refactorize = true)` starts from. The default keeps `state`: a method that keeps no factor across
+# its steps has none to refresh.
+@inline refactorize!!(state, method) = state
 
 # The status that the residual test of `solve!!` reads at `x`. It is `status` itself, unless a
 # problem steps on a scaled residual and converges on its unscaled one: a `Deflated` problem sets
@@ -216,7 +236,7 @@ always kept. A step along a reused factor takes no factorisation at its start po
 falls back to a fresh one there, after a failed line search or refinement; without one, it
 carries the diagnostics that the solve tested at `x_k` before, which failed, so it is kept. When
 neither test holds after a step that is neither `STALLED` nor `limited`, a step test that holds
-returns `STALLED` at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate
+while the rate test below fails returns `STALLED` at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate
 where the next step would start — unless the stationarity test, re-measured at that iterate,
 holds, which a nonzero-residual least-squares minimum reaches with a step of any length, a zero
 one included; `min_iterations` bounds both. After a `STALLED` step only the residual and
@@ -224,6 +244,15 @@ stationarity tests apply, and `options.max_stalls` consecutive `STALLED` steps r
 After a step whose `limited` is set only the residual and stationarity tests apply too, because a
 radius or a damping, not the distance to a root, sets its norm; such a step is not a stall.
 Reaching `options.max_iterations` without convergence returns `MAXITERS`.
+
+[`record`](@ref) measures the rate ``θ_k = \\|Δ_k\\| / \\|Δ_{k-1}\\|`` of each step into
+`status.rate`. The rate test of [`Options`](@ref) joins the step test: after a step that is
+neither `STALLED` nor `limited`, where the residual test fails and the rate test holds, the solve
+returns `SUCCESS` with `status.contracted == true`, unless the stationarity test, re-measured at
+that iterate, holds, which returns `SUCCESS` with `status.stationary == true`. Under
+`options.roundoff` the round-off stop joins the step test too: it returns `STALLED` at that
+iterate, unless the stationarity test holds there. Each rate goes to the method's state after its
+step, where a [`Newton`](@ref) with `reuse` reads it.
 """
 function solve!!(
         state, prob::AbstractNonlinearProblem, x₀, method, p = nothing,
@@ -255,9 +284,10 @@ function solve!!(
         F_k = copy!!(Fbuf, Fx)
         status_k = status
         x, Fx, state, info = step!!(state, method, prob, x, Fx, p)
-        state_step = state
         recorded = record(status, info)
-        status = converged_status(state, prob, x, recorded)
+        state = observe_rate!!(state, method, recorded.rate)
+        state_step = state
+        status = with_rate(converged_status(state, prob, x, recorded), recorded)
         if info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS
             return finish!!(state, method, prob, x, Fx, status)
         end
@@ -288,16 +318,25 @@ function solve!!(
                     discarded_step_status(status_k, status))
             end
         end
-        # the residual test fails: the step test, or a zero step, ends the solve unconverged,
-        # unless the iterate it returns is stationary, which a step of zero length cannot show
-        if !(info.code == STALLED || info.limited) &&
-           (step_converged(options, status, rnorm(x)) ||
+        # the residual test fails: the rate test ends the solve with `SUCCESS`, and the step test,
+        # a zero step or the round-off stop ends it unconverged, unless the iterate it returns is
+        # stationary, which a step of zero length cannot show. These tests read the steps that
+        # neither stalled nor were limited.
+        steptested = !(info.code == STALLED || info.limited)
+        xnorm = steptested ? R(rnorm(x)) : R(NaN)
+        contracted = steptested && rate_converged(options, status, xnorm)
+        if contracted ||
+           steptested &&
+           (step_converged(options, status, xnorm) ||
             (info.code == SUCCESS && iszero(info.stepnorm) &&
-             status.iterations >= options.min_iterations))
+             status.iterations >= options.min_iterations) ||
+            roundoff_stop(options, status, status_k.rate))
             refreshed || (state = refresh_diagnostics!!(state, method, prob, x, Fx, p))
             if stationary_converged(prob, options, state, status)
                 return finish!!(state, method, prob, x, Fx, stationary_status(status))
             end
+            contracted &&
+                return finish!!(state, method, prob, x, Fx, contracted_status(status))
             return finish!!(state, method, prob, x, Fx, end_status(status, STALLED))
         end
         if info.code == STALLED
@@ -397,8 +436,8 @@ function init(
 end
 
 """
-    solve!(solver::NonlinearSolver; b = nothing)
-    solve!(solver::NonlinearSolver, x, p = solver.p; b = nothing)
+    solve!(solver::NonlinearSolver; b = nothing, refactorize = false)
+    solve!(solver::NonlinearSolver, x, p = solver.p; b = nothing, refactorize = false)
 
 Solve `solver.prob`, using the preallocated workspace and AD preparation in `solver`, store the
 solution in `solver.x`, and return `(solver.x, status)` where `status` is a
@@ -412,12 +451,20 @@ with the parameters that the solver holds. For a [`StationarityProblem`](@ref), 
 reallocating. An `x` whose element type or length differs
 from the iterate of `init` raises an `ArgumentError`, and so do an `x` of another type, a `p` of
 another type than those of `init`, and any `ForwardDiff.Dual` in `x` or `p`. A refused call
-changes neither `solver` nor `x`.
+changes neither `solver` nor `x`, except a datum `b` that the solve of a `StationarityProblem`
+refuses after `refactorize = true` has dropped the factor.
+
+With `refactorize = true`, the first step of the solve factorises afresh. A [`Newton`](@ref) with
+`keep_factor = true` otherwise starts on the factor that the last solve kept; a caller that changes
+the problem between two calls, such as an integrator that changes its step size, passes it. For a
+method that keeps no factor across its steps, the keyword changes nothing.
 """
-solve!(solver::NonlinearSolver; b = nothing) = solve!(solver, solver.x, solver.p; b = b)
+function solve!(solver::NonlinearSolver; b = nothing, refactorize::Bool = false)
+    return solve!(solver, solver.x, solver.p; b, refactorize)
+end
 
 function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
-        p = solver.p; b = nothing) where {T, P, M, O, S, X, Q}
+        p = solver.p; b = nothing, refactorize::Bool = false) where {T, P, M, O, S, X, Q}
     if has_dual_type(typeof(x)) || has_dual_type(typeof(p))
         throw(ArgumentError(
             "solve! does not accept ForwardDiff.Dual inputs; use solve(prob, x₀, method, p) for implicit differentiation"))
@@ -432,12 +479,14 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
     p isa Q || throw(ArgumentError(
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
+    stationarity = P <: StationarityProblem || is_elim_stationarity_problem(P)
+    b === nothing || stationarity ||
+        throw(ArgumentError(
+            "keyword `b` is only supported for a `StationarityProblem` or a `BlockEliminated` `StationarityProblem`"))
+    refactorize && (solver.state = refactorize!!(solver.state, solver.method))
     P <: StationarityProblem && return _solve_stationarity_solver!(solver, x, p, b)
     is_elim_stationarity_problem(P) &&
         return _solve_elim_stationarity_solver!(solver, x, p, b)
-    b === nothing ||
-        throw(ArgumentError(
-            "keyword `b` is only supported for a `StationarityProblem` or a `BlockEliminated` `StationarityProblem`"))
     solver.x = x
     solver.p = p
     x₊, status, state = solve!!(

@@ -40,6 +40,11 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 - `g_tol::R`: the stationarity tolerance ``\\|J^\\top F\\|_2 / (\\|J\\|_F \\|F\\|_2) \\le g_{\\text{tol}}`` on a [`LeastSquaresProblem`](@ref).
 - `norm::N`: the [`StoppingNorm`](@ref) of the residual test, [`L2Norm`](@ref) or
   [`MaxNorm`](@ref). It is a singleton, so `Options` has the size of its other fields.
+- `kappa::R`: the factor ``κ ∈ (0, 1)`` of the rate test
+  ``θ_k / (1 - θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)``, with the rate
+  ``θ_k = \\|Δ_k\\|_2 / \\|Δ_{k-1}\\|_2`` of the step ``Δ_k``.
+- `roundoff::Bool`: the round-off stop, which ends a solve with `STALLED` at the first step of
+  rate ``θ_k ≥ 1`` after a step of rate ``θ_{k-1} < 1``.
 
 [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
 type `T` of the iterate, so the caller never names `R`. A solve takes only an `Options{R}` for
@@ -57,15 +62,22 @@ struct Options{R <: Real, N <: StoppingNorm}
     max_stalls::Int32
     g_tol::R
     norm::N
+    kappa::R
+    roundoff::Bool
 end
 
-# The positional forms in `R`: eight values and a norm, `L2Norm()` without one, and the seven
-# values before `g_tol`, which take `g_tol = √eps(R)`.
+# The positional forms in `R`: eight values, a norm, `κ` and the round-off flag, which default to
+# `L2Norm()`, `κ = 1/10` and `false`, and the seven values before `g_tol`, which take
+# `g_tol = √eps(R)`.
 function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
         min_iterations::Integer, max_iterations::Integer, max_stalls::Integer, g_tol::Real,
-        norm::N = L2Norm()) where {R <: Real, N <: StoppingNorm}
+        norm::N = L2Norm(), kappa::Real = R(1) / 10,
+        roundoff::Bool = false) where {R <: Real, N <: StoppingNorm}
+    κ = R(kappa)
+    check_kappa(κ)
     return Options{R, N}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
-        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm)
+        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm,
+        κ, roundoff)
 end
 
 function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
@@ -80,8 +92,17 @@ end
     return nothing
 end
 
+# `κ` of the rate test, in the precision `R` of the options: the test bounds the error estimate
+# `θ / (1 - θ) ‖Δ‖` by the fraction `κ` of the step tolerance, so `κ` lies in `(0, 1)`. `NaN` fails
+# both comparisons, and a value that rounds to `0` or `1` in `R` is refused as that value.
+@inline function check_kappa(kappa::Real)
+    zero(kappa) < kappa < one(kappa) ||
+        throw(ArgumentError("kappa must be finite and in (0, 1), got $kappa"))
+    return nothing
+end
+
 """
-    Options(T = Float64; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls, g_tol, norm)
+    Options(T = Float64; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls, g_tol, norm, kappa, roundoff)
 
 Build the [`Options`](@ref) of a solve whose iterate has element type `T`, as `Options{real(T)}`.
 The relative tolerances scale with `eps(R)`:
@@ -97,6 +118,8 @@ The relative tolerances scale with `eps(R)`:
 | `max_stalls` | `2` |
 | `g_tol` | `√eps(R)` |
 | `norm` | [`L2Norm()`](@ref L2Norm) |
+| `kappa` | `1/10` |
+| `roundoff` | `false` |
 
 **The stopping norm is the norm of the residual test only.** With `norm = MaxNorm()` the residual
 test reads ``\\|F(x)\\|_\\infty \\le \\max(f_{abstol}, f_{reltol} \\|F(x₀)\\|_\\infty)``, so the
@@ -118,8 +141,28 @@ fraction of itself. So a start at the limiting accuracy returns unchanged after 
 when the caller sets `f_abstol` at or above its residual floor, as an integrator that knows the
 scale of `F` can.
 
+**The rate test joins the step test** (Hairer and Wanner 1996, *Solving Ordinary Differential
+Equations II*, Sec. IV.8, (8.9)–(8.10), doi:10.1007/978-3-642-05221-7). From the
+second step on, the rate of the step ``Δ_k`` is ``θ_k = \\|Δ_k\\|_2 / \\|Δ_{k-1}\\|_2``, and once
+the residual test fails, a step of rate ``θ_k < 1`` with
+``θ_k / (1 - θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)`` returns `SUCCESS` with
+`status.contracted == true`. The left side estimates the distance of `x` to the limit of a
+contraction of rate ``θ_k``. The rate is `NaN` at the first step and after a step of zero norm, and
+a `NaN` rate passes no test.
+
+**The round-off stop is off by default.** With `roundoff = true`, the first step of rate
+``θ_k ≥ 1`` after a step of rate ``θ_{k-1} < 1`` returns `STALLED` with the iterate it reached
+(Hairer, McLachlan and Razakarivony 2008, *BIT Numer. Math.* 48, p. 235,
+doi:10.1007/s10543-008-0170-3): the increments have stopped decreasing, as they do once the
+residual reaches its round-off floor. A step of zero norm returns `STALLED` under either setting,
+as [`solve!!`](@ref) says.
+
+The rate test and the round-off stop read the steps that the step test reads: not a `STALLED`
+step, not a step that a radius or a damping limits, and not before `min_iterations` steps.
+
 A negative or `NaN` tolerance, a negative `min_iterations`, a `max_iterations` below
-`min_iterations` and a `max_stalls` below 1 raise an `ArgumentError`.
+`min_iterations`, a `max_stalls` below 1 and a `kappa` outside ``(0, 1)`` in `real(T)` raise an
+`ArgumentError`.
 
 ```jldoctest
 julia> opt = Options(ComplexF32; f_reltol = 1e-4);
@@ -143,7 +186,9 @@ function Options(::Type{T} = Float64;
         max_iterations::Integer = 100,
         max_stalls::Integer = 2,
         g_tol::Real = sqrt(eps(real(T))),
-        norm::StoppingNorm = L2Norm()) where {T <: Number}
+        norm::StoppingNorm = L2Norm(),
+        kappa::Real = real(T)(1) / 10,
+        roundoff::Bool = false) where {T <: Number}
     R = real(T)
     # one call per tolerance, because a loop over their mixed types allocates
     nonnegative(:f_abstol, f_abstol)
@@ -158,7 +203,8 @@ function Options(::Type{T} = Float64;
     max_stalls >= 1 ||
         throw(ArgumentError("max_stalls must be at least 1, got $max_stalls"))
     Options{R}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
-        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm)
+        Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm,
+        kappa, roundoff)
 end
 
 # `nothing` when `options` is an `Options{real(T)}`, the options of an iterate of element type
@@ -181,8 +227,8 @@ through `f_abstol`. A zero step is no progress, so it never passes the step test
 test compares `status.fnorm` with `fnorm₀` as they are given: under [`MaxNorm`](@ref), the caller
 passes both in the max norm, as [`solve!!`](@ref) does.
 
-[`solve!!`](@ref) returns `SUCCESS` only through the residual test: a step test that holds while
-the residual test fails returns `STALLED`.
+[`solve!!`](@ref) returns `SUCCESS` through the residual test or the rate test of
+[`Options`](@ref): a step test that holds while both fail returns `STALLED`.
 """
 function converged(options::Options{R}, status::SolverStatus{R}, fnorm₀::R, xnorm::R) where {R}
     return residual_converged(options, status, fnorm₀) ||
@@ -203,4 +249,27 @@ end
     status.iterations >= options.min_iterations || return false
     return status.iterations > 0 && status.stepnorm > 0 &&
            status.stepnorm <= max(options.x_abstol, options.x_reltol * xnorm)
+end
+
+# The rate test of `Options` for an iterate of norm `xnorm`, once `min_iterations` steps are taken:
+# a step of nonzero norm and rate `θ < 1` with `θ / (1 - θ) ‖Δ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)`.
+# A `NaN` rate fails `θ < 1`.
+@inline function rate_converged(
+        options::Options{R}, status::SolverStatus{R}, xnorm::R) where {R}
+    status.iterations >= options.min_iterations || return false
+    θ = status.rate
+    status.stepnorm > 0 && θ < one(R) || return false
+    return θ / (one(R) - θ) * status.stepnorm <=
+           options.kappa * max(options.x_abstol, options.x_reltol * xnorm)
+end
+
+# The round-off stop of `Options` after a step of rate `status.rate`, where the step before it had
+# the rate `θ_prev`: under `roundoff = true`, a step of rate `θ ≥ 1` after one of rate below `1`,
+# once `min_iterations` steps are taken. A `NaN` rate fails both comparisons. A step of zero norm
+# needs no rule here: `solve!!` stops on it under any `roundoff`.
+@inline function roundoff_stop(
+        options::Options{R}, status::SolverStatus{R}, θ_prev::R) where {R}
+    options.roundoff || return false
+    status.iterations >= options.min_iterations || return false
+    return status.rate >= one(R) && θ_prev < one(R)
 end

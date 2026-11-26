@@ -49,6 +49,7 @@ const TESTS = [
         "Deflated problem" => "nonlinear/deflation.jl",
         "Block elimination and variable projection" => "nonlinear/eliminate.jl",
         "Nonlinear solver loop" => "nonlinear/solver.jl",
+        "Contraction rate, round-off stop and kept factor" => "nonlinear/stopping.jl",
         "Default method" => "nonlinear/default.jl",
         "Newton" => "nonlinear/newton.jl",
         "Kronecker stage solver" => "nonlinear/kronecker.jl",

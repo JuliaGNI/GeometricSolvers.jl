@@ -830,7 +830,7 @@ end
         @test info_count.code == SUCCESS
     end
     @test counts == [1, 3]
-    @test st_count.rule === GS.FactorAge(Int32(1), false)
+    @test st_count.rule === GS.FactorAge(Int32(1), false, false)
     @test !st_count.promoted
     # each early refactorisation is one step-rule failure, and the solve counts them
     @test st_qn.step_failures >= 1
@@ -978,7 +978,7 @@ end
     # The first step factorises. Each later step takes two products along the reused factor and
     # one evaluation for the factorisation that refreshes it.
     @test calls == [1, 3, 3, 3, 3]
-    @test all(s -> s[1].rule === GS.FactorAge(Int32(1), false), steps)
+    @test all(s -> s[1].rule === GS.FactorAge(Int32(1), false, false), steps)
     @test [s[2].failures for s in steps] == [0, 1, 1, 1, 1]
     @test !any(s -> s[2].promoted, steps)
     _, status = solve(prob, copy(x), m, p)
