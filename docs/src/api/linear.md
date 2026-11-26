@@ -36,13 +36,13 @@ a rectangular one, `m` its row count, which is what makes a rank-revealing solve
 vector state (R3) with no sparse pattern (`jacobian_pattern(prob, jacprep) === nothing`),
 [`init_linear`](@ref) pre-allocates [`DenseLU`](@ref), [`DenseLDLT`](@ref),
 [`DenseCholesky`](@ref), [`DenseQR`](@ref) or [`DenseSVD`](@ref) on a host `Array` and
-[`DeviceLU`](@ref), [`DeviceLDLT`](@ref), [`DeviceQR`](@ref) or [`DeviceSVD`](@ref) on an
-`AbstractGPUArray`, where a [`CholeskyFactorization`](@ref) raises an `ArgumentError`, and
+[`DeviceLU`](@ref), [`DeviceLDLT`](@ref), [`DeviceCholesky`](@ref), [`DeviceQR`](@ref) or
+[`DeviceSVD`](@ref) on an `AbstractGPUArray`, and
 [`factorize!!`](@ref) and [`ldiv!!`](@ref) reuse its buffers in place: through LAPACK on the host,
 and on a device through the `GeometricSolversMetalExt` (`Metal` MPS `lu!` and `ldiv!` on
 `MtlMatrix{Float32}` and `MtlVector{Float32}`, with every MPS failure status reported as a singular
-factor) and `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `geqrf!`, `ormqr!` with
-cuBLAS `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
+factor) and `GeometricSolversCUDAExt` (`CUDA` cuSOLVER `getrf!`, `getrs!`, `potrf!`, `potrs!`,
+`geqrf!`, `ormqr!` with cuBLAS `trsv!`, and `gesvdj!` on `CuMatrix{T}` and `CuVector{T}` for `T <:
 LinearAlgebra.BlasFloat`, falling back to `ka_factorize_svd!` where `gesvdj!` does not converge,
 and calling it in place of `gesvdj!` where the `rtol` cutoff lies below `√m · eps(real(T))`, `m`
 the number of rows)
@@ -100,6 +100,7 @@ DeviceLU
 DenseLDLT
 DeviceLDLT
 DenseCholesky
+DeviceCholesky
 DenseQR
 DeviceQR
 DenseSVD
@@ -116,8 +117,7 @@ singular_values
 right-hand sides: `init(prob, method)` factorises it into a [`LinearSolver`](@ref) with one of the
 five dense factorisations above, `solve!(solver, b)` returns the solution and a
 [`LinearStatus`](@ref), and [`refactorize!!`](@ref) factorises a new matrix of the same size, into
-the same buffers on an array. A square system takes every factorisation except Cholesky on a
-device array, an `m × n` system with `m > n` the least-squares solution through QR and SVD, and
+the same buffers on an array. A square system takes every factorisation, an `m × n` system with `m > n` the least-squares solution through QR and SVD, and
 one with `m < n` the minimum-norm solution through the SVD of `Aᴴ`, or a QR of `Aᴴ` on a static
 matrix and a host array. The status carries the numerical rank of an SVD. These names are
 exported.

@@ -76,7 +76,9 @@ fixed-point homotopy, a non-finite `F(x₀)` makes it so, and so does a non-fini
 fixed-point homotopy, which a non-finite `J(x₀)` gives. A start that the corrector cannot bring
 onto the path at `λ = 0` returns `STALLED` with no step; so does a start whose bordered system at
 `(x₀, 0)` along `e_λ` is singular, such as a fold of `λ` at the start of the Newton or the
-parameter homotopy, where `H_x(x₀, 0)` is singular. A halved `h` below `h_min` returns `STALLED`,
+parameter homotopy, where `H_x(x₀, 0)` is singular. The `fnorm` of these returns before the first
+step is the norm of `F` at `x₀` and `λ = 1`; a parameter homotopy evaluates `F` there for them
+alone, and its path does not. A halved `h` below `h_min` returns `STALLED`,
 and `max_iterations` path steps of the [`Options`](@ref) return `MAXITERS`; both return the last
 accepted point of the path, with `fnorm` the norm of `F` there at `λ = 1`, `stepnorm` the length
 of the last step, and `step_failures` the rejected steps. [`continuation_steps`](@ref) reads `λ`
@@ -147,6 +149,22 @@ function homotopy_scale(::FixedPointHomotopy, J, x₀, F₀, p)
     σ = maximum(abs, F₀)
     return iszero(σ) ? one(σ) : σ
 end
+
+# Write `F(x₀, p)` into `F₀` for the Newton and the fixed-point homotopy, whose residual and
+# Jacobian read it. A parameter homotopy reads only the length of `F₀`, and `F` is not evaluated.
+function start_residual!(F₀, ::Union{NewtonHomotopy, FixedPointHomotopy}, F, x₀, p)
+    F₁ = F(x₀, p)
+    for i in eachindex(F₀)
+        F₀[i] = F₁[i]
+    end
+    return F₀
+end
+start_residual!(F₀, ::ParameterHomotopy, F, x₀, p) = F₀
+
+# The norm of `F(x₀, p₁)` that a return before the first step reports: that of `F₀` for the Newton
+# and the fixed-point homotopy, whose `p₁` is `p`, and of a new evaluation for a parameter homotopy.
+start_fnorm(::Union{NewtonHomotopy, FixedPointHomotopy}, F, x₀, p₁, F₀) = rnorm(F₀)
+start_fnorm(::ParameterHomotopy, F, x₀, p₁, F₀) = rnorm(F(x₀, p₁))
 
 """
     homotopy_residual!(H, homotopy, F, x, λ, x₀, F₀, σ, p)
@@ -290,11 +308,14 @@ end
 @inline path_iterate(::Nothing, x::StaticArray, z, n) = typeof(x)(ntuple(i -> z[i], n))
 
 # Solve `A y = r` in place in `r` from the dense `A`, which it overwrites. `false` where `A` is not
-# finite, whose LU factor can give a finite `y`, and where `y` is not finite, which a non-finite
-# `r` and an exactly singular `A`, whose zero pivot divides, both give.
+# finite, whose LU factor can give a finite `y`, where the LU factor has a zero pivot, on which the
+# generic back substitution of a `BigFloat` factor throws `SingularException`, and where `y` is not
+# finite, which a non-finite `r` gives.
 function bordered_solve!(A, r)
     all(isfinite, A) || return false
-    ldiv!(lu!(A; check = false), r)
+    fac = lu!(A; check = false)
+    issuccess(fac) || return false
+    ldiv!(fac, r)
     return all(isfinite, r)
 end
 
@@ -365,18 +386,16 @@ function solve!!(
     J = (x, q) -> jacobian!!(state.member.J, state.member.jacprep, prob, x, q)
     xs = copy!!(state.x₀, x₀)
     xw = state.xw
-    # the start: the residual at `λ = 1`, which is `F(x₀, p)` but for a parameter homotopy, the
-    # scale of the homotopy, and the homotopy residual at `λ = 0`, which a non-finite `F(x₀, p)`
-    # makes non-finite for the Newton and the fixed-point homotopy (`0 · Inf` is `NaN`)
-    F₁ = F(x₀, p₁)
-    f₁ = R(rnorm(F₁))
-    for i in 1:n
-        ws.F₀[i] = F₁[i]
-    end
+    # the start: `F₀ = F(x₀, p)` and the scale of the Newton and the fixed-point homotopy, and the
+    # homotopy residual at `λ = 0`, which a non-finite `F(x₀, p)` makes non-finite for those two
+    # (`0 · Inf` is `NaN`). A parameter homotopy reads neither `F₀` nor a scale, so its path does
+    # not evaluate `F` at `(x₀, p₁)`, where `F` need not be defined.
+    start_residual!(ws.F₀, h, F, x₀, p)
     ws.σ[] = homotopy_scale(h, J, x₀, ws.F₀, p)
     if !isfinite(ws.σ[]) ||
        !all(isfinite, homotopy_residual!(
         view(ws.r, 1:n), h, F, x₀, zero(T), xs, ws.F₀, ws.σ[], p))
+        f₁ = R(start_fnorm(h, F, x₀, p₁, ws.F₀))
         return x₀, path_status(NONFINITE, 0, f₁, zero(R), 0), state
     end
     # the start on the path: the corrector at `λ = 0`, along `t = e_λ`, which a start on the path
@@ -389,8 +408,10 @@ function solve!!(
     fill!(ws.t, zero(T))
     ws.t[n + 1] = one(T)
     ok, _ = path_corrector!(ws, h, F, J, xw, x₀, xs, p, n)
-    (ok && path_tangent!(ws, ws.w, h, F, J, xw, x₀, xs, p, n)) ||
+    if !(ok && path_tangent!(ws, ws.w, h, F, J, xw, x₀, xs, p, n))
+        f₁ = R(start_fnorm(h, F, x₀, p₁, ws.F₀))
         return x₀, path_status(STALLED, 0, f₁, zero(R), 0), state
+    end
     ws.z .= ws.w
     step = T(method.h₀)
     steps = 0
@@ -405,7 +426,10 @@ function solve!!(
         steps += 1
         ws.zp .= ws.z .+ step .* ws.t
         ok, k = path_corrector!(ws, h, F, J, xw, x₀, xs, p, n)
-        ok = ok && rnorm(ws.w .- ws.zp) <= step && ws.w[n + 1] >= 0
+        # the distance from the prediction, in `r`, which the tangent and the next corrector
+        # overwrite before they read it
+        ok && (ws.r .= ws.w .- ws.zp)
+        ok = ok && rnorm(ws.r) <= step && ws.w[n + 1] >= 0
         # the step ends the path at `λ ≥ 1`, or the tangent at its point continues it
         ok = ok && (ws.w[n + 1] >= 1 || path_tangent!(ws, ws.w, h, F, J, xw, x₀, xs, p, n))
         if !ok

@@ -31,9 +31,9 @@ of the action, with the acceptance and radius rule of [`DogLeg`](@ref) on the me
 
 [`PseudoTransient`](@ref) is the pseudo-transient continuation of a [`Newton`](@ref) on a
 [`StationarityProblem`](@ref): each step solves ``(J + I/δ) d = -F`` and is accepted, and the
-pseudo-time step `δ`, which `Newton` keeps in its state, grows as the residual falls. A small
-`δ` follows the gradient flow of the action, so the steps leave a saddle that a Newton step
-converges to.
+pseudo-time step `δ`, which `Newton` keeps in its state, grows as the residual falls. Where
+`E == U`, a small `δ` follows the gradient flow of the action, so the steps leave a saddle that a
+Newton step converges to.
 
 ```@docs
 DogLeg
