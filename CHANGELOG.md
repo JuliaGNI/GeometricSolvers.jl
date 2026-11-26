@@ -9,10 +9,11 @@ so that a compat-only bump can be told apart from an interface change.
 
 ## [0.1.0] — 2026-11-26
 
-The first registered release. GeometricSolvers solves nonlinear systems `F(x, p) = 0`,
-stationarity problems and nonlinear least-squares problems in three regimes: value semantics on a
-`Number` or an `SVector` (R1), batches with `solve_batch!` on the CPU or a GPU (R2), and in place
-on a host or device array (R3), with a matrix-free variant through `GMRES` or `MINRESQLP`. The
+The first registered release. GeometricSolvers solves nonlinear systems `F(x, p) = 0` and
+stationarity problems in three regimes: value semantics on a `Number` or an `SVector` (R1), batches
+with `solve_batch!` on the CPU or a GPU (R2), and in place on a host or device array (R3), with a
+matrix-free variant through `GMRES` or `MINRESQLP`. It solves nonlinear least-squares problems in
+R1 and R3; `solve_batch!` takes no `LeastSquaresProblem`. The
 entries below record the development before this release; there is no earlier release to compare
 with, and a "breaking" entry names a change against an earlier state of `main`. The entries on the
 test layout and the Metal workflow state the test groups and the required checks of this release,
