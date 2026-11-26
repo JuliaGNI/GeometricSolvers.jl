@@ -44,13 +44,20 @@ so that a compat-only bump can be told apart from an interface change.
   in the four element types within `32 eps κ₁`, `eps` of the factor's type (testset "a subnormal
   matrix" of `test/linear/linearproblem.jl`), where LU, QR and Cholesky gave `SUCCESS` with a
   large error, LDLᵀ `NONFINITE`, and the static `SVDFactorization(Float32)` `SINGULAR`. The
-  Cholesky solve of `[2t t; t t]`, `t = nextfloat(0)`, gives `(-1, 2)` within `4 √(t floatmax)`,
-  `2^-23` in `Float64`, where it gave `(-0.5, 1)`. The R1 Golub–Pereyra reduced Jacobian of
+  same-type `ldiv!!` of a factor with `e < 0` lifts the right-hand side with the matrix: it
+  divides `r` by `2^k`, `k = min(e, 0)`, unless the headroom of `rhs_exponent` below `floatmax`
+  needs a larger `k`, so that a subnormal `r` keeps its bits (testsets "a subnormal b with a
+  matrix near floatmin" and "a b near floatmax with a matrix of exponent below 0" of
+  `test/linear/linearproblem.jl`); a factor with `e ≥ 0` solves as before, bit for bit. The
+  Cholesky solve of `[2t t; t t]`, `t = nextfloat(0)`, gives `(-1, 2)` within `8 eps κ₁`, where
+  it gave `(-0.5, 1)`. The R1 Golub–Pereyra reduced Jacobian of
   `VariableProjection` (`_pinv_adj_mul_r1`) applies the static SVD's exponent to each coefficient
-  by `ldexp2`, because `2^-e` overflows for `e` below `-exponent(floatmax)`; the static
+  by `ldexp2`, in the wider of the factor's and the matrix's element types, because `2^-e`
+  overflows for `e` below `-exponent(floatmax)`; the static
   `SVDFactorization(Float32)` of a `Float64` matrix at `2^-130`, which gives `NaN` there on
   `bf08120`, gives a result within `8 eps(Float32) κ`. This closes K110, K111 and K114. Five limits
-  stay: a subnormal right-hand side is not scaled up (K124), nor is a subnormal `w` of
+  stay: the solve of an `m < n` system does not scale a subnormal right-hand side up (K124),
+  nor is a subnormal `w` of
   `_pinv_adj_mul_r1` (K129), the device `SVDFactorization(Float32)` of a subnormal `Float64`
   matrix gives `SINGULAR` (K125), `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where
   `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K140), and a `Dual`

@@ -772,22 +772,22 @@
 
 ### K107 · The docstrings of `StaticLU`, `StaticSVD`, `StaticLDLT` and `StaticRectQR` say that the factor is `isbits` for every element type, which is false for `BigFloat`
 
-- **location:** `src/linear/factors.jl:129` (`StaticLU`), `:170` (`StaticSVD`), `:339`
+- **location:** `src/linear/factors.jl:131` (`StaticLU`), `:172` (`StaticSVD`), `:341`
   (`StaticLDLT`), `src/linear/static/qr_rect.jl:12` (`StaticRectQR`)
 - **evidence:** each docstring says that the size parameter makes the `SMatrix` field concrete,
   "so the factor is `isbits`", with no condition on `TF`.
   `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
   `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
   `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
-  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:815`), so
-  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:404-405`) states
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:817`), so
+  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:406-407`) states
   the condition.
 - **kind:** docs
 - **found:** #108
 
 ### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
 
-- **location:** `src/linear/factors.jl:799` (`factor_matrix`), and `src/linear/static/svd.jl:102`
+- **location:** `src/linear/factors.jl:801` (`factor_matrix`), and `src/linear/static/svd.jl:102`
   (`svd_matrix`) and `src/linear/static/svd_rect.jl:51` (`svd_rect_matrix`), which scale always
 - **evidence:** the scale exponent of every static factor is an `Int32` field, and
   `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
@@ -958,32 +958,22 @@
 - **kind:** defect
 - **found:** #113
 
-### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
+### K124 · The solve of an `m < n` system does not scale a subnormal right-hand side up, so it loses the bits below the smallest subnormal
 
-- **location:** `src/linear/factors.jl:871` (`rhs_exponent`), which `ldiv!!` of the dense,
-  device and static factors calls; `src/linear/linearproblem.jl:436, 477` (`wide_solve!`, the
-  same-type `m < n` solve of a dense or device `LinearSolver`), which does not call
-  `rhs_exponent`; and the static `SVDFactorization` solve of `m < n`
-- **evidence:** `rhs_exponent` gives `max(0, …)`, so a right-hand side divides by `2^k` only near
-  `floatmax`. With `s = 2^10 · nextfloat(zero(R))`, `A = 3s · I(5)`, `A[3, 1] = A[1, 3] = s` and
-  `b = fill(s, 5)`, whose solution `(1/4, 1/3, 1/4, 1/3, 1/3)` lies in the normal range,
-  `solve!(init(LinearProblem(A), CholeskyFactorization()), b)` gives `SUCCESS`, a factor of
-  `A / 2^e` in the normal range (`e = -1024` in `Float64`, `-128` in `Float32`), and a relative
-  error against the `BigFloat` solution of `1.9e-4` in the 2-norm and `3.7e-4` in the maximum
-  norm, on `SMatrix`, `Array` and `JLArray` in `Float32`, `Float64`, `ComplexF32` and
-  `ComplexF64`. The forward substitution forms `L₃₁ y₁ ≈ s/3`, a subnormal that rounds to a
-  multiple of `nextfloat(zero(R))`, a relative error of up to `1.5 · 2^-10`. With the factor of
-  `A` unscaled, on `bf08120`, the error is `1.4e-4` and `2.7e-4` (Julia 1.13.4).
-  `test/linear/linearproblem.jl` bounds this case by `2t/s = 2^-9`. A wide system loses such a
-  right-hand side whole: with `A = fill(2.0^-1000, 1, 4)` and `b = [nextfloat(0.0)]`, whose
-  minimum-norm solution is `fill(2.0^-76, 4)`, `solve!` gives `x = 0` and `SUCCESS` for
-  `SVDFactorization()` and `QRFactorization()` on an `Array`, and for `SVDFactorization()` on an
-  `SMatrix` (the static QR solve gives `2^-76`); the same solves of `b · 2^1074`, scaled back by
-  `2^-1074`, give `fill(2.0^-76, 4)` exactly; `rhs_exponent(b) = 0` (Julia 1.13.4, PR #115 at
-  `3d1e53b`).
+- **location:** `src/linear/linearproblem.jl:436, 477` (`wide_solve!`, the same-type `m < n`
+  solve of a dense or device `LinearSolver`) and `:377, 387` (`static_wide_solve`, the static
+  `SVDFactorization` and `QRFactorization` solve of `m < n`), which do not call `rhs_exponent`
+- **evidence:** with `A = fill(2.0^-1000, 1, 4)` and `b = [nextfloat(0.0)]`, whose minimum-norm
+  solution is `fill(2.0^-76, 4)`, `solve!(init(LinearProblem(A), method), b)` gives `x = 0` and
+  `SUCCESS` for `SVDFactorization()` and `QRFactorization()` on an `Array` and on an `SMatrix`
+  (Julia 1.13.4, PR #125 at `ed0e445` and at `c87aca8`); `main`
+  at `ae2a0db` gives the same, except for the static QR solve, which gives `fill(2.0^-76, 4)`.
+  The same solves of `b · 2^1074`, scaled back by `2^-1074`, give `fill(2.0^-76, 4)` exactly
+  (PR #115 at `3d1e53b`). The square and tall solves lift such a right-hand side with the
+  matrix: the 5 × 5 Cholesky case of `test/linear/linearproblem.jl`, which lost up to `3.7e-4`
+  in the maximum norm, meets `8 eps(R) κ₁`.
 - **kind:** defect
-- **found:** 2026-11-25, the K114 5 × 5 case, which the fix of K114 leaves at this limit; the
-  wide case from a review of PR #115
+- **found:** 2026-11-25, the K114 5 × 5 case; the wide case from a review of PR #115
 
 ### K125 · The device `SVDFactorization(Float32)` of a `Float64` or `ComplexF64` matrix of subnormal entries gives `SINGULAR`
 
@@ -1055,14 +1045,15 @@
 
 ### K129 · `_pinv_adj_mul_r1` does not scale a subnormal `w` up, so the products `Vᴴ w` of the Golub–Pereyra Jacobian run on subnormal numbers
 
-- **location:** `src/nonlinear/eliminate.jl:520` and `:543` (`_pinv_adj_mul_r1` of
+- **location:** `src/nonlinear/eliminate.jl:522` and `:545` (`_pinv_adj_mul_r1` of
   `StaticRectSVD` and `StaticSVD`)
 - **evidence:** with `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, `Φ = 2^k A₀` and
   `w = 2^k (1, -2, 0.5)`, `_pinv_adj_mul_r1(factorize!!(nothing, SVDFactorization(), Φ), Φ, w)`
   at `k = -1060` in `Float64` (`k = -135` in `Float32`) has a relative error against the
   `BigFloat` `Φᴴ \ w` of `2.89e-5` to `2.91e-5`, and `1.73e-5` to `1.74e-5` for the `3 × 2`
-  matrix `A₀[:, 1:2]` against `Φ (Φᴴ Φ)⁻¹ w`, in the four element types (`Φ = 2^k (1 + i/2) A₀`
-  in the complex ones), the same values on `bf08120` and on `091997c` (Julia 1.13.4). At
+  matrix `A₀[:, 1:2]` and `w = 2^k (1, -2)` against `Φ (Φᴴ Φ)⁻¹ w`, in the four element
+  types (`Φ = 2^k (1 + i/2) A₀` in the complex ones), the same values on `bf08120`, on
+  `091997c` and on `c87aca8` (Julia 1.13.4). At
   `k = -1026` (`-130`) the error is below `1.1e-15` (`5.8e-7`). The coefficients `vₖᴴ w` hold
   only `k - exponent(nextfloat(zero(R)))` significant bits, 14 at `k = -1060` (`-135`). The
   testset "(Φ⁺)ᴴ w from a static SVD at every scale exponent" of `test/nonlinear/eliminate.jl`
@@ -1073,7 +1064,7 @@
 
 ### K130 · The R3 `_pinv_adj_mul_r3!` of a `DenseSVD` in `Float32` of a `Float64` matrix near `2^-130` gives `NaN`
 
-- **location:** `src/nonlinear/eliminate.jl:1293` (`_pinv_adj_mul_r3!` of `DenseSVD`)
+- **location:** `src/nonlinear/eliminate.jl:1295` (`_pinv_adj_mul_r3!` of `DenseSVD`)
 - **evidence:** the method forms `scale = ldexp(one(R), -fac.scale_exponent)` with
   `R = real(eltype(fac.tmp))`, `Float32` for `SVDFactorization(Float32)`. For
   `Φ = 2^-130 A₀` in `Float64`, `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, the factor has
@@ -1136,7 +1127,7 @@
 
 ### K140 · `_pinv_adj_mul_r1` of a subnormal `Φ` and a normal `w` gives `NaN` where the true `(Φ⁺)ᴴ w` has entries above `floatmax`
 
-- **location:** `src/nonlinear/eliminate.jl:520` and `:543` (`_pinv_adj_mul_r1` of
+- **location:** `src/nonlinear/eliminate.jl:522` and `:545` (`_pinv_adj_mul_r1` of
   `StaticRectSVD` and `StaticSVD`)
 - **evidence:**
 
@@ -1160,7 +1151,7 @@
 
 ### K141 · A `ForwardDiff.Dual` matrix of subnormal values and partials 1 gives `NaN` partials where the true derivative lies above `floatmax`
 
-- **location:** `src/linear/dense.jl:204` (`load_factors!`), `src/linear/factors.jl:799`
+- **location:** `src/linear/dense.jl:204` (`load_factors!`), `src/linear/factors.jl:801`
   (`factor_matrix`)
 - **evidence:**
 
@@ -1188,7 +1179,7 @@
 
 ### K142 · Inside an Apple GPU kernel, `matrix_exponent` and `cholesky_exponent` give `e = 0` for a matrix of subnormal `Float32` entries, so an R1 static factor there takes no subnormal scale
 
-- **location:** `src/linear/factors.jl:839` (`matrix_exponent`), `:858` (`cholesky_exponent`)
+- **location:** `src/linear/factors.jl:841` (`matrix_exponent`), `:860` (`cholesky_exponent`)
 - **evidence:** both return `isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0`,
   and in a Metal kernel `iszero` of a subnormal `Float32` is `true`: with
   `m = reinterpret(Float32, 0x00010000)` in a kernel, `iszero(m)`, `isfinite(m)` and `m == 0f0`
