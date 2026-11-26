@@ -305,7 +305,6 @@ struct GMRES{F <: AbstractForcingTerm, P, TJ, TB, FL} <: LinearMethod{Nothing}
             throw(ArgumentError("GMRES needs 1 ≤ restart ≤ maxiter"))
         (TB === Nothing || TB <: AbstractFloat) ||
             throw(ArgumentError("GMRES basis_eltype must be Nothing or an AbstractFloat type"))
-        FL isa Bool || throw(ArgumentError("GMRES flexible must be a Bool"))
         return new{F, P, TJ, TB, FL}(maxiter, restart, forcing, preconditioner, jvp_eltype,
             mgs, basis_eltype, flexible)
     end
