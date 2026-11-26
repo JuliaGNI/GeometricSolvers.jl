@@ -263,42 +263,53 @@ types, factor reuse, mixed precision, composition and preconditioning.
 
 ### Git hooks
 
-Two hooks live in `.githooks`. They are **not active in a fresh clone** — `core.hooksPath` is local
-configuration and does not travel with a push — so enable them once per clone:
+`.githooks` holds two hooks, `pre-commit` and `pre-push`. Each is a shell launcher that runs its
+Julia program, `pre-commit.jl` or `pre-push.jl`; `test-layout.jl` holds the test-layout check of
+`pre-commit`. The hooks are **not active in a fresh clone**, because `core.hooksPath` is local
+configuration and is not part of a clone. Enable them once per clone:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-**`pre-commit`** acts on **staged `.jl` files only**, and exits immediately when a commit stages
-none, so a documentation- or workflow-only commit is not slowed down by it:
+**`pre-commit`** runs when a commit stages a `.jl` file, a `.jl` deletion included, or changes
+anything below `test/`. Any other commit passes at once. It refuses a staged `.jl` file that also
+has unstaged changes, because the stages read the files on disk. Then it runs these stages:
 
-- **JuliaFormatter `--check`**, honouring this repository's own `.JuliaFormatter.toml` — **blocks**
-  the commit. Formatting is mechanical and always fixable.
-- **`fatou lint`**, when `fatou` is installed — **advisory only**, and deliberately so: its
-  `unused-import` rule does not follow `include`, so it flags the load-bearing imports of every
-  module file.
-- **Unicode NFC** — **blocks** a staged file that is not NFC-normalised. Sources here are NFC, so a
-  file that is not is a regression: a pattern typed in NFC silently matches nothing in a decomposed
-  file, which defeats `grep`, an editor search and Documenter's doctest comparison alike. Fix with
-  `julia --startup-file=no ~/Research/Environment/Harness/githooks/nfc.jl --apply <files>`. The invariant
-  is `s == Unicode.normalize(s, :NFC)`, not the absence of combining marks — `q̇`, `v̄` and `f̄` have
-  no precomposed codepoint and are two codepoints in NFC as well.
-- **`using <Package>`**, which catches a syntax error or a broken `include` — **blocks**.
+- **Test layout**, on a commit that changes `test/`: **blocks** when the tests do not follow the
+  test convention of the shared hook set.
+- **JuliaFormatter**, on the staged `.jl` files, with this repository's `.JuliaFormatter.toml`:
+  **blocks** a file that is not formatted. It needs JuliaFormatter 2.14 or newer, which it looks
+  for first in the Julia environment of the hook set, which `RESEARCH_HARNESS_JULIA` can name, and
+  then on Julia's load path; with none, or with an older one found first, every file fails.
+- **`fatou lint`**, on the staged `.jl` files, when `fatou` is installed: **advisory**, because
+  some of its findings are wrong.
+- **Unicode NFC**, on the staged `.jl` files: **blocks** a file that is not NFC-normalised. A
+  pattern typed in NFC matches nothing in a decomposed file. The invariant is
+  `s == Unicode.normalize(s, :NFC)`: `q̇`, `v̄` and `f̄` have no precomposed codepoint and stay two
+  codepoints. The script `nfc.jl` of the shared hook set fixes a file:
+  `julia --startup-file=no nfc.jl --apply <files>`.
+- **ast-grep**, on the staged `.jl` files, with the rules of an `sgconfig.yml` in the repository
+  root or a directory above it: **blocks** on a hit of severity `error` on a line that the commit
+  adds, and is **advisory** for a hit of severity `error` on another line and for a hit of
+  severity `warning` or `hint`. Without `ast-grep` or an `sgconfig.yml`, the stage is skipped.
+- **Package load**, when a `.jl` file is staged or deleted: **blocks** when `using GeometricSolvers`
+  fails in a new process, such as on a syntax error or a broken `include`.
 
-**`pre-push`** runs the full test suite with `--check-bounds=auto`, but **only when pushing to
-`main` or `master`**; a topic branch is left to CI. It prints nothing for **10–30 minutes**, which
-looks exactly like a network hang and is not one. If you do interrupt it, check for an orphaned
-Julia process that the killed hook left behind.
+**`pre-push`** runs the full test suite, `Pkg.test` with `--check-bounds=auto`, **only when the
+push updates `main` or `master`**. A push to another branch leaves the suite to CI. The suite
+runs for a long time and can print little while it runs; that is not a network hang. An
+interrupt stops the suite's processes, and the hook reports any process that does not stop.
 
-Either hook can be bypassed for a single command with `--no-verify`, for a change you know it does
-not apply to:
+Either hook can be bypassed for one command with `--no-verify`, for a change that it does not
+apply to:
 
 ```sh
 git commit --no-verify
 git push --no-verify
 ```
 
-The hooks are generated from one shared copy and are byte-identical across the related
-repositories, so edit them there rather than here — a local edit is silently undone by the next
-install.
+The hooks are generated from the shared hook set in
+[michakraus/ResearchHarness](https://github.com/michakraus/ResearchHarness) (`githooks/`, and
+`scripts/test-layout.jl`), and are identical across the related repositories. Edit them there:
+the next install overwrites a local edit.

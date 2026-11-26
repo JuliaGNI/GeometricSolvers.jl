@@ -19,7 +19,11 @@ so that a compat-only bump can be told apart from an interface change.
   `init` and `solve!` (R3), a batch with `solve_batch!` on the CPU (R2), a least-squares fit with
   `GaussNewton` and with `LevenbergMarquardt`, and a matrix-free Newton–GMRES solve; the output
   under each is that of a run of the block. A sixth block, a batch on a GPU, is marked as not
-  run. The Development section is unchanged and stays at the end.
+  run. The Development section, at the end, now states what the git hooks do: the files in
+  `.githooks`, when `pre-commit` runs (a staged `.jl` file, a staged `.jl` deletion, a change
+  below `test/`), each of its stages and whether it blocks, the test-layout check and ast-grep
+  among them, and that `pre-push` runs the suite only on a push to `main` or `master`. The NFC fix
+  names the `nfc.jl` script of the shared hook set in place of a path on one machine.
 
 - **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
   `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
