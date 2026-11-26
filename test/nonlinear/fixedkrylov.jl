@@ -137,8 +137,8 @@ end
 # stop on the forcing test with a linear residual well above zero. `η₀ = 0.1` keeps the safeguard
 # `η^φ` below `0.1` at step 2, and the smaller `η` of step 2 keeps it there at step 3, so each `η`
 # after the first is the ratio of the rule. The full step of `Static` makes `d = x₊ - x` the
-# direction of the inner solve, and a DQGMRES window as wide as its cap makes its residual the true
-# one.
+# direction of the inner solve, and a DQGMRES window no narrower than the iterations of each inner
+# solve (`n = 6`) makes its residual estimate the true one.
 @testset "Each step records the forcing term of the next, $M, $T" for M in FIXED_METHODS,
     T in REAL_ELTYPES
 
