@@ -499,12 +499,12 @@ end
         steihaug = r"^ArgumentError: Newton with a Steihaug globalization needs linsolve = MINRESQLP\(\.\.\.\): its conjugate gradients take the place of the MINRES-QLP solve$"
         @test_throws steihaug Newton(; linsolve = GMRES(), globalization = Steihaug())
         @test_throws steihaug Newton(; globalization = Steihaug())
-        @test_throws r"^ArgumentError: Newton with a JVPFunction needs linsolve = GMRES\(\.\.\.\) or MINRESQLP\(\.\.\.\): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give$" Newton(;
+        @test_throws r"^ArgumentError: Newton with a JVPFunction needs a matrix-free linear method, such as GMRES\(\.\.\.\): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give$" Newton(;
             jacobian = JVPFunction((Jv, x, v, p) -> Jv))
         # a value iterate has no Krylov solve, and a Jacobian function fills a matrix
         @test_throws r"^ArgumentError: a Newton with MINRESQLP solves an array linear system: the iterate must be an AbstractVector and not a value iterate, which is a Number or a StaticArray$" solve(
             prob_same, SVector(0.3, 0.2, 0.1), Newton(; linsolve = MINRESQLP()))
-        jacfun = r"^ArgumentError: a Newton with GMRES or MINRESQLP takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none$"
+        jacfun = r"^ArgumentError: a Newton with a matrix-free linear method takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none$"
         @test_throws jacfun solve(prob_same, [0.3, 0.2, 0.1],
             Newton(; linsolve = MINRESQLP(), jacobian = (J, x, p) -> J))
         @test_throws jacfun solve(prob_same, [0.3, 0.2, 0.1],

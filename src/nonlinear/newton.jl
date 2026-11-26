@@ -175,7 +175,7 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a matrix-free solve does not form"))
         elseif jacobian isa JVPFunction
-            throw(ArgumentError("Newton with a JVPFunction needs linsolve = GMRES(...) or MINRESQLP(...): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give"))
+            throw(ArgumentError("Newton with a JVPFunction needs a matrix-free linear method, such as GMRES(...): a factorising linear method needs a Jacobian matrix, which a JVPFunction does not give"))
         end
         globalization isa Steihaug && !(linsolve isa MINRESQLP) &&
             throw(ArgumentError("Newton with a Steihaug globalization needs linsolve = MINRESQLP(...): its conjugate gradients take the place of the MINRES-QLP solve"))
@@ -1948,12 +1948,13 @@ end
     j isa JVPFunction && return j
     backend = j === nothing ? AutoForwardDiff() : j
     backend isa AbstractADType || throw(ArgumentError(
-        "a Newton with GMRES or MINRESQLP takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none"))
+        "a Newton with a matrix-free linear method takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none"))
     return prepare_jvp(backend, prob, Fx, x, p)
 end
 
-# Whether a `Newton` with `GMRES` solves `prob`: the square system of a `NonlinearProblem`, and the
-# reduced problem of a `StationarityProblem`, which `stationarity.jl` adds.
+# Whether a `Newton` with `GMRES`, `BiCGStab` or `DQGMRES` solves `prob`: the square system of a
+# `NonlinearProblem`, and the reduced problem of a `StationarityProblem`, which `stationarity.jl`
+# adds.
 @inline gmres_problem(::NonlinearProblem) = true
 @inline gmres_problem(prob) = false
 

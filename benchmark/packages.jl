@@ -320,6 +320,14 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
         NoMethod("no Krylov linear solver"),
         NoMethod("no Krylov linear solver"),
         NoMethod("no Krylov linear solver")),
+    "Newton Backtracking BiCGStab" => (gs_entry("Newton Backtracking BiCGStab"),
+        NoMethod("no Krylov linear solver"),
+        NoMethod("no Krylov linear solver"),
+        NoMethod("no Krylov linear solver")),
+    "Newton Backtracking DQGMRES" => (gs_entry("Newton Backtracking DQGMRES"),
+        NoMethod("no Krylov linear solver"),
+        NoMethod("no Krylov linear solver"),
+        NoMethod("no Krylov linear solver")),
     "Broyden" => (gs_entry("Broyden"),
         NoMethod("no Broyden method"),
         Paired("SimpleBroyden",
@@ -347,10 +355,10 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
 )
 
 # The nine `Newton` columns with a factorisation take the shared Jacobian. `Picard`, its
-# compositions, Newton–GMRES and `Fallback` read `prob.J` whenever the problem has one, so they
-# get a problem without it and keep their own Jacobian source. An `Anderson` takes it where its
-# member does.
-gs_takes_jacobian(m) = m isa GS.Newton && !(m.linsolve isa GS.GMRES)
+# compositions, a `Newton` with a matrix-free linear method and `Fallback` read `prob.J`
+# whenever the problem has one, so they get a problem without it and keep their own Jacobian
+# source. An `Anderson` takes it where its member does.
+gs_takes_jacobian(m) = m isa GS.Newton && !GS.matrix_free(m.linsolve)
 gs_takes_jacobian(a::GS.Anderson) = gs_takes_jacobian(a.member)
 
 """

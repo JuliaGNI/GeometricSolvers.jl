@@ -1062,11 +1062,21 @@ so that a compat-only bump can be told apart from an interface change.
   a test for `GMRES` in its refusals of reuse, refinement, `LevenbergMarquardt` and
   `PseudoTransient`, in its `forcing` and `preconditioner` keywords and where its state is built,
   a `BatchEliminated` problem reads it before it refuses every method but `GMRES`, and `solve`
-  reads it for the refusal of a `ForwardDiff.Dual` input. A `Newton` with `GMRES` or `MINRESQLP`
-  keeps every behaviour. The messages of the refusals of reuse, refinement and
-  `LevenbergMarquardt` with `GMRES`, of a `Dual` input, and of `max_inner_iterations`, `f_calls`
-  and `jvp_calls` on a solve that keeps no count name a matrix-free linear method in place of
-  `GMRES`.
+  reads it for the refusal of a `ForwardDiff.Dual` input. `Continuation` reads it for the
+  refusal of its `Newton` method, and `KroneckerFactorization` for the refusal of its block
+  method, so both refuse every matrix-free linear method; `KroneckerFactorization(; block =
+  MINRESQLP())`, which was accepted, now raises an `ArgumentError`. A `Newton` with `GMRES` or
+  `MINRESQLP` keeps every other behaviour. The messages of the refusals of reuse, refinement and
+  `LevenbergMarquardt` with `GMRES`, of a `Dual` input, of a `Continuation` method, of a
+  `JVPFunction` with a factorising method and of a Jacobian function with a matrix-free method,
+  and of `max_inner_iterations`, `f_calls` and `jvp_calls` on a solve that keeps no count, name a
+  matrix-free linear method in place of `GMRES` or of `GMRES` and `MINRESQLP`.
+
+- **The standard test set has two more columns, `Newton Backtracking BiCGStab` and `Newton
+  Backtracking DQGMRES`,** after `Newton Backtracking GMRES`: 17 columns and 2278 cells. Their
+  268 cells are new in `test/verification/standard_reference.csv`, and the benchmark pairs each
+  with no package method (no Krylov linear solver). The benchmark's GeometricSolvers adapter
+  hands the shared Jacobian to no `Newton` with a matrix-free linear method.
 
 - **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
   exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to

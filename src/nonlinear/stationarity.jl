@@ -375,9 +375,9 @@ end
     return u₊, F₊, with_merit(s, merit), info
 end
 
-# The matrix-free `Newton` on the reduced problem: `GMRES` takes any index sets, and `MINRESQLP` and
-# `Steihaug` take `E == U` only, compared as the problem stores them, so that `(1, 2)` and `(2, 1)`
-# differ: the Jacobian is then not symmetric.
+# The matrix-free `Newton` on the reduced problem: `GMRES`, `BiCGStab` and `DQGMRES` take any index
+# sets, and `MINRESQLP` and `Steihaug` take `E == U` only, compared as the problem stores them, so
+# that `(1, 2)` and `(2, 1)` differ: the Jacobian is then not symmetric.
 @inline gmres_problem(::ReducedStatProb) = true
 
 @inline function check_symmetric_problem(rprob::ReducedStatProb)
@@ -396,7 +396,7 @@ end
     j = m.jacobian
     j isa JVPFunction && return j
     (j === nothing || j isa AbstractADType) || throw(ArgumentError(
-        "a Newton with GMRES or MINRESQLP takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none"))
+        "a Newton with a matrix-free linear method takes jacobian = nothing, an AbstractADType or a JVPFunction: a Jacobian function fills a matrix, and a matrix-free solve forms none"))
     eltype(u) === eltype(rprob.x_ref) || throw(ArgumentError(
         "a StationarityProblem takes a GMRES with jvp_eltype = Nothing: its Hessian–vector product is formed in the element type of the state"))
     return rprob.prep

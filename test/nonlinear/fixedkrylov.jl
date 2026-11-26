@@ -2,7 +2,7 @@
 # step to the forcing tolerance on the true residual, the products per iteration, the fixed
 # workspace, the four breakdown guards of `BiCGStab`, the conjugated inner products, the right
 # preconditioner, the DQGMRES window, the scale of the scalar recurrences, and the refusals of the
-# `matrix_free` trait.
+# `matrix_free` trait, in `Newton`, `Continuation` and `KroneckerFactorization`.
 #
 # The Newton solves run on `Array` and on `JLArray` (a CPU array that refuses scalar indexing) in
 # `REAL_ELTYPES`.
@@ -600,6 +600,18 @@ end
     @test Newton(; linsolve = fixed(M), jacobian = JVPFunction(jvp!)) isa Newton
 end
 
+@testset "Continuation refuses a Newton with $(nameof(typeof(linsolve)))" for linsolve in (
+    BiCGStab(), DQGMRES(), KroneckerFactorization())
+    @test_throws r"^ArgumentError: Continuation needs a Newton method whose step forms the Jacobian matrix" Continuation(
+        FixedPointHomotopy(); method = Newton(; linsolve))
+end
+
+@testset "KroneckerFactorization refuses the block method $(nameof(typeof(block)))" for block in (
+    BiCGStab(), DQGMRES(), MINRESQLP(), KroneckerFactorization())
+    @test_throws r"^ArgumentError: KroneckerFactorization takes a block method that factorises in the working precision" KroneckerFactorization(;
+        block)
+end
+
 # The refusals of the state of a `Newton` with `GMRES` name the method.
 @testset "Newton with $M refuses what has no square vector system" for M in FIXED_METHODS
     name = string(nameof(M))
@@ -609,6 +621,8 @@ end
     @test_throws Regex("^ArgumentError: a Newton with $name solves an array linear system") init(
         NonlinearProblem((x, q) -> x .- 1), SVector(0.0, 0.0), m)
     prob = NonlinearProblem((r, x, p) -> (r .= x .^ 3 .- 2; nothing))
+    @test_throws r"^ArgumentError: a Newton with a matrix-free linear method takes jacobian = nothing, an AbstractADType or a JVPFunction" solve(
+        prob, [1.0, 1.5], Newton(; linsolve = fixed(M), jacobian = (J, x, p) -> J))
     @test_throws Regex("^ArgumentError: LeftPreconditioned does not take a Newton with $name as its outer method") solve(
         prob, [1.0, 1.5], LeftPreconditioned(m, Newton()))
     # a Newton with the method as the inner map is taken
