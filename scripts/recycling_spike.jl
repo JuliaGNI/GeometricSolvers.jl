@@ -17,7 +17,8 @@
 # `k` steps after, and the step after one whose inner solve reached its cap, as
 # `Newton(; reuse = k)` refreshes a `GMRES` preconditioner. That `Newton` also refreshes after a
 # `STALLED` step, which the script's own Newton loop does not; the Newton steps and the refreshes
-# of a row show where the loops part. Every product is `J(x) v` with the analytic Jacobian. The three columns of a cell, each the sum over the ten solves:
+# of a row show where the loops part. Every product is `J(x) v` with the analytic Jacobian. The
+# three columns of a cell, each the sum over the ten solves:
 #
 # - `GMRES(m)`: `Newton(; linsolve = GMRES(; restart = m, maxiter = 500, forcing =
 #   FixedForcing(η), preconditioner = M), reuse = k)` of the package, its products counted by
