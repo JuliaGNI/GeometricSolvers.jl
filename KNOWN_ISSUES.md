@@ -1003,7 +1003,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2082` for `GMRES`, `:2327` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2082` for `GMRES`, `:2329` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×

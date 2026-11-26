@@ -170,9 +170,10 @@ inner iteration `j`; on a device, each reduction is a synchronisation. The inner
 
 The matrix-free [`DogLeg`](@ref) runs on the Arnoldi relation of an unrestarted `GMRES` only
 (`restart == maxiter`), and a `Newton` with a preconditioner, a restarted `GMRES` or a
-`basis_eltype` other than `Nothing` under it raises an `ArgumentError`. `GMRES` also solves a [`StationarityProblem`](@ref), whose Jacobian is not
-symmetric where `E ≠ U`, with a [`JVPFunction`](@ref) on the unknowns or the Hessian–vector product
-of the problem's automatic differentiation.
+`basis_eltype` other than `Nothing` under it raises an `ArgumentError`. `GMRES` also solves a
+[`StationarityProblem`](@ref), whose Jacobian is not symmetric where `E ≠ U`, with a
+[`JVPFunction`](@ref) on the unknowns or the Hessian–vector product of the problem's automatic
+differentiation.
 
 [`MINRESQLP`](@ref) is the linear method of a `StationarityProblem` with `E == U`, whose Jacobian
 is a symmetric block of the Hessian of `S`: MINRES-QLP (Choi, Paige and Saunders 2011,

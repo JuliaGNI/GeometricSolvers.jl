@@ -668,9 +668,9 @@ function cgs2_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
 end
 
 # The CGS2 step on a basis stored in a type other than the working type: column `j + 1` cannot
-# hold `w₁` in the working type, so `w₁` stays in `ws.w`, the two projections `h₁ = V_jᴴ w` and `h₂ = V_jᴴ w₁` are
-# two reductions, and a third, `rnorm(w₂)`, norms the result. The products read the stored basis
-# and accumulate in the working type.
+# hold `w₁` in the working type, so `w₁` stays in `ws.w`, the two projections `h₁ = V_jᴴ w` and
+# `h₂ = V_jᴴ w₁` are two reductions, and a third, `rnorm(w₂)`, norms the result. The products read
+# the stored basis and accumulate in the working type.
 function cgs2_reduced_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
     Vj = @view ws.V[:, 1:j]
     hd = @view ws.hd[1:j]

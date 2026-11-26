@@ -2110,9 +2110,11 @@ end
 
 # The linear residual `‖F + α J d‖` of the step `α d` that a line search accepted, which the
 # Choice 1 forcing term of the next step reads; `α = stepnorm / ‖d‖`. On one Arnoldi cycle,
-# `F + α J M⁻¹ V_k y = V_{k+1} (-β₀ e₁ + α H̄_k y)`, so the value is the norm of a reduced vector
-# and costs no product. A restarted solve has no such relation and keeps the residual of its
-# direction, and so does a full step, whose residual that is.
+# `F + α J d = V_{k+1} (-β₀ e₁ + α H̄_k y)` for `d = M⁻¹ V_k y`, and `d = Z_k y` on the flexible
+# path, so the value is the norm of a reduced vector and costs no product. On a basis stored in a
+# type other than the working one, the relation holds to the round-off of that type. A restarted
+# solve has no such relation and keeps the residual of its direction, and so does a full step,
+# whose residual that is.
 @inline function accepted_linres!(ws::GMRESWorkspace{T, R}, stepnorm, dnorm) where {T, R}
     k = Int(ws.arnoldi)
     (k > 0 && ws.gmres_iterations == ws.arnoldi) || return nothing
