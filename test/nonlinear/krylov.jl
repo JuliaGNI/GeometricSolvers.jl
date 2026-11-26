@@ -2031,7 +2031,7 @@ end
     b = [1.0, 0.0, 0.0]
     op = (Jv, v) -> (Jv .= jd .* v; Jv)
     ws = init_gmres_workspace(GMRES(; maxiter = 10, restart = 3, basis_eltype = Float32), zeros(3))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-8, Int32(10), Int32(3); mgs)
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-8, Int32(10), Int32(3); mgs)
     @test info.breakdown
     @test !info.converged
     @test info.iterations == 1
