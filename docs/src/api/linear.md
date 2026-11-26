@@ -142,7 +142,16 @@ The forcing term sets that tolerance. [`EisenstatWalkerChoice2`](@ref) is the de
 [`EisenstatWalkerChoice1`](@ref) and [`FixedForcing`](@ref) are the alternatives; a term is an
 [`AbstractForcingTerm`](@ref), and [`compute_forcing`](@ref) is its rule. The right preconditioner
 of `GMRES(; preconditioner = P)` is refreshed by [`refresh!`](@ref) once per Newton step and
-applied by [`apply_preconditioner!`](@ref) before every product. A matrix-free problem supplies its
+applied by [`apply_preconditioner!`](@ref) before every product. Under `Newton(; reuse = k)` it is
+refreshed at the first step and every `k` steps after, and at the step after a `STALLED` step or
+an inner solve that reached its cap; without a preconditioner `reuse` raises an `ArgumentError`.
+`GMRES(; flexible = true)` keeps each preconditioned vector ``z_j = M_j^{-1} v_j`` and forms the
+direction from them (Saad 1993, doi:10.1137/0914028), so a preconditioner that changes between
+inner iterations still gives the minimal-residual direction. `GMRES(; basis_eltype = Float32)`
+stores the Krylov basis in `Float32`, `ComplexF32` for a complex iterate, with every product and
+update in the working type, as the compressed basis of Aliaga et al. (2020, arXiv:2009.12101);
+each cycle then ends on the true residual, which costs one product, and restarts where it misses
+the tolerance. A matrix-free problem supplies its
 own product as [`JVPFunction`](@ref)`(jvp!)` in the `jacobian` field of [`Newton`](@ref), and the
 solve reports the exact counts of its residual and product evaluations in
 [`f_calls`](@ref)/[`jvp_calls`](@ref) and in the `f_calls` and `jvp_calls` fields of
@@ -160,8 +169,8 @@ inner iteration `j`; on a device, each reduction is a synchronisation. The inner
 [`GMRESRefinement`](@ref) orthogonalises by modified Gram–Schmidt whatever `GMRES` selects.
 
 The matrix-free [`DogLeg`](@ref) runs on the Arnoldi relation of an unrestarted `GMRES` only
-(`restart == maxiter`), and a `Newton` with a preconditioner or a restarted `GMRES` under it raises
-an `ArgumentError`. `GMRES` also solves a [`StationarityProblem`](@ref), whose Jacobian is not
+(`restart == maxiter`), and a `Newton` with a preconditioner, a restarted `GMRES` or a
+`basis_eltype` other than `Nothing` under it raises an `ArgumentError`. `GMRES` also solves a [`StationarityProblem`](@ref), whose Jacobian is not
 symmetric where `E ≠ U`, with a [`JVPFunction`](@ref) on the unknowns or the Hessian–vector product
 of the problem's automatic differentiation.
 

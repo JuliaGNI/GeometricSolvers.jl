@@ -328,6 +328,11 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
         NoMethod("no Krylov linear solver"),
         NoMethod("no Krylov linear solver"),
         NoMethod("no Krylov linear solver")),
+    "Newton Backtracking Float32-basis GMRES" => (
+        gs_entry("Newton Backtracking Float32-basis GMRES"),
+        NoMethod("no Krylov linear solver"),
+        NoMethod("no Krylov linear solver"),
+        NoMethod("no Krylov linear solver")),
     "Broyden" => (gs_entry("Broyden"),
         NoMethod("no Broyden method"),
         Paired("SimpleBroyden",

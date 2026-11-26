@@ -995,3 +995,15 @@
   for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
 - **kind:** docs
 - **found:** 2026-11-26
+
+### K138 · The test of the summary of the standard test set finds the line of a column by its name and a space, so a column whose name is another column's name, a space and more matches two lines
+
+- **location:** `test/verification/standard.jl:399`
+- **evidence:** `only(filter(startswith(column * " "), split(summary, "\n")))` raises
+  `ArgumentError: Collection has multiple elements, must contain exactly 1 element` for the
+  column `Newton Backtracking GMRES` once a column named `Newton Backtracking GMRES Float32 basis`
+  is in `STANDARD_COLUMNS`: both summary lines start with `Newton Backtracking GMRES `. Observed on
+  a draft of the branch that adds the `Float32`-basis column, which then names it
+  `Newton Backtracking Float32-basis GMRES`, so no column of the table meets the case.
+- **kind:** defect
+- **found:** 2026-11-26

@@ -1037,6 +1037,37 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`GMRES` takes two new keywords, `flexible = false` and `basis_eltype = Nothing`, and a
+  `Newton` with a preconditioned `GMRES` takes `reuse = k`.** `GMRES(; flexible = true)` is the
+  flexible GMRES of Saad (1993, doi:10.1137/0914028): with a preconditioner it keeps each
+  `z_j = M_j⁻¹ v_j` in a working-precision matrix `Z` of `min(restart, n)` columns and forms the
+  direction and the restart residual from `Z y`, so a preconditioner that changes between inner
+  iterations still gives the minimal-residual direction; without one it allocates no `Z` and
+  solves as `flexible = false`. `GMRES(; basis_eltype = TB)` stores the Krylov basis in `TB`
+  (`Complex{TB}` for a complex iterate), as the compressed basis of Aliaga et al. (2020,
+  arXiv:2009.12101), with every product, coefficient, norm and update in the working type; the
+  preconditioner reads a working-precision copy of each basis vector. Its Givens estimate is not
+  the true residual, so each cycle ends on `‖b − J d‖`, one more Jacobian–vector product, and
+  restarts where it misses the tolerance; its CGS2 step takes three reductions. One cycle of `j`
+  CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist, Luszczek and
+  Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve reaches
+  `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor an
+  `AbstractFloat` type raises an `ArgumentError`, and so does a `DogLeg` with any `basis_eltype`
+  but `Nothing`, because its trial loop reads the basis as orthonormal in the working precision.
+  Both keywords are type parameters, `GMRES{F, P, TJ, TB, FL}` with the fields `basis_eltype` and
+  `flexible::Val{FL}`, and the `forcing` and `preconditioner` keywords of `Newton` keep them.
+  `Newton(; reuse = k)` with a `GMRES` that has a preconditioner refreshes it at the first step,
+  every `k` steps after and at the step after a `STALLED` step or an inner solve that reached its
+  cap, with no retry within a step; without a preconditioner, and with `BiCGStab`, `DQGMRES` or
+  `MINRESQLP`, `reuse` still raises an `ArgumentError`, whose message now names the exception.
+
+- **The standard test set has one more column, `Newton Backtracking Float32-basis GMRES`,** after
+  `Newton Backtracking DQGMRES`: 18 columns and 2412 cells. Its 134 cells are new in
+  `test/verification/standard_reference.csv`, 24 of them flagged `unstable`, and the benchmark
+  pairs it with no package method (no Krylov linear solver). Its `Float32` cells equal those of
+  `Newton Backtracking GMRES`, whose basis is then of the same type; 9 of its 67 `Float64` cells
+  differ from that column in the code or the iteration count, on problems 3, 11, 15, 21 and 22.
+
 - **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
   20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
   storage does not grow with the iteration count.** `BiCGStab` is the right-preconditioned
