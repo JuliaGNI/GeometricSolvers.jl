@@ -16,13 +16,13 @@ its globalization. Its keywords are:
 
 | keyword | default | meaning |
 |:--|:--|:--|
-| `linsolve` | `LUFactorization()` | the [linear solver](@ref linear): a factorisation or [`GMRES`](@ref) |
-| `globalization` | `Static()` | the [globalization](@ref globalization): a line search, [`DogLeg`](@ref) or [`LevenbergMarquardt`](@ref) |
-| `jacobian` | `nothing` | the Jacobian source: `nothing` (the problem's `J`, else `AutoForwardDiff()`), an ADTypes back end, a callable (`J(x, p)` on a value iterate, `J!(J, x, p)` on an array) except with `GMRES`, or a [`JVPFunction`](@ref) for `GMRES` |
+| `linsolve` | `LUFactorization()` | the [linear solver](@ref linear): a factorisation, [`GMRES`](@ref) or [`MINRESQLP`](@ref) |
+| `globalization` | `Static()` | the [globalization](@ref globalization): a line search, [`DogLeg`](@ref), [`Steihaug`](@ref) or [`LevenbergMarquardt`](@ref) |
+| `jacobian` | `nothing` | the Jacobian source: `nothing` (the problem's `J`, else `AutoForwardDiff()`), an ADTypes back end, a callable (`J(x, p)` on a value iterate, `J!(J, x, p)` on an array) except with `GMRES` or `MINRESQLP`, or a [`JVPFunction`](@ref) for `GMRES` or `MINRESQLP` |
 | `refinement` | `NoRefinement()` | iterative refinement of the direction: [`Refinement`](@ref) or [`GMRESRefinement`](@ref), see [Mixed precision](@ref mixed) |
 | `regularization` | `0` | the diagonal shift ``\mu`` of ``J + \mu I`` |
 | `reuse` | `nothing` | the factor-reuse period `k` |
-| `forcing`, `preconditioner` | `nothing` | the forcing term and the right preconditioner of a `GMRES` |
+| `forcing`, `preconditioner` | `nothing` | the forcing term and the right preconditioner of a `GMRES`; the forcing term of a `MINRESQLP` |
 | `best` | `false` | return the iterate of the smallest ``\|F\|_2`` of a solve that ends without `SUCCESS` |
 
 ```jldoctest nonlinear

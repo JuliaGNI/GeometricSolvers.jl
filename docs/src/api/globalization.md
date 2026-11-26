@@ -25,7 +25,12 @@ factor and a parameter that lives across iterations (the trust-region radius or 
 parameter `μ`), so `Newton` keeps that parameter in its state and runs the trial loop against
 the factor itself.
 
+[`Steihaug`](@ref) is the trust region of a [`Newton`](@ref) with [`MINRESQLP`](@ref) on a
+[`StationarityProblem`](@ref) with `E == U`: truncated conjugate gradients on the quadratic model
+of the action, with the acceptance and radius rule of [`DogLeg`](@ref) on the merit ``\|F\|``.
+
 ```@docs
 DogLeg
 LevenbergMarquardt
+Steihaug
 ```

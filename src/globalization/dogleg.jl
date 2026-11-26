@@ -95,6 +95,15 @@ end
 @inline g_b(::Nothing) = nothing
 @inline g_b(g) = g.b
 
+# Whether the product `y` of the model `J` is finite: `true` for a matrix, whose products the loop
+# does not check, and a check of every entry for an operator that defines a method. A product
+# that is not finite ends the step with `NONFINITE`: the iterate stays, and the radius is that of
+# the trial whose product was not finite.
+@inline finite_product(J, y) = true
+@inline function nonfinite_product(fnorm::R) where {R}
+    return StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+end
+
 # The trial loop of `DogLeg` at `(x, Fx)`, with the model matrix `J`, the Newton step `sN` (read
 # only when `newton` is `true`) and the radius `δ` (`0` when unset). Returns `(x₊, F₊, δ₊, info)`.
 @inline function dogleg_step(prob, x, Fx, p, J, sN, newton::Bool, δ::R) where {R}
@@ -116,9 +125,11 @@ end
     # gives no Cauchy point.
     u = scale!!(g_u(g), inv(fnorm), Fx)
     g̃ = mul!!(g_g̃(g), J', u)
+    finite_product(J, g̃) || return x, Fx, δ, nonfinite_product(fnorm)
     gnorm = rnorm(g̃)
     ĝ = scale!!(g_ĝ(g), inv(gnorm), g̃)
     Jg = mul!!(g_Jg(g), J, ĝ)
+    finite_product(J, Jg) || return x, Fx, δ, nonfinite_product(fnorm)
     jnorm = rnorm(Jg)
     cauchy = !iszero(gnorm) && isfinite(gnorm) && !iszero(jnorm) && isfinite(jnorm)
     nC = fnorm * ((gnorm / jnorm) / jnorm)
@@ -154,6 +165,7 @@ end
             boundary = true
         end
         Js = mul!!(g_Jg(g), J, s)
+        finite_product(J, Js) || return x, Fx, δ, nonfinite_product(fnorm)
         Flin = axpby!!(g_Ft(g), one(R), Fx, one(R), Js)
         pred = fnorm - rnorm(Flin)
         x₊ = update_iterate!!(g_xt(g), x, one(R), s)

@@ -161,10 +161,22 @@ inner iteration `j`; on a device, each reduction is a synchronisation. The inner
 
 The matrix-free [`DogLeg`](@ref) runs on the Arnoldi relation of an unrestarted `GMRES` only
 (`restart == maxiter`), and a `Newton` with a preconditioner or a restarted `GMRES` under it raises
-an `ArgumentError`. These names are exported.
+an `ArgumentError`. `GMRES` also solves a [`StationarityProblem`](@ref), whose Jacobian is not
+symmetric where `E ≠ U`, with a [`JVPFunction`](@ref) on the unknowns or the Hessian–vector product
+of the problem's automatic differentiation.
+
+[`MINRESQLP`](@ref) is the linear method of a `StationarityProblem` with `E == U`, whose Jacobian
+is a symmetric block of the Hessian of `S`: MINRES-QLP (Choi, Paige and Saunders 2011,
+doi:10.1137/100787921), with four Lanczos vectors and no Krylov basis. On a singular Hessian it
+returns the solution of minimum length of the least-squares problem in the Krylov space; on an
+incompatible system in `Float32`, rounding can end the solve before that space holds it. It
+takes the forcing terms of `GMRES` and no preconditioner, and the trust regions
+[`DogLeg`](@ref), whose Cauchy point takes two Hessian–vector products, and [`Steihaug`](@ref).
+These names are exported.
 
 ```@docs
 GMRES
+MINRESQLP
 AbstractForcingTerm
 EisenstatWalkerChoice2
 EisenstatWalkerChoice1
