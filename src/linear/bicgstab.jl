@@ -34,7 +34,7 @@ minimises no residual: its residual norm need not decrease from one iteration to
 stops where ``\\|F + J d\\| \\le \\eta_k \\|F\\|`` by its recurrence. Four scalars of the
 recurrence divide: ``\\sigma = \\hat r^H v``, ``\\|t\\|``, ``\\omega`` and ``\\rho = \\hat r^H r``.
 Where one of them is exactly zero the solve stops, a breakdown: it returns the last finite
-iterate, ``x + \\alpha \\hat p`` where ``\\omega = 0`` or ``t = 0``, with no convergence, and the
+iterate, ``d + \\alpha \\hat p`` where ``\\omega = 0`` or ``t = 0``, with no convergence, and the
 Newton step goes on with that direction as after a `GMRES` breakdown on a singular operator. A
 product that is not finite ends the step with `NONFINITE`, and the iterate stays.
 

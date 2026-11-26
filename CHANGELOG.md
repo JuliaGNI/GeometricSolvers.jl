@@ -1070,7 +1070,10 @@ so that a compat-only bump can be told apart from an interface change.
   `LevenbergMarquardt` with `GMRES`, of a `Dual` input, of a `Continuation` method, of a
   `JVPFunction` with a factorising method and of a Jacobian function with a matrix-free method,
   and of `max_inner_iterations`, `f_calls` and `jvp_calls` on a solve that keeps no count, name a
-  matrix-free linear method in place of `GMRES` or of `GMRES` and `MINRESQLP`.
+  matrix-free linear method in place of `GMRES` or of `GMRES` and `MINRESQLP`. The message of
+  the `forcing` and `preconditioner` keywords of `Newton` names `GMRES`, `BiCGStab` or `DQGMRES`
+  as the methods they configure, and `MINRESQLP` for `forcing`, and says to pass them to the
+  method.
 
 - **The standard test set has two more columns, `Newton Backtracking BiCGStab` and `Newton
   Backtracking DQGMRES`,** after `Newton Backtracking GMRES`: 17 columns and 2278 cells. Their
