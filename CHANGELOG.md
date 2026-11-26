@@ -19,13 +19,16 @@ so that a compat-only bump can be told apart from an interface change.
   the copy, bit for bit, because with `e > 0` the solve would hold up to `2^e` times its solution,
   which overflows near `floatmax`. A Cholesky factor in the matrix's own element type rounds that
   `e < 0` down to an even exponent, so that its factor is that of `J` times a power of two and
-  the solve of a normal-range matrix keeps its bits. The load kernel of `DeviceCholesky` takes the
-  largest entry and its exponent from the bits (`abs_bits`, `bits_exponent`), not from `abs`,
-  `max` and `frexp`, because the Apple GPU flushes subnormals to zero in its arithmetic: there a
-  `Float32` matrix of subnormal entries read as zero, kept `e = 0` and gave `SINGULAR`; it gives
-  `SUCCESS`, the host's `e` and an error within `32 eps(Float32) · 16` in `Float32` and
-  `ComplexF32` (testset "Metal KA Cholesky of a matrix of subnormal entries" of
-  `test/devices/metal_ka.jl`). A factor of another element type divides for every `e`, as before,
+  the solve of a normal-range matrix keeps its bits. For an IEEE element type, the load kernel of
+  `DeviceCholesky` takes the largest entry and its exponent from the bits (`abs_bits`,
+  `bits_exponent`), not from `abs`, `max` and `frexp`, because the Apple GPU flushes subnormals
+  to zero in its arithmetic: there a `Float32` matrix of subnormal entries read as zero, kept
+  `e = 0` and gave `SINGULAR`; it gives `SUCCESS`, the host's `e` and an error within
+  `32 eps(Float32) · 16` in `Float32` and `ComplexF32` (testset "Metal KA Cholesky of a matrix of
+  subnormal entries" of `test/devices/metal_ka.jl`). A matrix of a real type outside
+  `Base.IEEEFloat`, such as `ForwardDiff.Dual`, has no such bits, and the kernel takes its largest
+  entry and exponent from `abs` and `exponent`, as the host `cholesky_exponent` does. A factor of
+  another element type divides for every `e`, as before,
   and a static factor still copies an own-type `BigFloat` matrix whose exponent lies outside the
   `Int32` range (K108). The static SVD divides by the exponent of a subnormal largest entry,
   which `matrix_exponent` clamps to `-exponent(floatmax)`, so its largest entry lies in `[1, 2)`

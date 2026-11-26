@@ -1068,3 +1068,23 @@
 - **kind:** defect
 - **found:** 2026-11-25, the fix of `_pinv_adj_mul_r1` for a static SVD exponent below
   `-exponent(floatmax)`
+
+### K136 · `DeviceCholesky` of a `JLArray{BigFloat}` throws `InvalidIRError` while it compiles the load kernel
+
+- **location:** `src/linear/ka/cholesky.jl:37` (`ka_cholesky_load_kernel!`)
+- **evidence:**
+
+  ```julia
+  m = CholeskyFactorization()
+  factorize!!(dense_factor(m, nothing, JLArray(BigFloat[1, 2]), nothing), m,
+      JLArray(BigFloat[3 1; 1 3]))
+  ```
+
+  throws `InvalidIRError` compiling `gpu_ka_cholesky_load_kernel!`, with the reasons
+  "unsupported call to an external C function" (`mpfr_less_p`, `mpfr_set`, `mpfr_mul_2si`, …)
+  and "unsupported calls into the Julia runtime", on `ae2a0db` and on the head of PR #125
+  (Julia 1.13.4). `BigFloat` is not `isbits`, and its arithmetic calls MPFR, which a kernel
+  cannot call. The same calls give `SUCCESS` for `Float16`, and for `Float32` with
+  `CholeskyFactorization(Float16)` and `Float16` with `CholeskyFactorization(Float32)`.
+- **kind:** defect
+- **found:** a review of PR #125

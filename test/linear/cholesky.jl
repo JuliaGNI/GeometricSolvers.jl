@@ -563,8 +563,9 @@ end
     @test f_tiny.scale_exponent == fh_tiny.scale_exponent == -exponent(floatmax(R))
 end
 
-# The load kernel takes the largest entry and its exponent from the bits, so that a device that
-# flushes subnormals to zero in its arithmetic, as the Apple GPU does, reads a subnormal matrix.
+# For an IEEE element type, the load kernel takes the largest entry and its exponent from the bits,
+# so that a device that flushes subnormals to zero in its arithmetic, as the Apple GPU does, reads
+# a subnormal matrix.
 # The CPU does not flush, so these rows check the bit path against `exponent` and the host's
 # `cholesky_exponent`; the Metal rows of `test/devices/metal_ka.jl` check the flush.
 @testset "The bit exponent of the load kernel is exponent, normal and subnormal ($R)" for R in REAL_ELTYPES
@@ -575,7 +576,7 @@ end
     append!(xs, (ldexp(one(R), k)
     for k in exponent(nextfloat(zero(R))):exponent(floatmax(R))))
     append!(xs, (3 * nextfloat(zero(R)) * k for k in 1:97))
-    append!(xs, abs.(randn(Xoshiro(83), R, 64)) .*
+    append!(xs, abs.(R.(randn(Xoshiro(83), 64))) .*
                 ldexp.(one(R), rand(Xoshiro(89), -200:120, 64)))
     for x in filter(x -> isfinite(x) && !iszero(x), xs)
         @test bits_exponent(R, abs_bits(x)) == exponent(x)

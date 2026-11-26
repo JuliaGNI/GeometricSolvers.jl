@@ -254,6 +254,37 @@ end
     @test norm(ẏ - ẋ) <= rtol * norm(ẋ)
 end
 
+@testset "DeviceCholesky of a ForwardDiff.Dual JLArray, $R" for R in REAL_ELTYPES
+    # A `Dual` has no magnitude bits, so the load kernel takes its largest entry and exponent
+    # through `abs` and `exponent`. `J(t) = s (A₀ + t·1·1ᵀ)` at `t = 0` and `b = s b₀`, as above,
+    # at three scales: `s = 8`, whose exponent 2 the own type does not take (`e = 0`); `s = 1`,
+    # exponent -1, rounded down to the even `e = -2`; and the subnormal `s = 2^(-emax - 10)`,
+    # `e = -emax - 1`. The CPU does not flush subnormals, so the device and the host
+    # `DenseCholesky` take the same exponent. The solution and the bound are those above.
+    emax = exponent(floatmax(R))
+    A₀ = [4 1; 1 5] .// 8
+    b₀ = [1, -2]
+    x = big.(A₀) \ big.(b₀)
+    ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
+    M = CholeskyFactorization
+    for (s, e) in ((R(8), 0), (one(R), -2), (ldexp(one(R), -emax - 10), -emax - 1))
+        rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * (eps(R) + nextfloat(zero(R)) / s)
+        J = ForwardDiff.Dual.(R.(s .* A₀), s)
+        b = ForwardDiff.Dual.(R.(s .* b₀), zero(R))
+        fh = factorize!!(dense_factor(M(), nothing, b, nothing), M(), J)
+        bd = JLArray(b)
+        fd = factorize!!(dense_factor(M(), nothing, bd, nothing), M(), JLArray(J))
+        y = Array(ldiv!!(similar(bd), fd, bd))
+        v = ForwardDiff.value.(y)
+        ẏ = map(a -> ForwardDiff.partials(a, 1), y)
+        @test returncode(fd) === returncode(fh) === SUCCESS
+        @test fd.scale_exponent == fh.scale_exponent == e
+        @test all(isfinite, v) && all(isfinite, ẏ)
+        @test norm(v - x) <= rtol * norm(x)
+        @test norm(ẏ - ẋ) <= rtol * norm(ẋ)
+    end
+end
+
 @testset "a 0 × 0 matrix sets no scale in the static SVD" begin
     # the exponent of the empty matrix runs no reduction over its entries; the static SVD of it
     # throws later, at `σ[1]` (K127 of `KNOWN_ISSUES.md`)
