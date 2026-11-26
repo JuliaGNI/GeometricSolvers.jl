@@ -754,12 +754,17 @@ singular_values(fac::StaticSVD) = map(a -> ldexp2(a, fac.scale_exponent), fac.σ
     end
 end
 @inline ldexp2(a::AbstractFloat, e::Integer) = ldexp(a, e)
-# Where `float(a)` is no `IEEEFloat`, such as a `ForwardDiff.Dual`, whose `float` is the `Dual`
-# itself, or the `BigFloat` of a `BigInt`, `ldexp` scales it, so the method never calls itself.
-# It scales in two halves of `e`: ForwardDiff multiplies the partials of `ldexp(x, e)` by
-# `exp2(e)`, which is `Inf` for an `e` above `emax`, the exponent of `floatmax`, such as the
-# `emax + 1` that the own-type Cholesky exponent `-emax - 1` divides by, while each half of an
-# `|e|` up to `2 emax` stays inside the range of `exp2`.
+# A `ForwardDiff.Dual` scales its value and each partial by `ldexp2` in their own type, down to the
+# innermost values of a `Dual` of `Dual`s, so that each component is exact unless it leaves the
+# floating-point range. ForwardDiff's `ldexp(x, e)` multiplies the partials by `exp2(e)`, a
+# `Float64` for an integer `e`, which the Apple GPU cannot compile, and `Inf` for an `e` above
+# `emax`, the exponent of `floatmax`.
+@inline function ldexp2(a::ForwardDiff.Dual{T}, e::Integer) where {T}
+    p = ForwardDiff.Partials(map(x -> ldexp2(x, e), ForwardDiff.partials(a).values))
+    return ForwardDiff.Dual{T}(ldexp2(ForwardDiff.value(a), e), p)
+end
+# Where `float(a)` is no `IEEEFloat`, such as the `BigFloat` of a `BigInt`, `ldexp` scales it, so
+# the method never calls itself. It scales in two halves of `e`, each exact for a `BigFloat`.
 @inline function ldexp2(a::Real, e::Integer)
     b = float(a)
     b isa Base.IEEEFloat && return ldexp2(b, e)

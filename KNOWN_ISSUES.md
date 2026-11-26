@@ -779,7 +779,7 @@
   `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
   `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
   `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
-  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:809`), so
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:814`), so
   such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:404-405`) states
   the condition.
 - **kind:** docs
@@ -787,7 +787,7 @@
 
 ### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
 
-- **location:** `src/linear/factors.jl:793` (`factor_matrix`), and `src/linear/static/svd.jl:102`
+- **location:** `src/linear/factors.jl:798` (`factor_matrix`), and `src/linear/static/svd.jl:102`
   (`svd_matrix`) and `src/linear/static/svd_rect.jl:51` (`svd_rect_matrix`), which scale always
 - **evidence:** the scale exponent of every static factor is an `Int32` field, and
   `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
@@ -958,7 +958,7 @@
 
 ### K124 · The solve does not scale a subnormal right-hand side up, so its triangular solves run on subnormal intermediates and lose the bits below the smallest subnormal
 
-- **location:** `src/linear/factors.jl:865` (`rhs_exponent`), which `ldiv!!` of the dense,
+- **location:** `src/linear/factors.jl:870` (`rhs_exponent`), which `ldiv!!` of the dense,
   device and static factors calls; `src/linear/linearproblem.jl:436, 477` (`wide_solve!`, the
   same-type `m < n` solve of a dense or device `LinearSolver`), which does not call
   `rhs_exponent`; and the static `SVDFactorization` solve of `m < n`
@@ -1045,7 +1045,7 @@
 - **kind:** defect
 - **found:** 2026-11-25
 
-### K136 · `DeviceCholesky` of a `JLArray{BigFloat}` throws `InvalidIRError` while it compiles the load kernel
+### K139 · `DeviceCholesky` of a `JLArray{BigFloat}` throws `InvalidIRError` while it compiles the load kernel
 
 - **location:** `src/linear/ka/cholesky.jl:36` (`ka_cholesky_load_kernel!`)
 - **evidence:**
@@ -1065,7 +1065,7 @@
 - **kind:** defect
 - **found:** a review of PR #125
 
-### K137 · `_pinv_adj_mul_r1` of a subnormal `Φ` and a normal `w` gives `NaN` where the true `(Φ⁺)ᴴ w` has entries above `floatmax`
+### K140 · `_pinv_adj_mul_r1` of a subnormal `Φ` and a normal `w` gives `NaN` where the true `(Φ⁺)ᴴ w` has entries above `floatmax`
 
 - **location:** `src/nonlinear/eliminate.jl:520` and `:543` (`_pinv_adj_mul_r1` of
   `StaticRectSVD` and `StaticSVD`)
@@ -1089,9 +1089,9 @@
 - **found:** 2026-11-25, the fix of `_pinv_adj_mul_r1` for a static SVD exponent below
   `-exponent(floatmax)`
 
-### K138 · A `ForwardDiff.Dual` matrix of subnormal values and partials 1 gives `NaN` partials where the true derivative lies above `floatmax`
+### K141 · A `ForwardDiff.Dual` matrix of subnormal values and partials 1 gives `NaN` partials where the true derivative lies above `floatmax`
 
-- **location:** `src/linear/dense.jl:204` (`load_factors!`), `src/linear/factors.jl:793`
+- **location:** `src/linear/dense.jl:204` (`load_factors!`), `src/linear/factors.jl:798`
   (`factor_matrix`)
 - **evidence:**
 
@@ -1106,7 +1106,8 @@
   ```
 
   gives the values `(2.9473684209372335, -3.7894736840863894)` and the partials `(NaN, NaN)` on
-  `a0a311c` and on the branch of PR #125 after it; the `DenseCholesky` of `Matrix(J)` and the
+  `a0a311c` and on the branch of PR #125 after it, also where `ldexp2` scales the value and each
+  partial of a `Dual` in their own type; the `DenseCholesky` of `Matrix(J)` and the
   `DenseLU` also give the partials `(NaN, NaN)`, and the static LU `(Inf, -Inf)`. On `ae2a0db`
   both Cholesky factors give the partials `(-Inf, Inf)`, the static LU `(Inf, -Inf)`, and the
   `DenseLU` `NaN` values and partials (Julia 1.13.4, ForwardDiff 1.5.0). The partial 1 is not

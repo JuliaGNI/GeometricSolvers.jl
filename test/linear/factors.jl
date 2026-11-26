@@ -331,6 +331,72 @@ end
     @test fd.scale_exponent == -10
 end
 
+@testset "the LU and QR scale of a complex matrix reads the imaginary parts, $M, $R, dual = $dual" for M in (
+        LUFactorization, QRFactorization),
+    R in REAL_ELTYPES, dual in (false, true)
+
+    # `J = [2^-20 0; 3·2^-10 im 2^-20]`, in `Complex{R}` and in `Complex{Dual{R}}`: the largest
+    # |re| or |im| is the imaginary part `3·2^-10` of `J[2, 1]`, of exponent -9, which the own
+    # type divides by; without the imaginary parts the exponent is -20. Only `e` is asserted.
+    D(x) = dual ? ForwardDiff.Dual(R(x), one(R)) : R(x)
+    s = ldexp(one(R), -20)
+    t = 3 * ldexp(s, 10)
+    J = [complex(D(s), D(0)) complex(D(0), D(0)); complex(D(0), D(t)) complex(D(s), D(0))]
+    b = [complex(D(1), D(0)), complex(D(2), D(0))]
+    fh = factorize!!(dense_factor(M(), nothing, b, nothing), M(), J)
+    bd = JLArray(b)
+    fd = factorize!!(dense_factor(M(), nothing, bd, nothing), M(), JLArray(J))
+    fs = factorize!!(nothing, M(), SMatrix{2, 2}(J))
+    @test fh.scale_exponent == -9
+    @test fd.scale_exponent == -9
+    @test fs.scale_exponent == -9
+end
+
+@testset "ldexp2 of a ForwardDiff.Dual scales its value and partials in their own type, $R" for R in REAL_ELTYPES
+    # The value and each partial are scaled by `ldexp2` of `R`, and a `Dual` of `Dual`s by
+    # component down to its innermost values, so that the result is exact and has the type of the
+    # argument, its tag included; no `exp2(e)` of a `Float64` enters, which the Apple GPU cannot
+    # compile.
+    emax = exponent(floatmax(R))
+    s = ldexp(one(R), -emax - 10)
+    d = ForwardDiff.Dual{typeof(ForwardDiff.Tag(sin, R))}(s, R(3), one(R) / 4)
+    for e in (emax + 1, -3, 7)
+        y = @inferred GeometricSolvers.ldexp2(d, e)
+        @test typeof(y) === typeof(d)
+        @test isequal(ForwardDiff.value(y), GeometricSolvers.ldexp2(s, e))
+        @test isequal(ForwardDiff.partials(y, 1), GeometricSolvers.ldexp2(R(3), e))
+        @test isequal(ForwardDiff.partials(y, 2), GeometricSolvers.ldexp2(one(R) / 4, e))
+        dd = ForwardDiff.Dual{typeof(ForwardDiff.Tag(cos, typeof(d)))}(d, d)
+        yy = @inferred GeometricSolvers.ldexp2(dd, e)
+        @test typeof(yy) === typeof(dd)
+        @test ForwardDiff.value(yy) === y
+        @test ForwardDiff.partials(yy, 1) === y
+    end
+end
+
+@testset "the Cholesky load kernel of a ForwardDiff.Dual{Float32} JLArray holds no Float64" begin
+    # The device LLVM IR of the load kernel, for the matrix `2^-130 [4 1 0; 1 4 1; 0 1 4]`, whose
+    # scale the own type divides by: a `double` in it is a Float64 operation, which the Apple GPU
+    # refuses to compile ("unsupported use of double value").
+    D(x, p) = ForwardDiff.Dual(x, p)
+    m = CholeskyFactorization()
+    A = JLArray(D.(Float32[4 1 0; 1 4 1; 0 1 4] .* ldexp(1.0f0, -130), 1.0f0))
+    b = JLArray(D.(Float32[1, 2, 3], 0.0f0))
+    io = IOBuffer()
+    KernelAbstractions.GPUCompiler.@device_code_llvm io=io debuginfo=:none factorize!!(
+        dense_factor(m, nothing, b, nothing), m, A)
+    ir = String[]
+    inload = false
+    for l in split(String(take!(io)), '\n')
+        if startswith(l, "; ") && occursin("CompilerJob", l)
+            inload = occursin("load_kernel", l)
+        end
+        inload && !startswith(lstrip(l), ";") && push!(ir, l)
+    end
+    @test !isempty(ir)
+    @test count(l -> occursin("double", l), ir) == 0
+end
+
 @testset "a 0 × 0 matrix sets no scale in the static SVD" begin
     # the exponent of the empty matrix runs no reduction over its entries; the static SVD of it
     # throws later, at `σ[1]` (K127 of `KNOWN_ISSUES.md`)
