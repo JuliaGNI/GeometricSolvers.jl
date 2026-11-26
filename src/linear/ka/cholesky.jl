@@ -25,21 +25,20 @@ end
 # strict lower triangle and |re| of the diagonal; where the element types of `J` and `A` agree,
 # only a negative exponent is taken, rounded down to an even one, and any other gives `e = 0`, and
 # a zero lower triangle gives `e = 0`; where an entry is not finite, `J` as it is in the factor
-# element type, and `e = 0`. For a `Base.IEEEFloat` real type of `J`, the largest entry is the
+# element type, and `e = 0`. The scale is taken from `scale_value` of each |re| and |im|, the value
+# of a `ForwardDiff.Dual`. Where its type `P` is a `Base.IEEEFloat`, the largest entry is the
 # largest of the magnitude bits, `abs_bits`, and its exponent is `bits_exponent`, so that a device
-# that flushes subnormals to zero reads a subnormal entry as the host does; for another real type,
-# such as a `ForwardDiff.Dual`, which has no such bits and no `frexp`, they are `abs` and
-# `exponent`, as in the host `cholesky_exponent`, and `exponent` sees only a finite nonzero `m`.
-# `BITS` is a constant of the types, so each kernel compiles one of the two paths. `status` takes
-# `[info, e]`, with `info = 1` for a non-finite `J` and 0 otherwise. Each work-item reads and
-# writes only the entries of its columns `tid`, `tid + G`, …, and reads each entry before it writes
-# it, so that `J` may be `A`.
+# that flushes subnormals to zero reads a subnormal entry as the host does; any other `P`, such as
+# `BigFloat`, gives `e = 0`. `IEEE` is a constant of the types, so a kernel of another `P` compiles
+# no bit path. `status` takes `[info, e]`, with `info = 1` for a non-finite `J` and 0 otherwise.
+# Each work-item reads and writes only the entries of its columns `tid`, `tid + G`, …, and reads
+# each entry before it writes it, so that `J` may be `A`.
 @kernel function ka_cholesky_load_kernel!(A, J, status, n::Int, ::Val{G}) where {G}
     tid = @index(Local, Linear)
     @uniform F = eltype(A)
-    @uniform RJ = real(eltype(J))
-    @uniform BITS = RJ <: Base.IEEEFloat
-    @uniform U = BITS ? typeof(abs_bits(zero(RJ))) : RJ
+    @uniform P = typeof(scale_value(zero(real(eltype(J)))))
+    @uniform IEEE = P <: Base.IEEEFloat
+    @uniform U = IEEE ? typeof(abs_bits(zero(P))) : UInt8
     l_bad = @localmem Int32 (G,)
     l_max = @localmem U (G,)
     l_ctrl = @localmem Int32 (2,)
@@ -51,11 +50,10 @@ end
             for i in 1:n
                 a = J[i, j]
                 isfinite(a) || (bad = Int32(1))
-                if i > j
-                    m = BITS ? max(m, abs_bits(real(a)), abs_bits(imag(a))) :
-                        max(m, abs(real(a)), abs(imag(a)))
-                elseif i == j
-                    m = BITS ? max(m, abs_bits(real(a))) : max(m, abs(real(a)))
+                if IEEE && i > j
+                    m = max(m, abs_bits(scale_value(real(a))), abs_bits(scale_value(imag(a))))
+                elseif IEEE && i == j
+                    m = max(m, abs_bits(scale_value(real(a))))
                 end
             end
             j += G
@@ -73,9 +71,9 @@ end
                 m = max(m, l_max[t])
             end
             e = Int32(0)
-            if bad == Int32(0) && !iszero(m)
-                emax = exponent(floatmax(RJ))
-                em = Int32(clamp(BITS ? bits_exponent(RJ, m) : exponent(m), -emax, emax))
+            if IEEE && bad == Int32(0) && !iszero(m)
+                emax = exponent(floatmax(P))
+                em = Int32(clamp(bits_exponent(P, m), -emax, emax))
                 if F !== eltype(J)
                     e = em
                 elseif em < Int32(0)

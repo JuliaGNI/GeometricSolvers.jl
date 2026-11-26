@@ -771,6 +771,13 @@ end
 @inline abs_bits(x::T) where {T <: Base.IEEEFloat} = reinterpret(Unsigned, x) &
                                                      ~Base.sign_mask(T)
 
+# The value of a real entry from which the scale of a matrix is taken: the entry itself, and the
+# value of a `ForwardDiff.Dual`, down to its innermost one. ForwardDiff's `iszero`, `==`, `<` and
+# `max` of a `Dual` also read its partials, so that a `Dual` of zero value and nonzero partials is
+# neither zero nor the largest entry by its value, and `exponent` throws on its value.
+@inline scale_value(a) = a
+@inline scale_value(a::ForwardDiff.Dual) = scale_value(ForwardDiff.value(a))
+
 # `J / 2^e` in the factor element type `F`, as an `SMatrix`, which keeps the conversion off the
 # heap, and the exponent `e` of the power of two that `J` was divided by, with
 # `e = scale_exponent(J)`: by default `matrix_exponent`, the exponent of the largest |re| or |im| of
@@ -812,13 +819,15 @@ end
 end
 
 # The exponent of the largest |re| or |im| of a nonempty array `J`, a matrix or a right-hand side,
-# clamped to the exponent range, and 0 for a zero or non-finite `J`.
+# clamped to the exponent range, and 0 for a zero or non-finite `J`. |re| and |im| are those of
+# `scale_value`, the value of a `ForwardDiff.Dual`.
 function matrix_exponent(J::AbstractArray)
-    R = real(eltype(J))
+    R = typeof(scale_value(zero(real(eltype(J)))))
     m = if R <: Base.IEEEFloat
-        reinterpret(R, maximum(a -> max(abs_bits(real(a)), abs_bits(imag(a))), J))
+        reinterpret(R,
+            maximum(a -> max(abs_bits(scale_value(real(a))), abs_bits(scale_value(imag(a)))), J))
     else
-        float(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
+        float(maximum(a -> max(abs(scale_value(real(a))), abs(scale_value(imag(a)))), J))
     end
     emax = exponent(floatmax(m))
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
@@ -828,14 +837,15 @@ end
 # a square `J`, the entries that a Cholesky factorisation reads, as `matrix_exponent` gives it:
 # clamped to the exponent range, and 0 for a zero or non-finite lower triangle. An entry above the
 # diagonal or an imaginary part of the diagonal sets no scale, so that the lower triangle of a
-# factor in a narrower precision does not underflow by it.
+# factor in a narrower precision does not underflow by it. |re| and |im| are those of
+# `scale_value`, the value of a `ForwardDiff.Dual`.
 function cholesky_exponent(J::AbstractMatrix)
-    m = float(zero(real(eltype(J))))
+    m = float(scale_value(zero(real(eltype(J)))))
     @inbounds for j in axes(J, 2)
-        m = max(m, float(abs(real(J[j, j]))))
+        m = max(m, float(abs(scale_value(real(J[j, j])))))
         for i in (j + 1):size(J, 1)
             a = J[i, j]
-            m = max(m, float(abs(real(a))), float(abs(imag(a))))
+            m = max(m, float(abs(scale_value(real(a)))), float(abs(scale_value(imag(a)))))
         end
     end
     emax = exponent(floatmax(m))

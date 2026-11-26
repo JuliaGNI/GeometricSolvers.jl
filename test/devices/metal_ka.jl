@@ -1,3 +1,4 @@
+using ForwardDiff: ForwardDiff
 using GPUArraysCore: allowscalar
 using LinearAlgebra: BLAS, Diagonal, I, cond, norm, opnorm, qr
 using Metal
@@ -198,6 +199,24 @@ if Metal.functional() && !on_virtual_gpu()
         @test fac.scale_exponent == fh.scale_exponent < 0
         x = Array(ldiv!!(similar(MtlArray(b)), fac, MtlArray(b)))
         @test Float64(norm(big.(x) - xref) / norm(xref)) <= 32 * eps(Float32) * 16
+    end
+
+    # The load kernel takes the scale of a `ForwardDiff.Dual` matrix from the bits of its values:
+    # a normal matrix, a matrix of entries below `floatmin(Float32)` and a matrix of zero values
+    # and partials 1, which keeps `e = 0`, take the code and the scale of the host.
+    @testset "Metal KA Cholesky of a ForwardDiff.Dual matrix: $R" for R in filter(
+        T -> T <: Real, METAL_ELTYPES)
+        W = R[4 1 0; 1 4 1; 0 1 4]
+        b = ForwardDiff.Dual.(R[1, 2, 3], zero(R))
+        m = CholeskyFactorization()
+        for (J, code, e) in ((ForwardDiff.Dual.(W, one(R)), SUCCESS, 0),
+            (ForwardDiff.Dual.(W .* ldexp(one(R), -130), one(R)), SUCCESS, -128),
+            (ForwardDiff.Dual.(zero(W), one(R)), SINGULAR, 0))
+            fh = factorize!!(dense_factor(m, nothing, b, nothing), m, J)
+            fac = factorize!!(dense_factor(m, nothing, MtlArray(b), nothing), m, MtlArray(J))
+            @test returncode(fac) === returncode(fh) === code
+            @test fac.scale_exponent == fh.scale_exponent == e
+        end
     end
 
     @testset "Metal KA SVD agrees with CPU LAPACK gesvd at n = $n" for n in (1, 16, 10^3)

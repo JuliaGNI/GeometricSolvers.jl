@@ -25,9 +25,12 @@ so that a compat-only bump can be told apart from an interface change.
   to zero in its arithmetic: there a `Float32` matrix of subnormal entries read as zero, kept
   `e = 0` and gave `SINGULAR`; it gives `SUCCESS`, the host's `e` and an error within
   `32 eps(Float32) · 16` in `Float32` and `ComplexF32` (testset "Metal KA Cholesky of a matrix of
-  subnormal entries" of `test/devices/metal_ka.jl`). A matrix of a real type outside
-  `Base.IEEEFloat`, such as `ForwardDiff.Dual`, has no such bits, and the kernel takes its largest
-  entry and exponent from `abs` and `exponent`, as the host `cholesky_exponent` does. A factor of
+  subnormal entries" of `test/devices/metal_ka.jl`). The scale of a matrix of `ForwardDiff.Dual`
+  entries, real or complex, is taken from their values alone (`scale_value`), on the host and in
+  the kernel, which reads the bits of each value as those of an IEEE entry, because ForwardDiff's
+  `iszero`, `==`, `<` and `max` of a `Dual` also read its partials: a `Dual` matrix of zero values
+  and nonzero partials keeps `e = 0`, and its factor takes it as it is. In the kernel, a real type
+  whose value is no `Base.IEEEFloat`, such as `BigFloat`, gives `e = 0`. A factor of
   another element type divides for every `e`, as before,
   and a static factor still copies an own-type `BigFloat` matrix whose exponent lies outside the
   `Int32` range (K108). The static SVD divides by the exponent of a subnormal largest entry,
@@ -42,11 +45,13 @@ so that a compat-only bump can be told apart from an interface change.
   `VariableProjection` (`_pinv_adj_mul_r1`) applies the static SVD's exponent to each coefficient
   by `ldexp2`, because `2^-e` overflows for `e` below `-exponent(floatmax)`; the static
   `SVDFactorization(Float32)` of a `Float64` matrix at `2^-130`, which gives `NaN` there on
-  `bf08120`, gives a result within `8 eps(Float32) κ`. This closes K110, K111 and K114. Four limits
+  `bf08120`, gives a result within `8 eps(Float32) κ`. This closes K110, K111 and K114. Five limits
   stay: a subnormal right-hand side is not scaled up (K124), nor is a subnormal `w` of
   `_pinv_adj_mul_r1` (K129), the device `SVDFactorization(Float32)` of a subnormal `Float64`
-  matrix gives `SINGULAR` (K125), and `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where
-  `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K137). A static
+  matrix gives `SINGULAR` (K125), `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where
+  `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K137), and a `Dual`
+  matrix of subnormal values and partials 1 gives `NaN` partials, where the Cholesky factors of
+  `ae2a0db` gave `±Inf`, for a true derivative above `floatmax` (K138). A static
   LU, QR or LDLᵀ of a `0 × 0` matrix in another factor type, which threw an `ArgumentError` from
   the empty reduction, gives `SUCCESS` and `e = 0`. Two probes against `bf08120`, Julia 1.13.4:
   of 1 024 normal-range solves (every route, element type and factor, at scales `2^-60` to

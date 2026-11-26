@@ -255,8 +255,8 @@ end
 end
 
 @testset "DeviceCholesky of a ForwardDiff.Dual JLArray, $R" for R in REAL_ELTYPES
-    # A `Dual` has no magnitude bits, so the load kernel takes its largest entry and exponent
-    # through `abs` and `exponent`. `J(t) = s (A₀ + t·1·1ᵀ)` at `t = 0` and `b = s b₀`, as above,
+    # The load kernel takes the largest entry and its exponent from the bits of the values of the
+    # `Dual`s. `J(t) = s (A₀ + t·1·1ᵀ)` at `t = 0` and `b = s b₀`, as above,
     # at three scales: `s = 8`, whose exponent 2 the own type does not take (`e = 0`); `s = 1`,
     # exponent -1, rounded down to the even `e = -2`; and the subnormal `s = 2^(-emax - 10)`,
     # `e = -emax - 1`. The CPU does not flush subnormals, so the device and the host
@@ -283,6 +283,52 @@ end
         @test norm(v - x) <= rtol * norm(x)
         @test norm(ẏ - ẋ) <= rtol * norm(ẋ)
     end
+end
+
+@testset "a ForwardDiff.Dual matrix of zero values sets no scale, $R" for R in REAL_ELTYPES
+    # Every value is zero and every partial is one, for a `Dual` and for a `Dual` of `Dual`s.
+    # ForwardDiff's `iszero`, `==` and `<` of a `Dual` also read the partials, so the scale is
+    # taken from the innermost values alone: the zero matrix keeps `e = 0`, and the factor buffer
+    # takes `J` as it is.
+    Z = ForwardDiff.Dual.(zeros(R, 3, 3), one(R))
+    for J in (Z, ForwardDiff.Dual.(Z, one(R)))
+        b = map(a -> oftype(a, 1), J[:, 1])
+        bd = JLArray(b)
+        m = CholeskyFactorization()
+        fd = factorize!!(dense_factor(m, nothing, bd, nothing), m, JLArray(J))
+        J === Z && @test returncode(fd) === SINGULAR
+        @test fd.scale_exponent == 0
+        for M in (LUFactorization, QRFactorization, LDLTFactorization, CholeskyFactorization),
+            (A, r) in ((J, b), (JLArray(J), bd))
+
+            M === CholeskyFactorization && A isa JLArray && continue
+            fac = factorize!!(dense_factor(M(), nothing, r, nothing), M(), A)
+            @test fac.scale_exponent == 0
+        end
+        me, ce = GeometricSolvers.matrix_exponent, GeometricSolvers.cholesky_exponent
+        for (A, se) in ((J, me), (J, ce), (JLArray(J), me))
+            B = similar(A)
+            @test GeometricSolvers.load_factors!(B, A, se) == 0
+            @test all(map(===, Array(B), J))
+        end
+    end
+end
+
+@testset "the Cholesky scale of a complex Dual matrix reads the lower imaginary parts, $R" for R in REAL_ELTYPES
+    # `J = [2^-20 0; 3·2^-10 im 2^-20]`: the largest entry that a Cholesky factorisation reads is
+    # the imaginary part `3·2^-10` of `J[2, 1]`, of exponent -9, which the own type rounds down to
+    # the even `e = -10`; without that imaginary part the exponent is -20. Only `e` is asserted.
+    D(x) = ForwardDiff.Dual(R(x), one(R))
+    s = ldexp(one(R), -20)
+    t = 3 * ldexp(s, 10)
+    J = [complex(D(s), D(0)) complex(D(0), D(0)); complex(D(0), D(t)) complex(D(s), D(0))]
+    b = [complex(D(1), D(0)), complex(D(2), D(0))]
+    m = CholeskyFactorization()
+    fh = factorize!!(dense_factor(m, nothing, b, nothing), m, J)
+    bd = JLArray(b)
+    fd = factorize!!(dense_factor(m, nothing, bd, nothing), m, JLArray(J))
+    @test fh.scale_exponent == -10
+    @test fd.scale_exponent == -10
 end
 
 @testset "a 0 × 0 matrix sets no scale in the static SVD" begin
