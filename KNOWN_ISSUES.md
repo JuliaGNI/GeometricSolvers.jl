@@ -856,3 +856,35 @@
   matrix for `m < n` alone.
 - **kind:** defect
 - **found:** #115
+
+### K112 · OpenBLAS's `getrf!` gives a backward error of order one on a matrix whose entries are subnormal or near `floatmin`
+
+- **location:** `src/linear/dense.jl:258` (`factorize!!` for `DenseLU`, the `getrf!` path)
+- **evidence:** `randn(Xoshiro(n), T, n, n)` scaled by `s`, and
+  `‖A[p, :] − L U‖∞ / ‖A‖∞` in `BigFloat` (libopenblas64_ 0.3.30, Julia 1.13.4, Apple M4 Max):
+  `LAPACK.getrf!` gives 0.51, 1.1 (`Float32`, `s = floatmin`, n = 8, 32), 0.79 (`Float64`,
+  `s = floatmin`, n = 32) and 0.56–0.80 (`s = 2^20 · nextfloat(0)`, n = 8, 32, 64, both types);
+  `recursive_lu!` on the same matrices gives 1.2e-16 to 1.4e-6, the round-off of the subnormal
+  range. At `s = floatmin` and n = 64, `getrf!` gives 2.8e-7 (`Float32`) and 4.9e-16 (`Float64`),
+  of the recursion's size.
+  The `2 × 2` matrix `[s 1; s/2 1]` with `s = 4 · nextfloat(0)` keeps the multiplier `s/2`
+  unscaled in `getrf!`'s factor, where LAPACK's reference `getf2` divides it by the pivot. An
+  `n × n` Jacobian at such a scale in its own element type reaches `getrf!` unscaled for every `n`
+  outside the band of `use_recursive_lu`.
+- **kind:** upstream
+- **found:** 2026-11-24
+
+### K113 · The outer iteration counts of Check 6 in `test/composition/preconditioning.jl` are round-off sensitive, so a change of the block factor's round-off moves them across their bounds
+
+- **location:** `test/composition/preconditioning.jl:1083` (the testset "Check 6: the P8 counts
+  and the parallel schedule"; the NKS-RAS bound at `:1113`, the RASPEN bound at `:1136`)
+- **evidence:** a probe of 64 starts 1 ulp from `x0` (record of 2026-11-24): with `getrf!` as the
+  dense block factor, `Float64` RASPEN takes 4–9 outer iterations and
+  `Float32` NKS-RAS ends `MAXITERS` from 3 of the 64 starts; with `recursive_lu!` in the band
+  `8 ≤ n ≤ 32`, RASPEN takes 4–7 and every `Float32` solve ends `SUCCESS`. From `x0` itself,
+  `Float64` RASPEN takes 7 outer iterations under `recursive_lu!`, so a RASPEN bound of `<= 6`
+  fails. The RASPEN bound is `<= 9`, the top of the spread under `getrf!`; the NKS-RAS bound is
+  `<= 6`. The follow-up is a robust Check 6: a start or a `λ` whose measured spread of
+  outer iterations lies inside the bounds.
+- **kind:** missing test
+- **found:** 2026-11-24
