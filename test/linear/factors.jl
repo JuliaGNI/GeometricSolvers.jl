@@ -371,6 +371,49 @@ end
         @test typeof(yy) === typeof(dd)
         @test ForwardDiff.value(yy) === y
         @test ForwardDiff.partials(yy, 1) === y
+        # A `Dual` with no partials, as `Dual(x)` builds: its empty partials keep the value type.
+        d0 = ForwardDiff.Dual(s)
+        y0 = @inferred GeometricSolvers.ldexp2(d0, e)
+        @test typeof(y0) === typeof(d0)
+        @test isequal(ForwardDiff.value(y0), GeometricSolvers.ldexp2(s, e))
+    end
+    # The factorisations of a matrix of `Dual`s with no partials, `J = 2^k A₀` and `b = 2^k b₀`:
+    # at `k = -20` the largest entry `2^-18` makes the own type divide by `2^-18` (an even
+    # exponent for Cholesky too), and at `k = 0` it keeps `e = 0`. The solution is `A₀⁻¹ b₀`,
+    # within `8 κ eps(R)`, `κ = cond(A₀) ≈ 2.1`; the device row is the JLArray Cholesky load kernel.
+    A₀ = R[4 1 0; 1 4 1; 0 1 4]
+    b₀ = R[1, 2, 3]
+    x = big.(A₀) \ big.(b₀)
+    rtol = 8 * BigFloat(cond(Float64.(A₀))) * eps(R)
+    for (k, e) in ((0, 0), (-20, -18)),
+        M in (LUFactorization, QRFactorization, CholeskyFactorization)
+
+        J = ForwardDiff.Dual.(ldexp.(A₀, k))
+        b = ForwardDiff.Dual.(ldexp.(b₀, k))
+        bd = JLArray(b)
+        runs = [(factorize!!(dense_factor(M(), nothing, b, nothing), M(), copy(J)), b),
+            (factorize!!(nothing, M(), SMatrix{3, 3}(J)), SVector{3}(b))]
+        if M === CholeskyFactorization
+            fd = factorize!!(dense_factor(M(), nothing, bd, nothing), M(), JLArray(J))
+            push!(runs, (fd, bd))
+        end
+        for (fac, r) in runs
+            y = Array(ldiv!!(r isa SVector ? nothing : similar(r), fac, r))
+            @test returncode(fac) === SUCCESS
+            @test fac.scale_exponent == e
+            @test norm(ForwardDiff.value.(y) - x) <= rtol * norm(x)
+        end
+    end
+end
+
+@testset "ldexp2 of a real whose float is no IEEEFloat scales it by ldexp" begin
+    # `float` of a `BigInt` or a `Rational{BigInt}` is a `BigFloat`, whose exponent range holds
+    # `2^±2000`, so the scaled value is exact.
+    for a in (big(3), big(3) // 1), e in (-2, 2000, -2000)
+
+        y = GeometricSolvers.ldexp2(a, e)
+        @test y isa BigFloat
+        @test y == 3 * big(2.0)^e
     end
 end
 
