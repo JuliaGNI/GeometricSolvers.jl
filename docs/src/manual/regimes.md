@@ -114,8 +114,7 @@ the element type is `Float32`.
 In R3 the iterate is an `AbstractVector` that is not static. The residual and the Jacobian write
 into buffers, and [`init`](@ref) allocates every buffer once. The factorisation is LAPACK on a host
 `Array` and a device factorisation on a GPU array. See [Linear solvers](@ref linear) for the
-factor that each array type gets. [`CholeskyFactorization`](@ref) factorises on a host `Array`
-only: it has no device factorisation, and a GPU array raises an `ArgumentError` in [`init`](@ref).
+factor that each array type gets.
 
 ```jldoctest regimes
 julia> F!(y, x, p) = (y .= x .^ 2 .- p; y);
@@ -143,8 +142,8 @@ x, status = solve(NonlinearProblem(F!), x₀, Newton(), p)
 ```
 
 On a device array, the default Jacobian is the own chunked forward mode of ForwardDiff, and the
-factor is [`DeviceLU`](@ref), [`DeviceQR`](@ref), [`DeviceLDLT`](@ref) or [`DeviceSVD`](@ref). A
-matrix-free [`GMRES`](@ref) solve needs no factor at all.
+factor is [`DeviceLU`](@ref), [`DeviceQR`](@ref), [`DeviceLDLT`](@ref), [`DeviceCholesky`](@ref)
+or [`DeviceSVD`](@ref). A matrix-free [`GMRES`](@ref) solve needs no factor at all.
 
 ## How to choose a regime
 

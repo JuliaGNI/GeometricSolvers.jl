@@ -128,7 +128,6 @@ function square_matrix(T, n, method)
     method isa Union{LDLTFactorization, CholeskyFactorization} ?
     spd(T, n) : wellcond(T, n, n)
 end
-device_cholesky(route, method) = route == "JLArray" && method isa CholeskyFactorization
 function device_wide_qr(route, method, m, n)
     route == "JLArray" && method isa QRFactorization && m < n
 end
@@ -153,12 +152,6 @@ end
 
 @testset "a square system: $route, $T, $(nameof(typeof(method)))" for route in ROUTES,
     T in ELTYPES, method in SQUARE
-    if device_cholesky(route, method)
-        @test_throws r"^ArgumentError: CholeskyFactorization has no device factor" init(
-            LinearProblem(JLArray(square_matrix(T, 4, method))),
-            method)
-        continue
-    end
     R = real(T)
     A = square_matrix(T, 4, method)
     b = rhs(T, 4)
@@ -277,7 +270,6 @@ end
     end
     for method in SQUARE, bad in (NaN, Inf)
 
-        device_cholesky(route, method) && continue
         A = square_matrix(T, 3, method)
         A[2, 1] = T(bad)
         x, st, _ = lp_solve(route, method, A, rhs(T, 3))
@@ -452,7 +444,6 @@ end
         (SVDFactorization(), 3, 5), (QRFactorization(Float32), 3, 5),
         (SVDFactorization(Float32), 3, 5))
 
-    device_cholesky(route, method) && continue
     device_wide_qr(route, method, m, n) && continue
     route == "JLArray" && m > n && continue
     A = m == n ? square_matrix(T, m, method) : wellcond(T, m, n)

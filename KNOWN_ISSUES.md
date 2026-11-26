@@ -888,3 +888,129 @@
   outer iterations lies inside the bounds.
 - **kind:** missing test
 - **found:** 2026-11-24
+
+### K114 · A Cholesky factor in the matrix's own element type takes no power-of-two scale, so the solve with a matrix of subnormal entries can have an O(1) relative error with `info = 0`
+
+- **location:** `src/linear/dense.jl:516-536` (`factorize!!` of `DenseCholesky`), and
+  `src/linear/ka/cholesky.jl:55` (the load kernel of `DeviceCholesky`)
+- **evidence:** the error is O(1), with `info = 0` and `SUCCESS`. With `t = nextfloat(zero(R))`,
+  `A = [2t t; t t]` and `b = [0, t]`, the exact solution is `[-1, 2]`. `CholeskyFactorization()`
+  gives `info = 0`, `scale_exponent = 0` and `x ≈ [-0.5, 1.0]`, a relative error of `0.5` in the
+  maximum norm, for the host `DenseCholesky` and for a `DeviceCholesky` on a `JLArray`, in
+  `Float32`, `Float64`, `ComplexF32` and `ComplexF64`. The trailing update `L₂₁² = t/2` lies below
+  the smallest subnormal and rounds to zero, so the factor holds `L₂₂² = t` in place of `t/2`, the
+  factor of `[2t t; t 1.5t]`. Julia 1.13.4, JLArrays 0.5.0, tree of `2390f50`. A milder case:
+  with `s = 2^10 * nextfloat(zero(R))`, `A = 3s * I(5)` and `A[3, 1] = A[1, 3] = s`,
+  `CholeskyFactorization()` gives `info = 0`, `scale_exponent = 0` and, for `b = fill(s, 5)`, a
+  solution with a relative error of `2.7e-4` in the maximum norm against the `BigFloat` solve, in
+  `Float32`, `Float64`, `ComplexF32` and `ComplexF64`. LAPACK's `cholesky(Hermitian(A, :L)) \ b`
+  gives the same `2.7e-4`. For `b = ones(5)` the solution is not finite, and the exact solution also
+  lies above `floatmax` (`2.3e41` in `Float32`). Julia 1.13.4, tree of `2ddfd8f`. A `DeviceCholesky`
+  on a `JLArray` gives the same `info`, `scale_exponent` and `2.7e-4` in the four element types
+  (tree of `49a1752`).
+- **kind:** found late
+- **found:** #113
+
+### K115 · The own KA LU solve does not check the length of the vector against the order of the factor
+
+- **location:** `src/linear/ka/lu.jl:149-151` (`ka_lu_backsolve!`)
+- **evidence:** `ka_lu_backsolve!` takes `n = length(d)` and launches its kernels with that `n`,
+  which read the factor by index under `@inbounds`. A `DeviceLU` of `[4 0; 0 9]` on a `JLArray`,
+  with `ldiv!!(JLArray(ones(k)), fac, JLArray(ones(k)))`: `k = 3` throws `ReadOnlyMemoryError()`
+  in one cold run and ends the Julia process in another; `k = 1` returns `[0.25]`, the solve of
+  the leading `1 × 1` block only, with no error. Julia 1.13.4, JLArrays 0.5.0, tree of `157ca76`.
+  The own Cholesky solve, `ka_cholesky_backsolve!`, throws `DimensionMismatch` in this case.
+- **kind:** defect
+- **found:** #113
+
+### K116 · The mixed-precision `ldiv!!` of a dense factor does not check the length of the vector against the order of the factor
+
+- **location:** `src/linear/mixed.jl:12-27` (the `T ≠ TF` method of `ldiv!!` for every
+  `DenseFactor`)
+- **evidence:** `rhs .= F.(r ./ s)` broadcasts a length-1 `r` into the length-2 `fac.rhs`, and the
+  method then writes `rhs[1:1]` into `d`. A factor of `[4 0; 0 9]` with
+  `CholeskyFactorization(Float32)` or `LUFactorization(Float32)`, solved with
+  `ldiv!!(A(ones(k)), fac, A(ones(k)))` in `Float64`, for `DenseCholesky`, `DeviceCholesky`,
+  `DenseLU` and `DeviceLU`, with `A` an `Array` or a `JLArray`: `k = 1` returns a length-1 result
+  with no error, `[0.25]` (`[0.2499999850988388]` for `DenseCholesky`); `k = 3` throws
+  `DimensionMismatch` from the broadcast. Julia 1.13.4, JLArrays 0.5.0, tree of `b6aa30e`.
+- **kind:** found late
+- **found:** #113
+
+### K117 · A same-type `ldiv!!` of a dense factor with vectors of two lengths throws a `TypeError`, not a `DimensionMismatch`
+
+- **location:** `src/linear/dense.jl:225` (the `T == TF` method of `ldiv!!` for every `DenseFactor`)
+- **evidence:** with `length(d) != length(r)` the method takes its branch for a rectangular factor
+  and asserts `fac.rhs::AbstractVector{T}`, which is `nothing` for a square factor. A factor of
+  `[4 0; 0 9]` in `Float32` with `CholeskyFactorization()` or `LUFactorization()`, solved with
+  `ldiv!!(A(ones(2)), fac, A(ones(3)))` or `ldiv!!(A(ones(3)), fac, A(ones(2)))`, throws
+  `TypeError: in typeassert, expected AbstractVector{Float32}, got a value of type Nothing` for
+  `DenseCholesky`, `DeviceCholesky`, `DenseLU` and `DeviceLU`, with `A` an `Array` or a `JLArray`.
+  Julia 1.13.4, JLArrays 0.5.0, tree of `b6aa30e`.
+- **kind:** found late
+- **found:** #113
+
+### K118 · The vendor LU and QR solves return an empty vector with no error for a factor of order `n > 0`
+
+- **location:** `ext/GeometricSolversCUDAExt.jl:32`, `:60`; `ext/GeometricSolversAMDGPUExt.jl:32`,
+  `:63` (`backsolve!` of `DeviceLU` and `DeviceQR` on a `CuMatrix` and on a `ROCMatrix`)
+- **evidence:** read, not run (no CUDA or ROCm device): each of the four methods starts with
+  `isempty(d) && return d` and checks the length of `d` against the factor nowhere before it, so an
+  empty `d` returns with no error for a factor of any order. The vendor Cholesky solves in the same
+  files check `length(d) == size(fac.factors, 1)` before that return and throw `DimensionMismatch`.
+- **kind:** found late
+- **found:** #113
+
+### K119 · The own KA LDLᵀ solve does not check the length of the vector against the order of the factor
+
+- **location:** `src/linear/ka/ldlt.jl:394-397` (`ka_ldlt_backsolve!`)
+- **evidence:** `ka_ldlt_backsolve!` takes `n = length(d)` and launches its kernel with that `n`,
+  which reads the factor by index under `@inbounds`. A `DeviceLDLT` of `[4 0; 0 9]` with
+  `LDLTFactorization()` on a `JLArray`, with `ldiv!!(JLArray(ones(k)), fac, JLArray(ones(k)))`:
+  `k = 3` throws `ReadOnlyMemoryError()`; `k = 1` returns `[0.25]`, the solve of the leading
+  `1 × 1` block only, with no error. Julia 1.13.4, JLArrays 0.5.0, tree of `2390f50`. The own
+  Cholesky solve, `ka_cholesky_backsolve!`, throws `DimensionMismatch` in this case.
+- **kind:** found late
+- **found:** #113
+
+### K120 · The own KA QR solve does not check the length of the vector against the rows of the factor
+
+- **location:** `src/linear/ka/qr.jl:164-177` (`ka_qr_backsolve!`), `:184-194`
+  (`backsolve_shifted!` of `DeviceQR`)
+- **evidence:** `ka_qr_backsolve!` takes `m, n = size(A)` and its kernels write `d[1:m]` by index
+  under `@inbounds`, whatever the length of `d`. A square `DeviceQR` of `[4 0; 0 9]` with
+  `QRFactorization()` on a `JLArray`: `ldiv!!(JLArray(ones(1)), fac, JLArray(ones(1)))` returns
+  `[0.25]` and the process then ends with signal 11 in a GC finalizer, in two of two cold runs, and
+  `backsolve!(fac, JLArray(ones(1)))` ends it the same way; `k = 3` returns
+  `[0.25, 0.1111111111111111, 1.0]`, whose third entry is the input, with no error. For the
+  `3 × 2` least-squares factor of `[4 0; 0 9; 1 1]`, `backsolve_shifted!(fac, d, JLArray(ones(3)))`
+  with `length(d) = 4` copies `rhs[1:4]` and returns `7.26e-322` as the fourth entry, a read past
+  `rhs`. Julia 1.13.4, JLArrays 0.5.0, tree of `2390f50`. The own Cholesky solve,
+  `ka_cholesky_backsolve!`, throws `DimensionMismatch` for a vector of another length.
+- **kind:** found late
+- **found:** #113
+
+### K121 · The Cholesky test matrix `cuda_hpd` draws its random numbers in the element type, so each precision gets a different matrix
+
+- **location:** `test/helpers/own_kernel.jl:70`, `:72` (`cuda_hpd`)
+- **evidence:** `G = randn(rng, T, n, n)` and `randn(rng, T, n)` take the stream of `T`, so one
+  seed gives a `Float32` matrix that is not the `Float64` matrix rounded. With the seed of `n = 4`,
+  `randn(Xoshiro(0xc401 + 4), Float32, 4, 4)` and `Float32.(randn(Xoshiro(0xc401 + 4), 4, 4))`
+  differ by up to 1.55 per entry (Julia 1.13.4). The convention is one draw in `Float64`
+  (`ComplexF64` for a complex `T`), rounded to `T`. The rows that use the matrix compare the vendor
+  factor with the own kernel in one `T`, so no result is wrong; a comparison across precisions on
+  these matrices would compare two samples.
+- **kind:** defect
+- **found:** #113
+
+### K122 · The vendor agreement matrix `cuda_well_conditioned` draws its random numbers in the element type, so each precision gets a different matrix
+
+- **location:** `test/helpers/own_kernel.jl:33`, `:36`, `:37`, `:39` (`cuda_well_conditioned`)
+- **evidence:** `randn(rng, T, n, n)`, `randn(rng, T, 16, 16)` and `randn(rng, T, n)` take the
+  stream of `T`. With the seed of `n = 4`, `randn(Xoshiro(0x5eed + 4), Float32, 4, 4)` and
+  `Float32.(randn(Xoshiro(0x5eed + 4), 4, 4))` differ by up to 2.90 per entry (Julia 1.13.4). The
+  convention is one draw in `Float64` (`ComplexF64` for a complex `T`), rounded to `T`. The
+  LU, QR and SVD agreement rows compare in one `T`, so no result is wrong. The function is on
+  `main`.
+- **kind:** defect
+- **found:** #113

@@ -5,8 +5,9 @@ using Random: Xoshiro
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: DeviceLDLT, DeviceLU, DeviceQR, DeviceSVD
-using GeometricSolvers: LDLTFactorization, LUFactorization, Newton, NonlinearProblem
+using GeometricSolvers: DeviceCholesky, DeviceLDLT, DeviceLU, DeviceQR, DeviceSVD
+using GeometricSolvers: CholeskyFactorization, LDLTFactorization, LUFactorization, Newton,
+                        NonlinearProblem
 using GeometricSolvers: Options, QRFactorization, SVDFactorization
 using GeometricSolvers: backsolve!, dense_factor, factorize!!, init, init_linear,
                         jacobi_tolerance, ldiv!!, returncode, solve, solve!
@@ -117,6 +118,62 @@ if Metal.functional() && !on_virtual_gpu()
             x = Array(d)
             bwd = norm(A * x - b) / (opnorm(A) * norm(x) + norm(b))
             @test bwd <= 10 * n * eps(Float32)
+        end
+    end
+
+    @testset "Metal KA Cholesky agrees with the host DenseCholesky: $T, n = $n" for T in METAL_ELTYPES,
+        n in (1, 4, 64, 65, 128)
+
+        # one workgroup of 64 work-items: below it, at it and above it; `G Gᴴ / n + I` is
+        # Hermitian positive definite, and the bound takes its `κ∞`
+        rng = Xoshiro(0xc401 + n)
+        G = randn(rng, T, n, n)
+        A = G * G' / n + Matrix{T}(I, n, n)
+        A = (A + A') / 2
+        b = randn(rng, T, n)
+        κ = Float64(cond(A, Inf))
+        m = CholeskyFactorization()
+        fh = factorize!!(dense_factor(m, nothing, b, nothing), m, A)
+        xh = ldiv!!(similar(b), fh, b)
+        fac = dense_factor(m, nothing, MtlArray(b), nothing)
+        @test fac isa DeviceCholesky
+        fac = factorize!!(fac, m, MtlArray(A))
+        @test fac.info == 0
+        @test returncode(fac) === SUCCESS
+        d = ldiv!!(similar(MtlArray(b)), fac, MtlArray(b))
+        @test d isa MtlVector{T}
+        x = Array(d)
+        @test norm(x - xh, Inf) <= 8 * n * eps(Float32) * κ * norm(xh, Inf)
+        L = Array(fac.factors)
+        @test all(iszero, (L[i, j] for j in 2:n for i in 1:(j - 1)))
+        @test norm(L * L' - A, Inf) <= 8 * n * eps(Float32) * opnorm(A, Inf)
+    end
+
+    @testset "Metal KA Cholesky: not positive definite, non-finite and Hermitian: $T" for T in METAL_ELTYPES
+        m = CholeskyFactorization()
+        device_factor(A) = factorize!!(
+            dense_factor(m, nothing, MtlArray(zeros(T, size(A, 1))), nothing), m, MtlArray(A))
+        fac = device_factor(Matrix(Diagonal(T[1, 2, -1, 3])))
+        @test fac.info == 3
+        @test returncode(fac) === SINGULAR
+        A = Matrix(Diagonal(fill(T(2), 80)))
+        A[70, 70] = -1
+        @test device_factor(A).info == 70
+        for n in (4, 65)
+            A = Matrix(Diagonal(fill(T(2), n)))
+            A[n, 1] = T(NaN)
+            fac = device_factor(A)
+            @test fac.info == 1
+            @test fac.scale_exponent == 0
+        end
+        if T <: Complex
+            # Hermitian with non-real off-diagonal entries: `L Lᴴ` is `A`, `L Lᵀ` is not
+            A = T[4 1+2im 0.5-1im; 1-2im 5 2im; 0.5+1im -2im 6]
+            fac = device_factor(A)
+            @test fac.info == 0
+            L = Array(fac.factors)
+            @test norm(L * L' - A, Inf) <= 8 * 3 * eps(Float32) * opnorm(A, Inf)
+            @test norm(L * transpose(L) - A, Inf) > 1
         end
     end
 

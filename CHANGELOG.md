@@ -1107,7 +1107,7 @@ so that a compat-only bump can be told apart from an interface change.
   nothing after a warm-up. A `b` that shares memory with `solver.x` and is not `solver.x` itself,
   such as a view of it, is copied before the solve, which allocates one copy of `b`;
   `b === solver.x` is solved in place. The object adds no kernel. `m == n` takes every factor type,
-  and `CholeskyFactorization` on a device raises an `ArgumentError`. `m > n` is the least-squares
+  on the host and on a device. `m > n` is the least-squares
   solution through QR or SVD, the minimum-norm one where the SVD rank is below `n`; LU, LDLᵀ and
   Cholesky raise an `ArgumentError` for `m ≠ n`. `m < n` is the minimum-norm solution through the
   SVD of `Aᴴ` truncated at its rank, on every route, or through a QR of `Aᴴ`, `x = Q R⁻ᴴ b`, on a
@@ -1173,10 +1173,29 @@ so that a compat-only bump can be told apart from an interface change.
   `Newton` to the working precision, unchanged: with `CholeskyFactorization(Float32)`, the Jacobian
   `[1 1; 1 1 + 1e-9]` has a zero pivot in `Float32`, and the step factorises it in `Float64`. A
   `LeastSquaresProblem` takes the method only in the stacked `LevenbergMarquardt` step, as it takes
-  `LDLTFactorization`, and a device array iterate raises an `ArgumentError`, because the method has
-  no device factor. The tests are in `test/linear/cholesky.jl`, and the LDLᵀ rows of
+  `LDLTFactorization`. The tests are in `test/linear/cholesky.jl`, and the LDLᵀ rows of
   `test/nonlinear/leastsquares.jl`, `gmres_ir.jl` and `refinement.jl` have Cholesky twins. The
   standard test set has no Cholesky column, as it has no LDLᵀ column.
+
+- **`CholeskyFactorization` factorises on a device array, as the factor `DeviceCholesky`.** The
+  own KernelAbstractions kernels run in one workgroup of 64 work-items, as the LDLᵀ kernel does, on
+  every device array and element type that no vendor method below takes, `JLArray` and Metal's
+  `Float32` and `ComplexF32` included: a load kernel refuses a matrix with a non-finite entry
+  anywhere with `info = 1`, takes the power-of-two scale of a factor in another element type from
+  the lower triangle and the real diagonal, and writes zeros above the diagonal; a factor kernel
+  runs the column loop, each work-item taking the trailing columns `k + tid, k + tid + 64, …`; and
+  the status is read back once. On a `CuMatrix` and a `ROCMatrix` of a `BlasFloat` element type,
+  the CUDA and AMDGPU extensions call cuSOLVER and rocSOLVER `potrf`/`potrs` after the same load
+  kernel. The status is the host factor's: `info = k` for the first leading minor that is not
+  positive, `SINGULAR`, and `n = 0` launches nothing and gives `SUCCESS`. On both paths,
+  `backsolve!` refuses a vector whose length is not the order of the factor, the empty vector
+  included, with a `DimensionMismatch`. The JLArray rows of `test/linear/cholesky.jl` agree with
+  `DenseCholesky` at `n = 1, 4, 64, 65, 128`; the Metal rows are in `test/devices/metal_ka.jl`, and
+  the cuSOLVER and rocSOLVER rows, which compare the vendor factor with the own kernel, in
+  `test/gpu/cuda/runtests.jl` and `test/gpu/rocm/runtests.jl`. A `LinearProblem` of a device
+  array takes `CholeskyFactorization` too, in place of the `ArgumentError` it raised without a
+  device factor; `test/linear/linearproblem.jl` runs it on `JLArray`, and the Metal and CUDA
+  `LinearProblem` testsets each add a Cholesky row.
 
 - **Verified root certificates, `GeometricSolvers.certify`, with the package extension
   `GeometricSolversIntervalArithmeticExt`.** When `IntervalArithmetic` is loaded,
