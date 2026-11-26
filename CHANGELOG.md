@@ -1053,6 +1053,25 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`scripts/recycling_spike.jl` (new) counts the Jacobian–vector products of Krylov recycling
+  under a lagged preconditioner.** On `sparse_bracket_problem` at `N = 125` and `768`, ten Newton
+  solves along `p = 1.00, 1.05, …, 1.45`, each from the root before, with `FixedForcing(η)` and
+  the LU of the analytic Jacobian as a right preconditioner that `Newton(; reuse = k)` refreshes,
+  it gives the products of the package's `GMRES(; restart = m)` and of a GCRO-DR(m, k) written in
+  the script, without and with the recycled space kept between linear solves, the `k` products of
+  `A·U` included, over `m ∈ {20, 30}`, `k ∈ {5, 10}` and `η ∈ {1e-2, 1e-6}`. A control with six
+  eigenvalues in `[0.01, 0.05]` must give fewer products with recycling than without, and fewer
+  without than with `GMRES(m)`, and each GCRO-DR count must equal a direct count of the
+  operator's calls; the script stops with an error otherwise. It prints one verdict line for each
+  of the rules decided before the run. On the base `cd7fa81` with this script, on an Apple M4 Max
+  with Julia 1.13.4 and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every
+  cell of the grid gave the same count in all three columns (23 at `η = 1e-2`, 36 at `η = 1e-6`,
+  over 21 Newton steps). No linear solve started from a recycled space: the inner solves before
+  the last ran fewer than `k` Arnoldi steps each, and such a cycle leaves none. The stop rule
+  (`r ≥ 0.90` in every cell) held. `test/integration/hardware_scripts.jl` runs the script at
+  `N = 125`, `m = 20`, `k = 5`, `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the
+  package's steps and refreshes, and its verdict on synthetic rows.
+
 - **`GMRES` takes two new keywords, `flexible = false` and `basis_eltype = Nothing`, and a
   `Newton` with a preconditioned `GMRES` takes `reuse = k`.** `GMRES(; flexible = true)` is the
   flexible GMRES of Saad (1993, doi:10.1137/0914028): with a preconditioner it keeps each
