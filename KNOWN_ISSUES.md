@@ -712,7 +712,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1980`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2048`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -976,7 +976,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1055` (`stored_factors`), `:1071` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1059` (`stored_factors`), `:1075` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -1003,7 +1003,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2080` for `GMRES`, `:2325` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2082` for `GMRES`, `:2327` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1023,4 +1023,19 @@
   a draft of the branch that adds the `Float32`-basis column, which then names it
   `Newton Backtracking Float32-basis GMRES`, so no column of the table meets the case.
 - **kind:** defect
+- **found:** 2026-11-26
+
+### K140 · The JLArray testsets of `test/nonlinear/krylov.jl` that count the reductions and the plain products of the GMRES paths count none of the matrix–vector products, and fail
+
+- **location:** `test/nonlinear/krylov.jl:826` (the counting `mul!` overload)
+- **evidence:** `run-tests.jl <repository> test/nonlinear/krylov.jl` on the base `460bd37` gives
+  791 passed, 27 failed and 2 errored, at lines 868, 883, 914, 921, 930, 935, 956, 984, 1007,
+  1020 and 1021, for example `Evaluated: [0, 0, 0, 0, 0] == [2, 2, 2, 2, 2]`; the two errors are
+  `only(PLAIN_PRODUCTS)` on an empty list. The overload takes the 7-argument
+  `mul!(C, tA, tB, A, B, α, β)`. The test environment resolves JLArrays 0.5.0 and GPUArrays
+  12.3.0, which defines its own 6-argument matrix–vector method,
+  `mul!(C::AnyStridedGPUVector, tA::AbstractChar, A, B, a, b)`
+  (`GPUArrays/src/host/linalg.jl:735`). Not checked: that the products of the paths reach that
+  method and not the overload.
+- **kind:** upstream
 - **found:** 2026-11-26

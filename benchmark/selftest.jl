@@ -511,7 +511,7 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
             @test out.result isa Thrown
         end
         # The block tables' counts.
-        @test length.(block_cells.(BLOCKS)) == (395, 816, 1264, 20)
+        @test length.(block_cells.(BLOCKS)) == (395, 864, 1264, 20)
     end
 
     @testset "nsol: a Jacobian at every iteration, and a start that meets the test" begin

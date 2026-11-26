@@ -1879,33 +1879,55 @@ end
         GMRES(; basis_eltype = Float32), zeros(ComplexF64, 4)).V) === ComplexF32
     @test eltype(init_gmres_workspace(
         GMRES(; basis_eltype = Float32), zeros(ComplexF64, 4)).hd) === ComplexF64
-    # a complex solve on a Float32 basis reaches a tolerance below eps(Float32) on its true residual
-    A = ComplexF64.(FG_A6) .+ 0.3im .* ComplexF64.(FG_A6')
-    b = ComplexF64.(FG_B6) .- 0.5im
-    for mgs in (false, true)
-        ws = init_gmres_workspace(GMRES(; maxiter = 40, basis_eltype = Float32), zeros(ComplexF64, 6))
+    @test eltype(init_gmres_workspace(
+        GMRES(; basis_eltype = Float16), zeros(ComplexF32, 4)).V) === ComplexF16
+    # a complex solve on a reduced basis reaches a tolerance below the round-off of the basis type
+    # on its true residual
+    for (T, TB, tol) in ((ComplexF64, Float32, 1e-12), (ComplexF32, Float16, 1.0f-5)),
+        mgs in (false, true)
+
+        A = T.(FG_A6) .+ T(0.3im) .* T.(FG_A6')
+        b = T.(FG_B6) .- T(0.5im)
+        ws = init_gmres_workspace(GMRES(; maxiter = 40, basis_eltype = TB), zeros(T, 6))
         op = (Jv, v) -> (mul!(Jv, A, v); Jv)
         d, info = gmres_solve!(
-            ws, op, nothing, b, rnorm(b), 1e-12, Int32(40), Int32(40); mgs)
+            ws, op, nothing, b, rnorm(b), tol, Int32(40), Int32(40); mgs)
         @test info.converged
-        @test rnorm(b .- A * d) <= 1e-12 * rnorm(b)
+        @test rnorm(b .- A * d) <= tol * rnorm(b)
     end
 end
 
-@testset "The preconditioner reads a working-precision copy of a reduced basis column" begin
+@testset "The preconditioner reads a working-precision copy of a reduced basis column, $T" for T in REAL_ELTYPES
+    TB = T === Float64 ? Float32 : Float16
     P = RecordingPreconditioner(Type[])
-    A = FG_A6
-    b = FG_B6
+    A = T.(FG_A6)
+    b = T.(FG_B6)
     ws = init_gmres_workspace(
-        GMRES(; maxiter = 6, basis_eltype = Float32, preconditioner = P),
-        zeros(6))
+        GMRES(; maxiter = 6, basis_eltype = TB, preconditioner = P),
+        zeros(T, 6))
     op = (Jv, v) -> (mul!(Jv, A, v); Jv)
     for mgs in (false, true)
         empty!(P.seen)
-        gmres_solve!(ws, op, P, b, rnorm(b), 1e-10, Int32(6), Int32(6); mgs)
+        gmres_solve!(ws, op, P, b, rnorm(b), T(1e-4), Int32(6), Int32(6); mgs)
         @test !isempty(P.seen)
-        @test all(t -> t === Vector{Float64}, P.seen)
+        @test all(t -> t === Vector{T}, P.seen)
     end
+end
+
+@testset "The CGS2 step keeps a reduced basis orthogonal to the round-off of its type, $T" for T in REAL_ELTYPES
+    # a diagonal operator with κ = 1e5 and a full cycle of 30 steps without a stop: one pass of
+    # classical Gram–Schmidt leaves ‖VᵀV − I‖ near 7e-3 on a Float32 basis here, and the second
+    # pass keeps it below one unit of the round-off of the stored type
+    TB = T === Float64 ? Float32 : Float16
+    n = 40
+    jd = T.(collect(range(1, 1e5; length = n)))
+    b = ones(T, n)
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 30, basis_eltype = TB), zeros(T, n))
+    gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(30), Int32(30))
+    @test ws.arnoldi == 30
+    V = Float64.(ws.V[:, 1:30])
+    @test opnorm(V' * V - I) <= 4 * eps(TB)
 end
 
 @testset "A Float32 basis reaches the forcing tolerance on R5Diagonal, mgs = $mgs, $AT" for AT in ARRAY_BACKENDS,
@@ -2038,18 +2060,41 @@ end
     @test rule(nothing, Newton(; linsolve = GMRES()), true, SUCCESS, Int32(1)) === nothing
 end
 
-@testset "A reduced-basis breakdown on a singular operator stops without convergence, mgs = $mgs" for mgs in (false, true)
-    # `b = e₁` is exact in Float32 and `J e₁ = 0`, so the first Arnoldi step breaks down exactly;
-    # the true residual is `‖b‖`, and the solve stops there rather than restart to its cap
-    jd = [0.0, 1.0, 2.0]
-    b = [1.0, 0.0, 0.0]
+@testset "A reduced-basis breakdown on a singular operator stops without convergence, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    # `b = e₁` is exact in the basis type and `J e₁ = 0`, so the first Arnoldi step breaks down
+    # exactly; the true residual is `‖b‖`, and the solve stops there rather than restart to its cap
+    TB = T === Float64 ? Float32 : Float16
+    jd = T[0, 1, 2]
+    b = T[1, 0, 0]
     op = (Jv, v) -> (Jv .= jd .* v; Jv)
-    ws = init_gmres_workspace(GMRES(; maxiter = 10, restart = 3, basis_eltype = Float32), zeros(3))
-    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-8, Int32(10), Int32(3); mgs)
+    ws = init_gmres_workspace(GMRES(; maxiter = 10, restart = 3, basis_eltype = TB), zeros(T, 3))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), T(1e-4), Int32(10), Int32(3); mgs)
     @test info.breakdown
     @test !info.converged
     @test info.iterations == 1
-    @test info.resnorm == 1.0
+    @test info.resnorm == 1
+end
+
+@testset "A reduced-basis breakdown that meets the Givens estimate restarts on its true residual, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    # `s` rounds to zero in the basis type, so the stored `v₁` is `e₁`, an eigenvector of `J`: the
+    # first step breaks down with a zero Givens estimate, while the true residual is `s`, above
+    # the tolerance `s²`; the restart from that residual reaches it
+    TB = T === Float64 ? Float32 : Float16
+    s = sqrt(sqrt(floatmin(T)))
+    @test iszero(TB(s))
+    jd = T[2, 3, 5]
+    b = T[1, s, 0]
+    tol = s^2
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 10, restart = 3, basis_eltype = TB), zeros(T, 3))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(10), Int32(3); mgs)
+    @test info.converged
+    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+    @test info.resnorm <= tol * rnorm(b)
 end
 
 @testset "reuse takes a GMRES with a preconditioner only" begin
@@ -2069,10 +2114,11 @@ end
     @test_throws r"^ArgumentError: Newton with a DogLeg globalization takes a GMRES with basis_eltype = Nothing" Newton(;
         linsolve = GMRES(; basis_eltype = Float32), globalization = DogLeg())
     @test Newton(; linsolve = GMRES(; flexible = true), globalization = DogLeg()) isa Newton
-    @test_throws r"^ArgumentError: GMRES basis_eltype must be Nothing or an AbstractFloat type" GMRES(;
-        basis_eltype = Int)
-    @test_throws r"^ArgumentError: GMRES basis_eltype must be Nothing or an AbstractFloat type" GMRES(;
-        basis_eltype = ComplexF32)
+    msg = r"^ArgumentError: GMRES basis_eltype must be Nothing or a concrete AbstractFloat type"
+    @test_throws msg GMRES(; basis_eltype = Int)
+    @test_throws msg GMRES(; basis_eltype = ComplexF32)
+    @test_throws msg GMRES(; basis_eltype = Union{})
+    @test_throws msg GMRES(; basis_eltype = AbstractFloat)
     @test GMRES(; basis_eltype = Float16).basis_eltype === Float16
 end
 
@@ -2133,10 +2179,10 @@ end
             @test ηs[k - 1]^R((1 + sqrt(5)) / 2) <= R(0.1)
             ref = GeometricSolvers.compute_forcing(
                 f1, k - 1, norms[k], norms[k - 1], ηs[k - 1], lins[k - 1])
-            # the recorded linear residual is that of the Arnoldi relation, exact to the
-            # round-off of the basis type relative to `‖F_{k-1}‖`, which the rule divides by
-            u = label == "reduced" ? eps(TB) : eps(R)
-            @test abs(ηs[k] - ref) <= 100 * u
+            # the recorded linear residual is the Givens estimate of the Arnoldi relation on the
+            # flexible path and the true residual on the reduced basis; either is exact to the
+            # round-off of the working type relative to `‖F_{k-1}‖`, which the rule divides by
+            @test abs(ηs[k] - ref) <= 100 * eps(R)
         end
     end
 end
@@ -2169,8 +2215,14 @@ end
         @inferred gmres_solve!(
             ws, op, g.preconditioner, b, β, R(1e-10), Int32(4), g.restart; mgs)
     end
-    # the control: the helper sees an allocation
-    @test (@allocated similar(zeros(T, 4))) > 0
+    # the control: the helper sees the allocation of an operator that allocates
+    g = GMRES(; maxiter = 4, basis_eltype = TB, mgs)
+    ws = init(prob, zeros(T, 4), Newton(; linsolve = g)).state.ws
+    A = Diagonal(T[3, 4, 5, 6])
+    alloc_op = (Jv, v) -> (Jv .= A * v; Jv)
+    b = T.(.-R5_B4)
+    @test preconditioned_allocations(
+        ws, alloc_op, nothing, b, rnorm(b), R(1e-10), Int32(4), g.restart; mgs) > 0
 end
 
 @testset "The scale rows: A and b at 4√floatmax and floatmax/8, mgs = $mgs, $T" for T in REAL_ELTYPES,

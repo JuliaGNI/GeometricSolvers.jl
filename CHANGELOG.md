@@ -1051,9 +1051,10 @@ so that a compat-only bump can be told apart from an interface change.
   restarts where it misses the tolerance; its CGS2 step takes three reductions. One cycle of `j`
   CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist, Luszczek and
   Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve reaches
-  `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor an
-  `AbstractFloat` type raises an `ArgumentError`, and so does a `DogLeg` with any `basis_eltype`
-  but `Nothing`, because its trial loop reads the basis as orthonormal in the working precision.
+  `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor a
+  concrete `AbstractFloat` type raises an `ArgumentError`, and so does a `DogLeg` with any
+  `basis_eltype` but `Nothing`, because its trial loop reads the basis as orthonormal in the
+  working precision.
   Both keywords are type parameters, `GMRES{F, P, TJ, TB, FL}` with the fields `basis_eltype` and
   `flexible::Val{FL}`, and the `forcing` and `preconditioner` keywords of `Newton` keep them.
   `Newton(; reuse = k)` with a `GMRES` that has a preconditioner refreshes it at the first step,

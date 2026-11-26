@@ -254,7 +254,7 @@ doi:10.1137/0914028).
   orthogonalises by modified Gram–Schmidt, which takes ``j + 1`` reductions at inner iteration
   `j`.
 - `basis_eltype::Type{TB}`: `Nothing` stores the Krylov basis in the working type `T` of the
-  iterate; an `AbstractFloat` type `TB` stores it in `TB`, and a complex iterate in
+  iterate; a concrete `AbstractFloat` type `TB` stores it in `TB`, and a complex iterate in
   `Complex{TB}`, as the compressed basis of Aliaga et al. (2020, arXiv:2009.12101) does. Every
   product, coefficient, norm and update stays in `T`, and the preconditioner reads a copy of each
   basis vector in `T`. A basis in a type other than `T` is not orthonormal in `T`, so the Givens
@@ -303,8 +303,8 @@ struct GMRES{F <: AbstractForcingTerm, P, TJ, TB, FL} <: LinearMethod{Nothing}
         maxiter >= Int32(1) || throw(ArgumentError("GMRES maxiter must be ≥ 1"))
         (Int32(1) <= restart <= maxiter) ||
             throw(ArgumentError("GMRES needs 1 ≤ restart ≤ maxiter"))
-        (TB === Nothing || TB <: AbstractFloat) ||
-            throw(ArgumentError("GMRES basis_eltype must be Nothing or an AbstractFloat type"))
+        (TB === Nothing || (TB <: AbstractFloat && isconcretetype(TB))) ||
+            throw(ArgumentError("GMRES basis_eltype must be Nothing or a concrete AbstractFloat type"))
         return new{F, P, TJ, TB, FL}(maxiter, restart, forcing, preconditioner, jvp_eltype,
             mgs, basis_eltype, flexible)
     end
@@ -522,10 +522,10 @@ reports no convergence. A restarted cycle forms its new residual with one more p
 flexible path, the solution update is ``u \\mathrel{+}= Z_k y``, the direction is `u` itself and the
 restart residual is `b - J u`. On a basis stored in a type other than that of `b`, every cycle
 ends on that product, and the solve converges where the true residual meets the tolerance; a
-cycle that misses it restarts, unless it ended on a breakdown or at `maxiter`, and the reported
-residual is the true one. The least-squares problem is solved
-from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only where the reduced
-system is singular, and the corresponding weight is then `0`.
+cycle that misses it restarts, unless it ended at `maxiter` or on a breakdown whose reduced
+residual misses the tolerance too, and the reported residual is the true one. The least-squares
+problem is solved from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only
+where the reduced system is singular, and the corresponding weight is then `0`.
 """
 function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxiter,
         restart; mgs::Bool = false) where {T, R}
@@ -621,7 +621,9 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             restart_residual!(ws, jvp_op!, P, b)
             resnorm = R(rnorm(ws.rr))
             converged = resnorm <= atol
-            (converged || breakdown || used >= maxiter) && break
+            # a breakdown whose Givens estimate meets the tolerance leaves a true residual to
+            # restart from; one whose estimate misses it is singular on the Krylov space, and stops
+            (converged || (breakdown && linres > atol) || used >= maxiter) && break
             continue
         end
         if linres <= atol || breakdown || used >= maxiter
@@ -672,14 +674,13 @@ end
 function cgs2_reduced_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
     Vj = @view ws.V[:, 1:j]
     hd = @view ws.hd[1:j]
-    mul!(hd, Vj', ws.w)
-    copyto!(ws.hh, 1, ws.hd, 1, j)
-    @views ws.H[1:j, j] .= ws.hh[1:j]
-    mul!(ws.w, Vj, hd, -one(T), one(T))
-    mul!(hd, Vj', ws.w)
-    copyto!(ws.hh, 1, ws.hd, 1, j)
-    @views ws.H[1:j, j] .+= ws.hh[1:j]
-    mul!(ws.w, Vj, hd, -one(T), one(T))
+    @views ws.H[1:j, j] .= zero(T)
+    for _ in 1:2
+        mul!(hd, Vj', ws.w)
+        copyto!(ws.hh, 1, ws.hd, 1, j)
+        @views ws.H[1:j, j] .+= ws.hh[1:j]
+        mul!(ws.w, Vj, hd, -one(T), one(T))
+    end
     return R(rnorm(ws.w))
 end
 

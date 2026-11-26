@@ -598,6 +598,10 @@ end
 # is one step long.
 @inline fresh_age(m::Newton) = m.reuse == Int32(1) ? Int32(0) : Int32(1)
 
+# The age of a reused factor after one more step: `0` at the end of its period of `reuse` steps.
+@inline next_age(rule::FactorAge, m::Newton) = rule.age + one(Int32) >= m.reuse ? Int32(0) :
+                                               rule.age + one(Int32)
+
 # The rule state of `Newton` with `DogLeg` or `Steihaug`: the radius, and the initial radius that
 # each solve starts from, `0` when the first step sets it.
 struct TrustRadius{R}
@@ -1697,7 +1701,7 @@ end
     age_fresh = fresh_age(m)
     failures = Int32(0)
     if !(rule.age == Int32(0) || rule.stalled)
-        age₊ = rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32)
+        age₊ = next_age(rule, m)
         # A reused factor whose `Refinement` fails is refactorised at `x`, within the step, and
         # counts one step-rule failure. A reused factor can also give a direction that does not
         # descend: a line search along it that fails without a step is retried once, in the same
@@ -1737,8 +1741,7 @@ end
     rule = state.rule
     fresh = state.promoted || rule.age == Int32(0) || rule.stalled
     age_fresh = fresh_age(m)
-    age₊ = fresh ? age_fresh :
-           (rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32))
+    age₊ = fresh ? age_fresh : next_age(rule, m)
     while true
         was_fresh = fresh
         md = mixed_newton!!(state, m, prob, x, Fx, fnorm_old, p, fresh, true)
@@ -2066,8 +2069,7 @@ end
 @inline preconditioner_rule(rule, m::Newton, refreshed::Bool, code, failures) = rule
 @inline function preconditioner_rule(
         rule::FactorAge, m::Newton, refreshed::Bool, code, failures)
-    age₊ = refreshed ? fresh_age(m) :
-           (rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32))
+    age₊ = refreshed ? fresh_age(m) : next_age(rule, m)
     return FactorAge(age₊, code == STALLED || failures > Int32(0))
 end
 
