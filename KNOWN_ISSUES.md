@@ -1158,3 +1158,20 @@
   wrong sign.
 - **kind:** defect
 - **found:** 2026-11-26, PR #125
+
+### K142 · Inside an Apple GPU kernel, `matrix_exponent` and `cholesky_exponent` give `e = 0` for a matrix of subnormal `Float32` entries, so an R1 static factor there takes no subnormal scale
+
+- **location:** `src/linear/factors.jl:839` (`matrix_exponent`), `:858` (`cholesky_exponent`)
+- **evidence:** both return `isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0`,
+  and in a Metal kernel `iszero` of a subnormal `Float32` is `true`: with
+  `m = reinterpret(Float32, 0x00010000)` in a kernel, `iszero(m)`, `isfinite(m)` and `m == 0f0`
+  are all `true`, while the entry reaches the kernel intact (`0x00010000` on the device and the
+  host). A static `SVDFactorization()` of `2^-134 · [i + j]` (`n = 1, 4, 16`, `Float32` and
+  `ComplexF32`) inside a Metal kernel gives `scale_exponent = 0` and rank 0, where the host gives
+  `-133`, `-131`, `-129` and rank 1, 2, 2; `matrix_exponent` gives 0 in the kernel and `-127` on
+  the host (Julia 1.13.4). `origin/main` at `0999817` has the same lines and the same result.
+  `test/devices/metal_svd.jl` passes on Metal because it checks the subnormal factor on the host
+  only. The load kernel of `DeviceCholesky` reads the bits (`abs_bits`, `bits_exponent`) and is
+  not affected.
+- **kind:** defect
+- **found:** 2026-11-26, the pre-PR verification of PR #125

@@ -29,7 +29,11 @@ so that a compat-only bump can be told apart from an interface change.
   entries, real or complex, is taken from their values alone (`scale_value`), on the host and in
   the kernel, which reads the bits of each value as those of an IEEE entry, because ForwardDiff's
   `iszero`, `==`, `<` and `max` of a `Dual` also read its partials: a `Dual` matrix of zero values
-  and nonzero partials keeps `e = 0`, and its factor takes it as it is. In the kernel, a real type
+  and nonzero partials keeps `e = 0`, and its factor takes it as it is. `ldexp2` divides a `Dual`
+  in its value and in each partial, in their own type, not by ForwardDiff's `ldexp`, whose
+  `exp2(e)` is a `Float64`: so the load kernel of a `Dual{Float32}` matrix holds no `Float64`
+  operation, which the Apple GPU does not compile (testset "Metal KA Cholesky of a
+  ForwardDiff.Dual matrix" of `test/devices/metal_ka.jl`). In the kernel, a real type
   whose value is no `Base.IEEEFloat`, such as `BigFloat`, gives `e = 0`. A factor of
   another element type divides for every `e`, as before,
   and a static factor still copies an own-type `BigFloat` matrix whose exponent lies outside the
