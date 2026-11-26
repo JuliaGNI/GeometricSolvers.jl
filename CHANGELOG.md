@@ -44,14 +44,20 @@ so that a compat-only bump can be told apart from an interface change.
   in the four element types within `32 eps κ₁`, `eps` of the factor's type (testset "a subnormal
   matrix" of `test/linear/linearproblem.jl`), where LU, QR and Cholesky gave `SUCCESS` with a
   large error, LDLᵀ `NONFINITE`, and the static `SVDFactorization(Float32)` `SINGULAR`. The
-  same-type `ldiv!!` of a factor with `e < 0` lifts the right-hand side with the matrix: it
-  divides `r` by `2^k`, `k = min(e, 0)`, unless the headroom of `rhs_exponent` below `floatmax`
-  needs a larger `k`, so that a subnormal `r` keeps its bits (testsets "a subnormal b with a
-  matrix near floatmin" and "a b near floatmax with a matrix of exponent below 0" of
-  `test/linear/linearproblem.jl`); a factor with `e ≥ 0` solves as before, bit for bit. The
-  static QR solve of `m < n` takes the same `k` for `b` (testsets "m < n, the static QR of …"):
-  it took `b` as it is, which gave `NaN` for some `b` near `floatmax`, and keeps its bits for
-  every other `b` with `e ≥ 0`. The
+  same-type `ldiv!!` of a factor with `e < 0` lifts a small right-hand side with the matrix: it
+  divides `r` by `2^k`, `k` the exponent of `r` clamped to `[e, 0]`, unless the headroom of
+  `rhs_exponent` below `floatmax` needs a larger `k`, so that a subnormal `r` keeps its bits
+  (testsets "a subnormal b with a matrix near floatmin" and "a b near floatmax with a matrix of
+  exponent below 0" of `test/linear/linearproblem.jl`). `r` is not lifted past the exponent 0, so
+  the solve holds `2^(e - k) x`, never larger than the solution `x`, and the LU back substitution
+  of `2^kA W`, `W` the Wilkinson growth matrix of size `n`, `kA < 0`, stays finite for a solution
+  near `floatmax / 2^n`, as on `main` (testset "the LU solve of 2^kA W …"). A factor with `e ≥ 0` solves as before, bit
+  for bit. The static QR and SVD solves of `m < n` and the dense QR one take the same `k` for
+  `b` (testsets "m < n, …"): they took `b` as it is, which lost a subnormal `b` to 0 or to a
+  power of two of the solution and gave `NaN` or `NONFINITE` for some `b` near `floatmax`; the
+  1 260 rows with `b` in the normal range of a sweep of these solves keep their bits, but five
+  `ComplexF32` static SVD rows, which move by 2 ulp with the same `k`, and 20 static QR rows of
+  a solution above `floatmax`, `NONFINITE` before and after. The
   Cholesky solve of `[2t t; t t]`, `t = nextfloat(0)`, gives `(-1, 2)` within `8 eps κ₁`, where
   it gave `(-0.5, 1)`. The R1 Golub–Pereyra reduced Jacobian of
   `VariableProjection` (`_pinv_adj_mul_r1`) applies the static SVD's exponent to each coefficient
@@ -59,7 +65,7 @@ so that a compat-only bump can be told apart from an interface change.
   overflows for `e` below `-exponent(floatmax)`; the static
   `SVDFactorization(Float32)` of a `Float64` matrix at `2^-130`, which gives `NaN` there on
   `bf08120`, gives a result within `8 eps(Float32) κ`. This closes K110, K111 and K114. Five limits
-  stay: the SVD solve of an `m < n` system and the dense QR one do not scale a subnormal
+  stay: the dense and device SVD solves of an `m < n` system do not scale a subnormal
   right-hand side up (K124), nor is a subnormal `w` of
   `_pinv_adj_mul_r1` (K129), the device `SVDFactorization(Float32)` of a subnormal `Float64`
   matrix gives `SINGULAR` (K125), `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where

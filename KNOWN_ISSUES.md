@@ -772,22 +772,22 @@
 
 ### K107 · The docstrings of `StaticLU`, `StaticSVD`, `StaticLDLT` and `StaticRectQR` say that the factor is `isbits` for every element type, which is false for `BigFloat`
 
-- **location:** `src/linear/factors.jl:131` (`StaticLU`), `:172` (`StaticSVD`), `:341`
+- **location:** `src/linear/factors.jl:132` (`StaticLU`), `:173` (`StaticSVD`), `:342`
   (`StaticLDLT`), `src/linear/static/qr_rect.jl:12` (`StaticRectQR`)
 - **evidence:** each docstring says that the size parameter makes the `SMatrix` field concrete,
   "so the factor is `isbits`", with no condition on `TF`.
   `isbitstype(GeometricSolvers.StaticLU{2, BigFloat, 4})` and
   `isbitstype(GeometricSolvers.StaticQR{2, BigFloat, 4})` are `false`, and
   `isbitstype(GeometricSolvers.StaticLU{2, Float64, 4})` is `true` (Julia 1.13.4, tree of
-  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:817`), so
-  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:406-407`) states
+  `c6a2c4f`). The R1 path takes `BigFloat` through `local_array` (`src/linear/factors.jl:818`), so
+  such a factor exists. The `StaticCholesky` docstring (`src/linear/factors.jl:407-408`) states
   the condition.
 - **kind:** docs
 - **found:** #108
 
 ### K108 · A static factor with a factorisation type other than the matrix's element type throws `InexactError` for a `BigFloat` matrix whose largest entry has an exponent above `typemax(Int32)`
 
-- **location:** `src/linear/factors.jl:801` (`factor_matrix`), and `src/linear/static/svd.jl:102`
+- **location:** `src/linear/factors.jl:802` (`factor_matrix`), and `src/linear/static/svd.jl:102`
   (`svd_matrix`) and `src/linear/static/svd_rect.jl:51` (`svd_rect_matrix`), which scale always
 - **evidence:** the scale exponent of every static factor is an `Int32` field, and
   `factor_matrix` converts the exponent of `matrix_exponent` with `Int32(e)`. With
@@ -958,22 +958,21 @@
 - **kind:** defect
 - **found:** #113
 
-### K124 · The SVD solve of an `m < n` system and the dense QR one do not scale a subnormal right-hand side up, so they lose the bits below the smallest subnormal
+### K124 · The dense and device SVD solves of an `m < n` system do not scale a subnormal right-hand side up, so they lose the bits below the smallest subnormal
 
-- **location:** `src/linear/linearproblem.jl:446, 487` (`wide_solve!`, the same-type `m < n`
-  solve of a dense or device `LinearSolver`) and `:384` (`wide_rhs_exponent` of the static
-  `SVDFactorization` solve of `m < n`, which keeps `b` as it is)
-- **evidence:** with `A = fill(2.0^-1000, 1, 4)` and `b = [nextfloat(0.0)]`, whose minimum-norm
-  solution is `fill(2.0^-76, 4)`, `solve!(init(LinearProblem(A), method), b)` gives `x = 0` and
-  `SUCCESS` for `SVDFactorization()` on an `SMatrix`, an `Array` and a `JLArray`, and for
-  `QRFactorization()` on an `Array`; with `A = 2^(23 - emax) [2 1 0; 1 2 1]` and
-  `b = t (1, -2)`, `t = nextfloat(zero(R))`, the relative error is `0.289` on the same routes,
-  in `Float32`, `Float64` and `ComplexF64`, the same on `main` at `ae2a0db` and on PR #125 at
-  `9067ba3` (Julia 1.13.4). The same solves of `b · 2^1074`, scaled back by `2^-1074`, give
-  `fill(2.0^-76, 4)` exactly (PR #115 at `3d1e53b`). The square and tall solves, and the static
-  QR solve of `m < n`, lift such a right-hand side with the matrix: there both cases meet
-  `32 eps(R) κ₁`, and the 5 × 5 Cholesky case of `test/linear/linearproblem.jl`, which lost up
-  to `3.7e-4` in the maximum norm, meets `8 eps(R) κ₁`.
+- **location:** `src/linear/linearproblem.jl:442` (`wide_solve!` of a `DenseSVD` or
+  `DeviceSVD`, the same-type `m < n` solve of a dense or device `LinearSolver`)
+- **evidence:** with `A = fill(2^kA, 1, 4)` and `b = [t]`, `t = nextfloat(zero(R))`, whose
+  minimum-norm solution `2^(-kA - 2) t (1, 1, 1, 1)` lies in the normal range,
+  `solve!(init(LinearProblem(A), SVDFactorization()), b)` gives `SUCCESS` and, in `Float64` and
+  `ComplexF64` at `kA = -1000, -1026, -1062`, `x = 0` on an `Array` and a `JLArray`; in `Float32`
+  and `ComplexF32` at `kA = -104, -130, -137`, `x = 0` on a `JLArray` and four times the solution
+  (relative error `3.0`) on an `Array`. With `A = 2^(23 - emax) [2 1 0; 1 2 1]` and
+  `b = t (1, -2)` the relative error is `0.289` on both routes in all four element types. `main`
+  at `ae2a0db` gives the same on these routes (Julia 1.13.4). The static QR and SVD solves of
+  `m < n` and the dense QR one lift such a right-hand side with the matrix: on PR #125 they meet
+  `32 eps(R)` on the `1 × 4` cases and `2.2e-16` (`1.9e-7` in `Float32` and `ComplexF32`) on the
+  `2 × 3` one, as do the square and tall solves.
 - **kind:** defect
 - **found:** 2026-11-25, the K114 5 × 5 case; the wide case from a review of PR #115
 
@@ -1153,7 +1152,7 @@
 
 ### K141 · A `ForwardDiff.Dual` matrix of subnormal values and partials 1 gives `NaN` partials where the true derivative lies above `floatmax`
 
-- **location:** `src/linear/dense.jl:204` (`load_factors!`), `src/linear/factors.jl:801`
+- **location:** `src/linear/dense.jl:204` (`load_factors!`), `src/linear/factors.jl:802`
   (`factor_matrix`)
 - **evidence:**
 
@@ -1167,21 +1166,21 @@
   ldiv!!(nothing, factorize!!(nothing, m, J), b)
   ```
 
-  gives the values `(2.9473684209372335, -3.7894736840863894)` and the partials `(NaN, NaN)` on
-  `a0a311c` and on the branch of PR #125 after it, also where `ldexp2` scales the value and each
-  partial of a `Dual` in their own type; the `DenseCholesky` of `Matrix(J)` and the
-  `DenseLU` also give the partials `(NaN, NaN)`, and the static LU `(Inf, -Inf)`. On `ae2a0db`
-  both Cholesky factors give the partials `(-Inf, Inf)`, the static LU `(Inf, -Inf)`, and the
-  `DenseLU` `NaN` values and partials (Julia 1.13.4, ForwardDiff 1.5.0). The partial 1 is not
-  scaled with the subnormal value, so the true derivative, `(1.75e319, 1.31e319)` in `BigFloat`,
-  lies above `floatmax`, and no finite partial is right; each `±Inf` above has one entry of the
-  wrong sign.
+  gives the values `(2.9473684210526314, -3.789473684210527)` and the partials `(NaN, NaN)` on
+  PR #125, where the solve lifts `b` with the matrix; the `DenseCholesky` of `Matrix(J)` gives
+  the same, the `DenseLU` the values `(2.9473684210526314, -3.789473684210526)` and the
+  partials `(NaN, NaN)`, and the static LU the same values and the partials `(NaN, -Inf)`. On
+  `ae2a0db` both Cholesky factors give the partials `(-Inf, Inf)`, the static LU `(Inf, -Inf)`
+  with the first value `2.9473876953125`, and the `DenseLU` `NaN` values and partials (Julia
+  1.13.4, ForwardDiff 1.5.0). The partial 1 is not scaled with the subnormal value, so the true
+  derivative, `(1.75e319, 1.31e319)` in `BigFloat`, lies above `floatmax`, and no finite partial
+  is right; each `-Inf` above has the wrong sign.
 - **kind:** defect
 - **found:** 2026-11-26, PR #125
 
 ### K142 · Inside an Apple GPU kernel, `matrix_exponent` and `cholesky_exponent` give `e = 0` for a matrix of subnormal `Float32` entries, so an R1 static factor there takes no subnormal scale
 
-- **location:** `src/linear/factors.jl:841` (`matrix_exponent`), `:860` (`cholesky_exponent`)
+- **location:** `src/linear/factors.jl:842` (`matrix_exponent`), `:861` (`cholesky_exponent`)
 - **evidence:** both return `isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0`,
   and in a Metal kernel `iszero` of a subnormal `Float32` is `true`: with
   `m = reinterpret(Float32, 0x00010000)` in a kernel, `iszero(m)`, `isfinite(m)` and `m == 0f0`

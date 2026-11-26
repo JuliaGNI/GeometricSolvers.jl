@@ -686,8 +686,9 @@ end
     method in SQUARE
 
     # `A = [2 1; 1 2] / 4` has the exponent `e = -1` (`-2` for the even Cholesky one), and
-    # `b = 0.6 floatmax (1, 1)` gives the finite solution `0.8 floatmax (1, 1)`. Lifting `b` by `2^-e`
-    # would overflow; the headroom bound divides it by `2^3` instead, and the solve stays finite.
+    # `b = 0.6 floatmax (1, 1)` gives the finite solution `0.8 floatmax (1, 1)`. Lifted by `2^-e`,
+    # `b` would overflow; of an exponent above 0 it is not lifted, the headroom bound divides it by
+    # `2^3`, and the solve stays finite.
     R = real(T)
     A = T.(R[2 1; 1 2] ./ 4)
     b = fill(T(R(0.6) * floatmax(R)), 2)
@@ -714,18 +715,96 @@ end
     @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
 end
 
-@testset "m < n, the static QR of a matrix of exponent below 0 and a b near floatmax: $T" for T in ELTYPES
-    # `A = [2 1 0; 1 2 1] / 4` has the exponent `e = -1`, and `b = 0.6 floatmax (1, 1)` gives the
-    # finite minimum-norm solution `0.6 floatmax · 4/14 (5, 4, 1)`. Lifting `b` by `2^-e` would
-    # overflow; the headroom bound divides it by `2^3` instead, and the solve stays finite.
+@testset "m < n, the QR of a matrix of exponent 0 or below and a b near floatmax: $route, $T, A₀ / $d" for route in filter(
+        !=("JLArray"), ROUTES),
+    T in ELTYPES,
+    d in (4, 2)
+
+    # `A = [2 1 0; 1 2 1] / d` has the exponent `e = -1` for `d = 4` and 0 for `d = 2`, and
+    # `b = 0.6 floatmax (1, 1)` gives the finite minimum-norm solution
+    # `0.6 floatmax · d/14 (5, 4, 1)`. Lifted by `2^-e`, `b` would overflow; of an exponent above 0
+    # it is not lifted, the headroom bound divides it by `2^3`, the solve stays finite, and its
+    # result is multiplied by `2^(3 - e)`, also where `e = 0`.
     R = real(T)
-    A = T.(R[2 1 0; 1 2 1] ./ 4)
+    A = T.(R[2 1 0; 1 2 1] ./ d)
     b = fill(T(R(0.6) * floatmax(R)), 2)
     κ = cond1(Matrix(A'))
-    x, st, _ = lp_solve("SMatrix", QRFactorization(), A, b)
+    x, st, _ = lp_solve(route, QRFactorization(), A, b)
     @test st.code == SUCCESS
     @test all(isfinite, x)
     @test relerr(x, xref(A, b)) <= 32 * eps(R) * κ
+end
+
+@testset "a b of exponent above 0 is not divided with a matrix of exponent below 0: $route, $T, $(nameof(typeof(method)))" for route in ROUTES,
+    T in ELTYPES,
+    method in SQUARE
+
+    # `A = diag(1/2, 1/4)` has the exponent `e = -1` (`-2` for the even Cholesky one), and
+    # `b = (2^20, 3 · 2^(exponent(t) + 14))`, `t = nextfloat(0)`, gives the solution
+    # `(2^21, 12 · 2^(exponent(t) + 14))`, with a subnormal second entry. `b` of an exponent above 0
+    # is solved as it is, and the solve of the diagonal factor gives the second entry exactly and
+    # the first one within a few ulp (Cholesky's `√2`); divided by `2^20`, the second entry of `b`
+    # would round to 0.
+    R = real(T)
+    s = ldexp(one(R), exponent(nextfloat(zero(R))) + 14)
+    A = T[R(0.5) 0; 0 R(0.25)]
+    b = T[ldexp(one(R), 20), 3s]
+    x, st, _ = lp_solve(route, method, A, b)
+    @test st.code == SUCCESS
+    @test isapprox(x[1], ldexp(one(R), 21); rtol = 8 * eps(R))
+    @test isapprox(x[2], 12s; rtol = 8 * eps(R))
+end
+
+# The Wilkinson growth matrix of size `n`: 1 on the diagonal and in the last column, -1 below the
+# diagonal.
+function wilkinson(n::Int)
+    W = Matrix(1.0I, n, n)
+    for i in 2:n
+        W[i, 1:(i - 1)] .= -1
+    end
+    W[:, n] .= 1
+    return W
+end
+
+@testset "the LU solve of 2^kA W and a solution near floatmax / 2^n: $route, $T, n = $n, kA = $kA" for route in ROUTES,
+    T in REAL_ELTYPES,
+    n in (8, 12),
+    kA in (-40, 20 - exponent(floatmax(T)))
+
+    # `A = 2^kA W` with the Wilkinson matrix `W` and `kA < 0`, so that the own-type factor holds
+    # `A / 2^e` with `e < 0`, and `b = A x` with `x = 2^(emax - n - 1) v`, `v = (1, -2, 3, …)`.
+    # Partial pivoting keeps `U = I + 2^(i - 1)` in the last column, so the back substitution forms
+    # intermediates up to `2^(n - 1)` times the solution it gives. With `b` lifted by `2^-e`, that
+    # solution is `x` itself and the intermediates overflow; `b` of an exponent above 0 is not
+    # lifted, the solve gives `2^e x`, and its intermediates stay finite.
+    emax = exponent(floatmax(T))
+    A = T.(ldexp.(wilkinson(n), kA))
+    v = T.(collect(1:n) .* (-1) .^ (0:(n - 1)))
+    b = T.(big.(A) * (big.(v) .* big(2.0)^(emax - n - 1)))
+    x, st, _ = lp_solve(route, LUFactorization(), A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 64 * eps(T) * cond1(A)
+end
+
+@testset "m < n, a matrix below floatmin and a subnormal b: $route, $T, $(nameof(typeof(method))), kA = $kA" for (route, method) in (
+        ("SMatrix", QRFactorization()), ("SMatrix", SVDFactorization()),
+        ("Array", QRFactorization())),
+    T in ELTYPES,
+    kA in (-exponent(floatmax(real(T))) + 23, -exponent(floatmax(real(T))) - 3,
+        exponent(nextfloat(zero(real(T)))) + 12)
+
+    # `A = 2^kA (1, 1, 1, 1)` near or below `floatmin` and `b = t`, `t = nextfloat(0)`: the
+    # minimum-norm solution `2^(-kA - 2) t (1, 1, 1, 1)` lies in the normal range. The factor holds
+    # `Aᴴ / 2^e`, and the solve lifts `b` with the matrix, so that the forward substitution of the
+    # QR and the coordinates of the SVD do not run on the subnormal grid; with `b` as it is, they
+    # lose the solution to 0, or to a power of two of it.
+    R = real(T)
+    t = nextfloat(zero(R))
+    A = fill(T(ldexp(one(R), kA)), 1, 4)
+    b = T[t]
+    x, st, _ = lp_solve(route, method, A, b)
+    @test st.code == SUCCESS
+    @test relerr(x, xref(A, b)) <= 32 * eps(R)
 end
 
 @testset "a Cholesky factor in the element type of A · 2^-4 gives the bits of A: $route, $T" for route in ROUTES,
