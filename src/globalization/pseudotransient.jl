@@ -31,7 +31,8 @@ takes no `reuse` and no refinement, and needs a factorising linear method: a [`G
 problem other than a `StationarityProblem` raises an `ArgumentError` where the state is built: a
 [`NonlinearProblem`](@ref), a [`LeastSquaresProblem`](@ref), and the problem that a combinator
 such as [`LeftPreconditioned`](@ref) builds. The shift follows the gradient flow of `S` only
-where `F` is a gradient.
+where `F` is a gradient, which it is where `E == U`; for other index sets `F` is no gradient,
+and the shifted steps still aim at a root of `F`.
 """
 struct PseudoTransient{R <: AbstractFloat}
     δ₀::R
@@ -63,7 +64,12 @@ Adapt.@adapt_structure PseudoTransient
 end
 
 # The pseudo-time step after a step from a residual of norm `fnorm` to one of norm `fnorm₊`: the
-# ratio is taken first, so that neither norm is squared or multiplied by `δ` alone.
+# fractions of `frexp` are multiplied and divided, and the exponents are added, so that neither
+# the ratio nor the product underflows or overflows before the result does. A residual of zero
+# after the step has the fraction zero, and gives the cap.
 @inline function pt_next_step(pt::PseudoTransient, δ::R, fnorm::R, fnorm₊::R) where {R}
-    return min(δ * (fnorm / fnorm₊), R(pt.δ_max))
+    fδ, eδ = frexp(δ)
+    f, e = frexp(fnorm)
+    f₊, e₊ = frexp(fnorm₊)
+    return min(ldexp2(fδ * (f / f₊), eδ + e - e₊), R(pt.δ_max))
 end

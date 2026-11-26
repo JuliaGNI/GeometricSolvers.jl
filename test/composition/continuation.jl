@@ -250,6 +250,9 @@ end
         @test !bordered_solve!(T[1 1; 1 1], T[1, 2])
         @test !bordered_solve!(T[2 1; 1 3], T[NaN, 2])
     end
+    # a `BigFloat` matrix with a zero pivot, on which the generic back substitution throws
+    # `SingularException`
+    @test !bordered_solve!(BigFloat[1 1; 1 1], BigFloat[1, 2])
 end
 
 @testset "the corrector stops at √eps" begin
@@ -292,6 +295,14 @@ end
         h = ParameterHomotopy((p, λ) -> λ)
         _, status = solve(NonlinearProblem((x, p) -> x - 1 / (1 - p)), one(T), Continuation(h))
         @test status.iterations > 0
+        # nor is `F` evaluated at `(x₀, p_1)` before the path: `log(x − q)` is not defined at
+        # `x₀ = 1` and `q = p_1 = 2`, and the path `x = 1 + 2λ` reaches the root 3
+        h = ParameterHomotopy((p, λ) -> 2λ)
+        for (prob, x₀) in ((NonlinearProblem((x, q) -> log(x - q)), one(T)),
+            (NonlinearProblem((y, x, q) -> (y[1] = log(x[1] - q); nothing)), T[1]))
+            x, status = solve(prob, x₀, Continuation(h))
+            @test status.code == SUCCESS && isapprox(only(x), 3; rtol = 8 * eps(T))
+        end
         # `x² + 1 = 0` at `λ = 0` has no root to correct the start onto
         h = ParameterHomotopy((p, λ) -> λ)
         solver = init(NonlinearProblem((x, p) -> x^2 + 1 - 2p), T(0.5), Continuation(h))
@@ -306,6 +317,14 @@ end
             @test status.code == STALLED && status.iterations == 0 && x == x₀ &&
                   isempty(continuation_steps(solver).λ)
         end
+    end
+    # the same fold in `BigFloat`, whose generic LU factor of the singular bordered system has a
+    # zero pivot
+    for x₀ in (big(1.0), big(-1.0))
+        solver = init(NonlinearProblem(cubic), x₀, Continuation(NewtonHomotopy()))
+        x, status = solve!(solver)
+        @test status.code == STALLED && status.iterations == 0 && x == x₀ &&
+              isempty(continuation_steps(solver).λ)
     end
 end
 
