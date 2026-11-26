@@ -7,7 +7,7 @@ This package is pre-1.0, so *every* minor release is potentially breaking in the
 so that a compat-only bump can be told apart from an interface change.
 
 
-## [Unreleased] — targeting 0.1.0
+## [Unreleased]
 
 ### Changed
 
@@ -80,6 +80,35 @@ so that a compat-only bump can be told apart from an interface change.
   routes, in `Float32`, `Float64` and `ComplexF64`), the 1 619 that both runs record give the
   same return code and the same error to four digits. `test/verification/standard_reference.csv`
   is unchanged.
+
+
+## [0.1.0] — 2026-11-26
+
+The first registered release. GeometricSolvers solves nonlinear systems `F(x, p) = 0` and
+stationarity problems in three regimes: value semantics on a `Number` or an `SVector` (R1), batches
+with `solve_batch!` on the CPU or a GPU (R2), and in place on a host or device array (R3), with a
+matrix-free variant through `GMRES` or `MINRESQLP`. It solves nonlinear least-squares problems in
+R1 and R3; `solve_batch!` takes no `LeastSquaresProblem`. The
+entries below record the development before this release; there is no earlier release to compare
+with, and a "breaking" entry names a change against an earlier state of `main`. The entries on the
+test layout and the Metal workflow state the test groups and the required checks of this release,
+which closes `K94` in `KNOWN_ISSUES.md`.
+
+### Changed
+
+- **The README describes the package and gives five examples.** It states the three regimes and
+  how the storage of the initial iterate selects one, the matrix-free regime, the families of
+  methods, the problem types and the package extensions, with links to the documentation, and
+  replaces the line that called the package early-stage with a pre-1.0 status line. The examples
+  are a scalar and an `SVector` solve (R1), an in-place `Newton` with `Backtracking` through
+  `init` and `solve!` (R3), a batch with `solve_batch!` on the CPU (R2), a least-squares fit with
+  `GaussNewton` and with `LevenbergMarquardt`, and a matrix-free Newton–GMRES solve; the output
+  under each is that of a run of the block. A sixth block, a batch on a GPU, is marked as not
+  run. The Development section, at the end, now states what the git hooks do: the files in
+  `.githooks`, when `pre-commit` runs (a staged `.jl` file, a staged `.jl` deletion, a change
+  below `test/`), each of its stages and whether it blocks, the test-layout check and ast-grep
+  among them, and that `pre-push` runs the suite only on a push to `main` or `master`. The NFC fix
+  names the `nfc.jl` script of the shared hook set in place of a path on one machine.
 
 - **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
   `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
@@ -1862,14 +1891,14 @@ so that a compat-only bump can be told apart from an interface change.
 - The test suite follows the shared layout. The test dependencies move from `[extras]` and
   `[targets]` to `test/Project.toml`, with their bounds; `Adapt`, which the tests use directly,
   takes its bound from `Project.toml` alone, and `Documenter` is new. `test/runtests.jl` selects
-  the groups `core`, `slow` and `metal` from `ARGS`, and the next entry gives the groups of a run
-  with empty `ARGS`. `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to
-  `test/quality/aqua.jl` and `test/quality/jet.jl`, the line-function fixture moves to
-  `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
-  docstring doctests. No file of `test/gpu/` moves.
+  its test groups from `ARGS`, and the next entry gives the groups of a run with empty `ARGS`.
+  `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to `test/quality/aqua.jl` and
+  `test/quality/jet.jl`, the line-function fixture moves to `test/helpers/linefunctions.jl`, and
+  the new `test/quality/doctests.jl`, the one file of the group `doctests`, runs the docstring
+  doctests. No file of `test/gpu/` moves.
 - A default test run on an Apple-silicon Mac runs the Metal device tests. When `ARGS` is empty,
-  `test/runtests.jl` runs the groups `core`, `slow` and `metal` on an Apple-silicon Mac and `core`
-  and `slow` everywhere else. The new `test/devices/metal.jl`, in the `metal` group, includes
+  `test/runtests.jl` runs the groups that `test/ci-groups.toml` lists, and on an Apple-silicon Mac
+  the group `metal` after them. The new `test/devices/metal.jl`, in the `metal` group, includes
   `test/gpu/runtests.jl` and runs its Metal case, the `axpy` kernel in `Float32` and `Float16`;
   `test/gpu/` stays the separate suite for a run by hand, and `test/gpu/README.md` and the header
   of `test/gpu/runtests.jl` say that the Metal case alone has device CI. Where
@@ -1877,8 +1906,8 @@ so that a compat-only bump can be told apart from an interface change.
   (`@test_skip Metal.functional()`), also under `test_args = ["metal"]`. Metal (1.10 or later) is
   a test dependency on every platform; it installs on Linux and Windows, and no default run there
   loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and
-  `1` Julia versions, and a step before the tests fails that job where Metal is not functional. The
-  job is not a required check.
+  `1` Julia versions, and a step before the tests fails that job where Metal is not functional. Its
+  two jobs are required checks.
 - The `Adapt` floor is 4.7.3. Metal 1.12, which the test environments take, needs `GPUArrays`
   12.1, and that needs Adapt 4.7.3, so a test environment with `Metal = "1.12"` does not resolve
   with Adapt held below it.
