@@ -35,6 +35,7 @@ export LUFactorization, LDLTFactorization, QRFactorization, SVDFactorization,
        CholeskyFactorization
 export KroneckerFactorization, StageResidual, stage_matrix, stage_jacobian
 export UMFPACKFactorization
+export LinearProblem, LinearSolver, LinearStatus, refactorize!!
 export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt
@@ -82,6 +83,7 @@ include("linear/ka/svd.jl")
 include("linear/mixed.jl")
 include("linear/gmres.jl")
 include("linear/kronecker.jl")
+include("linear/linearproblem.jl")
 
 include("globalization/linesearch.jl")
 include("globalization/static.jl")

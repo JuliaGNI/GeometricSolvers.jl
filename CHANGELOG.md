@@ -1009,6 +1009,44 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`LinearProblem(A)`, `init(prob, method)` and `solve!(solver, b)` solve a dense linear system
+  for many right-hand sides after one factorisation.** `LinearProblem`, `LinearSolver`,
+  `LinearStatus` and `refactorize!!` are exported. `LinearProblem(A)` holds a dense matrix in the
+  field `A`; a zero dimension, a sparse matrix, and an `A` or a `b` with an axis that does not
+  start at 1 raise an `ArgumentError`. `init` factorises with
+  `LUFactorization`, `QRFactorization`, `SVDFactorization`, `LDLTFactorization` or
+  `CholeskyFactorization` and returns a `LinearSolver`; `GMRES`, `UMFPACKFactorization` and a
+  precision marker such as `TF32` raise an `ArgumentError`. `solve!` returns `(x, status)` with an
+  `isbits` `LinearStatus` of `code::ReturnCode` and `rank::Int32`. A static matrix (R1) gives a
+  new `SVector` result and a solver that is `isbits` for an `isbits` element type, and `init`,
+  `solve!` and `refactorize!!` are inferred and allocation-free for a `Float64` `SMatrix`. Any
+  other dense `AbstractMatrix`, on the host or a device (R3), returns the buffer `solver.x`, which
+  the next `solve!` overwrites; on a `Float64` host `Array`, `solve!` and `refactorize!!` allocate
+  nothing after a warm-up. A `b` that shares memory with `solver.x` and is not `solver.x` itself,
+  such as a view of it, is copied before the solve, which allocates one copy of `b`;
+  `b === solver.x` is solved in place. The object adds no kernel. `m == n` takes every factor type,
+  and `CholeskyFactorization` on a device raises an `ArgumentError`. `m > n` is the least-squares
+  solution through QR or SVD, the minimum-norm one where the SVD rank is below `n`; LU, LDLᵀ and
+  Cholesky raise an `ArgumentError` for `m ≠ n`. `m < n` is the minimum-norm solution through the
+  SVD of `Aᴴ` truncated at its rank, on every route, or through a QR of `Aᴴ`, `x = Q R⁻ᴴ b`, on a
+  static matrix and a host array; QR with `m < n` on a device array raises an `ArgumentError`. The
+  QR path is not rank-revealing: its `rank` is -1, and an exact zero on the diagonal of `R` gives
+  `SINGULAR`. The default SVD cutoff is that of the factored matrix with `max(m, n)` rows,
+  `√max(m, n) · eps(R) · σ₁`; `SVDFactorization(; rtol)` sets `rtol · σ₁`. The factors take
+  `factor_eltype(method, eltype(A))` and `x` is in `eltype(A)`; a lower precision divides `b` by
+  its largest absolute entry before the conversion, for `m < n` too, and there is no iterative
+  refinement. `SINGULAR` (factor `info ≠ 0`) gives `x` all `NaN` and `rank` -1. A non-finite `A` is
+  not factorised and gives `NONFINITE`, `rank` -1 and `x` all `NaN`; a non-finite `b` gives
+  `NONFINITE` and `x` all `NaN`, and a non-finite `x` gives `NONFINITE`. `rank` is the SVD rank
+  and -1 for every other factor. `refactorize!!(solver, A)` takes the same size (else
+  `DimensionMismatch`), element type and backend (else `ArgumentError`); it returns a new value on
+  R1, where the old solver still solves its matrix, and the same buffers, `x` included, on R3.
+  `LinearProblem` clashes with `SciMLBase.LinearProblem` for a caller that uses both packages, as
+  `NonlinearProblem` does; such a caller qualifies the name. Tests are in
+  `test/linear/linearproblem.jl` (core group), `test/devices/metal_linearproblem.jl` (metal group)
+  and a testset in `test/gpu/cuda/runtests.jl` that leaves out the `m > n` QR (K91 of
+  `KNOWN_ISSUES.md`); the API page has a section "Linear-solve object".
+
 - **`KroneckerFactorization(; block = LUFactorization())` solves the Newton steps of the stage
   system of an implicit Runge–Kutta method.** With the stage matrix `A = V Λ V⁻¹`, `Newton`
   factorises `s` blocks `γᵢ I − J` of size `n × n`, `γᵢ = 1/(h λᵢ)`, in place of one `s·n × s·n`
