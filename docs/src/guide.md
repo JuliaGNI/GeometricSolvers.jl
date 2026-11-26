@@ -9,7 +9,8 @@ one applies. It names no method as the right one: the choice depends on the prob
 cost of its residual and its Jacobian, and the start. The pages under *Algorithms* describe each
 method in full.
 
-The storage of the iterate selects the regime (see [The three regimes](@ref regimes)). R5 is an R3
+The entry point and the storage of the iterate select the regime (see
+[The three regimes](@ref regimes)). R5 is an R3
 iterate with a matrix-free linear solver:
 
 | regime | iterate | entry point | linear solver |

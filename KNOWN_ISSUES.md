@@ -561,19 +561,6 @@
 - **kind:** not verified
 - **found:** #97
 
-### K94 · Two entries of the `[Unreleased]` section of `CHANGELOG.md` name test groups and a required-check status that `main` at 4646177 already does not have
-
-- **location:** `CHANGELOG.md:1323`
-- **evidence:** `CHANGELOG.md:1323` says that `test/runtests.jl` selects the groups `core`, `slow`
-  and `metal`; `CHANGELOG.md:1327` puts `test/quality/doctests.jl` in `slow`; `CHANGELOG.md:1330`
-  says that an empty `ARGS` runs `core`, `slow` and `metal`; and `CHANGELOG.md:1339` says that the
-  Metal job is not a required check. At 4646177, `test/ci-groups.toml` lists six groups,
-  `test/quality/doctests.jl` is the one file of the group `doctests`, and the Metal jobs are
-  required checks, as `CHANGELOG.md:692` says. These sentences were false before the parallel test
-  form, which leaves them as they are.
-- **kind:** docs
-- **found:** 2026-11-20
-
 ### K95 · Under Metal.jl 1.12, `factorize!!` never reaches the negative-status branches of `_mps_lu_finish!`, and a non-singular MPS failure throws instead of giving `info = 1`
 
 - **location:** `ext/GeometricSolversMetalExt.jl:44`
