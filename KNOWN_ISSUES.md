@@ -1127,7 +1127,7 @@
 - **found:** 2026-11-25; the homotopy forms that the part's spec decides (its clause 3), at a
   scale outside those that its clauses and the scale row name
 
-### K136 · A `StationarityProblem` evaluates a callable datum at the parameters `p` of the solve, which a `ParameterHomotopy` maps before its problem reads them
+### K143 · A `StationarityProblem` evaluates a callable datum at the parameters `p` of the solve, which a `ParameterHomotopy` maps before its problem reads them
 
 - **location:** `src/nonlinear/stationarity.jl` (`_init_stationarity_state`, the `solve!!` of a
   `DenseStationarityState` and `_solve_stationarity_solver!`, which evaluate `b(p)` to check its
