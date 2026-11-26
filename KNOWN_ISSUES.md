@@ -973,3 +973,25 @@
 - **kind:** found late
 - **found:** 2026-11-25; the homotopy forms that the part's spec decides (its clause 3), at a
   scale outside those that its clauses and the scale row name
+
+### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
+
+- **location:** `src/nonlinear/newton.jl:1041` (`stored_factors`), `:1057` (`promoted_factors`);
+  `docs/src/manual/regimes.md:147`
+- **evidence:** each line reads "a matrix-free [`GMRES`](@ref) solve" as the solve whose factor is
+  `nothing`. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
+  The two docstring lines read the same at `9023f76` (`newton.jl:1006`, `:1022`), where
+  `MINRESQLP` already held no factor. The wording "a matrix-free solve ([`matrix_free`](@ref))"
+  covers every such method.
+- **kind:** docs
+- **found:** 2026-11-26
+
+### K137 · A comment in the GMRES tests says that no linear method other than `GMRES` takes the `forcing` and `preconditioner` keywords of `Newton`
+
+- **location:** `test/nonlinear/krylov.jl:1334`
+- **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
+  them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
+  (`src/nonlinear/newton.jl:211–214`, `with_forcing`). The comment was already false at `9023f76`,
+  for `MINRESQLP`. The assertions below it use the default `LUFactorization()` and hold.
+- **kind:** docs
+- **found:** 2026-11-26
