@@ -68,7 +68,10 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   [`LevenbergMarquardt`](@ref) globalization takes no reuse: its model needs the Jacobian of the
   current iterate, and the constructor raises an `ArgumentError`. A [`PseudoTransient`](@ref)
   globalization takes no reuse and no refinement either, because its shift changes at every
-  step.
+  step. A [`GMRES`](@ref) with a preconditioner takes `reuse = k` as the period of the
+  preconditioner: it keeps the preconditioner for up to `k` consecutive steps, so
+  [`refresh!`](@ref) runs at the first step, `k` steps after each refresh, and early at the step
+  after a `STALLED` step or an inner solve that reached its cap, with no retry within a step.
 - `best::B`: `Val(false)`, the default, or `Val(true)` from the keyword `best = true`, which
   returns the best iterate (below). The six-argument positional constructor gives `Val(false)`.
 
@@ -100,9 +103,11 @@ the norm of the global residual; its inner method takes `best = true`, which has
 [`DQGMRES`](@ref) of `linsolve`, `forcing` configures a [`MINRESQLP`](@ref) too, and a `Newton`
 that takes either of them with any other linear method, or a `preconditioner` with `MINRESQLP`,
 raises an `ArgumentError`. A `Newton` with a matrix-free linear method ([`matrix_free`](@ref))
-forms no factor, so it takes no `reuse`, no [`Refinement`](@ref), no
+forms no factor, so it takes no `reuse`, except a `GMRES` with a preconditioner, where `reuse` is
+the period of its refresh, no [`Refinement`](@ref), no
 [`LevenbergMarquardt`](@ref) and no [`PseudoTransient`](@ref) globalization, and a
-[`DogLeg`](@ref) needs an unrestarted `GMRES` without a preconditioner or a `MINRESQLP`. A
+[`DogLeg`](@ref) needs an unrestarted `GMRES` without a preconditioner and with
+`basis_eltype = Nothing`, or a `MINRESQLP`. A
 [`Steihaug`](@ref) globalization needs a `MINRESQLP`. A [`JVPFunction`](@ref) in `jacobian` needs
 a matrix-free linear method, because a factorising method needs a Jacobian matrix. Each refusal
 is an `ArgumentError`.
@@ -110,8 +115,8 @@ is an `ArgumentError`.
 - `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
   the relative tolerance of every Newton step's inner solve.
 - `preconditioner`: the right preconditioner of `linsolve`, which [`refresh!`](@ref) is called on
-  once per Newton step and [`apply_preconditioner!`](@ref) on before every Jacobian-vector
-  product.
+  once per Newton step, or as `reuse` sets for a `GMRES`, and [`apply_preconditioner!`](@ref) on
+  before every Jacobian-vector product.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
     B <: Union{Val{false}, Val{true}}}
@@ -159,8 +164,8 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a MINRESQLP solve does not form"))
         elseif matrix_free(linsolve)
-            reuse === nothing ||
-                throw(ArgumentError("Newton with a matrix-free linear method takes no factor reuse: its step has no factor"))
+            (reuse === nothing || preconditioner_reuse(linsolve)) ||
+                throw(ArgumentError("Newton with a matrix-free linear method takes no factor reuse: its step has no factor; a GMRES with a preconditioner takes reuse as the period of the preconditioner's refresh"))
             is_refining(refinement) &&
                 throw(ArgumentError("Newton with a matrix-free linear method takes no refinement: its step has no factor to refine against"))
             if globalization isa DogLeg
@@ -170,6 +175,8 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
                     throw(ArgumentError("Newton with a DogLeg globalization needs unrestarted GMRES: restart must equal maxiter"))
                 linsolve.preconditioner === nothing ||
                     throw(ArgumentError("Newton with a DogLeg globalization takes a GMRES without a preconditioner"))
+                linsolve.basis_eltype === Nothing ||
+                    throw(ArgumentError("Newton with a DogLeg globalization takes a GMRES with basis_eltype = Nothing: its trial loop reads the Arnoldi basis as orthonormal in the working precision"))
             end
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization needs a Jacobian matrix, which a matrix-free solve does not form"))
@@ -222,8 +229,8 @@ end
 @inline function with_forcing(g::GMRES, forcing, preconditioner)
     f = forcing === nothing ? g.forcing : forcing
     P = preconditioner === nothing ? g.preconditioner : preconditioner
-    return GMRES{typeof(f), typeof(P), g.jvp_eltype}(
-        g.maxiter, g.restart, f, P, g.jvp_eltype, g.mgs)
+    return GMRES(
+        g.maxiter, g.restart, f, P, g.jvp_eltype, g.mgs, g.basis_eltype, g.flexible)
 end
 @inline function with_forcing(g::BiCGStab, forcing, preconditioner)
     f = forcing === nothing ? g.forcing : forcing
@@ -463,7 +470,8 @@ with no pattern does; an explicit `jacobian_prototype` does not consult it.
 Whether a [`Newton`](@ref) with the linear method `method` solves its step through
 Jacobian–vector products alone and forms no Jacobian matrix: `false` by default, and `true` for
 [`GMRES`](@ref), [`BiCGStab`](@ref), [`DQGMRES`](@ref) and [`MINRESQLP`](@ref). Where it is
-`true`, the `Newton` takes no factor reuse and no [`Refinement`](@ref), its `forcing` keyword
+`true`, the `Newton` takes no factor reuse, except a `GMRES` with a preconditioner, where `reuse`
+is the period of the preconditioner's refresh, and no [`Refinement`](@ref), its `forcing` keyword
 configures the method, and so does its `preconditioner` keyword for every method but
 `MINRESQLP`, a [`JVPFunction`](@ref) is a `jacobian` it takes, and `solve` refuses a
 `ForwardDiff.Dual` in `x₀` or `p`. The trait is a query on the linear methods of this package,
@@ -472,6 +480,11 @@ not an extension point: the workspace and the step of a matrix-free solve are in
 """
 @inline matrix_free(::LinearMethod) = false
 @inline matrix_free(::Union{GMRES, BiCGStab, DQGMRES, MINRESQLP}) = true
+
+# Whether a matrix-free linear method takes `reuse`: a `GMRES` with a preconditioner, whose
+# refresh the period of `reuse` sets.
+@inline preconditioner_reuse(g::GMRES) = g.preconditioner !== nothing
+@inline preconditioner_reuse(::LinearMethod) = false
 
 # The pattern that the factor of `ls` on `x` is built on: an explicit prototype as it is, and a
 # detected pattern only where `has_sparse_factor` holds, else `nothing` and the dense factor. A
@@ -574,8 +587,9 @@ end
 @inline init_globalization(g, linsolve::LinearMethod, x, Fx) = init_globalization(
     g, linsolve, x)
 
-# The rule state of `Newton` with `reuse = k`: the age of the factor, and whether the last step
-# stalled, which refreshes the factor early.
+# The rule state of `Newton` with `reuse = k`: the age of the factor, or of the preconditioner of a
+# `GMRES`, and whether the last step stalled, which refreshes it early; a `GMRES` step also sets
+# the flag where its inner solve reached its cap.
 struct FactorAge
     age::Int32
     stalled::Bool
@@ -584,6 +598,10 @@ end
 # The age of a factor that a step has just factorised: the next step reuses it unless the period
 # is one step long.
 @inline fresh_age(m::Newton) = m.reuse == Int32(1) ? Int32(0) : Int32(1)
+
+# The age of a reused factor after one more step: `0` at the end of its period of `reuse` steps.
+@inline next_age(rule::FactorAge, m::Newton) = rule.age + one(Int32) >= m.reuse ? Int32(0) :
+                                               rule.age + one(Int32)
 
 # The rule state of `Newton` with `DogLeg` or `Steihaug`: the radius, and the initial radius that
 # each solve starts from, `0` when the first step sets it.
@@ -1686,12 +1704,14 @@ end
 @inline function newton_step!!(
         state::NewtonState, m::Newton{L, G, J, RF, Reg, Int32},
         prob::AbstractNonlinearProblem, x, Fx, p) where {L, G, J, RF, Reg}
+    ws = gmres_workspace(state)
+    ws === nothing || return gmres_step!!(state, ws, m, m.linsolve, prob, x, Fx, p)
     is_mixed(m, eltype(x)) && return mixed_step!!(state, m, prob, x, Fx, p)
     rule = state.rule
     age_fresh = fresh_age(m)
     failures = Int32(0)
     if !(rule.age == Int32(0) || rule.stalled)
-        age₊ = rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32)
+        age₊ = next_age(rule, m)
         # A reused factor whose `Refinement` fails is refactorised at `x`, within the step, and
         # counts one step-rule failure. A reused factor can also give a direction that does not
         # descend: a line search along it that fails without a step is retried once, in the same
@@ -1731,8 +1751,7 @@ end
     rule = state.rule
     fresh = state.promoted || rule.age == Int32(0) || rule.stalled
     age_fresh = fresh_age(m)
-    age₊ = fresh ? age_fresh :
-           (rule.age + one(Int32) >= m.reuse ? Int32(0) : rule.age + one(Int32))
+    age₊ = fresh ? age_fresh : next_age(rule, m)
     while true
         was_fresh = fresh
         md = mixed_newton!!(state, m, prob, x, Fx, fnorm_old, p, fresh, true)
@@ -2026,9 +2045,10 @@ end
     # a value that `start!!` sets is `NaN` on a state it did not see, so a step reads no state of
     # an earlier solve
     (isfinite(fnorm) && isfinite(ws.prev_fnorm) && isfinite(ws.last_eta)) ||
-        return false, zero(R), Int32(0), fnorm
+        return false, zero(R), Int32(0), fnorm, false
     η = R(compute_forcing(g.forcing, ws.step, fnorm, ws.prev_fnorm, ws.last_eta, ws.linres))
-    refresh!(g.preconditioner, prob, x, Fx, p)
+    refreshed = refresh_due(state.rule)
+    refreshed && refresh!(g.preconditioner, prob, x, Fx, p)
     map!!(-, ws.bb, Fx)
     op = R5Operator(state.jvpprep, prob, x, p)
     _, info = gmres_solve!(
@@ -2045,7 +2065,22 @@ end
     # or direction: the step ends with `NONFINITE` before a globalization reads either
     ok = isfinite(info.resnorm) && all(isfinite, ws.d)
     η_ach = iszero(fnorm) ? zero(R) : min(info.resnorm / fnorm, η)
-    return ok, R(η_ach), failures, fnorm
+    return ok, R(η_ach), failures, fnorm, refreshed
+end
+
+# Whether a step refreshes the preconditioner: every step without `reuse`, and with `reuse = k` a
+# step at age 0 and the step after one that stalled or whose inner solve reached its cap.
+@inline refresh_due(rule) = true
+@inline refresh_due(rule::FactorAge) = rule.age == Int32(0) || rule.stalled
+
+# The rule state after a step of a `Newton` with `GMRES`: unchanged without `reuse`; with it, the
+# age of the preconditioner, as `FactorAge` holds the age of a factor, and whether the next step
+# refreshes early, after a `STALLED` step or an inner solve that reached its cap.
+@inline preconditioner_rule(rule, m::Newton, refreshed::Bool, code, failures) = rule
+@inline function preconditioner_rule(
+        rule::FactorAge, m::Newton, refreshed::Bool, code, failures)
+    age₊ = refreshed ? fresh_age(m) : next_age(rule, m)
+    return FactorAge(age₊, code == STALLED || failures > Int32(0))
 end
 
 # The step of a `Newton` with `GMRES`: the inner solve and the globalization of its direction. A line
@@ -2058,7 +2093,8 @@ end
         m::Newton, g::GMRES{F, P, TJ}, prob, x, Fx, p) where {F, P, TJ}
     R = real(eltype(x))
     cap = m.globalization isa DogLeg ? Int32(size(ws.V, 2) - 1) : g.maxiter
-    ok, η_ach, failures, fnorm = gmres_direction!(state, g, ws, prob, x, Fx, p, cap)
+    ok, η_ach, failures, fnorm, refreshed = gmres_direction!(
+        state, g, ws, prob, x, Fx, p, cap)
     ok ||
         return x, Fx, state, StepInfo{R}(NONFINITE, fnorm, zero(R), failures, false, false)
     d = ws.d
@@ -2078,14 +2114,17 @@ end
         InexactStep(η_ach), state.merit)
     accepted_linres!(ws, info.stepnorm, dnorm)
     info = bump_failures(info, failures)
-    return x₊, F₊, with_merit(state, merit, info.fnorm), info
+    rule = preconditioner_rule(state.rule, m, refreshed, info.code, failures)
+    return x₊, F₊, with_merit(with_rule(state, rule), merit, info.fnorm), info
 end
 
 # The linear residual `‖F + α J d‖` of the step `α d` that a line search accepted, which the
 # Choice 1 forcing term of the next step reads; `α = stepnorm / ‖d‖`. On one Arnoldi cycle,
-# `F + α J M⁻¹ V_k y = V_{k+1} (-β₀ e₁ + α H̄_k y)`, so the value is the norm of a reduced vector
-# and costs no product. A restarted solve has no such relation and keeps the residual of its
-# direction, and so does a full step, whose residual that is.
+# `F + α J d = V_{k+1} (-β₀ e₁ + α H̄_k y)` for `d = M⁻¹ V_k y`, and `d = Z_k y` on the flexible
+# path, so the value is the norm of a reduced vector and costs no product. On a basis stored in a
+# type other than the working one, the relation holds to the round-off of that type. A restarted
+# solve has no such relation and keeps the residual of its direction, and so does a full step,
+# whose residual that is.
 @inline function accepted_linres!(ws::GMRESWorkspace{T, R}, stepnorm, dnorm) where {T, R}
     k = Int(ws.arnoldi)
     (k > 0 && ws.gmres_iterations == ws.arnoldi) || return nothing

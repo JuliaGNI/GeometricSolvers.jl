@@ -37,7 +37,7 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             "Newton Backtracking SVD", "Newton LevenbergMarquardt SVD",
             "Newton reuse 3 Backtracking LU", "Picard Backtracking",
             "Newton Backtracking GMRES", "Newton Backtracking BiCGStab",
-            "Newton Backtracking DQGMRES", "Broyden",
+            "Newton Backtracking DQGMRES", "Newton Backtracking Float32-basis GMRES", "Broyden",
             "LeftPreconditioned Picard Backtracking Newton",
             "Continuation FixedPointHomotopy",
             "Fallback Newton DogLeg LevenbergMarquardt"]
@@ -58,7 +58,7 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         @test PAIRING["Newton Static LU"][1].label == "Newton+Static+LUFactorization"
         @test PAIRING["Newton reuse 3 Backtracking LU"][1].label ==
               "Newton(3)+Backtracking+LUFactorization"
-        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 17 + 21
+        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 18 + 21
         # The nine `Newton` columns with a factorisation take the shared Jacobian, and the
         # GeometricSolvers adapter hands it to no other column: a Jacobian that throws reaches
         # the solve on those nine alone.
@@ -516,7 +516,7 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
             @test out.result isa Thrown
         end
         # The block tables' counts.
-        @test length.(block_cells.(BLOCKS)) == (395, 816, 1264, 20)
+        @test length.(block_cells.(BLOCKS)) == (395, 864, 1264, 20)
     end
 
     @testset "nsol: a Jacobian at every iteration, and a start that meets the test" begin

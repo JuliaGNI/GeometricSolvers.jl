@@ -21,7 +21,7 @@ its globalization. Its keywords are:
 | `jacobian` | `nothing` | the Jacobian source: `nothing` (the problem's `J`, else `AutoForwardDiff()`), an ADTypes back end, a callable (`J(x, p)` on a value iterate, `J!(J, x, p)` on an array) except with a matrix-free linear method, or a [`JVPFunction`](@ref) for a matrix-free linear method ([`matrix_free`](@ref)) |
 | `refinement` | `NoRefinement()` | iterative refinement of the direction: [`Refinement`](@ref) or [`GMRESRefinement`](@ref), see [Mixed precision](@ref mixed) |
 | `regularization` | `0` | the diagonal shift ``\mu`` of ``J + \mu I`` |
-| `reuse` | `nothing` | the factor-reuse period `k` |
+| `reuse` | `nothing` | the factor-reuse period `k`, or the refresh period of a preconditioned `GMRES` |
 | `forcing`, `preconditioner` | `nothing` | the forcing term and the right preconditioner of a `GMRES`, `BiCGStab` or `DQGMRES`; the forcing term of a `MINRESQLP` |
 | `best` | `false` | return the iterate of the smallest ``\|F\|_2`` of a solve that ends without `SUCCESS` |
 

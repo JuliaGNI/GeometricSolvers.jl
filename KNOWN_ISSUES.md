@@ -691,7 +691,7 @@
 
 ### K103 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
 
-- **location:** `src/linear/gmres.jl:547` (`linres` from the rotated right-hand side)
+- **location:** `src/linear/gmres.jl:616` (`linres` from the rotated right-hand side)
 - **evidence:** with `rng = Xoshiro(1)`, `A = T.(Diagonal(1:6) + 0.1 randn(rng, 6, 6))`, then
   `b = T.(randn(rng, 6))`, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32`
   reports `resnorm = 8.7e-17`, while the true residual is `‖b − A d‖ = 5.8e-8 ‖b‖`; in `Float64`
@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2038`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2058`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1138,7 +1138,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1043` (`stored_factors`), `:1059` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1061` (`stored_factors`), `:1077` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -1153,7 +1153,7 @@
 - **location:** `test/nonlinear/krylov.jl:1374`
 - **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
   them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
-  (`src/nonlinear/newton.jl:211–214`, `with_forcing`). The comment was already false at `9023f76`,
+  (`src/nonlinear/newton.jl:218–221`, `with_forcing`). The comment was already false at `9023f76`,
   for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
 - **kind:** docs
 - **found:** 2026-11-26
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2057` for `GMRES`, `:2300` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2092` for `GMRES`, `:2339` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1282,7 +1282,7 @@
 
 ### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
 
-- **location:** `src/nonlinear/newton.jl:2047` (`GMRES`), `:2269` (`MINRESQLP`), `:2319`
+- **location:** `src/nonlinear/newton.jl:2067` (`GMRES`), `:2308` (`MINRESQLP`), `:2358`
   (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
 - **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
   ratio asks `Backtracking` for more decrease than the direction gives. With
@@ -1297,11 +1297,42 @@
 - **kind:** defect
 - **found:** PR #127, its review and the CodeRabbit comment on the BiCGStab and DQGMRES step
 
+### K145 · The test of the summary of the standard test set finds the line of a column by its name and a space, so a column whose name is another column's name, a space and more matches two lines
+
+- **location:** `test/verification/standard.jl:399`
+- **evidence:** `only(filter(startswith(column * " "), split(summary, "\n")))` raises
+  `ArgumentError: Collection has multiple elements, must contain exactly 1 element` for the
+  column `Newton Backtracking GMRES` once a column named `Newton Backtracking GMRES Float32 basis`
+  is in `STANDARD_COLUMNS`: both summary lines start with `Newton Backtracking GMRES `. Observed on
+  a draft of the branch that adds the `Float32`-basis column, which then names it
+  `Newton Backtracking Float32-basis GMRES`, so no column of the table meets the case.
+- **kind:** defect
+- **found:** 2026-11-26
+
+### K146 · On a reduced basis, the CGS2 step does not see a Krylov space that is invariant to the round-off of the basis type, and the rest of the cycle makes no progress
+
+- **location:** `src/linear/gmres.jl:691` (`cgs2_reduced_step!`)
+- **evidence:** with `J = 14 I`, `b = fill(-9.0, 100)`, `GMRES(; maxiter = 20, basis_eltype =
+  Float16)` and `tol = 1e-10`, the stored `v₁` has `‖v₁‖² = 1 − 4.9e-4`, and the two CGS2 passes
+  leave `hj = 3.3e-6` along `v₁`, a Givens estimate of `2.4e-7 ‖b‖`; the step stores `v₂ = v₁`
+  bit for bit, classical Gram–Schmidt over the two equal columns doubles the projection, and the
+  subdiagonal of the Hessenberg matrix grows to `1.1e3` at `j = 10` and `1.2e4` at `j = 30`,
+  where `‖J v_j‖ = 14`. The cycle ends at its cap on a true residual of `2.4e-4 ‖b‖` without
+  convergence; with `restart = 10` the restart converges at 12 iterations (Julia 1.13.4). With a
+  `Float32` basis the remainder, `1.2e-14`, lies below the tolerance, and the solve converges in 2.
+  The MGS step with its second pass converges in 4 on the same system. The docstring of `GMRES`
+  states the limit, and the testset "A CGS2 cycle on a Krylov space invariant to a Float16 basis
+  makes no progress, and a restart recovers" of `test/nonlinear/krylov.jl:2190` asserts it. A
+  test of `hj` against the round-off of the stored basis would see the breakdown.
+- **kind:** defect
+- **found:** PR #129, the second fix round, where the remedy of the review's MGS finding was
+  decided as a second MGS pass and this limit as a documented one
+
 ### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
 
-- **location:** `src/nonlinear/newton.jl:2047` (`GMRES`), `:2269` (`MINRESQLP`), `:2319`
+- **location:** `src/nonlinear/newton.jl:2067` (`GMRES`), `:2308` (`MINRESQLP`), `:2358`
   (`BiCGStab` and `DQGMRES`), each `η_ach` from the inner solve on `J + μ I`
-  (`RegularizedJVP`, `:1992` and `:2170`); `:2068` (`dogleg_step_mf`, on the Arnoldi relation of
+  (`RegularizedJVP`, `:2011` and `:2209`); `:2104` (`dogleg_step_mf`, on the Arnoldi relation of
   that solve; read, not measured)
 - **evidence:** `InexactStep(η)` states `‖F + J d‖ ≤ η ‖F‖`; the inner solve bounds
   `‖F + (J + μ I) d‖` instead, and `‖F + J d‖` exceeds it by up to `μ ‖d‖`. With
@@ -1310,7 +1341,7 @@
   `fnorm = 1.3e-4`, and `GMRES`, `BiCGStab` and `DQGMRES` with `FixedForcing(1e-12)` each end
   `STALLED` after 2 iterations at `fnorm = √3`, the residual of `x₀` (Julia 1.13.4). `main` at
   907d20b gives the same for the dense `Newton` and `GMRES`. The line searches that evaluate the
-  slope take the product of `J` alone (`merit_jvp`, `:1297`), so `Bisection` and `StrongWolfe` do
+  slope take the product of `J` alone (`merit_jvp`, `:1315`), so `Bisection` and `StrongWolfe` do
   not have this limit. A fix chooses the step kind of a regularized direction, such as the measured
   slope or the attained ratio of `J` at one more product, and is a choice for all four methods
   together with K144.

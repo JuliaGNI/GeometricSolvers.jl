@@ -213,14 +213,17 @@ end
 
 """
     GMRES(; maxiter = 30, restart = nothing, forcing = EisenstatWalkerChoice2(),
-            preconditioner = nothing, jvp_eltype = Nothing, mgs = false)
+            preconditioner = nothing, jvp_eltype = Nothing, mgs = false,
+            basis_eltype = Nothing, flexible = false)
 
 The R5 matrix-free Newton–Krylov linear solver of [`Newton`](@ref): right-preconditioned GMRES
 on the Jacobian–vector product of the problem, with the forcing term `forcing`
 ([`EisenstatWalkerChoice2`](@ref) by default,
 [`EisenstatWalkerChoice1`](@ref) or [`FixedForcing`](@ref)), a right preconditioner
-`preconditioner`, the element type `jvp_eltype` of the product, and the orthogonalisation of the
-Arnoldi process that `mgs` selects.
+`preconditioner`, the element type `jvp_eltype` of the product, the orthogonalisation of the
+Arnoldi process that `mgs` selects, the storage type `basis_eltype` of the Krylov basis, and the
+flexible variant that `flexible` selects (Saad 1993, SIAM J. Sci. Comput. 14(2), 461–469,
+doi:10.1137/0914028).
 
 # Fields
 
@@ -233,8 +236,9 @@ Arnoldi process that `mgs` selects.
   needs. The Krylov basis holds `min(restart, n) + 1` columns.
 - `forcing::F`: the rule that sets the relative tolerance ``\\eta_k`` of step `k`.
 - `preconditioner::P`: the right preconditioner, `nothing` for none. `refresh!(P, prob, x, Fx, p)`
-  is called once per Newton step, before GMRES starts, and `apply_preconditioner!(z, P, v)` once
-  per inner iteration; the solve forms ``J M^{-1} u = -F`` and returns ``d = M^{-1} u``. A type
+  is called once per Newton step, before GMRES starts, or once per `k` steps under
+  `Newton(; reuse = k)`, and `apply_preconditioner!(z, P, v)` once per inner iteration; the solve
+  forms ``J M^{-1} u = -F`` and returns ``d = M^{-1} u``. A type
   that carries a preconditioner extends those two functions, for example a stored factorisation
   that `ldiv!` applies, which is the frozen-Jacobian preconditioner of a Newton–Krylov method.
 - `jvp_eltype::Type{TJ}`: `Nothing` evaluates the Jacobian–vector product in the working type of
@@ -248,7 +252,34 @@ Arnoldi process that `mgs` selects.
   ``w_2`` is ``\\sqrt{s_1 - \\|h_2\\|^2}`` where ``s_1`` is finite, at least `n * floatmin` and
   ``\\|h_2\\|^2 \\le s_1 / 2``, and one more reduction, `rnorm` of ``w_2``, elsewhere. `true`
   orthogonalises by modified Gram–Schmidt, which takes ``j + 1`` reductions at inner iteration
-  `j`.
+  `j`, and ``2j + 1`` on a basis stored in a type other than `T` (`basis_eltype` below).
+- `basis_eltype::Type{TB}`: `Nothing` stores the Krylov basis in the working type `T` of the
+  iterate; a concrete `AbstractFloat` type `TB` stores it in `TB`, and a complex iterate in
+  `Complex{TB}`, as the compressed basis of Aliaga et al. (2020, arXiv:2009.12101) does. Every
+  product, coefficient, norm and update stays in `T`, and the preconditioner reads a copy of each
+  basis vector in `T`. A basis in a type other than `T` is not orthonormal in `T`, so the Givens
+  estimate of the residual is not the true one: each cycle ends on the true residual
+  ``\\|b - J d\\|``, one product, and restarts where it misses the tolerance. With room for
+  restarts the solve reaches the accuracy of `T`; one cycle of `j` CGS2 iterations reaches that
+  of the cycle in `T` within the bound of Lindquist, Luszczek and Dongarra (2022, Theorem 1,
+  doi:10.1109/TPDS.2021.3090757) for the unit roundoff of `TB`. A stored column has unit norm
+  only to the round-off of `TB`, so one projection leaves a remainder of that order along the
+  basis: the CGS2 step takes three reductions here, because column `j + 1` of the basis cannot
+  hold ``w_1`` in `T`, and the MGS step takes a second pass. On a Krylov space that is invariant,
+  as that of `J = c I` and a constant `b`, the CGS2 step takes its remainder, of order
+  ``\\mathrm{eps}(TB)^2``, for a new basis vector parallel to the last one, and the cycle makes
+  no more progress; its true residual then restarts it. So a solve with `maxiter == restart` and
+  a tolerance below about ``\\mathrm{eps}(TB)^2`` can end without convergence near
+  ``\\mathrm{eps}(TB) \\|b\\|``, about ``2.4 \\cdot 10^{-4} \\|b\\|`` for a `Float16` basis on
+  `Float64`. Any other
+  `basis_eltype` raises an `ArgumentError`, and so does a [`Newton`](@ref) with a
+  [`DogLeg`](@ref) globalization and a `basis_eltype` that is not `Nothing`.
+- `flexible::Val{FL}`: `Val(false)`, from `flexible = false`, forms the direction
+  ``d = M^{-1} u`` of the right-preconditioned solve. `Val(true)` keeps each preconditioned
+  vector ``z_j = M_j^{-1} v_j`` in a matrix `Z` of the working type and forms
+  ``d = Z_k y``, and the restart residual from it, so that a preconditioner that changes between
+  inner iterations still gives the minimal-residual direction of its Krylov space (Saad 1993).
+  Without a preconditioner `Z` is not allocated, and the solve is that of `flexible = false`.
 
 A `Newton` with `GMRES` allocates no `n × n` Jacobian, and its iterate must be an
 `AbstractVector`: a `Number` and a `StaticArray` have no Krylov basis here, and a
@@ -264,32 +295,38 @@ root. A constructor refuses
 [`DogLeg`](@ref) globalization and a preconditioner or a `restart < maxiter`; a kernel cannot
 format a message, so each message is constant.
 """
-struct GMRES{F <: AbstractForcingTerm, P, TJ} <: LinearMethod{Nothing}
+struct GMRES{F <: AbstractForcingTerm, P, TJ, TB, FL} <: LinearMethod{Nothing}
     maxiter::Int32
     restart::Int32
     forcing::F
     preconditioner::P
     jvp_eltype::Type{TJ}
     mgs::Bool
+    basis_eltype::Type{TB}
+    flexible::Val{FL}
     # `adapt` rebuilds the method through this constructor, inside a device kernel too.
-    function GMRES{F, P, TJ}(maxiter::Int32, restart::Int32, forcing::F,
-            preconditioner::P, jvp_eltype::Type{TJ}, mgs::Bool) where {
-            F <: AbstractForcingTerm, P, TJ}
+    function GMRES{F, P, TJ, TB, FL}(maxiter::Int32, restart::Int32, forcing::F,
+            preconditioner::P, jvp_eltype::Type{TJ}, mgs::Bool, basis_eltype::Type{TB},
+            flexible::Val{FL}) where {F <: AbstractForcingTerm, P, TJ, TB, FL}
         maxiter >= Int32(1) || throw(ArgumentError("GMRES maxiter must be ≥ 1"))
         (Int32(1) <= restart <= maxiter) ||
             throw(ArgumentError("GMRES needs 1 ≤ restart ≤ maxiter"))
-        return new{F, P, TJ}(maxiter, restart, forcing, preconditioner, jvp_eltype, mgs)
+        (TB === Nothing || (TB <: AbstractFloat && isconcretetype(TB))) ||
+            throw(ArgumentError("GMRES basis_eltype must be Nothing or a concrete AbstractFloat type"))
+        return new{F, P, TJ, TB, FL}(maxiter, restart, forcing, preconditioner, jvp_eltype,
+            mgs, basis_eltype, flexible)
     end
 end
 
 function GMRES(; maxiter::Integer = 30, restart::Union{Nothing, Integer} = nothing,
         forcing::AbstractForcingTerm = EisenstatWalkerChoice2(),
-        preconditioner = nothing, jvp_eltype::Type = Nothing, mgs::Bool = false)
+        preconditioner = nothing, jvp_eltype::Type = Nothing, mgs::Bool = false,
+        basis_eltype::Type = Nothing, flexible::Bool = false)
     m = to_int32(maxiter, "GMRES maxiter must fit in an Int32")
     r = restart === nothing ? m :
         to_int32(restart, "GMRES restart must fit in an Int32")
-    return GMRES{typeof(forcing), typeof(preconditioner), jvp_eltype}(
-        m, r, forcing, preconditioner, jvp_eltype, mgs)
+    return GMRES(
+        m, r, forcing, preconditioner, jvp_eltype, mgs, basis_eltype, Val(flexible))
 end
 
 # An `Integer` constructor argument as an `Int32`, with a constant message where it does not fit: a
@@ -299,15 +336,26 @@ end
     return Int32(n)
 end
 
-# The positional form, which `adapt` rebuilds the method through: the element type of the product
-# is a type and not a field, so it travels as the fifth argument.
+# The positional form, which `adapt` rebuilds the method through: the element types of the product
+# and of the basis are types and the flexible flag a `Val`, so each is a type parameter too.
 @inline function GMRES(maxiter::Int32, restart::Int32, forcing::AbstractForcingTerm,
-        preconditioner, jvp_eltype::Type, mgs::Bool)
-    return GMRES{typeof(forcing), typeof(preconditioner), jvp_eltype}(
-        maxiter, restart, forcing, preconditioner, jvp_eltype, mgs)
+        preconditioner, jvp_eltype::Type, mgs::Bool, basis_eltype::Type, flexible::Val{FL}) where {FL}
+    return GMRES{typeof(forcing), typeof(preconditioner), jvp_eltype, basis_eltype, FL}(
+        maxiter, restart, forcing, preconditioner, jvp_eltype, mgs, basis_eltype, flexible)
 end
 
 Adapt.@adapt_structure GMRES
+
+# Whether the solve of `g` keeps the preconditioned vectors `Z`: a flexible `GMRES` with a
+# preconditioner. A flexible `GMRES` without one keeps none, because `M⁻¹ v = v` for each `v`.
+@inline keeps_z(::GMRES{F, P, TJ, TB, FL}) where {F, P, TJ, TB, FL} = FL && P !== Nothing
+
+# The element type of the Krylov basis of `g` on an iterate of element type `T`: `T` where
+# `basis_eltype` is `Nothing`, and `TB`, or `Complex{TB}` for a complex `T`, elsewhere.
+@inline basis_type(::GMRES{F, P, TJ, Nothing}, ::Type{T}) where {F, P, TJ, T} = T
+@inline function basis_type(::GMRES{F, P, TJ, TB}, ::Type{T}) where {F, P, TJ, TB, T}
+    return T <: Complex ? Complex{TB} : TB
+end
 
 """
     refresh!(P, prob, x, Fx, p)
@@ -315,7 +363,9 @@ Adapt.@adapt_structure GMRES
 Refresh the right preconditioner `P` of [`GMRES`](@ref) at the start of a Newton step, from the
 iterate `x`, its residual `Fx` and the parameters `p`. [`Newton`](@ref) calls it once per step,
 before the inner solve, so that the preconditioner of step `k` sees the data of the last residual
-evaluation (Chen et al. 2014, pp. 558–560). The method for `nothing` does nothing; a
+evaluation (Chen et al. 2014, pp. 558–560). Under `Newton(; reuse = k)` it calls it at the first
+step, `k` steps after each call, and early at the step after one that stalled or whose inner
+solve reached its cap. The method for `nothing` does nothing; a
 preconditioner that holds data extends this function, and one that is constant across the solve
 extends it with a method that does nothing.
 """
@@ -334,7 +384,9 @@ without a preconditioner solves `J d = -F` itself; any other type extends this f
     GMRESWorkspace{T, R}
 
 The workspace of one R5 solve: the Krylov basis `V` of `min(restart, n) + 1` columns in the
-storage of the iterate, the host Hessenberg matrix `H` after the Givens rotations and `H0` before
+storage of the iterate, in the type that `basis_eltype` sets, the preconditioned vectors `Z` of
+`min(restart, n)` columns in the working type for a flexible `GMRES` with a preconditioner
+(`nothing` otherwise), the host Hessenberg matrix `H` after the Givens rotations and `H0` before
 them, the rotation tables `cs` and `sn`, the right-hand side `g` of the least-squares problem, the
 solution weights `y`, the weights `cg`, `yN` and `yb` of the matrix-free [`DogLeg`](@ref) and its
 reduced work vector `sm`, the vector slots `rr`, `z`, `w`, `u`, `d` and `bb` of length `n`, the
@@ -355,8 +407,9 @@ step a line search accepted on an unrestarted inner solve and that of the direct
 and a step there fails closed. The counters are mutable, so that a step reports them without
 rebuilding the workspace.
 """
-mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D, HD}
+mutable struct GMRESWorkspace{T, R <: Real, V, M, SR, ST, NV, D, HD, ZM}
     V::V
+    Z::ZM
     H::M
     H0::M
     cs::SR
@@ -395,16 +448,18 @@ end
     init_gmres_workspace(g::GMRES, x::AbstractVector)
 
 Allocate the [`GMRESWorkspace`](@ref) of a solve of `g` on an iterate like `x`: the Krylov basis
-holds `min(g.restart, length(x)) + 1` columns, and the host matrices `H` and `H0`, the host
-vectors and the vector `hd` in the storage of `x` are of that width. The slots of `jvp_eltype`
-are `nothing` unless `g.jvp_eltype` names a type.
+holds `min(g.restart, length(x)) + 1` columns of the basis type of `g`, and the host matrices `H`
+and `H0`, the host vectors and the vector `hd` in the storage of `x` are of that width. The slots
+of `jvp_eltype` are `nothing` unless `g.jvp_eltype` names a type, and `Z` is `nothing` unless `g`
+is flexible and has a preconditioner.
 """
 function init_gmres_workspace(g::GMRES{F, P, TJ}, x::AbstractVector{T}) where {F, P, TJ, T}
     R = real(T)
     n = length(x)
     mr = min(Int(g.restart), n)
     w = mr + 1
-    V = buffer(x, T, n, w)
+    V = buffer(x, basis_type(g, T), n, w)
+    Z = keeps_z(g) ? buffer(x, T, n, mr) : nothing
     H = zeros(T, w, mr)
     H0 = zeros(T, w, mr)
     cs = zeros(R, mr)
@@ -427,8 +482,8 @@ function init_gmres_workspace(g::GMRES{F, P, TJ}, x::AbstractVector{T}) where {F
     hd = buffer(x, T, w)
     hh = zeros(T, w)
     return GMRESWorkspace{T, R, typeof(V), typeof(H), typeof(cs), typeof(sn),
-        typeof(rr), typeof(xT), typeof(hd)}(
-        V, H, H0, cs, sn, gb, y, cg, yN, yb, sm, rr,
+        typeof(rr), typeof(xT), typeof(hd), typeof(Z)}(
+        V, Z, H, H0, cs, sn, gb, y, cg, yN, yb, sm, rr,
         z, wv, u, d, bb, xT, vT, wT, hd, hh, false,
         Int32(0), Int32(0), Int32(0), Int32(0), Int32(0), Int32(0),
         R(NaN), R(NaN), R(NaN), R(NaN))
@@ -471,9 +526,14 @@ solve stops there rather than dividing by zero. The residual of
 the reduced problem is then zero, unless `J` is singular on that space: the rotated diagonal entry
 is then zero too, the residual is that of the last entry of the right-hand side, and the solve
 reports no convergence. A restarted cycle forms its new residual with one more product,
-`b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. The least-squares problem is solved
-from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only where the reduced
-system is singular, and the corresponding weight is then `0`.
+`b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. On a workspace with `Z`, the
+flexible path, the solution update is ``u \\mathrel{+}= Z_k y``, the direction is `u` itself and the
+restart residual is `b - J u`. On a basis stored in a type other than that of `b`, every cycle
+ends on that product, and the solve converges where the true residual meets the tolerance; a
+cycle that misses it restarts, unless it ended at `maxiter` or on a breakdown whose reduced
+residual misses the tolerance too, and the reported residual is the true one. The least-squares
+problem is solved from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only
+where the reduced system is singular, and the corresponding weight is then `0`.
 """
 function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxiter,
         restart; mgs::Bool = false) where {T, R}
@@ -504,7 +564,7 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
         while j < mr && used < maxiter
             j += 1
             used += one(Int32)
-            @views apply_preconditioner!(ws.z, P, ws.V[:, j])
+            precondition_column!(ws, P, j)
             jvp_op!(ws.w, ws.z)
             if mgs
                 # modified Gram–Schmidt: one pass of projections, in the order of the basis
@@ -512,6 +572,15 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
                     h = arnoldi_dot(@view(ws.V[:, i]), ws.w)
                     ws.H[i, j] = h
                     @views ws.w .-= h .* ws.V[:, i]
+                end
+                # a basis stored in another type is orthonormal only to its own round-off, so one
+                # pass leaves a remainder of that order along the basis, which a second removes
+                if reduced_basis(ws)
+                    for i in 1:j
+                        h = arnoldi_dot(@view(ws.V[:, i]), ws.w)
+                        ws.H[i, j] += h
+                        @views ws.w .-= h .* ws.V[:, i]
+                    end
                 end
                 hj = R(rnorm(ws.w))
             else
@@ -560,19 +629,28 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             end
             ws.y[i] = iszero(ws.H[i, i]) ? zero(T) : acc / ws.H[i, i]
         end
-        add_basis!(ws.u, ws, ws.y, j)
+        add_solution!(ws.u, ws, ws.y, j)
         resnorm = linres
         breakdown = iszero(hj)
+        if reduced_basis(ws)
+            # a basis in a type other than the working one makes the Givens estimate inexact, so
+            # every cycle ends on the true residual, and a cycle that misses the tolerance restarts
+            restart_residual!(ws, jvp_op!, P, b)
+            resnorm = R(rnorm(ws.rr))
+            converged = resnorm <= atol
+            # a breakdown whose Givens estimate meets the tolerance leaves a true residual to
+            # restart from; one whose estimate misses it is singular on the Krylov space, and stops
+            (converged || (breakdown && linres > atol) || used >= maxiter) && break
+            continue
+        end
         if linres <= atol || breakdown || used >= maxiter
             converged = linres <= atol
             break
         end
-        # a restart: the residual b - J M⁻¹ u at the solution so far, one product
-        apply_preconditioner!(ws.z, P, ws.u)
-        jvp_op!(ws.w, ws.z)
-        @views ws.rr .= b .- ws.w
+        # a restart: the residual at the solution so far, one product
+        restart_residual!(ws, jvp_op!, P, b)
     end
-    apply_preconditioner!(ws.d, P, ws.u)
+    solution!(ws, P)
     ws.arnoldi = arnoldi
     return ws.d, GMRESInfo{R}(used, resnorm, R(bnorm), converged, breakdown)
 end
@@ -586,6 +664,7 @@ end
 # `n floatmin`, the threshold of `rnorm`; elsewhere a third reduction, `rnorm(w₂)`, norms it. A
 # non-finite product fails one of those tests, so `rnorm` returns its non-finite norm.
 function cgs2_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
+    reduced_basis(ws) && return cgs2_reduced_step!(ws, j)
     n = length(ws.w)
     Vj = @view ws.V[:, 1:j]
     hd = @view ws.hd[1:j]
@@ -605,19 +684,83 @@ function cgs2_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
     return pythagoras ? sqrt(s₁ - h₂²) : R(rnorm(ws.w))
 end
 
+# The CGS2 step on a basis stored in a type other than the working type: column `j + 1` cannot
+# hold `w₁` in the working type, so `w₁` stays in `ws.w`, the two projections `h₁ = V_jᴴ w` and
+# `h₂ = V_jᴴ w₁` are two reductions, and a third, `rnorm(w₂)`, norms the result. The products read
+# the stored basis and accumulate in the working type.
+function cgs2_reduced_step!(ws::GMRESWorkspace{T, R}, j::Int) where {T, R}
+    Vj = @view ws.V[:, 1:j]
+    hd = @view ws.hd[1:j]
+    @views ws.H[1:j, j] .= zero(T)
+    for _ in 1:2
+        mul!(hd, Vj', ws.w)
+        copyto!(ws.hh, 1, ws.hd, 1, j)
+        @views ws.H[1:j, j] .+= ws.hh[1:j]
+        mul!(ws.w, Vj, hd, -one(T), one(T))
+    end
+    return R(rnorm(ws.w))
+end
+
 # `s += V_k y` for the host weights `y`, on the path of the last solve: after an MGS solve one
 # update per column of `V_k`, in the order of the basis; after a CGS2 solve one matrix–vector
 # product, for which the weights go to the storage of the basis first, in `ws.hd`.
-@inline function add_basis!(s, ws::GMRESWorkspace{T}, y, k::Int) where {T}
+@inline add_basis!(s, ws::GMRESWorkspace, y, k::Int) = add_columns!(s, ws.V, ws, y, k)
+
+# `s += B_k y` for the first `k` columns of `B`, the basis `V` or the preconditioned vectors `Z`,
+# on the path of the last solve, as `add_basis!` describes.
+@inline function add_columns!(s, B, ws::GMRESWorkspace{T}, y, k::Int) where {T}
     if ws.mgs
         for i in 1:k
-            @views s .+= y[i] .* ws.V[:, i]
+            @views s .+= y[i] .* B[:, i]
         end
         return s
     end
     copyto!(ws.hd, 1, y, 1, k)
-    mul!(s, (@view ws.V[:, 1:k]), (@view ws.hd[1:k]), one(T), one(T))
+    mul!(s, (@view B[:, 1:k]), (@view ws.hd[1:k]), one(T), one(T))
     return s
+end
+
+# Whether the basis of `ws` is stored in a type other than the working type `T`.
+@inline reduced_basis(::GMRESWorkspace{T, R, V}) where {T, R, V} = eltype(V) !== T
+
+# `z = M⁻¹ v_j` for column `j` of the basis, kept in column `j` of `Z` on the flexible path. The
+# preconditioner reads a copy of `v_j` in the working type, in `ws.w`, where the basis is stored in
+# another type, and the column itself elsewhere.
+@inline function precondition_column!(ws::GMRESWorkspace, P, j::Int)
+    if reduced_basis(ws)
+        @views ws.w .= ws.V[:, j]
+        apply_preconditioner!(ws.z, P, ws.w)
+    else
+        @views apply_preconditioner!(ws.z, P, ws.V[:, j])
+    end
+    ws.Z === nothing || (@views ws.Z[:, j] .= ws.z)
+    return ws.z
+end
+
+# The update of the solution by the weights `y` of a cycle: `u += V_k y`, whose direction is
+# `M⁻¹ u`, and on the flexible path `u += Z_k y`, which is the direction itself.
+@inline function add_solution!(s, ws::GMRESWorkspace, y, k::Int)
+    ws.Z === nothing && return add_basis!(s, ws, y, k)
+    return add_columns!(s, ws.Z, ws, y, k)
+end
+
+# The residual `b - J d` of the solution so far in `ws.rr`, one product: `d = M⁻¹ u`, and `d = u`
+# on the flexible path.
+@inline function restart_residual!(ws::GMRESWorkspace, jvp_op!, P, b)
+    if ws.Z === nothing
+        apply_preconditioner!(ws.z, P, ws.u)
+        jvp_op!(ws.w, ws.z)
+    else
+        jvp_op!(ws.w, ws.u)
+    end
+    @views ws.rr .= b .- ws.w
+    return ws.rr
+end
+
+# The direction of the solve in `ws.d`: `M⁻¹ u`, and `u` on the flexible path.
+@inline function solution!(ws::GMRESWorkspace, P)
+    ws.Z === nothing && return apply_preconditioner!(ws.d, P, ws.u)
+    return copy!!(ws.d, ws.u)
 end
 
 """

@@ -1771,3 +1771,592 @@ end
         @test solve_allocations(solver, x₀, similar(x₀)) == 0
     end
 end
+
+# ─── Flexible GMRES, a basis below the working precision, a lagged preconditioner ───
+
+# A right preconditioner that changes at every application: call `k` divides by the diagonal
+# `scales[mod1(k, end)]`, so that `M_j⁻¹` differs between the inner iterations of one solve.
+# `refresh!` counts its calls.
+mutable struct CyclingPreconditioner{S}
+    scales::S
+    calls::Int
+    refreshes::Int
+end
+
+CyclingPreconditioner(scales) = CyclingPreconditioner(scales, 0, 0)
+
+function GeometricSolvers.refresh!(P::CyclingPreconditioner, prob, x, Fx, p)
+    P.refreshes += 1
+    return nothing
+end
+
+function GeometricSolvers.apply_preconditioner!(z, P::CyclingPreconditioner, v)
+    P.calls += 1
+    z .= v ./ P.scales[mod1(P.calls, length(P.scales))]
+    return z
+end
+
+# The diagonals of the cycle: scales of up to a factor 100 between entries and between calls, and
+# a gentle cycle within `[1/2, 2]` for the rows at the scale of `floatmax`.
+function cycling_scales(::Type{T}, AT) where {T}
+    [AT(T[1, 1, 1, 1, 1, 1]),
+        AT(T[1, 10, 0.1, 5, 0.2, 3]), AT(T[0.3, 4, 1, 0.1, 8, 2])]
+end
+function gentle_scales(::Type{T}) where {T}
+    [T[1, 1, 1, 1, 1, 1], T[1, 2, 0.5, 2, 0.5, 1],
+        T[0.5, 1, 2, 1, 2, 0.5]]
+end
+
+# A 6 × 6 nonsymmetric system, `F(x) = A x - b`, with its root in `Float64`.
+const FG_A6 = [4.0 1.0 0.5 0.2 0.0 0.1
+               0.3 3.0 0.8 0.1 0.2 0.0
+               0.2 0.4 2.5 0.6 0.0 0.3
+               0.1 0.2 0.3 2.0 0.5 0.0
+               0.0 0.1 0.2 0.3 1.5 0.4
+               0.2 0.0 0.1 0.2 0.3 1.2]
+const FG_B6 = [1.0, -2.0, 1.5, -0.5, 0.7, -1.1]
+const FG_X6 = FG_A6 \ FG_B6
+
+function fg_affine(A, b)
+    return NonlinearProblem((r, x, q) -> (mul!(r, A, x); r .-= b; r))
+end
+
+# The right preconditioner that records the type of every vector it is given.
+struct RecordingPreconditioner
+    seen::Vector{Type}
+end
+
+function GeometricSolvers.apply_preconditioner!(z, P::RecordingPreconditioner, v)
+    push!(P.seen, typeof(v))
+    z .= v
+    return z
+end
+
+# The diagonal Jacobian of `R5Diagonal` at `x` and its residual, for the inner solves of the
+# reduced-basis rows: `J = Diagonal(3x² + 2)`, `b = -F(x)`.
+r5_diagonal_system(x) = (3 .* x .^ 2 .+ 2, .-(x .^ 3 .+ 2 .* x .- 3))
+
+const FG_DIAGONAL_X = collect(range(1.5, 3.0; length = 8))
+
+@testset "Flexible GMRES solves where GMRES with a changing preconditioner does not, mgs = $mgs, $AT, $T" for T in REAL_ELTYPES,
+    AT in ARRAY_BACKENDS, mgs in (false, true)
+
+    R = real(T)
+    A = AT(T.(FG_A6))
+    b = AT(T.(FG_B6))
+    tol = R(1e-5)
+    op = (Jv, v) -> (mul!(Jv, A, v); Jv)
+    rel = Dict{Bool, R}()
+    for flexible in (false, true)
+        P = CyclingPreconditioner(cycling_scales(T, AT))
+        g = GMRES(; maxiter = 30, preconditioner = P, flexible, mgs)
+        ws = init_gmres_workspace(g, AT(zeros(T, 6)))
+        d, info = gmres_solve!(ws, op, P, b, rnorm(b), tol, Int32(30), Int32(30); mgs)
+        rel[flexible] = rnorm(b .- A * d) / rnorm(b)
+        flexible && @test info.converged
+    end
+    # the true residual `‖b − J d‖ ≤ η ‖b‖` of the flexible direction; the direction `M_last⁻¹ u`
+    # of GMRES misses it by orders of magnitude
+    @test rel[true] <= tol
+    @test rel[false] > 1000 * tol
+
+    # the Newton status: one step of the flexible solve ends the solve, three steps with GMRES
+    # and the same preconditioner do not
+    prob = fg_affine(A, b)
+    for (flexible, steps) in ((true, 1), (false, 3))
+        P = CyclingPreconditioner(cycling_scales(T, AT))
+        m = Newton(;
+            linsolve = GMRES(; maxiter = 12, forcing = FixedForcing(tol),
+            preconditioner = P, flexible, mgs))
+        x, st = solve(prob, AT(zeros(T, 6)), m; max_iterations = steps)
+        if flexible
+            @test st.code == SUCCESS
+            @test norm(Array(x) .- FG_X6) <= 100 * tol * norm(FG_X6)
+        else
+            @test st.code != SUCCESS
+        end
+    end
+end
+
+@testset "A restarted flexible cycle forms its residual from Z y, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    R = real(T)
+    A = T.(FG_A6)
+    b = T.(FG_B6)
+    tol = R(1e-3)
+    P = CyclingPreconditioner(cycling_scales(T, Array))
+    ws = init_gmres_workspace(
+        GMRES(; maxiter = 60, restart = 2, preconditioner = P, flexible = true, mgs),
+        zeros(T, 6))
+    op = (Jv, v) -> (mul!(Jv, A, v); Jv)
+    d, info = gmres_solve!(ws, op, P, b, rnorm(b), tol, Int32(60), Int32(2); mgs)
+    @test info.converged
+    @test info.iterations > 2
+    @test rnorm(b .- A * d) <= tol * rnorm(b)
+    @test info.resnorm <= tol * rnorm(b)
+end
+
+@testset "The Z slot of the flexible path" begin
+    x = zeros(6)
+    P = CyclingPreconditioner(cycling_scales(Float64, Array))
+    @test init_gmres_workspace(GMRES(; flexible = true), x).Z === nothing
+    @test init_gmres_workspace(GMRES(; preconditioner = P), x).Z === nothing
+    Z = init_gmres_workspace(
+        GMRES(; maxiter = 4, preconditioner = P, flexible = true), x).Z
+    @test Z isa Matrix{Float64} && size(Z) == (6, 4)
+    @test init_gmres_workspace(
+        GMRES(; maxiter = 10, preconditioner = P, flexible = true), x).Z isa Matrix{Float64}
+    @test size(init_gmres_workspace(
+        GMRES(; maxiter = 10, preconditioner = P, flexible = true), x).Z) == (6, 6)
+end
+
+@testset "The basis type: basis_eltype, and Complex{TB} for a complex iterate" begin
+    @test eltype(init_gmres_workspace(GMRES(), zeros(4)).V) === Float64
+    @test eltype(init_gmres_workspace(GMRES(; basis_eltype = Float32), zeros(4)).V) ===
+          Float32
+    @test eltype(init_gmres_workspace(
+        GMRES(; basis_eltype = Float32), zeros(ComplexF64, 4)).V) === ComplexF32
+    @test eltype(init_gmres_workspace(
+        GMRES(; basis_eltype = Float32), zeros(ComplexF64, 4)).hd) === ComplexF64
+    @test eltype(init_gmres_workspace(
+        GMRES(; basis_eltype = Float16), zeros(ComplexF32, 4)).V) === ComplexF16
+    # a complex solve on a reduced basis reaches a tolerance below the round-off of the basis type
+    # on its true residual
+    for T in filter(T -> T <: Complex, ELTYPES), mgs in (false, true)
+
+        TB = real(T) === Float64 ? Float32 : Float16
+        tol = real(T) === Float64 ? 1e-12 : 1.0f-5
+        A = T.(FG_A6) .+ T(0.3im) .* T.(FG_A6')
+        b = T.(FG_B6) .- T(0.5im)
+        ws = init_gmres_workspace(GMRES(; maxiter = 40, basis_eltype = TB), zeros(T, 6))
+        @test sizeof(real(eltype(ws.V))) < sizeof(real(T))
+        op = (Jv, v) -> (mul!(Jv, A, v); Jv)
+        d, info = gmres_solve!(
+            ws, op, nothing, b, rnorm(b), tol, Int32(40), Int32(40); mgs)
+        @test info.converged
+        @test rnorm(b .- A * d) <= tol * rnorm(b)
+    end
+end
+
+@testset "The preconditioner reads a working-precision copy of a reduced basis column, $T" for T in REAL_ELTYPES
+    TB = T === Float64 ? Float32 : Float16
+    P = RecordingPreconditioner(Type[])
+    A = T.(FG_A6)
+    b = T.(FG_B6)
+    ws = init_gmres_workspace(
+        GMRES(; maxiter = 6, basis_eltype = TB, preconditioner = P),
+        zeros(T, 6))
+    op = (Jv, v) -> (mul!(Jv, A, v); Jv)
+    for mgs in (false, true)
+        empty!(P.seen)
+        gmres_solve!(ws, op, P, b, rnorm(b), T(1e-4), Int32(6), Int32(6); mgs)
+        @test !isempty(P.seen)
+        @test all(t -> t === Vector{T}, P.seen)
+    end
+end
+
+@testset "The CGS2 step keeps a reduced basis orthogonal to the round-off of its type, $T" for T in REAL_ELTYPES
+    # a diagonal operator with κ = 1e5 and a full cycle of 30 steps without a stop: one pass of
+    # classical Gram–Schmidt leaves ‖VᵀV − I‖ near 7e-3 on a Float32 basis here, and the second
+    # pass keeps it below one unit of the round-off of the stored type
+    TB = T === Float64 ? Float32 : Float16
+    n = 40
+    jd = T.(collect(range(1, 1e5; length = n)))
+    b = ones(T, n)
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 30, basis_eltype = TB), zeros(T, n))
+    gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(30), Int32(30))
+    @test ws.arnoldi == 30
+    V = Float64.(ws.V[:, 1:30])
+    @test opnorm(V' * V - I) <= 4 * eps(TB)
+end
+
+@testset "A Float32 basis reaches the forcing tolerance on R5Diagonal, mgs = $mgs, $AT" for AT in ARRAY_BACKENDS,
+    mgs in (false, true)
+
+    # the inner solve at the start: the Givens estimate of a Float32 basis is not the true
+    # residual, so the solve ends only where the true residual meets a tolerance below eps(Float32)
+    jd, b = r5_diagonal_system(FG_DIAGONAL_X)
+    Jd = AT(jd)
+    bb = AT(b)
+    op = (Jv, v) -> (Jv .= Jd .* v; Jv)
+    for tol in (1e-8, 1e-12)
+        ws = init_gmres_workspace(GMRES(; maxiter = 30, basis_eltype = Float32), AT(zeros(8)))
+        d, info = gmres_solve!(
+            ws, op, nothing, bb, rnorm(bb), tol, Int32(30), Int32(30); mgs)
+        @test info.converged
+        @test rnorm(bb .- Jd .* d) <= tol * rnorm(bb)
+        @test info.resnorm == rnorm(bb .- Jd .* d)
+    end
+
+    # the Newton solve: every step meets its forcing tolerance on the true residual
+    counts = R5Counts(0, 0)
+    m = Newton(;
+        linsolve = GMRES(; maxiter = 20, forcing = FixedForcing(1e-10),
+        basis_eltype = Float32, mgs))
+    x, st = solve(r5_problem(counts), AT(copy(FG_DIAGONAL_X)), m)
+    @test x isa AT
+    @test st.code == SUCCESS
+    @test norm(Array(x) .- 1) <= 100 * sqrt(eps(Float64))
+    @test eltype(init(r5_problem(counts), AT(copy(FG_DIAGONAL_X)), m).state.ws.V) ===
+          Float32
+end
+
+@testset "The attainable accuracy of a Float32 basis against the CGS2 bound of LLD2022" begin
+    # Lindquist, Luszczek and Dongarra (2022), the simplified form of Theorem 1 (p. 1029): one
+    # cycle of `j` CGSR iterations in a precision of unit roundoff `u` attains a normwise backward
+    # error of at most 1.1 times that of the exact cycle plus
+    # `(4 j^{3/2} + 30 j + 3 p j^{1/2} + 3 c₁(n, j)) u`, with the norm ‖A‖_F. Three readings make
+    # it a number: the paper gives `c₁(n, j)` only as O(n j), and this test takes `n j`; it does
+    # not define `p`, and this test takes the largest number of nonzeros in a row of the
+    # Jacobian, 1 for a diagonal one; the cycle with the Float64 basis stands for the exact one.
+    # The test drops the factor 1.1 to 1, so it asserts more than the theorem. The paper proves the
+    # bound for CGSR only; the MGS rows check the same number.
+    jd, b = r5_diagonal_system(FG_DIAGONAL_X)
+    n = length(b)
+    p = 1
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    backward(d) = rnorm(b .- jd .* d) / (norm(jd) * rnorm(d) + rnorm(b))
+    for j in (4, 8), mgs in (false, true)
+
+        ws64 = init_gmres_workspace(GMRES(; maxiter = j), zeros(n))
+        d64, _ = gmres_solve!(ws64, op, nothing, b, rnorm(b), 0.0, Int32(j), Int32(j); mgs)
+        ws32 = init_gmres_workspace(GMRES(; maxiter = j, basis_eltype = Float32), zeros(n))
+        d32, info = gmres_solve!(
+            ws32, op, nothing, b, rnorm(b), 0.0, Int32(j), Int32(j); mgs)
+        @test info.iterations == j
+        u = eps(Float32) / 2
+        bound = (4 * j^1.5 + 30 * j + 3 * p * sqrt(j) + 3 * n * j) * u
+        @test backward(copy(d32)) <= backward(copy(d64)) + bound
+    end
+    # with the true residual at the end of each cycle and the update `u += V y` in Float64, the
+    # restarts reach the working precision (Lindquist, Luszczek and Dongarra 2022, §3; Aliaga
+    # et al. 2020, §6.2), within 34 iterations at every point; a residual of the Givens recurrence
+    # in its place reports convergence at a true residual near 2e-8 for `restart = 2` and
+    # `tol = 1e-14`, and an update in Float32 stops near 3e-8
+    for mgs in (false, true), restart in (2, 4), tol in (1e-13, 1e-14)
+        ws = init_gmres_workspace(
+            GMRES(; maxiter = 60, restart, basis_eltype = Float32), zeros(n))
+        d, info = gmres_solve!(
+            ws, op, nothing, b, rnorm(b), tol, Int32(60), Int32(restart); mgs)
+        @test info.converged
+        @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+        @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(Float64))
+    end
+end
+
+@testset "Newton(; reuse = k) refreshes a GMRES preconditioner once per k steps, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    R = real(T)
+    x₀ = T.(collect(R5_COUPLED_X))
+    prob = r5_coupled(T)
+    for k in (1, 2, 3)
+        count = Ref(Int32(0))
+        P = ScaledRightPreconditioner(count, T(2))
+        m = Newton(; reuse = k,
+            linsolve = GMRES(;
+                maxiter = 8, forcing = FixedForcing(R(1e-6)), preconditioner = P, mgs))
+        _, st = solve(prob, copy(x₀), m)
+        @test st.code == SUCCESS
+        @test st.iterations >= 3
+        @test st.step_failures == 0
+        @test count[] == cld(st.iterations, k)
+    end
+    # an inner solve that reaches its cap refreshes at the next step: every step of a cap of one
+    # inner iteration is capped, so every step after the first adds one early refresh
+    for k in (2, 3)
+        count = Ref(Int32(0))
+        P = ScaledRightPreconditioner(count, T(2))
+        m = Newton(; reuse = k,
+            linsolve = GMRES(;
+                maxiter = 1, forcing = FixedForcing(R(1e-6)), preconditioner = P, mgs))
+        _, st = solve(prob, copy(x₀), m; max_iterations = 6)
+        @test st.iterations >= 3
+        @test st.step_failures == st.iterations
+        @test count[] == st.iterations
+        @test count[] > cld(st.iterations, k)
+    end
+end
+
+@testset "The age of the preconditioner after a step" begin
+    FA = GeometricSolvers.FactorAge
+    rule = GeometricSolvers.preconditioner_rule
+    STALLED = GeometricSolvers.STALLED
+    P = ScaledRightPreconditioner(Ref(Int32(0)), 2.0)
+    m = Newton(; reuse = 3, linsolve = GMRES(; preconditioner = P))
+    # a refresh starts a period, also an early one at a nonzero age: the next refresh is due
+    # three steps after it
+    @test rule(FA(Int32(0), false), m, true, SUCCESS, Int32(0)) === FA(Int32(1), false)
+    @test rule(FA(Int32(2), true), m, true, SUCCESS, Int32(0)) === FA(Int32(1), false)
+    @test rule(FA(Int32(1), false), m, false, SUCCESS, Int32(0)) === FA(Int32(2), false)
+    @test rule(FA(Int32(2), false), m, false, SUCCESS, Int32(0)) === FA(Int32(0), false)
+    # a step that stalled or whose inner solve reached its cap asks for a refresh at the next one
+    @test rule(FA(Int32(1), false), m, false, SUCCESS, Int32(1)) === FA(Int32(2), true)
+    @test rule(FA(Int32(1), false), m, false, STALLED, Int32(0)) === FA(Int32(2), true)
+    # a period of one step refreshes at every step
+    m1 = Newton(; reuse = 1, linsolve = GMRES(; preconditioner = P))
+    @test rule(FA(Int32(0), false), m1, true, SUCCESS, Int32(0)) === FA(Int32(0), false)
+    # without reuse the rule state is that of the globalization, unchanged
+    @test rule(nothing, Newton(; linsolve = GMRES()), true, SUCCESS, Int32(1)) === nothing
+end
+
+@testset "A reduced-basis breakdown on a singular operator stops without convergence, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    # `b = e₁` is exact in the basis type and `J e₁ = 0`, so the first Arnoldi step breaks down
+    # exactly; the true residual is `‖b‖`, and the solve stops there rather than restart to its cap
+    TB = T === Float64 ? Float32 : Float16
+    jd = T[0, 1, 2]
+    b = T[1, 0, 0]
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 10, restart = 3, basis_eltype = TB), zeros(T, 3))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), T(1e-4), Int32(10), Int32(3); mgs)
+    @test info.breakdown
+    @test !info.converged
+    @test info.iterations == 1
+    @test info.resnorm == 1
+end
+
+@testset "A reduced-basis breakdown that meets the Givens estimate restarts on its true residual, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    # `s` rounds to zero in the basis type, so the stored `v₁` is `e₁`, an eigenvector of `J`: the
+    # first step breaks down with a zero Givens estimate, while the true residual is `s`, above
+    # the tolerance `s²`; the restart from that residual reaches it
+    TB = T === Float64 ? Float32 : Float16
+    s = sqrt(sqrt(floatmin(T)))
+    @test iszero(TB(s))
+    jd = T[2, 3, 5]
+    b = T[1, s, 0]
+    tol = s^2
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 10, restart = 3, basis_eltype = TB), zeros(T, 3))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(10), Int32(3); mgs)
+    @test info.converged
+    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+    @test info.resnorm <= tol * rnorm(b)
+end
+
+# Two systems whose Krylov space is invariant after a few steps: `J = 14 I` with a constant `b`, a
+# space of dimension one, and a diagonal `J` of the three eigenvalues 2, 5 and 11, of dimension
+# three. A stored column of a reduced basis has unit norm only to the round-off of its type, so
+# the projection at the last step of the space leaves a remainder of that order along the basis.
+function invariant_krylov_system(::Type{T}, kind::Symbol) where {T}
+    n = 100
+    kind === :scaled_identity && return fill(T(14), n), fill(T(-9), n)
+    return T.(repeat([2, 5, 11], 34)[1:n]), T.(collect(range(-1, 1; length = n)))
+end
+
+@testset "A reduced basis on a Krylov space invariant to its round-off converges in one cycle, mgs = $mgs, $kind, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true), kind in (:scaled_identity, :three_eigenvalues)
+
+    # one pass of MGS takes that remainder for a new direction, and the cycle ends at its cap
+    # with a true residual of 1, Inf or near eps(TB) ‖b‖; its second pass removes the remainder,
+    # and the cycle ends early and restarts from its true residual. The CGS2 row of a Float16
+    # basis on Float64 and J = 14 I is the limit of the testset below.
+    if mgs || !(T === Float64 && TB === Float16 && kind === :scaled_identity)
+        jd, b = invariant_krylov_system(T, kind)
+        tol = T === Float64 ? 1e-10 : 1.0f-5
+        op = (Jv, v) -> (Jv .= jd .* v; Jv)
+        ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
+        d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+        @test eltype(ws.V) === TB
+        @test info.converged
+        @test info.iterations < 20
+        @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+        @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(T))
+    end
+end
+
+@testset "Newton with a reduced basis solves x³ + 2x − 3 = 0 on both paths, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    # the constant start makes the Krylov space of each step that of a multiple of I, which one
+    # pass of MGS on a reduced basis does not see, and the step ends NONFINITE
+    F!(r, x, q) = (@. r = x^3 + 2x - 3; r)
+    η = T === Float64 ? 1e-10 : 1.0f-5
+    m = Newton(;
+        linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(η), basis_eltype = TB, mgs))
+    x₀ = fill(T(2), 8)
+    x, st = solve(NonlinearProblem(F!), copy(x₀), m)
+    @test st.code == SUCCESS
+    @test maximum(abs, x .- 1) <= sqrt(eps(T))
+end
+
+@testset "A CGS2 cycle on a Krylov space invariant to a Float16 basis makes no progress, and a restart recovers" begin
+    # `J = 14 I` and a constant `b` on Float64: the two CGS2 passes leave a remainder of order
+    # eps(Float16)² along `v₁`, above the tolerance, which the step takes for `v₂`; the cycle runs
+    # to its cap and ends on its true residual near eps(Float16) ‖b‖, without convergence
+    jd, b = invariant_krylov_system(Float64, :scaled_identity)
+    tol = 1e-10
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = Float16), zeros(length(b)))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20))
+    @test !info.converged
+    @test info.iterations == 20
+    @test tol * rnorm(b) < rnorm(b .- jd .* d) <= eps(Float16) * rnorm(b)
+    @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(Float64))
+    # with room for a restart, the restart from that true residual converges
+    ws = init_gmres_workspace(
+        GMRES(; maxiter = 20, restart = 10, basis_eltype = Float16), zeros(length(b)))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(10))
+    @test info.converged
+    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+end
+
+@testset "reuse takes a GMRES with a preconditioner only" begin
+    P = ScaledRightPreconditioner(Ref(Int32(0)), 2.0)
+    msg = r"^ArgumentError: Newton with a matrix-free linear method takes no factor reuse"
+    @test_throws msg Newton(; linsolve = GMRES(), reuse = 2)
+    @test_throws msg Newton(; linsolve = GMRES(; flexible = true), reuse = 2)
+    @test_throws msg Newton(; linsolve = GeometricSolvers.BiCGStab(; preconditioner = P),
+        reuse = 2)
+    @test Newton(; linsolve = GMRES(; preconditioner = P), reuse = 2).reuse === Int32(2)
+    @test Newton(; linsolve = GMRES(), preconditioner = P, reuse = 2).reuse === Int32(2)
+    @test_throws r"^ArgumentError: Newton with a matrix-free linear method takes no refinement" Newton(;
+        linsolve = GMRES(; preconditioner = P), reuse = 2, refinement = Refinement())
+end
+
+@testset "DogLeg refuses a reduced basis, and GMRES validates basis_eltype" begin
+    @test_throws r"^ArgumentError: Newton with a DogLeg globalization takes a GMRES with basis_eltype = Nothing" Newton(;
+        linsolve = GMRES(; basis_eltype = Float32), globalization = DogLeg())
+    @test Newton(; linsolve = GMRES(; flexible = true), globalization = DogLeg()) isa Newton
+    msg = r"^ArgumentError: GMRES basis_eltype must be Nothing or a concrete AbstractFloat type"
+    @test_throws msg GMRES(; basis_eltype = Int)
+    @test_throws msg GMRES(; basis_eltype = ComplexF32)
+    @test_throws msg GMRES(; basis_eltype = Union{})
+    @test_throws msg GMRES(; basis_eltype = AbstractFloat)
+    @test GMRES(; basis_eltype = Float16).basis_eltype === Float16
+end
+
+@testset "The rebuild of Newton and adapt keep flexible and basis_eltype" begin
+    P = ScaledRightPreconditioner(Ref(Int32(0)), 2.0)
+    m = Newton(; linsolve = GMRES(; flexible = true, basis_eltype = Float32, mgs = true),
+        forcing = FixedForcing(0.1), preconditioner = P)
+    g = m.linsolve
+    @test g.flexible === Val(true)
+    @test g.basis_eltype === Float32
+    @test g.mgs
+    @test g.forcing === FixedForcing(0.1)
+    @test g.preconditioner === P
+    @test g isa GMRES{FixedForcing{Float64}, typeof(P), Nothing, Float32, true}
+    g₀ = GMRES(; flexible = true, basis_eltype = Float32)
+    @test Adapt.adapt(Array, g₀) === g₀
+end
+
+@testset "The forcing record of the flexible and the reduced-basis step, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    R = real(T)
+    n = 12
+    x₀ = T.(collect(range(0.2, 2.4; length = n)))
+    prob = r5_coupled(T)
+    f1 = EisenstatWalkerChoice1(R; η₀ = R(0.1))
+    P = ScaledRightPreconditioner(Ref(Int32(0)), T(2))
+    TB = T === Float64 ? Float32 : Float16
+    gmres = (
+        ("flexible",
+            GMRES(; maxiter = 30, forcing = f1, preconditioner = P, flexible = true, mgs)),
+        ("reduced", GMRES(; maxiter = 30, forcing = f1, basis_eltype = TB, mgs)))
+    for (label, g) in gmres, globalization in (GeometricSolvers.Static(), Backtracking())
+
+        solver = init(prob, copy(x₀), Newton(; linsolve = g, globalization))
+        x = copy(x₀)
+        Fx = similar(x)
+        prob.F(Fx, x, nothing)
+        state = start!!(solver.state, solver.method, prob, x, Fx, nothing, rnorm(Fx))
+        ηs = R[]
+        norms = R[rnorm(Fx)]
+        lins = R[]
+        for _ in 1:3
+            # a step may update `x` in place, so the start of the step is kept
+            x_start = copy(x)
+            x₊, F₊, state, info = step!!(state, solver.method, prob, x, Fx, nothing)
+            # the inner solve stops on the forcing test, short of n iterations
+            @test 1 <= state.ws.gmres_iterations < n
+            push!(ηs, R(state.ws.last_eta))
+            push!(norms, R(info.fnorm))
+            # the true linear residual of the accepted step, from ForwardDiff on `F` itself
+            push!(lins, R(direction_linres(prob, x_start, x₊ .- x_start)))
+            x, Fx = x₊, F₊
+        end
+        @test ηs[1] == f1.η₀
+        for k in 2:3
+            # the φ-safeguard does not bind
+            @test ηs[k - 1]^R((1 + sqrt(5)) / 2) <= R(0.1)
+            ref = GeometricSolvers.compute_forcing(
+                f1, k - 1, norms[k], norms[k - 1], ηs[k - 1], lins[k - 1])
+            # the recorded linear residual is the Givens estimate of the Arnoldi relation on the
+            # flexible path and the true residual on the reduced basis; either is exact to the
+            # round-off of the working type relative to `‖F_{k-1}‖`, which the rule divides by
+            @test abs(ηs[k] - ref) <= 100 * eps(R)
+        end
+    end
+end
+
+# The bytes of one inner solve with the preconditioner `P`, through a function barrier that calls
+# the solve once before it measures.
+function preconditioned_allocations(ws, op, P, b, β, tol, maxiter, restart; mgs)
+    gmres_solve!(ws, op, P, b, β, tol, maxiter, restart; mgs)
+    return @allocated gmres_solve!(ws, op, P, b, β, tol, maxiter, restart; mgs)
+end
+
+@testset "The flexible and the reduced-basis solves allocate nothing after init on Array, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    Base.JLOptions().check_bounds == 1 && continue
+    R = real(T)
+    TB = T === Float64 ? Float32 : Float16
+    prob = r5_affine()
+    P = ScaledRightPreconditioner(Ref(Int32(0)), T(2))
+    for g in (GMRES(; maxiter = 4, preconditioner = P, flexible = true, mgs),
+        GMRES(; maxiter = 4, restart = 2, preconditioner = P, flexible = true, mgs),
+        GMRES(; maxiter = 4, basis_eltype = TB, mgs))
+        solver = init(prob, zeros(T, 4), Newton(; linsolve = g))
+        ws = solver.state.ws
+        op = GeometricSolvers.R5Operator(solver.state.jvpprep, prob, zeros(T, 4), nothing)
+        b = T.(.-R5_B4)
+        β = rnorm(b)
+        @test preconditioned_allocations(
+            ws, op, g.preconditioner, b, β, R(1e-10), Int32(4), g.restart; mgs) == 0
+        @inferred gmres_solve!(
+            ws, op, g.preconditioner, b, β, R(1e-10), Int32(4), g.restart; mgs)
+    end
+    # the control: the helper sees the allocation of an operator that allocates
+    g = GMRES(; maxiter = 4, basis_eltype = TB, mgs)
+    ws = init(prob, zeros(T, 4), Newton(; linsolve = g)).state.ws
+    A = Diagonal(T[3, 4, 5, 6])
+    alloc_op = (Jv, v) -> (Jv .= A * v; Jv)
+    b = T.(.-R5_B4)
+    @test preconditioned_allocations(
+        ws, alloc_op, nothing, b, rnorm(b), R(1e-10), Int32(4), g.restart; mgs) > 0
+end
+
+@testset "The scale rows: A and b at 4√floatmax and floatmax/8, mgs = $mgs, $T" for T in REAL_ELTYPES,
+    mgs in (false, true)
+
+    R = real(T)
+    TB = T === Float64 ? Float32 : Float16
+    for s in (4 * sqrt(floatmax(R)), floatmax(R) / 8)
+        c = s / R(4)
+        A = c .* T.(FG_A6)
+        b = c .* T.(FG_B6)
+        op = (Jv, v) -> (mul!(Jv, A, v); Jv)
+        tol = R(1e-4)
+        P = CyclingPreconditioner(gentle_scales(T))
+        for g in (GMRES(; maxiter = 30, preconditioner = P, flexible = true, mgs),
+            GMRES(; maxiter = 30, basis_eltype = TB, mgs))
+            ws = init_gmres_workspace(g, zeros(T, 6))
+            d, info = gmres_solve!(
+                ws, op, g.preconditioner, b, rnorm(b), tol, Int32(30), Int32(30); mgs)
+            @test info.converged
+            @test all(isfinite, d)
+            # the solution of the unscaled system, within the tolerance times κ(A) ≤ 10
+            @test norm(Float64.(d) .- FG_X6) <= 10 * tol * norm(FG_X6)
+        end
+    end
+end

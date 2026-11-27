@@ -65,6 +65,46 @@ so that a compat-only bump can be told apart from an interface change.
   with no package method (no Krylov linear solver). The benchmark's GeometricSolvers adapter
   hands the shared Jacobian to no `Newton` with a matrix-free linear method.
 
+- **`GMRES` takes two new keywords, `flexible = false` and `basis_eltype = Nothing`, and a
+  `Newton` with a preconditioned `GMRES` takes `reuse = k`.** `GMRES(; flexible = true)` is the
+  flexible GMRES of Saad (1993, doi:10.1137/0914028): with a preconditioner it keeps each
+  `z_j = M_j⁻¹ v_j` in a working-precision matrix `Z` of `min(restart, n)` columns and forms the
+  direction and the restart residual from `Z y`, so a preconditioner that changes between inner
+  iterations still gives the minimal-residual direction; without one it allocates no `Z` and
+  solves as `flexible = false`. `GMRES(; basis_eltype = TB)` stores the Krylov basis in `TB`
+  (`Complex{TB}` for a complex iterate), as the compressed basis of Aliaga et al. (2020,
+  arXiv:2009.12101), with every product, coefficient, norm and update in the working type; the
+  preconditioner reads a working-precision copy of each basis vector. Its Givens estimate is not
+  the true residual, so each cycle ends on `‖b − J d‖`, one more Jacobian–vector product, and
+  restarts where it misses the tolerance; its CGS2 step takes three reductions, and its MGS step a
+  second pass, `2j + 1` reductions at inner iteration `j`, because a stored column has unit norm
+  only to the round-off of `TB`. On a Krylov space that is invariant to the round-off of `TB`, as
+  that of `J = c I` and a constant `b`, the CGS2 step takes its remainder of order eps(TB)² for a
+  new basis vector, and the cycle makes no more progress. A solve with `maxiter == restart` and a
+  tolerance below about eps(TB)² can end without convergence near eps(TB) ‖b‖, about 2.4e-4 ‖b‖
+  for a `Float16` basis on `Float64`; with room for a restart it converges (known issue K146).
+  One cycle of `j` CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist,
+  Luszczek and Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve
+  reaches `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor a
+  concrete `AbstractFloat` type raises an `ArgumentError`, and so does a `DogLeg` with any
+  `basis_eltype` but `Nothing`, because its trial loop reads the basis as orthonormal in the
+  working precision.
+  Both keywords are type parameters, `GMRES{F, P, TJ, TB, FL}` with the fields `basis_eltype` and
+  `flexible::Val{FL}`, and the `forcing` and `preconditioner` keywords of `Newton` keep them.
+  `Newton(; reuse = k)` with a `GMRES` that has a preconditioner keeps it for up to `k` consecutive
+  steps: it refreshes it at the first step, `k` steps after each refresh, and early at the step
+  after a `STALLED` step or an inner solve that reached its cap, with no retry within a step;
+  without a preconditioner, and with `BiCGStab`, `DQGMRES` or `MINRESQLP`, `reuse` still raises an
+  `ArgumentError`. The message of the refusal for a matrix-free method other than `MINRESQLP` now
+  names the exception.
+
+- **The standard test set has one more column, `Newton Backtracking Float32-basis GMRES`,** after
+  `Newton Backtracking DQGMRES`: 18 columns and 2412 cells. Its 134 cells are new in
+  `test/verification/standard_reference.csv`, 24 of them flagged `unstable`, and the benchmark
+  pairs it with no package method (no Krylov linear solver). Its `Float32` cells equal those of
+  `Newton Backtracking GMRES`, whose basis is then of the same type; 9 of its 67 `Float64` cells
+  differ from that column in the code or the iteration count, on problems 3, 11, 15, 21 and 22.
+
 - **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
   exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
   `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,

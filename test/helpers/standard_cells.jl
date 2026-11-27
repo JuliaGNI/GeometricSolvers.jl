@@ -23,11 +23,12 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The seventeen columns of the standard test set, each a name and a method: `Newton` with each
+The eighteen columns of the standard test set, each a name and a method: `Newton` with each
 globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
 `LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, `Picard` with
-`Backtracking`, the matrix-free `Newton` with `Backtracking` and each of `GMRES`, `BiCGStab` and
-`DQGMRES`, whose columns hold no Jacobian, `Broyden()`, whose default `Picard` member is damped
+`Backtracking`, the matrix-free `Newton` with `Backtracking` and each of `GMRES`, `BiCGStab`,
+`DQGMRES` and `GMRES` with a `Float32` basis, whose columns hold no Jacobian, `Broyden()`, whose
+default `Picard` member is damped
 by 0.5, `Picard` with `Backtracking` left-preconditioned by one `Newton()` step, `Continuation` on
 the fixed-point homotopy with its default `Newton()` member, and the `Fallback` of the methods of
 the columns "Newton Static LU", "Newton DogLeg LU" and "Newton LevenbergMarquardt SVD", in this
@@ -53,6 +54,8 @@ const STANDARD_COLUMNS = (
         linsolve = BiCGStab(), globalization = Backtracking()),
     "Newton Backtracking DQGMRES" => Newton(;
         linsolve = DQGMRES(), globalization = Backtracking()),
+    "Newton Backtracking Float32-basis GMRES" => Newton(;
+        linsolve = GMRES(; basis_eltype = Float32), globalization = Backtracking()),
     "Broyden" => Broyden(),
     "LeftPreconditioned Picard Backtracking Newton" =>
         LeftPreconditioned(Picard(; globalization = Backtracking()), Newton()),

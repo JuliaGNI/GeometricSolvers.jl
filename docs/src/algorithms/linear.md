@@ -187,7 +187,8 @@ The **forcing term** sets ``\eta_k``. [`EisenstatWalkerChoice2`](@ref) is the de
 root and tightly near it, which saves inner iterations where a tight solve buys nothing.
 
 A **right preconditioner** `M` is any object with methods of [`refresh!`](@ref), called once per
-Newton step, and [`apply_preconditioner!`](@ref), called before every product. A stored Jacobian
+Newton step, or as `reuse = k` sets, and [`apply_preconditioner!`](@ref), called before every
+product. A stored Jacobian
 factor that `ldiv!` applies is the frozen-Jacobian preconditioner of a Newton–Krylov method. The
 example below takes the diagonal of the Jacobian instead:
 
@@ -214,7 +215,8 @@ count the evaluations of the last solve, and the status holds the same counts.
 
 `GMRES` needs an `AbstractVector` iterate, on the host or on a device. A `Number` or a static
 iterate has no Krylov basis here, and a [`LeastSquaresProblem`](@ref) has no square system. It
-takes no factor reuse and no [`Refinement`](@ref).
+takes no factor reuse, other than `reuse = k` as the refresh period of a preconditioner, and no
+[`Refinement`](@ref).
 
 ## Eigensolver
 
