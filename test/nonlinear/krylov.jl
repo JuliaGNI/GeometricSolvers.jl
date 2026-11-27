@@ -2192,8 +2192,8 @@ end
 # singular on it. Their entries, 0.2, have no exact value in the basis type, so each stored column
 # is parallel to its vector and has unit norm only to the round-off of `TB`, and the second step
 # leaves a remainder of order eps(TB)² ‖w₀‖ along `v₂`; the reduced system has no solution.
-@testset "A breakdown at the round-off of a reduced basis on a singular operator stops without convergence, mgs = $mgs, $TB on $T" for (T, TB) in ((
-        Float64, Float16), (Float64, Float32), (Float32, Float16)),
+@testset "A breakdown at the round-off of a reduced basis on a singular operator stops without convergence, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
     mgs in (false, true)
 
     n = 50
@@ -2217,15 +2217,15 @@ end
 # the cluster leaves a remainder at step 3 of about 0.8 eps(TB) ‖w₀‖, below the round-off of the
 # basis and above the breakdown test's `2e-3 eps(TB) ‖w₀‖`; the one cycle of `maxiter = 4` runs
 # through it to step 4
-@testset "A reduced-basis remainder below the round-off of the basis on a cluster is no breakdown, mgs = $mgs, $TB on $T" for (T, TB) in ((
-        Float64, Float16), (Float64, Float32), (Float32, Float16)),
+@testset "A reduced-basis remainder below the round-off of the basis on a cluster is no breakdown, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
     mgs in (false, true)
 
     jd = T[1, 1 + eps(TB), 2, 3]
     b = ones(T, 4)
     op = (Jv, v) -> (Jv .= jd .* v; Jv)
     ws = init_gmres_workspace(GMRES(; maxiter = 4, basis_eltype = TB), zeros(T, 4))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(4), Int32(4); mgs)
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(4), Int32(4); mgs)
     @test ws.arnoldi == 4
     @test info.iterations == 4
     @test !info.breakdown
@@ -2233,11 +2233,11 @@ end
 
 # The breakdown test of a reduced basis acts only where the cycle would go on. On `J = 14 I` the
 # last cycle meets the tolerance on its Givens estimate at the invariant step, so it reports no
-# breakdown. On the singular operator of the testset above, the second step is the last of the
-# budget with `maxiter = 2`, and the last of each cycle with `restart = 2`: the cycle ends there
-# without the test, so neither solve reports a breakdown.
-@testset "The breakdown test of a reduced basis acts only where the cycle would go on, mgs = $mgs, $TB on $T" for (T, TB) in ((
-        Float64, Float16), (Float64, Float32), (Float32, Float16)),
+# breakdown. On the singular operator `J = u₂ (u₁ + u₂)ᵀ` above, the second step is the last of
+# the budget with `maxiter = 2`, and the last of each cycle with `restart = 2`: the cycle ends
+# there without the test, so neither solve reports a breakdown.
+@testset "The breakdown test of a reduced basis acts only where the cycle would go on, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
     mgs in (false, true)
 
     tol = T === Float64 ? 1e-10 : 1.0f-5

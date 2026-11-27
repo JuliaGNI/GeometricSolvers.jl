@@ -71,13 +71,22 @@ so that a compat-only bump can be told apart from an interface change.
   arXiv:2009.12101), with every product, coefficient, norm and update in the working type; the
   preconditioner reads a working-precision copy of each basis vector. Its Givens estimate is not
   the true residual, so each cycle ends on `‖b − J d‖`, one more Jacobian–vector product, and
-  restarts where it misses the tolerance; its CGS2 step takes three reductions, and its MGS step a
-  second pass, `2j + 1` reductions at inner iteration `j`, because a stored column has unit norm
-  only to the round-off of `TB`. On a Krylov space that is invariant to the round-off of `TB`, as
-  that of `J = c I` and a constant `b`, the CGS2 step takes its remainder of order eps(TB)² for a
-  new basis vector, and the cycle makes no more progress. A solve with `maxiter == restart` and a
-  tolerance below about eps(TB)² can end without convergence near eps(TB) ‖b‖, about 2.4e-4 ‖b‖
-  for a `Float16` basis on `Float64`; with room for a restart it converges (known issue K146).
+  restarts where it misses the tolerance; its CGS2 step takes four reductions, and its MGS step
+  with its second pass `2j + 2` reductions at inner iteration `j`, one of them the norm of
+  `w = J M⁻¹ v_j` before the projections, because a stored column has unit norm only to the
+  round-off of `TB`. Where the cycle would go on (the Givens estimate misses the tolerance,
+  `j < restart` and the iteration cap is not reached), a remainder `h_{j+1,j} < 2e-3 eps(TB) ‖w‖`
+  is a breakdown, and the cycle ends on its true residual and restarts from it. On the Krylov space
+  of `J = c I` and a constant `b`, each stored column is parallel to its vector and has unit norm
+  only to the round-off of `TB`, so the remainder lies along the stored basis; the test catches it,
+  and the CGS2 cycle on a `Float16` basis on `Float64` with `maxiter = restart = 20` and
+  `tol = 1e-10` converges in 3 iterations, one per cycle. This closes known issue K146. The constant 2e-3 lies between the largest ratio `hj / (eps(TB) ‖w‖)` of such an invariant
+  step, 2.44e-4, and the smallest of a non-invariant step, 0.0168, measured by
+  `scripts/gmres_breakdown_ratio.jl` on the reduced-basis systems of the tests and the
+  Float32-basis column of the standard test set. An invariant space whose stored columns also carry
+  a direction error of order eps(TB) (ratios 0.27-0.63 measured) leaves a remainder the test does
+  not see, and the cycle goes on with it as a new direction; those solves converge. With
+  `basis_eltype = Nothing` nothing changes: the test and its reduction act only on a reduced basis.
   One cycle of `j` CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist,
   Luszczek and Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve
   reaches `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor a
