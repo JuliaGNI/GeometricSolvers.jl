@@ -86,8 +86,9 @@ const RC_STOP_RATIO = 0.90
 # The right preconditioner `M = LU(J(x))`: `refresh!` evaluates the analytic Jacobian `J!` at the
 # iterate and factorises it, and `apply_preconditioner!` solves with that factor. It counts its
 # refreshes, and those in the first step of a solve: the caller sets `first_step` at the start of
-# each solve, and the first solve with the factor clears it. A step refreshes before its inner
-# solve, which solves with the factor at least once.
+# each solve, and the first application of the factor clears it. A step refreshes before its
+# inner solve, which applies the factor at least once, since its tolerance `η ‖F‖` lies below
+# `‖F‖`.
 mutable struct LUPreconditioner{FJ, M, F}
     J!::FJ
     J::M
@@ -183,13 +184,13 @@ function harmonic_basis(A::AbstractMatrix, B::AbstractMatrix, k::Integer)
 end
 
 # The operator of a solve may be scaled near `floatmax`. A product of two entries of its
-# Hessenberg matrix then overflows, so does a Householder reflector of a column of norm above
-# `floatmax / 2` and a product of a Hessenberg entry with a coefficient above 1, and a column of
-# the recycled space `U`, with `A U = C`, is of the size of the inverse of the scale, which may be
-# subnormal. So every QR factorisation and every least-squares solve below takes a matrix divided
-# by its largest entry, the harmonic Ritz pencil is formed from such a matrix, and `U` is held as
-# unit columns `Û` and the inverses `d` of the norms of the columns of `U`,
-# `U = Û Diagonal(1 ./ d)`.
+# Hessenberg matrix then overflows, and so may a sum of products of Hessenberg entries with
+# coefficients near 1 in a least-squares solve or its residual; and the `R` factor of such a
+# matrix is of the size of the scale, so that a column of the recycled space `U`, with `A U = C`,
+# is of the size of its inverse, which may be subnormal. So every QR factorisation and every
+# least-squares solve below takes a matrix divided by its largest entry, the harmonic Ritz pencil
+# is formed from such a matrix, and `U` is held as unit columns `Û` and the inverses `d` of the
+# norms of the columns of `U`, `U = Û Diagonal(1 ./ d)`.
 
 # The `Q` factor and the scaled `R` factor `R / σ` of the QR factorisation of `M`, and `σ`.
 function scaled_qr(M)

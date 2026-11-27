@@ -432,8 +432,8 @@ end
 @testset "recycling_spike.jl: GCRO-DR on the control matrix scaled near floatmax" begin
     # `s A y = s b` for the control matrix `A` and three unit right-hand sides, each solve after
     # the first from the recycled space of the one before: at `s = 4 √floatmax` a product of two
-    # Hessenberg entries overflows, and at `s = floatmax / 8` a Householder reflector of a
-    # Hessenberg column and a product of a Hessenberg entry with a coefficient above 1 do too
+    # Hessenberg entries overflows, and at `s = floatmax / 8` the residual of a least-squares
+    # solve formed from the unscaled Hessenberg matrix overflows too
     prob, _ = RecyclingSpike.control_problem()
     A = copy(prob.jacobian_prototype)
     n = size(A, 1)
@@ -460,15 +460,15 @@ end
         Qs = Matrix(qr(g.U).Q)
         @test opnorm(Qs - Q1 * (Q1' * Qs)) < sqrt(eps(Float64))
         # the solution is that at scale 1, to the round-off of `s A`, which the condition number
-        # of `A`, about 10⁴, amplifies
+        # of `A`, about 6·10⁴, amplifies
         for (y, y1) in zip(ys, ys1)
             @test norm(y - y1) <= 1e-10 * norm(y1)
         end
     end
-    # a matrix whose columns have norms between floatmax / 2 and floatmax, where a Householder
-    # reflector of the matrix itself overflows, and `2¹⁰²⁰` times one of norms about 14: the
-    # scaling is exact, so the factors and the recycled space are those of the smaller matrix,
-    # with `σ` and `d` scaled by `2¹⁰²⁰`
+    # a matrix whose columns have norms between floatmax / 2 and floatmax, `2¹⁰²⁰` times one of
+    # norms from 12 to 16: the `R` factor of the matrix itself is of the size of `floatmax`, so that
+    # `X R⁻¹` has subnormal entries. The scaling is exact, so the factors and the recycled space
+    # are those of the smaller matrix, with `σ` and `d` scaled by `2¹⁰²⁰`
     M1 = randn(Xoshiro(21), 40, 3) .+ 2
     t = 2.0^1020
     @test all(c -> floatmax(Float64) / 2 < t * norm(c) < floatmax(Float64), eachcol(M1))
@@ -487,7 +487,7 @@ end
 end
 
 @testset "recycling_spike.jl: the second Gram–Schmidt pass of the Arnoldi process" begin
-    # a unit vector at the distance 10⁻¹⁰ from the span of an orthonormal `V`: one pass of
+    # a vector at the distance 10⁻¹⁰ of its norm from the span of an orthonormal `V`: one pass of
     # classical Gram–Schmidt leaves a loss of orthogonality of about eps / 10⁻¹⁰
     n = 400
     V = Matrix(qr(randn(Xoshiro(11), n, 20)).Q)
