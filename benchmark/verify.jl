@@ -1,6 +1,6 @@
 # The verifier of the results. It reads `<dir>/correctness.csv`, `<dir>/rows.csv`,
-# `<dir>/timings.csv`, the four block tables `<dir>/mixed.csv`, `stage.csv`, `anderson.csv` and
-# `sparse.csv`, every `<dir>/devices-<machine>.csv` and its `.txt`, `benchmark/REPORT.md` and
+# `<dir>/broyden_update.csv`, `<dir>/timings.csv`, the four block tables `<dir>/mixed.csv`,
+# `stage.csv`, `anderson.csv` and `sparse.csv`, every `<dir>/devices-<machine>.csv` and its `.txt`, `benchmark/REPORT.md` and
 # `benchmark/traces/`, and checks them with code of its own: it loads no file of the harness and
 # no solver package.
 #
@@ -258,6 +258,64 @@ if !STRUCTURE
     end
     for id in keys(headings)
         check(haskey(named, id), "REPORT.md: $id is named by no row")
+    end
+end
+
+# --- Y1: the Broyden-update table ----------------------------------------------------------------
+
+# `broyden_update.csv`: GeometricSolvers alone on the 79 rows in both precisions, with the columns
+# `Broyden` and `Newton reuse 3 Broyden Backtracking LU`, the fields of `correctness.csv` and the
+# chunk count of the shared Jacobian of each row.
+const BROYDEN_COLUMNS = ["Broyden", "Newton reuse 3 Broyden Backtracking LU"]
+const N_BROYDEN = 2 * 79 * length(BROYDEN_COLUMNS)
+
+blines = readlines(joinpath(DIR, "broyden_update.csv"))
+check(blines[1] == CELLS_HEAD * ",chunks", "broyden_update.csv: header is $(blines[1])")
+bcells = [split(l, ",") for l in blines[2:end]]
+check(length(bcells) == N_BROYDEN && all(c -> length(c) == 17, bcells),
+    "broyden_update.csv: $(length(bcells)) cells, not $N_BROYDEN of 17 fields")
+bcells = filter(c -> length(c) == 17, bcells)
+broyden_count = Dict{Tuple{String, String}, Vector{Int}}()     # column, eltype => successes, cells
+broyden_jac = Dict{Tuple{String, String}, Float64}()            # column, eltype => Σ dual / chunks
+for c in bcells
+    set, problem, start, el, column, pkg, status, method,
+    code, succ, iters, fe, de, fn, x, comment, chunks = c
+    where = "broyden_update.csv: cell $(join(c[1:5], ","))"
+    check(pkg == "GeometricSolvers" && status == "ran" && column in BROYDEN_COLUMNS,
+        "$where: package $pkg, status $status, column $column")
+    check(join(c[1:5], ",") in keys(cellsof) || !(column in columns),
+        "$where: a row that correctness.csv does not hold")
+    check(iscount(fe) && iscount(de) && iscount(chunks) && parse(Int, chunks) ≥ 1,
+        "$where: f_evals '$fe', dual_evals '$de', chunks '$chunks'")
+    T = eltype_of(el)
+    ok = code != "ERROR" && code in OK_CODES[pkg] &&
+         all(isfinite, number.(split(x, ";"), T)) && 0 ≤ number(fn, T) ≤ sqrt(eps(T))
+    check(succ == string(ok), "$where: success $succ, recomputed $ok")
+    n = get!(broyden_count, (String(column), String(el)), [0, 0])
+    n[1] += ok
+    n[2] += 1
+    broyden_jac[(String(column), String(el))] = get(
+        broyden_jac, (
+            String(column), String(el)), 0.0) +
+                                                parse(Int, de) / parse(Int, chunks)
+end
+check(length(Set(join(c[1:5], ",") for c in bcells)) == length(bcells),
+    "broyden_update.csv: a cell twice")
+
+if !STRUCTURE
+    btable = table("### Broyden updates of a reused factor")
+    check([f[1] for f in btable] == BROYDEN_COLUMNS,
+        "REPORT.md: the Broyden-update table has the columns $(join(first.(btable), ", "))")
+    for f in btable
+        i = 2
+        for el in ("Float32", "Float64")
+            n = get(broyden_count, (String(f[1]), el), [0, 0])
+            want = ("$(n[1])/$(n[2])",
+                @sprintf("%.1f", get(broyden_jac, (String(f[1]), el), NaN)))
+            check((f[i], f[i + 1]) == want,
+                "REPORT.md: the Broyden-update entries of $(f[1]) $el are $(f[i]), $(f[i + 1]), recomputed $want")
+            i += 2
+        end
     end
 end
 
@@ -972,7 +1030,7 @@ end
 
 if isempty(failures)
     println("VERIFY OK: $(length(cells)) cells, $(length(rows)) rows, ",
-        "$(length(timings)) timings, ",
+        "$(length(bcells)) Broyden-update cells, $(length(timings)) timings, ",
         join(
             ("$(length(get(btables, b, []))) $b"
             for b in ("mixed", "stage", "anderson", "sparse")),

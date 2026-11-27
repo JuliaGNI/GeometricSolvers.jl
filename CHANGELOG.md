@@ -30,7 +30,12 @@ so that a compat-only bump can be told apart from an interface change.
   `Newton{L, G, J, RF, Reg, Int32}` keep working. The standard test set has the new column
   `Newton reuse 3 Broyden Backtracking LU` (`reuse = 3`, `BroydenUpdate(2)`): 56/67 `SUCCESS`
   cells in `Float32` and 57/67 in `Float64`, against 57/67 and 59/67 for `reuse = 3` alone, and
-  2546 cells in all; no other cell of the reference table changes.
+  2546 cells in all; no other cell of the reference table changes. `benchmark/REPORT.md` has a
+  table of the column beside `Broyden`, from `benchmark/broyden_update.jl` (GeometricSolvers
+  alone at `21696f6`, 79 rows in each precision, checked by `verify.jl`): 66/79 and 68/79
+  successes and Jacobian counts `Σ dual_evals / chunks` of 1779 and 1829, an upper bound that
+  holds the line search's directional derivatives too; the 13-column tables stay the run at
+  `301f366`.
 
 - **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
   20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
