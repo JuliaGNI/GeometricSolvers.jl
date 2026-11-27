@@ -2,12 +2,13 @@
 # factor `B₀`, the step takes the direction `-Hₖ F` of the inverse
 # `Hₖ = (I + uₖ sₖᴴ) ⋯ (I + u₁ s₁ᴴ) B₀⁻¹`, with `u = (s - H y) / (sᴴ H y)` from each accepted step
 # `s` and its residual change `y`. The tests check the secant condition `H₊ y = s`, the edges of
-# the update, the refusals of the constructor and of the state build, the R1 storage, and the
-# dispatch of the `Int32` step methods.
+# the update, the refusals of the constructor and of the state build, the R1 storage, a solve in a
+# KernelAbstractions kernel on CPU, and the dispatch of the `Int32` step methods.
 
 using Adapt: Adapt
 using JET: JET
-using LinearAlgebra: I, mul!, norm
+using KernelAbstractions: @index, @kernel, synchronize
+using LinearAlgebra: I, dot, mul!, norm
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -132,7 +133,10 @@ end
     r = T.(R[1, 2, -1])
     z = r - s * (sum(conj.(s) .* r) / sum(conj.(s) .* s))
     @test abs(sum(conj.(s) .* z)) <= 8 * eps(R) * norm(s) * norm(z)
-    @test norm(GS.apply_pairs!!(state.pairs, copy(z)) - z) <= 64 * eps(R) * norm(z)
+    # the pair moves `z` by `u (sᴴ z)`, at most `‖u‖` times the bound above, and the sum rounds
+    u = state.pairs.u[:, 1]
+    @test norm(GS.apply_pairs!!(state.pairs, copy(z)) - z) <=
+          8 * eps(R) * (1 + norm(u) * norm(s)) * norm(z)
 end
 
 @testset "no pair where sᴴ H y = 0, and the next step factorises, $T on $V" for T in REAL_ELTYPES,
@@ -150,6 +154,18 @@ end
     @test infos[2].code == SUCCESS
     @test all(isfinite, Array(xs[3]))
     @test Array(xs[3]) != Array(xs[2])
+end
+
+@testset "a step of zero length stores no pair, $T on $V" for T in REAL_ELTYPES,
+    V in BACKENDS
+    # `s = H y = 0` gives `sᴴ H y = 0` and `u = 0 / 0`: every entry of `u` is NaN
+    z = storage(V, zeros(T, 2))
+    pairs = GS.init_pairs(BroydenUpdate(1), z)
+    den = GS.pair_dot(z, z)
+    @test iszero(den)
+    stored, finite = GS.store_pair!!(pairs, copy(z), copy(z), den)
+    @test !finite
+    @test stored.count == 0
 end
 
 @testset "no pair where sᴴ H y overflows, $T on $V" for T in REAL_ELTYPES, V in BACKENDS
@@ -246,6 +262,30 @@ end
     end
 end
 
+@testset "a reused step after a fresh factor applies the pair of that factor alone, $T on $V" for T in ELTYPES,
+    V in BACKENDS
+
+    # with `reuse = 3`, step 4 factorises afresh and stores its pair `(u, s)`, and step 5 takes the
+    # direction `-(I + u sᴴ) B₀⁻¹ F` with that pair alone. The reference is dense algebra on the
+    # iterates and residuals of the run, not `apply_pairs!!`, so a pair of steps 1 and 2 that the
+    # step applies moves the step and not the reference. The step `x₆ - x₅` rounds at
+    # `eps · (‖x₅‖ + ‖x₆‖)`.
+    R = real(T)
+    A, B₀, b, x₀ = linear_system(T)
+    prob, m = linear_case(A, B₀, b, V; reuse = 3, update = BroydenUpdate(2))
+    xs, Fs, infos, _ = run_steps(m, prob, storage(V, x₀), 5)
+    @test all(info -> info.code == SUCCESS, infos)
+    x₄, x₅, x₆ = Array(xs[4]), Array(xs[5]), Array(xs[6])
+    F₄, F₅ = Array(Fs[4]), Array(Fs[5])
+    s = x₅ - x₄
+    Hy = B₀ \ (F₅ - F₄)
+    u = (s - Hy) / dot(s, Hy)
+    H₀F = B₀ \ F₅
+    d = -(H₀F + u * dot(s, H₀F))
+    @test norm(x₆ - x₅ - d) <= 8 * eps(R) * (norm(x₅) + norm(x₆))
+    @test norm(x₆ - x₅ + H₀F) > 100 * eps(R) * (norm(x₅) + norm(x₆))
+end
+
 @testset "a solve with the update converges, $T on $V" for T in REAL_ELTYPES, V in BACKENDS
     # `F(x) = A x + x³ - b`, nonlinear, from `x₀`, along the Jacobian of the problem
     A, _, b, x₀ = linear_system(T)
@@ -273,6 +313,11 @@ end
     @test Newton(; reuse = 2, update = BroydenUpdate(1)).reuse === Int32(2)
     @test Newton(; reuse = 5, update = BroydenUpdate(4)).reuse === Int32(5)
     @test Newton().update === nothing
+    # the range check compares `reuse - 1` with `m` and forms no `m + 1`, which overflows
+    for big_m in (typemax(Int32), Int(typemax(Int32)) + 1, typemax(Int))
+        @test Newton(; reuse = 3, update = BroydenUpdate(big_m)).update ===
+              BroydenUpdate(big_m)
+    end
     range_phrase = r"^ArgumentError: Newton with update = BroydenUpdate\(m\) needs 2 ≤ reuse ≤ m \+ 1"
     for reuse in (nothing, 1, 4, 10)
         @test_throws range_phrase Newton(; reuse, update = BroydenUpdate(2))
@@ -398,6 +443,35 @@ end
         Tuple{typeof(st), typeof(m), LeastSquaresProblem, typeof(x), typeof(x), Nothing}) ===
           which(GS.refresh_diagnostics!!,
         Tuple{typeof(st), typeof(m6), LeastSquaresProblem, typeof(x), typeof(x), Nothing})
+end
+
+@kernel function broyden_solve_kernel!(codes, xs, prob, method, state₀, opt, @Const(x₀))
+    i = @index(Global, Linear)
+    @inbounds begin
+        x, st, _ = GS.solve!!(state₀, prob, x₀, method, nothing, opt)
+        codes[i] = st.code
+        xs[i] = x
+    end
+end
+
+@testset "a solve with the update inside a KernelAbstractions kernel on CPU, $T" for T in REAL_ELTYPES
+    A, _, b, x₀ = linear_system(T)
+    As, bs = SMatrix{3, 3}(A), SVector{3}(b)
+    prob = NonlinearProblem((x, p) -> As * x + x .^ 3 - bs)
+    m = Adapt.adapt(GS.ToReal{T}(),
+        Newton(; reuse = 3, update = BroydenUpdate(2), globalization = Backtracking()))
+    opt = Options(T)
+    q₀ = SVector{3}(x₀ ./ 4)
+    state₀ = init_state(m, prob, q₀, nothing)
+    x_host, st_host, _ = GS.solve!!(state₀, prob, q₀, m, nothing, opt)
+    @test st_host.code == SUCCESS
+    @test x_host != q₀
+    codes = Vector{GS.ReturnCode}(undef, 2)
+    xs = Vector{SVector{3, T}}(undef, 2)
+    broyden_solve_kernel!(KA_BACKEND)(codes, xs, prob, m, state₀, opt, q₀; ndrange = 2)
+    synchronize(KA_BACKEND)
+    @test all(==(st_host.code), codes)
+    @test all(x -> isapprox(x, x_host; rtol = 8 * eps(T)), xs)
 end
 
 allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))

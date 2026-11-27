@@ -204,7 +204,7 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
             throw(ArgumentError("Newton keep_factor = true needs reuse = k: only a factor that its steps reuse can survive a solve"))
         if update !== nothing
             (reuse !== nothing &&
-             Int32(2) <= reuse <= Int32(update_memory(update)) + Int32(1)) ||
+             Int32(2) <= reuse && reuse - Int32(1) <= update_memory(update)) ||
                 throw(ArgumentError("Newton with update = BroydenUpdate(m) needs 2 ≤ reuse ≤ m + 1: a factor serves at most reuse steps and collects at most reuse - 1 pairs, which the memory of m pairs holds"))
             refinement isa Refinement &&
                 throw(ArgumentError("Newton with a BroydenUpdate takes no Refinement: a refinement corrects the solve of the factor, and the update steps along another inverse"))
@@ -990,12 +990,10 @@ end
     return nothing
 end
 
-# The inner product `aᴴ b`, conjugated in `a`, in the element type of the iterate: a lazy broadcast
-# with no scalar indexing, which a device array refuses.
+# The inner product `aᴴ b`, conjugated in `a`, in the element type of the iterate; a vector takes
+# `arnoldi_dot`, a lazy broadcast with no scalar indexing, which a device array refuses.
 @inline pair_dot(a::Number, b::Number) = conj(a) * b
-@inline function pair_dot(a, b)
-    return sum(Broadcast.instantiate(Broadcast.broadcasted((x, y) -> conj(x) * y, a, b)))
-end
+@inline pair_dot(a, b) = arnoldi_dot(a, b)
 
 # `v` with the pairs applied, `(I + u_count s_countᴴ) ⋯ (I + u₁ s₁ᴴ) v`: the product with `Hⱼ`
 # of `v = B₀⁻¹ w`. An array `v` is overwritten.
@@ -1044,10 +1042,9 @@ end
     return s, apply_pairs!!(p, ldiv!!(nothing, fac, y))
 end
 @inline function secant_pair!!(p::BroydenPairs, fac, x₊, F₊, x, Fx)
-    s = view(p.s, :, p.count + Int32(1))
-    s .= x₊ .- p.xk
-    p.Fk .= F₊ .- p.Fk
-    return s, apply_pairs!!(p, ldiv!!(p.xk, fac, p.Fk))
+    s = map!!(-, view(p.s, :, p.count + Int32(1)), x₊, p.xk)
+    y = map!!(-, p.Fk, F₊, p.Fk)
+    return s, apply_pairs!!(p, ldiv!!(p.xk, fac, y))
 end
 
 # The pairs with `(u, s)`, `u = (s - Hⱼ y) / den`, as the pair `count + 1`, and whether every entry
@@ -1065,8 +1062,7 @@ end
 end
 @inline function store_pair!!(p::BroydenPairs, s, Hy, den)
     k = p.count + Int32(1)
-    u = view(p.u, :, k)
-    u .= (s .- Hy) ./ den
+    u = map!!((a, b) -> (a - b) / den, view(p.u, :, k), s, Hy)
     isfinite(rmaxnorm(u)) || return p, false
     return BroydenPairs(p.u, p.s, p.xk, p.Fk, k), true
 end
