@@ -308,7 +308,7 @@ end
     end
 end
 
-@testset "the constructor refuses reuse outside 2 ≤ reuse ≤ m + 1, a refinement and a method without a factor" begin
+@testset "the constructor refuses reuse outside 2 ≤ reuse ≤ m + 1, a refinement, a matrix-free method and KroneckerFactorization" begin
     @test Newton(; reuse = 3, update = BroydenUpdate(2)).update === BroydenUpdate(2)
     @test Newton(; reuse = 2, update = BroydenUpdate(1)).reuse === Int32(2)
     @test Newton(; reuse = 5, update = BroydenUpdate(4)).reuse === Int32(5)
