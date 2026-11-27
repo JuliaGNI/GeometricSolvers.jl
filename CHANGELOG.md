@@ -24,7 +24,8 @@ so that a compat-only bump can be told apart from an interface change.
   test holds at the third step at the earliest. It reads no step whose last fresh factor is a
   rank-deficient SVD factor, also the outer factor of an eliminated problem and a factor kept from
   an earlier solve, so a least-squares point with no root still returns `STALLED`. On a
-  `LeastSquaresProblem` and a `VariableProjection` it reads no step along a reused factor, which
+  `LeastSquaresProblem`, a `VariableProjection` and a `Reparametrized` problem around a
+  `LeastSquaresProblem` it reads no step along a reused factor, which
   contracts onto the point where `J₀ᵀ F(x) = 0` for the factor's Jacobian `J₀` and not onto a
   stationary point of `‖F‖²`; such a solve ends on the stationarity, step or residual test, as
   without `reuse`, and square problems read every step. So `SUCCESS`

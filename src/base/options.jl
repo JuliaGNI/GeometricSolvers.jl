@@ -154,8 +154,9 @@ solve. The rate is `NaN` at the first step and after a step of zero norm, and a 
 no test, so the rate test holds at the third step at the earliest; `status.rate` is ``θ_k``. The
 test reads only a solve whose last fresh factor reports no rank (`status.rank == -1`, as an LU or
 a QR factor does) or full column rank: along a rank-deficient SVD factor the steps can contract
-onto a point that is no root, and the step test decides. On a [`LeastSquaresProblem`](@ref) and a
-[`VariableProjection`](@ref) it reads no step along a reused factor of `reuse = k`: such steps
+onto a point that is no root, and the step test decides. On a [`LeastSquaresProblem`](@ref), a
+[`VariableProjection`](@ref) and a [`Reparametrized`](@ref) problem around a
+`LeastSquaresProblem` it reads no step along a reused factor of `reuse = k`: such steps
 contract onto the point where ``J_0^\\top F(x) = 0`` for the Jacobian ``J_0`` of the factor, which
 is no stationary point of ``\\|F\\|_2^2``, so the stationarity, the step or the residual test
 ends the solve there, as without `reuse`. A step along a fresh factor, and every step of a square

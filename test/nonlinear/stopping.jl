@@ -229,6 +229,49 @@ end
     end
 end
 
+@testset "the rate test reads a step along a fresh factor of a least-squares problem, $T" for T in REAL_ELTYPES
+    # `F(x) = 0.99 x` with the Jacobian `1`, from `1`: under `reuse = 2` the third step, of norm
+    # `9.9e-5`, steps along a fresh factor and meets the rate test before the residual test
+    lin(x, p) = SVector(T(99) / 100 * x[1])
+    lin_j(x, p) = SMatrix{1, 1}(one(x[1]))
+    m = Newton(; linsolve = GeometricSolvers.QRFactorization(), jacobian = lin_j, reuse = 2)
+    _, st = solve(GeometricSolvers.LeastSquaresProblem(lin, lin_j), SVector{1, T}(1), m;
+        options = Options(T; f_reltol = 0, x_abstol = T(1e-4)))
+    @test st.code == SUCCESS
+    @test stopping_test(st) == :contraction
+    @test !st.reused
+end
+
+@testset "the rate test of a Reparametrized problem reads the steps that it reads for the inner problem, $T" for T in REAL_ELTYPES
+    # `ls_square` from `3` under the identity chart: without the guard, the steps along a reused
+    # QR factor meet the rate test where `‖r‖²` is not stationary
+    p = (c = T(3),)
+    opt = Options(T)
+    chart(y, p) = y
+    chart_jacobian(y, p) = SMatrix{1, 1}(one(y[1]))
+    prob = GeometricSolvers.Reparametrized(
+        GeometricSolvers.LeastSquaresProblem(ls_square, ls_square_jacobian), chart, chart_jacobian)
+    for k in (3, 10)
+        m = Newton(; linsolve = GeometricSolvers.QRFactorization(), reuse = k)
+        x, st = solve(prob, SVector{1, T}(3), m, p; options = opt)
+        @test x[1] != 3
+        @test st.reused
+        @test stopping_test(st) != :contraction
+        @test !st.contracted
+        @test st.code != SUCCESS || st.stationary
+    end
+    # A square inner problem keeps the rate test on a reused factor: `F(x) = 0.99 x` with the
+    # Jacobian `1`, from `1`, ends on the rate test at its third step, along a reused factor
+    lin(x, p) = SVector(T(99) / 100 * x[1])
+    lin_j(x, p) = SMatrix{1, 1}(one(x[1]))
+    square = GeometricSolvers.Reparametrized(NonlinearProblem(lin, lin_j), chart, chart_jacobian)
+    _, st = solve(square, SVector{1, T}(1), Newton(; reuse = 3);
+        options = Options(T; f_reltol = 0, x_abstol = T(1e-4)))
+    @test st.code == SUCCESS
+    @test stopping_test(st) == :contraction
+    @test st.reused
+end
+
 @testset "the rate test reads no step along a kept factor of a least-squares problem, $T" for T in REAL_ELTYPES
     # The pair of `ls_affine`: the first solve, linear, ends on the stationarity test and keeps
     # its factor; the second starts along it. The pair of `ls_square`, from `3`, at `c = 0` and
