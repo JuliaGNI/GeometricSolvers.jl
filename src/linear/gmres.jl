@@ -272,9 +272,11 @@ doi:10.1137/0914028).
   the cycle ends on its true residual. That remainder is what the projections
   leave on a Krylov space that is invariant, as that of `J = c I` and a constant `b`, where each
   stored column is parallel to its vector and has unit norm only to the round-off of `TB`;
-  without the test the step would take it for a new basis vector parallel to the last one. An
-  invariant space whose stored columns also carry a direction error of order ``\\mathrm{eps}(TB)``
-  leaves a remainder of that order, which the test does not see: the cycle goes on with it as a
+  without the test the step would take it for a new basis vector parallel to the last one. A
+  genuine remainder below that bound is taken as round-off too, which costs a restart. At such a
+  breakdown, a rotated diagonal entry below the same bound is zero: `J` is singular on the Krylov
+  space, and the solve stops without convergence. An invariant space whose stored columns also
+  carry a direction error of order ``\\mathrm{eps}(TB)`` leaves a remainder of that order, which the test does not see: the cycle goes on with it as a
   new direction. Any other
   `basis_eltype` raises an `ArgumentError`, and so does a [`Newton`](@ref) with a
   [`DogLeg`](@ref) globalization and a `basis_eltype` that is not `Nothing`.
@@ -629,13 +631,15 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             # direction where the cycle would go on: the Krylov space is invariant to that
             # round-off, and the step is a breakdown: the diagonal entry `H[j, j]`, `g[j]` and the
             # residual become those of a rotation of a zero `H[j+1, j]`, which the weights and the
-            # stop of the cycle read
+            # stop of the cycle read. A diagonal entry `a` at that round-off is zero too: `J` is
+            # singular on the space, and the residual keeps `g[j]`
             if reduced_basis(ws) && linres > atol && j < mr && used < maxiter &&
                basis_breakdown(ws, hj, w₀)
                 hj = zero(R)
-                ws.H[j, j] = a
+                singular = basis_breakdown(ws, R(abs(a)), w₀)
+                ws.H[j, j] = singular ? zero(T) : a
                 ws.g[j] = gj
-                linres = iszero(a) ? R(abs(gj)) : zero(R)
+                linres = singular ? R(abs(gj)) : zero(R)
             end
             if iszero(hj) || linres <= atol
                 break
@@ -751,7 +755,10 @@ end
 # `hj / (eps(TB) ‖w₀‖)` of an invariant step whose remainder lies along the stored basis,
 # 2.44e-4, and the smallest of a non-invariant step, 0.0168, at the steps where the test acts on
 # the reduced-basis systems of the tests and of the standard test set
-# (`scripts/gmres_breakdown_ratio.jl`).
+# (`scripts/gmres_breakdown_ratio.jl`); the separation holds on those measured systems, and a
+# genuine remainder below the bound costs a restart, as on a Newton step with a Float16 basis on
+# Float64 whose ratio is 3.74e-4 and which still converges. The same bound decides whether the
+# rotated diagonal entry of a breakdown step is zero.
 @inline function basis_breakdown(ws::GMRESWorkspace{T, R, V}, hj, w₀) where {T, R, V}
     return hj < R(2e-3) * R(eps(real(eltype(V)))) * w₀
 end

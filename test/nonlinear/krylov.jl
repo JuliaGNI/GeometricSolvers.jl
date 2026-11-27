@@ -2213,6 +2213,39 @@ end
     @test isapprox(info.resnorm, rnorm(b); rtol = sqrt(eps(TB)))
 end
 
+# The singular operator above in a random orthonormal frame `Q`, `J = Q u₂ (u₁ + u₂)ᵀ Qᵀ` and
+# `b = Q u₁`: the rotated diagonal entry of the breakdown step is then not exactly zero but at the
+# round-off of the basis, and the breakdown test takes it as zero, so the solve stops there
+# rather than dividing `g[j]` by it and restarting to `maxiter`. The residual is at least `‖b‖`,
+# the minimum over every `d` since `b ⟂ range(J)`; an earlier step of the frame leaves a
+# remainder with a direction error of order eps(TB), which the test does not see, so `d` holds a
+# component of order 1 / eps(TB) (K149), and the residual exceeds `‖b‖`.
+@testset "A breakdown on a singular operator in a rotated frame stops without convergence, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    n = 50
+    Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
+    u₁ = Q * [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = Q * [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v); Jv)
+    b = copy(u₁)
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+    Jd = op(similar(d), d)
+    @test info.breakdown
+    @test !info.converged
+    @test info.iterations < 20
+    @test isapprox(info.resnorm, rnorm(b .- Jd); rtol = 8 * eps(T))
+    @test info.resnorm >= rnorm(b) * (1 - 8 * eps(T))
+    # the reduced system is singular at the breakdown step: its diagonal entry and its weight are 0
+    @test iszero(ws.H[ws.arnoldi, ws.arnoldi])
+    @test iszero(ws.y[ws.arnoldi])
+    @test all(isfinite, d)
+end
+
 # `J = diag(1, 1 + eps(TB), 2, 3)` and `b = 1`: the space is not invariant before step 4, but
 # the cluster leaves a remainder at step 3 of about 0.8 eps(TB) ‖w₀‖, below the round-off of the
 # basis and above the breakdown test's `2e-3 eps(TB) ‖w₀‖`; the one cycle of `maxiter = 4` runs

@@ -691,7 +691,7 @@
 
 ### K103 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
 
-- **location:** `src/linear/gmres.jl:626` (`linres` from the rotated right-hand side)
+- **location:** `src/linear/gmres.jl:628` (`linres` from the rotated right-hand side)
 - **evidence:** with `rng = Xoshiro(1)`, `A = T.(Diagonal(1:6) + 0.1 randn(rng, 6, 6))`, then
   `b = T.(randn(rng, 6))`, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32`
   reports `resnorm = 8.7e-17`, while the true residual is `‖b − A d‖ = 5.8e-8 ‖b‖`; in `Float64`
@@ -1308,3 +1308,35 @@
   `Newton Backtracking Float32-basis GMRES`, so no column of the table meets the case.
 - **kind:** defect
 - **found:** 2026-11-26
+
+### K148 · `gmres_solve!` reports convergence at 0 iterations for a right-hand side with an `Inf` entry
+
+- **location:** `src/linear/gmres.jl:551` (`atol = R(tol) * R(bnorm)`) and `:558`
+  (`converged = resnorm <= atol`)
+- **evidence:** with `J = 14 I`, `n = 10`, `b = ones(10)`, `b[3] = Inf`, `GMRES(; maxiter = 10)`
+  and `tol = 1e-10`, `gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-10, 10, 10)` returns
+  `GMRESInfo(0, Inf, Inf, true, false)` and `d = 0`: `bnorm = Inf` makes `atol = Inf`, and
+  `Inf <= Inf` holds before the first iteration. The same holds with `basis_eltype = Float32`
+  and without the breakdown test of a reduced basis (Julia 1.13.4). A non-finite `bnorm` reported as no
+  convergence would close it.
+- **kind:** defect
+- **found:** 2026-11-27
+
+### K149 · On a reduced basis, a `J` singular on a Krylov space in a general frame stops at the breakdown with a direction of order `1 / eps(TB)`
+
+- **location:** `src/linear/gmres.jl:637` (`basis_breakdown(ws, hj, w₀)`) and `:656` (the weights
+  of the reduced least-squares problem)
+- **evidence:** with a random orthonormal `Q` (`qr(randn(Xoshiro(7), 50, 50)).Q`), the unit
+  vectors `u₁ = Q [0.2·1₂₅; 0]` and `u₂ = Q [0; 0.2·1₂₅]`, `J = u₂ (u₁ + u₂)ᵀ`, `b = u₁`,
+  `GMRES(; maxiter = 20, basis_eltype = TB)` and `maxiter = restart = 20`, the Krylov space is
+  `span(u₁, u₂)` and `min ‖b − J d‖ = ‖b‖ = 1`. The remainder of step 2 carries the direction
+  error of the stored basis, `hj / (eps(TB) ‖w₀‖) = 0.15` (`Float16`) and `0.19` (`Float32`),
+  above the breakdown test's `2e-3`, so the step takes it for `v₃`; step 3 is the breakdown, and
+  the solve stops there without convergence after 3 iterations. The rotated diagonal of step 2 is
+  then of the order of that remainder, and its weight gives `‖d‖ = 429` for a `Float16` basis on
+  `Float64` or `Float32` and `‖d‖ = 1.17e7` for a `Float32` basis on `Float64`, with a true
+  residual `1.000002` and `1.0014` (Julia 1.13.4). Without the breakdown test the same solves run
+  to `maxiter` with `‖d‖` from `1e8` to `1e23`. A Newton step on such a direction depends on its
+  line search to reject it.
+- **kind:** defect
+- **found:** 2026-11-27

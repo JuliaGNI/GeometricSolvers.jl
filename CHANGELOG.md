@@ -84,7 +84,11 @@ so that a compat-only bump can be told apart from an interface change.
   constant 2e-3 lies between the largest ratio `hj / (eps(TB) ‖w‖)` of such an invariant step,
   2.44e-4, and the smallest of a non-invariant step, 0.0168, measured by
   `scripts/gmres_breakdown_ratio.jl` on the reduced-basis systems of the tests and the
-  Float32-basis column of the standard test set. An invariant space whose stored columns also carry
+  Float32-basis column of the standard test set; the separation holds on those systems only. A
+  genuine remainder below the bound is taken as round-off and costs a restart: a Newton step with
+  a `Float16` basis on `Float64` meets one of ratio 3.74e-4 and still converges. At such a
+  breakdown, a rotated diagonal entry below the same bound is zero, so a `J` singular on the
+  Krylov space stops the solve without convergence. An invariant space whose stored columns also carry
   a direction error of order eps(TB) (ratios 0.27-0.63 measured) leaves a remainder the test does
   not see, and the cycle goes on with it as a new direction; those solves converge. With
   `basis_eltype = Nothing` nothing changes: the test and its reduction act only on a reduced basis.
