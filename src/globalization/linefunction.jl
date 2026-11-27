@@ -171,7 +171,8 @@ end
         Fx = copy!!(Fx, res.residual)
         return x, Fx,
         g,
-        StepInfo{R}(SUCCESS, sqrt(res.φ), res.α * dn, Int32(0), false, false),
+        StepInfo{R}(
+            SUCCESS, sqrt(res.φ), res.α * dn, Int32(0), false, false, res.α < one(R)),
         res.φ
     elseif code == LINESEARCH_FAILED
         if isfinite(res.φ) && res.φ < φ₀
@@ -180,7 +181,8 @@ end
             Fx = copy!!(Fx, res.residual)
             return x, Fx,
             g,
-            StepInfo{R}(LINESEARCH_FAILED, sqrt(res.φ), res.α * dn, Int32(1), false, false),
+            StepInfo{R}(LINESEARCH_FAILED, sqrt(res.φ), res.α * dn, Int32(1), false, false,
+                res.α < one(R)),
             res.φ
         else
             return x, Fx,

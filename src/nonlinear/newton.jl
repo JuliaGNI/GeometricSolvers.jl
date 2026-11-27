@@ -1443,7 +1443,7 @@ end
             return with_mixed(state, true, Int32(0)),
             StepInfo{R}(
                 info.code, info.fnorm, info.stepnorm,
-                info.failures + one(Int32), true, info.limited)
+                info.failures + one(Int32), true, info.limited, info.shortened)
         end
         return with_mixed(state, false, slow), info
     end
@@ -1480,7 +1480,8 @@ end
 @inline function bump_failures(info::StepInfo{R}, n::Int32) where {R <: Real}
     iszero(n) && return info
     return StepInfo{R}(
-        info.code, info.fnorm, info.stepnorm, info.failures + n, info.promoted, info.limited)
+        info.code, info.fnorm, info.stepnorm, info.failures + n, info.promoted, info.limited,
+        info.shortened)
 end
 
 # The state a mixed-precision step returns with `fac` stored, for a solve that reuses its factor:
@@ -1707,7 +1708,8 @@ end
     info = bump_failures(info, md.failures)
     if promoted_step
         info = StepInfo{R}(
-            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited)
+            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited,
+            info.shortened)
         st = with_mixed(md.state, true, Int32(0))
     elseif state.promoted
         st = md.state
@@ -1763,7 +1765,8 @@ end
     info = bump_failures(info, md.failures)
     if promoted_step
         info = StepInfo{R}(
-            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited)
+            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited,
+            info.shortened)
         st = with_mixed(md.state, true, Int32(0))
     elseif state.promoted
         st = md.state
@@ -1856,7 +1859,8 @@ end
         info = bump_failures(info, md.failures)
         if promoted_step
             info = StepInfo{R}(
-                info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited)
+                info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited,
+                info.shortened)
             st = with_mixed(st, true, Int32(0))
         elseif md.fresh && !st.promoted
             st, info = read_mixed_stall(st, info, fnorm_old, lin_rel)

@@ -151,9 +151,12 @@ on, the rate of the step ``Δ_k`` is ``θ_k = \\|Δ_k\\|_2 / \\|Δ_{k-1}\\|_2``,
 residual test fails, a step with ``\\hat θ_k = \\max(θ_k, θ_{k-1}) < 1`` and
 ``\\hat θ_k / (1 - \\hat θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)`` returns
 `SUCCESS` with `status.contracted == true`. The left side estimates the distance of `x` to the
-limit of a contraction of rate ``\\hat θ_k``. The larger of the last two rates keeps one small
-rate, after a step that a line search shrank or after an irregular secant step, from ending a
-solve. The rate is `NaN` at the first step and after a step of zero norm, and a `NaN` rate passes
+limit of a contraction of rate ``\\hat θ_k``. The test reads only a step of full length: a step
+that a line search cut below the full step (`shortened` in its [`StepInfo`](@ref)) has a small
+rate because the line search shortened it, not because the iteration contracts, so it passes no
+rate test. The larger of the last two rates keeps the one small rate of an irregular step of full
+length, such as a secant step or an inexact Krylov step, from ending a solve. The rate is `NaN`
+at the first step and after a step of zero norm, and a `NaN` rate passes
 no test, so the rate test holds at the third step at the earliest; `status.rate` is ``θ_k``. The
 test reads only a solve whose last fresh factor reports no rank (`status.rank == -1`, as an LU or
 a QR factor does) or full column rank: along a rank-deficient SVD factor the steps can contract
@@ -173,7 +176,8 @@ residual reaches its round-off floor. A step of zero norm returns `STALLED` unde
 as [`solve!!`](@ref) says.
 
 The rate test and the round-off stop read the steps that the step test reads: not a `STALLED`
-step, not a step that a radius or a damping limits, and not before `min_iterations` steps.
+step, not a step that a radius or a damping limits, and not before `min_iterations` steps. The
+rate test also reads no step that a line search shortened.
 
 A negative or `NaN` tolerance, a negative `min_iterations`, a `max_iterations` below
 `min_iterations`, a `max_stalls` below 1 and a `kappa` outside ``(0, 1)`` in `real(T)` raise an
@@ -269,8 +273,9 @@ end
 # The rate test of `Options` for an iterate of norm `xnorm`, once `min_iterations` steps are taken,
 # after a step of rate `status.rate` where the step before it had the rate `θ_prev`: a step of
 # nonzero norm and `θ < 1` with `θ / (1 - θ) ‖Δ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)`, for the larger
-# `θ` of the two rates. One small rate after a step that a line search shrank, or after an
-# irregular secant step, does not pass it. A `NaN` rate, of either step, fails `θ < 1`.
+# `θ` of the two rates. The one small rate of an irregular step, such as a secant or an inexact
+# Krylov step, does not pass it. A `NaN` rate, of either step, fails `θ < 1`. `solve!!` does not
+# call it after a step that a line search shortened.
 @inline function rate_converged(
         options::Options{R}, status::SolverStatus{R}, θ_prev::R, xnorm::R) where {R}
     status.iterations >= options.min_iterations || return false

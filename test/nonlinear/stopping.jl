@@ -417,6 +417,55 @@ end
     @test st_plain.iterations == 3
 end
 
+# A method whose step divides `x` by `100`, as `ScriptedStep` does, and reports `SUCCESS` and a
+# step that a line search shortened.
+struct ShortenedStep end
+GeometricSolvers.init_state(::ShortenedStep, prob, x, p) = nothing
+function GeometricSolvers.step!!(state, ::ShortenedStep, prob, x, Fx, p)
+    x₊ = x / 100
+    F₊ = prob.F(x₊, p)
+    T = typeof(x)
+    return x₊, F₊, state,
+    StepInfo{T}(SUCCESS, abs(F₊), abs(x₊ - x), Int32(0), false, false, true)
+end
+
+@testset "the rate test skips a step that a line search shortened, and the step test reads it, $T" for T in REAL_ELTYPES
+    # the steps of `ScriptedStep(SUCCESS, false)`, which end on the rate test at the third step
+    # under `x_abstol = 1/200`: shortened, they pass no rate test, and at the third step, of norm
+    # `9.9e-5`, the step test `‖Δ₃‖ ≤ x_abstol` returns `STALLED`
+    prob = linear_problem(one(T))
+    opt = Options(T; f_reltol = 0, x_abstol = T(1) / 200, max_iterations = 5)
+    x, st = solve(prob, one(T), ShortenedStep(); options = opt)
+    @test st.code == STALLED
+    @test !st.contracted
+    @test stopping_test(st) == :none
+    @test st.iterations == 3
+    @test x == one(T) / 100 / 100 / 100
+end
+
+@testset "a composition carries the shortened flag of its member to the rate test, $T" for T in REAL_ELTYPES
+    # each composition of the steps above ends on the rate test at the third step, and with
+    # shortened member steps the step test returns `STALLED` there; a `Multiplicative` of two
+    # members divides by `10⁴` per step, so its steps of norm `1e-4` and `1e-8` meet the step test
+    # at the third step under `x_abstol = 10⁻⁶`
+    prob = linear_problem(one(T))
+    half = FixedWeights((1 // 2, 1 // 2))
+    compositions = (s -> Repeat(s, 1), s -> Additive((s, s), half), s -> Anderson(s),
+        s -> Switch(s, s; threshold = 1e3), s -> Multiplicative(s, s))
+    for (i, compose) in enumerate(compositions)
+        x_abstol = i == length(compositions) ? T(1e-6) : T(1) / 200
+        opt = Options(T; f_reltol = 0, x_abstol, max_iterations = 5)
+        _, st_full = solve(prob, one(T), compose(ScriptedStep(SUCCESS, false)); options = opt)
+        @test st_full.code == SUCCESS
+        @test stopping_test(st_full) == :contraction
+        @test st_full.iterations == 3
+        _, st = solve(prob, one(T), compose(ShortenedStep()); options = opt)
+        @test st.code == STALLED
+        @test !st.contracted
+        @test st.iterations == 3
+    end
+end
+
 # A method whose steps from `x₀ = 1` go to `1/2`, `1/4`, `-1/4` and back to `1/4`: the step norms
 # `1/2`, `1/4`, `1/2` and `1/2` have the rates `1/2`, `2` and `1`, all exact. Each step reports
 # `SUCCESS` and the flag `limited`.
@@ -493,11 +542,12 @@ end
     @test st_lin.iterations == 2
 end
 
-@testset "a line search that shrinks one step does not end a solve on the rate test" begin
+@testset "one small rate of a full step after a shortened step does not end a solve on the rate test" begin
     # the Powell badly scaled function from `u0` under a matrix-free `Newton` with `GMRES` and
-    # `Backtracking`: at iteration 77 one rate of about `8e-8` follows a step that the line search
-    # shrank, about `1` away from the root. The larger of the last two rates fails the bound, and
-    # the solve reaches the root by the residual test
+    # `Backtracking`: at iteration 77 a full step of norm about `3e-9`, about `1` away from the
+    # root, has the rate `8e-8` after a step that the line search shortened. The rate test reads
+    # the full step, the larger rate `0.98` of the last two fails the bound, and the solve reaches
+    # the root by the residual test
     sp = STANDARD_PROBLEMS[3]
     m = Newton(; linsolve = GeometricSolvers.GMRES(),
         globalization = GeometricSolvers.Backtracking())
@@ -506,6 +556,25 @@ end
     @test !st.contracted
     @test stopping_test(st) == :residual
     @test st.iterations > 77
+end
+
+@testset "steps that a line search shortens at a minimum of |F| do not end a solve on the rate test" begin
+    # `F(x) = x³ - 2x + 2` has its one real root at `x ≈ -1.7693`, and `|F|` has a local minimum
+    # of `0.9113` at `x = √(2/3)`, where `F′ = 0`. From these starts `Backtracking` shortens the
+    # Newton steps near that minimum, and their small rates, which the line search and not a
+    # contraction sets, do not pass the rate test: the step test `‖Δ‖ ≤ x_abstol` returns
+    # `STALLED` at the minimum
+    prob = NonlinearProblem((x, p) -> x^3 - 2x + 2)
+    m = Newton(; globalization = GeometricSolvers.Backtracking())
+    for x_abstol in (1e-4, 1e-3), x₀ in (0.6, 0.8, 1.0)
+
+        x, st = solve(prob, x₀, m; options = Options(Float64; x_abstol))
+        @test st.code == STALLED
+        @test !st.contracted
+        @test stopping_test(st) == :none
+        @test abs(x - sqrt(2 / 3)) <= x_abstol
+        @test st.fnorm > 0.9
+    end
 end
 
 @testset "a NaN rate never stops a solve" begin
