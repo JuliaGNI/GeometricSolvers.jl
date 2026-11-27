@@ -199,6 +199,7 @@ end
 @inline sum_failures(infos::Tuple) = mapreduce(info -> info.failures, +, infos)
 @inline any_promoted(infos::Tuple) = any(info -> info.promoted, infos)
 @inline any_limited(infos::Tuple) = any(info -> info.limited, infos)
+@inline any_shortened(infos::Tuple) = any(info -> info.shortened, infos)
 
 @inline function best_candidate_index(
         fnorms::Tuple{R, Vararg{R, N}}) where {R <: Real, N}
@@ -372,7 +373,8 @@ function step!!(
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
     code = additive_code(infos, fnorm₊)
     info_ok = StepInfo{R}(
-        code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
+        code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos),
+        any_shortened(infos))
     return x₊, F₊, new_state, info_ok
 end
 
@@ -427,6 +429,7 @@ function step!!(
     failures = sum_failures(infos) + Int32(rank_fallback) + Int32(safeguard_fallback)
     code = additive_code(infos, fnorm₊)
     info_ok = StepInfo{R}(
-        code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos))
+        code, fnorm₊, stepnorm, failures, any_promoted(infos), any_limited(infos),
+        any_shortened(infos))
     return x_out, Fx_out, new_state, info_ok
 end

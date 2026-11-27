@@ -262,7 +262,8 @@ Reaching `options.max_iterations` without convergence returns `MAXITERS`.
 
 [`record`](@ref) measures the rate ``θ_k = \\|Δ_k\\| / \\|Δ_{k-1}\\|`` of each step into
 `status.rate`. The rate test of [`Options`](@ref) joins the step test: after a step that is
-neither `STALLED` nor `limited`, where the residual test fails and the rate test, which reads the
+neither `STALLED` nor `limited` and that no line search `shortened`, where the residual test fails
+and the rate test, which reads the
 larger of the rates of that step and of the step before it, holds, along a last fresh factor
 that reports no rank or full column rank, and on a [`LeastSquaresProblem`](@ref), a
 [`VariableProjection`](@ref) or a [`Reparametrized`](@ref) problem around a
@@ -341,10 +342,11 @@ function solve!!(
         # a zero step or the round-off stop ends it unconverged, unless the iterate it returns is
         # stationary, which a step of zero length cannot show. These tests read the steps that
         # neither stalled nor were limited: the `NaN` norm of any other step fails the bound of
-        # the rate test.
+        # the rate test. The rate test reads no step that a line search shortened either.
         steptested = !(info.code == STALLED || info.limited)
         xnorm = steptested ? R(rnorm(x)) : R(NaN)
-        contracted = rate_test_rank(state, x) && rate_test_step(prob, state) &&
+        contracted = !info.shortened && rate_test_rank(state, x) &&
+                     rate_test_step(prob, state) &&
                      rate_converged(options, status, status_k.rate, xnorm)
         if contracted ||
            steptested &&

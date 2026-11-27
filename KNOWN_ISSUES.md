@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2340`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2344`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -982,7 +982,7 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:326` (the stationarity test of `solve!!` after a step,
+- **location:** `src/nonlinear/solver.jl:327` (the stationarity test of `solve!!` after a step,
   which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
   at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2374` for `GMRES`, `:2621` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2378` for `GMRES`, `:2625` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1282,7 +1282,7 @@
 
 ### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
 
-- **location:** `src/nonlinear/newton.jl:2349` (`GMRES`), `:2590` (`MINRESQLP`), `:2640`
+- **location:** `src/nonlinear/newton.jl:2353` (`GMRES`), `:2594` (`MINRESQLP`), `:2644`
   (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
 - **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
   ratio asks `Backtracking` for more decrease than the direction gives. With
@@ -1330,9 +1330,9 @@
 
 ### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
 
-- **location:** `src/nonlinear/newton.jl:2349` (`GMRES`), `:2590` (`MINRESQLP`), `:2640`
+- **location:** `src/nonlinear/newton.jl:2353` (`GMRES`), `:2594` (`MINRESQLP`), `:2644`
   (`BiCGStab` and `DQGMRES`), each `η_ach` from the inner solve on `J + μ I`
-  (`RegularizedJVP`, `:2293` and `:2491`); `:2386` (`dogleg_step_mf`, on the Arnoldi relation of
+  (`RegularizedJVP`, `:2297` and `:2495`); `:2390` (`dogleg_step_mf`, on the Arnoldi relation of
   that solve; read, not measured)
 - **evidence:** `InexactStep(η)` states `‖F + J d‖ ≤ η ‖F‖`; the inner solve bounds
   `‖F + (J + μ I) d‖` instead, and `‖F + J d‖` exceeds it by up to `μ ‖d‖`. With

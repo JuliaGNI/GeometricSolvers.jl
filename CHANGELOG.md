@@ -229,14 +229,29 @@ so that a compat-only bump can be told apart from an interface change.
   survive a sequence of solves.** `record` measures the rate `θₖ = ‖Δₖ‖ / ‖Δₖ₋₁‖` of each step
   into the new field `SolverStatus.rate` (`NaN` at the first step and after a step of zero norm).
   The rate test joins the step test of `Options` (Hairer and Wanner 1996, *Solving Ordinary
-  Differential Equations II*, (8.9)–(8.10)): after a step that is neither `STALLED` nor limited,
-  where the residual test fails, a step with `θ̂ₖ = max(θₖ, θₖ₋₁) < 1` and
+  Differential Equations II*, (8.9)–(8.10)): after a step that is neither `STALLED`, nor limited,
+  nor shortened by a line search, where the residual test fails, a step with
+  `θ̂ₖ = max(θₖ, θₖ₋₁) < 1` and
   `θ̂ₖ / (1 - θ̂ₖ) ‖Δₖ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)` returns `SUCCESS` with the new flag
   `status.contracted`, unless the stationarity test holds there, and `stopping_test` returns
-  `:contraction`. The larger of the last two rates keeps one small rate after a step that a line
-  search shrank, or after an irregular secant step, from ending a solve far from a root, and the
-  test holds at the third step at the earliest. It reads no step whose last fresh factor is a
-  rank-deficient SVD factor, also the outer factor of an eliminated problem and a factor kept from
+  `:contraction`. The rate test reads only full-length steps. `StepInfo` has a new seventh field,
+  `shortened`, set where a line search (`Backtracking`, `Bisection`, `StrongWolfe`) accepted a
+  step length `α < 1`, the full step being `α = 1`; the constructor form with the first six fields
+  sets it to `false`, `Static` does not set it, and the compositions (`Repeat`,
+  `Multiplicative`, `Additive`, `Anderson`, `LeftPreconditioned`) and the eliminated problems
+  carry it from their members, as they carry `limited`. A line search that shortens several steps
+  in a row gives each a small rate, though the iterate is not near a root: on
+  `F(x) = x³ − 2x + 2` with `Newton(; globalization = Backtracking())` from 0.6, 0.8 and 1.0, a
+  rate test that read such steps returned `SUCCESS` at `x = 0.8165`, a local minimum of `|F|` with
+  `F = 0.911`, in five of six solves (`x_abstol = 1e-4` and `1e-3`); with the field those solves
+  return `STALLED`, as without the rate test. The step test and the round-off stop still read a
+  shortened step. The larger of the last two rates still keeps the one small rate of an irregular
+  full-length step, such as a secant step or an inexact Krylov step, from ending a solve far from
+  a root: the Powell badly scaled problem under matrix-free `Newton` with `GMRES` and
+  `Backtracking` has at iteration 77 a full step of rate 8e-8 after a shortened step, and the
+  larger of the two rates, 0.98, fails the bound. The test holds at the third step at the
+  earliest. It reads no step whose last fresh factor is a rank-deficient SVD factor, also the
+  outer factor of an eliminated problem and a factor kept from
   an earlier solve, so a least-squares point with no root still returns `STALLED`. On a
   `LeastSquaresProblem`, a `VariableProjection` and a `Reparametrized` problem around a
   `LeastSquaresProblem` it reads no step along a reused factor, which

@@ -135,9 +135,10 @@ end
 
 @inline function _step_multiplicative_tail(
         ::Tuple{}, ::Tuple{}, prob::AbstractNonlinearProblem, x, Fx, p,
-        fnorm::R, failures::Int32, promoted::Bool, limited::Bool, stalled::Bool) where {R}
+        fnorm::R, failures::Int32, promoted::Bool, limited::Bool, shortened::Bool,
+        stalled::Bool) where {R}
     code = stalled ? STALLED : SUCCESS
-    info = StepInfo{R}(code, fnorm, zero(R), failures, promoted, limited)
+    info = StepInfo{R}(code, fnorm, zero(R), failures, promoted, limited, shortened)
     return x, Fx, (), info
 end
 
@@ -146,21 +147,24 @@ end
 # Otherwise the sequence is `STALLED` when every member step is, and `SUCCESS` else.
 @inline function _step_multiplicative_tail(
         states::Tuple, members::Tuple, prob::AbstractNonlinearProblem, x, Fx, p,
-        fnorm::R, failures::Int32, promoted::Bool, limited::Bool, stalled::Bool) where {R}
+        fnorm::R, failures::Int32, promoted::Bool, limited::Bool, shortened::Bool,
+        stalled::Bool) where {R}
     s_i = sync_merit(first(states), first(members), norm2(Fx))
     x_next, Fx_next, s_i_new, info_i = step!!(s_i, first(members), prob, x, Fx, p)
     failures_next = failures + info_i.failures
     promoted_next = promoted || info_i.promoted
     limited_next = limited || info_i.limited
+    shortened_next = shortened || info_i.shortened
     if is_hard_failure(info_i)
         states_sc = (s_i_new, Base.tail(states)...)
         info_sc = StepInfo{R}(
-            info_i.code, info_i.fnorm, zero(R), failures_next, promoted_next, limited_next)
+            info_i.code, info_i.fnorm, zero(R), failures_next, promoted_next, limited_next,
+            shortened_next)
         return x_next, Fx_next, states_sc, info_sc
     end
     x_out, Fx_out, ss_tail, info_out = _step_multiplicative_tail(
         Base.tail(states), Base.tail(members), prob, x_next, Fx_next, p,
-        info_i.fnorm, failures_next, promoted_next, limited_next,
+        info_i.fnorm, failures_next, promoted_next, limited_next, shortened_next,
         stalled && info_i.code == STALLED)
     return x_out, Fx_out, (s_i_new, ss_tail...), info_out
 end
@@ -173,9 +177,10 @@ function step!!(
     R = real(eltype(x))
     x_start = copy!!(state.x₀, x)
     x_out, Fx_out, states, info = _step_multiplicative_tail(
-        state.states, m.members, prob, x, Fx, p, zero(R), Int32(0), false, false, true)
+        state.states, m.members, prob, x, Fx, p, zero(R), Int32(0), false, false, false, true)
     stepnorm = rnorm(map!!(-, state.x₀, x_out, x_start))
     info_out = StepInfo{R}(
-        info.code, info.fnorm, stepnorm, info.failures, info.promoted, info.limited)
+        info.code, info.fnorm, stepnorm, info.failures, info.promoted, info.limited,
+        info.shortened)
     return x_out, Fx_out, MultiplicativeState(states, state.Fx, state.x₀), info_out
 end

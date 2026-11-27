@@ -183,6 +183,10 @@ The result of one step, which [`record`](@ref) folds into a [`SolverStatus`](@re
 - `limited::Bool`: the step was accepted, but a trust-region radius truncated it or a damping
   above its initial value shortened it, so its norm is set by the radius or the damping and does
   not measure the distance to a root.
+- `shortened::Bool`: a line search accepted a step length below the full step `α = 1`, so the
+  ratio of its norm to that of the step before it measures the line search, not a contraction.
+  The rate test of [`Options`](@ref) skips such a step, and the step test reads it. The form with
+  the first six fields sets it to `false`.
 """
 struct StepInfo{R <: Real}
     code::ReturnCode
@@ -191,6 +195,13 @@ struct StepInfo{R <: Real}
     failures::Int32
     promoted::Bool
     limited::Bool
+    shortened::Bool
+end
+
+# The fields up to `limited`, for a step that no line search shortened.
+@inline function StepInfo{R}(
+        code, fnorm, stepnorm, failures, promoted, limited) where {R <: Real}
+    return StepInfo{R}(code, fnorm, stepnorm, failures, promoted, limited, false)
 end
 
 """

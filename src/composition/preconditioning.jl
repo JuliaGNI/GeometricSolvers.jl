@@ -314,7 +314,8 @@ end
     # `rˡ` there and reports `NONFINITE`: the inner `MAXITERS` names the cause instead
     code = info.code == NONFINITE && lprob.code[] == MAXITERS ? MAXITERS : info.code
     info₊ = StepInfo{R}(
-        code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited)
+        code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited,
+        info.shortened)
     return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx, p), info₊
 end
 

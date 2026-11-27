@@ -21,6 +21,9 @@ end
     @test isbits(info)
     @test isbitstype(SolverStatus{R})
     @test isbitstype(StepInfo{R})
+    # the form with six fields reads a step that no line search shortened
+    @test !info.shortened
+    @test StepInfo{R}(SUCCESS, one(R), zero(R), Int32(0), false, false, true).shortened
     @test sizeof(SolverStatus{R}) == (R === Float32 ? 44 : 72)
     @test st.rank === Int32(-1)
     @test st.nullnorm === R(NaN)
