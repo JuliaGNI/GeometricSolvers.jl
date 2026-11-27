@@ -799,6 +799,7 @@ end
 @inline state_gradratio(state::NewtonState) = state.diag.gradratio
 @inline state_jnorm(state::NewtonState) = state.diag.jnorm
 @inline state_rank(state::NewtonState) = state.diag.rank
+@inline reused_step(state::NewtonState) = state.rule isa FactorAge && state.rule.reused
 @inline step_start_buffers(state::NewtonState) = state.kept
 
 # The state whose diagnostics measure the stationarity test at `(x, Fx)`: `solve!!` re-measures
@@ -1125,7 +1126,10 @@ stage of a [`GMRESRefinement`](@ref) forms for each Krylov vector `v`, in the wo
 # The per-solve reset that every `Newton` method shares: the rule state, the anchor merit of a
 # line search, the promotion flags and the diagnostics. Under `keep_factor = true` the rule state
 # is the one that the last `finish!!` left, so the first step reuses the factor that it kept, and
-# the diagnostics keep the rank of the last fresh factor, which the rate test reads along it.
+# the diagnostics keep the rank of the last fresh factor, which the rate test reads along it. That
+# factor may be one that the last solve dropped, after a solve that kept no factor or after
+# `refactorize = true`: the first step then factorises afresh, and only a solve that ends with no
+# step reports the dropped factor's rank.
 @inline function newton_start!!(state::NewtonState, m::Newton, x, Fx, fnorm₀)
     R = real(eltype(x))
     m.keep_factor || (state = with_rule(state, reset_rule(state.rule, m.globalization)))

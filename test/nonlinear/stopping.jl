@@ -187,6 +187,90 @@ vp_full!(y, x, p) = (y .= vp_full(x, p); y)
     end
 end
 
+# One-unknown least-squares residuals with no root: `ls_square` is `(x² - 2 - c, x - 1)`, and
+# `ls_affine` is `(x + a x² - 1 - c, x - 3)`, linear at `a = 0`. Steps along a factor of `J(x₀)`
+# contract onto the point where `J(x₀)ᵀ r(x) = 0`, which is no stationary point of `‖r‖²`.
+ls_square(x, p) = SVector(x[1]^2 - 2 - p.c, x[1] - 1)
+ls_square_jacobian(x, p) = SMatrix{2, 1}(2x[1], one(x[1]))
+ls_affine(x, p) = SVector(x[1] + p.a * x[1]^2 - 1 - p.c, x[1] - 3)
+ls_affine_jacobian(x, p) = SMatrix{2, 1}(1 + 2p.a * x[1], one(x[1]))
+# `‖J(x)ᵀ r(x)‖ / (‖J(x)‖_F ‖r(x)‖)`, the ratio of the stationarity test, in `BigFloat`
+function ls_gradratio(r, j, x, p)
+    xb = SVector(big(x[1]))
+    rx = r(xb, p)
+    J = j(xb, p)
+    return abs((J' * rx)[1]) / (sqrt(sum(abs2, J)) * sqrt(sum(abs2, rx)))
+end
+
+# The status of a least-squares solve whose rate test reads no step along a reused factor: no
+# `SUCCESS` by the rate test, and a `SUCCESS` only by the stationarity test, at a point that
+# passes it (`2 g_tol` for the round-off of the solve's own measure).
+function test_no_reused_contraction(st, r, j, x, p, opt)
+    @test stopping_test(st) != :contraction
+    @test !st.contracted
+    @test st.code != SUCCESS || st.stationary
+    @test st.code != SUCCESS || ls_gradratio(r, j, x, p) <= 2 * opt.g_tol
+end
+
+@testset "the rate test reads no step along a reused factor of a least-squares problem, $T" for T in REAL_ELTYPES
+    # `r(x) = (x² - 5, x - 1)` from `3`: without the guard, the steps along a reused QR factor
+    # meet the rate test where `‖r‖²` is not stationary, near `2.1753` for `reuse = 10` in
+    # `Float64` (the stationary point solves `2x³ - 9x - 1 = 0`, `x* ≈ 2.1748`)
+    p = (c = T(3),)
+    opt = Options(T)
+    prob = GeometricSolvers.LeastSquaresProblem(ls_square, ls_square_jacobian)
+    for k in (3, 10)
+        m = Newton(; linsolve = GeometricSolvers.QRFactorization(),
+            jacobian = ls_square_jacobian, reuse = k)
+        x, st = solve(prob, SVector{1, T}(3), m, p; options = opt)
+        @test x[1] != 3
+        @test st.reused
+        test_no_reused_contraction(st, ls_square, ls_square_jacobian, x, p, opt)
+    end
+end
+
+@testset "the rate test reads no step along a kept factor of a least-squares problem, $T" for T in REAL_ELTYPES
+    # The pair of `ls_affine`: the first solve, linear, ends on the stationarity test and keeps
+    # its factor; the second starts along it. The pair of `ls_square`, from `3`, at `c = 0` and
+    # then `c = 3`.
+    opt = Options(T)
+    pairs = (
+        (ls_affine, ls_affine_jacobian, (a = zero(T), c = zero(T)),
+            (a = T(1 // 20), c = T(10)), SVector{1, T}(0), (10,)),
+        (ls_square, ls_square_jacobian, (c = zero(T),), (c = T(3),), SVector{1, T}(3),
+            (3, 10)))
+    for (r, j, p₁, p₂, x₀, ks) in pairs, k in ks,
+        linsolve in (GeometricSolvers.QRFactorization(), SVDFactorization())
+        m = Newton(; linsolve, jacobian = j, reuse = k, keep_factor = true)
+        solver = init(GeometricSolvers.LeastSquaresProblem(r, j), x₀, m, p₁; options = opt)
+        x₁, st₁ = solve!(solver, x₀, p₁)
+        test_no_reused_contraction(st₁, r, j, x₁, p₁, opt)
+        x₂, st₂ = solve!(solver, copy(x₁), p₂)
+        @test x₂ != x₁
+        test_no_reused_contraction(st₂, r, j, x₂, p₂, opt)
+    end
+end
+
+@testset "the rate test reads no step along a reused outer factor of a VariableProjection, $T" for T in REAL_ELTYPES
+    # `vp_full` from `(0, 3, 1/2)`: without the guard, the steps along a reused outer factor meet
+    # the rate test in `Float64` at a point that is not stationary. R1 on `SVector`s and R3 on
+    # `Vector`s.
+    opt = Options(T)
+    x₀ = SVector{3, T}(0, 3, 1 // 2)
+    vp1 = GeometricSolvers.VariableProjection(
+        GeometricSolvers.LeastSquaresProblem(vp_full, 4), (1,); outer = (2, 3))
+    vp3 = GeometricSolvers.VariableProjection(
+        GeometricSolvers.LeastSquaresProblem(vp_full!, 4), [1]; outer = [2, 3])
+    for (vp, x) in ((vp1, x₀), (vp3, Vector(x₀))), k in (3, 10)
+
+        _, st = solve(vp, x, Newton(; linsolve = SVDFactorization(), reuse = k); options = opt)
+        @test st.reused
+        @test stopping_test(st) != :contraction
+        @test !st.contracted
+        @test st.code != SUCCESS || st.stationary
+    end
+end
+
 @testset "the stationarity test comes before the rate test, $T" for T in REAL_ELTYPES
     # `r(x) = (x² - 2, x - 1)` has no root, and Gauss–Newton converges to its least-squares point
     # at a linear rate: the solve ends on the stationarity test, also where the rate test holds
@@ -819,6 +903,12 @@ end
         @test st₂.code == STALLED
         @test !st₂.contracted
         @test st₂.rank == 1
+        if keep_factor
+            # every step of the second solve is along the kept factor, which carries its rank
+            # and no other diagnostic of the first solve
+            @test isnan(st₂.nullnorm)
+            @test isnan(st₂.gradratio)
+        end
     end
 end
 

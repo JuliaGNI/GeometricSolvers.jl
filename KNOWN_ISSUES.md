@@ -712,7 +712,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2120`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2124`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -803,7 +803,7 @@
 
 ### K109 · No public solve is known to fail a step rule or to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.step_failures` and `status.promoted` on that return
 
-- **location:** `src/nonlinear/solver.jl:95` (`discarded_step_status`, which takes
+- **location:** `src/nonlinear/solver.jl:106` (`discarded_step_status`, which takes
   `step_failures` and `promoted` from the status after `record` folds in the discarded step)
 - **evidence:** the solve discards only a step that does not lower `‖F‖`. A count of the calls
   of `discarded_step_status` on the mirror-symmetric saddle problem (b) of the testset "a step
@@ -1019,7 +1019,7 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:311` (the stationarity test of `solve!!` after a step,
+- **location:** `src/nonlinear/solver.jl:323` (the stationarity test of `solve!!` after a step,
   which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
   at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
@@ -1129,7 +1129,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1090` (`stored_factors`), `:1106` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1091` (`stored_factors`), `:1107` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -1156,7 +1156,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2154` for `GMRES`, `:2401` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2158` for `GMRES`, `:2405` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1192,7 +1192,7 @@
 
 ### K141 · A `Newton(; reuse = k, keep_factor = true)` solve that returns `SUCCESS` at its start, with no step, drops the kept factor, so the next solve factorises at its first step
 
-- **location:** `src/nonlinear/newton.jl:1192` (`keeps_factor`)
+- **location:** `src/nonlinear/newton.jl:1196` (`keeps_factor`)
 - **evidence:** `keeps_factor` keeps the factor after `SUCCESS` only with `status.iterations == 1`
   or a last rate `θ ≤ 10⁻³`; a solve of no step has `iterations == 0` and the rate `NaN`, which
   fails both. With the midpoint residual of `test/nonlinear/stopping.jl`,

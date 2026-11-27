@@ -2270,6 +2270,13 @@ end
 @inline rate_test_rank(st::StaticElimState, x) = rate_test_rank(st.outer_state, st.z_curr)
 @inline rate_test_rank(st::DenseElimState, x) = rate_test_rank(st.outer_state, st.ws.z_curr)
 
+# The steps of the solver loop are those of the outer solve, and so is its factor. The outer
+# problem of a `VariableProjection` is a least-squares problem, whose rate test reads no step
+# along a reused factor.
+@inline reused_step(st::Union{
+    StaticElimState, DenseElimState}) = reused_step(st.outer_state)
+@inline rate_test_step(::VariableProjection, state) = !reused_step(state)
+
 # The rate of a step, which refreshes a reused factor at `θ ≥ 1`, goes to the outer solve, whose
 # factor the steps reuse.
 @inline function observe_rate!!(st::StaticElimState, m, rate)

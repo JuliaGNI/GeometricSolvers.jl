@@ -171,7 +171,9 @@ Each step's rate ``θ_k = \|Δ_k\| / \|Δ_{k-1}\|`` goes into `status.rate`. The
 ``\hat θ_k / (1 - \hat θ_k) \|Δ_k\| ≤ κ \max(x_{abstol}, x_{reltol} \|x\|)`` returns `SUCCESS` with
 `status.contracted` set, and [`stopping_test`](@ref) then returns `:contraction`; it reads no step
 along an SVD factor whose rank is below the number of the unknowns it solves for, the outer ones of
-an eliminated problem, nor a step of a composition whose stepping member has such a factor. With
+an eliminated problem, nor a step of a composition whose stepping member has such a factor. On a
+[`LeastSquaresProblem`](@ref) and a [`VariableProjection`](@ref) it reads no step along a reused
+factor, whose steps contract onto a point that need not be stationary. With
 `roundoff = true`, a step whose increment stops decreasing returns `STALLED` at the iterate it
 reached. `status.reused` is set where the last step of a [`Newton`](@ref) solve with `reuse`
 stepped along a reused factor.

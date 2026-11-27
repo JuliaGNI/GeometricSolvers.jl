@@ -71,6 +71,17 @@ and for an array iterate it writes that iterate into `x` and returns `x`. [`Newt
     return rank == Int32(-1) || rank == length(x)
 end
 
+# Whether the last step of `state` stepped along a factor that an earlier step formed.
+@inline reused_step(state) = false
+
+# Whether the rate test of a solve of `prob` reads the last step of `state`. On a square problem it
+# reads every step. On a least-squares problem it reads no step along a reused factor: such steps
+# contract onto the fixed point of the frozen Gauss–Newton map, where `J₀ᵀ F(x) = 0` for the
+# Jacobian `J₀` of the factor, and not onto a stationary point of `‖F‖²`, so the stationarity, the
+# step or the residual test decides there.
+@inline rate_test_step(::AbstractNonlinearProblem, state) = true
+@inline rate_test_step(::LeastSquaresProblem, state) = !reused_step(state)
+
 # The statuses that `solve!!` closes a solve with: the code, the counts and the norms of `status`
 # and its rate, and whether the solve converged by the stationarity or the rate test.
 @inline function closing_status(status::SolverStatus{R}, code::ReturnCode,
@@ -251,7 +262,8 @@ Reaching `options.max_iterations` without convergence returns `MAXITERS`.
 `status.rate`. The rate test of [`Options`](@ref) joins the step test: after a step that is
 neither `STALLED` nor `limited`, where the residual test fails and the rate test, which reads the
 larger of the rates of that step and of the step before it, holds, along a last fresh factor
-that reports no rank or full column rank, the solve returns `SUCCESS` with
+that reports no rank or full column rank, and on a [`LeastSquaresProblem`](@ref) or a
+[`VariableProjection`](@ref) along a fresh factor only, the solve returns `SUCCESS` with
 `status.contracted == true`, unless the stationarity test, re-measured at that iterate, holds,
 which returns `SUCCESS` with `status.stationary == true`. Under
 `options.roundoff` the round-off stop joins the step test too: it returns `STALLED` at that
@@ -329,7 +341,7 @@ function solve!!(
         # the rate test.
         steptested = !(info.code == STALLED || info.limited)
         xnorm = steptested ? R(rnorm(x)) : R(NaN)
-        contracted = rate_test_rank(state, x) &&
+        contracted = rate_test_rank(state, x) && rate_test_step(prob, state) &&
                      rate_converged(options, status, status_k.rate, xnorm)
         if contracted ||
            steptested &&
