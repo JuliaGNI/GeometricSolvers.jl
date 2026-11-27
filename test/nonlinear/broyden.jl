@@ -160,7 +160,7 @@ end
     V in BACKENDS
     # `s = H y = 0` gives `sᴴ H y = 0` and `u = 0 / 0`: every entry of `u` is NaN
     z = storage(V, zeros(T, 2))
-    pairs = GS.init_pairs(BroydenUpdate(1), z)
+    pairs = GS.init_pairs(BroydenUpdate(1), 2, z)
     den = GS.pair_dot(z, z)
     @test iszero(den)
     stored, finite = GS.store_pair!!(pairs, copy(z), copy(z), den)
@@ -207,7 +207,7 @@ end
 end
 
 @testset "the array form refuses a pair whose u overflows, $T" for T in REAL_ELTYPES
-    pairs = GS.init_pairs(BroydenUpdate(1), zeros(T, 2))
+    pairs = GS.init_pairs(BroydenUpdate(1), 2, zeros(T, 2))
     ε = floatmin(T) / 8
     stored, finite = GS.store_pair!!(pairs, T[1, 0], T[ε, 1], ε)
     @test !finite
@@ -216,6 +216,37 @@ end
     @test finite
     @test stored.count == 1
     @test stored.u[:, 1] == T[1, -2]
+end
+
+@testset "an array iterate holds min(m, reuse - 1) pairs, and a larger m steps as m = reuse - 1, $T on $V" for T in REAL_ELTYPES,
+    V in BACKENDS
+
+    # one factor of `reuse = k` stores at most `k - 1` pairs, so an array iterate allocates
+    # `min(m, k - 1)` columns, while a value iterate keeps all `m` pairs as `NTuple`s; the value
+    # iterate runs with `m = 6`, because `NTuple`s of 1000 entries take long to compile
+    R = real(T)
+    A, B₀, b, x₀ = linear_system(T)
+    big_m = V <: SVector ? 6 : 1000
+    for (reuse, m) in ((3, 2), (3, big_m), (4, big_m), (5, 4))
+        prob, mk = linear_case(A, B₀, b, V; reuse, update = BroydenUpdate(m))
+        _, m_ref = linear_case(A, B₀, b, V; reuse, update = BroydenUpdate(reuse - 1))
+        pairs = init_state(mk, prob, storage(V, x₀), nothing).pairs
+        if V <: SVector
+            @test length(pairs.u) == length(pairs.s) == m
+        else
+            @test size(pairs.u) == size(pairs.s) == (3, min(m, reuse - 1))
+        end
+        # the first factor fills its `reuse - 1` pairs
+        _, _, _, state = run_steps(mk, prob, storage(V, x₀), reuse - 1)
+        @test state.pairs.count == reuse - 1
+        # over two periods of the factor the iterates are those of the memory `reuse - 1`
+        xs, _, _, _ = run_steps(mk, prob, storage(V, x₀), 2reuse)
+        xs_ref, _, _, _ = run_steps(m_ref, prob, storage(V, x₀), 2reuse)
+        @test all(zip(xs, xs_ref)) do (x, x_ref)
+            norm(Array(x) - Array(x_ref)) <= 8 * eps(R) * norm(Array(x_ref))
+        end
+        @test Array(xs[end]) != Array(xs[1])
+    end
 end
 
 @testset "a fresh factor clears the pairs, $T on $V" for T in REAL_ELTYPES, V in BACKENDS

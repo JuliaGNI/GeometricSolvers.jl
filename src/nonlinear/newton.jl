@@ -16,8 +16,15 @@ is not finite stores no pair, and the next step factorises afresh. A complex ele
 conjugates `s`.
 
 `m` is a type parameter, so that the pairs of a value iterate are `NTuple`s of the iterate's
-type and its state stays `isbits`; an array iterate holds them in two `n × m` arrays. `m < 1`
-raises an `ArgumentError`.
+type and its state stays `isbits`; an array iterate holds them in two `n × min(m, k - 1)` arrays,
+since one factor stores at most `k - 1` pairs. A value iterate holds all `m` pairs whatever `k`
+is, so its state and the compiled step grow with `m`, and an `m` above `k - 1` costs storage
+and compile time and adds no pair. `m < 1` raises an `ArgumentError`.
+
+The rate test of [`Options`](@ref) reads a full-length step along stored pairs as it reads any
+other full-length step. A run of up to `k - 1` such secant steps can contract onto a point that
+is no root, and the larger of the last two rates, which keeps one small rate from ending a solve,
+does not guard such a run.
 """
 struct BroydenUpdate{M}
     # `adapt` passes the update through unchanged. The message is constant, as in every check of a
@@ -953,7 +960,8 @@ end
 # `Hⱼ = (I + uⱼ sⱼᴴ) ⋯ (I + u₁ s₁ᴴ) B₀⁻¹`, from the pairs `(uᵢ, sᵢ)`, `i ≤ count`, that the steps
 # on that factor stored. A value iterate holds the pairs as `NTuple`s of `M` values of its own
 # type, so that its state stays `isbits`; an array iterate holds them as the columns of two
-# `n × M` arrays, with two buffers that keep the iterate and the residual at the start of a step.
+# `n × min(M, reuse - 1)` arrays, the most pairs that one factor stores, with two buffers that
+# keep the iterate and the residual at the start of a step.
 struct BroydenPairs{P, B}
     u::P
     s::P
@@ -965,16 +973,18 @@ end
 @inline pair_value(x::Number) = x
 @inline pair_value(x::StaticVector) = SVector(x)
 
-@inline init_pairs(::Nothing, x) = nothing
-@inline function init_pairs(::BroydenUpdate{M}, x::Union{Number, StaticVector}) where {M}
+@inline init_pairs(::Nothing, reuse, x) = nothing
+@inline function init_pairs(
+        ::BroydenUpdate{M}, reuse, x::Union{Number, StaticVector}) where {M}
     z = zero(pair_value(x))
     return BroydenPairs(ntuple(_ -> z, Val(M)), ntuple(_ -> z, Val(M)), nothing, nothing,
         Int32(0))
 end
-@inline function init_pairs(::BroydenUpdate{M}, x::AbstractVector) where {M}
+@inline function init_pairs(::BroydenUpdate{M}, reuse, x::AbstractVector) where {M}
     T = eltype(x)
-    U = fill!(buffer(x, T, length(x), M), zero(T))
-    S = fill!(buffer(x, T, length(x), M), zero(T))
+    k = min(M, Int(reuse) - 1)
+    U = fill!(buffer(x, T, length(x), k), zero(T))
+    S = fill!(buffer(x, T, length(x), k), zero(T))
     return BroydenPairs(U, S, buffer(x), buffer(x), Int32(0))
 end
 
@@ -1242,7 +1252,7 @@ end
         return NewtonState(
             jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule, merit, R(NaN),
             diag, nothing, nothing, false, Int32(0), nothing, (nothing, nothing), nothing,
-            init_pairs(m.update, x))
+            init_pairs(m.update, m.reuse, x))
     else
         fac = init_newton_factor(m, m.linsolve, prob, x, p, jacprep)
         fac_T = mixed && !(m.globalization isa LevenbergMarquardt) ?
@@ -1256,7 +1266,7 @@ end
             jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, fac_T, x, Fx),
             init_globalization(m.globalization, m.linsolve, x, Fx), rule, merit, R(NaN),
             diag, refbuf, fac_T, false, Int32(0), nothing, kept, nothing,
-            init_pairs(m.update, x))
+            init_pairs(m.update, m.reuse, x))
     end
 end
 

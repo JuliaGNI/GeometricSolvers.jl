@@ -155,8 +155,10 @@ limit of a contraction of rate ``\\hat θ_k``. The test reads only a step of ful
 that a line search cut below the full step (`shortened` in its [`StepInfo`](@ref)) has a small
 rate because the line search shortened it, not because the iteration contracts, so it passes no
 rate test. The larger of the last two rates keeps the one small rate of an irregular step of full
-length, such as a secant step or an inexact Krylov step, from ending a solve. The rate is `NaN`
-at the first step and after a step of zero norm, and a `NaN` rate passes
+length, such as a secant step or an inexact Krylov step, from ending a solve. It does not guard a
+run of such steps: along the stored pairs of a [`BroydenUpdate`](@ref) up to `reuse - 1` secant
+steps follow each other, and such a run can contract onto a point that is no root. The rate is
+`NaN` at the first step and after a step of zero norm, and a `NaN` rate passes
 no test, so the rate test holds at the third step at the earliest; `status.rate` is ``θ_k``. The
 test reads only a solve whose last fresh factor reports no rank (`status.rank == -1`, as an LU or
 a QR factor does) or full column rank: along a rank-deficient SVD factor the steps can contract
