@@ -46,13 +46,14 @@
 # preconditioner. The script stops with an error unless the products of GCRO-DR with recycling
 # are fewer than those without, those fewer than those of GMRES(m), and every solve converges.
 #
-# The verdict applies the rules decided before the run, on the full grid only; on any other grid
-# it says that it is not evaluated. `r` is the ratio of the products of GCRO-DR with recycling to
-# those of GMRES(m). Build rule: one pair `(m, k)` at which, at both `N` and both `η`, every column
-# converges, `r ≤ 0.75`, and GCRO-DR with recycling takes fewer products than without. Stop rule:
-# `r ≥ 0.90` in every cell, where a cell in which GMRES(m) converges and GCRO-DR with recycling
-# does not counts as `r ≥ 0.90`, and a cell in which GMRES(m) does not converge counts as neither.
-# Any other result is between the two.
+# The verdict applies two rules, on the full grid only; on any other grid it says that they are
+# not evaluated. `r` is the ratio of the products of GCRO-DR with recycling to those of GMRES(m).
+# Build rule: one pair `(m, k)` at which, at both `N` and both `η`, every column converges,
+# `r ≤ 0.75`, and GCRO-DR with recycling takes fewer products than without. Stop rule: `r ≥ 0.90`
+# in every cell, where a cell in which GMRES(m) converges and GCRO-DR with recycling does not
+# counts as `r ≥ 0.90`. A cell in which GMRES(m) does not converge, and a cell in which no linear
+# solve of GCRO-DR with recycling starts from a recycled space, count for neither rule. Any other
+# result is between the two.
 
 using GeometricSolvers
 using GeometricSolvers: FixedForcing, JVPFunction, jvp_calls
@@ -410,17 +411,20 @@ function print_row(io::IO, row)
         " | ", row.rec.from_u, " |")
 end
 
-# Whether a cell meets the build rule: every column converges, `r ≤ 0.75`, and recycling takes
-# fewer products than no recycling.
+# Whether a cell meets the build rule: a linear solve starts from a recycled space, every column
+# converges, `r ≤ 0.75`, and recycling takes fewer products than no recycling.
 function build_cell(row)
+    row.rec.from_u > 0 || return false
     all(c -> c.converged, (row.gmres, row.norec, row.rec)) || return false
     return row.rec.products <= RC_BUILD_RATIO * row.gmres.products &&
            row.rec.products < row.norec.products
 end
 
-# Whether a cell meets the stop rule, `r ≥ 0.90`: a GMRES(m) that does not converge meets neither
-# rule, and a GCRO-DR with recycling that does not converge, beside a GMRES(m) that does, meets it.
+# Whether a cell meets the stop rule, `r ≥ 0.90`: a GMRES(m) that does not converge, and a cell in
+# which no solve starts from a recycled space, meet neither rule, and a GCRO-DR with recycling
+# that does not converge, beside a GMRES(m) that does, meets it.
 function stop_cell(row)
+    row.rec.from_u > 0 || return false
     row.gmres.converged || return false
     row.rec.converged || return true
     return row.rec.products >= RC_STOP_RATIO * row.gmres.products
