@@ -1019,7 +1019,7 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:310` (the stationarity test of `solve!!` after a step,
+- **location:** `src/nonlinear/solver.jl:311` (the stationarity test of `solve!!` after a step,
   which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
   at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a

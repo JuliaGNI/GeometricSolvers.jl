@@ -240,8 +240,9 @@ neither test holds after a step that is neither `STALLED` nor `limited`, a step 
 while the rate test below fails returns `STALLED` at once, and so does a `SUCCESS` step of zero
 norm, which leaves the iterate where the next step would start — unless the stationarity test,
 re-measured at that iterate, holds, which a nonzero-residual least-squares minimum reaches with a
-step of any length, a zero one included; `min_iterations` bounds both. After a `STALLED` step only the residual and
-stationarity tests apply, and `options.max_stalls` consecutive `STALLED` steps return `STALLED`.
+step of any length, a zero one included; `min_iterations` bounds both. After a `STALLED` step
+only the residual and stationarity tests apply, and `options.max_stalls` consecutive `STALLED`
+steps return `STALLED`.
 After a step whose `limited` is set only the residual and stationarity tests apply too, because a
 radius or a damping, not the distance to a root, sets its norm; such a step is not a stall.
 Reaching `options.max_iterations` without convergence returns `MAXITERS`.

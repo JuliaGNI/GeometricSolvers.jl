@@ -153,7 +153,8 @@ rate, after a step that a line search shrank or after an irregular secant step, 
 solve. The rate is `NaN` at the first step and after a step of zero norm, and a `NaN` rate passes
 no test, so the rate test holds at the third step at the earliest; `status.rate` is ``θ_k``. The
 test reads only a solve whose last fresh factor reports no rank (`status.rank == -1`, as an LU or
-a QR factor does) or full column rank: along a rank-deficient SVD factor the steps can contract onto a point that is no root, and the step test decides.
+a QR factor does) or full column rank: along a rank-deficient SVD factor the steps can contract
+onto a point that is no root, and the step test decides.
 
 **The round-off stop is off by default.** With `roundoff = true`, the first step of rate
 ``θ_k ≥ 1`` after a step of rate ``θ_{k-1} < 1`` returns `STALLED` with the iterate it reached
