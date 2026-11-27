@@ -22,10 +22,11 @@ so that a compat-only bump can be told apart from an interface change.
   `:contraction`. The larger of the last two rates keeps one small rate after a step that a line
   search shrank, or after an irregular secant step, from ending a solve far from a root, and the
   test holds at the third step at the earliest. It reads no step whose last fresh factor is a
-  rank-deficient SVD factor, also the outer factor of an eliminated problem, so a least-squares
-  point with no root still returns `STALLED`. So `SUCCESS` no longer comes from the residual and
-  stationarity tests alone. The new `Options` field `kappa` is `κ`, default `1/10`, and a value
-  outside `(0, 1)` in `real(T)` raises an `ArgumentError`. The new flag `roundoff`, default `false`, returns `STALLED` at the
+  rank-deficient SVD factor, also the outer factor of an eliminated problem and a factor kept from
+  an earlier solve, so a least-squares point with no root still returns `STALLED`. So `SUCCESS`
+  no longer comes from the residual and stationarity tests alone. The new `Options` field `kappa`
+  is `κ`, default `1/10`, and a value outside `(0, 1)` in `real(T)` raises an `ArgumentError`.
+  The new flag `roundoff`, default `false`, returns `STALLED` at the
   first step of rate `θₖ ≥ 1` after a step of rate below `1` (Hairer, McLachlan and Razakarivony
   2008, *BIT Numer. Math.* 48, p. 235). The new `Newton` keyword `keep_factor`, which needs
   `reuse`, keeps the factor and its age from one solve of a `NonlinearSolver` to the next after a
@@ -35,9 +36,12 @@ so that a compat-only bump can be told apart from an interface change.
   `solve!` of a `ReparametrizedSolver` takes no such keyword (K140). The inner options of a
   `BlockEliminated` and a `BatchEliminated` keep `kappa` and `roundoff`. Under
   `reuse`, a step along a reused factor or preconditioner of rate `θ ≥ 1` refreshes it at the next
-  step, and the new flag `status.reused` reports a last step along a reused factor. A composition
-  keeps `rate`, `contracted` and `reused` of the status of its member, and passes the factor rules
-  to its members: the rate test of `Repeat`, of `Switch` (the member that took the step), of
+  step (the outer factor of an eliminated problem), and the new flag `status.reused` reports a
+  last step along a reused factor; the `SINGULAR` status of a failed tangent factorisation in
+  implicit differentiation keeps `rate`, `contracted` and `reused`. A composition keeps `rate`,
+  `contracted` and `reused` of the status of its member (an `Additive` reports `reused = false`
+  whatever its members reused), and passes the factor rules to its members: the rate test of
+  `Repeat`, of `Switch` (the member that took the step), of
   `Additive`, `Multiplicative`, `Anderson` and `Broyden` (every member) and of the outer method of
   a `LeftPreconditioned` reads the rank of those members' factors; the same members take the rate
   of each step, which refreshes a reused factor at `θ ≥ 1`; and `refactorize = true` drops the

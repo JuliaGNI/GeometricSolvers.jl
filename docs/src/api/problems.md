@@ -140,7 +140,9 @@ PerSystem
 Every type in this section is `isbits`, so a kernel can hold it, and every real field is in
 `R = real(T)` for the element type `T` of the iterate. [`SolverStatus`](@ref) also carries the
 range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
-``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return; a
+``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return (a
+solve that steps only along a factor kept with `keep_factor = true` reports the `rank` of that
+factor and `NaN` for the other two); a
 solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has factorised afresh
 at the iterate it returns. Where such a solve returns the start point of a step it discards, the
 status carries the diagnostics of the factorisation at that point, not those of the later

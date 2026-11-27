@@ -86,7 +86,9 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   factorises at its first step. A change of the parameters between two solves keeps the factor,
   and the rate rule above refreshes it where it no longer contracts; a caller that knows the
   Jacobian changed, such as after a change of the step size, passes
-  `solve!(solver, x, p; refactorize = true)`. `keep_factor = true` without `reuse` raises an
+  `solve!(solver, x, p; refactorize = true)`. A solve that steps only along a kept factor reports
+  in its [`SolverStatus`](@ref) the `rank` of that factor, which the rate test reads, and `NaN`
+  for `nullnorm` and `gradratio`. `keep_factor = true` without `reuse` raises an
   `ArgumentError`. The six- and seven-argument positional constructors give `false`.
 
 # The best iterate
@@ -1122,12 +1124,15 @@ stage of a [`GMRESRefinement`](@ref) forms for each Krylov vector `v`, in the wo
 
 # The per-solve reset that every `Newton` method shares: the rule state, the anchor merit of a
 # line search, the promotion flags and the diagnostics. Under `keep_factor = true` the rule state
-# is the one that the last `finish!!` left, so the first step reuses the factor that it kept.
+# is the one that the last `finish!!` left, so the first step reuses the factor that it kept, and
+# the diagnostics keep the rank of the last fresh factor, which the rate test reads along it.
 @inline function newton_start!!(state::NewtonState, m::Newton, x, Fx, fnorm₀)
+    R = real(eltype(x))
     m.keep_factor || (state = with_rule(state, reset_rule(state.rule, m.globalization)))
     state = with_merit(state, start_merit(m.globalization, Fx), fnorm₀)
     state = with_mixed(state, false, Int32(0))
-    return with_diag(state, NewtonDiagnostics(real(eltype(x))))
+    rank = m.keep_factor ? state.diag.rank : Int32(-1)
+    return with_diag(state, NewtonDiagnostics{R}(rank, R(NaN), R(NaN), zero(R)))
 end
 
 # A solve under `best = true` starts its record at `x₀`, whatever an earlier solve on the state

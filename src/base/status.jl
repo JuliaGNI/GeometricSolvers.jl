@@ -43,7 +43,9 @@ is in `R = real(T)` for the element type `T` of the iterate.
   refreshed.
 
 The three numbers are those of the last fresh factorisation (``x_k``), not of the iterate
-``x`` at return; a solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has
+``x`` at return, and a solve that steps only along a factor kept with `keep_factor = true`
+reports the `rank` of that factor and `NaN` for the other two; a solve of a
+[`LeastSquaresProblem`](@ref) that ends on the stationarity test has
 factorised afresh at the iterate it returns, so its numbers are that iterate's. Where such a solve
 returns the start point of a step it discards, the numbers are those of the factorisation at that
 point, the iterate at return, and not those of the later re-measure at the end of the step.

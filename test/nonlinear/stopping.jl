@@ -5,6 +5,7 @@
 # `Newton(; reuse = k, keep_factor = true)` and of `solve!(solver, x, p; refactorize = true)`.
 
 using Adapt: Adapt
+using ForwardDiff: ForwardDiff
 using JET: JET
 using LinearAlgebra: I
 using StaticArrays: SMatrix, SVector
@@ -13,7 +14,8 @@ using Test
 using GeometricSolvers
 using GeometricSolvers: L2Norm, LUFactorization, MAXITERS, Newton, NonlinearProblem,
                         Options, PerSystem,
-                        QuasiNewton, STALLED, SUCCESS, SolverStatus, StepInfo, init,
+                        QuasiNewton, SINGULAR, STALLED, SUCCESS, SolverStatus, StepInfo,
+                        init,
                         init_state, record, solve, solve!, solve_batch!, stopping_test
 using GeometricSolvers: Additive, Anderson, Broyden, Fallback, FixedWeights, Multiplicative,
                         Picard, Repeat, SVDFactorization, Switch
@@ -783,6 +785,92 @@ end
     end
 end
 
+# `F(x) = (g(s) - 2, 2 g(s) - 4 + c)` in `s = x₁ + x₂` with `g(s) = s + a s²`, and its Jacobian
+# `g'(s) [1 1; 2 2]` of rank `1`. With `c = 0` the residual has roots; with `c ≠ 0` it has none,
+# and the steps along an SVD factor contract onto a least-squares point.
+rank_one_g(s, a) = s + a * s^2
+function rank_one_residual(x, p)
+    g = rank_one_g(x[1] + x[2], p.a)
+    return SVector(g - 2, 2g - 4 + p.c)
+end
+function rank_one_jacobian(x, p)
+    d = 1 + 2 * p.a * (x[1] + x[2])
+    return SMatrix{2, 2}(d, 2d, d, 2d)
+end
+
+@testset "a kept rank-deficient factor leaves the solve to the step test, $T" for T in REAL_ELTYPES
+    # The first solve, at `c = 0`, ends on the residual test after one step and keeps its SVD
+    # factor of rank `1`. The second, at `c = 1/2` with no root, starts along that factor and
+    # contracts onto a least-squares point: the rate test reads the rank of the kept factor and
+    # leaves the solve to the step test, as a solve that factorises afresh does.
+    opt = Options(T; x_abstol = T(1e-6), g_tol = 0)
+    x₀ = SVector{2, T}(1 // 2, 1 // 2)
+    p₁ = (a = zero(T), c = zero(T))
+    p₂ = (a = T(1 // 100), c = T(1 // 2))
+    for keep_factor in (true, false)
+        m = Newton(; jacobian = rank_one_jacobian, linsolve = SVDFactorization(),
+            reuse = 10, keep_factor)
+        solver = init(NonlinearProblem(rank_one_residual), x₀, m, p₁; options = opt)
+        _, st₁ = solve!(solver, x₀, p₁)
+        @test st₁.code == SUCCESS
+        @test st₁.iterations == 1
+        @test st₁.rank == 1
+        _, st₂ = solve!(solver, x₀, p₂)
+        @test st₂.code == STALLED
+        @test !st₂.contracted
+        @test st₂.rank == 1
+    end
+end
+
+@testset "a solve without keep_factor reports no rank of an earlier solve, $T" for T in REAL_ELTYPES
+    # a solve that ends at a root `x₀` with no step reads no factor, after a solve whose last
+    # factor has rank `1`
+    m = Newton(; jacobian = rank_one_jacobian, linsolve = SVDFactorization())
+    opt = Options(T; x_abstol = T(1e-6), g_tol = 0)
+    p_none = (a = zero(T), c = T(1 // 2))
+    p_root = (a = zero(T), c = zero(T))
+    x₀ = SVector{2, T}(1 // 2, 1 // 2)
+    solver = init(NonlinearProblem(rank_one_residual), x₀, m, p_none; options = opt)
+    _, st₁ = solve!(solver, x₀, p_none)
+    @test st₁.code == STALLED
+    @test st₁.rank == 1
+    _, st₂ = solve!(solver, SVector{2, T}(1, 1), p_root)
+    @test st₂.code == SUCCESS
+    @test st₂.iterations == 0
+    @test st₂.rank == -1
+end
+
+struct RateTangentTag end
+
+@testset "a SINGULAR tangent keeps the rate of the solve, $T" for T in REAL_ELTYPES
+    # `F(x) = p x` at `p = 15/16` along the Jacobian `1`: a contraction of rate `1/16` that ends on
+    # the rate test. The Jacobian `0` of the problem, which the tangent reads at `x*`, is
+    # singular, so the solve with a dual `p` returns `SINGULAR`; it keeps the rate, the rate test
+    # and the reused factor of the primal solve.
+    opt = Options(T; f_reltol = 0, x_abstol = T(1e-4))
+    a = T(15) / 16
+    pd = ForwardDiff.Dual{RateTangentTag}(a, one(T))
+    for (prob, x₀, J) in (
+            (
+            NonlinearProblem((x, p) -> p * x, (x, p) -> zero(T)), one(T), (x, p) -> one(T)),
+            (NonlinearProblem((x, p) -> p * x, (x, p) -> zero(SMatrix{1, 1, T})),
+            SVector{1, T}(1), (x, p) -> one(SMatrix{1, 1, T}))),
+        reuse in (1, 3)
+
+        m = Newton(; jacobian = J, reuse)
+        _, st = solve(prob, x₀, m, a; options = opt)
+        @test st.code == SUCCESS
+        @test stopping_test(st) == :contraction
+        @test st.reused == (reuse == 3)
+        _, st_d = solve(prob, x₀, m, pd; options = opt)
+        @test st_d.code == SINGULAR
+        @test st_d.iterations == st.iterations
+        @test st_d.rate == st.rate
+        @test st_d.contracted
+        @test st_d.reused == st.reused
+    end
+end
+
 @testset "eliminated inner options keep κ and the round-off flag" begin
     opt = Options(Float64; kappa = 1 / 4, roundoff = true)
     prob = NonlinearProblem((x, p) -> SVector(x[1] - 2, x[2] - 2))
@@ -818,6 +906,32 @@ end
         @test dropped.outer_state.rule.age == 0
         _, st₃ = solve!(solver, x .+ 1e-7; refactorize = true)
         @test st₃.code == SUCCESS
+    end
+end
+
+@testset "a step of rate θ ≥ 1 along a reused outer factor refreshes it, $T" for T in REAL_ELTYPES
+    # the fixture of "a step of rate θ ≥ 1 along a reused factor refreshes it" as the outer block
+    # `z = x₂`, beside the decoupled inner block `x₁ - 1`: the Jacobian of `z` is `2/5` at `z = 2`
+    # and `1` elsewhere. The refresh at the third step reads the exact Jacobian and lands at
+    # `z = 0`; along the first factor the iterates grow by `3/2` at each step. The Jacobian records
+    # the `z` it is read at: the refresh reads it at `z₂ = 9/2`, where the static form also reads
+    # it once for its Schur complement, and the dense form does not.
+    points = T[]
+    jac_z(z) = (push!(points, z); z == 2 ? T(2) / 5 : one(T))
+    F(x, p) = SVector(x[1] - 1, x[2])
+    J(x, p) = SMatrix{2, 2, T}(1, 0, 0, jac_z(x[2]))
+    F!(y, x, p) = (y[1] = x[1] - 1; y[2] = x[2]; y)
+    J!(Jm, x, p) = (Jm .= 0; Jm[1, 1] = 1; Jm[2, 2] = jac_z(x[2]); Jm)
+    for (F_, J_, x₀, Y, Z, n) in ((F, J, SVector{2, T}(1, 2), (1,), (2,), 2),
+        (F!, J!, T[1, 2], [1], [2], 1))
+        empty!(points)
+        elim = GeometricSolvers.BlockEliminated(NonlinearProblem(F_, J_), Y; outer = Z)
+        x, st = solve(elim, x₀, Newton(; reuse = 10);
+            options = Options(T; max_iterations = 6))
+        @test st.code == SUCCESS
+        @test x == [1, 0]
+        @test st.iterations == 3
+        @test count(==(T(9) / 2), points) == n
     end
 end
 

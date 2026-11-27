@@ -2270,6 +2270,17 @@ end
 @inline rate_test_rank(st::StaticElimState, x) = rate_test_rank(st.outer_state, st.z_curr)
 @inline rate_test_rank(st::DenseElimState, x) = rate_test_rank(st.outer_state, st.ws.z_curr)
 
+# The rate of a step, which refreshes a reused factor at `θ ≥ 1`, goes to the outer solve, whose
+# factor the steps reuse.
+@inline function observe_rate!!(st::StaticElimState, m, rate)
+    return StaticElimState(
+        observe_rate!!(st.outer_state, m, rate), st.inner_state, st.y_warm, st.z_curr,
+        st.fnorm_z_prev, st.Y, st.Z, st.E_y, st.E_z, st.init_failures)
+end
+@inline function observe_rate!!(st::DenseElimState, m, rate)
+    return DenseElimState(observe_rate!!(st.outer_state, m, rate), st.ws, st.oprob)
+end
+
 @inline residual_buffer(::StaticElimState) = nothing
 @inline residual_buffer(st::DenseElimState) = _ElimResBuffer(st.ws)
 
