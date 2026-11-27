@@ -7,7 +7,8 @@
 # of a device array is disallowed, so a script that reads a device array entry by entry fails here.
 
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, I, UpperTriangular, norm, normalize, opnorm, qr, rank
+using LinearAlgebra: BLAS, I, UpperTriangular, diagind, eigen, norm, normalize, opnorm, qr,
+                     rank
 using Random: Xoshiro
 using Test
 
@@ -431,40 +432,94 @@ end
 
 @testset "recycling_spike.jl: GCRO-DR on the control matrix scaled near floatmax" begin
     # `s A y = s b` for the control matrix `A` and three unit right-hand sides, each solve after
-    # the first from the recycled space of the one before: at `s = 4 √floatmax` a product of two
-    # Hessenberg entries overflows, and at `s = floatmax / 8` the residual of a least-squares
-    # solve formed from the unscaled Hessenberg matrix overflows too
+    # the first from the recycled space of the one before, for eight draws of the right-hand
+    # sides: at `s = 4 √floatmax` a product of two Hessenberg entries overflows, and at
+    # `s = floatmax / 8` the residual of a least-squares solve formed from the unscaled Hessenberg
+    # matrix overflows too, and so does `‖s A v‖` for some unit `v`, since `‖A‖₂ ≈ 78`
     prob, _ = RecyclingSpike.control_problem()
     A = copy(prob.jacobian_prototype)
     n = size(A, 1)
-    B = randn(Xoshiro(7), n, 3)
-    B ./= norm.(eachcol(B))'
-    function scaled_run(s)
-        op = RecyclingSpike.CountingOperator(s .* A, nothing, zeros(n), 0)
-        g = RecyclingSpike.GCRODR(30, 10; recycle = true)
-        ys = map(eachcol(B)) do b
-            y, capped = RecyclingSpike.gcrodr_solve!(g, op, s .* b, 1e-8 * s)
-            @test !capped
-            return y
-        end
-        return ys, g
+    tol = 1e-8
+    # an orthonormal basis of the eigenvectors of the six eigenvalues in `[0.01, 0.05]`, the
+    # eigenvalues of `A` of the smallest modulus; `A` is real with real eigenvalues
+    E = eigen(A)
+    small = sortperm(abs.(E.values))[1:6]
+    @test all(λ -> 0.009 < real(λ) < 0.051 && imag(λ) == 0, E.values[small])
+    X6 = Matrix(qr(real.(E.vectors[:, small])).Q)
+    orth(U) = Matrix(qr(U).Q)
+    # the sine of the largest principal angle between the span of `X` and the span of `U`
+    sinangle(X, U) = (Q = orth(U); opnorm(orth(X) - Q * (Q' * orth(X))))
+    # the τ of the Arnoldi process is 1 at the scales 1 and `4 √floatmax`, and below 1 at
+    # `floatmax / 8`, where it keeps `τ n max|s Aᵢⱼ|` below `floatmax / 32`
+    τ(s) = RecyclingSpike.operator_scale(RecyclingSpike.CountingOperator(s .* A, nothing,
+        zeros(n), 0))
+    @test τ(1.0) == 1 && τ(4 * sqrt(floatmax(Float64))) == 1
+    let s = floatmax(Float64) / 8
+        @test τ(s) < 1 && ispow2(τ(s))
+        @test τ(s) * n * maximum(abs, s .* A) <= floatmax(Float64) / 32
     end
-    ys1, g1 = scaled_run(1.0)
-    @test g1.au == 2 * 10
-    Q1 = Matrix(qr(g1.U).Q)
-    for s in (4 * sqrt(floatmax(Float64)), floatmax(Float64) / 8)
-        ys, g = scaled_run(s)
-        @test g.au == g1.au
-        @test all(isfinite, g.U)
-        # the sine of the largest principal angle between the recycled spaces at `s` and at 1
-        Qs = Matrix(qr(g.U).Q)
-        @test opnorm(Qs - Q1 * (Q1' * Qs)) < sqrt(eps(Float64))
-        # the solution is that at scale 1, to the round-off of `s A`, which the condition number
-        # of `A`, about 6·10⁴, amplifies
-        for (y, y1) in zip(ys, ys1)
-            @test norm(y - y1) <= 1e-10 * norm(y1)
+    @testset "right-hand sides of the seed $seed" for seed in 1:8
+        B = randn(Xoshiro(seed), n, 3)
+        B ./= norm.(eachcol(B))'
+        function scaled_run(s)
+            op = RecyclingSpike.CountingOperator(s .* A, nothing, zeros(n), 0)
+            g = RecyclingSpike.GCRODR(30, 10; recycle = true)
+            ys = map(eachcol(B)) do b
+                y, capped = RecyclingSpike.gcrodr_solve!(g, op, s .* b, tol * s)
+                @test !capped
+                # the residual of `A y = b` meets the tolerance, to the round-off of `A y`
+                @test norm(b - A * y) <= tol + n * eps(Float64) * opnorm(A) * norm(y)
+                return y
+            end
+            return ys, g
+        end
+        ys1, g1 = scaled_run(1.0)
+        @test g1.au == 2 * 10
+        # the six eigenvectors lie in the recycled space at scale 1 to the accuracy of a
+        # harmonic Ritz vector after solves to `tol`: `tol` over the gap of 0.008 between the
+        # small eigenvalues, times 10
+        @test sinangle(X6, g1.U) < 10 * tol / 0.008
+        # the part of that space closest to the six eigenvectors
+        Q1 = orth(g1.U)
+        P6 = Q1 * (Q1' * X6)
+        for s in (4 * sqrt(floatmax(Float64)), floatmax(Float64) / 8)
+            ys, g = scaled_run(s)
+            @test g.au == g1.au
+            @test all(isfinite, g.U)
+            # the recycled space at `s` spans the eigenvectors that it spans at scale 1
+            @test sinangle(P6, g.U) < sqrt(eps(Float64))
+            # the solution is that at scale 1, to the round-off of `s A`, which the condition
+            # number of `A`, about 6·10⁴, amplifies
+            for (y, y1) in zip(ys, ys1)
+                @test norm(y - y1) <= 1e-10 * norm(y1)
+            end
         end
     end
+    # a residual whose norm is not finite ends the solve with an error: a right-hand side of the
+    # norm 2.5 floatmax at its start; a preconditioner whose inverse overflows in the Arnoldi
+    # process; and the same preconditioner on the `A·U` products of a solve that starts from a
+    # recycled space
+    s = floatmax(Float64) / 8
+    braw = randn(Xoshiro(5), n)
+    braw .*= 20 / norm(braw)
+    op = RecyclingSpike.CountingOperator(s .* A, nothing, zeros(n), 0)
+    @test_throws r"^GCRO-DR: the residual norm is not finite$" RecyclingSpike.gcrodr_solve!(
+        RecyclingSpike.GCRODR(30, 10; recycle = true), op, s .* braw, tol * s)
+    # it fails at its start, before any product
+    @test op.calls == 0
+    tiny = (J, x, p) -> (fill!(J, 0); J[diagind(J)] .= 1e-320; J)
+    Ptiny = RecyclingSpike.LUPreconditioner(tiny, zeros(n, n), zeros(n), 1)
+    optiny = RecyclingSpike.CountingOperator(copy(A), Ptiny, zeros(n), 0)
+    b1 = normalize(randn(Xoshiro(6), n))
+    @test_throws r"^GCRO-DR: the residual norm is not finite$" RecyclingSpike.gcrodr_solve!(
+        RecyclingSpike.GCRODR(30, 10; recycle = true, maxiter = 3), optiny, b1, tol)
+    g = RecyclingSpike.GCRODR(30, 10; recycle = true)
+    RecyclingSpike.gcrodr_solve!(
+        g, RecyclingSpike.CountingOperator(copy(A), nothing, zeros(n), 0),
+        b1, tol)
+    @test g.U !== nothing
+    @test_throws r"^GCRO-DR: the residual norm is not finite$" RecyclingSpike.gcrodr_solve!(
+        g, optiny, b1, tol)
     # a matrix whose columns have norms between floatmax / 2 and floatmax, `2¹⁰²⁰` times one of
     # norms from 12 to 16: the `R` factor of the matrix itself is of the size of `floatmax`, so that
     # `X R⁻¹` has subnormal entries. The scaling is exact, so the factors and the recycled space

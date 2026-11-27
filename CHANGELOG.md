@@ -179,9 +179,13 @@ so that a compat-only bump can be told apart from an interface change.
   adds the solves that start on a kept preconditioner and the mark; the verdict counts the vacuous
   cells and, where all 16 are, evaluates neither rule and says that the spike measures nothing.
   Its GCRO-DR divides each QR factorisation, least-squares solve and harmonic Ritz pencil by the
-  largest entry of its matrix and holds the recycled space as unit columns, so that on the control
-  matrix scaled by `4√floatmax` and by `floatmax/8` it raises no exception, where the pencil
-  `Gᴴ G` raised `LAPACKException(30)`, and gives the recycled space and the solution of scale 1.
+  largest entry of its matrix and holds the recycled space as unit columns, runs its Arnoldi
+  process and its `A·U` products on `τ A` for a power of two `τ ≤ 1` that keeps `τ n max|Aᵢⱼ|` below
+  `floatmax/32`, and raises an error where the norm of a residual is not finite. On the control
+  matrix scaled by `4√floatmax` and by `floatmax/8`, with right-hand sides of norm 1 times the
+  scale, it raises no exception, where the pencil `Gᴴ G` raised `LAPACKException(30)`, gives the
+  solution of scale 1, and its recycled space spans the six eigenvectors of the smallest
+  eigenvalues that it spans at scale 1; a right-hand side whose norm overflows ends with the error.
   Its classical Gram–Schmidt with a second pass is one function, and a test fails where the
   second pass is lost. On the base `a2fc0e4` with this script, on an Apple M4 Max with Julia 1.13.4
   and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every cell of the grid gave

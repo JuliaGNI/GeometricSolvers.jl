@@ -275,14 +275,54 @@ function gcrodr_cycle!(s::GCRODR, op, y, r, β, C, Û, d, nsteps, tol)
     return j, (Wj * Q[:, 1:(s.k)], unit_recycled(V̂ * P, R, σ)...)
 end
 
+# The operator `v ↦ τ A v` for the operator `A` of `op` and a power of two `τ`, which counts as a
+# call of `op`.
+struct ScaledOperator{O}
+    op::O
+    τ::Float64
+    v::Vector{Float64}
+end
+
+function apply_operator!(y, S::ScaledOperator, v)
+    S.v .= S.τ .* v
+    return apply_operator!(y, S.op, S.v)
+end
+
+# The power of two `τ ≤ 1` that keeps `τ J v` and its norm below `floatmax / 32` for a unit `v`:
+# `‖J v‖ ≤ n max|Jᵢⱼ|`. It is 1 where `n max|Jᵢⱼ|` lies below `floatmax / 256`. The bound is that of
+# `J` alone; with a preconditioner, an overflow in `M⁻¹ v` ends the solve in `residual_norm`.
+function operator_scale(op::CountingOperator)
+    e = exponent(maximum(abs, op.J)) + ceil(Int, log2(size(op.J, 2))) + 6 -
+        exponent(floatmax(Float64))
+    return exp2(-max(0, e))
+end
+
+# The norm of the residual `r`; a norm that is not finite, from a non-finite entry or from an
+# overflow, is an error, since `while rn > tol` reads a `NaN` as converged.
+function residual_norm(r)
+    rn = norm(r)
+    isfinite(rn) || error("GCRO-DR: the residual norm is not finite")
+    return rn
+end
+
 # The GCRO-DR solve of `A y = b` from `y = 0` to `‖b − A y‖ ≤ tol`, with `A` the operator `op`.
 # It returns `y` and whether the solve reached its cap of `maxiter` Arnoldi steps without `tol`.
-function gcrodr_solve!(s::GCRODR, op, b, tol)
+# The Arnoldi process and the `A·U` products run on `τ A` with the `τ` of `operator_scale`, so that
+# no product with a unit vector overflows; the solve finds `y / τ`, and the residual
+# `b − (τ A)(y / τ)` is that of `A y = b`. A power of two scales exactly, so the solve at `τ = 1`
+# is that on `A`, and the unit columns of `U` do not depend on `τ`.
+function gcrodr_solve!(s::GCRODR, op::CountingOperator, b, tol)
+    τ = operator_scale(op)
+    y, capped = gcrodr_solve!(s, ScaledOperator(op, τ, zeros(length(b))), b, tol)
+    return τ .* y, capped
+end
+
+function gcrodr_solve!(s::GCRODR, op::ScaledOperator, b, tol)
     s.recycle || (s.U = nothing)
     n = length(b)
     y = zeros(n)
     r = copy(b)
-    rn = norm(r)
+    rn = residual_norm(r)
     rn <= tol && return y, false
     C = U = d = nothing
     if s.U !== nothing
@@ -298,7 +338,7 @@ function gcrodr_solve!(s::GCRODR, op, b, tol)
         c = C' * r
         y .+= U * (c ./ d)
         r .-= C * c
-        rn = norm(r)
+        rn = residual_norm(r)
     end
     iters = 0
     while rn > tol && iters < s.maxiter
@@ -306,7 +346,7 @@ function gcrodr_solve!(s::GCRODR, op, b, tol)
         j, CU = gcrodr_cycle!(s, op, y, r, rn, C, U, d, nsteps, tol)
         iters += j
         CU === nothing || ((C, U, d) = CU)
-        rn = norm(r)
+        rn = residual_norm(r)
     end
     U === nothing || (s.U = U)
     return y, rn > tol
