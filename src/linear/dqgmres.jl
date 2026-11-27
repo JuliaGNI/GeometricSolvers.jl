@@ -6,15 +6,16 @@
 # only, by modified Gram–Schmidt, so the Hessenberg matrix is banded with `m + 1` nonzeros per
 # column. Its Givens rotations act on that band alone, and the solution is updated at every
 # iteration along a direction `p_j = (z_j - Σ r_ij p_i) / r_jj` of the last `m` directions. A
-# direction is stored as `p_j 2^e_j`, with `2^e_j ≤ |r_jj| < 2^(e_j+1)`, at the scale of `z_j`, so
-# that no vector carries the reciprocal scale of the system; the band and the solution take the
-# power of two back in their coefficients. The scaling is exact, so in the normal range the
-# iterates are those of the unscaled directions. The basis keeps `m + 1` columns, the directions
-# `m`, and both are rings: the vector of iteration `j` overwrites the one that the band no longer
-# reaches. With `m` at least the iteration count, the orthogonalisation is complete and the
-# iterate is that of unrestarted GMRES with modified Gram–Schmidt. The Hessenberg band and the rotations are on the host, every vector of length `n`
-# is in the storage of the iterate, the loop allocates nothing after `init_dqgmres_workspace`, and
-# it indexes no entry of a vector.
+# direction is stored as `q_j = p_j 2^-f_j`, whose norm lies in `(1/2, 2)`, so that no vector
+# carries the scale of the system or of the preconditioner; each coefficient takes its power of
+# two back, `(r_ij 2^f_i)` in the band and `(g_j 2^f_j)` in the solution, and so lies within a
+# factor 2 of the norm of the product that it scales. The scaling is exact, so in the normal range
+# the iterates are those of the unscaled directions. The basis keeps `m + 1` columns, the
+# directions `m`, and both are rings: the vector of iteration `j` overwrites the one that the band
+# no longer reaches. With `m` at least the iteration count, the orthogonalisation is complete and
+# the iterate is that of unrestarted GMRES with modified Gram–Schmidt. The Hessenberg band and the
+# rotations are on the host, every vector of length `n` is in the storage of the iterate, the loop
+# allocates nothing after `init_dqgmres_workspace`, and it indexes no entry of a vector.
 
 """
     DQGMRES(; maxiter = 30, memory = 20, forcing = EisenstatWalkerChoice2(),
@@ -92,8 +93,8 @@ Adapt.@adapt_structure DQGMRES
 # directions, the solution `d`, the preconditioned basis vector `z`, the product `w` and the
 # right-hand side `bb`, in the storage of the iterate; on the host the band `c` of `m + 2` entries
 # of the current Hessenberg column, rows `j - m` to `j + 1`, the rings `cs` and `sn` of the last
-# `m` rotations, and the ring `pe` of the exponents `e_j` of the stored directions `p_j 2^e_j`; and
-# the counters of a solve, as in `MINRESQLPWorkspace`.
+# `m` rotations, and the ring `pe` of the exponents `f_j` of the stored directions
+# `q_j = p_j 2^-f_j`; and the counters of a solve, as in `MINRESQLPWorkspace`.
 mutable struct DQGMRESWorkspace{T, R <: Real, M, V, SR, ST}
     V::M
     P::M
@@ -214,24 +215,23 @@ function dqgmres_solve!(ws::DQGMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
         # the next basis vector in the slot of `v_{j-m}`, which the band of column `j` did not
         # read; a vector of norm zero ends the solve below and is not formed
         iszero(hj) || (@views ws.V[:, mod1(j + 1, m + 1)] .= w ./ hj)
-        # the direction `p_j 2^e_j` of iteration j in the slot of `p_{j-m} 2^e_{j-m}`, which it
-        # reads last: `w` holds `z_j` minus the directions of the band that keep their slots
+        # the direction `q_j = p_j 2^-f_j` of iteration j in the slot of `q_{j-m}`, which it reads
+        # last: `w` holds `u = z_j - Σ r_ij p_i`, each term formed as `(r_ij 2^f_i) q_i`, and
+        # `q_j = (u 2^-eu) / (r_jj 2^-er)` with `f_j = eu - er`
         w .= z
         for i in max(1, j - m + 1):(j - 1)
             k = mod1(i, m)
-            w .-= ldexp2(c[i - j + m + 1], -ws.pe[k]) .* @view(ws.P[:, k])
+            w .-= ldexp2(c[i - j + m + 1], ws.pe[k]) .* @view(ws.P[:, k])
         end
         pj = @view ws.P[:, q]
-        e = norm_exponent(R(abs(rjj)))
-        if j > m
-            pj .= (w .- ldexp2(c[1], -ws.pe[q]) .* pj) ./ ldexp2(rjj, -e)
-        else
-            pj .= w ./ ldexp2(rjj, -e)
-        end
-        d .+= ldexp2(gj, -e) .* pj
+        j > m && (w .-= ldexp2(c[1], ws.pe[q]) .* pj)
+        eu = norm_exponent(R(rnorm(w)))
+        er = norm_exponent(R(abs(rjj)))
+        pj .= ldexp2.(w, -eu) ./ ldexp2(rjj, -er)
+        d .+= ldexp2(gj, eu - er) .* pj
         ws.cs[q] = cs
         ws.sn[q] = sn
-        ws.pe[q] = e
+        ws.pe[q] = eu - er
         resnorm = sqrt(R(cld(j + 1, m + 1))) * R(abs(g))
         if iszero(hj)
             breakdown = true

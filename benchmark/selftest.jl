@@ -153,12 +153,13 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         @test count(p -> run_cell(row, "Newton Backtracking LU", p).status == "ran",
             PACKAGES) == 3
         # A round-off floor: ‖F‖∞ cannot fall below about 4e-6 > τ near √2, while a relative
-        # tolerance of sqrt(eps) on ‖F(x₀)‖ = 9.8e11 accepts it. GeometricSolvers and
-        # SimpleSolvers report no success there, and no cell succeeds.
+        # tolerance of sqrt(eps) on ‖F(x₀)‖ = 9.8e11 accepts it. GeometricSolvers ends on its
+        # rate test at fl(√2), the nearest double to the root, with SUCCESS; SimpleSolvers reports
+        # no success; and the harness's rule ‖F‖∞ ≤ τ counts no cell as a success.
         floored(y, x, p) = (y[1] = 1e10 * (x[1]^2 - 2); nothing)
         row = Row{Float64}("selftest", "floor", "x0", floored, [10.0])
         cells = [run_cell(row, "Newton Backtracking LU", p) for p in PACKAGES]
-        @test cells[1].code != "SUCCESS"
+        @test cells[1].code == "SUCCESS" && !cells[1].success
         @test cells[2].code == "not converged"
         @test !any(c -> c.success, cells)
     end

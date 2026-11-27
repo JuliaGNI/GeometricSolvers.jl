@@ -311,8 +311,8 @@ end
         5, 5; recycle = true)
 
     # synthetic rows of the full grid: `r` per cell from `ratio`, recycling below no recycling,
-    # and `from_u` solves from a recycled space
-    function grid(ratio; norec = 1.0, conv = (_...) -> (true, true), from_u = (_...) -> 1)
+    # and `from_u(N, m, k, η)` solves from a recycled space
+    function grid(ratio; norec = 1.0, conv = (_...) -> (true, true), from_u = (_...) -> 3)
         [(N = N, m = m, k = k, η = η, gmres = cc(1000; converged = conv(N, m, k, η)[1]),
              norec = cc(round(Int, 1000 * norec)),
              rec = (;
@@ -324,8 +324,8 @@ end
         η in RecyclingSpike.RC_ETAS] |> vec
     end
     # a grid in which no linear solve starts from a recycled space measures nothing, whatever its
-    # ratios; one cell that does makes the rules apply
-    for ratio in (1.0, 0.5)
+    # ratios; one cell that does makes the rules apply, and the vacuous cells count for neither
+    for ratio in (1.08, 1.0, 0.5)
         rows = grid((_...) -> ratio; from_u = (_...) -> 0)
         v = RecyclingSpike.rc_verdict(rows)
         @test v.rule === :vacuous && v.vacuous == 16 && isempty(v.pairs)
@@ -340,13 +340,14 @@ end
     hit = (768, 30, 10, 1e-6)
     rows = grid((_...) -> 1.08; from_u = (N, m, k, η) -> (N, m, k, η) == hit ? 3 : 0)
     v = RecyclingSpike.rc_verdict(rows)
-    @test v.rule === :stop && v.vacuous == 15
+    @test v.rule === :between && v.vacuous == 15
     vbuf = IOBuffer()
     RecyclingSpike.print_verdict(vbuf, rows, v)
-    @test startswith(String(take!(vbuf)),
-        "vacuous cells (no linear solve starts from a recycled space U): 15 of 16\n" *
-        "build rule (r ≤ 0.75 and below GCRO-DR without recycling, at both N and both η): " *
-        "not met\nstop rule (r ≥ 0.90 in every cell): met (16 of 16 cells)\nresult: stop\n")
+    @test String(take!(vbuf)) ==
+          "vacuous cells (no linear solve starts from a recycled space U): 15 of 16\n" *
+          "build rule (r ≤ 0.75 and below GCRO-DR without recycling, at both N and both η): " *
+          "not met\nstop rule (r ≥ 0.90 in every cell): not met (1 of 16 cells)\n" *
+          "result: between\n"
     verdict = RecyclingSpike.rc_verdict
     @test verdict(grid((_...) -> 1.08)).rule === :stop
     @test verdict(grid((_...) -> 0.90)).rule === :stop
@@ -369,6 +370,11 @@ end
           :between
     @test verdict(grid((N, m, k, η) -> N == 125 ? 1.0 : 0.5;
         conv = (N, m, k, η) -> (true, N == 125))).rule === :stop
+    # a vacuous cell meets neither rule
+    @test verdict(grid((_...) -> 1.08; from_u = (N, m, k, η) -> N == 125 ? 0 : 3)).rule ===
+          :between
+    @test verdict(grid((N, m, k, η) -> (m, k) == (30, 10) ? 0.75 : 1.0;
+        from_u = (N, m, k, η) -> (m, k, η) == (30, 10, 1e-6) ? 0 : 3)).rule === :between
     @test verdict(grid((_...) -> 0.5)[1:(end - 1)]).rule === :not_evaluated
     nc = RecyclingSpike.cell_text(cc(7; converged = false))
     @test nc == "no convergence"

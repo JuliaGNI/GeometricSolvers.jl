@@ -19,17 +19,22 @@ so that a compat-only bump can be told apart from an interface change.
   minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
   finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
   direction; no `ReturnCode` is added. Its recurrence runs on the right-hand side scaled to unit
-  norm, divides each preconditioned vector and each product by the power of two of its norm, and
-  forms `ω` from `‖t‖`, so a system scaled to `4√floatmax`, `floatmax/8` or into the subnormal
+  norm, divides each preconditioned vector and each product by the power of two of its norm,
+  forms `ω` from `‖t‖`, and forms `β` and the next direction so that no intermediate overflows
+  where `β` or the direction does not (the shift by the power of two comes before the division
+  where that shrinks it), so a system scaled to `4√floatmax`, `floatmax/8` or into the subnormal
   range, and a right preconditioner of large scale, keep their solution. `DQGMRES` is the
   right-preconditioned DQGMRES of Saad and Wu (1996,
   doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8): one product per
   iteration, a quasi-minimal residual over a window of `min(memory, n)` vectors, `min(memory, n)
-  + 1` basis vectors and `min(memory, n)` directions, each stored as `p_j 2^e_j` with `2^e_j ≤
-  |r_jj| < 2^(e_j+1)` for the diagonal entry `r_jj` of its band, so that it keeps its solution
-  over the same range of scales; with `memory` at least the iteration count its iterate is that
-  of unrestarted `GMRES` with modified Gram–Schmidt. The divisions of both are exact, so in the
-  normal range the iterates are those of the unscaled recurrences. Both take the forcing
+  + 1` basis vectors and `min(memory, n)` directions, each stored as `q_j = p_j 2^-f_j`, whose
+  norm lies in (1/2, 2); each coefficient takes its power of two back (`r_ij 2^f_i` in the band,
+  `g_j 2^f_j` in the solution) and so lies within a factor 2 of the norm of the product it
+  scales, so neither the scale of the system nor a right preconditioner of small scale at a
+  large right-hand side makes a coefficient overflow where the solution is representable; with
+  `memory` at least the iteration count its iterate is that of unrestarted `GMRES` with modified
+  Gram–Schmidt. The divisions of both are exact, so in the normal range the iterates are those
+  of the unscaled recurrences. Both take the forcing
   terms and the right preconditioner of `GMRES`, the `forcing` and `preconditioner` keywords of
   `Newton`, `Static` and the line searches, on `Array`, `JLArray` and a device array, and count
   `f_calls` and `jvp_calls` exactly. `DogLeg`, whose trial loop reads the Arnoldi relation of
@@ -160,15 +165,27 @@ so that a compat-only bump can be told apart from an interface change.
   `A·U` included, over `m ∈ {20, 30}`, `k ∈ {5, 10}` and `η ∈ {1e-2, 1e-6}`. A control with six
   eigenvalues in `[0.01, 0.05]` must give fewer products with recycling than without, and fewer
   without than with `GMRES(m)`, and each GCRO-DR count must equal a direct count of the
-  operator's calls; the script stops with an error otherwise. It prints one verdict line for each
-  of the rules decided before the run. On the base `cd7fa81` with this script, on an Apple M4 Max
-  with Julia 1.13.4 and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every
-  cell of the grid gave the same count in all three columns (23 at `η = 1e-2`, 36 at `η = 1e-6`,
-  over 21 Newton steps). No linear solve started from a recycled space: the inner solves before
-  the last ran fewer than `k` Arnoldi steps each, and such a cycle leaves none. The stop rule
-  (`r ≥ 0.90` in every cell) held. `test/integration/hardware_scripts.jl` runs the script at
-  `N = 125`, `m = 20`, `k = 5`, `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the
-  package's steps and refreshes, and its verdict on synthetic rows.
+  operator's calls; the script stops with an error otherwise. A cell in which no linear solve of
+  GCRO-DR with recycling starts from a recycled space ("solves from U" = 0) counts for neither
+  rule, as a cell in which GMRES(m) does not converge does; `build_cell` and `stop_cell` both
+  test it. It prints one verdict line for each rule. The rules were decided before the run,
+  except this condition, which was added after the first run of the full grid showed that no
+  solve had started from a recycled space. Measured with this script on commit `5a19709`, on an
+  Apple M4 Max with Julia 1.13.4, OpenBLAS 0.3.30 and 2 BLAS threads, the control gave 779, 408
+  and 271 products, and every cell of the grid gave the same count in all three columns (23 at
+  `η = 1e-2`, 36 at `η = 1e-6`, over 21 Newton steps). No linear solve started from a recycled
+  space in any of the 16 cells: the inner solves before the last ran fewer than `k` Arnoldi steps
+  each, and such a cycle leaves none. Before that condition, the stop rule (`r ≥ 0.90`) held in
+  16 of 16 cells, and so measured that recycling never ran, not what it does. The full grid,
+  re-run on the script with it, prints the same counts and the verdict lines "build rule … not
+  met", "stop rule (r ≥ 0.90 in every cell): not met (0 of 16 cells)" and "result: between",
+  because no cell started a solve from a recycled space. The spike keeps its fresh-LU protocol,
+  the preconditioner refreshed at the first Newton step of every solve; a protocol with a
+  preconditioner kept across solves is left to later work (#147).
+  `test/integration/hardware_scripts.jl` runs the script at `N = 125`, `m = 20`, `k = 5`,
+  `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the package's steps and refreshes,
+  and its verdict on synthetic rows, among them a cell with no solve from a recycled space, which
+  meets neither rule.
 
 - **`scripts/recycling_spike.jl` keeps the preconditioner across the ten solves of a cell, and
   marks a cell in which no linear solve starts from a recycled space as `vacuous`.** Every column
@@ -176,8 +193,9 @@ so that a compat-only bump can be told apart from an interface change.
   Newton loop of GCRO-DR takes the same rule: a refresh after an inner solve at its cap, after a
   step along a reused preconditioner with the rate `θ ≥ 1`, and at the first step of a solve after
   one that kept no preconditioner, and the rate and step tests of the default `Options`. Each row
-  adds the solves that start on a kept preconditioner and the mark; the verdict counts the vacuous
-  cells and, where all 16 are, evaluates neither rule and says that the spike measures nothing.
+  adds the solves that start on a kept preconditioner and the mark; a vacuous cell counts for
+  neither rule, and the verdict counts the vacuous cells and, where all 16 are, evaluates neither
+  rule and says that the spike measures nothing.
   Its GCRO-DR divides each QR factorisation, least-squares solve and harmonic Ritz pencil by the
   largest entry of its matrix and holds the recycled space as unit columns, runs its Arnoldi
   process and its `A·U` products on `τ A` for a power of two `τ ≤ 1` that keeps `τ n max|Aᵢⱼ|` below
@@ -187,11 +205,11 @@ so that a compat-only bump can be told apart from an interface change.
   solution of scale 1, and its recycled space spans the six eigenvectors of the smallest
   eigenvalues that it spans at scale 1; a right-hand side whose norm overflows ends with the error.
   Its classical Gram–Schmidt with a second pass is one function, and a test fails where the
-  second pass is lost. On the base `a2fc0e4` with this script, on an Apple M4 Max with Julia 1.13.4
-  and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every cell of the grid gave
-  the same count in all three columns (59 over 30 Newton steps at `η = 1e-2`, 81 over 21 at
-  `η = 1e-6`), with one refresh per column and nine of the ten solves starting on the kept
-  preconditioner. No linear solve started from a recycled space: all 16 cells are vacuous.
+  second pass is lost. On the base `020d55b` with this script, on an Apple M4 Max with Julia
+  1.13.4, OpenBLAS 0.3.30 and 2 BLAS threads, the control gave 779, 408 and 271 products, and
+  every cell of the grid gave the same count in all three columns (59 over 30 Newton steps at
+  `η = 1e-2`, 81 over 21 at `η = 1e-6`), with one refresh per column and nine of the ten solves
+  starting on the kept preconditioner. No linear solve started from a recycled space: all 16 cells are vacuous.
 
 ### Changed
 
@@ -232,7 +250,7 @@ so that a compat-only bump can be told apart from an interface change.
   `SUCCESS` in one step or with a last rate `θ ≤ 10⁻³`, not after a promoted solve, and
   `solve!(solver, x, p; refactorize = true)` drops it, as after a change of the step size, also on
   a stationarity, a deflated stationarity and an eliminated problem (there the outer factor); the
-  `solve!` of a `ReparametrizedSolver` takes no such keyword (K147). The inner options of a
+  `solve!` of a `ReparametrizedSolver` takes no such keyword (K150). The inner options of a
   `BlockEliminated` and a `BatchEliminated` keep `kappa` and `roundoff`. Under
   `reuse`, a step along a reused factor or preconditioner of rate `θ ≥ 1` refreshes it at the next
   step (the outer factor of an eliminated problem), and the new flag `status.reused` reports a
@@ -320,6 +338,16 @@ so that a compat-only bump can be told apart from an interface change.
   routes, in `Float32`, `Float64` and `ComplexF64`), the 1 619 that both runs record give the
   same return code and the same error to four digits. `test/verification/standard_reference.csv`
   is unchanged.
+
+- **With `regularization = μ > 0`, a matrix-free `Newton` (`GMRES`, `MINRESQLP`, `BiCGStab`,
+  `DQGMRES`) passes the product of `J` alone to its globalization, so `Bisection` and
+  `StrongWolfe` take the slope of `‖F‖²`.** It passed the regularized product `J v + μ v`, so
+  they took the slope of `2 Re⟨F, (J + μI) d⟩`; the inner solve keeps `J + μ I`. On `main` at
+  907d20b (`GMRES`) one regularized step differs from that of the dense `Newton` with
+  `LUFactorization` by 4.8e13 eps relative to the step under `Bisection` and by 8.1e14 eps under
+  `StrongWolfe(; c₁ = 0.4)`; now all four methods agree with the dense step to at most 11 eps,
+  in `Float32` and `Float64`. `Backtracking` with `regularization` is not fixed: it still reads
+  the residual ratio of the regularized system as `InexactStep` (K147).
 
 ## [0.1.0] — 2026-11-26
 

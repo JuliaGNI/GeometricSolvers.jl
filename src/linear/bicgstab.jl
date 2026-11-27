@@ -131,6 +131,25 @@ end
     return β >= one(β) ? β * ldexp2(α, -e) : ldexp2(β * α, -e)
 end
 
+# `β = ρq (α / ω) 2^Δ` of the scaled recurrence, with `ρq = ρ₊/ρ`: the shift applies after the
+# division where it grows, and before it where it shrinks, so `α / ω` overflows only where `β`
+# does. In the normal range both orders round as `ldexp2(α / ω, Δ)`.
+@inline bicgstab_beta(ρq, α, ω, Δ) = ρq * (Δ >= 0 ? ldexp2(α / ω, Δ) : ldexp2(α, Δ) / ω)
+
+# The next direction `p ← r + β (p - ω 2^-Δ v)` of the scaled recurrence. Where `ω 2^-Δ` leaves
+# the normal range, the product `β ω 2^-Δ`, which is `ρq α`, takes its place, so that no factor
+# overflows or flushes where the direction does not; otherwise the direction rounds as the
+# unscaled recurrence does.
+@inline function bicgstab_direction!(p, r, v, β, ρq, α, ω, Δ)
+    ωv = ldexp2(ω, -Δ)
+    if isfinite(ωv) && abs(ωv) >= floatmin(real(typeof(ωv)))
+        p .= r .+ β .* (p .- ωv .* v)
+    else
+        p .= r .+ β .* p .- (ρq * α) .* v
+    end
+    return p
+end
+
 """
     bicgstab_solve!(ws::BiCGStabWorkspace, jvp_op!, P, b, bnorm, tol, maxiter) -> (d, GMRESInfo)
 
@@ -238,9 +257,10 @@ function bicgstab_solve!(ws::BiCGStabWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
         # `β = (ρ₊/ρ)(α'/ω')` and `p - ω' J M⁻¹p` of the unscaled steps `α' = α 2^-(eμ+eν)` and
         # `ω' = ω 2^-(eη+eτ)`, with `J M⁻¹p = v 2^(eμ+eν)`
         Δ = (eη + eτ) - (eμ + eν)
-        β = (ρ₊ / ρ) * ldexp2(α / ω, Δ)
+        ρq = ρ₊ / ρ
+        β = bicgstab_beta(ρq, α, ω, Δ)
         ρ = ρ₊
-        p .= r .+ β .* (p .- ldexp2(ω, -Δ) .* v)
+        bicgstab_direction!(p, r, v, β, ρq, α, ω, Δ)
     end
     return d, GMRESInfo{R}(k, β₀ * rel, β₀, converged, breakdown)
 end

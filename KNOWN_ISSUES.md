@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2126`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2134`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2160` for `GMRES`, `:2407` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2168` for `GMRES`, `:2415` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1282,7 +1282,7 @@
 
 ### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
 
-- **location:** `src/nonlinear/newton.jl:2135` (`GMRES`), `:2376` (`MINRESQLP`), `:2426`
+- **location:** `src/nonlinear/newton.jl:2143` (`GMRES`), `:2384` (`MINRESQLP`), `:2434`
   (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
 - **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
   ratio asks `Backtracking` for more decrease than the direction gives. With
@@ -1328,7 +1328,28 @@
 - **found:** PR #129, the second fix round, where the remedy of the review's MGS finding was
   decided as a second MGS pass and this limit as a documented one
 
-### K147 · `solve!` on a `ReparametrizedSolver` takes no `refactorize` keyword, so a `Newton(; reuse = k, keep_factor = true)` inside it refreshes its kept factor only by the rate rule
+### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
+
+- **location:** `src/nonlinear/newton.jl:2143` (`GMRES`), `:2384` (`MINRESQLP`), `:2434`
+  (`BiCGStab` and `DQGMRES`), each `η_ach` from the inner solve on `J + μ I`
+  (`RegularizedJVP`, `:2087` and `:2285`); `:2180` (`dogleg_step_mf`, on the Arnoldi relation of
+  that solve; read, not measured)
+- **evidence:** `InexactStep(η)` states `‖F + J d‖ ≤ η ‖F‖`; the inner solve bounds
+  `‖F + (J + μ I) d‖` instead, and `‖F + J d‖` exceeds it by up to `μ ‖d‖`. With
+  `F(x) = x − 1` on three entries, `x₀ = 0`, `regularization = 10.0` and
+  `Backtracking(; c₁ = 0.5)`, the dense `Newton` ends `MAXITERS` after 100 iterations at
+  `fnorm = 1.3e-4`, and `GMRES`, `BiCGStab` and `DQGMRES` with `FixedForcing(1e-12)` each end
+  `STALLED` after 2 iterations at `fnorm = √3`, the residual of `x₀` (Julia 1.13.4). `main` at
+  907d20b gives the same for the dense `Newton` and `GMRES`. The line searches that evaluate the
+  slope take the product of `J` alone (`merit_jvp`, `:1389`), so `Bisection` and `StrongWolfe` do
+  not have this limit. A fix chooses the step kind of a regularized direction, such as the measured
+  slope or the attained ratio of `J` at one more product, and is a choice for all four methods
+  together with K144.
+- **kind:** defect
+- **found:** PR #127, the CodeRabbit comment on the regularized product of the matrix-free step;
+  the part on `Bisection` and `StrongWolfe` is fixed there
+
+### K150 · `solve!` on a `ReparametrizedSolver` takes no `refactorize` keyword, so a `Newton(; reuse = k, keep_factor = true)` inside it refreshes its kept factor only by the rate rule
 
 - **location:** `src/nonlinear/reparametrized.jl:1061`
 - **evidence:** `solve!(solver::ReparametrizedSolver)` and `solve!(solver::ReparametrizedSolver, y,
@@ -1340,7 +1361,7 @@
 - **kind:** defect
 - **found:** 2026-11-26
 
-### K148 · A `Newton(; reuse = k, keep_factor = true)` solve that returns `SUCCESS` at its start, with no step, drops the kept factor, so the next solve factorises at its first step
+### K151 · A `Newton(; reuse = k, keep_factor = true)` solve that returns `SUCCESS` at its start, with no step, drops the kept factor, so the next solve factorises at its first step
 
 - **location:** `src/nonlinear/newton.jl:1198` (`keeps_factor`)
 - **evidence:** `keeps_factor` keeps the factor after `SUCCESS` only with `status.iterations == 1`
@@ -1357,7 +1378,7 @@
 - **found:** 2026-11-27, the review of the branch that keeps a `Newton` factor across solves; the
   limit of the decided rule for a kept factor after `SUCCESS`
 
-### K149 · A `Newton(; reuse = k)` solve with `k > 1`, or with a kept factor, of a least-squares problem with a nonzero residual at its minimum often returns `STALLED` near the stationary point
+### K152 · A `Newton(; reuse = k)` solve with `k > 1`, or with a kept factor, of a least-squares problem with a nonzero residual at its minimum often returns `STALLED` near the stationary point
 
 - **location:** `src/nonlinear/solver.jl:84` (`rate_test_step`)
 - **evidence:** the steps along a reused factor converge to the fixed point of the frozen
@@ -1374,10 +1395,10 @@
   limit of the decided rule that the rate test of a least-squares problem reads no step along a
   reused factor
 
-### K150 · `solve!` on a static `ReparametrizedSolver` of a `LeastSquaresProblem` raises a `MethodError`
+### K153 · `solve!` on a static `ReparametrizedSolver` of a `LeastSquaresProblem` raises a `MethodError`
 
 - **location:** `src/nonlinear/reparametrized.jl:955`
-- **evidence:** with `r` and its Jacobian of K149 as static vectors, and the identity chart
+- **evidence:** with `r` and its Jacobian of K152 as static vectors, and the identity chart
   `id(y, p) = y`, `did(y, p) = SMatrix{1, 1}(one(y[1]))`,
   `s = init(Reparametrized(LeastSquaresProblem(r, j), id, did), SVector(3.0), Newton(; linsolve =
   QRFactorization(), reuse = k); options = Options(Float64))` followed by

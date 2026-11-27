@@ -49,22 +49,22 @@
 # preconditioner. The script stops with an error unless the products of GCRO-DR with recycling
 # are fewer than those without, those fewer than those of GMRES(m), and every solve converges.
 #
-# The verdict applies the rules decided before the run, on the full grid only; on any other grid
-# it says that it is not evaluated. `r` is the ratio of the products of GCRO-DR with recycling to
-# those of GMRES(m). Build rule: one pair `(m, k)` at which, at both `N` and both `η`, every column
-# converges, `r ≤ 0.75`, and GCRO-DR with recycling takes fewer products than without. Stop rule:
-# `r ≥ 0.90` in every cell, where a cell in which GMRES(m) converges and GCRO-DR with recycling
-# does not counts as `r ≥ 0.90`, and a cell in which GMRES(m) does not converge counts as neither.
-# Any other result is between the two. The verdict counts the vacuous cells, and where every cell
-# of the full grid is vacuous it evaluates neither rule: the spike then measures nothing.
+# The verdict applies two rules, on the full grid only; on any other grid it says that they are
+# not evaluated. `r` is the ratio of the products of GCRO-DR with recycling to those of GMRES(m).
+# Build rule: one pair `(m, k)` at which, at both `N` and both `η`, every column converges,
+# `r ≤ 0.75`, and GCRO-DR with recycling takes fewer products than without. Stop rule: `r ≥ 0.90`
+# in every cell, where a cell in which GMRES(m) converges and GCRO-DR with recycling does not
+# counts as `r ≥ 0.90`. A cell in which GMRES(m) does not converge, and a vacuous cell, count for
+# neither rule. Any other result is between the two. The verdict counts the vacuous cells, and
+# where every cell of the full grid is vacuous it evaluates neither rule: the spike then measures
+# nothing.
 
 using GeometricSolvers
 using GeometricSolvers: FixedForcing, JVPFunction, jvp_calls
-using KernelAbstractions: KernelAbstractions
 using LinearAlgebra
 using Printf
 using Random: Xoshiro
-using SparseArrays: SparseMatrixCSC
+using SparseArrays: SparseArrays
 
 include(joinpath(@__DIR__, "hardware", "common.jl"))
 include(joinpath(@__DIR__, "..", "test", "helpers", "sparse_problems.jl"))
@@ -380,9 +380,9 @@ end
 
 # A Newton solve of `F!(r, x, p) = 0` from `x` with GCRO-DR, in the steps of
 # `Newton(; reuse, keep_factor)` with a preconditioned `GMRES`, `FixedForcing(η)` and the default
-# `Options`: the inner tolerance `η ‖F‖` and the full step. A step refreshes `P` where the rule's
-# age is 0 or the rule is `stalled`; after the step the age counts on, or starts at 1 after a
-# refresh, and returns to 0 after `reuse` steps; `stalled` is set by an inner solve that reached
+# `Options`: the inner tolerance `max(η, 2 eps) ‖F‖` and the full step. A step refreshes `P` where
+# the rule's age is 0 or the rule is `stalled`; after the step the age counts on, or starts at 1
+# after a refresh, and returns to 0 after `reuse` steps; `stalled` is set by an inner solve that reached
 # its cap and by a step along a reused preconditioner whose rate `θ = ‖d_k‖ / ‖d_{k−1}‖` is at
 # least 1. The solve ends with `SUCCESS` on the residual test `‖F‖ ≤ √eps ‖F(x₀)‖` or on the rate
 # test `θ / (1 − θ) ‖d‖ ≤ κ x_reltol ‖x‖`, with `θ` the larger rate of the step and of the one
@@ -406,7 +406,7 @@ function gcrodr_newton!(s::GCRODR, F!, J!, Jbuf, P, x, p, η; rule = nothing)
         refresh = P !== nothing && (rule.age == 0 || rule.stalled)
         refresh && lu_refresh!(P, x, p)
         J!(Jbuf, x, p)
-        y, capped = gcrodr_solve!(s, op, -F, η * fnorm)
+        y, capped = gcrodr_solve!(s, op, -F, max(η, 2 * eps(Float64)) * fnorm)
         d = similar(x)
         precondition!(d, P, y)
         x .+= d
@@ -575,17 +575,20 @@ function print_row(io::IO, row)
         vacuous(row) ? "vacuous" : "", " |")
 end
 
-# Whether a cell meets the build rule: every column converges, `r ≤ 0.75`, and recycling takes
-# fewer products than no recycling.
+# Whether a cell meets the build rule: the cell is not vacuous, every column converges,
+# `r ≤ 0.75`, and recycling takes fewer products than no recycling.
 function build_cell(row)
+    vacuous(row) && return false
     all(c -> c.converged, (row.gmres, row.norec, row.rec)) || return false
     return row.rec.products <= RC_BUILD_RATIO * row.gmres.products &&
            row.rec.products < row.norec.products
 end
 
-# Whether a cell meets the stop rule, `r ≥ 0.90`: a GMRES(m) that does not converge meets neither
-# rule, and a GCRO-DR with recycling that does not converge, beside a GMRES(m) that does, meets it.
+# Whether a cell meets the stop rule, `r ≥ 0.90`: a vacuous cell and a GMRES(m) that does not
+# converge meet neither rule, and a GCRO-DR with recycling that does not converge, beside a
+# GMRES(m) that does, meets it.
 function stop_cell(row)
+    vacuous(row) && return false
     row.gmres.converged || return false
     row.rec.converged || return true
     return row.rec.products >= RC_STOP_RATIO * row.gmres.products
