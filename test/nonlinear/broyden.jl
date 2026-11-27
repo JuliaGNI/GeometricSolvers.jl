@@ -166,6 +166,42 @@ end
     @test state.rule.age == 0
 end
 
+@testset "no pair where u overflows, and the next step factorises, $T" for T in REAL_ELTYPES
+    # `F(x) = a x` from `x₀ = √floatmin / 4` along `B₀ = 2a`, `a = 1 / √floatmin`: `s = -x₀ / 2`,
+    # `H y = -x₀ / 4` and `sᴴ H y = x₀² / 8`, finite and nonzero, but `u = -(x₀ / 4) / (x₀² / 8)`
+    # overflows; the second step factorises afresh and halves the iterate again
+    a = inv(sqrt(floatmin(T)))
+    x₀ = sqrt(floatmin(T)) / 4
+    prob = NonlinearProblem((x, p) -> a * x)
+    m = Newton(;
+        jacobian = (x, p) -> 2a, globalization = Static(), reuse = 2,
+        update = BroydenUpdate(1))
+    xs, Fs, infos, state = run_steps(m, prob, x₀, 1)
+    s = xs[2] - xs[1]
+    Hy = (Fs[2] - Fs[1]) / (2a)
+    den = s * Hy
+    @test isfinite(den) && !iszero(den) && den < inv(floatmax(T))
+    @test !isfinite((s - Hy) * inv(den))
+    @test state.pairs.count == 0
+    @test state.rule.age == 0
+    xs, Fs, infos, state = run_steps(m, prob, x₀, 2)
+    @test infos[2].code == SUCCESS
+    @test isfinite(xs[3])
+    @test abs(xs[3] - x₀ / 4) <= 8 * eps(T) * x₀ / 4
+end
+
+@testset "the array form refuses a pair whose u overflows, $T" for T in REAL_ELTYPES
+    pairs = GS.init_pairs(BroydenUpdate(1), zeros(T, 2))
+    ε = floatmin(T) / 8
+    stored, finite = GS.store_pair!!(pairs, T[1, 0], T[ε, 1], ε)
+    @test !finite
+    @test stored.count == 0
+    stored, finite = GS.store_pair!!(pairs, T[1, 0], T[1 / 2, 1], T(1) / 2)
+    @test finite
+    @test stored.count == 1
+    @test stored.u[:, 1] == T[1, -2]
+end
+
 @testset "a fresh factor clears the pairs, $T on $V" for T in REAL_ELTYPES, V in BACKENDS
 
     R = real(T)
@@ -269,6 +305,9 @@ end
     @test message(() -> Newton(;
         reuse = 3, update = BroydenUpdate(2), refinement = GMRESRefinement())) ==
           "Newton with a BroydenUpdate takes no GMRESRefinement: a refinement corrects the solve of the factor, and the update steps along another inverse"
+    @test message(() -> Newton(;
+        reuse = 3, update = BroydenUpdate(2), linsolve = GMRES(), preconditioner = I)) ==
+          "Newton with a BroydenUpdate needs a factorising linear method other than KroneckerFactorization: the update acts on the solve of a dense or sparse factor"
     @test message(() -> Newton(;
         reuse = 3, update = BroydenUpdate(2), linsolve = KroneckerFactorization())) ==
           "Newton with a BroydenUpdate needs a factorising linear method other than KroneckerFactorization: the update acts on the solve of a dense or sparse factor"

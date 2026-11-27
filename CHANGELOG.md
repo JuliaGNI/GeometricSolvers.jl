@@ -18,11 +18,12 @@ so that a compat-only bump can be told apart from an interface change.
   `-(I + uⱼ sⱼᴴ) ⋯ (I + u₁ s₁ᴴ) B₀⁻¹ F`, so that each stored pair meets the secant condition
   `Hⱼ₊₁ y = s`; a complex element type conjugates `s`. A fresh factorisation steps along `B₀⁻¹`
   alone and clears the pairs, and so does `start!!`, also under `keep_factor = true`. A step
-  whose `sᴴ Hⱼ y` is zero or not finite stores no pair, and the next step factorises afresh. The
-  memory `m` is a type parameter: a value iterate holds the pairs as `NTuple`s and its state stays
-  `isbits` and runs in the `solve_batch!` kernel on Metal; an array iterate holds them in two
-  `n × m` arrays, on `Array` and on `JLArray`, and a solve on an `Array` allocates nothing. The constructor raises an `ArgumentError` for `reuse`
-  outside `2 ≤ reuse ≤ m + 1`, for `Refinement`, for `GMRESRefinement` and for a matrix-free
+  whose `sᴴ Hⱼ y` is zero or not finite, or whose `u` is not finite, stores no pair, and the next
+  step factorises afresh. The memory `m` is a type parameter: a value iterate holds the pairs as
+  `NTuple`s, and its state stays `isbits` and runs in the `solve_batch!` kernel on Metal; an array
+  iterate holds them in two `n × m` arrays, on `Array` and on `JLArray`, and a solve on an `Array`
+  allocates nothing. The constructor raises an `ArgumentError` for `reuse` outside
+  `2 ≤ reuse ≤ m + 1`, for `Refinement`, for `GMRESRefinement` and for a matrix-free
   linear method or `KroneckerFactorization`, and `init_state` for a factorisation precision other
   than the element type of the iterate and for a `LeastSquaresProblem`. `update` is the last type
   parameter of `Newton`, so the six- to eight-argument positional constructors and the methods on

@@ -11,8 +11,8 @@ factor that the next step reuses stores the pair ``(u, s)`` of its accepted step
 ``u = (s - H_j y) / (s^\\mathsf{H} H_j y)``, so that ``H_{j+1} y = s``, the secant condition, and
 ``H_{j+1} z = H_j z`` wherever ``s^\\mathsf{H} H_j z = 0``. A step that factorises afresh steps
 along ``B_0^{-1}`` alone and clears the pairs, and so does [`start!!`](@ref). A step whose
-``s^\\mathsf{H} H_j y`` is zero or not finite, which a step of zero length gives too, stores no
-pair, and the next step factorises afresh. A complex element type conjugates `s`.
+``s^\\mathsf{H} H_j y`` is zero or not finite, which a step of zero length gives too, or whose `u`
+is not finite stores no pair, and the next step factorises afresh. A complex element type conjugates `s`.
 
 `m` is a type parameter, so that the pairs of a value iterate are `NTuple`s of the iterate's
 type and its state stays `isbits`; an array iterate holds them in two `n × m` arrays. `m < 1`
@@ -1017,8 +1017,9 @@ end
 
 # The state after a step from `(x, Fx)` to `(x₊, F₊)` along the factor of `state`: where the next
 # step reuses that factor, the pair of the step is stored, unless `sᴴ Hⱼ y` is zero or not finite,
-# which a step of zero length also gives; the next step then factorises afresh. Where the next step
-# factorises, the pair would serve no step, and none is formed.
+# which a step of zero length also gives, or `u` is not finite, which a finite `sᴴ Hⱼ y` near the
+# underflow gives; the next step then factorises afresh. Where the next step factorises, the pair
+# would serve no step, and none is formed.
 @inline update_pairs!!(state::NewtonState, x₊, F₊, x, Fx) = update_pairs!!(
     state, state.pairs, x₊, F₊, x, Fx)
 @inline update_pairs!!(state::NewtonState, ::Nothing, x₊, F₊, x, Fx) = state
@@ -1027,9 +1028,11 @@ end
     (rule.age == Int32(0) || rule.stalled) && return state
     s, Hy = secant_pair!!(pairs, state.fac, x₊, F₊, x, Fx)
     den = pair_dot(s, Hy)
-    (isfinite(den) && !iszero(den)) ||
-        return with_rule(state, FactorAge(Int32(0), false, rule.reused))
-    return with_pairs(state, store_pair!!(pairs, s, Hy, den))
+    refused = with_rule(state, FactorAge(Int32(0), false, rule.reused))
+    (isfinite(den) && !iszero(den)) || return refused
+    stored, finite = store_pair!!(pairs, s, Hy, den)
+    finite || return refused
+    return with_pairs(state, stored)
 end
 
 # The step `s = x₊ - x` and `Hⱼ y` for `y = F₊ - Fx`. An array iterate reads the start of the step
@@ -1047,19 +1050,25 @@ end
     return s, apply_pairs!!(p, ldiv!!(p.xk, fac, p.Fk))
 end
 
-# The pairs with `(u, s)`, `u = (s - Hⱼ y) / den`, as the pair `count + 1`. The value form takes one
-# reciprocal of `den`: a complex division for each entry makes the count kernel of `solve_batch!`
-# on Metal too large to link.
+# The pairs with `(u, s)`, `u = (s - Hⱼ y) / den`, as the pair `count + 1`, and whether every entry
+# of `u` is finite; where one is not, the pairs keep their count, and the column that an array
+# iterate wrote is never read. The value form takes one reciprocal of `den`: a complex division for
+# each entry makes the count kernel of `solve_batch!` on Metal too large to link. The array form
+# reads its column with `rmaxnorm`, a reduction with no scalar indexing.
 @inline function store_pair!!(p::BroydenPairs{<:Tuple}, s, Hy, den)
     k = p.count + Int32(1)
     u = (s - Hy) * inv(den)
+    all(isfinite, u) || return p, false
     return BroydenPairs(
-        Base.setindex(p.u, u, Int(k)), Base.setindex(p.s, s, Int(k)), nothing, nothing, k)
+        Base.setindex(p.u, u, Int(k)), Base.setindex(p.s, s, Int(k)), nothing, nothing, k),
+    true
 end
 @inline function store_pair!!(p::BroydenPairs, s, Hy, den)
     k = p.count + Int32(1)
-    view(p.u, :, k) .= (s .- Hy) ./ den
-    return BroydenPairs(p.u, p.s, p.xk, p.Fk, k)
+    u = view(p.u, :, k)
+    u .= (s .- Hy) ./ den
+    isfinite(rmaxnorm(u)) || return p, false
+    return BroydenPairs(p.u, p.s, p.xk, p.Fk, k), true
 end
 
 # ─── A `Number` iterate on the one-entry vector path ─────────────────────────
