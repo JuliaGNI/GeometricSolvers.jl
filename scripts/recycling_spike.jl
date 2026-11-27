@@ -234,15 +234,16 @@ end
 # and the new recycled space `(C, Û, d)` from the harmonic Ritz vectors of the cycle, or `nothing`
 # where the cycle spans fewer than `k` vectors. Dividing the Hessenberg matrix of the pencil by its
 # largest entry leaves the eigenvectors and the order of the eigenvalues by modulus as they are.
-function gcrodr_cycle!(s::GCRODR, op, y, r, β, C, Û, d, nsteps, tol)
+function gcrodr_cycle!(s::GCRODR, op, y, r, β, rec, nsteps, tol)
     n = length(r)
-    kc = C === nothing ? 0 : size(C, 2)
+    kc = rec === nothing ? 0 : size(rec[1], 2)
     W = zeros(n, kc + nsteps + 1)
     s.basis = max(s.basis, size(W, 2))
     G = zeros(kc + nsteps + 1, kc + nsteps)
     rhs = zeros(kc + nsteps + 1)
     rhs[kc + 1] = β
     if kc > 0
+        C, Û, d = rec
         W[:, 1:kc] .= C
         G[1:kc, 1:kc] .= Diagonal(d)
     end
@@ -324,7 +325,7 @@ function gcrodr_solve!(s::GCRODR, op::ScaledOperator, b, tol)
     r = copy(b)
     rn = residual_norm(r)
     rn <= tol && return y, false
-    C = U = d = nothing
+    rec = nothing
     if s.U !== nothing
         Ũ = s.U
         AU = similar(Ũ)
@@ -339,16 +340,17 @@ function gcrodr_solve!(s::GCRODR, op::ScaledOperator, b, tol)
         y .+= U * (c ./ d)
         r .-= C * c
         rn = residual_norm(r)
+        rec = (C, U, d)
     end
     iters = 0
     while rn > tol && iters < s.maxiter
-        nsteps = min(C === nothing ? s.m : s.m - s.k, s.maxiter - iters)
-        j, CU = gcrodr_cycle!(s, op, y, r, rn, C, U, d, nsteps, tol)
+        nsteps = min(rec === nothing ? s.m : s.m - s.k, s.maxiter - iters)
+        j, CU = gcrodr_cycle!(s, op, y, r, rn, rec, nsteps, tol)
         iters += j
-        CU === nothing || ((C, U, d) = CU)
+        CU === nothing || (rec = CU)
         rn = residual_norm(r)
     end
-    U === nothing || (s.U = U)
+    rec === nothing || (s.U = rec[2])
     return y, rn > tol
 end
 
