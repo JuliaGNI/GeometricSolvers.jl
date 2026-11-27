@@ -1052,14 +1052,14 @@
 
 ### K130 · The R3 `_pinv_adj_mul_r3!` of a `DenseSVD` in `Float32` of a `Float64` matrix near `2^-130` gives `NaN`
 
-- **location:** `src/nonlinear/eliminate.jl:1295` (`_pinv_adj_mul_r3!` of `DenseSVD`)
+- **location:** `src/nonlinear/eliminate.jl:1296` (`_pinv_adj_mul_r3!` of `DenseSVD`)
 - **evidence:** the method forms `scale = ldexp(one(R), -fac.scale_exponent)` with
   `R = real(eltype(fac.tmp))`, `Float32` for `SVDFactorization(Float32)`. For
   `Φ = 2^-130 A₀` in `Float64`, `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, the factor has
   `scale_exponent = -128`, `2^128` is `Inf` in `Float32`, and
   `_pinv_adj_mul_r3!(out, factorize!!(init_linear(m, nothing, w), m, Φ), w)` with
   `w = 2^-130 (1, -2, 0.5)` gives `[NaN, -Inf, NaN]`, on `bf08120` and on `091997c`
-  (Julia 1.13.4). The `DeviceSVD` method at `:1310` forms the same product; that it gives `NaN`
+  (Julia 1.13.4). The `DeviceSVD` method at `:1311` forms the same product; that it gives `NaN`
   is not verified.
 - **kind:** defect
 - **found:** 2026-11-25
