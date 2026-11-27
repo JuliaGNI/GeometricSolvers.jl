@@ -1017,7 +1017,9 @@ end
 # step reuses that factor, the pair of the step is stored, unless `sᴴ Hⱼ y` is zero or not finite,
 # which a step of zero length also gives, or `u` is not finite, which a finite `sᴴ Hⱼ y` near the
 # underflow gives; the next step then factorises afresh. Where the next step factorises, the pair
-# would serve no step, and none is formed.
+# would serve no step, and none is formed. On the host the check of `u` also refuses a zero
+# `sᴴ Hⱼ y`; the zero test keeps the status kernel of `solve_batch!` on Metal small enough to link
+# for a complex element type.
 @inline update_pairs!!(state::NewtonState, x₊, F₊, x, Fx) = update_pairs!!(
     state, state.pairs, x₊, F₊, x, Fx)
 @inline update_pairs!!(state::NewtonState, ::Nothing, x₊, F₊, x, Fx) = state
