@@ -114,8 +114,9 @@ primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while
 problem) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
 with other `p` of the same types, in place into an array `x`; on a [`NonlinearSolver`](@ref), with
-`refactorize = true` its first step factorises afresh, where a [`Newton`](@ref) with `keep_factor = true` would otherwise start on
-the factor of the last solve. `init`, `solve!` and `solve` are the
+`refactorize = true` its first step factorises afresh, where a [`Newton`](@ref) with
+`keep_factor = true` would otherwise start on the factor of the last solve. `init`, `solve!` and
+`solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
 `solve!(init(args...))` returns what `solve(args...)` returns on primal inputs. [`solve!!`](@ref) takes a solver
 state from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch

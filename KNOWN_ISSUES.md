@@ -803,7 +803,7 @@
 
 ### K109 · No public solve is known to fail a step rule or to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.step_failures` and `status.promoted` on that return
 
-- **location:** `src/nonlinear/solver.jl:94` (`discarded_step_status`, which takes
+- **location:** `src/nonlinear/solver.jl:95` (`discarded_step_status`, which takes
   `step_failures` and `promoted` from the status after `record` folds in the discarded step)
 - **evidence:** the solve discards only a step that does not lower `‖F‖`. A count of the calls
   of `discarded_step_status` on the mirror-symmetric saddle problem (b) of the testset "a step
@@ -1019,7 +1019,7 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:309` (the stationarity test of `solve!!` after a step,
+- **location:** `src/nonlinear/solver.jl:310` (the stationarity test of `solve!!` after a step,
   which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
   at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
@@ -1204,4 +1204,5 @@
   "after a `SUCCESS` the factor's age survives only after one iteration or a last `θ ≤ 10⁻³`" of
   the part's spec, which does not name a solve of no step.
 - **kind:** found late
-- **found:** 2026-11-27, SR critic round 1a; the spec clause "Decided at the edges", fourth item
+- **found:** 2026-11-27, the review of the branch that keeps a `Newton` factor across solves; the
+  limit of the decided rule for a kept factor after `SUCCESS`

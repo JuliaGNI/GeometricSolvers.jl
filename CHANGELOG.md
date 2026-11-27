@@ -24,9 +24,8 @@ so that a compat-only bump can be told apart from an interface change.
   test holds at the third step at the earliest. It reads no step whose last fresh factor is a
   rank-deficient SVD factor, also the outer factor of an eliminated problem, so a least-squares
   point with no root still returns `STALLED`. So `SUCCESS` no longer comes from the residual and
-  stationarity tests alone. The
-  new `Options` field `kappa` is `κ`, default `1/10`, and a value outside `(0, 1)` in `real(T)`
-  raises an `ArgumentError`. The new flag `roundoff`, default `false`, returns `STALLED` at the
+  stationarity tests alone. The new `Options` field `kappa` is `κ`, default `1/10`, and a value
+  outside `(0, 1)` in `real(T)` raises an `ArgumentError`. The new flag `roundoff`, default `false`, returns `STALLED` at the
   first step of rate `θₖ ≥ 1` after a step of rate below `1` (Hairer, McLachlan and Razakarivony
   2008, *BIT Numer. Math.* 48, p. 235). The new `Newton` keyword `keep_factor`, which needs
   `reuse`, keeps the factor and its age from one solve of a `NonlinearSolver` to the next after a

@@ -237,10 +237,10 @@ always kept. A step along a reused factor takes no factorisation at its start po
 falls back to a fresh one there, after a failed line search or refinement; without one, it
 carries the diagnostics that the solve tested at `x_k` before, which failed, so it is kept. When
 neither test holds after a step that is neither `STALLED` nor `limited`, a step test that holds
-while the rate test below fails returns `STALLED` at once, and so does a `SUCCESS` step of zero norm, which leaves the iterate
-where the next step would start — unless the stationarity test, re-measured at that iterate,
-holds, which a nonzero-residual least-squares minimum reaches with a step of any length, a zero
-one included; `min_iterations` bounds both. After a `STALLED` step only the residual and
+while the rate test below fails returns `STALLED` at once, and so does a `SUCCESS` step of zero
+norm, which leaves the iterate where the next step would start — unless the stationarity test,
+re-measured at that iterate, holds, which a nonzero-residual least-squares minimum reaches with a
+step of any length, a zero one included; `min_iterations` bounds both. After a `STALLED` step only the residual and
 stationarity tests apply, and `options.max_stalls` consecutive `STALLED` steps return `STALLED`.
 After a step whose `limited` is set only the residual and stationarity tests apply too, because a
 radius or a damping, not the distance to a root, sets its norm; such a step is not a stall.
@@ -250,8 +250,9 @@ Reaching `options.max_iterations` without convergence returns `MAXITERS`.
 `status.rate`. The rate test of [`Options`](@ref) joins the step test: after a step that is
 neither `STALLED` nor `limited`, where the residual test fails and the rate test, which reads the
 larger of the rates of that step and of the step before it, holds, along a last fresh factor
-that reports no rank or full column rank, the solve returns `SUCCESS` with `status.contracted == true`, unless the stationarity test, re-measured at
-that iterate, holds, which returns `SUCCESS` with `status.stationary == true`. Under
+that reports no rank or full column rank, the solve returns `SUCCESS` with
+`status.contracted == true`, unless the stationarity test, re-measured at that iterate, holds,
+which returns `SUCCESS` with `status.stationary == true`. Under
 `options.roundoff` the round-off stop joins the step test too: it returns `STALLED` at that
 iterate, unless the stationarity test holds there. Each rate goes to the method's state after its
 step, where a [`Newton`](@ref) with `reuse` reads it.
@@ -462,8 +463,8 @@ With `refactorize = true`, the first step of the solve factorises afresh. A [`Ne
 `keep_factor = true` otherwise starts on the factor that the last solve kept; a caller that changes
 the problem between two calls, such as an integrator that changes its step size, passes it. On an
 eliminated problem it drops the factor of the outer solve, for a composition the factors of its
-members, and for a [`LeftPreconditioned`](@ref) that of its outer method. For a method that keeps no factor across
-its steps, the keyword changes nothing.
+members, and for a [`LeftPreconditioned`](@ref) that of its outer method. For a method that
+keeps no factor across its steps, the keyword changes nothing.
 """
 function solve!(solver::NonlinearSolver; b = nothing, refactorize::Bool = false)
     return solve!(solver, solver.x, solver.p; b, refactorize)
