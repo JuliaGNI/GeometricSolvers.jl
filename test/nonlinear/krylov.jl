@@ -2155,20 +2155,20 @@ end
 
     # one pass of MGS takes that remainder for a new direction, and the cycle ends at its cap
     # with a true residual of 1, Inf or near eps(TB) ‖b‖; its second pass removes the remainder,
-    # and the cycle ends early and restarts from its true residual. The CGS2 row of a Float16
-    # basis on Float64 and J = 14 I is the limit of the testset below.
-    if mgs || !(T === Float64 && TB === Float16 && kind === :scaled_identity)
-        jd, b = invariant_krylov_system(T, kind)
-        tol = T === Float64 ? 1e-10 : 1.0f-5
-        op = (Jv, v) -> (Jv .= jd .* v; Jv)
-        ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
-        d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
-        @test eltype(ws.V) === TB
-        @test info.converged
-        @test info.iterations < 20
-        @test rnorm(b .- jd .* d) <= tol * rnorm(b)
-        @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(T))
-    end
+    # and the cycle ends early and restarts from its true residual. On `J = 14 I` the stored `v₁`
+    # is parallel to `b`, so the remainder lies along `v₁`, of order eps(TB)² ‖J v₁‖ after the two
+    # passes of either step, and the breakdown test ends the cycle there: without it, the CGS2
+    # cycle on a Float16 basis on Float64 takes the remainder for `v₂ = v₁` and ends at its cap
+    jd, b = invariant_krylov_system(T, kind)
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+    @test eltype(ws.V) === TB
+    @test info.converged
+    @test info.iterations < 20
+    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+    @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(T))
 end
 
 @testset "Newton with a reduced basis solves x³ + 2x − 3 = 0 on both paths, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
@@ -2187,25 +2187,79 @@ end
     @test maximum(abs, x .- 1) <= sqrt(eps(T))
 end
 
-@testset "A CGS2 cycle on a Krylov space invariant to a Float16 basis makes no progress, and a restart recovers" begin
-    # `J = 14 I` and a constant `b` on Float64: the two CGS2 passes leave a remainder of order
-    # eps(Float16)² along `v₁`, above the tolerance, which the step takes for `v₂`; the cycle runs
-    # to its cap and ends on its true residual near eps(Float16) ‖b‖, without convergence
-    jd, b = invariant_krylov_system(Float64, :scaled_identity)
-    tol = 1e-10
-    op = (Jv, v) -> (Jv .= jd .* v; Jv)
-    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = Float16), zeros(length(b)))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20))
+# `J = u₂ (u₁ + u₂)ᵀ` for the unit vectors `u₁` and `u₂`, constant on the first and on the second
+# half of the entries, and `b = u₁`: the Krylov space is `span(u₁, u₂)`, invariant, and `J` is
+# singular on it. Their entries, 0.2, have no exact value in the basis type, so each stored column
+# is parallel to its vector and has unit norm only to the round-off of `TB`, and the second step
+# leaves a remainder of order eps(TB)² ‖w₀‖ along `v₂`; the reduced system has no solution.
+@testset "A breakdown at the round-off of a reduced basis on a singular operator stops without convergence, mgs = $mgs, $TB on $T" for (T, TB) in ((
+        Float64, Float16), (Float64, Float32), (Float32, Float16)),
+    mgs in (false, true)
+
+    n = 50
+    u₁ = [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v); Jv)
+    b = copy(u₁)
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+    Jd = op(similar(d), d)
+    @test info.breakdown
     @test !info.converged
-    @test info.iterations == 20
-    @test tol * rnorm(b) < rnorm(b .- jd .* d) <= eps(Float16) * rnorm(b)
-    @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(Float64))
-    # with room for a restart, the restart from that true residual converges
-    ws = init_gmres_workspace(
-        GMRES(; maxiter = 20, restart = 10, basis_eltype = Float16), zeros(length(b)))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(10))
+    @test info.iterations == 2
+    @test isapprox(info.resnorm, rnorm(b .- Jd); rtol = 8 * eps(T))
+    @test isapprox(info.resnorm, rnorm(b); rtol = sqrt(eps(TB)))
+end
+
+# `J = diag(1, 1 + eps(TB), 2, 3)` and `b = 1`: the space is not invariant before step 4, but
+# the cluster leaves a remainder at step 3 of about 0.8 eps(TB) ‖w₀‖, below the round-off of the
+# basis and above the breakdown test's `2e-3 eps(TB) ‖w₀‖`; the one cycle of `maxiter = 4` runs
+# through it to step 4
+@testset "A reduced-basis remainder below the round-off of the basis on a cluster is no breakdown, mgs = $mgs, $TB on $T" for (T, TB) in ((
+        Float64, Float16), (Float64, Float32), (Float32, Float16)),
+    mgs in (false, true)
+
+    jd = T[1, 1 + eps(TB), 2, 3]
+    b = ones(T, 4)
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 4, basis_eltype = TB), zeros(T, 4))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(4), Int32(4); mgs)
+    @test ws.arnoldi == 4
+    @test info.iterations == 4
+    @test !info.breakdown
+end
+
+# The breakdown test of a reduced basis acts only where the cycle would go on. On `J = 14 I` the
+# last cycle meets the tolerance on its Givens estimate at the invariant step, so it reports no
+# breakdown. On the singular operator of the testset above, the second step is the last of the
+# budget with `maxiter = 2`, and the last of each cycle with `restart = 2`: the cycle ends there
+# without the test, so neither solve reports a breakdown.
+@testset "The breakdown test of a reduced basis acts only where the cycle would go on, mgs = $mgs, $TB on $T" for (T, TB) in ((
+        Float64, Float16), (Float64, Float32), (Float32, Float16)),
+    mgs in (false, true)
+
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    jd, b = invariant_krylov_system(T, :scaled_identity)
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
     @test info.converged
-    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+    @test !info.breakdown
+
+    u₁ = [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v); Jv)
+    for (maxiter, restart) in ((2, 20), (20, 2))
+        ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, 50))
+        _, info = gmres_solve!(ws, op, nothing, u₁, rnorm(u₁), tol, Int32(maxiter),
+            Int32(restart); mgs)
+        @test !info.converged
+        @test !info.breakdown
+        @test info.iterations == maxiter
+    end
 end
 
 @testset "reuse takes a GMRES with a preconditioner only" begin
