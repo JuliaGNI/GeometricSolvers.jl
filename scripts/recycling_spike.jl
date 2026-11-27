@@ -140,9 +140,9 @@ function apply_operator!(y, op::CountingOperator, v)
 end
 
 # The GCRO-DR(m, k) solver: the recycled space `U` that a solve leaves, as unit columns, whose span
-# is all that the next solve reads, whether the next solve
-# starts from it (`recycle`), the script's own count of the Arnoldi products and of the `A·U`
-# products, and the largest number of basis columns `[C V]` that a cycle held.
+# is all that the next solve reads, whether the next solve starts from it (`recycle`), the
+# script's own count of the Arnoldi products and of the `A·U` products, and the largest number of
+# basis columns `[C V]` that a cycle held.
 mutable struct GCRODR
     m::Int
     k::Int
