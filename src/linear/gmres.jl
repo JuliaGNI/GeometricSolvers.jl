@@ -283,10 +283,9 @@ doi:10.1137/0914028).
   frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``, and with a
   `Float16` basis on `Float32` or `Float64` and ``\\delta = 10^{-7}``. There the ratio of that
   entry to the residual is 0.986–1.00, and on the singular systems of the tests it is at least
-  0.895. An invariant
-  space whose stored columns also
-  carry a direction error of order ``\\mathrm{eps}(TB)`` leaves a remainder of that order, which the test does not see: the cycle goes on with it as a
-  new direction. Any other
+  0.895. An invariant space whose stored columns also carry a direction error of order
+  ``\\mathrm{eps}(TB)`` leaves a remainder of that order, which the test does not see: the cycle
+  goes on with it as a new direction. Any other
   `basis_eltype` raises an `ArgumentError`, and so does a [`Newton`](@ref) with a
   [`DogLeg`](@ref) globalization and a `basis_eltype` that is not `Nothing`.
 - `flexible::Val{FL}`: `Val(false)`, from `flexible = false`, forms the direction

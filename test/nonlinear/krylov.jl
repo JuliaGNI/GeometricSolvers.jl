@@ -2265,7 +2265,7 @@ end
     s = u₁ .+ u₂
     op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v) .+ T(δ) .* u₁ .* sum(u₁ .* v); Jv)
     b = copy(u₁)
-    tol = T === Float64 ? 1e-8 : 1.0f-4
+    tol = 1e-8
     ws = init_gmres_workspace(GMRES(; maxiter = 40, basis_eltype = TB), zeros(T, n))
     d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(40), Int32(20); mgs)
     @test info.converged

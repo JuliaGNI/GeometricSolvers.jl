@@ -86,7 +86,7 @@ for (T, TB) in PAIRS, mgs in (false, true),
     maxiter in (40, 200)
     u₁, u₂ = frame02(T)
     tol = T === Float64 ? 1e-8 : 1.0f-4
-    info, record = solve_recorded(T, TB, mgs, u₁, u₂, δ, tol, maxiter)
+    _, record = solve_recorded(T, TB, mgs, u₁, u₂, δ, tol, maxiter)
     append!(get!(restarted, TB, Float64[]), [g for (g, s) in record if !s])
     for (g, s) in record
         s && push!(read_singular, ("mgs = $mgs, $TB on $T, δ = $δ, maxiter = $maxiter", g))
