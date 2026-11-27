@@ -1112,8 +1112,8 @@
 
 ### K135 · `Continuation` does not reach the root of the linear check `F(x) = s (A x − b)` at a subnormal scale `s`, where `Newton()` reaches it in `Float64`
 
-- **location:** `src/composition/continuation.jl:175` (`homotopy_residual!`; the fixed-point form
-  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:185`)
+- **location:** `src/composition/continuation.jl:176` (`homotopy_residual!`; the fixed-point form
+  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:186`)
 - **evidence:** `A = [3 1; 1 2]`, `b = [1, −3]`, root `(1, −2)`, start `zeros(T, 2)`,
   `f_abstol = 0`, at `s = 2^20 · nextfloat(zero(T))`. `Float64`:
   `Continuation(FixedPointHomotopy())` returns `MAXITERS` at `(0.263, −0.628)`,
@@ -1141,7 +1141,7 @@
 
 ### K137 · A comment in the GMRES tests says that no linear method other than `GMRES` takes the `forcing` and `preconditioner` keywords of `Newton`
 
-- **location:** `test/nonlinear/krylov.jl:1334`
+- **location:** `test/nonlinear/krylov.jl:1374`
 - **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
   them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
   (`src/nonlinear/newton.jl:243–246`, `with_forcing`). The comment was already false at `9023f76`,
