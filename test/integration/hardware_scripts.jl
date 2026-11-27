@@ -7,7 +7,7 @@
 # of a device array is disallowed, so a script that reads a device array entry by entry fails here.
 
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, I, norm, normalize, opnorm, qr, rank
+using LinearAlgebra: BLAS, I, UpperTriangular, norm, normalize, opnorm, qr, rank
 using Random: Xoshiro
 using Test
 
@@ -195,6 +195,10 @@ end
     # that starts on a kept preconditioner; refactorising at every solve refreshes at least once
     # per solve and starts none on a kept one
     nokeep = RecyclingSpike.run_cell(125, 20, 5, 1e-2; keep_factor = false)
+    # the cell's preconditioner is that of `Newton(; reuse = 1000, keep_factor = true)`
+    sp, _, z0, _, _ = RecyclingSpike.sparse_bracket_problem(125)
+    @test row.gmres == RecyclingSpike.run_column(:gmres, sp, z0, RecyclingSpike.RC_PS;
+        m = 20, k = 5, η = 1e-2, preconditioned = true, reuse = 1000, keep_factor = true)
     for (col, col0) in ((row.gmres, nokeep.gmres), (row.norec, nokeep.norec),
         (row.rec, nokeep.rec))
         @test col.converged
@@ -292,7 +296,6 @@ end
     # the Newton loop of GCRO-DR takes the steps, the refreshes and the kept starts of
     # `Newton(; reuse, keep_factor)` with a preconditioned `GMRES`, early refreshes after an inner
     # cap included
-    sp, _, z0, _, _ = RecyclingSpike.sparse_bracket_problem(125)
     for (maxiter, reuse, keep_factor, η) in Iterators.product(
         (2, 500), (1, 2, 5, RecyclingSpike.RC_REUSE), (true, false), (1e-2, 1e-6))
         kw = (; m = 20, k = 5, η, preconditioned = true, reuse, keep_factor, maxiter)
@@ -370,6 +373,62 @@ end
     @test nc == "no convergence"
 end
 
+@testset "recycling_spike.jl: the GCRO-DR Newton loop keeps the preconditioner as Newton does" begin
+    # on each problem, the package's `Newton(; reuse = 1000, keep_factor)` with a preconditioned
+    # `GMRES` and the Newton loop of GCRO-DR take the same steps, refreshes and kept starts, and
+    # those are the ones that the rule gives
+    function both(prob, x0, ps; keep_factor = true)
+        kw = (; m = 2, k = 1, η = 1e-2, preconditioned = true,
+            reuse = RecyclingSpike.RC_REUSE, keep_factor)
+        a = RecyclingSpike.run_column(:gmres, prob, x0, ps; kw...)
+        b = RecyclingSpike.run_column(:norec, prob, x0, ps; kw...)
+        @test (a.converged, a.steps, a.refreshes, a.kept) ==
+              (b.converged, b.steps, b.refreshes, b.kept)
+        return (b.converged, b.steps, b.refreshes, b.kept)
+    end
+    NonlinearProblem = RecyclingSpike.NonlinearProblem
+    n = 4
+    # `F(x) = x − 1` with the Jacobian `I / 2`: each step is `−2 F`, so `x` alternates between `0`
+    # and `2` and every step after the first has the rate 1 exactly. A step along a reused
+    # preconditioner with the rate 1 refreshes it at the next step: every other step of 100
+    osc = NonlinearProblem((r, x, p) -> (r .= x .- 1), (J, x, p) -> copyto!(J, 0.5I);
+        jacobian_prototype = zeros(n, n))
+    @test both(osc, zeros(n), [1]) == (false, 100, 50, 0)
+    # `F(x) = x − p c` with the exact Jacobian: each solve takes one step and keeps the
+    # preconditioner, so only the first step of the sequence refreshes it
+    c = [1.0, 2.0, 3.0, 4.0]
+    lin = NonlinearProblem((r, x, p) -> (r .= x .- p .* c), (J, x, p) -> copyto!(J, I);
+        jacobian_prototype = zeros(n, n))
+    @test both(lin, zeros(n), 1:10) == (true, 10, 1, 9)
+    @test both(lin, zeros(n), 1:10; keep_factor = false) == (true, 10, 10, 0)
+    # a solve that starts at its root converges with no step, and counts as kept
+    @test both(lin, copy(c), [1]) == (true, 0, 0, 1)
+    # one unknown, with `F` and `J` constant on intervals of `x`, so that each step is `−F / J`
+    function scalar(f, j)
+        F! = (r, x, p) -> (r[1] = f(x[1], p); r)
+        J! = (J, x, p) -> (J[1, 1] = j(x[1]); J)
+        return NonlinearProblem(F!, J!; jacobian_prototype = zeros(1, 1))
+    end
+    # `J = 1`: the first solve takes the steps 1 and 10⁻³, whose rate `10⁻³` keeps the
+    # preconditioner, and the second solve starts on it
+    f3(v, p) = p == 1 ? (v < 0.5 ? -1.0 : v < 1.0005 ? -1e-3 : 0.0) : (v < 1.5 ? -1.0 : 0.0)
+    @test both(scalar(f3, v -> 1.0), [0.0], 1:2) == (true, 3, 1, 1)
+    # `F = −1`: the steps 1, 10⁻⁶ and 10⁻¹⁴ at `‖F‖ = 1`, whose rates 10⁻⁶ and 10⁻⁸ pass the
+    # rate test, which ends the solve with `SUCCESS` where the residual test fails
+    j4(v) = v < 0.5 ? 1.0 : v < 1 + 5e-7 ? 1e6 : 1e14
+    @test both(scalar((v, p) -> -1.0, j4), [0.0], [1]) == (true, 3, 1, 0)
+    # the steps 1, 10⁻⁴, 2·10⁻¹² and 10⁻¹⁶: after the third, the larger rate 10⁻⁴ times the step
+    # is 2·10⁻¹⁶, between `κ x_reltol ‖x‖` and `x_reltol ‖x‖`, so only the fourth passes the
+    # rate test
+    j5(v) = v < 0.5 ? 1.0 : v < 1 + 5e-5 ? 1e4 : v < 1.0001 + 1e-12 ? 5e11 : 1e16
+    @test both(scalar((v, p) -> -1.0, j5), [0.0], [1]) == (true, 4, 1, 0)
+    # a first step of `2 eps` from `1 − 2 eps` to 1 meets the step test `‖d‖ ≤ 2 eps ‖x‖` with
+    # equality: the solve ends there, unconverged, where `F(1) = −1` fails the residual test, and
+    # keeps no preconditioner, so the second solve, of one step to 2, refreshes it
+    f6(v, p) = p == 1 ? (v < 1 ? -2 * eps(Float64) : -1.0) : (v < 1.5 ? -1.0 : 0.0)
+    @test both(scalar(f6, v -> 1.0), [1 - 2 * eps(Float64)], 1:2) == (false, 2, 2, 0)
+end
+
 @testset "recycling_spike.jl: GCRO-DR on the control matrix scaled near floatmax" begin
     # `s A y = s b` for the control matrix `A` and three unit right-hand sides, each solve after
     # the first from the recycled space of the one before: at `s = 4 √floatmax` a product of two
@@ -406,6 +465,25 @@ end
             @test norm(y - y1) <= 1e-10 * norm(y1)
         end
     end
+    # a matrix whose columns have norms between floatmax / 2 and floatmax, where a Householder
+    # reflector of the matrix itself overflows, and `2¹⁰²⁰` times one of norms about 14: the
+    # scaling is exact, so the factors and the recycled space are those of the smaller matrix,
+    # with `σ` and `d` scaled by `2¹⁰²⁰`
+    M1 = randn(Xoshiro(21), 40, 3) .+ 2
+    t = 2.0^1020
+    @test all(c -> floatmax(Float64) / 2 < t * norm(c) < floatmax(Float64), eachcol(M1))
+    Q, R, σ = RecyclingSpike.scaled_qr(t .* M1)
+    Q1, R1, σ1 = RecyclingSpike.scaled_qr(M1)
+    @test isapprox(Q, Q1; rtol = 8 * eps(Float64))
+    @test isapprox(R, R1; rtol = 8 * eps(Float64))
+    @test σ == t * σ1
+    X = randn(Xoshiro(22), 40, 3)
+    Û, d = RecyclingSpike.unit_recycled(X, R, σ)
+    Û1, d1 = RecyclingSpike.unit_recycled(X, R1, σ1)
+    @test isapprox(Û, Û1; rtol = 8 * eps(Float64))
+    @test isapprox(d, t .* d1; rtol = 8 * eps(Float64))
+    # `X (σ R)⁻¹ = Û Diagonal(1 ./ d)` at the smaller scale, where no entry is subnormal
+    @test isapprox(X / UpperTriangular(σ1 .* R1), Û1 ./ d1'; rtol = 64 * eps(Float64))
 end
 
 @testset "recycling_spike.jl: the second Gram–Schmidt pass of the Arnoldi process" begin

@@ -1,7 +1,7 @@
 # The Krylov-recycling spike: the Jacobian–vector products of ten Newton solves along a parameter
 # path, with restarted GMRES and with GCRO-DR, the GCRO method with deflated restarts that carries
-# a recycled space from one linear solve to the next, under a lagged LU right preconditioner. It
-# times nothing: the comparison is of counts.
+# a recycled space from one linear solve to the next, under an LU right preconditioner that the
+# solves keep from one to the next. It times nothing: the comparison is of counts.
 #
 # Usage, from the root of the repository:
 #   julia --startup-file=no --project=. scripts/recycling_spike.jl [N,…] [m,…] [k,…] [η,…]
@@ -12,17 +12,18 @@
 # `n = 2N`. A cell solves it ten times, at `p = 1.00, 1.05, …, 1.45`, the first solve from the
 # problem's `z0` and each later one from the root of the solve before. Every solve is a Newton
 # iteration with the forcing term `FixedForcing(η)`, the default `Options` (the residual test
-# `‖F‖ ≤ √eps ‖F(x₀)‖`, at most 100 steps) and the right preconditioner `M = LU(J(x))` of the
-# analytic Jacobian at the iterate of the step that refreshes it: the first step of a solve, every
-# `k` steps after, and the step after one whose inner solve reached its cap, as
-# `Newton(; reuse = k)` refreshes a `GMRES` preconditioner. That `Newton` also refreshes after a
-# `STALLED` step, which the script's own Newton loop does not; the Newton steps and the refreshes
-# of a row show where the loops part. Every product is `J(x) v` with the analytic Jacobian. The
-# three columns of a cell, each the sum over the ten solves:
+# `‖F‖ ≤ √eps ‖F(x₀)‖`, the rate test, the step test, at most 100 steps) and the right
+# preconditioner `M = LU(J(x))` of the analytic Jacobian at the iterate of the step that refreshes
+# it, as `Newton(; reuse = 1000, keep_factor = true)` refreshes a `GMRES` preconditioner: at the
+# first step of the sequence, 1000 steps after a refresh, at the step after one whose inner solve
+# reached its cap or that stepped along a reused preconditioner with the rate `θ ≥ 1`, and at the
+# first step of a solve after one that did not keep it. A solve keeps it for the next one only after
+# `SUCCESS` in one step or with a last rate `θ ≤ 10⁻³`. Every product is `J(x) v` with the
+# analytic Jacobian. The three columns of a cell, each the sum over the ten solves:
 #
 # - `GMRES(m)`: `Newton(; linsolve = GMRES(; restart = m, maxiter = 500, forcing =
-#   FixedForcing(η), preconditioner = M), reuse = k)` of the package, its products counted by
-#   `jvp_calls`.
+#   FixedForcing(η), preconditioner = M), reuse = 1000, keep_factor = true)` of the package, one
+#   solver for the ten solves, its products counted by `jvp_calls`.
 # - `GCRO-DR no recycling`: the GCRO-DR(m, k) of this script, in a Newton loop of this script that
 #   takes the steps of the package's `Newton` above, with its recycled space discarded at the start
 #   of each linear solve, so that it deflates across the restarts of one solve only.
@@ -35,10 +36,12 @@
 # for `C = A U`, which its count includes. Each GCRO-DR count is the script's own count of its
 # Arnoldi and `A·U` products, and the script stops with an error where that count differs from a
 # direct count of the operator's calls. A cell that does not converge in a column shows
-# `no convergence` there. Beside the three columns, a row gives the Newton steps and the refreshes
-# of the preconditioner of each column, in the order of the columns, and the linear solves of
-# GCRO-DR with recycling that started from a recycled space. A cycle of fewer than `k` Arnoldi
-# steps leaves no recycled space, so a solve after such cycles alone starts without one.
+# `no convergence` there. Beside the three columns, a row gives the Newton steps, the refreshes of
+# the preconditioner and the solves that started on a kept preconditioner of each column, in the
+# order of the columns, and the linear solves of GCRO-DR with recycling that started from a
+# recycled space. A cycle of fewer than `k` Arnoldi steps leaves no recycled space, so a solve
+# after such cycles alone starts without one. A row in which no linear solve started from a
+# recycled space is marked `vacuous`: its recycling column measures no recycling.
 #
 # The control runs first: ten solves of `A x = b_i` with a dense `400 × 400` matrix `A` with six
 # eigenvalues in `[0.01, 0.05]` and the others in `[1, 3]`, ten random right-hand sides, each
@@ -52,7 +55,8 @@
 # converges, `r ≤ 0.75`, and GCRO-DR with recycling takes fewer products than without. Stop rule:
 # `r ≥ 0.90` in every cell, where a cell in which GMRES(m) converges and GCRO-DR with recycling
 # does not counts as `r ≥ 0.90`, and a cell in which GMRES(m) does not converge counts as neither.
-# Any other result is between the two.
+# Any other result is between the two. The verdict counts the vacuous cells, and where every cell
+# of the full grid is vacuous it evaluates neither rule: the spike then measures nothing.
 
 using GeometricSolvers
 using GeometricSolvers: FixedForcing, JVPFunction, jvp_calls
@@ -81,37 +85,40 @@ const RC_STOP_RATIO = 0.90
 
 # The right preconditioner `M = LU(J(x))`: `refresh!` evaluates the analytic Jacobian `J!` at the
 # iterate and factorises it, and `apply_preconditioner!` solves with that factor. It counts its
-# refreshes, and those at the iterate `start`, which the caller sets to the start of each solve:
-# a refresh there is one at the first step of a solve, since a later step of a solve leaves that
-# point or ends the solve.
+# refreshes, and those in the first step of a solve: the caller sets `first_step` at the start of
+# each solve, and the first solve with the factor clears it. A step refreshes before its inner
+# solve, which solves with the factor at least once.
 mutable struct LUPreconditioner{FJ, M, F}
     J!::FJ
     J::M
     fac::F
     refreshes::Int
-    start::Vector{Float64}
-    start_refreshes::Int
+    first_step::Bool
+    first_refreshes::Int
 end
 
 function LUPreconditioner(J!, prototype, x, p)
     J = copy(prototype)
     J!(J, x, p)
-    return LUPreconditioner(J!, J, lu(J), 0, copy(x), 0)
+    return LUPreconditioner(J!, J, lu(J), 0, false, 0)
 end
 
 function lu_refresh!(P::LUPreconditioner, x, p)
     P.J!(P.J, x, p)
     P.fac = lu(P.J)
     P.refreshes += 1
-    x == P.start && (P.start_refreshes += 1)
+    P.first_step && (P.first_refreshes += 1)
     return nothing
 end
 
 GeometricSolvers.refresh!(P::LUPreconditioner, prob, x, Fx, p) = lu_refresh!(P, x, p)
-GeometricSolvers.apply_preconditioner!(z, P::LUPreconditioner, v) = ldiv!(z, P.fac, v)
+GeometricSolvers.apply_preconditioner!(z, P::LUPreconditioner, v) = precondition!(z, P, v)
 
 precondition!(z, ::Nothing, v) = copyto!(z, v)
-precondition!(z, P::LUPreconditioner, v) = ldiv!(z, P.fac, v)
+function precondition!(z, P::LUPreconditioner, v)
+    P.first_step = false
+    return ldiv!(z, P.fac, v)
+end
 
 # ─── GCRO-DR ───────────────────────────────────────────────────────────────────
 
@@ -131,7 +138,8 @@ function apply_operator!(y, op::CountingOperator, v)
     return y
 end
 
-# The GCRO-DR(m, k) solver: the recycled space `U` that a solve leaves, whether the next solve
+# The GCRO-DR(m, k) solver: the recycled space `U` that a solve leaves, as unit columns, whose span
+# is all that the next solve reads, whether the next solve
 # starts from it (`recycle`), the script's own count of the Arnoldi products and of the `A·U`
 # products, and the largest number of basis columns `[C V]` that a cycle held.
 mutable struct GCRODR
@@ -174,12 +182,14 @@ function harmonic_basis(A::AbstractMatrix, B::AbstractMatrix, k::Integer)
     return Matrix(qr(reduce(hcat, cols)).Q)[:, 1:k]
 end
 
-# The operator of a solve may be scaled near `floatmax`, where a product of two of its entries
-# overflows, a Householder reflector of one of its columns overflows, and a vector of the size of
-# its inverse is subnormal. So every QR factorisation and every least-squares solve below takes a
-# matrix divided by its largest entry, the harmonic Ritz pencil is formed from such a matrix, and a
-# recycled space `U` is held as unit columns `Û` and the inverses `d` of the norms of the columns
-# of `U`, `U = Û Diagonal(1 ./ d)`.
+# The operator of a solve may be scaled near `floatmax`. A product of two entries of its
+# Hessenberg matrix then overflows, so does a Householder reflector of a column of norm above
+# `floatmax / 2` and a product of a Hessenberg entry with a coefficient above 1, and a column of
+# the recycled space `U`, with `A U = C`, is of the size of the inverse of the scale, which may be
+# subnormal. So every QR factorisation and every least-squares solve below takes a matrix divided
+# by its largest entry, the harmonic Ritz pencil is formed from such a matrix, and `U` is held as
+# unit columns `Û` and the inverses `d` of the norms of the columns of `U`,
+# `U = Û Diagonal(1 ./ d)`.
 
 # The `Q` factor and the scaled `R` factor `R / σ` of the QR factorisation of `M`, and `σ`.
 function scaled_qr(M)
@@ -198,12 +208,11 @@ function scaled_lsq(G, rhs)
     return z, σ .* (r̂ - Ĝ * z)
 end
 
-# The recycled space `U = X (σ R)⁻¹` of an upper-triangular `R` as `(Û, d)`.
+# The recycled space `U = X (σ R)⁻¹` as `(Û, d)`, for the scaled `R` and the `σ` of `scaled_qr`.
 function unit_recycled(X, R, σ)
-    τ = maximum(abs, R)
-    Y = X / UpperTriangular(R ./ τ)
+    Y = X / UpperTriangular(R)
     ny = [norm(c) for c in eachcol(Y)]
-    return Y ./ ny', σ * τ ./ ny
+    return Y ./ ny', σ ./ ny
 end
 
 # Classical Gram–Schmidt with a second pass (CGS2): `w` made orthogonal to the orthonormal columns
@@ -411,7 +420,7 @@ function run_column(column::Symbol, prob, x0, ps; m, k, η, preconditioned::Bool
         solver = init(prob, x, method, first(ps))
         count = 0
         for p in ps
-            P === nothing || copyto!(P.start, x)
+            P === nothing || (P.first_step = true)
             _, status = solve!(solver, x, p)
             count += jvp_calls(solver)
             converged &= status.code == GeometricSolvers.SUCCESS
@@ -423,7 +432,7 @@ function run_column(column::Symbol, prob, x0, ps; m, k, η, preconditioned::Bool
     s = GCRODR(m, k; recycle = column === :rec, maxiter)
     rule = preconditioned ? PreconditionerRule(reuse; keep = keep_factor) : nothing
     for p in ps
-        P === nothing || copyto!(P.start, x)
+        P === nothing || (P.first_step = true)
         ok, n = gcrodr_newton!(s, prob.F, prob.J, Jbuf, P, x, p, η; rule)
         converged &= ok
         steps += n
@@ -435,9 +444,10 @@ end
 refreshes(::Nothing) = 0
 refreshes(P::LUPreconditioner) = P.refreshes
 
-# The solves that started on a kept preconditioner: those whose first step refreshed nothing.
+# The solves that started on a kept preconditioner: those whose first step refreshed nothing, and
+# a solve of no step.
 kept_starts(::Nothing, ps) = 0
-kept_starts(P::LUPreconditioner, ps) = length(ps) - P.start_refreshes
+kept_starts(P::LUPreconditioner, ps) = length(ps) - P.first_refreshes
 
 # ─── The control ───────────────────────────────────────────────────────────────
 

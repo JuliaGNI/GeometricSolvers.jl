@@ -170,6 +170,25 @@ so that a compat-only bump can be told apart from an interface change.
   `N = 125`, `m = 20`, `k = 5`, `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the
   package's steps and refreshes, and its verdict on synthetic rows.
 
+- **`scripts/recycling_spike.jl` keeps the preconditioner across the ten solves of a cell, and
+  marks a cell in which no linear solve starts from a recycled space as `vacuous`.** Every column
+  takes the LU preconditioner of `Newton(; reuse = 1000, keep_factor = true)`, and the script's
+  Newton loop of GCRO-DR takes the same rule: a refresh after an inner solve at its cap, after a
+  step along a reused preconditioner with the rate `θ ≥ 1`, and at the first step of a solve after
+  one that kept no preconditioner, and the rate and step tests of the default `Options`. Each row
+  adds the solves that start on a kept preconditioner and the mark; the verdict counts the vacuous
+  cells and, where all 16 are, evaluates neither rule and says that the spike measures nothing.
+  Its GCRO-DR divides each QR factorisation, least-squares solve and harmonic Ritz pencil by the
+  largest entry of its matrix and holds the recycled space as unit columns, so that on the control
+  matrix scaled by `4√floatmax` and by `floatmax/8` it raises no exception, where the pencil
+  `Gᴴ G` raised `LAPACKException(30)`, and gives the recycled space and the solution of scale 1.
+  Its classical Gram–Schmidt with a second pass is one function, and a test fails where the
+  second pass is lost. On the base `a2fc0e4` with this script, on an Apple M4 Max with Julia 1.13.4
+  and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every cell of the grid gave
+  the same count in all three columns (59 over 30 Newton steps at `η = 1e-2`, 81 over 21 at
+  `η = 1e-6`), with one refresh per column and nine of the ten solves starting on the kept
+  preconditioner. No linear solve started from a recycled space: all 16 cells are vacuous.
+
 ### Changed
 
 - **`Reparametrized(prob, g, ∂g)` refuses a `prob` that is itself a `Reparametrized`, which
