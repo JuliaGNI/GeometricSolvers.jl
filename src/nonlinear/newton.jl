@@ -69,9 +69,9 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   current iterate, and the constructor raises an `ArgumentError`. A [`PseudoTransient`](@ref)
   globalization takes no reuse and no refinement either, because its shift changes at every
   step. A [`GMRES`](@ref) with a preconditioner takes `reuse = k` as the period of the
-  preconditioner: [`refresh!`](@ref) runs at the first step and every `k` steps after, and at
-  the step after a `STALLED` step or an inner solve that reached its cap, with no retry within a
-  step.
+  preconditioner: it keeps the preconditioner for up to `k` consecutive steps, so
+  [`refresh!`](@ref) runs at the first step, `k` steps after each refresh, and early at the step
+  after a `STALLED` step or an inner solve that reached its cap, with no retry within a step.
 - `best::B`: `Val(false)`, the default, or `Val(true)` from the keyword `best = true`, which
   returns the best iterate (below). The six-argument positional constructor gives `Val(false)`.
 

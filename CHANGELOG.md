@@ -80,11 +80,12 @@ so that a compat-only bump can be told apart from an interface change.
   working precision.
   Both keywords are type parameters, `GMRES{F, P, TJ, TB, FL}` with the fields `basis_eltype` and
   `flexible::Val{FL}`, and the `forcing` and `preconditioner` keywords of `Newton` keep them.
-  `Newton(; reuse = k)` with a `GMRES` that has a preconditioner refreshes it at the first step,
-  every `k` steps after and at the step after a `STALLED` step or an inner solve that reached its
-  cap, with no retry within a step; without a preconditioner, and with `BiCGStab`, `DQGMRES` or
-  `MINRESQLP`, `reuse` still raises an `ArgumentError`. The message of the refusal for a
-  matrix-free method other than `MINRESQLP` now names the exception.
+  `Newton(; reuse = k)` with a `GMRES` that has a preconditioner keeps it for up to `k` consecutive
+  steps: it refreshes it at the first step, `k` steps after each refresh, and early at the step
+  after a `STALLED` step or an inner solve that reached its cap, with no retry within a step;
+  without a preconditioner, and with `BiCGStab`, `DQGMRES` or `MINRESQLP`, `reuse` still raises an
+  `ArgumentError`. The message of the refusal for a matrix-free method other than `MINRESQLP` now
+  names the exception.
 
 - **The standard test set has one more column, `Newton Backtracking Float32-basis GMRES`,** after
   `Newton Backtracking DQGMRES`: 18 columns and 2412 cells. Its 134 cells are new in

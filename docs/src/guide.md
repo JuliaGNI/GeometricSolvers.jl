@@ -188,7 +188,7 @@ true
 | a right preconditioner with methods of [`refresh!`](@ref) and [`apply_preconditioner!`](@ref) | an operator that is refreshed once per Newton step and applied before every product |
 | `GMRES(; flexible = true)` | a right preconditioner that changes between the inner iterations of one solve; it keeps one more vector of the working type per inner iteration |
 | `GMRES(; basis_eltype = Float32)` | a Krylov basis whose storage dominates the memory or the memory traffic of a solve; each cycle ends on the true residual, one more product; no [`DogLeg`](@ref) |
-| [`Newton`](@ref) with `reuse = k` and `GMRES(; preconditioner = P)` | a preconditioner whose refresh dominates the cost of a step; it is refreshed once per `k` steps, and at the step after a `STALLED` step or a capped inner solve |
+| [`Newton`](@ref) with `reuse = k` and `GMRES(; preconditioner = P)` | a preconditioner whose refresh dominates the cost of a step; it is kept for up to `k` consecutive steps, and refreshed early at the step after a `STALLED` step or a capped inner solve |
 | [`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) | as in R1 |
 | [`DogLeg`](@ref) | as in R1; it runs on the Arnoldi relation of one unrestarted cycle without a preconditioner |
 | [`Steihaug`](@ref) | `linsolve = MINRESQLP()`; truncated conjugate gradients that minimise the model of the action `S`, with trials accepted by the ratio of `DogLeg` on ``\|F\|``; a solve does not converge to a root where the Hessian of `S` is indefinite, also from a start close to it, and ends with `LINESEARCH_FAILED`; `DogLeg` does not have this limit |

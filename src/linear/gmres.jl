@@ -356,8 +356,8 @@ Refresh the right preconditioner `P` of [`GMRES`](@ref) at the start of a Newton
 iterate `x`, its residual `Fx` and the parameters `p`. [`Newton`](@ref) calls it once per step,
 before the inner solve, so that the preconditioner of step `k` sees the data of the last residual
 evaluation (Chen et al. 2014, pp. 558–560). Under `Newton(; reuse = k)` it calls it at the first
-step and every `k` steps after, and at the step after one that stalled or whose inner solve
-reached its cap. The method for `nothing` does nothing; a
+step, `k` steps after each call, and early at the step after one that stalled or whose inner
+solve reached its cap. The method for `nothing` does nothing; a
 preconditioner that holds data extends this function, and one that is constant across the solve
 extends it with a method that does nothing.
 """
