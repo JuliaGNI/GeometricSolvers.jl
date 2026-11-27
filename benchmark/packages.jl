@@ -170,9 +170,9 @@ end
 
 # The label part of an object that an adapter passes to its package: its type name, a method
 # symbol as it is, and the parts of a GeometricSolvers method. A GeometricSolvers `Newton` shows
-# `LUFactorization(Float32)` as `LUFactorization{Float32}`, a `Refinement` as `+Refinement` and
-# a Jacobian selector other than the default `nothing` by its type name; an `Anderson` shows its
-# depth and its member.
+# `LUFactorization(Float32)` as `LUFactorization{Float32}`, a `Refinement` as `+Refinement`, a
+# Jacobian selector other than the default `nothing` by its type name and a `BroydenUpdate(m)` as
+# `+BroydenUpdate(m)`; an `Anderson` shows its depth and its member.
 part(obj) = string(nameof(typeof(obj)))
 part(s::Symbol) = string(s)
 part(m::SS.Newton) = m.refactorize == 1 ? "Newton" : "Newton($(m.refactorize))"
@@ -182,6 +182,7 @@ function part(m::GS.Newton)
     parts = [name, part(m.globalization), part(m.linsolve)]
     m.refinement isa GS.Refinement && push!(parts, "Refinement")
     m.jacobian === nothing || push!(parts, part(m.jacobian))
+    m.update === nothing || push!(parts, "BroydenUpdate($(GS.update_memory(m.update)))")
     return join(parts, "+")
 end
 part(a::GS.Anderson{m}) where {m} = "Anderson{$m}($(part(a.member)))"
@@ -341,6 +342,11 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
         Paired("broyden+Static",
             "updates a full inverse from the identity and uses no Jacobian; the column is a depth-4 history over `Picard` damped by 0.5",
             T -> (; method = :broyden, linesearch = LineSearches.Static()))),
+    "Newton reuse 3 Broyden Backtracking LU" => (
+        gs_entry("Newton reuse 3 Broyden Backtracking LU"),
+        NoMethod("no Broyden update; `Newton(3)` steps along the reused factor alone"),
+        NoMethod("`SimpleBroyden` updates from a scaled identity and factorises no Jacobian"),
+        NoMethod("`:broyden` updates from the identity and factorises no Jacobian")),
     "LeftPreconditioned Picard Backtracking Newton" => (
         gs_entry("LeftPreconditioned Picard Backtracking Newton"),
         NoMethod("no nonlinear preconditioning"),
@@ -359,7 +365,7 @@ const PAIRING = Dict{String, NTuple{4, Union{Paired, NoMethod}}}(
         NoMethod("no whole-solve fallback"))
 )
 
-# The nine `Newton` columns with a factorisation take the shared Jacobian. `Picard`, its
+# The ten `Newton` columns with a factorisation take the shared Jacobian. `Picard`, its
 # compositions, a `Newton` with a matrix-free linear method and `Fallback` read `prob.J`
 # whenever the problem has one, so they get a problem without it and keep their own Jacobian
 # source. An `Anderson` takes it where its member does.

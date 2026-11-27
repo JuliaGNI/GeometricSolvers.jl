@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2126`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2324`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1138,7 +1138,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1093` (`stored_factors`), `:1109` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1281` (`stored_factors`), `:1297` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -1153,7 +1153,7 @@
 - **location:** `test/nonlinear/krylov.jl:1374`
 - **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
   them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
-  (`src/nonlinear/newton.jl:244–247`, `with_forcing`). The comment was already false at `9023f76`,
+  (`src/nonlinear/newton.jl:299–302`, `with_forcing`). The comment was already false at `9023f76`,
   for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
 - **kind:** docs
 - **found:** 2026-11-26
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2160` for `GMRES`, `:2407` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2358` for `GMRES`, `:2605` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1282,7 +1282,7 @@
 
 ### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
 
-- **location:** `src/nonlinear/newton.jl:2135` (`GMRES`), `:2376` (`MINRESQLP`), `:2426`
+- **location:** `src/nonlinear/newton.jl:2333` (`GMRES`), `:2574` (`MINRESQLP`), `:2624`
   (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
 - **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
   ratio asks `Backtracking` for more decrease than the direction gives. With
@@ -1299,7 +1299,7 @@
 
 ### K145 · The test of the summary of the standard test set finds the line of a column by its name and a space, so a column whose name is another column's name, a space and more matches two lines
 
-- **location:** `test/verification/standard.jl:399`
+- **location:** `test/verification/standard.jl:409`
 - **evidence:** `only(filter(startswith(column * " "), split(summary, "\n")))` raises
   `ArgumentError: Collection has multiple elements, must contain exactly 1 element` for the
   column `Newton Backtracking GMRES` once a column named `Newton Backtracking GMRES Float32 basis`
@@ -1342,7 +1342,7 @@
 
 ### K148 · A `Newton(; reuse = k, keep_factor = true)` solve that returns `SUCCESS` at its start, with no step, drops the kept factor, so the next solve factorises at its first step
 
-- **location:** `src/nonlinear/newton.jl:1198` (`keeps_factor`)
+- **location:** `src/nonlinear/newton.jl:1388` (`keeps_factor`)
 - **evidence:** `keeps_factor` keeps the factor after `SUCCESS` only with `status.iterations == 1`
   or a last rate `θ ≤ 10⁻³`; a solve of no step has `iterations == 0` and the rate `NaN`, which
   fails both. With the midpoint residual of `test/nonlinear/stopping.jl`,

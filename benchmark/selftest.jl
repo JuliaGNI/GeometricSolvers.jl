@@ -38,6 +38,7 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             "Newton reuse 3 Backtracking LU", "Picard Backtracking",
             "Newton Backtracking GMRES", "Newton Backtracking BiCGStab",
             "Newton Backtracking DQGMRES", "Newton Backtracking Float32-basis GMRES", "Broyden",
+            "Newton reuse 3 Broyden Backtracking LU",
             "LeftPreconditioned Picard Backtracking Newton",
             "Continuation FixedPointHomotopy",
             "Fallback Newton DogLeg LevenbergMarquardt"]
@@ -58,17 +59,20 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         @test PAIRING["Newton Static LU"][1].label == "Newton+Static+LUFactorization"
         @test PAIRING["Newton reuse 3 Backtracking LU"][1].label ==
               "Newton(3)+Backtracking+LUFactorization"
-        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 18 + 21
-        # The nine `Newton` columns with a factorisation take the shared Jacobian, and the
+        @test PAIRING["Newton reuse 3 Broyden Backtracking LU"][1].label ==
+              "Newton(3)+Backtracking+LUFactorization+BroydenUpdate(2)"
+        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 19 + 21
+        # The ten `Newton` columns with a factorisation take the shared Jacobian, and the
         # GeometricSolvers adapter hands it to no other column: a Jacobian that throws reaches
-        # the solve on those nine alone.
+        # the solve on those ten alone.
+        jacobian_columns = [1:9; 16]
         @test [column for (column, m) in STANDARD_COLUMNS if gs_takes_jacobian(m)] ==
-              COLUMNS[1:9]
+              COLUMNS[jacobian_columns]
         nojac(J, x, p) = error("the Jacobian is called")
         for (k, column) in enumerate(COLUMNS)
             out = call_package(Val(:GeometricSolvers), PAIRING[column][1].build(Float64),
                 Counted(rosenbrock!), nojac, [-1.2, 1.0])
-            @test (out.result isa Thrown) == (k ≤ 9)
+            @test (out.result isa Thrown) == (k in jacobian_columns)
         end
     end
 
@@ -516,7 +520,7 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
             @test out.result isa Thrown
         end
         # The block tables' counts.
-        @test length.(block_cells.(BLOCKS)) == (395, 864, 1264, 20)
+        @test length.(block_cells.(BLOCKS)) == (395, 912, 1264, 20)
     end
 
     @testset "nsol: a Jacobian at every iteration, and a start that meets the test" begin

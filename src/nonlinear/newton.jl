@@ -1,7 +1,41 @@
 """
+    BroydenUpdate(m)
+
+The good Broyden update of the inverse Jacobian along a reused factor, with a memory of `m ≥ 1`
+pairs, for the keyword `update` of [`Newton`](@ref) with `reuse = k`, `2 ≤ k ≤ m + 1`.
+
+A step along a factor of the Jacobian `B₀` takes the direction ``d = -H_j F(x)`` of the inverse
+``H_j = (I + u_j s_j^\\mathsf{H}) \\cdots (I + u_1 s_1^\\mathsf{H}) B_0^{-1}``. Each step on the
+factor that the next step reuses stores the pair ``(u, s)`` of its accepted step
+``s = x_+ - x``, its residual change ``y = F(x_+) - F(x)`` and
+``u = (s - H_j y) / (s^\\mathsf{H} H_j y)``, so that ``H_{j+1} y = s``, the secant condition, and
+``H_{j+1} z = H_j z`` wherever ``s^\\mathsf{H} H_j z = 0``. A step that factorises afresh steps
+along ``B_0^{-1}`` alone and clears the pairs, and so does [`start!!`](@ref). A step whose
+``s^\\mathsf{H} H_j y`` is zero or not finite, which a step of zero length gives too, stores no
+pair, and the next step factorises afresh. A complex element type conjugates `s`.
+
+`m` is a type parameter, so that the pairs of a value iterate are `NTuple`s of the iterate's
+type and its state stays `isbits`; an array iterate holds them in two `n × m` arrays. `m < 1`
+raises an `ArgumentError`.
+"""
+struct BroydenUpdate{M}
+    # `adapt` passes the update through unchanged. The message is constant, as in every check of a
+    # method that a device kernel can hold.
+    function BroydenUpdate{M}() where {M}
+        (M isa Int && M >= 1) || throw(ArgumentError("BroydenUpdate needs a memory m ≥ 1"))
+        return new{M}()
+    end
+end
+
+BroydenUpdate(m::Integer) = BroydenUpdate{Int(m)}()
+
+@inline update_memory(::BroydenUpdate{M}) where {M} = M
+
+"""
     Newton(; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
              refinement = NoRefinement(), regularization = 0, reuse = nothing,
-             forcing = nothing, preconditioner = nothing, best = false, keep_factor = false)
+             forcing = nothing, preconditioner = nothing, best = false, keep_factor = false,
+             update = nothing)
 
 Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) and, as
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
@@ -91,6 +125,14 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   in its [`SolverStatus`](@ref) the `rank` of that factor, which the rate test reads, and `NaN`
   for `nullnorm` and `gradratio`. `keep_factor = true` without `reuse` raises an
   `ArgumentError`. The six- and seven-argument positional constructors give `false`.
+- `update::U`: `nothing`, the default, or a [`BroydenUpdate`](@ref)`(m)`, which updates the
+  inverse of a reused factor by the good Broyden update and steps along it. It needs
+  `2 ≤ reuse ≤ m + 1`, so that the `reuse - 1` pairs that a factor collects fit the memory, and a
+  factorising linear method other than [`KroneckerFactorization`](@ref) with no
+  [`Refinement`](@ref) and no [`GMRESRefinement`](@ref); the constructor raises an
+  `ArgumentError` otherwise. [`init_state`](@ref) raises one for a factorisation precision other
+  than the element type of the iterate and for a [`LeastSquaresProblem`](@ref). The six- to
+  eight-argument positional constructors give `nothing`.
 
 # The best iterate
 
@@ -136,7 +178,7 @@ is an `ArgumentError`.
   before every Jacobian-vector product.
 """
 struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
-    B <: Union{Val{false}, Val{true}}}
+    B <: Union{Val{false}, Val{true}}, U <: Union{Nothing, BroydenUpdate}}
     linsolve::L
     globalization::G
     jacobian::J
@@ -145,20 +187,32 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
     reuse::K
     best::B
     keep_factor::Bool
+    update::U
     # `adapt` rebuilds a method through this constructor, inside a device kernel too, so the check
     # also refuses a value that `ToReal` narrows to `Inf` or to zero. A kernel cannot format a
     # message, so each message is constant.
-    function Newton{L, G, J, RF, R, K, B}(
+    function Newton{L, G, J, RF, R, K, B, U}(
             linsolve::L, globalization::G, jacobian::J,
             refinement::RF, regularization::R,
             reuse::K, best::B,
-            keep_factor::Bool) where {
+            keep_factor::Bool, update::U) where {
             L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
-            B <: Union{Val{false}, Val{true}}}
+            B <: Union{Val{false}, Val{true}}, U <: Union{Nothing, BroydenUpdate}}
         regularization >= zero(R) && isfinite(regularization) ||
             throw(ArgumentError("Newton regularization must be finite and ≥ 0"))
         keep_factor && reuse === nothing &&
             throw(ArgumentError("Newton keep_factor = true needs reuse = k: only a factor that its steps reuse can survive a solve"))
+        if update !== nothing
+            (reuse !== nothing &&
+             Int32(2) <= reuse <= Int32(update_memory(update)) + Int32(1)) ||
+                throw(ArgumentError("Newton with update = BroydenUpdate(m) needs 2 ≤ reuse ≤ m + 1: a factor serves at most reuse steps and collects at most reuse - 1 pairs, which the memory of m pairs holds"))
+            refinement isa Refinement &&
+                throw(ArgumentError("Newton with a BroydenUpdate takes no Refinement: a refinement corrects the solve of the factor, and the update steps along another inverse"))
+            refinement isa GMRESRefinement &&
+                throw(ArgumentError("Newton with a BroydenUpdate takes no GMRESRefinement: a refinement corrects the solve of the factor, and the update steps along another inverse"))
+            (matrix_free(linsolve) || linsolve isa KroneckerFactorization) &&
+                throw(ArgumentError("Newton with a BroydenUpdate needs a factorising linear method other than KroneckerFactorization: the update acts on the solve of a dense or sparse factor"))
+        end
         if reuse !== nothing
             reuse >= Int32(1) ||
                 throw(ArgumentError("Newton reuse must be ≥ 1 or nothing"))
@@ -206,25 +260,25 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
         end
         globalization isa Steihaug && !(linsolve isa MINRESQLP) &&
             throw(ArgumentError("Newton with a Steihaug globalization needs linsolve = MINRESQLP(...): its conjugate gradients take the place of the MINRES-QLP solve"))
-        new{L, G, J, RF, R, K, B}(
+        new{L, G, J, RF, R, K, B, U}(
             linsolve, globalization, jacobian, refinement, regularization, reuse, best,
-            keep_factor)
+            keep_factor, update)
     end
 end
 
-# The positional forms: the eight fields, which `adapt` rebuilds a method from, the seven before
-# `keep_factor`, which give `keep_factor = false`, and the six before `best`, which also give
-# `best = Val(false)`.
+# The positional forms: the nine fields, which `adapt` rebuilds a method from, the eight before
+# `update`, which give `update = nothing`, the seven before `keep_factor`, which also give
+# `keep_factor = false`, and the six before `best`, which also give `best = Val(false)`.
 function Newton(
         linsolve::L, globalization::G, jacobian::J,
         refinement::RF, regularization::R,
         reuse::K, best::B = Val(false),
-        keep_factor::Bool = false) where {
+        keep_factor::Bool = false, update::U = nothing) where {
         L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
-        B <: Union{Val{false}, Val{true}}}
-    return Newton{L, G, J, RF, R, K, B}(
+        B <: Union{Val{false}, Val{true}}, U <: Union{Nothing, BroydenUpdate}}
+    return Newton{L, G, J, RF, R, K, B, U}(
         linsolve, globalization, jacobian, refinement, regularization, reuse, best,
-        keep_factor)
+        keep_factor, update)
 end
 
 function Newton(;
@@ -237,7 +291,8 @@ function Newton(;
         forcing::Union{Nothing, AbstractForcingTerm} = nothing,
         preconditioner = nothing,
         best::Bool = false,
-        keep_factor::Bool = false)
+        keep_factor::Bool = false,
+        update::Union{Nothing, BroydenUpdate} = nothing)
     reg = float(regularization)
     r = reuse === nothing ? nothing : Int32(reuse)
     ref = refinement isa Bool ? (refinement ? Refinement() : NoRefinement()) : refinement
@@ -246,7 +301,8 @@ function Newton(;
             "the forcing and preconditioner keywords of Newton configure a GMRES, BiCGStab or DQGMRES linear method, and forcing a MINRESQLP one; pass them to the method, or set linsolve = GMRES(...)"))
         linsolve = with_forcing(linsolve, forcing, preconditioner)
     end
-    return Newton(linsolve, globalization, jacobian, ref, reg, r, Val(best), keep_factor)
+    return Newton(
+        linsolve, globalization, jacobian, ref, reg, r, Val(best), keep_factor, update)
 end
 
 # A matrix-free linear method with the forcing term `forcing` and the right preconditioner
@@ -710,9 +766,10 @@ end
 # otherwise). For a value iterate the workspace slots are `nothing`, and so is the factor slot
 # unless the factor is reused. The factor slot is the storage that each factorisation writes into;
 # only a step with reuse stores the factor it returns, because only such a step reads it again.
-# The norm is `NaN` on a state that no `start!!` saw or that `solve!!` returned. The last field is
-# the record of the best iterate, a `BestIterate` under `best = true` and `nothing` else.
-struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS, BR}
+# The norm is `NaN` on a state that no `start!!` saw or that `solve!!` returned. The field `best`
+# is the record of the best iterate, a `BestIterate` under `best = true` and `nothing` else, and
+# the last field holds the pairs of a `BroydenUpdate`, `BroydenPairs`, and `nothing` without one.
+struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS, BR, QP}
     jacprep::JP
     jvpprep::VP
     Fx::FX
@@ -731,16 +788,17 @@ struct NewtonState{JP, VP, FX, D, FAC, JM, G, RS, PH, R, DG, RB, FT, WS, KS, BR}
     ws::WS
     kept::KS
     best::BR
+    pairs::QP
 end
 
-# A state with no slots for the start point of a step and no record of the best iterate: the
-# fields up to the workspace `ws`, which defaults to `nothing` for a factorising method, whose
-# linear solve keeps no workspace of its own.
+# A state with no slots for the start point of a step, no record of the best iterate and no
+# Broyden pairs: the fields up to the workspace `ws`, which defaults to `nothing` for a factorising
+# method, whose linear solve keeps no workspace of its own.
 @inline function NewtonState(jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag,
         refbuf, fac_T, promoted::Bool, slow_steps::Int32, ws = nothing)
     return NewtonState(
         jacprep, jvpprep, Fx, d, fac, J, g, rule, merit, fnorm, diag, refbuf, fac_T,
-        promoted, slow_steps, ws, (nothing, nothing), nothing)
+        promoted, slow_steps, ws, (nothing, nothing), nothing, nothing)
 end
 
 # The record of the best iterate of a solve under `best = true`: the iterate `x`, its residual
@@ -773,7 +831,7 @@ end
 @inline function with_best(s::NewtonState, best)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, best, s.pairs)
 end
 
 # The record after an iterate `x` with residual `Fx` and norm `fnorm`: it takes `x` where `fnorm`
@@ -836,13 +894,13 @@ end
 @inline function with_factor(s::NewtonState, fac)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best, s.pairs)
 end
 
 @inline function with_factor_T(s::NewtonState, fac_T)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
+        s.refbuf, fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best, s.pairs)
 end
 
 @inline function update_stored_factor(
@@ -858,7 +916,7 @@ end
 @inline function with_rule(s::NewtonState, rule)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best, s.pairs)
 end
 
 # The merit of the current residual and its norm: the two values a step returns, or that a solve
@@ -867,19 +925,141 @@ end
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, merit,
         oftype(s.fnorm, fnorm), s.diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best, s.pairs)
 end
 
 @inline function with_diag(s::NewtonState, diag)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, diag,
-        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best)
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best, s.pairs)
 end
 
 @inline function with_mixed(s::NewtonState, promoted::Bool, slow_steps::Int32)
     return NewtonState(
         s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
-        s.refbuf, s.fac_T, promoted, slow_steps, s.ws, s.kept, s.best)
+        s.refbuf, s.fac_T, promoted, slow_steps, s.ws, s.kept, s.best, s.pairs)
+end
+
+@inline function with_pairs(s::NewtonState, pairs)
+    return NewtonState(
+        s.jacprep, s.jvpprep, s.Fx, s.d, s.fac, s.J, s.g, s.rule, s.merit, s.fnorm, s.diag,
+        s.refbuf, s.fac_T, s.promoted, s.slow_steps, s.ws, s.kept, s.best, pairs)
+end
+
+# ─── The pairs of a `BroydenUpdate` ──────────────────────────────────────────
+#
+# The inverse that a step along a reused factor `B₀` applies is
+# `Hⱼ = (I + uⱼ sⱼᴴ) ⋯ (I + u₁ s₁ᴴ) B₀⁻¹`, from the pairs `(uᵢ, sᵢ)`, `i ≤ count`, that the steps
+# on that factor stored. A value iterate holds the pairs as `NTuple`s of `M` values of its own
+# type, so that its state stays `isbits`; an array iterate holds them as the columns of two
+# `n × M` arrays, with two buffers that keep the iterate and the residual at the start of a step.
+struct BroydenPairs{P, B}
+    u::P
+    s::P
+    xk::B
+    Fk::B
+    count::Int32
+end
+
+@inline pair_value(x::Number) = x
+@inline pair_value(x::StaticVector) = SVector(x)
+
+@inline init_pairs(::Nothing, x) = nothing
+@inline function init_pairs(::BroydenUpdate{M}, x::Union{Number, StaticVector}) where {M}
+    z = zero(pair_value(x))
+    return BroydenPairs(ntuple(_ -> z, Val(M)), ntuple(_ -> z, Val(M)), nothing, nothing,
+        Int32(0))
+end
+@inline function init_pairs(::BroydenUpdate{M}, x::AbstractVector) where {M}
+    T = eltype(x)
+    U = fill!(buffer(x, T, length(x), M), zero(T))
+    S = fill!(buffer(x, T, length(x), M), zero(T))
+    return BroydenPairs(U, S, buffer(x), buffer(x), Int32(0))
+end
+
+@inline clear_pairs(::Nothing) = nothing
+@inline clear_pairs(p::BroydenPairs) = BroydenPairs(p.u, p.s, p.xk, p.Fk, Int32(0))
+
+# The start `x` of a step and its residual `Fx`, which an array iterate's step overwrites; a value
+# iterate keeps both as values.
+@inline keep_step_start!(::Nothing, x, Fx) = nothing
+@inline keep_step_start!(::BroydenPairs{<:Tuple}, x, Fx) = nothing
+@inline function keep_step_start!(p::BroydenPairs, x, Fx)
+    copyto!(p.xk, x)
+    copyto!(p.Fk, Fx)
+    return nothing
+end
+
+# The inner product `aᴴ b`, conjugated in `a`, in the element type of the iterate: a lazy broadcast
+# with no scalar indexing, which a device array refuses.
+@inline pair_dot(a::Number, b::Number) = conj(a) * b
+@inline function pair_dot(a, b)
+    return sum(Broadcast.instantiate(Broadcast.broadcasted((x, y) -> conj(x) * y, a, b)))
+end
+
+# `v` with the pairs applied, `(I + u_count s_countᴴ) ⋯ (I + u₁ s₁ᴴ) v`: the product with `Hⱼ`
+# of `v = B₀⁻¹ w`. An array `v` is overwritten.
+@inline apply_pairs!!(::Nothing, v) = v
+@inline function apply_pairs!!(p::BroydenPairs{<:NTuple{M}}, v) where {M}
+    for i in 1:M
+        i > p.count && break
+        v = v + p.u[i] * pair_dot(p.s[i], v)
+    end
+    return v
+end
+@inline function apply_pairs!!(p::BroydenPairs, v)
+    for i in 1:p.count
+        c = pair_dot(view(p.s, :, i), v)
+        v .+= c .* view(p.u, :, i)
+    end
+    return v
+end
+
+# The state after a step from `(x, Fx)` to `(x₊, F₊)` along the factor of `state`: where the next
+# step reuses that factor, the pair of the step is stored, unless `sᴴ Hⱼ y` is zero or not finite,
+# which a step of zero length also gives; the next step then factorises afresh. Where the next step
+# factorises, the pair would serve no step, and none is formed.
+@inline update_pairs!!(state::NewtonState, x₊, F₊, x, Fx) = update_pairs!!(
+    state, state.pairs, x₊, F₊, x, Fx)
+@inline update_pairs!!(state::NewtonState, ::Nothing, x₊, F₊, x, Fx) = state
+@inline function update_pairs!!(state::NewtonState, pairs::BroydenPairs, x₊, F₊, x, Fx)
+    rule = state.rule
+    (rule.age == Int32(0) || rule.stalled) && return state
+    s, Hy = secant_pair!!(pairs, state.fac, x₊, F₊, x, Fx)
+    den = pair_dot(s, Hy)
+    (isfinite(den) && !iszero(den)) ||
+        return with_rule(state, FactorAge(Int32(0), false, rule.reused))
+    return with_pairs(state, store_pair!!(pairs, s, Hy, den))
+end
+
+# The step `s = x₊ - x` and `Hⱼ y` for `y = F₊ - Fx`. An array iterate reads the start of the step
+# from the buffers that `keep_step_start!` filled, writes `s` into the next column of `p.s`, and
+# `Hⱼ y` into `p.xk`, whose start of the step `s` has already read.
+@inline function secant_pair!!(p::BroydenPairs{<:Tuple}, fac, x₊, F₊, x, Fx)
+    s = pair_value(x₊) - pair_value(x)
+    y = pair_value(F₊) - pair_value(Fx)
+    return s, apply_pairs!!(p, ldiv!!(nothing, fac, y))
+end
+@inline function secant_pair!!(p::BroydenPairs, fac, x₊, F₊, x, Fx)
+    s = view(p.s, :, p.count + Int32(1))
+    s .= x₊ .- p.xk
+    p.Fk .= F₊ .- p.Fk
+    return s, apply_pairs!!(p, ldiv!!(p.xk, fac, p.Fk))
+end
+
+# The pairs with `(u, s)`, `u = (s - Hⱼ y) / den`, as the pair `count + 1`. The value form takes one
+# reciprocal of `den`: a complex division for each entry makes the count kernel of `solve_batch!`
+# on Metal too large to link.
+@inline function store_pair!!(p::BroydenPairs{<:Tuple}, s, Hy, den)
+    k = p.count + Int32(1)
+    u = (s - Hy) * inv(den)
+    return BroydenPairs(
+        Base.setindex(p.u, u, Int(k)), Base.setindex(p.s, s, Int(k)), nothing, nothing, k)
+end
+@inline function store_pair!!(p::BroydenPairs, s, Hy, den)
+    k = p.count + Int32(1)
+    view(p.u, :, k) .= (s .- Hy) ./ den
+    return BroydenPairs(p.u, p.s, p.xk, p.Fk, k)
 end
 
 # ─── A `Number` iterate on the one-entry vector path ─────────────────────────
@@ -938,7 +1118,7 @@ end
     j = m.jacobian
     (j === nothing || j isa AbstractADType) && return m
     return Newton(m.linsolve, m.globalization, ScalarJacobian(j), m.refinement,
-        m.regularization, m.reuse, m.best, m.keep_factor)
+        m.regularization, m.reuse, m.best, m.keep_factor, m.update)
 end
 
 # The state of a one-variable least-squares problem is the state of the lifted problem at the
@@ -1004,6 +1184,12 @@ end
     matrix_free(m.linsolve) && return init_gmres_state(m, m.linsolve, prob, x, p)
     m.linsolve isa KroneckerFactorization &&
         return init_kronecker_state(m, m.linsolve, prob, x, p)
+    if m.update !== nothing
+        prob isa LeastSquaresProblem && throw(ArgumentError(
+            "Newton with a BroydenUpdate takes no LeastSquaresProblem: its secant update needs a square Jacobian"))
+        factor_eltype(m.linsolve, eltype(x)) === eltype(x) || throw(ArgumentError(
+            "Newton with a BroydenUpdate needs a factor in the element type of the iterate: the pairs are formed and applied in that precision, with the solve of the factor"))
+    end
     if prob isa LeastSquaresProblem &&
        m.linsolve isa Union{LUFactorization, LDLTFactorization, CholeskyFactorization} &&
        !(m.globalization isa LevenbergMarquardt)
@@ -1047,7 +1233,8 @@ end
         end
         return NewtonState(
             jacprep, jvpprep, nothing, nothing, fac, nothing, nothing, rule, merit, R(NaN),
-            diag, nothing, nothing, false, Int32(0), nothing)
+            diag, nothing, nothing, false, Int32(0), nothing, (nothing, nothing), nothing,
+            init_pairs(m.update, x))
     else
         fac = init_newton_factor(m, m.linsolve, prob, x, p, jacprep)
         fac_T = mixed && !(m.globalization isa LevenbergMarquardt) ?
@@ -1060,7 +1247,8 @@ end
         return NewtonState(
             jacprep, jvpprep, Fx, buffer(x), fac, init_newton_J(m, fac, fac_T, x, Fx),
             init_globalization(m.globalization, m.linsolve, x, Fx), rule, merit, R(NaN),
-            diag, refbuf, fac_T, false, Int32(0), nothing, kept, nothing)
+            diag, refbuf, fac_T, false, Int32(0), nothing, kept, nothing,
+            init_pairs(m.update, x))
     end
 end
 
@@ -1126,7 +1314,8 @@ stage of a [`GMRESRefinement`](@ref) forms for each Krylov vector `v`, in the wo
 @inline preconditioned_buffer(refbuf) = nothing
 
 # The per-solve reset that every `Newton` method shares: the rule state, the anchor merit of a
-# line search, the promotion flags and the diagnostics. Under `keep_factor = true` the rule state
+# line search, the promotion flags, the diagnostics and the pairs of a `BroydenUpdate`, which a
+# solve does not take over from the last one. Under `keep_factor = true` the rule state
 # is the one that the last `finish!!` left, so the first step reuses the factor that it kept, and
 # the diagnostics keep the rank of the last fresh factor, which the rate test reads along it. That
 # factor may be one that the last solve dropped, after a solve that kept no factor or after
@@ -1137,6 +1326,7 @@ stage of a [`GMRESRefinement`](@ref) forms for each Krylov vector `v`, in the wo
     m.keep_factor || (state = with_rule(state, reset_rule(state.rule, m.globalization)))
     state = with_merit(state, start_merit(m.globalization, Fx), fnorm₀)
     state = with_mixed(state, false, Int32(0))
+    state = with_pairs(state, clear_pairs(state.pairs))
     rank = m.keep_factor ? state.diag.rank : Int32(-1)
     return with_diag(state, NewtonDiagnostics{R}(rank, R(NaN), R(NaN), zero(R)))
 end
@@ -1776,36 +1966,44 @@ end
     rule = state.rule
     age_fresh = fresh_age(m)
     failures = Int32(0)
+    keep_step_start!(state.pairs, x, Fx)
     if !(rule.age == Int32(0) || rule.stalled)
         age₊ = next_age(rule, m)
         # A reused factor whose `Refinement` fails is refactorised at `x`, within the step, and
         # counts one step-rule failure. A reused factor can also give a direction that does not
         # descend: a line search along it that fails without a step is retried once, in the same
-        # step, from a fresh factor, and from the same residual and merit.
+        # step, from a fresh factor, and from the same residual and merit. The pairs of a
+        # `BroydenUpdate` act on the direction of the factor.
         d, ref_failed = newton_direction(m, state, prob, x, Fx, p, state.fac, nothing)
         if ref_failed
             failures = one(Int32)
         else
+            d = apply_pairs!!(state.pairs, d)
             x₊, F₊, info, merit = newton_line(m, state, prob, x, Fx, p, state.fac, d, false)
             (info.code == LINESEARCH_FAILED && iszero(info.stepnorm)) ||
                 return reuse_result(
-                    state, state.fac, state.diag, x₊, F₊, info, merit, age₊, true)
+                    state, state.fac, state.diag, x₊, F₊, info, merit, age₊, true, x, Fx)
         end
     end
+    # a fresh factor starts with no pairs
+    state = with_pairs(state, clear_pairs(state.pairs))
     Jreg, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, Jreg)
     return reuse_result(
-        state, fac, diag, x₊, F₊, bump_failures(info, failures), merit, age_fresh, false)
+        state, fac, diag, x₊, F₊, bump_failures(info, failures), merit, age_fresh, false, x, Fx)
 end
 
-# The state and the result of a step with reuse from the factor `fac` it took, reused or fresh: a
-# `SINGULAR` step resets the age of the factor, and a `STALLED` one refreshes it at the next step.
+# The state and the result of a step with reuse from the factor `fac` it took, reused or fresh,
+# from `(x, Fx)`: a `SINGULAR` step resets the age of the factor, a `STALLED` one refreshes it at
+# the next step, and any other step stores its pair of a `BroydenUpdate` where the next step reuses
+# the factor.
 @inline function reuse_result(
-        state::NewtonState, fac, diag, x₊, F₊, info, merit, age₊, reused::Bool)
+        state::NewtonState, fac, diag, x₊, F₊, info, merit, age₊, reused::Bool, x, Fx)
     state = with_diag(with_merit(with_factor(state, fac), merit, info.fnorm), diag)
     info.code == SINGULAR &&
         return x₊, F₊, with_rule(state, FactorAge(Int32(0), false, reused)), info
-    return x₊, F₊, with_rule(state, FactorAge(age₊, info.code == STALLED, reused)), info
+    state = with_rule(state, FactorAge(age₊, info.code == STALLED, reused))
+    return x₊, F₊, update_pairs!!(state, x₊, F₊, x, Fx), info
 end
 
 # The same step with a factorisation in `TF ≠ T`: the mixed-precision half of the step, and the

@@ -23,13 +23,14 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The eighteen columns of the standard test set, each a name and a method: `Newton` with each
+The nineteen columns of the standard test set, each a name and a method: `Newton` with each
 globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
 `LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, `Picard` with
 `Backtracking`, the matrix-free `Newton` with `Backtracking` and each of `GMRES`, `BiCGStab`,
 `DQGMRES` and `GMRES` with a `Float32` basis, whose columns hold no Jacobian, `Broyden()`, whose
 default `Picard` member is damped
-by 0.5, `Picard` with `Backtracking` left-preconditioned by one `Newton()` step, `Continuation` on
+by 0.5, `Newton` with `reuse = 3`, `update = BroydenUpdate(2)` and `Backtracking` on LU, `Picard`
+with `Backtracking` left-preconditioned by one `Newton()` step, `Continuation` on
 the fixed-point homotopy with its default `Newton()` member, and the `Fallback` of the methods of
 the columns "Newton Static LU", "Newton DogLeg LU" and "Newton LevenbergMarquardt SVD", in this
 order.
@@ -57,6 +58,8 @@ const STANDARD_COLUMNS = (
     "Newton Backtracking Float32-basis GMRES" => Newton(;
         linsolve = GMRES(; basis_eltype = Float32), globalization = Backtracking()),
     "Broyden" => Broyden(),
+    "Newton reuse 3 Broyden Backtracking LU" => Newton(;
+        reuse = 3, update = BroydenUpdate(2), globalization = Backtracking()),
     "LeftPreconditioned Picard Backtracking Newton" =>
         LeftPreconditioned(Picard(; globalization = Backtracking()), Newton()),
     "Continuation FixedPointHomotopy" => Continuation(FixedPointHomotopy()),
@@ -206,7 +209,8 @@ end
 
 function without_refinement(m::Newton)
     Newton(
-        m.linsolve, m.globalization, m.jacobian, NoRefinement(), m.regularization, m.reuse)
+        m.linsolve, m.globalization, m.jacobian, NoRefinement(), m.regularization, m.reuse,
+        m.best, m.keep_factor, m.update)
 end
 
 function GeometricSolvers.newton_stepkind(
@@ -225,7 +229,7 @@ function perturbed_direction(m::Newton, seed)
     GeometricSolvers.matrix_free(m.linsolve) && return nothing
     Newton(
         m.linsolve, m.globalization, m.jacobian, PerturbedDirection(seed), m.regularization,
-        m.reuse)
+        m.reuse, m.best, m.keep_factor, m.update)
 end
 perturbed_direction(::Picard, seed) = nothing
 perturbed_direction(::Broyden, seed) = nothing

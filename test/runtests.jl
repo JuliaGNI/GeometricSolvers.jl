@@ -52,6 +52,7 @@ const TESTS = [
         "Contraction rate, round-off stop and kept factor" => "nonlinear/stopping.jl",
         "Default method" => "nonlinear/default.jl",
         "Newton" => "nonlinear/newton.jl",
+        "Jacobian-initialised Broyden updates" => "nonlinear/broyden.jl",
         "Kronecker stage solver" => "nonlinear/kronecker.jl",
         "Iterative refinement" => "nonlinear/refinement.jl",
         "Picard" => "nonlinear/picard.jl",
