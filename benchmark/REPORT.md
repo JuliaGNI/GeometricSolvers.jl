@@ -167,7 +167,7 @@ The column `Newton reuse 3 Broyden Backtracking LU` (`Newton(; reuse = 3, update
 BroydenUpdate(2), globalization = Backtracking())`) is not in the tables above, which stay the run
 at `301f366`. The three other packages have no method for it (no Broyden update of a reused
 factor; `SimpleBroyden` and NLsolve's `:broyden` factorise no Jacobian). This table is
-GeometricSolvers alone at `21696f6`, over the 79 rows in each precision, with the success rule
+GeometricSolvers alone at `b86fc6c`, over the 79 rows in each precision, with the success rule
 above, beside `Broyden` of the same run: `julia --project=benchmark benchmark/broyden_update.jl`
 writes its 316 cells to `results/broyden_update.csv`. Each entry is the success count of the
 column and precision, and the Jacobian count `Σ dual_evals / chunks`, where `chunks` is the number

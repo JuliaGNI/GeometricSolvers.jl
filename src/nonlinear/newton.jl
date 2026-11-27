@@ -12,7 +12,8 @@ factor that the next step reuses stores the pair ``(u, s)`` of its accepted step
 ``H_{j+1} z = H_j z`` wherever ``s^\\mathsf{H} H_j z = 0``. A step that factorises afresh steps
 along ``B_0^{-1}`` alone and clears the pairs, and so does [`start!!`](@ref). A step whose
 ``s^\\mathsf{H} H_j y`` is zero or not finite, which a step of zero length gives too, or whose `u`
-is not finite stores no pair, and the next step factorises afresh. A complex element type conjugates `s`.
+is not finite stores no pair, and the next step factorises afresh. A complex element type
+conjugates `s`.
 
 `m` is a type parameter, so that the pairs of a value iterate are `NTuple`s of the iterate's
 type and its state stays `isbits`; an array iterate holds them in two `n × m` arrays. `m < 1`

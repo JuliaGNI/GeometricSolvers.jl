@@ -1,8 +1,8 @@
 # The verifier of the results. It reads `<dir>/correctness.csv`, `<dir>/rows.csv`,
 # `<dir>/broyden_update.csv`, `<dir>/timings.csv`, the four block tables `<dir>/mixed.csv`,
-# `stage.csv`, `anderson.csv` and `sparse.csv`, every `<dir>/devices-<machine>.csv` and its `.txt`, `benchmark/REPORT.md` and
-# `benchmark/traces/`, and checks them with code of its own: it loads no file of the harness and
-# no solver package.
+# `stage.csv`, `anderson.csv` and `sparse.csv`, every `<dir>/devices-<machine>.csv` and its
+# `.txt`, `benchmark/REPORT.md` and `benchmark/traces/`, and checks them with code of its own: it
+# loads no file of the harness and no solver package.
 #
 # Usage: julia benchmark/verify.jl <dir> [--structure] [--all-cards]
 #
