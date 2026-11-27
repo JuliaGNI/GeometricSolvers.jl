@@ -72,30 +72,38 @@ const RC_ETAS = [1e-2, 1e-6]
 const RC_PS = [1.0 + 0.05 * i for i in 0:9]
 "the cap on the inner iterations of one linear solve, in every column"
 const RC_MAXITER = 500
+"the period of the preconditioner, `Newton(; reuse)`, in Newton steps"
+const RC_REUSE = 1000
 const RC_BUILD_RATIO = 0.75
 const RC_STOP_RATIO = 0.90
 
 # ─── The preconditioner ────────────────────────────────────────────────────────
 
 # The right preconditioner `M = LU(J(x))`: `refresh!` evaluates the analytic Jacobian `J!` at the
-# iterate and factorises it, and `apply_preconditioner!` solves with that factor.
+# iterate and factorises it, and `apply_preconditioner!` solves with that factor. It counts its
+# refreshes, and those at the iterate `start`, which the caller sets to the start of each solve:
+# a refresh there is one at the first step of a solve, since a later step of a solve leaves that
+# point or ends the solve.
 mutable struct LUPreconditioner{FJ, M, F}
     J!::FJ
     J::M
     fac::F
     refreshes::Int
+    start::Vector{Float64}
+    start_refreshes::Int
 end
 
 function LUPreconditioner(J!, prototype, x, p)
     J = copy(prototype)
     J!(J, x, p)
-    return LUPreconditioner(J!, J, lu(J), 0)
+    return LUPreconditioner(J!, J, lu(J), 0, copy(x), 0)
 end
 
 function lu_refresh!(P::LUPreconditioner, x, p)
     P.J!(P.J, x, p)
     P.fac = lu(P.J)
     P.refreshes += 1
+    x == P.start && (P.start_refreshes += 1)
     return nothing
 end
 
@@ -166,11 +174,57 @@ function harmonic_basis(A::AbstractMatrix, B::AbstractMatrix, k::Integer)
     return Matrix(qr(reduce(hcat, cols)).Q)[:, 1:k]
 end
 
+# The operator of a solve may be scaled near `floatmax`, where a product of two of its entries
+# overflows, a Householder reflector of one of its columns overflows, and a vector of the size of
+# its inverse is subnormal. So every QR factorisation and every least-squares solve below takes a
+# matrix divided by its largest entry, the harmonic Ritz pencil is formed from such a matrix, and a
+# recycled space `U` is held as unit columns `Û` and the inverses `d` of the norms of the columns
+# of `U`, `U = Û Diagonal(1 ./ d)`.
+
+# The `Q` factor and the scaled `R` factor `R / σ` of the QR factorisation of `M`, and `σ`.
+function scaled_qr(M)
+    σ = maximum(abs, M)
+    F = qr(M ./ σ)
+    return Matrix(F.Q), F.R, σ
+end
+
+# The least-squares solution `z` of `G z ≈ rhs` and its residual `rhs − G z`. The residual is
+# formed in the scaled system too: a product `G z` overflows where `z` holds an entry above 1.
+function scaled_lsq(G, rhs)
+    σ = maximum(abs, G)
+    Ĝ = G ./ σ
+    r̂ = rhs ./ σ
+    z = Ĝ \ r̂
+    return z, σ .* (r̂ - Ĝ * z)
+end
+
+# The recycled space `U = X (σ R)⁻¹` of an upper-triangular `R` as `(Û, d)`.
+function unit_recycled(X, R, σ)
+    τ = maximum(abs, R)
+    Y = X / UpperTriangular(R ./ τ)
+    ny = [norm(c) for c in eachcol(Y)]
+    return Y ./ ny', σ * τ ./ ny
+end
+
+# Classical Gram–Schmidt with a second pass (CGS2): `w` made orthogonal to the orthonormal columns
+# of `basis`, in place, and the coefficients of the two passes summed. One pass leaves `w` with a
+# loss of orthogonality of about `eps` times the ratio of `‖w‖` before and after it; the second
+# pass takes it back to about `eps`.
+function orthogonalize!(w, basis)
+    h = basis' * w
+    w .-= basis * h
+    h2 = basis' * w
+    w .-= basis * h2
+    return h .+ h2
+end
+
 # One cycle from the residual `r` of norm `β`: `nsteps` Arnoldi steps at most, orthogonal to `C`
-# where a recycled space `(C, U)` is given, until the least-squares residual reaches `tol`. It
-# updates `y` and `r`, and returns the number of steps and the new recycled space `(C, U)` from the
-# harmonic Ritz vectors of the cycle, or `nothing` where the cycle spans fewer than `k` vectors.
-function gcrodr_cycle!(s::GCRODR, op, y, r, β, C, U, nsteps, tol)
+# where a recycled space `(C, Û, d)` is given, with `A Û Diagonal(1 ./ d) = C`, until the
+# least-squares residual reaches `tol`. It updates `y` and `r`, and returns the number of steps
+# and the new recycled space `(C, Û, d)` from the harmonic Ritz vectors of the cycle, or `nothing`
+# where the cycle spans fewer than `k` vectors. Dividing the Hessenberg matrix of the pencil by its
+# largest entry leaves the eigenvectors and the order of the eigenvalues by modulus as they are.
+function gcrodr_cycle!(s::GCRODR, op, y, r, β, C, Û, d, nsteps, tol)
     n = length(r)
     kc = C === nothing ? 0 : size(C, 2)
     W = zeros(n, kc + nsteps + 1)
@@ -180,9 +234,7 @@ function gcrodr_cycle!(s::GCRODR, op, y, r, β, C, U, nsteps, tol)
     rhs[kc + 1] = β
     if kc > 0
         W[:, 1:kc] .= C
-        d = [1 / norm(u) for u in eachcol(U)]
         G[1:kc, 1:kc] .= Diagonal(d)
-        Û = U .* d'
     end
     W[:, kc + 1] .= r ./ β
     w = zeros(n)
@@ -191,30 +243,26 @@ function gcrodr_cycle!(s::GCRODR, op, y, r, β, C, U, nsteps, tol)
         j += 1
         apply_operator!(w, op, view(W, :, kc + j))
         s.arnoldi += 1
-        basis = view(W, :, 1:(kc + j))
-        h = basis' * w
-        w .-= basis * h
-        h2 = basis' * w
-        w .-= basis * h2
-        G[1:(kc + j), kc + j] .= h .+ h2
+        G[1:(kc + j), kc + j] .= orthogonalize!(w, view(W, :, 1:(kc + j)))
         hn = norm(w)
         G[kc + j + 1, kc + j] = hn
         hn > 0 && (W[:, kc + j + 1] .= w ./ hn)
         Gj = G[1:(kc + j + 1), 1:(kc + j)]
-        res = norm(rhs[1:(kc + j + 1)] - Gj * (Gj \ rhs[1:(kc + j + 1)]))
-        (res <= tol || hn == 0) && break
+        _, e = scaled_lsq(Gj, rhs[1:(kc + j + 1)])
+        (norm(e) <= tol || hn == 0) && break
     end
     J = kc + j
     Gj = G[1:(J + 1), 1:J]
     Wj = W[:, 1:(J + 1)]
-    z = Gj \ rhs[1:(J + 1)]
+    z, e = scaled_lsq(Gj, rhs[1:(J + 1)])
     V̂ = kc > 0 ? hcat(Û, W[:, (kc + 1):(kc + j)]) : W[:, 1:j]
     y .+= V̂ * z
-    r .= Wj * (rhs[1:(J + 1)] - Gj * z)
+    r .= Wj * e
     J < s.k && return j, nothing
-    P = harmonic_basis(Gj' * Gj, Gj' * (Wj' * V̂), s.k)
-    F = qr(Gj * P)
-    return j, (Wj * Matrix(F.Q)[:, 1:(s.k)], (V̂ * P) / UpperTriangular(F.R))
+    Ĝ = Gj ./ maximum(abs, Gj)
+    P = harmonic_basis(Ĝ' * Ĝ, Ĝ' * (Wj' * V̂), s.k)
+    Q, R, σ = scaled_qr(Gj * P)
+    return j, (Wj * Q[:, 1:(s.k)], unit_recycled(V̂ * P, R, σ)...)
 end
 
 # The GCRO-DR solve of `A y = b` from `y = 0` to `‖b − A y‖ ≤ tol`, with `A` the operator `op`.
@@ -226,7 +274,7 @@ function gcrodr_solve!(s::GCRODR, op, b, tol)
     r = copy(b)
     rn = norm(r)
     rn <= tol && return y, false
-    C = U = nothing
+    C = U = d = nothing
     if s.U !== nothing
         Ũ = s.U
         AU = similar(Ũ)
@@ -234,20 +282,20 @@ function gcrodr_solve!(s::GCRODR, op, b, tol)
             apply_operator!(view(AU, :, i), op, view(Ũ, :, i))
             s.au += 1
         end
-        F = qr(AU)
-        C = Matrix(F.Q)[:, 1:(s.k)]
-        U = Ũ / UpperTriangular(F.R)
+        Q, R, σ = scaled_qr(AU)
+        C = Q[:, 1:(s.k)]
+        U, d = unit_recycled(Ũ, R, σ)
         c = C' * r
-        y .+= U * c
+        y .+= U * (c ./ d)
         r .-= C * c
         rn = norm(r)
     end
     iters = 0
     while rn > tol && iters < s.maxiter
         nsteps = min(C === nothing ? s.m : s.m - s.k, s.maxiter - iters)
-        j, CU = gcrodr_cycle!(s, op, y, r, rn, C, U, nsteps, tol)
+        j, CU = gcrodr_cycle!(s, op, y, r, rn, C, U, d, nsteps, tol)
         iters += j
-        CU === nothing || ((C, U) = CU)
+        CU === nothing || ((C, U, d) = CU)
         rn = norm(r)
     end
     U === nothing || (s.U = U)
@@ -256,52 +304,97 @@ end
 
 # ─── The Newton loops ──────────────────────────────────────────────────────────
 
-# A Newton solve of `F!(r, x, p) = 0` from `x` with GCRO-DR, in the steps of `Newton(; reuse)`
-# with a preconditioned `GMRES` and `FixedForcing(η)`: the inner tolerance `η ‖F‖`, the full step,
-# the residual test `‖F‖ ≤ √eps ‖F(x₀)‖`, the step test `‖d‖ ≤ 2 eps ‖x‖`, at most 100 steps, and
-# the refresh of `P` at age 0 and after an inner solve that reached its cap. `P = nothing` takes
-# no preconditioner. It writes the last iterate into `x` and returns whether the residual test
-# holds and the number of steps.
-function gcrodr_newton!(s::GCRODR, F!, J!, Jbuf, P, x, p, η; reuse = nothing)
+# The rule of the preconditioner of `Newton(; reuse, keep_factor)` with a preconditioned `GMRES`,
+# whose state a sequence of solves shares: the period `reuse`, whether a solve keeps the
+# preconditioner for the next one (`keep`), the age of the preconditioner, whether the next step
+# refreshes it early (`stalled`), and whether the last step stepped along a preconditioner that an
+# earlier step formed (`reused`).
+mutable struct PreconditionerRule
+    reuse::Int
+    keep::Bool
+    age::Int
+    stalled::Bool
+    reused::Bool
+end
+
+function PreconditionerRule(reuse::Integer; keep::Bool)
+    PreconditionerRule(reuse, keep, 0, false, false)
+end
+
+function drop!(rule::PreconditionerRule)
+    rule.age, rule.stalled, rule.reused = 0, false, false
+    return rule
+end
+
+# A Newton solve of `F!(r, x, p) = 0` from `x` with GCRO-DR, in the steps of
+# `Newton(; reuse, keep_factor)` with a preconditioned `GMRES`, `FixedForcing(η)` and the default
+# `Options`: the inner tolerance `η ‖F‖` and the full step. A step refreshes `P` where the rule's
+# age is 0 or the rule is `stalled`; after the step the age counts on, or starts at 1 after a
+# refresh, and returns to 0 after `reuse` steps; `stalled` is set by an inner solve that reached
+# its cap and by a step along a reused preconditioner whose rate `θ = ‖d_k‖ / ‖d_{k−1}‖` is at
+# least 1. The solve ends with `SUCCESS` on the residual test `‖F‖ ≤ √eps ‖F(x₀)‖` or on the rate
+# test `θ / (1 − θ) ‖d‖ ≤ κ x_reltol ‖x‖`, with `θ` the larger rate of the step and of the one
+# before it, `κ = 1/10` and `x_reltol = 2 eps`; it ends unconverged on the step test
+# `‖d‖ ≤ 2 eps ‖x‖`, on a zero step, and after 100 steps. A rule that keeps its preconditioner
+# keeps it for the next solve only after `SUCCESS` in one step or with a last rate `θ ≤ 10⁻³`;
+# otherwise, and at the start of a solve under a rule that does not keep, the age is 0, so that the
+# next step refreshes. `P = nothing` takes no preconditioner and no rule. It writes the last
+# iterate into `x` and returns whether the solve converged and the number of steps.
+function gcrodr_newton!(s::GCRODR, F!, J!, Jbuf, P, x, p, η; rule = nothing)
     op = CountingOperator(Jbuf, P, zeros(length(x)), 0)
     counted = products(s)
     F = similar(x)
     F!(F, x, p)
     fnorm = norm(F)
     tol = sqrt(eps(Float64)) * fnorm
-    age, early, steps = 0, false, 0
-    while fnorm > tol && steps < 100
-        if P !== nothing
-            if reuse === nothing || age == 0 || early
-                lu_refresh!(P, x, p)
-                age = (reuse === nothing || reuse == 1) ? 0 : 1
-            else
-                age = age + 1 >= reuse ? 0 : age + 1
-            end
-        end
+    rule === nothing || rule.keep || drop!(rule)
+    steps, converged = 0, fnorm <= tol
+    rate, prevnorm = NaN, 0.0
+    while !converged && steps < 100
+        refresh = P !== nothing && (rule.age == 0 || rule.stalled)
+        refresh && lu_refresh!(P, x, p)
         J!(Jbuf, x, p)
-        y, early = gcrodr_solve!(s, op, -F, η * fnorm)
+        y, capped = gcrodr_solve!(s, op, -F, η * fnorm)
         d = similar(x)
         precondition!(d, P, y)
         x .+= d
         F!(F, x, p)
         fnorm = norm(F)
         steps += 1
-        norm(d) <= 2 * eps(Float64) * norm(x) && break
+        dnorm = norm(d)
+        prevrate = rate
+        rate = prevnorm > 0 ? dnorm / prevnorm : NaN
+        prevnorm = dnorm
+        if P !== nothing
+            rule.age = refresh ? (rule.reuse == 1 ? 0 : 1) :
+                       (rule.age + 1 >= rule.reuse ? 0 : rule.age + 1)
+            rule.reused = !refresh
+            rule.stalled = capped || (rule.reused && rate >= 1)
+        end
+        converged = fnorm <= tol
+        converged && break
+        xnorm = norm(x)
+        θ = max(rate, prevrate)
+        converged = dnorm > 0 && θ < 1 &&
+                    θ / (1 - θ) * dnorm <= 0.1 * 2 * eps(Float64) * xnorm
+        (converged || dnorm <= 2 * eps(Float64) * xnorm) && break
     end
+    keeps = converged && (steps == 1 || rate <= 1e-3)
+    rule === nothing || keeps || drop!(rule)
     counted = products(s) - counted
     counted == op.calls || error(
         "GCRO-DR counted $counted products, the operator was called $(op.calls) times")
-    return fnorm <= tol, steps
+    return converged, steps
 end
 
 # The ten solves of one column along `ps`, each from the root before, starting from `x0`.
-# `column` is `:gmres`, `:norec` or `:rec`. Returns the products, whether every solve converged,
-# the Newton steps, the refreshes of the preconditioner, and the linear solves that started from a
-# recycled space. `maxiter` caps the inner iterations of each linear solve, and the `restart` of
-# `GMRES` at `min(m, maxiter)`.
+# `column` is `:gmres`, `:norec` or `:rec`; a preconditioned column takes the rule of
+# `Newton(; reuse, keep_factor)`. Returns the products, whether every solve converged, the Newton
+# steps, the refreshes of the preconditioner, the solves that started on a kept preconditioner,
+# and the linear solves that started from a recycled space. `maxiter` caps the inner iterations of
+# each linear solve, and the `restart` of `GMRES` at `min(m, maxiter)`.
 function run_column(column::Symbol, prob, x0, ps; m, k, η, preconditioned::Bool, reuse,
-        maxiter = RC_MAXITER)
+        keep_factor::Bool = true, maxiter = RC_MAXITER)
     x = copy(x0)
     Jbuf = copy(prob.jacobian_prototype)
     P = preconditioned ? LUPreconditioner(prob.J, prob.jacobian_prototype, x, first(ps)) :
@@ -313,31 +406,38 @@ function run_column(column::Symbol, prob, x0, ps; m, k, η, preconditioned::Bool
         g = GMRES(; restart = min(m, maxiter), maxiter, forcing = FixedForcing(η),
             preconditioner = P)
         method = preconditioned ?
-                 Newton(; linsolve = g, reuse, jacobian = JVPFunction(jvp!)) :
+                 Newton(; linsolve = g, reuse, keep_factor, jacobian = JVPFunction(jvp!)) :
                  Newton(; linsolve = g, jacobian = JVPFunction(jvp!))
         solver = init(prob, x, method, first(ps))
         count = 0
         for p in ps
+            P === nothing || copyto!(P.start, x)
             _, status = solve!(solver, x, p)
             count += jvp_calls(solver)
             converged &= status.code == GeometricSolvers.SUCCESS
             steps += status.iterations
         end
-        return (products = count, converged, steps, refreshes = refreshes(P), from_u = 0)
+        return (products = count, converged, steps, refreshes = refreshes(P),
+            kept = kept_starts(P, ps), from_u = 0)
     end
     s = GCRODR(m, k; recycle = column === :rec, maxiter)
+    rule = preconditioned ? PreconditionerRule(reuse; keep = keep_factor) : nothing
     for p in ps
-        ok, n = gcrodr_newton!(s, prob.F, prob.J, Jbuf, P, x, p, η;
-            reuse = preconditioned ? reuse : nothing)
+        P === nothing || copyto!(P.start, x)
+        ok, n = gcrodr_newton!(s, prob.F, prob.J, Jbuf, P, x, p, η; rule)
         converged &= ok
         steps += n
     end
     return (products = products(s), converged, steps, refreshes = refreshes(P),
-        from_u = s.au ÷ s.k)
+        kept = kept_starts(P, ps), from_u = s.au ÷ s.k)
 end
 
 refreshes(::Nothing) = 0
 refreshes(P::LUPreconditioner) = P.refreshes
+
+# The solves that started on a kept preconditioner: those whose first step refreshed nothing.
+kept_starts(::Nothing, ps) = 0
+kept_starts(P::LUPreconditioner, ps) = length(ps) - P.start_refreshes
 
 # ─── The control ───────────────────────────────────────────────────────────────
 
@@ -386,14 +486,24 @@ end
 
 # ─── The grid, the table and the verdict ───────────────────────────────────────
 
-"one cell of the grid: the three columns of `N`, `m`, `k` and `η`"
-function run_cell(N, m, k, η)
+"""
+    run_cell(N, m, k, η; keep_factor = true)
+
+One cell of the grid: the three columns of `N`, `m`, `k` and `η`, each with the preconditioner
+of `Newton(; reuse = RC_REUSE, keep_factor)`.
+"""
+function run_cell(N, m, k, η; keep_factor::Bool = true)
     prob, _, z0, _, _ = sparse_bracket_problem(N, Float64)
     cols = map((:gmres, :norec, :rec)) do c
-        run_column(c, prob, z0, RC_PS; m, k, η, preconditioned = true, reuse = k)
+        run_column(c, prob, z0, RC_PS; m, k, η, preconditioned = true, reuse = RC_REUSE,
+            keep_factor)
     end
     return (N = N, m = m, k = k, η = η, gmres = cols[1], norec = cols[2], rec = cols[3])
 end
+
+# A cell in which no linear solve of GCRO-DR with recycling starts from a recycled space: its
+# recycling column measures GCRO-DR without recycling.
+vacuous(row) = row.rec.from_u == 0
 
 cell_text(c) = c.converged ? string(c.products) : "no convergence"
 
@@ -408,7 +518,8 @@ function print_row(io::IO, row)
     println(io, "| ", row.N, " | ", row.m, " | ", row.k, " | ", row.η, " | ",
         cell_text(row.gmres), " | ", cell_text(row.norec), " | ", cell_text(row.rec), " | ",
         ratio_text(row), " | ", three(row, c -> c.steps), " | ", three(row, c -> c.refreshes),
-        " | ", row.rec.from_u, " |")
+        " | ", three(row, c -> c.kept), " | ", row.rec.from_u, " | ",
+        vacuous(row) ? "vacuous" : "", " |")
 end
 
 # Whether a cell meets the build rule: every column converges, `r ≤ 0.75`, and recycling takes
@@ -435,22 +546,37 @@ end
 """
     rc_verdict(rows)
 
-The verdict of the rows of a grid: `rule` is `:build`, `:stop`, `:between`, or `:not_evaluated`
-on a grid other than the full one; `pairs` holds the pairs `(m, k)` that meet the build rule.
+The verdict of the rows of a grid: `rule` is `:build`, `:stop`, `:between`, `:vacuous` on the
+full grid where every cell is vacuous, or `:not_evaluated` on a grid other than the full one;
+`pairs` holds the pairs `(m, k)` that meet the build rule, and `vacuous` the number of vacuous
+cells.
 """
 function rc_verdict(rows)
-    full_grid(rows) || return (rule = :not_evaluated, pairs = Tuple{Int, Int}[])
+    nvac = count(vacuous, rows)
+    full_grid(rows) ||
+        return (rule = :not_evaluated, pairs = Tuple{Int, Int}[], vacuous = nvac)
+    nvac == length(rows) &&
+        return (rule = :vacuous, pairs = Tuple{Int, Int}[], vacuous = nvac)
     pairs = [(m, k) for m in RC_MS
              for k in RC_KS
              if all(build_cell, filter(r -> (r.m, r.k) == (m, k), rows))]
     rule = !isempty(pairs) ? :build : all(stop_cell, rows) ? :stop : :between
-    return (rule = rule, pairs = pairs)
+    return (rule = rule, pairs = pairs, vacuous = nvac)
 end
 
 function print_verdict(io::IO, rows, v)
+    println(
+        io, "vacuous cells (no linear solve starts from a recycled space U): ", v.vacuous,
+        " of ", length(rows))
     if v.rule === :not_evaluated
         println(io, "build rule: not evaluated (the grid is not the full grid)")
         println(io, "stop rule: not evaluated (the grid is not the full grid)")
+        return nothing
+    end
+    if v.rule === :vacuous
+        println(io, "build rule: not evaluated (every cell is vacuous)")
+        println(io, "stop rule: not evaluated (every cell is vacuous)")
+        println(io, "result: the further spike measures nothing")
         return nothing
     end
     pairs = join(("(m, k) = ($m, $k)" for (m, k) in v.pairs), ", ")
@@ -493,8 +619,8 @@ function main(args = ARGS; io::IO = stdout)
     println(io)
     println(
         io, "| N | m | k | η | GMRES(m) | GCRO-DR no recycling | GCRO-DR recycling | r | ",
-        "Newton steps | refreshes | solves from U |")
-    println(io, "|--:|--:|--:|--:|--:|--:|--:|--:|:--|:--|--:|")
+        "Newton steps | refreshes | kept starts | solves from U | cell |")
+    println(io, "|--:|--:|--:|--:|--:|--:|--:|--:|:--|:--|:--|--:|:--|")
     rows = []
     for N in Ns, m in ms, k in ks, η in ηs
         row = run_cell(N, m, k, η)
