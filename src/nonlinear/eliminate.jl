@@ -2556,7 +2556,8 @@ end
                  ((pre_fail | jac_fail | step_fail) ? Int32(1) : Int32(0))
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     st₊ = StaticElimState(
         outer_state₊, st.inner_state, y₊, z₊, fnorm₊,
         st.Y, st.Z, st.E_y, st.E_z, Int32(0))
@@ -2586,7 +2587,8 @@ end
     extra_fail = st.init_failures + ((jac_fail | step_fail) ? Int32(1) : Int32(0))
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     st₊ = StaticElimState(
         outer_state₊, st.inner_state, y₊, z₊, fnorm_prev_vp,
         st.Y, st.Z, st.E_y, st.E_z, Int32(0))
@@ -2623,7 +2625,8 @@ end
     ws.init_failures = Int32(0)
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
 end
 
@@ -2651,7 +2654,8 @@ end
     ws.init_failures = Int32(0)
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
 end
 

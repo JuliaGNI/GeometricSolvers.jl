@@ -1043,7 +1043,8 @@ function step_multisecant!!(
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_rst = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
-            info_m.failures + one(Int32), info_m.promoted, info_m.limited)
+            info_m.failures + one(Int32), info_m.promoted, info_m.limited,
+            info_m.shortened)
         return x_m, F_m, st_rst, info_rst
     end
 
@@ -1084,7 +1085,7 @@ function step_multisecant!!(
             state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
         info_fb = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
-            failures + one(Int32), info_m.promoted, info_m.limited)
+            failures + one(Int32), info_m.promoted, info_m.limited, info_m.shortened)
         return x_m, F_m, st_fb, info_fb
     end
 
@@ -1111,7 +1112,8 @@ function step_multisecant!!(
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_post = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
-            info_m.failures + one(Int32), info_m.promoted, info_m.limited)
+            info_m.failures + one(Int32), info_m.promoted, info_m.limited,
+            info_m.shortened)
         return x_m, F_m, st_post, info_post
     end
 
@@ -1126,7 +1128,7 @@ function step_multisecant!!(
         state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
     info_ok = StepInfo{R}(
         accelerated_code(info_m), fnorm₊, stepnorm, failures, info_m.promoted,
-        info_m.limited)
+        info_m.limited, info_m.shortened)
     return x₊, F₊, st_ok, info_ok
 end
 
@@ -1329,7 +1331,8 @@ function step_multisecant!!(
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_rst = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
-            info_m.failures + one(Int32), info_m.promoted, info_m.limited)
+            info_m.failures + one(Int32), info_m.promoted, info_m.limited,
+            info_m.shortened)
         return x, Fx, st_rst, info_rst
     end
 
@@ -1411,7 +1414,7 @@ function step_multisecant!!(
             state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
         info_fb = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
-            failures + one(Int32), info_m.promoted, info_m.limited)
+            failures + one(Int32), info_m.promoted, info_m.limited, info_m.shortened)
         return x, Fx, st_fb, info_fb
     end
 
@@ -1439,7 +1442,8 @@ function step_multisecant!!(
             state.fnorm₀, fnorm_best, Int32(0), restart_current_depth(), true)
         info_post = StepInfo{R}(
             info_m.code, fnorm_m, info_m.stepnorm,
-            info_m.failures + one(Int32), info_m.promoted, info_m.limited)
+            info_m.failures + one(Int32), info_m.promoted, info_m.limited,
+            info_m.shortened)
         return x, Fx, st_post, info_post
     end
 
@@ -1460,7 +1464,7 @@ function step_multisecant!!(
         state.fnorm₀, fnorm_best, Int32(p_kept), cur_depth, true)
     info_ok = StepInfo{R}(
         accelerated_code(info_m), fnorm₊, stepnorm, failures, info_m.promoted,
-        info_m.limited)
+        info_m.limited, info_m.shortened)
     return x, Fx, st_ok, info_ok
 end
 

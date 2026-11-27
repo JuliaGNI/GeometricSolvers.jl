@@ -80,6 +80,7 @@ function step!!(
     failures = Int32(0)
     promoted = false
     limited = false
+    shortened = false
     for _ in Base.OneTo(m.count)
         s = sync_merit(s, m.method, norm2(Fx))
         x, Fx, s, info = step!!(s, m.method, prob, x, Fx, p)
@@ -87,6 +88,7 @@ function step!!(
         failures += info.failures
         promoted |= info.promoted
         limited |= info.limited
+        shortened |= info.shortened
         stalled &= info.code == STALLED
         if is_hard_failure(info)
             code = info.code
@@ -95,6 +97,6 @@ function step!!(
     end
     stalled && (code = STALLED)
     stepnorm = rnorm(map!!(-, state.x₀, x, x_start))
-    info_out = StepInfo{R}(code, fnorm, stepnorm, failures, promoted, limited)
+    info_out = StepInfo{R}(code, fnorm, stepnorm, failures, promoted, limited, shortened)
     return x, Fx, RepeatState(s, state.Fx, state.x₀), info_out
 end
