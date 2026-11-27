@@ -19,12 +19,17 @@ so that a compat-only bump can be told apart from an interface change.
   minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
   finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
   direction; no `ReturnCode` is added. Its recurrence runs on the right-hand side scaled to unit
-  norm and forms `ω` from `‖t‖`, so a system scaled to `4√floatmax` or `floatmax/8` keeps its
-  solution. `DQGMRES` is the right-preconditioned DQGMRES of Saad and Wu (1996,
+  norm, divides each preconditioned vector and each product by the power of two of its norm, and
+  forms `ω` from `‖t‖`, so a system scaled to `4√floatmax`, `floatmax/8` or into the subnormal
+  range, and a right preconditioner of large scale, keep their solution. `DQGMRES` is the
+  right-preconditioned DQGMRES of Saad and Wu (1996,
   doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8): one product per
   iteration, a quasi-minimal residual over a window of `min(memory, n)` vectors, `min(memory, n)
-  + 1` basis vectors and `min(memory, n)` directions; with `memory` at least the iteration count
-  its iterate is that of unrestarted `GMRES` with modified Gram–Schmidt. Both take the forcing
+  + 1` basis vectors and `min(memory, n)` directions, each stored as `p_j 2^e_j` with `2^e_j ≤
+  |r_jj| < 2^(e_j+1)` for the diagonal entry `r_jj` of its band, so that it keeps its solution
+  over the same range of scales; with `memory` at least the iteration count its iterate is that
+  of unrestarted `GMRES` with modified Gram–Schmidt. The divisions of both are exact, so in the
+  normal range the iterates are those of the unscaled recurrences. Both take the forcing
   terms and the right preconditioner of `GMRES`, the `forcing` and `preconditioner` keywords of
   `Newton`, `Static` and the line searches, on `Array`, `JLArray` and a device array, and count
   `f_calls` and `jvp_calls` exactly. `DogLeg`, whose trial loop reads the Arnoldi relation of
@@ -88,7 +93,7 @@ so that a compat-only bump can be told apart from an interface change.
   accepts every step and ends at that root; a non-finite `J(x₀)` returns `NONFINITE` with no
   step.
 
-- **The standard test set has a fifteenth column, `Continuation FixedPointHomotopy`,** before the
+- **The standard test set has a sixteenth column, `Continuation FixedPointHomotopy`,** before the
   `Fallback` column: 43 of 67 starts give `SUCCESS` in `Float32` and 49 of 67 in `Float64`. The
   benchmark pairs it with SimpleNonlinearSolve's `ArcLengthContinuation`, with
   `SimpleNewtonRaphson` as its corrector, on the same homotopy; its arclength metric, its
@@ -103,7 +108,8 @@ so that a compat-only bump can be told apart from an interface change.
   `PseudoTransient(0.1)` to the minimum `(1, 0)`. A non-finite `δ`, `1/δ` or residual returns
   `NONFINITE`; every problem other than a `StationarityProblem` (a `NonlinearProblem`, a
   `LeastSquaresProblem`, the problem that `LeftPreconditioned` builds), `reuse`, a refinement and
-  a `GMRES`, `MINRESQLP` or `KroneckerFactorization` linear method raise an `ArgumentError`.
+  a matrix-free linear method (`GMRES`, `BiCGStab`, `DQGMRES`, `MINRESQLP`) or a
+  `KroneckerFactorization` raise an `ArgumentError`.
 
 ### Changed
 

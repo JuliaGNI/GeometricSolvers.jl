@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1980`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2030`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1138,7 +1138,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1041` (`stored_factors`), `:1057` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1043` (`stored_factors`), `:1059` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -1150,7 +1150,7 @@
 
 ### K137 · A comment in the GMRES tests says that no linear method other than `GMRES` takes the `forcing` and `preconditioner` keywords of `Newton`
 
-- **location:** `test/nonlinear/krylov.jl:1334`
+- **location:** `test/nonlinear/krylov.jl:1374`
 - **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
   them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
   (`src/nonlinear/newton.jl:211–214`, `with_forcing`). The comment was already false at `9023f76`,
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2047` for `GMRES`, `:2290` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2049` for `GMRES`, `:2292` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1279,3 +1279,20 @@
   `(p, λ) -> p + 3λ / 2`, solves (Julia 1.13.4).
 - **kind:** defect
 - **found:** PR #126, the round that evaluates a callable datum at `map(p, λ)`
+
+### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
+
+- **location:** `src/nonlinear/newton.jl:2039` (`GMRES`), `:2261` (`MINRESQLP`), `:2311`
+  (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
+- **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
+  ratio asks `Backtracking` for more decrease than the direction gives. With
+  `F(x) = A x − b`, `A = [1e-3 1; −1 1e-3]`, `b = [1, 0]`, `x₀ = 0`, `Backtracking()` and
+  `GMRES(; maxiter = 1, forcing = FixedForcing(0.5))`, the solve ends `STALLED` after 2 iterations
+  at `fnorm = 1.0` (Julia 1.13.4). The attained ratio in its place, `η_ach = resnorm / fnorm`, is
+  not a one-line fix: a ratio of one or more promises no decrease, and the search rejects every
+  step, so the testset "The Newton step goes on after the BiCGStab guard on ω" of
+  `test/nonlinear/fixedkrylov.jl`, whose direction has the ratio 1 and decreases `‖F‖`, ends
+  `LINESEARCH_FAILED` instead of `SUCCESS` with it. A fix chooses what a step with a ratio at or
+  above `η` passes, for example the measured slope, for all four methods together.
+- **kind:** defect
+- **found:** PR #127, its review and the CodeRabbit comment on the BiCGStab and DQGMRES step

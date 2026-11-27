@@ -22,9 +22,9 @@ a `RAS` with a positive tolerance whose local solve does not converge returns `M
 reports `NONFINITE`, returns `MAXITERS` too, which ends the solve. A `RAS` with
 a `balance_threshold` is refused at `init_state` with an `ArgumentError`, because a skipped sweep
 returns its input and so reads as a zero of ``r^\\ell`` at a point that is not a root. A
-[`Newton`](@ref) with [`GMRES`](@ref) as `outer` is refused at `init_state` with an
-`ArgumentError`, because it solves a `NonlinearProblem` and `outer` solves ``r^\\ell``; as `inner`
-it is taken. A `Newton` with `best = true` as `outer`, or as a member of a combinator `outer`, is
+[`Newton`](@ref) with [`GMRES`](@ref), [`BiCGStab`](@ref) or [`DQGMRES`](@ref) as `outer` is
+refused at `init_state` with an `ArgumentError`, because it solves a `NonlinearProblem` and
+`outer` solves ``r^\\ell``; as `inner` it is taken. A `Newton` with `best = true` as `outer`, or as a member of a combinator `outer`, is
 refused at `init_state` with an `ArgumentError` too, because its best iterate would be ranked by
 ``\\|r^\\ell\\|_2``; as `inner` it is taken, and its `best` has no effect. `outer` may be a
 combinator, such as [`Repeat`](@ref) or [`Multiplicative`](@ref), whose members step on

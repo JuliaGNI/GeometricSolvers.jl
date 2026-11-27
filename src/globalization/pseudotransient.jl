@@ -26,8 +26,8 @@ norm, so a short step never ends the solve as a stall.
 
 The parameters satisfy `0 < δ₀ ≤ δ_max < Inf`, else the constructor raises an `ArgumentError`;
 [`ToReal`](@ref) converts them to the real type of the iterate. `Newton` with a `PseudoTransient`
-takes no `reuse` and no refinement, and needs a factorising linear method: a [`GMRES`](@ref), a
-[`MINRESQLP`](@ref) or a [`KroneckerFactorization`](@ref) raises an `ArgumentError`. Every
+takes no `reuse` and no refinement, and needs a factorising linear method: a matrix-free linear
+method ([`matrix_free`](@ref)) or a [`KroneckerFactorization`](@ref) raises an `ArgumentError`. Every
 problem other than a `StationarityProblem` raises an `ArgumentError` where the state is built: a
 [`NonlinearProblem`](@ref), a [`LeastSquaresProblem`](@ref), and the problem that a combinator
 such as [`LeftPreconditioned`](@ref) builds. The shift follows the gradient flow of `S` only

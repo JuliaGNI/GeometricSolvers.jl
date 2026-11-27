@@ -5,11 +5,14 @@
 # Each new Krylov vector is orthogonalised against the last `m = min(memory, n)` basis vectors
 # only, by modified Gram–Schmidt, so the Hessenberg matrix is banded with `m + 1` nonzeros per
 # column. Its Givens rotations act on that band alone, and the solution is updated at every
-# iteration along a direction `p_j = (z_j - Σ r_ij p_i) / r_jj` of the last `m` directions. The
-# basis keeps `m + 1` columns, the directions `m`, and both are rings: the vector of iteration `j`
-# overwrites the one that the band no longer reaches. With `m` at least the iteration count, the
-# orthogonalisation is complete and the iterate is that of unrestarted GMRES with modified
-# Gram–Schmidt. The Hessenberg band and the rotations are on the host, every vector of length `n`
+# iteration along a direction `p_j = (z_j - Σ r_ij p_i) / r_jj` of the last `m` directions. A
+# direction is stored as `p_j 2^e_j`, with `2^e_j ≤ |r_jj| < 2^(e_j+1)`, at the scale of `z_j`, so
+# that no vector carries the reciprocal scale of the system; the band and the solution take the
+# power of two back in their coefficients. The scaling is exact, so in the normal range the
+# iterates are those of the unscaled directions. The basis keeps `m + 1` columns, the directions
+# `m`, and both are rings: the vector of iteration `j` overwrites the one that the band no longer
+# reaches. With `m` at least the iteration count, the orthogonalisation is complete and the
+# iterate is that of unrestarted GMRES with modified Gram–Schmidt. The Hessenberg band and the rotations are on the host, every vector of length `n`
 # is in the storage of the iterate, the loop allocates nothing after `init_dqgmres_workspace`, and
 # it indexes no entry of a vector.
 
@@ -88,8 +91,9 @@ Adapt.@adapt_structure DQGMRES
 # The workspace of one DQGMRES solve: the ring `V` of `m + 1` basis vectors and the ring `P` of `m`
 # directions, the solution `d`, the preconditioned basis vector `z`, the product `w` and the
 # right-hand side `bb`, in the storage of the iterate; on the host the band `c` of `m + 2` entries
-# of the current Hessenberg column, rows `j - m` to `j + 1`, and the rings `cs` and `sn` of the
-# last `m` rotations; and the counters of a solve, as in `MINRESQLPWorkspace`.
+# of the current Hessenberg column, rows `j - m` to `j + 1`, the rings `cs` and `sn` of the last
+# `m` rotations, and the ring `pe` of the exponents `e_j` of the stored directions `p_j 2^e_j`; and
+# the counters of a solve, as in `MINRESQLPWorkspace`.
 mutable struct DQGMRESWorkspace{T, R <: Real, M, V, SR, ST}
     V::M
     P::M
@@ -100,6 +104,7 @@ mutable struct DQGMRESWorkspace{T, R <: Real, M, V, SR, ST}
     c::ST
     cs::SR
     sn::ST
+    pe::Vector{Int}
     f_calls::Int32
     jvp_calls::Int32
     iterations::Int32
@@ -115,8 +120,8 @@ end
 
 Allocate the workspace of a [`DQGMRES`](@ref) solve on an iterate like `x`: with the window
 `m = min(g.memory, length(x))`, the basis `V` of `m + 1` columns and the directions `P` of `m`
-columns in the storage of `x`, four vectors like `x`, and the host band and rotations of the window,
-whose sizes no solve changes.
+columns in the storage of `x`, four vectors like `x`, and the host band, rotations and direction
+exponents of the window, whose sizes no solve changes.
 """
 function init_dqgmres_workspace(g::DQGMRES, x::AbstractVector{T}) where {T}
     R = real(T)
@@ -128,8 +133,9 @@ function init_dqgmres_workspace(g::DQGMRES, x::AbstractVector{T}) where {T}
     c = zeros(T, m + 2)
     cs = zeros(R, m)
     sn = zeros(T, m)
+    pe = zeros(Int, m)
     return DQGMRESWorkspace{T, R, typeof(V), typeof(vs[1]), typeof(cs), typeof(sn)}(
-        V, Pm, vs..., c, cs, sn,
+        V, Pm, vs..., c, cs, sn, pe,
         Int32(0), Int32(0), Int32(0), Int32(0), Int32(0), R(NaN), R(NaN), R(NaN))
 end
 
@@ -208,21 +214,24 @@ function dqgmres_solve!(ws::DQGMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
         # the next basis vector in the slot of `v_{j-m}`, which the band of column `j` did not
         # read; a vector of norm zero ends the solve below and is not formed
         iszero(hj) || (@views ws.V[:, mod1(j + 1, m + 1)] .= w ./ hj)
-        # the direction of iteration j in the slot of `p_{j-m}`, which it reads last: `w` holds
-        # `z_j` minus the directions of the band that keep their slots
+        # the direction `p_j 2^e_j` of iteration j in the slot of `p_{j-m} 2^e_{j-m}`, which it
+        # reads last: `w` holds `z_j` minus the directions of the band that keep their slots
         w .= z
         for i in max(1, j - m + 1):(j - 1)
-            w .-= c[i - j + m + 1] .* @view(ws.P[:, mod1(i, m)])
+            k = mod1(i, m)
+            w .-= ldexp2(c[i - j + m + 1], -ws.pe[k]) .* @view(ws.P[:, k])
         end
         pj = @view ws.P[:, q]
+        e = norm_exponent(R(abs(rjj)))
         if j > m
-            pj .= (w .- c[1] .* pj) ./ rjj
+            pj .= (w .- ldexp2(c[1], -ws.pe[q]) .* pj) ./ ldexp2(rjj, -e)
         else
-            pj .= w ./ rjj
+            pj .= w ./ ldexp2(rjj, -e)
         end
-        d .+= gj .* pj
+        d .+= ldexp2(gj, -e) .* pj
         ws.cs[q] = cs
         ws.sn[q] = sn
+        ws.pe[q] = e
         resnorm = sqrt(R(cld(j + 1, m + 1))) * R(abs(g))
         if iszero(hj)
             breakdown = true
