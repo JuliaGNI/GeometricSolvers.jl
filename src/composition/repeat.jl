@@ -42,6 +42,15 @@ end
 
 @inline residual_buffer(state::RepeatState) = state.Fx
 
+# The factor of `Repeat` is that of its member, which observes the rate of the outer step.
+@inline rate_test_rank(state::RepeatState, x) = rate_test_rank(state.state, x)
+@inline function observe_rate!!(state::RepeatState, m::Repeat, rate)
+    return RepeatState(observe_rate!!(state.state, m.method, rate), state.Fx, state.x₀)
+end
+@inline function drop_factor!!(state::RepeatState, m::Repeat)
+    return RepeatState(drop_factor!!(state.state, m.method), state.Fx, state.x₀)
+end
+
 @inline function start!!(state::RepeatState, m::Repeat, prob, x, Fx, p, fnorm₀)
     return RepeatState(
         start!!(state.state, m.method, prob, x, Fx, p, fnorm₀), state.Fx, state.x₀)

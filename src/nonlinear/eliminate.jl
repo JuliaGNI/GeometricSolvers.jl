@@ -2647,10 +2647,11 @@ end
         st.outer_state, m_r, oprob, st.z_curr, Fx, status)
     if st.init_failures > Int32(0)
         status_out = SolverStatus{R}(
-            status_out.code, status_out.iterations, status_out.fnorm,
+            status_out.code, Int16(0), status_out.iterations, status_out.fnorm,
             status_out.stepnorm, status_out.step_failures + st.init_failures,
-            status_out.promoted, status_out.stationary,
-            status_out.rank, status_out.nullnorm, status_out.gradratio)
+            status_out.promoted, status_out.stationary, Int16(0),
+            status_out.rank, status_out.nullnorm, status_out.gradratio, status_out.rate,
+            status_out.contracted, status_out.reused)
     end
     x_end = all(isfinite, st.y_warm) ?
             _scatter_yz_r1(st.y_warm, st.z_curr, st.Y, st.Z, Val(N)) : x
@@ -2670,10 +2671,11 @@ end
         st.outer_state, m_r, st.oprob, ws.z_curr, Fx, status)
     if ws.init_failures > Int32(0)
         status_out = SolverStatus{R}(
-            status_out.code, status_out.iterations, status_out.fnorm,
+            status_out.code, Int16(0), status_out.iterations, status_out.fnorm,
             status_out.stepnorm, status_out.step_failures + ws.init_failures,
-            status_out.promoted, status_out.stationary,
-            status_out.rank, status_out.nullnorm, status_out.gradratio)
+            status_out.promoted, status_out.stationary, Int16(0),
+            status_out.rank, status_out.nullnorm, status_out.gradratio, status_out.rate,
+            status_out.contracted, status_out.reused)
     end
     if all(isfinite, ws.y_warm)
         _scatter_yz!(x, ws.y_warm, ws.z_curr, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)

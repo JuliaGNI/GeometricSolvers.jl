@@ -514,9 +514,9 @@ end
 @inline function _inner_status(status::SolverStatus{R}, M) where {R}
     isfinite(status.fnorm) || return status
     return SolverStatus{R}(
-        status.code, status.iterations, status.fnorm / M, status.stepnorm,
-        status.step_failures, status.promoted, status.stationary, status.rank,
-        status.nullnorm, status.gradratio)
+        status.code, Int16(0), status.iterations, status.fnorm / M, status.stepnorm,
+        status.step_failures, status.promoted, status.stationary, Int16(0), status.rank,
+        status.nullnorm, status.gradratio, status.rate, status.contracted, status.reused)
 end
 
 @inline function converged_status(

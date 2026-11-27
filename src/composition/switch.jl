@@ -61,6 +61,22 @@ end
 
 @inline residual_buffer(state::SwitchState) = state.Fx
 
+# The rate test and the rate of a step read the member that took the step, the second once
+# `switched` is set; `refactorize` drops the factors of both.
+@inline function rate_test_rank(state::SwitchState, x)
+    return state.switched ? rate_test_rank(state.s2, x) : rate_test_rank(state.s1, x)
+end
+@inline function observe_rate!!(state::SwitchState, m::Switch, rate)
+    state.switched || return SwitchState(observe_rate!!(state.s1, m.first, rate), state.s2,
+        state.Fx, state.fnorm₀, state.switched)
+    return SwitchState(state.s1, observe_rate!!(state.s2, m.second, rate),
+        state.Fx, state.fnorm₀, state.switched)
+end
+@inline function drop_factor!!(state::SwitchState, m::Switch)
+    return SwitchState(drop_factor!!(state.s1, m.first), drop_factor!!(state.s2, m.second),
+        state.Fx, state.fnorm₀, state.switched)
+end
+
 @inline function start!!(state::SwitchState, m::Switch, prob, x, Fx, p, fnorm₀)
     R = typeof(state.fnorm₀)
     s1 = start!!(state.s1, m.first, prob, x, Fx, p, fnorm₀)

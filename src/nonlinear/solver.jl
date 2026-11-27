@@ -99,16 +99,6 @@ end
 @inline end_status(status::SolverStatus, code::ReturnCode) = closing_status(
     status, code, false, false)
 
-# `status` with the rate of `recorded`, the status that `record` returned for the same step: a
-# problem whose `converged_status` builds a status of its own keeps the rate of the step.
-@inline function with_rate(status::SolverStatus{R}, recorded::SolverStatus{R}) where {R}
-    return SolverStatus{R}(
-        status.code, status.f_calls, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted, status.stationary, status.jvp_calls,
-        status.rank, status.nullnorm, status.gradratio, recorded.rate, status.contracted,
-        status.reused)
-end
-
 # The state after a step of rate `rate`, which `record` measured: a method whose next step reads
 # the rate, as a `Newton` with `reuse` does to refresh its factor, takes it here. The default keeps
 # `state`.
@@ -129,7 +119,8 @@ end
     return SolverStatus{R}(
         status.code, status.f_calls, status.iterations, fnorm, status.stepnorm,
         status.step_failures, status.promoted, status.stationary, status.jvp_calls,
-        status.rank, status.nullnorm, status.gradratio)
+        status.rank, status.nullnorm, status.gradratio, status.rate, status.contracted,
+        status.reused)
 end
 
 # The status that the residual test of `solve!!` reads at `x`, whose residual is `Fx`: `status`,
@@ -298,7 +289,7 @@ function solve!!(
         recorded = record(status, info)
         state = observe_rate!!(state, method, recorded.rate)
         state_step = state
-        status = with_rate(converged_status(state, prob, x, recorded), recorded)
+        status = converged_status(state, prob, x, recorded)
         if info.code == SINGULAR || info.code == NONFINITE || info.code == MAXITERS
             return finish!!(state, method, prob, x, Fx, status)
         end
@@ -332,10 +323,11 @@ function solve!!(
         # the residual test fails: the rate test ends the solve with `SUCCESS`, and the step test,
         # a zero step or the round-off stop ends it unconverged, unless the iterate it returns is
         # stationary, which a step of zero length cannot show. These tests read the steps that
-        # neither stalled nor were limited.
+        # neither stalled nor were limited: the `NaN` norm of any other step fails the bound of
+        # the rate test.
         steptested = !(info.code == STALLED || info.limited)
         xnorm = steptested ? R(rnorm(x)) : R(NaN)
-        contracted = steptested && rate_test_rank(state, x) &&
+        contracted = rate_test_rank(state, x) &&
                      rate_converged(options, status, status_k.rate, xnorm)
         if contracted ||
            steptested &&
@@ -469,7 +461,8 @@ refuses after `refactorize = true` has dropped the factor.
 With `refactorize = true`, the first step of the solve factorises afresh. A [`Newton`](@ref) with
 `keep_factor = true` otherwise starts on the factor that the last solve kept; a caller that changes
 the problem between two calls, such as an integrator that changes its step size, passes it. On an
-eliminated problem it drops the factor of the outer solve. For a method that keeps no factor across
+eliminated problem it drops the factor of the outer solve, for a composition the factors of its
+members, and for a [`LeftPreconditioned`](@ref) that of its outer method. For a method that keeps no factor across
 its steps, the keyword changes nothing.
 """
 function solve!(solver::NonlinearSolver; b = nothing, refactorize::Bool = false)

@@ -1019,7 +1019,7 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:318` (the stationarity test of `solve!!` after a step,
+- **location:** `src/nonlinear/solver.jl:309` (the stationarity test of `solve!!` after a step,
   which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
   at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
@@ -1189,3 +1189,19 @@
   `θ ≤ 10⁻³`.
 - **kind:** defect
 - **found:** 2026-11-26
+
+### K141 · A `Newton(; reuse = k, keep_factor = true)` solve that returns `SUCCESS` at its start, with no step, drops the kept factor, so the next solve factorises at its first step
+
+- **location:** `src/nonlinear/newton.jl:1187` (`keeps_factor`)
+- **evidence:** `keeps_factor` keeps the factor after `SUCCESS` only with `status.iterations == 1`
+  or a last rate `θ ≤ 10⁻³`; a solve of no step has `iterations == 0` and the rate `NaN`, which
+  fails both. With the midpoint residual of `test/nonlinear/stopping.jl`,
+  `Newton(; jacobian, reuse = 10, keep_factor = true)` and `Options(Float64; f_abstol = 0.5,
+  max_iterations = 1)`: a solve from `q₀ .+ 1` returns `SUCCESS` in one step with the factor age
+  `1`; a solve from `q₀`, whose residual passes the test, returns `SUCCESS` with `0` iterations and
+  leaves age `0`; the next solve from `q₀ .+ 1` factorises once at its first step. An integrator
+  whose start is already converged refactorises at the next step. The rule follows the decided edge
+  "after a `SUCCESS` the factor's age survives only after one iteration or a last `θ ≤ 10⁻³`" of
+  the part's spec, which does not name a solve of no step.
+- **kind:** found late
+- **found:** 2026-11-27, SR critic round 1a; the spec clause "Decided at the edges", fourth item

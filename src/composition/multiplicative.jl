@@ -82,6 +82,16 @@ end
 
 @inline residual_buffer(state::MultiplicativeState) = state.Fx
 
+@inline rate_test_rank(state::MultiplicativeState, x) = _members_rate_test_rank(state.states, x)
+@inline function observe_rate!!(state::MultiplicativeState, m::Multiplicative, rate)
+    states = _observe_member_rates!!(state.states, m.members, rate)
+    return MultiplicativeState(states, state.Fx, state.x₀)
+end
+@inline function drop_factor!!(state::MultiplicativeState, m::Multiplicative)
+    states = _drop_member_factors!!(state.states, m.members)
+    return MultiplicativeState(states, state.Fx, state.x₀)
+end
+
 @inline function start!!(
         state::MultiplicativeState, m::Multiplicative, prob, x, Fx, p, fnorm₀)
     states = _start_member_states(state.states, m.members, prob, x, Fx, p, fnorm₀)
@@ -114,8 +124,9 @@ end
         state::MultiplicativeState, m::Multiplicative, prob, x, Fx,
         status::SolverStatus{R}) where {R}
     st_init = SolverStatus{R}(
-        status.code, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted, Int32(-1), R(NaN), R(NaN))
+        status.code, Int16(0), status.iterations, status.fnorm, status.stepnorm,
+        status.step_failures, status.promoted, false, Int16(0), Int32(-1), R(NaN), R(NaN),
+        status.rate, status.contracted, status.reused)
     states, x_out, st_out = _finish_multiplicative_states(
         state.states, m.members, prob, x, Fx, status, st_init)
     # each member counts only its own sub-steps, so `Multiplicative` keeps no count

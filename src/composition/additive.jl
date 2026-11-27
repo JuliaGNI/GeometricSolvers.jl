@@ -105,6 +105,24 @@ end
     return (s1, s_tail...)
 end
 
+# The seams of the rate test over the member states of a composition that steps every member:
+# the rate test reads a step only where the last factor of every member lets it, every member
+# observes the rate of the step, and `refactorize` drops the factor of every member.
+@inline _members_rate_test_rank(::Tuple{}, x) = true
+@inline function _members_rate_test_rank(states::Tuple, x)
+    return rate_test_rank(first(states), x) && _members_rate_test_rank(Base.tail(states), x)
+end
+@inline _observe_member_rates!!(::Tuple{}, ::Tuple{}, rate) = ()
+@inline function _observe_member_rates!!(states::Tuple, members::Tuple, rate)
+    s1 = observe_rate!!(first(states), first(members), rate)
+    return (s1, _observe_member_rates!!(Base.tail(states), Base.tail(members), rate)...)
+end
+@inline _drop_member_factors!!(::Tuple{}, ::Tuple{}) = ()
+@inline function _drop_member_factors!!(states::Tuple, members::Tuple)
+    s1 = drop_factor!!(first(states), first(members))
+    return (s1, _drop_member_factors!!(Base.tail(states), Base.tail(members))...)
+end
+
 # The members finish in order, each on the iterate and the residual norm that the member before it
 # returned: an `Anderson` or `Broyden` member restores its best iterate only where that beats the
 # one an earlier member restored. Returns the states, the iterate and that norm.
@@ -133,6 +151,18 @@ end
 
 @inline residual_buffer(state::AdditiveState) = state.Fx
 
+@inline rate_test_rank(state::AdditiveState, x) = _members_rate_test_rank(state.states, x)
+@inline function observe_rate!!(state::AdditiveState, m::Additive, rate)
+    states = _observe_member_rates!!(state.states, m.members, rate)
+    return AdditiveState(
+        states, state.Fx, state.xs, state.Fxs, state.d, state.xt, state.work)
+end
+@inline function drop_factor!!(state::AdditiveState, m::Additive)
+    states = _drop_member_factors!!(state.states, m.members)
+    return AdditiveState(
+        states, state.Fx, state.xs, state.Fxs, state.d, state.xt, state.work)
+end
+
 @inline function start!!(state::AdditiveState, m::Additive, prob, x, Fx, p, fnorm₀)
     states = _start_member_states(state.states, m.members, prob, x, Fx, p, fnorm₀)
     return AdditiveState(
@@ -145,8 +175,9 @@ end
     states, x_out, fnorm = _finish_member_states(
         state.states, m.members, prob, x, Fx, status)
     st = SolverStatus{R}(
-        status.code, status.iterations, fnorm, status.stepnorm,
-        status.step_failures, status.promoted, Int32(-1), R(NaN), R(NaN))
+        status.code, Int16(0), status.iterations, fnorm, status.stepnorm,
+        status.step_failures, status.promoted, false, Int16(0), Int32(-1), R(NaN), R(NaN),
+        status.rate, status.contracted, status.reused)
     new_state = AdditiveState(
         states, state.Fx, state.xs, state.Fxs, state.d, state.xt, state.work)
     return x_out, st, new_state

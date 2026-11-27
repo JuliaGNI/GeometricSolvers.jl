@@ -404,6 +404,22 @@ end
 
 @inline residual_buffer(state::AndersonState) = state.Fx
 
+# The factor of `Anderson` and `Broyden` is that of their member, which observes the rate of the
+# mixed step.
+@inline function with_member_state(state::AndersonState{m}, ms) where {m}
+    return AndersonState{m}(
+        ms, state.Fx, state.x_prev, state.w_prev, state.x_best, state.Fx_best,
+        state.ΔX, state.ΔW, state.ages, state.work, state.fnorm₀, state.fnorm_best,
+        state.depth, state.current_depth, state.has_prev)
+end
+@inline rate_test_rank(state::AndersonState, x) = rate_test_rank(state.member_state, x)
+@inline function observe_rate!!(state::AndersonState, a::MultisecantMethod, rate)
+    return with_member_state(state, observe_rate!!(state.member_state, a.member, rate))
+end
+@inline function drop_factor!!(state::AndersonState, a::MultisecantMethod)
+    return with_member_state(state, drop_factor!!(state.member_state, a.member))
+end
+
 @inline function sync_merit(
         state::AndersonState{m}, a::MultisecantMethod{m}, merit::Real) where {m}
     ms = sync_merit(state.member_state, a.member, merit)
@@ -490,8 +506,9 @@ end
 
 @inline function restored_best_status(status::SolverStatus{R}, fnorm_best::R) where {R}
     return SolverStatus{R}(
-        status.code, status.iterations, fnorm_best, status.stepnorm,
-        status.step_failures, status.promoted, status.rank, status.nullnorm, status.gradratio)
+        status.code, Int16(0), status.iterations, fnorm_best, status.stepnorm,
+        status.step_failures, status.promoted, false, Int16(0), status.rank, status.nullnorm,
+        status.gradratio, status.rate, status.contracted, status.reused)
 end
 
 @inline function finish!!(

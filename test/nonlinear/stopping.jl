@@ -15,6 +15,8 @@ using GeometricSolvers: L2Norm, LUFactorization, MAXITERS, Newton, NonlinearProb
                         Options, PerSystem,
                         QuasiNewton, STALLED, SUCCESS, SolverStatus, StepInfo, init,
                         init_state, record, solve, solve!, solve_batch!, stopping_test
+using GeometricSolvers: Additive, Anderson, Broyden, Fallback, FixedWeights, Multiplicative,
+                        Picard, Repeat, SVDFactorization, Switch
 
 include("../helpers/matrix.jl")
 include("../helpers/standard_problems.jl")
@@ -200,6 +202,15 @@ end
     @test st_c.code == SUCCESS
     @test st_c.contracted
     @test !st_c.stationary
+    # from `x₀ = 2` under `x_abstol = g_tol = 10⁻³` the stationarity test fails before the fourth
+    # step and holds after it, where the rate test holds too: the stationarity test ends the solve
+    _, st_both = solve(prob, SVector{1, T}(2), GeometricSolvers.GaussNewton();
+        options = Options(T; x_abstol = T(1e-3), g_tol = T(1e-3)))
+    @test st_both.code == SUCCESS
+    @test st_both.iterations == 4
+    @test st_both.stationary
+    @test !st_both.contracted
+    @test stopping_test(st_both) == :stationarity
 end
 
 @testset "a Deflated problem reports the rate of its steps, $T" for T in REAL_ELTYPES
@@ -227,6 +238,16 @@ end
     _, st = solve(prob, one(T), m)
     @test st.code == MAXITERS
     @test !st.contracted
+    # `best = true` returns the start, of residual `1/2`, with the rate of the last step, which
+    # under `reuse = 3` stepped along the factor of an earlier step
+    x_best, st_best = solve(prob, one(T),
+        Newton(; jacobian = (x, p) -> one(T), best = true, reuse = 3);
+        options = Options(T; max_iterations = 4))
+    @test st_best.code == MAXITERS
+    @test x_best == 1
+    @test st_best.fnorm == T(1) / 2
+    @test st_best.rate == T(3) / 2
+    @test st_best.reused
 end
 
 # A method whose step divides `x` by `100` and reports the code `code` and the flag `limited`, so
@@ -438,6 +459,13 @@ end
     @test x == 2
     _, st_off = solve(linear_problem(one(T)), T(4), m)
     @test st_off.code == MAXITERS
+    # the Jacobian `1/2` maps `x` to `-x`: every step after the first has the rate `1`, after a
+    # step of rate `1` too, and the stop needs a rate below `1` before it
+    _, st_one = solve(linear_problem(one(T)), one(T), linear_newton(T(1) / 2);
+        options = Options(T; roundoff = true, max_iterations = 6))
+    @test st_one.code == MAXITERS
+    @test st_one.iterations == 6
+    @test st_one.rate == 1
 end
 
 @testset "Options take κ in (0, 1) and the roundoff flag, $T" for T in REAL_ELTYPES
@@ -565,6 +593,16 @@ end
         @test x_mixed == 0
         @test calls[] == 2
     end
+    # a rate of exactly `1` refreshes too: the Jacobian `1/2` maps `x` to `-x`, and the second step,
+    # along the factor of the first, has the rate `1`
+    calls[] = 0
+    J_half = CountingJacobian((x, p) -> T(1) / 2, calls)
+    _, st_one = solve(
+        linear_problem(one(T)), one(T), Newton(; jacobian = J_half, reuse = 10);
+        options = Options(T; max_iterations = 3))
+    @test st_one.code == MAXITERS
+    @test st_one.rate == 1
+    @test calls[] == 2
 end
 
 # A preconditioner that the rule state of its `GMRES` names and that no step applies here.
@@ -810,6 +848,233 @@ stationary_action(x, p) = x[1]^4 / 4 - x[1]^2 / 2 + x[2]^2 * (1 + x[1]^2) / 2
             @test st₂.reused == !refactorize
         end
     end
+end
+
+@testset "a composition reports the rate test of its member, $T" for T in REAL_ELTYPES
+    # the rate-`1/100` contraction of the testset "the rate test returns SUCCESS before the
+    # residual test holds", through each composition: the status that a composition rebuilds from
+    # its member's keeps the rate, `contracted` and `reused`
+    prob = linear_problem(T(99) / 100)
+    nb = linear_newton(one(T))
+    opt = Options(T; f_reltol = 0, x_abstol = T(1e-4))
+    _, st_plain = solve(prob, one(T), nb; options = opt)
+    @test stopping_test(st_plain) == :contraction
+    @test st_plain.iterations == 3
+    half = FixedWeights((1 // 2, 1 // 2))
+    # `Switch` switches at the first step under the threshold `10³`, and never under `10⁻³⁰`;
+    # two equal candidates under fixed weights give the step of the member
+    for m in (Repeat(nb, 1), Switch(nb, nb; threshold = 1e3), Switch(nb, nb; threshold = 1e-30),
+        Fallback(nb, Picard()), Additive((nb, nb), half))
+        _, st = solve(prob, one(T), m; options = opt)
+        @test st.code == SUCCESS
+        @test st.contracted
+        @test stopping_test(st) == :contraction
+        @test st.iterations == 3
+        @test st.rate == st_plain.rate
+    end
+    # a `Multiplicative` of two steps of rate `1/10` on `F(x) = 9x/10`, of rate `1/100` together:
+    # its `Newton` members report diagnostics, and its `Picard` members report none, which the
+    # status of the `Multiplicative` itself then carries
+    prob_9 = linear_problem(T(9) / 10)
+    for m in (Multiplicative(nb, nb), Multiplicative(Picard(), Picard()))
+        _, st = solve(prob_9, one(T), m; options = opt)
+        @test st.code == SUCCESS
+        @test st.contracted
+        @test stopping_test(st) == :contraction
+        @test st.iterations == 3
+        @test isapprox(st.rate, T(1) / 100; rtol = 100 * eps(T))
+    end
+    # `Anderson` and `Broyden` end on the rate test too, with rates of their own mixed steps
+    for m in (Anderson(nb), Broyden(nb))
+        _, st = solve(prob, one(T), m; options = opt)
+        @test st.code == SUCCESS
+        @test st.contracted
+        @test stopping_test(st) == :contraction
+        @test 0 <= st.rate < 1
+    end
+    # the last corrector of a `Continuation` on `F(x) = x + x²` from `x₀ = 1`: its `Newton` with
+    # `reuse = 10` steps along one factor from the end of the path and contracts linearly
+    cont = GeometricSolvers.Continuation(GeometricSolvers.NewtonHomotopy();
+        method = Newton(; reuse = 10), h₀ = 1 / 2, h_max = 1)
+    _, st_cont = solve(NonlinearProblem((x, p) -> x + x^2), one(T), cont; options = opt)
+    @test st_cont.code == SUCCESS
+    @test st_cont.contracted
+    @test stopping_test(st_cont) == :contraction
+    @test 0 < st_cont.rate < 1
+    @test st_cont.reused
+    # a `reuse = 3` member steps along the factor of its first step at the third step
+    nr = Newton(; jacobian = (x, p) -> one(T), reuse = 3)
+    for m in (nr, Repeat(nr, 1), Switch(nr, nr; threshold = 1e3),
+        Switch(nr, nr; threshold = 1e-30), Fallback(nr, Picard()))
+        _, st = solve(prob, one(T), m; options = opt)
+        @test st.code == SUCCESS
+        @test st.contracted
+        @test st.iterations == 3
+        @test st.reused
+    end
+end
+
+# A residual of rank `1` with no root, as `vp_deficient` above without its eliminated unknown:
+# Newton steps along an SVD factor of rank `1` contract onto a least-squares point.
+deficient(x, p) = SVector((x[1] + x[2])^2 - 2, (x[1] + x[2]) - eltype(x)(7) / 5)
+
+@testset "a composition reads the rank of its member's factor in the rate test, $T" for T in REAL_ELTYPES
+    # under `x_abstol = 10⁻²` and `g_tol = 0` the plain solve stalls at the fourth step on the
+    # step test, at `fnorm ≈ 0.0134`, where the rate test would hold along a factor of full rank.
+    # The `Switch` with the SVD member first never switches, and the one with it second switches
+    # at the first step. In the `Additive`, the LU member reports no rank, and the SVD member
+    # reports rank `1`, which keeps the rate test off.
+    svdn = Newton(; linsolve = SVDFactorization())
+    opt = Options(T; x_abstol = T(1e-2), g_tol = 0)
+    x₀ = SVector{2, T}(0, 3)
+    _, st_plain = solve(NonlinearProblem(deficient), x₀, svdn; options = opt)
+    @test st_plain.code == STALLED
+    @test st_plain.rank == 1
+    for m in (Repeat(svdn, 1), Switch(svdn, Newton(); threshold = 1e-30),
+        Switch(Newton(), svdn; threshold = 1e3), Additive(Newton(), svdn),
+        Multiplicative(svdn, svdn))
+        _, st = solve(NonlinearProblem(deficient), x₀, m; options = opt)
+        @test st.code != SUCCESS
+        @test !st.contracted
+    end
+    # the mixed steps of `Anderson` and `Broyden` reach the bound of the rate test under
+    # `x_abstol = 10⁻³`, and the outer `Newton` of a `LeftPreconditioned` with a `Picard` inner,
+    # which steps on `rˡ = F`, under `x_abstol = 10⁻²`
+    opt_3 = Options(T; x_abstol = T(1e-3), g_tol = 0)
+    for m in (Anderson(svdn), Broyden(svdn))
+        _, st = solve(NonlinearProblem(deficient), x₀, m; options = opt_3)
+        @test st.code != SUCCESS
+        @test !st.contracted
+    end
+    deficient!(y, x, p) = (y .= deficient(x, p); y)
+    _, st_lp = solve(NonlinearProblem(deficient!), Vector(x₀),
+        GeometricSolvers.LeftPreconditioned(svdn, Picard()); options = opt)
+    @test st_lp.code != SUCCESS
+    @test !st_lp.contracted
+end
+
+@testset "a step of rate θ ≥ 1 along a reused factor refreshes a composition's member, $T" for T in REAL_ELTYPES
+    # the fixture of "a step of rate θ ≥ 1 along a reused factor refreshes it": without the
+    # refresh the iterates grow by `3/2` at each step. `Switch(qn, Picard())` never switches, and
+    # `Switch(Newton(), qn)` switches at the first step. The `Additive` of two equal candidates
+    # refreshes each of its members.
+    for (wrap, n) in ((m -> Repeat(m, 1), 2), (
+        m -> Switch(m, Picard(); threshold = 1e-30), 2),
+        (m -> Switch(Newton(), m; threshold = 1e3), 2),
+        (m -> Additive((m, m), FixedWeights((1 // 2, 1 // 2))), 4),
+        (m -> Multiplicative(m), 2))
+        calls = Ref(0)
+        J = CountingJacobian((x, p) -> x == 2 ? T(2) / 5 : one(T), calls)
+        x, st = solve(linear_problem(one(T)), T(2), wrap(QuasiNewton(10; jacobian = J));
+            options = Options(T; max_iterations = 6))
+        @test st.code == SUCCESS
+        @test x == 0
+        @test calls[] == n
+    end
+    # `Anderson` of depth `1` on `F(x) = x` in two unknowns, with the Jacobian `diag(1/3, 3)` at
+    # `x₀ = (2, 1)` and the exact identity elsewhere: a mixed step along the first factor has a
+    # rate `θ ≥ 1`, and the refresh of the member reads the identity and lands at the root.
+    # Without it the member keeps the first factor.
+    calls = Ref(0)
+    x₀ = SVector{2, T}(2, 1)
+    J = CountingJacobian(
+        (x, p) -> x == x₀ ? SMatrix{2, 2, T}(T(1) / 3, 0, 0, 3) : SMatrix{2, 2, T}(I), calls)
+    x, st = solve(
+        NonlinearProblem((x, p) -> x), x₀, Anderson(QuasiNewton(10; jacobian = J), 1);
+        options = Options(T; max_iterations = 10))
+    @test st.code == SUCCESS
+    @test x == zero(x)
+    @test calls[] == 2
+    # the outer `QuasiNewton` of a `LeftPreconditioned` with a `Picard` inner, whose residual
+    # `rˡ = F` has the slope `2/5` at `x₁ = 2` and about `1` elsewhere: the second step, along the
+    # first factor, has the rate `θ ≈ 3/2`, and the refresh brings the iterate to the root. Without
+    # it the iterates grow.
+    function bump!(y, x, p)
+        d = x[1] - 2
+        y[1] = x[1] - 3 * d * exp(-4 * d^2) / 5
+        y[2] = x[2]
+        return y
+    end
+    x_lp, st_lp = solve(NonlinearProblem(bump!), T[2, 1],
+        GeometricSolvers.LeftPreconditioned(QuasiNewton(10), Picard());
+        options = Options(T; max_iterations = 10))
+    @test st_lp.code == SUCCESS
+    @test maximum(abs, x_lp) < 1e-4
+end
+
+@testset "refactorize = true drops the factor of a composition's members, $T" for T in REAL_ELTYPES
+    # the pair of "refactorize = true after a change of h adds one factorisation" through each
+    # composition: one more factorisation for each member with a kept factor
+    function run(wrap, refactorize)
+        calls = Ref(0)
+        m = wrap(Newton(; jacobian = CountingJacobian(midpoint_jacobian, calls), reuse = 5,
+            keep_factor = true))
+        h = T(1) / 20
+        q₀ = SVector{2, T}(1, 0)
+        solver = init(NonlinearProblem(midpoint_residual), q₀, m, (; q₀, h))
+        for _ in 1:3
+            q₀, _ = solve!(solver, q₀, (; q₀, h))
+        end
+        h = T(1) / 40
+        before = calls[]
+        _, st = solve!(solver, q₀, (; q₀, h); refactorize)
+        return calls[] - before, st
+    end
+    half = FixedWeights((1 // 2, 1 // 2))
+    for (wrap, members) in ((m -> Repeat(m, 1), 1), (m -> Switch(m, m; threshold = 1e3), 1),
+        (m -> Switch(m, m; threshold = 1e-30), 1), (m -> Fallback(m, Picard()), 1),
+        (m -> Anderson(m), 1), (m -> Broyden(m), 1),
+        (m -> Additive((m, m), half), 2), (m -> Multiplicative(m, m), 2))
+        n_plain, st_plain = run(wrap, false)
+        n_refresh, st_refresh = run(wrap, true)
+        @test st_plain.code == SUCCESS
+        @test st_refresh.code == SUCCESS
+        @test n_refresh == n_plain + members
+    end
+end
+
+@testset "refactorize = true drops the factor of a Continuation" begin
+    # the last corrector of a `Continuation` keeps the factor of its member: at the third step
+    # of the midpoint rule the solve with `refactorize = true` factorises once more. In `Float32`
+    # the solves of this sequence end `STALLED`, which keeps no factor.
+    function run(refactorize)
+        calls = Ref(0)
+        m = GeometricSolvers.Continuation(GeometricSolvers.NewtonHomotopy();
+            method = Newton(; jacobian = CountingJacobian(midpoint_jacobian, calls),
+                reuse = 5, keep_factor = true))
+        h = 1 / 20
+        q₀ = SVector(1.0, 0.0)
+        solver = init(NonlinearProblem(midpoint_residual), q₀, m, (; q₀, h))
+        for _ in 1:2
+            q₀, _ = solve!(solver, q₀, (; q₀, h))
+        end
+        @test solver.state.member.rule.age > 0
+        before = calls[]
+        _, st = solve!(solver, q₀, (; q₀, h); refactorize)
+        return calls[] - before, st
+    end
+    n_plain, st_plain = run(false)
+    n_refresh, st_refresh = run(true)
+    @test st_plain.code == SUCCESS
+    @test st_refresh.code == SUCCESS
+    @test n_refresh == n_plain + 1
+end
+
+midpoint!(y, x, p) = (y .= midpoint_residual(SVector{2}(x), p); y)
+
+@testset "refactorize = true drops the factor of a LeftPreconditioned, $T" for T in REAL_ELTYPES
+    # the outer `Newton` of a `LeftPreconditioned`, whose Jacobian is a difference of the
+    # preconditioned residual, keeps its factor across solves; the seam of `refactorize` drops it
+    m = GeometricSolvers.LeftPreconditioned(
+        Newton(; reuse = 5, keep_factor = true), Picard())
+    q₀ = SVector{2, T}(1, 0)
+    p = (; q₀, h = T(1) / 20)
+    solver = init(NonlinearProblem(midpoint!), Vector(q₀), m, p)
+    _, st = solve!(solver, Vector(q₀), p)
+    @test st.code == SUCCESS
+    @test solver.state.outer_state.rule.age > 0
+    dropped = GeometricSolvers.drop_factor!!(solver.state, solver.method)
+    @test dropped.outer_state.rule.age == 0
 end
 
 allocations(f::F, a::A) where {F, A} = (f(a); @allocated f(a))

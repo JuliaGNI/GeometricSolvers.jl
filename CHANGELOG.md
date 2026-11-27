@@ -36,7 +36,13 @@ so that a compat-only bump can be told apart from an interface change.
   `solve!` of a `ReparametrizedSolver` takes no such keyword (K140). The inner options of a
   `BlockEliminated` and a `BatchEliminated` keep `kappa` and `roundoff`. Under
   `reuse`, a step along a reused factor or preconditioner of rate `θ ≥ 1` refreshes it at the next
-  step, and the new flag `status.reused` reports a last step along a reused factor.
+  step, and the new flag `status.reused` reports a last step along a reused factor. A composition
+  keeps `rate`, `contracted` and `reused` of the status of its member, and passes the factor rules
+  to its members: the rate test of `Repeat`, of `Switch` (the member that took the step), of
+  `Additive`, `Multiplicative`, `Anderson` and `Broyden` (every member) and of the outer method of
+  a `LeftPreconditioned` reads the rank of those members' factors; the same members take the rate
+  of each step, which refreshes a reused factor at `θ ≥ 1`; and `refactorize = true` drops the
+  factors of the members, also of a `Fallback` and a `Continuation`.
   `SolverStatus` grows from 36 to 44 bytes in `Float32` and from 56 to 72 in `Float64`, and
   `Options` from 32 to 40 and from 56 to 72; both stay `isbits`. The step-test testset of
   `test/nonlinear/solver.jl` sets `kappa = 1e-6`, because under `κ = 1/10` and `x_reltol = 0.5`
