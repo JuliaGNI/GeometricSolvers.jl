@@ -1,12 +1,13 @@
-# The measurement scripts of `scripts/hardware/` and `scripts/r2_throughput.jl` run to completion
-# at their smallest size: `ka_lu_large.jl` on `JLArray`, `sync_cost.jl` on the CPU and on
-# `JLArray`, `r3_lu_blas.jl` with OpenBLAS, `rl_host_lu.jl` on one thread, and `r2_throughput.jl`
-# on the CPU, whose SoA right-hand sides must give the roots of the AoS ones. A device or a library
-# that is not present gives one line and no rows. Scalar indexing of a device array is disallowed,
-# so a script that reads a device array entry by entry fails here.
+# The measurement scripts of `scripts/hardware/`, `scripts/r2_throughput.jl` and
+# `scripts/recycling_spike.jl` run to completion at their smallest size: `ka_lu_large.jl` on
+# `JLArray`, `sync_cost.jl` on the CPU and on `JLArray`, `r3_lu_blas.jl` with OpenBLAS,
+# `rl_host_lu.jl` on one thread, `r2_throughput.jl` on the CPU, whose SoA right-hand sides must
+# give the roots of the AoS ones, and `recycling_spike.jl` at its smallest grid point, after its
+# control. A device or a library that is not present gives one line and no rows. Scalar indexing
+# of a device array is disallowed, so a script that reads a device array entry by entry fails here.
 
 using GPUArraysCore: allowscalar
-using LinearAlgebra: BLAS, I, norm
+using LinearAlgebra: BLAS, I, norm, qr, rank
 using Random: Xoshiro
 using Test
 
@@ -34,6 +35,10 @@ end
 
 module RLHostLU
 include(joinpath(@__DIR__, "..", "..", "scripts", "hardware", "rl_host_lu.jl"))
+end
+
+module RecyclingSpike
+include(joinpath(@__DIR__, "..", "..", "scripts", "recycling_spike.jl"))
 end
 
 @testset "the median of the timed calls" begin
@@ -156,6 +161,175 @@ end
     @test RLHostLU.rl_verdict(vec(table([0.5, 0.5, 1.0, 1.0]; berr = 1.0))).rule === :stop
     @test RLHostLU.rl_verdict(vec(table([0.5, 1.0, 0.5, 0.5]))).bands[Float64] ==
           [(8, 8), (32, 64)]
+end
+
+@testset "recycling_spike.jl runs at its smallest grid point, and its verdict follows the rules" begin
+    buf = IOBuffer()
+    out = RecyclingSpike.main(["125", "20", "5", "1e-2"]; io = buf)
+    text = String(take!(buf))
+    for key in ("commit", "machine", "julia", "BLAS")
+        @test occursin("\n# $key: ", text)
+    end
+    # the control's order, which the script asserts, and its line of the header
+    c = out.control
+    @test c.recycling < c.no_recycling < c.gmres
+    cc(products; converged = true) = (; products, converged)
+    @test RecyclingSpike.check_control(cc(3), cc(2), cc(1)) === nothing
+    for (g, n, r) in ((3, 2, 2), (2, 2, 1), (3, 1, 2))
+        @test_throws r"^the control's order fails: GCRO-DR recycling" RecyclingSpike.check_control(
+            cc(g), cc(n), cc(r))
+    end
+    for i in 1:3
+        cols = [cc(3), cc(2), cc(1)]
+        cols[i] = cc(cols[i].products; converged = false)
+        @test_throws r"^the control does not converge in every column" RecyclingSpike.check_control(
+            cols...)
+    end
+    @test occursin(
+        "# control (m = 30, k = 10, η = 1e-8): GMRES(m) $(c.gmres), GCRO-DR no " *
+        "recycling $(c.no_recycling), GCRO-DR recycling $(c.recycling)\n",
+        text)
+    row = only(out.rows)
+    @test (row.N, row.m, row.k, row.η) == (125, 20, 5, 1e-2)
+    for col in (row.gmres, row.norec, row.rec)
+        @test col.converged
+        @test col.products >= col.steps >= 10
+        # one refresh at the first step of each solve at least
+        @test col.refreshes >= 10
+    end
+    @test occursin("\n| 125 | 20 | 5 | 0.01 | $(row.gmres.products) | ", text)
+    @test out.verdict.rule === :not_evaluated
+    @test occursin("\nbuild rule: not evaluated (the grid is not the full grid)\n", text)
+
+    # a GCRO-DR count is the operator's own count of its calls, `A·U` products included: ten
+    # solves of the control, each from a recycled space after the first, take `k` products each
+    prob, x0 = RecyclingSpike.control_problem()
+    s = RecyclingSpike.GCRODR(30, 10; recycle = true)
+    Jbuf = copy(prob.jacobian_prototype)
+    calls = 0
+    for p in 1:10
+        before = RecyclingSpike.products(s)
+        ok, _ = RecyclingSpike.gcrodr_newton!(s, prob.F, prob.J, Jbuf, nothing, x0, p, 1e-8)
+        @test ok
+        calls += RecyclingSpike.products(s) - before
+    end
+    @test s.au == 9 * 10
+    @test RecyclingSpike.products(s) == calls == c.recycling
+    # equal storage: no cycle holds more than the `m + 1` basis columns of GMRES(m)
+    @test s.basis == 30 + 1
+    # a solve whose right-hand side meets the tolerance takes no product, `A·U` included
+    op = RecyclingSpike.CountingOperator(Jbuf, nothing, zeros(length(x0)), 0)
+    y, capped = RecyclingSpike.gcrodr_solve!(s, op, zeros(length(x0)), 0.0)
+    @test op.calls == 0 && iszero(y) && !capped
+
+    # `F(x) = x − 1 + 10⁻²⁰ e₁` stays at `10⁻²⁰` at `x = 1`, where `x₁ − 10⁻²⁰` rounds to `1`:
+    # the solve stops on the step test after one step, not after 100, and fails the residual test
+    F1! = (r, x, p) -> (r .= x .- 1; r[1] += 1e-20; r)
+    J1! = (J, x, p) -> copyto!(J, I)
+    ok, steps = RecyclingSpike.gcrodr_newton!(
+        RecyclingSpike.GCRODR(20, 5; recycle = false),
+        F1!, J1!, zeros(4, 4), nothing, ones(4), nothing, 1e-8)
+    @test (ok, steps) == (false, 1)
+    # a count of products that the operator did not make stops the solve
+    s3 = RecyclingSpike.GCRODR(20, 5; recycle = false)
+    J3! = (J, x, p) -> (s3.arnoldi += 1; copyto!(J, I))
+    @test_throws r"^GCRO-DR counted 2 products, the operator was called 1 times" RecyclingSpike.gcrodr_newton!(
+        s3, F1!, J3!, zeros(4, 4), nothing, ones(4), nothing, 1e-8)
+
+    # an identity operator takes one product, and the solve stops there
+    n = 50
+    op = RecyclingSpike.CountingOperator(Matrix(1.0I, n, n), nothing, zeros(n), 0)
+    b = collect(range(1.0, 2.0; length = n))
+    s1 = RecyclingSpike.GCRODR(20, 5; recycle = true)
+    y, capped = RecyclingSpike.gcrodr_solve!(s1, op, b, 1e-10 * norm(b))
+    @test op.calls == 1 && !capped
+    @test isapprox(y, b; rtol = 8 * eps(Float64))
+    # the cyclic shift `A eᵢ = eᵢ₊₁` from `e₁` spans `e₁ … e₆` in exact arithmetic and breaks
+    # down at the sixth step, `‖w‖ = 0`: the solve is exact and leaves a finite recycled space of
+    # five vectors, from eigenvalues that are the sixth roots of unity, complex pairs among them
+    A = circshift(Matrix(1.0I, 6, 6), (1, 0))
+    op = RecyclingSpike.CountingOperator(A, nothing, zeros(6), 0)
+    s2 = RecyclingSpike.GCRODR(20, 5; recycle = true)
+    e1 = [1.0; zeros(5)]
+    y, capped = RecyclingSpike.gcrodr_solve!(s2, op, e1, 1e-14)
+    @test op.calls == 6 && !capped
+    @test norm(A * y - e1) <= 1e-12
+    @test size(s2.U) == (6, 5) && all(isfinite, s2.U)
+
+    # the harmonic Ritz basis: the eigenvalues of smallest modulus, a complex pair by its real and
+    # imaginary parts, a pair cut at the `k`-th vector by its real part
+    M = zeros(5, 5)
+    M[1:2, 1:2] .= [0.1 -0.1; 0.1 0.1]
+    M[3, 3], M[4, 4], M[5, 5] = 3.0, 1.0, 2.0
+    # in a random orthonormal frame `Qr`, so that no basis vector is a coordinate vector
+    Qr = Matrix(qr(randn(Xoshiro(3), 5, 5)).Q)
+    for (k, span) in ((1, 1:2), (2, 1:2), (3, [1, 2, 4]), (4, [1, 2, 4, 5]))
+        Pk = RecyclingSpike.harmonic_basis(Qr * M * Qr', Matrix(1.0I, 5, 5), k)
+        Qs = Qr[:, span]
+        @test size(Pk) == (5, k)
+        @test isapprox(Pk' * Pk, I; atol = 1e-12)
+        @test norm(Pk - Qs * (Qs' * Pk)) <= 1e-12
+        @test rank(Qs' * Pk) == k
+    end
+
+    # the Newton loop of GCRO-DR takes the steps and the refreshes of `Newton(; reuse)` with a
+    # preconditioned `GMRES`, early refreshes after an inner cap included
+    sp, _, z0, _, _ = RecyclingSpike.sparse_bracket_problem(125)
+    for maxiter in (2, 500), reuse in (1, 2, 5), η in (1e-2, 1e-6)
+        kw = (; m = 20, k = 5, η, preconditioned = true, reuse, maxiter)
+        a = RecyclingSpike.run_column(:gmres, sp, z0, RecyclingSpike.RC_PS; kw...)
+        b = RecyclingSpike.run_column(:norec, sp, z0, RecyclingSpike.RC_PS; kw...)
+        @test (a.converged, a.steps, a.refreshes) == (b.converged, b.steps, b.refreshes)
+        @test a.converged
+        @test 0.9 * a.products <= b.products <= 1.1 * a.products
+    end
+    @test_throws r"^ArgumentError: GCRO-DR needs 0 < k < m, got m = 5, k = 5" RecyclingSpike.GCRODR(
+        5, 5; recycle = true)
+
+    # synthetic rows of the full grid: `r` per cell from `ratio`, recycling below no recycling,
+    # and `from(N, m, k, η)` solves from a recycled space
+    function grid(ratio; norec = 1.0, conv = (_...) -> (true, true), from = (_...) -> 3)
+        [(N = N, m = m, k = k, η = η, gmres = cc(1000; converged = conv(N, m, k, η)[1]),
+             norec = cc(round(Int, 1000 * norec)),
+             rec = (;
+                 cc(round(Int, 1000 * ratio(N, m, k, η));
+                     converged = conv(N, m, k, η)[2])...,
+                 from_u = from(N, m, k, η)))
+         for N in RecyclingSpike.RC_NS,
+        m in RecyclingSpike.RC_MS, k in RecyclingSpike.RC_KS,
+        η in RecyclingSpike.RC_ETAS] |> vec
+    end
+    verdict = RecyclingSpike.rc_verdict
+    @test verdict(grid((_...) -> 1.08)).rule === :stop
+    @test verdict(grid((_...) -> 0.90)).rule === :stop
+    @test verdict(grid((_...) -> 0.89)).rule === :between
+    # the build rule needs one pair `(m, k)` at both `N` and both `η`
+    v = verdict(grid((N, m, k, η) -> (m, k) == (30, 10) ? 0.75 : 1.0))
+    @test v.rule === :build && v.pairs == [(30, 10)]
+    @test verdict(grid((N, m, k, η) -> (m, k) == (30, 10) ? 0.76 : 1.0)).rule === :between
+    @test verdict(grid((N, m, k, η) -> (m, k, N) == (30, 10, 125) ? 0.5 : 1.0)).rule ===
+          :between
+    @test verdict(grid((N, m, k, η) -> (m, k, η) == (30, 10, 1e-2) ? 0.5 : 1.0)).rule ===
+          :between
+    # recycling must also take fewer products than no recycling
+    @test verdict(grid((_...) -> 0.5; norec = 0.5)).rule === :between
+    # a GMRES(m) that does not converge meets neither rule; a recycling column that does not
+    # converge beside one that does counts as `r ≥ 0.90`
+    @test verdict(grid((_...) -> 1.0; conv = (N, m, k, η) -> (N == 125, true))).rule ===
+          :between
+    @test verdict(grid((_...) -> 0.5; conv = (N, m, k, η) -> (N == 125, true))).rule ===
+          :between
+    @test verdict(grid((N, m, k, η) -> N == 125 ? 1.0 : 0.5;
+        conv = (N, m, k, η) -> (true, N == 125))).rule === :stop
+    # a cell in which no solve starts from a recycled space meets neither rule
+    @test verdict(grid((_...) -> 1.08; from = (_...) -> 0)).rule === :between
+    @test verdict(grid((_...) -> 1.08; from = (N, m, k, η) -> N == 125 ? 0 : 3)).rule ===
+          :between
+    @test verdict(grid((N, m, k, η) -> (m, k) == (30, 10) ? 0.75 : 1.0;
+        from = (N, m, k, η) -> (m, k, η) == (30, 10, 1e-6) ? 0 : 3)).rule === :between
+    @test verdict(grid((_...) -> 0.5)[1:(end - 1)]).rule === :not_evaluated
+    nc = RecyclingSpike.cell_text(cc(7; converged = false))
+    @test nc == "no convergence"
 end
 
 @testset "ka_lu_large.jl runs on JLArray at n = 64" begin

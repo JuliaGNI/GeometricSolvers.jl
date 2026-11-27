@@ -182,6 +182,37 @@ so that a compat-only bump can be told apart from an interface change.
   a matrix-free linear method (`GMRES`, `BiCGStab`, `DQGMRES`, `MINRESQLP`) or a
   `KroneckerFactorization` raise an `ArgumentError`.
 
+- **`scripts/recycling_spike.jl` (new) counts the Jacobian–vector products of Krylov recycling
+  under a lagged preconditioner.** On `sparse_bracket_problem` at `N = 125` and `768`, ten Newton
+  solves along `p = 1.00, 1.05, …, 1.45`, each from the root before, with `FixedForcing(η)` and
+  the LU of the analytic Jacobian as a right preconditioner that `Newton(; reuse = k)` refreshes,
+  it gives the products of the package's `GMRES(; restart = m)` and of a GCRO-DR(m, k) written in
+  the script, without and with the recycled space kept between linear solves, the `k` products of
+  `A·U` included, over `m ∈ {20, 30}`, `k ∈ {5, 10}` and `η ∈ {1e-2, 1e-6}`. A control with six
+  eigenvalues in `[0.01, 0.05]` must give fewer products with recycling than without, and fewer
+  without than with `GMRES(m)`, and each GCRO-DR count must equal a direct count of the
+  operator's calls; the script stops with an error otherwise. A cell in which no linear solve of
+  GCRO-DR with recycling starts from a recycled space ("solves from U" = 0) counts for neither
+  rule, as a cell in which GMRES(m) does not converge does; `build_cell` and `stop_cell` both
+  test it. It prints one verdict line for each rule. The rules were decided before the run,
+  except this condition, which was added after the first run of the full grid showed that no
+  solve had started from a recycled space. Measured with this script on commit `5a19709`, on an
+  Apple M4 Max with Julia 1.13.4, OpenBLAS 0.3.30 and 2 BLAS threads, the control gave 779, 408
+  and 271 products, and every cell of the grid gave the same count in all three columns (23 at
+  `η = 1e-2`, 36 at `η = 1e-6`, over 21 Newton steps). No linear solve started from a recycled
+  space in any of the 16 cells: the inner solves before the last ran fewer than `k` Arnoldi steps
+  each, and such a cycle leaves none. Before that condition, the stop rule (`r ≥ 0.90`) held in
+  16 of 16 cells, and so measured that recycling never ran, not what it does. The full grid,
+  re-run on the script with it, prints the same counts and the verdict lines "build rule … not
+  met", "stop rule (r ≥ 0.90 in every cell): not met (0 of 16 cells)" and "result: between",
+  because no cell started a solve from a recycled space. The spike keeps its fresh-LU protocol,
+  the preconditioner refreshed at the first Newton step of every solve; a protocol with a
+  preconditioner kept across solves is left to later work (#147).
+  `test/integration/hardware_scripts.jl` runs the script at `N = 125`, `m = 20`, `k = 5`,
+  `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the package's steps and refreshes,
+  and its verdict on synthetic rows, among them a cell with no solve from a recycled space, which
+  meets neither rule.
+
 ### Changed
 
 - **A factor in the matrix's own element type divides a matrix whose largest entry lies below 1
