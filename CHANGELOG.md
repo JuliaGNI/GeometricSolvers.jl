@@ -80,8 +80,9 @@ so that a compat-only bump can be told apart from an interface change.
   of `J = c I` and a constant `b`, each stored column is parallel to its vector and has unit norm
   only to the round-off of `TB`, so the remainder lies along the stored basis; the test catches it,
   and the CGS2 cycle on a `Float16` basis on `Float64` with `maxiter = restart = 20` and
-  `tol = 1e-10` converges in 3 iterations, one per cycle. This closes known issue K146. The constant 2e-3 lies between the largest ratio `hj / (eps(TB) ‖w‖)` of such an invariant
-  step, 2.44e-4, and the smallest of a non-invariant step, 0.0168, measured by
+  `tol = 1e-10` converges in 3 iterations, one per cycle. This closes known issue K146. The
+  constant 2e-3 lies between the largest ratio `hj / (eps(TB) ‖w‖)` of such an invariant step,
+  2.44e-4, and the smallest of a non-invariant step, 0.0168, measured by
   `scripts/gmres_breakdown_ratio.jl` on the reduced-basis systems of the tests and the
   Float32-basis column of the standard test set. An invariant space whose stored columns also carry
   a direction error of order eps(TB) (ratios 0.27-0.63 measured) leaves a remainder the test does

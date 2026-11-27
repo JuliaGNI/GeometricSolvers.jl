@@ -267,8 +267,9 @@ doi:10.1137/0914028).
   basis: the CGS2 step takes three reductions here, because column `j + 1` of the basis cannot
   hold ``w_1`` in `T`, and the MGS step takes a second pass. Each step takes one more reduction,
   the norm of ``w = J M^{-1} v_j`` before the projections, for a breakdown test: where the cycle
-  would go on, a remainder ``h_{j+1,j} < 2 \\cdot 10^{-3}\\, \\mathrm{eps}(TB) \\|w\\|`` is a
-  breakdown, and the cycle ends on its true residual. That remainder is what the projections
+  would go on, its Givens estimate above the tolerance and neither `restart` nor `maxiter` reached,
+  a remainder ``h_{j+1,j} < 2 \\cdot 10^{-3}\\, \\mathrm{eps}(TB) \\|w\\|`` is a breakdown, and
+  the cycle ends on its true residual. That remainder is what the projections
   leave on a Krylov space that is invariant, as that of `J = c I` and a constant `b`, where each
   stored column is parallel to its vector and has unit norm only to the round-off of `TB`;
   without the test the step would take it for a new basis vector parallel to the last one. An
