@@ -13,8 +13,8 @@
 # problem's `z0` and each later one from the root of the solve before. Every solve is a Newton
 # iteration with the forcing term `FixedForcing(η)`, the default `Options` (the residual test
 # `‖F‖ ≤ √eps ‖F(x₀)‖`, at most 100 steps) and the right preconditioner `M = LU(J(x))` of the
-# analytic Jacobian at the iterate of the step that refreshes it: the first step of a solve, every
-# `k` steps after, and the step after one whose inner solve reached its cap, as
+# analytic Jacobian at the iterate of the step that refreshes it: the first step of a solve, `k`
+# steps after each refresh, and the step after one whose inner solve reached its cap, as
 # `Newton(; reuse = k)` refreshes a `GMRES` preconditioner. That `Newton` also refreshes after a
 # `STALLED` step, which the script's own Newton loop does not; the Newton steps and the refreshes
 # of a row show where the loops part. Every product is `J(x) v` with the analytic Jacobian. The
@@ -56,11 +56,10 @@
 
 using GeometricSolvers
 using GeometricSolvers: FixedForcing, JVPFunction, jvp_calls
-using KernelAbstractions: KernelAbstractions
 using LinearAlgebra
 using Printf
 using Random: Xoshiro
-using SparseArrays: SparseMatrixCSC
+using SparseArrays: SparseArrays
 
 include(joinpath(@__DIR__, "hardware", "common.jl"))
 include(joinpath(@__DIR__, "..", "test", "helpers", "sparse_problems.jl"))
@@ -257,11 +256,11 @@ end
 # ─── The Newton loops ──────────────────────────────────────────────────────────
 
 # A Newton solve of `F!(r, x, p) = 0` from `x` with GCRO-DR, in the steps of `Newton(; reuse)`
-# with a preconditioned `GMRES` and `FixedForcing(η)`: the inner tolerance `η ‖F‖`, the full step,
-# the residual test `‖F‖ ≤ √eps ‖F(x₀)‖`, the step test `‖d‖ ≤ 2 eps ‖x‖`, at most 100 steps, and
-# the refresh of `P` at age 0 and after an inner solve that reached its cap. `P = nothing` takes
-# no preconditioner. It writes the last iterate into `x` and returns whether the residual test
-# holds and the number of steps.
+# with a preconditioned `GMRES` and `FixedForcing(η)`: the inner tolerance `max(η, 2 eps) ‖F‖`,
+# the full step, the residual test `‖F‖ ≤ √eps ‖F(x₀)‖`, the step test `‖d‖ ≤ 2 eps ‖x‖`, at most
+# 100 steps, and the refresh of `P` at age 0 and after an inner solve that reached its cap.
+# `P = nothing` takes no preconditioner. It writes the last iterate into `x` and returns whether
+# the residual test holds and the number of steps.
 function gcrodr_newton!(s::GCRODR, F!, J!, Jbuf, P, x, p, η; reuse = nothing)
     op = CountingOperator(Jbuf, P, zeros(length(x)), 0)
     counted = products(s)
@@ -280,7 +279,7 @@ function gcrodr_newton!(s::GCRODR, F!, J!, Jbuf, P, x, p, η; reuse = nothing)
             end
         end
         J!(Jbuf, x, p)
-        y, early = gcrodr_solve!(s, op, -F, η * fnorm)
+        y, early = gcrodr_solve!(s, op, -F, max(η, 2 * eps(Float64)) * fnorm)
         d = similar(x)
         precondition!(d, P, y)
         x .+= d
