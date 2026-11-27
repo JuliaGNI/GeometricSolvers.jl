@@ -225,28 +225,30 @@ end
         ::Nothing, rprob::_ReducedStationarityProblem,
         u::StaticVector{N, T}, p) where {N, T}
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_residual_r1(AutoForwardDiff(), rprob.prob, x, p, rprob.b)
+    return _stationarity_residual_r1(
+        AutoForwardDiff(), rprob.prob, x, p, _datum_at(rprob, x, p))
 end
 
 @inline function residual!!(
         ::Nothing, rprob::_ReducedStationarityProblem,
         u::Number, p)
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_residual_r1(AutoForwardDiff(), rprob.prob, x, p, rprob.b)
+    return _stationarity_residual_r1(
+        AutoForwardDiff(), rprob.prob, x, p, _datum_at(rprob, x, p))
 end
 
 @inline function gradient_hessian!!(
         ::Nothing, ::Nothing, backend::AutoForwardDiff,
         rprob::_ReducedStationarityProblem, u::StaticVector{N, T}, p) where {N, T}
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)
+    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, _datum_at(rprob, x, p))
 end
 
 @inline function gradient_hessian!!(
         ::Nothing, ::Nothing, backend::AutoForwardDiff,
         rprob::_ReducedStationarityProblem, u::Number, p)
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)
+    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, _datum_at(rprob, x, p))
 end
 
 @inline function gradient_hessian!!(
@@ -265,14 +267,14 @@ end
         ::Nothing, backend::AutoForwardDiff, rprob::_ReducedStationarityProblem,
         u::StaticVector{N, T}, p) where {N, T}
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)[2]
+    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, _datum_at(rprob, x, p))[2]
 end
 
 @inline function jacobian!!(
         ::Nothing, backend::AutoForwardDiff, rprob::_ReducedStationarityProblem,
         u::Number, p)
     x = _embed_unknowns(rprob.prob.U, rprob.x_ref, u)
-    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, rprob.b)[2]
+    return _stationarity_grad_hess_r1(backend, rprob.prob, x, p, _datum_at(rprob, x, p))[2]
 end
 
 @inline function jvp!!(
@@ -698,7 +700,8 @@ end
 function residual!!(
         F::AbstractArray, rprob::_ReducedStationarityProblem, u::AbstractArray, p)
     _embed_u!(rprob.x_ref, rprob.x_ref, u, rprob.u_pos)
-    b_eff = rprob.has_b === nothing ? rprob.b : (rprob.has_b[] ? rprob.b : nothing)
+    b_eff = rprob.has_b === nothing ? _eval_datum(rprob.b, p) :
+            (rprob.has_b[] ? rprob.b : nothing)
     return _stationarity_residual_r3!(F, rprob.prep, rprob.prob, rprob.x_ref, p, b_eff)
 end
 
@@ -714,7 +717,8 @@ function gradient_hessian!!(
         prep::Union{ChunkedHessianForwardDiff, DIStationarity},
         rprob::_ReducedStationarityProblem, u::AbstractVector, p)
     _embed_u!(rprob.x_ref, rprob.x_ref, u, rprob.u_pos)
-    b_eff = rprob.has_b === nothing ? rprob.b : (rprob.has_b[] ? rprob.b : nothing)
+    b_eff = rprob.has_b === nothing ? _eval_datum(rprob.b, p) :
+            (rprob.has_b[] ? rprob.b : nothing)
     return _stationarity_grad_hess_r3!(F, J, prep, rprob.prob, rprob.x_ref, p, b_eff)
 end
 

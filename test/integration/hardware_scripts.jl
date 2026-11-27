@@ -362,10 +362,10 @@ end
     @test norm(Float64.(r_big)) > floatmax(Float32)
     for r_host in (r_big, randn(rng, Float32, n))
         r = jl.array(r_host)
-        @test (G.rhs_exponent(r) > 0) == (r_host === r_big)
         for M in (G.LUFactorization(), G.QRFactorization())
             fac = G.factorize!!(G.dense_factor(M, prob, x, nothing), M, J)
             @test fac.scale_exponent != 0
+            @test (G.rhs_exponent(r, fac.scale_exponent) > 0) == (r_host === r_big)
             d_ka = Array(KALULarge.ka_solve!(similar(x), fac, r))
             d_ldiv = Array(G.ldiv!!(similar(x), fac, r))
             @test d_ka == d_ldiv

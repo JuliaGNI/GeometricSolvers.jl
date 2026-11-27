@@ -1,5 +1,7 @@
+using ForwardDiff: ForwardDiff
 using GeometricSolvers
-using GeometricSolvers: factorize!!, ldiv!!, returncode, StaticLU, StaticQR
+using GeometricSolvers: dense_factor, factorize!!, ldiv!!, returncode, StaticLU, StaticQR
+using LinearAlgebra: cond, norm
 using StaticArrays: SMatrix, SVector
 using Test
 
@@ -126,6 +128,327 @@ end
           bound(A20, T, TF)
     # without a conversion there is no division
     @test factorize!!(nothing, M(), real(T)(1e40) * A).scale_exponent == 0
+end
+
+# The matrix needs a `BigFloat` exponent outside `Int32`. MPFR's largest exponent,
+# `get_emax_max()`, exceeds `typemax(Int32)` only where its exponent type `long` has 64 bits; on
+# Windows `long` has 32 bits, and the CI job there gives `SINGULAR` and `NaN` for these matrices.
+if Base.MPFR.get_emax_max() > typemax(Int32)
+    @testset "a BigFloat matrix whose exponent lies outside Int32 is factorised unscaled, $M" for M in (
+        LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization)
+
+        # A factor in the matrix's own element type divides it by `2^e` only for `e < 0`, and keeps
+        # `J` as it is where `e` does not fit the `Int32` field of the static factor: for
+        # `e = ±(2^31 + 7)`, `factorize!!` returns a factor with `scale_exponent = 0` and solves.
+        for k in (2^31 + 5, -(2^31 + 9))
+            s = ldexp(big(1.0), k)
+            A = SMatrix{2, 2, BigFloat}(s * big.([4 1; 1 5]))
+            fac = factorize!!(nothing, M(), A)
+            @test returncode(fac) === SUCCESS
+            @test fac.scale_exponent == 0
+            x = ldiv!!(nothing, fac, SVector{2, BigFloat}(A * SVector(big(1.0), big(-2.0))))
+            @test isapprox(x, [1, -2]; rtol = 64 * eps(BigFloat))
+        end
+    end
+end
+
+@testset "a 0 × 0 matrix sets no scale, $M($TF)" for M in (
+        LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization),
+    TF in (nothing, Float32)
+
+    # The static and the dense host factor of the empty matrix: `e = 0`, and no reduction runs
+    # over its entries, in the matrix's element type and in another.
+    m = TF === nothing ? M() : M(TF)
+    fs = factorize!!(nothing, m, SMatrix{0, 0, Float64}())
+    @test returncode(fs) === SUCCESS
+    @test fs.scale_exponent == 0
+    fd = factorize!!(dense_factor(m, nothing, Float64[], nothing), m, zeros(0, 0))
+    @test returncode(fd) === SUCCESS
+    @test fd.scale_exponent == 0
+end
+
+@testset "the static Cholesky exponent of a matrix of subnormal entries, $T" for T in filter(
+    T -> real(T) === Float64, ELTYPES)
+
+    # `cholesky_exponent` clamps to `-emax = -1023`: a factor of another element type keeps it,
+    # and one of the matrix's own element type rounds it down to the even `-1024`
+    A = SMatrix{2, 2, T}(T[3 1; 1 3] * ldexp(1.0, -1060))
+    emax = exponent(floatmax(Float64))
+    fac = factorize!!(nothing, CholeskyFactorization(Float32), A)
+    @test returncode(fac) === SUCCESS
+    @test fac.scale_exponent == -emax
+    fac = factorize!!(nothing, CholeskyFactorization(), A)
+    @test returncode(fac) === SUCCESS
+    @test fac.scale_exponent == -emax - 1
+end
+
+@testset "a ForwardDiff.Dual matrix below 1 in its own element type, $M, $R" for M in (
+        LUFactorization, QRFactorization, CholeskyFactorization, LDLTFactorization),
+    R in REAL_ELTYPES
+
+    # `J(t) = A₀ + t·1·1ᵀ` at `t = 0`, `A₀ = 2^-3 [4 1; 1 5]`: its largest entry is below 1, so
+    # the own-type factor divides it by `2^e`, `e = -1` (`-2` for Cholesky, whose exponent is
+    # even), which `ldexp2` does for a `Dual` too.
+    # The reference is the BigFloat solve: `x = A₀⁻¹ b`, `ẋ = -A₀⁻¹ (1·1ᵀ) x`. The bound is
+    # `8 κ² eps(R)`, `κ = cond(A₀) ≈ 1.66`: the value has an error of order `κ eps(R)`, and the
+    # partials pass two solves with `A₀`, of order `κ² eps(R)`.
+    A₀ = [4 1; 1 5] .// 8
+    b₀ = [1, -2]
+    x = big.(A₀) \ big.(b₀)
+    ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
+    rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * eps(R)
+    J = SMatrix{2, 2}(ForwardDiff.Dual.(R.(A₀), one(R)))
+    b = SVector{2}(ForwardDiff.Dual.(R.(b₀), zero(R)))
+    fs = factorize!!(nothing, M(), J)
+    xs = ldiv!!(nothing, fs, b)
+    fd = factorize!!(dense_factor(M(), nothing, Vector(b), nothing), M(), Matrix(J))
+    xd = ldiv!!(similar(Vector(b)), fd, Vector(b))
+    for (fac, y) in ((fs, xs), (fd, xd))
+        @test returncode(fac) === SUCCESS
+        @test fac.scale_exponent == (M === CholeskyFactorization ? -2 : -1)
+        @test norm(ForwardDiff.value.(y) - x) <= rtol * norm(x)
+        @test norm(map(a -> ForwardDiff.partials(a, 1), y) - ẋ) <= rtol * norm(ẋ)
+    end
+end
+
+@testset "ldexp2 of a ForwardDiff.Dual is exact at e = emax + 1, $R" for R in REAL_ELTYPES
+    # ForwardDiff scales the partial of `ldexp(x, e)` by `exp2(e)`, which is `Inf` here
+    emax = exponent(floatmax(R))
+    s = ldexp(one(R), -emax - 10)
+    for p in (s, zero(R), one(R) / 4)
+        d = GeometricSolvers.ldexp2(ForwardDiff.Dual(s, p), emax + 1)
+        @test isequal(ForwardDiff.value(d), GeometricSolvers.ldexp2(s, emax + 1))
+        @test isequal(ForwardDiff.partials(d, 1), GeometricSolvers.ldexp2(p, emax + 1))
+    end
+end
+
+@testset "Cholesky of a ForwardDiff.Dual matrix of subnormal entries, $R, $kind" for R in REAL_ELTYPES,
+    kind in (:static, :dense)
+
+    # `J(t) = s (A₀ + t·1·1ᵀ)` at `t = 0` and `b = s b₀`, `s = 2^(-emax - 10)`: the entries are
+    # exact subnormals below `2^-emax`, so the own-type Cholesky exponent is `-emax - 1`, and the
+    # factor multiplies `J` by `2^(emax + 1)`. The solution is that of `A₀`: `x = A₀⁻¹ b₀`,
+    # `ẋ = -A₀⁻¹ (1·1ᵀ) x`. The solve lifts the right-hand side with the matrix, by
+    # `2^(emax + 1)`, so it runs in the normal range. Each of the two solves with `A₀` that the
+    # partials pass multiplies the rounding error by at most `κ = cond(A₀) ≈ 1.66`, so the bound
+    # is `8 κ² eps(R)`.
+    emax = exponent(floatmax(R))
+    s = ldexp(one(R), -emax - 10)
+    A₀ = [4 1; 1 5] .// 8
+    b₀ = [1, -2]
+    x = big.(A₀) \ big.(b₀)
+    ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
+    rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * eps(R)
+    J = SMatrix{2, 2}(ForwardDiff.Dual.(R.(s .* A₀), s))
+    b = SVector{2}(ForwardDiff.Dual.(R.(s .* b₀), zero(R)))
+    M = CholeskyFactorization
+    if kind === :static
+        fac = factorize!!(nothing, M(), J)
+        y = ldiv!!(nothing, fac, b)
+    else
+        fac = factorize!!(dense_factor(M(), nothing, Vector(b), nothing), M(), Matrix(J))
+        y = ldiv!!(similar(Vector(b)), fac, Vector(b))
+    end
+    v = ForwardDiff.value.(y)
+    ẏ = map(a -> ForwardDiff.partials(a, 1), y)
+    @test returncode(fac) === SUCCESS
+    @test fac.scale_exponent == -emax - 1
+    @test all(isfinite, v) && all(isfinite, ẏ)
+    @test norm(v - x) <= rtol * norm(x)
+    @test norm(ẏ - ẋ) <= rtol * norm(ẋ)
+end
+
+@testset "DeviceCholesky of a ForwardDiff.Dual JLArray, $R" for R in REAL_ELTYPES
+    # The load kernel takes the largest entry and its exponent from the bits of the values of the
+    # `Dual`s. `J(t) = s (A₀ + t·1·1ᵀ)` at `t = 0` and `b = s b₀`, as above,
+    # at three scales: `s = 8`, whose exponent 2 the own type does not take (`e = 0`); `s = 1`,
+    # exponent -1, rounded down to the even `e = -2`; and the subnormal `s = 2^(-emax - 10)`,
+    # `e = -emax - 1`. The CPU does not flush subnormals, so the device and the host
+    # `DenseCholesky` take the same exponent. The solution and the bound are those above.
+    emax = exponent(floatmax(R))
+    A₀ = [4 1; 1 5] .// 8
+    b₀ = [1, -2]
+    x = big.(A₀) \ big.(b₀)
+    ẋ = -(big.(A₀) \ (ones(BigFloat, 2, 2) * x))
+    M = CholeskyFactorization
+    for (s, e) in ((R(8), 0), (one(R), -2), (ldexp(one(R), -emax - 10), -emax - 1))
+        rtol = 8 * (BigFloat(cond(Float64.(A₀))))^2 * eps(R)
+        J = ForwardDiff.Dual.(R.(s .* A₀), s)
+        b = ForwardDiff.Dual.(R.(s .* b₀), zero(R))
+        fh = factorize!!(dense_factor(M(), nothing, b, nothing), M(), J)
+        bd = JLArray(b)
+        fd = factorize!!(dense_factor(M(), nothing, bd, nothing), M(), JLArray(J))
+        y = Array(ldiv!!(similar(bd), fd, bd))
+        v = ForwardDiff.value.(y)
+        ẏ = map(a -> ForwardDiff.partials(a, 1), y)
+        @test returncode(fd) === returncode(fh) === SUCCESS
+        @test fd.scale_exponent == fh.scale_exponent == e
+        @test all(isfinite, v) && all(isfinite, ẏ)
+        @test norm(v - x) <= rtol * norm(x)
+        @test norm(ẏ - ẋ) <= rtol * norm(ẋ)
+    end
+end
+
+@testset "a ForwardDiff.Dual matrix of zero values sets no scale, $R" for R in REAL_ELTYPES
+    # Every value is zero and every partial is one, for a `Dual` and for a `Dual` of `Dual`s.
+    # ForwardDiff's `iszero`, `==` and `<` of a `Dual` also read the partials, so the scale is
+    # taken from the innermost values alone: the zero matrix keeps `e = 0`, and the factor buffer
+    # takes `J` as it is.
+    Z = ForwardDiff.Dual.(zeros(R, 3, 3), one(R))
+    for J in (Z, ForwardDiff.Dual.(Z, one(R)))
+        b = map(a -> oftype(a, 1), J[:, 1])
+        bd = JLArray(b)
+        m = CholeskyFactorization()
+        fd = factorize!!(dense_factor(m, nothing, bd, nothing), m, JLArray(J))
+        J === Z && @test returncode(fd) === SINGULAR
+        @test fd.scale_exponent == 0
+        for M in (LUFactorization, QRFactorization, LDLTFactorization, CholeskyFactorization),
+            (A, r) in ((J, b), (JLArray(J), bd))
+
+            M === CholeskyFactorization && A isa JLArray && continue
+            fac = factorize!!(dense_factor(M(), nothing, r, nothing), M(), A)
+            @test fac.scale_exponent == 0
+        end
+        me, ce = GeometricSolvers.matrix_exponent, GeometricSolvers.cholesky_exponent
+        for (A, se) in ((J, me), (J, ce), (JLArray(J), me))
+            B = similar(A)
+            @test GeometricSolvers.load_factors!(B, A, se) == 0
+            @test all(map(===, Array(B), J))
+        end
+    end
+end
+
+@testset "the Cholesky scale of a complex Dual matrix reads the lower imaginary parts, $R" for R in REAL_ELTYPES
+    # `J = [2^-20 0; 3·2^-10 im 2^-20]`: the largest entry that a Cholesky factorisation reads is
+    # the imaginary part `3·2^-10` of `J[2, 1]`, of exponent -9, which the own type rounds down to
+    # the even `e = -10`; without that imaginary part the exponent is -20. Only `e` is asserted.
+    D(x) = ForwardDiff.Dual(R(x), one(R))
+    s = ldexp(one(R), -20)
+    t = 3 * ldexp(s, 10)
+    J = [complex(D(s), D(0)) complex(D(0), D(0)); complex(D(0), D(t)) complex(D(s), D(0))]
+    b = [complex(D(1), D(0)), complex(D(2), D(0))]
+    m = CholeskyFactorization()
+    fh = factorize!!(dense_factor(m, nothing, b, nothing), m, J)
+    bd = JLArray(b)
+    fd = factorize!!(dense_factor(m, nothing, bd, nothing), m, JLArray(J))
+    @test fh.scale_exponent == -10
+    @test fd.scale_exponent == -10
+end
+
+@testset "the LU and QR scale of a complex matrix reads the imaginary parts, $M, $R, dual = $dual" for M in (
+        LUFactorization, QRFactorization),
+    R in REAL_ELTYPES, dual in (false, true)
+
+    # `J = [2^-20 0; 3·2^-10 im 2^-20]`, in `Complex{R}` and in `Complex{Dual{R}}`: the largest
+    # |re| or |im| is the imaginary part `3·2^-10` of `J[2, 1]`, of exponent -9, which the own
+    # type divides by; without the imaginary parts the exponent is -20. Only `e` is asserted.
+    D(x) = dual ? ForwardDiff.Dual(R(x), one(R)) : R(x)
+    s = ldexp(one(R), -20)
+    t = 3 * ldexp(s, 10)
+    J = [complex(D(s), D(0)) complex(D(0), D(0)); complex(D(0), D(t)) complex(D(s), D(0))]
+    b = [complex(D(1), D(0)), complex(D(2), D(0))]
+    fh = factorize!!(dense_factor(M(), nothing, b, nothing), M(), J)
+    bd = JLArray(b)
+    fd = factorize!!(dense_factor(M(), nothing, bd, nothing), M(), JLArray(J))
+    fs = factorize!!(nothing, M(), SMatrix{2, 2}(J))
+    @test fh.scale_exponent == -9
+    @test fd.scale_exponent == -9
+    @test fs.scale_exponent == -9
+end
+
+@testset "ldexp2 of a ForwardDiff.Dual scales its value and partials in their own type, $R" for R in REAL_ELTYPES
+    # The value and each partial are scaled by `ldexp2` of `R`, and a `Dual` of `Dual`s by
+    # component down to its innermost values, so that the result is exact and has the type of the
+    # argument, its tag included; no `exp2(e)` of a `Float64` enters, which the Apple GPU cannot
+    # compile.
+    emax = exponent(floatmax(R))
+    s = ldexp(one(R), -emax - 10)
+    d = ForwardDiff.Dual{typeof(ForwardDiff.Tag(sin, R))}(s, R(3), one(R) / 4)
+    for e in (emax + 1, -3, 7)
+        y = @inferred GeometricSolvers.ldexp2(d, e)
+        @test typeof(y) === typeof(d)
+        @test isequal(ForwardDiff.value(y), GeometricSolvers.ldexp2(s, e))
+        @test isequal(ForwardDiff.partials(y, 1), GeometricSolvers.ldexp2(R(3), e))
+        @test isequal(ForwardDiff.partials(y, 2), GeometricSolvers.ldexp2(one(R) / 4, e))
+        dd = ForwardDiff.Dual{typeof(ForwardDiff.Tag(cos, typeof(d)))}(d, d)
+        yy = @inferred GeometricSolvers.ldexp2(dd, e)
+        @test typeof(yy) === typeof(dd)
+        @test ForwardDiff.value(yy) === y
+        @test ForwardDiff.partials(yy, 1) === y
+        # A `Dual` with no partials, as `Dual(x)` builds: its empty partials keep the value type.
+        d0 = ForwardDiff.Dual(s)
+        y0 = @inferred GeometricSolvers.ldexp2(d0, e)
+        @test typeof(y0) === typeof(d0)
+        @test isequal(ForwardDiff.value(y0), GeometricSolvers.ldexp2(s, e))
+    end
+    # The factorisations of a matrix of `Dual`s with no partials, `J = 2^k A₀` and `b = 2^k b₀`:
+    # at `k = -20` the largest entry `2^-18` makes the own type divide by `2^-18` (an even
+    # exponent for Cholesky too), and at `k = 0` it keeps `e = 0`. The solution is `A₀⁻¹ b₀`,
+    # within `8 κ eps(R)`, `κ = cond(A₀) ≈ 2.1`; the device row is the JLArray Cholesky load kernel.
+    A₀ = R[4 1 0; 1 4 1; 0 1 4]
+    b₀ = R[1, 2, 3]
+    x = big.(A₀) \ big.(b₀)
+    rtol = 8 * BigFloat(cond(Float64.(A₀))) * eps(R)
+    for (k, e) in ((0, 0), (-20, -18)),
+        M in (LUFactorization, QRFactorization, CholeskyFactorization)
+
+        J = ForwardDiff.Dual.(ldexp.(A₀, k))
+        b = ForwardDiff.Dual.(ldexp.(b₀, k))
+        bd = JLArray(b)
+        runs = [(factorize!!(dense_factor(M(), nothing, b, nothing), M(), copy(J)), b),
+            (factorize!!(nothing, M(), SMatrix{3, 3}(J)), SVector{3}(b))]
+        if M === CholeskyFactorization
+            fd = factorize!!(dense_factor(M(), nothing, bd, nothing), M(), JLArray(J))
+            push!(runs, (fd, bd))
+        end
+        for (fac, r) in runs
+            y = Array(ldiv!!(r isa SVector ? nothing : similar(r), fac, r))
+            @test returncode(fac) === SUCCESS
+            @test fac.scale_exponent == e
+            @test norm(ForwardDiff.value.(y) - x) <= rtol * norm(x)
+        end
+    end
+end
+
+@testset "ldexp2 of a real whose float is no IEEEFloat scales it by ldexp" begin
+    # `float` of a `BigInt` or a `Rational{BigInt}` is a `BigFloat`, whose exponent range holds
+    # `2^±2000`, so the scaled value is exact.
+    for a in (big(3), big(3) // 1), e in (-2, 2000, -2000)
+
+        y = GeometricSolvers.ldexp2(a, e)
+        @test y isa BigFloat
+        @test y == 3 * big(2.0)^e
+    end
+end
+
+@testset "the Cholesky load kernel of a ForwardDiff.Dual{Float32} JLArray holds no Float64" begin
+    # The device LLVM IR of the load kernel, for the matrix `2^-130 [4 1 0; 1 4 1; 0 1 4]`, whose
+    # scale the own type divides by: a `double` in it is a Float64 operation, which the Apple GPU
+    # refuses to compile ("unsupported use of double value").
+    D(x, p) = ForwardDiff.Dual(x, p)
+    m = CholeskyFactorization()
+    A = JLArray(D.(Float32[4 1 0; 1 4 1; 0 1 4] .* ldexp(1.0f0, -130), 1.0f0))
+    b = JLArray(D.(Float32[1, 2, 3], 0.0f0))
+    io = IOBuffer()
+    KernelAbstractions.GPUCompiler.@device_code_llvm io=io debuginfo=:none factorize!!(
+        dense_factor(m, nothing, b, nothing), m, A)
+    ir = String[]
+    inload = false
+    for l in split(String(take!(io)), '\n')
+        if startswith(l, "; ") && occursin("CompilerJob", l)
+            inload = occursin("load_kernel", l)
+        end
+        inload && !startswith(lstrip(l), ";") && push!(ir, l)
+    end
+    @test !isempty(ir)
+    @test count(l -> occursin("double", l), ir) == 0
+end
+
+@testset "a 0 × 0 matrix sets no scale in the static SVD" begin
+    # the exponent of the empty matrix runs no reduction over its entries; the static SVD of it
+    # throws later, at `σ[1]` (K127 of `KNOWN_ISSUES.md`)
+    @test GeometricSolvers.svd_exponent(SMatrix{0, 0, Float64}()) == 0
+    @test GeometricSolvers.svd_exponent(SMatrix{0, 0, ComplexF32}()) == 0
 end
 
 @testset "the same-type solve scales r by a power of two, $T" for T in REAL_ELTYPES

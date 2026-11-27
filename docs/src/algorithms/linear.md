@@ -187,7 +187,8 @@ The **forcing term** sets ``\eta_k``. [`EisenstatWalkerChoice2`](@ref) is the de
 root and tightly near it, which saves inner iterations where a tight solve buys nothing.
 
 A **right preconditioner** `M` is any object with methods of [`refresh!`](@ref), called once per
-Newton step, and [`apply_preconditioner!`](@ref), called before every product. A stored Jacobian
+Newton step, or as `reuse = k` sets, and [`apply_preconditioner!`](@ref), called before every
+product. A stored Jacobian
 factor that `ldiv!` applies is the frozen-Jacobian preconditioner of a Newton–Krylov method. The
 example below takes the diagonal of the Jacobian instead:
 

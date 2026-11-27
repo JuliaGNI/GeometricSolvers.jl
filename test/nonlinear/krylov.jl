@@ -2139,6 +2139,75 @@ end
     @test info.resnorm <= tol * rnorm(b)
 end
 
+# Two systems whose Krylov space is invariant after a few steps: `J = 14 I` with a constant `b`, a
+# space of dimension one, and a diagonal `J` of the three eigenvalues 2, 5 and 11, of dimension
+# three. A stored column of a reduced basis has unit norm only to the round-off of its type, so
+# the projection at the last step of the space leaves a remainder of that order along the basis.
+function invariant_krylov_system(::Type{T}, kind::Symbol) where {T}
+    n = 100
+    kind === :scaled_identity && return fill(T(14), n), fill(T(-9), n)
+    return T.(repeat([2, 5, 11], 34)[1:n]), T.(collect(range(-1, 1; length = n)))
+end
+
+@testset "A reduced basis on a Krylov space invariant to its round-off converges in one cycle, mgs = $mgs, $kind, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true), kind in (:scaled_identity, :three_eigenvalues)
+
+    # one pass of MGS takes that remainder for a new direction, and the cycle ends at its cap
+    # with a true residual of 1, Inf or near eps(TB) ‖b‖; its second pass removes the remainder,
+    # and the cycle ends early and restarts from its true residual. The CGS2 row of a Float16
+    # basis on Float64 and J = 14 I is the limit of the testset below.
+    if mgs || !(T === Float64 && TB === Float16 && kind === :scaled_identity)
+        jd, b = invariant_krylov_system(T, kind)
+        tol = T === Float64 ? 1e-10 : 1.0f-5
+        op = (Jv, v) -> (Jv .= jd .* v; Jv)
+        ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
+        d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+        @test eltype(ws.V) === TB
+        @test info.converged
+        @test info.iterations < 20
+        @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+        @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(T))
+    end
+end
+
+@testset "Newton with a reduced basis solves x³ + 2x − 3 = 0 on both paths, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    # the constant start makes the Krylov space of each step that of a multiple of I, which one
+    # pass of MGS on a reduced basis does not see, and the step ends NONFINITE
+    F!(r, x, q) = (@. r = x^3 + 2x - 3; r)
+    η = T === Float64 ? 1e-10 : 1.0f-5
+    m = Newton(;
+        linsolve = GMRES(; maxiter = 10, forcing = FixedForcing(η), basis_eltype = TB, mgs))
+    x₀ = fill(T(2), 8)
+    x, st = solve(NonlinearProblem(F!), copy(x₀), m)
+    @test st.code == SUCCESS
+    @test maximum(abs, x .- 1) <= sqrt(eps(T))
+end
+
+@testset "A CGS2 cycle on a Krylov space invariant to a Float16 basis makes no progress, and a restart recovers" begin
+    # `J = 14 I` and a constant `b` on Float64: the two CGS2 passes leave a remainder of order
+    # eps(Float16)² along `v₁`, above the tolerance, which the step takes for `v₂`; the cycle runs
+    # to its cap and ends on its true residual near eps(Float16) ‖b‖, without convergence
+    jd, b = invariant_krylov_system(Float64, :scaled_identity)
+    tol = 1e-10
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = Float16), zeros(length(b)))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20))
+    @test !info.converged
+    @test info.iterations == 20
+    @test tol * rnorm(b) < rnorm(b .- jd .* d) <= eps(Float16) * rnorm(b)
+    @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(Float64))
+    # with room for a restart, the restart from that true residual converges
+    ws = init_gmres_workspace(
+        GMRES(; maxiter = 20, restart = 10, basis_eltype = Float16), zeros(length(b)))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(10))
+    @test info.converged
+    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+end
+
 @testset "reuse takes a GMRES with a preconditioner only" begin
     P = ScaledRightPreconditioner(Ref(Int32(0)), 2.0)
     msg = r"^ArgumentError: Newton with a matrix-free linear method takes no factor reuse"

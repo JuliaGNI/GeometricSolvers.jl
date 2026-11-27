@@ -143,8 +143,9 @@ The forcing term sets that tolerance. [`EisenstatWalkerChoice2`](@ref) is the de
 [`AbstractForcingTerm`](@ref), and [`compute_forcing`](@ref) is its rule. The right preconditioner
 of `GMRES(; preconditioner = P)` is refreshed by [`refresh!`](@ref) once per Newton step and
 applied by [`apply_preconditioner!`](@ref) before every product. Under `Newton(; reuse = k)` it is
-refreshed at the first step and every `k` steps after, and at the step after a `STALLED` step or
-an inner solve that reached its cap; without a preconditioner `reuse` raises an `ArgumentError`.
+kept for up to `k` consecutive steps: refreshed at the first step, `k` steps after each refresh,
+and early at the step after a `STALLED` step or an inner solve that reached its cap; without a
+preconditioner `reuse` raises an `ArgumentError`.
 `GMRES(; flexible = true)` keeps each preconditioned vector ``z_j = M_j^{-1} v_j`` and forms the
 direction from them (Saad 1993, doi:10.1137/0914028), so a preconditioner that changes between
 inner iterations still gives the minimal-residual direction. `GMRES(; basis_eltype = Float32)`

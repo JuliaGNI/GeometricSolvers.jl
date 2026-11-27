@@ -4,7 +4,11 @@ CurrentModule = GeometricSolvers
 
 # [The three regimes](@id regimes)
 
-One solver loop serves three regimes. The storage of the iterate selects the regime. Most problems
+One solver loop serves three regimes. The entry point and the storage of the iterate select the
+regime: [`solve_batch!`](@ref) always solves a batch (R2) and treats each entry of its array as a
+system of its own, and [`solve`](@ref) takes R1 for a `Number` or an `SVector` and R3 for any
+other vector. A `Vector{Float64}` is thus one system of `n` unknowns for `solve` and `n` scalar
+systems for `solve_batch!`. Most problems
 and methods work in each of them, but not all: [`solve_batch!`](@ref) takes no
 [`LeastSquaresProblem`](@ref), and a [`Newton`](@ref) with [`GMRES`](@ref) needs an R3 iterate.
 Check the docstrings of the problem and the method for the regimes that they support.

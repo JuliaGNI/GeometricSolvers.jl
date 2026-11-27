@@ -9,7 +9,8 @@ one applies. It names no method as the right one: the choice depends on the prob
 cost of its residual and its Jacobian, and the start. The pages under *Algorithms* describe each
 method in full.
 
-The storage of the iterate selects the regime (see [The three regimes](@ref regimes)). R5 is an R3
+The entry point and the storage of the iterate select the regime (see
+[The three regimes](@ref regimes)). R5 is an R3
 iterate with a matrix-free linear solver:
 
 | regime | iterate | entry point | linear solver |
@@ -17,7 +18,7 @@ iterate with a matrix-free linear solver:
 | **R1** value semantics | `Number` or `SVector` | [`solve`](@ref) | a factorisation of a static matrix |
 | **R2** batched | an array of `Number` or `SVector`, one entry per system | [`solve_batch!`](@ref) | a factorisation of a static matrix, per system |
 | **R3** in place | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | a factorisation of a dense or sparse matrix |
-| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref) or [`MINRESQLP`](@ref), with no Jacobian matrix |
+| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref), [`BiCGStab`](@ref), [`DQGMRES`](@ref) or [`MINRESQLP`](@ref), with no Jacobian matrix |
 
 `Newton()` takes `linsolve = LUFactorization()` and `globalization = Static()` unless the caller
 gives others (see [Nonlinear methods](@ref nonlinear)).
@@ -187,7 +188,7 @@ true
 | a right preconditioner with methods of [`refresh!`](@ref) and [`apply_preconditioner!`](@ref) | an operator that is refreshed once per Newton step and applied before every product |
 | `GMRES(; flexible = true)` | a right preconditioner that changes between the inner iterations of one solve; it keeps one more vector of the working type per inner iteration |
 | `GMRES(; basis_eltype = Float32)` | a Krylov basis whose storage dominates the memory or the memory traffic of a solve; each cycle ends on the true residual, one more product; no [`DogLeg`](@ref) |
-| [`Newton`](@ref) with `reuse = k` and `GMRES(; preconditioner = P)` | a preconditioner whose refresh dominates the cost of a step; it is refreshed once per `k` steps, and at the step after a `STALLED` step or a capped inner solve |
+| [`Newton`](@ref) with `reuse = k` and `GMRES(; preconditioner = P)` | a preconditioner whose refresh dominates the cost of a step; it is kept for up to `k` consecutive steps, and refreshed early at the step after a `STALLED` step or a capped inner solve |
 | [`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref) | as in R1 |
 | [`DogLeg`](@ref) | as in R1; it runs on the Arnoldi relation of one unrestarted cycle without a preconditioner |
 | [`Steihaug`](@ref) | `linsolve = MINRESQLP()`; truncated conjugate gradients that minimise the model of the action `S`, with trials accepted by the ratio of `DogLeg` on ``\|F\|``; a solve does not converge to a root where the Hessian of `S` is indefinite, also from a start close to it, and ends with `LINESEARCH_FAILED`; `DogLeg` does not have this limit |

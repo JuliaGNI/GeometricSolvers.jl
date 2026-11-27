@@ -7,9 +7,268 @@ This package is pre-1.0, so *every* minor release is potentially breaking in the
 so that a compat-only bump can be told apart from an interface change.
 
 
-## [Unreleased] — targeting 0.1.0
+## [Unreleased]
+
+### New Features
+
+- **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
+  20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
+  storage does not grow with the iteration count.** `BiCGStab` is the right-preconditioned
+  BiCGStab of van der Vorst (1992, doi:10.1137/0913035): nine vectors, two Jacobian–vector
+  products per iteration and one where the half step meets the tolerance, and no residual
+  minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
+  finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
+  direction; no `ReturnCode` is added. Its recurrence runs on the right-hand side scaled to unit
+  norm, divides each preconditioned vector and each product by the power of two of its norm, and
+  forms `ω` from `‖t‖`, so a system scaled to `4√floatmax`, `floatmax/8` or into the subnormal
+  range, and a right preconditioner of large scale, keep their solution. `DQGMRES` is the
+  right-preconditioned DQGMRES of Saad and Wu (1996,
+  doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8): one product per
+  iteration, a quasi-minimal residual over a window of `min(memory, n)` vectors, `min(memory, n)
+  + 1` basis vectors and `min(memory, n)` directions, each stored as `p_j 2^e_j` with `2^e_j ≤
+  |r_jj| < 2^(e_j+1)` for the diagonal entry `r_jj` of its band, so that it keeps its solution
+  over the same range of scales; with `memory` at least the iteration count its iterate is that
+  of unrestarted `GMRES` with modified Gram–Schmidt. The divisions of both are exact, so in the
+  normal range the iterates are those of the unscaled recurrences. Both take the forcing
+  terms and the right preconditioner of `GMRES`, the `forcing` and `preconditioner` keywords of
+  `Newton`, `Static` and the line searches, on `Array`, `JLArray` and a device array, and count
+  `f_calls` and `jvp_calls` exactly. `DogLeg`, whose trial loop reads the Arnoldi relation of
+  `GMRES`, `reuse`, `Refinement`, `LevenbergMarquardt`, `PseudoTransient`, a `ForwardDiff.Dual`
+  input to `solve`, a `BatchEliminated` problem and `memory < 1` raise an `ArgumentError`.
+
+- **`GeometricSolvers.matrix_free(method)` is a new public trait: `true` for `GMRES`, `BiCGStab`,
+  `DQGMRES` and `MINRESQLP`, `false` for every other linear method.** `Newton` reads it in place of
+  a test for `GMRES` in its refusals of reuse, refinement, `LevenbergMarquardt` and
+  `PseudoTransient`, in its `forcing` and `preconditioner` keywords and where its state is built,
+  a `BatchEliminated` problem reads it before it refuses every method but `GMRES`, and `solve`
+  reads it for the refusal of a `ForwardDiff.Dual` input. `Continuation` reads it for the
+  refusal of its `Newton` method, and `KroneckerFactorization` for the refusal of its block
+  method, so both refuse every matrix-free linear method; `KroneckerFactorization(; block =
+  MINRESQLP())`, which was accepted, now raises an `ArgumentError`. A `Newton` with `GMRES` or
+  `MINRESQLP` keeps every other behaviour. The messages of the refusals of reuse, refinement and
+  `LevenbergMarquardt` with `GMRES`, of a `Dual` input, of a `Continuation` method, of a
+  `JVPFunction` with a factorising method and of a Jacobian function with a matrix-free method,
+  and of `max_inner_iterations`, `f_calls` and `jvp_calls` on a solve that keeps no count, name a
+  matrix-free linear method in place of `GMRES` or of `GMRES` and `MINRESQLP`. The message of
+  the `forcing` and `preconditioner` keywords of `Newton` names `GMRES`, `BiCGStab` or `DQGMRES`
+  as the methods they configure, and `MINRESQLP` for `forcing`, and says to pass them to the
+  method.
+
+- **The standard test set has two more columns, `Newton Backtracking BiCGStab` and `Newton
+  Backtracking DQGMRES`,** after `Newton Backtracking GMRES`: 17 columns and 2278 cells. Their
+  268 cells are new in `test/verification/standard_reference.csv`, and the benchmark pairs each
+  with no package method (no Krylov linear solver). The benchmark's GeometricSolvers adapter
+  hands the shared Jacobian to no `Newton` with a matrix-free linear method.
+
+- **`GMRES` takes two new keywords, `flexible = false` and `basis_eltype = Nothing`, and a
+  `Newton` with a preconditioned `GMRES` takes `reuse = k`.** `GMRES(; flexible = true)` is the
+  flexible GMRES of Saad (1993, doi:10.1137/0914028): with a preconditioner it keeps each
+  `z_j = M_j⁻¹ v_j` in a working-precision matrix `Z` of `min(restart, n)` columns and forms the
+  direction and the restart residual from `Z y`, so a preconditioner that changes between inner
+  iterations still gives the minimal-residual direction; without one it allocates no `Z` and
+  solves as `flexible = false`. `GMRES(; basis_eltype = TB)` stores the Krylov basis in `TB`
+  (`Complex{TB}` for a complex iterate), as the compressed basis of Aliaga et al. (2020,
+  arXiv:2009.12101), with every product, coefficient, norm and update in the working type; the
+  preconditioner reads a working-precision copy of each basis vector. Its Givens estimate is not
+  the true residual, so each cycle ends on `‖b − J d‖`, one more Jacobian–vector product, and
+  restarts where it misses the tolerance; its CGS2 step takes three reductions, and its MGS step a
+  second pass, `2j + 1` reductions at inner iteration `j`, because a stored column has unit norm
+  only to the round-off of `TB`. On a Krylov space that is invariant to the round-off of `TB`, as
+  that of `J = c I` and a constant `b`, the CGS2 step takes its remainder of order eps(TB)² for a
+  new basis vector, and the cycle makes no more progress. A solve with `maxiter == restart` and a
+  tolerance below about eps(TB)² can end without convergence near eps(TB) ‖b‖, about 2.4e-4 ‖b‖
+  for a `Float16` basis on `Float64`; with room for a restart it converges (known issue K146).
+  One cycle of `j` CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist,
+  Luszczek and Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve
+  reaches `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor a
+  concrete `AbstractFloat` type raises an `ArgumentError`, and so does a `DogLeg` with any
+  `basis_eltype` but `Nothing`, because its trial loop reads the basis as orthonormal in the
+  working precision.
+  Both keywords are type parameters, `GMRES{F, P, TJ, TB, FL}` with the fields `basis_eltype` and
+  `flexible::Val{FL}`, and the `forcing` and `preconditioner` keywords of `Newton` keep them.
+  `Newton(; reuse = k)` with a `GMRES` that has a preconditioner keeps it for up to `k` consecutive
+  steps: it refreshes it at the first step, `k` steps after each refresh, and early at the step
+  after a `STALLED` step or an inner solve that reached its cap, with no retry within a step;
+  without a preconditioner, and with `BiCGStab`, `DQGMRES` or `MINRESQLP`, `reuse` still raises an
+  `ArgumentError`. The message of the refusal for a matrix-free method other than `MINRESQLP` now
+  names the exception.
+
+- **The standard test set has one more column, `Newton Backtracking Float32-basis GMRES`,** after
+  `Newton Backtracking DQGMRES`: 18 columns and 2412 cells. Its 134 cells are new in
+  `test/verification/standard_reference.csv`, 24 of them flagged `unstable`, and the benchmark
+  pairs it with no package method (no Krylov linear solver). Its `Float32` cells equal those of
+  `Newton Backtracking GMRES`, whose basis is then of the same type; 9 of its 67 `Float64` cells
+  differ from that column in the code or the iteration count, on problems 3, 11, 15, 21 and 22.
+
+- **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
+  exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
+  `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,
+  `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x)/σ + (1 − λ)(x − x₀)` with `σ` the
+  largest absolute entry of `J(x₀)`, or of `F(x₀)` where `J(x₀) = 0`, or 1 where both are 0, or
+  `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's problem; the
+  `NonlinearProblem` holds no `λ`. On a `StationarityProblem`, a callable datum `b(p)`, from
+  `prob.b` or from the `b` keyword of `solve`, `init` or `solve!`, is evaluated at `map(p, λ)`
+  along the path and at the last corrector too: the internal reduced problem holds `b` unevaluated,
+  and the reduced residual evaluates it at the parameters it is called with. For
+  `StationarityProblem((x, p) -> x^2 / 2; b = p -> p)` from `p = 0.0`, `x₀ = 0.0` and
+  `ParameterHomotopy((p, λ) -> p + λ)` the solve ends at `−1.0`, the root that `Newton()` finds at
+  `p = 1.0`, where it would otherwise return a `SUCCESS` at `0.0`, the root for `b` at the start
+  parameters. A non-callable datum is unchanged. Since the callable runs at every residual
+  evaluation in place of once per solve, an R3 (`Vector`) `solve!` with `Newton` and a callable
+  that returns a new array allocates, 160 bytes on a quadratic of two equations where it
+  allocated none; an R3 callable that writes into a buffer, and an R1 (`SVector`, `Number`)
+  `solve`, allocate nothing, as before. A tangent predictor and a bordered Newton corrector follow the
+  path through a fold of `λ`, where a step in `λ` alone stops. A failed corrector halves the step,
+  a corrector of at most 3 iterations doubles it up to `h_max`, and a step below `h_min` returns
+  `STALLED`. `GeometricSolvers.continuation_steps(state)` reads `λ` and the length of every
+  accepted and rejected step of the last solve, and the status counts the rejected steps in
+  `step_failures`. It solves the Powell badly scaled function (problem 3 of the standard test set)
+  from `100u0` in `Float32` and `Float64`, where every other column fails in `Float64`, and the
+  cubic `x³ − 3x − 5/2` from `−2.2` through both folds. It refuses a `ForwardDiff.Dual` input in
+  `solve`, a `LeastSquaresProblem`, a complex or a device array iterate, and a member that forms no
+  Jacobian matrix, each with an `ArgumentError`. The division by `σ` makes the path of the
+  fixed-point homotopy independent of a scale of `F`: `F(x) = s (A x − b)` gives the same root at
+  `s = 4 √floatmax` and `floatmax/8` with both homotopies, in `Float32` and `Float64`. Since `σ`
+  has the units of the Jacobian, the path from a start a few ulps from the root of `A x − b`
+  accepts every step and ends at that root; a non-finite `J(x₀)` returns `NONFINITE` with no
+  step.
+
+- **The standard test set has a sixteenth column, `Continuation FixedPointHomotopy`,** before the
+  `Fallback` column: 43 of 67 starts give `SUCCESS` in `Float32` and 49 of 67 in `Float64`. The
+  benchmark pairs it with SimpleNonlinearSolve's `ArcLengthContinuation`, with
+  `SimpleNewtonRaphson` as its corrector, on the same homotopy; its arclength metric, its
+  predictor and its landing on `λ = 1` differ from the column's.
+
+- **`PseudoTransient(δ₀; δ_max = 1e12)` is a new exported globalization of `Newton` for a
+  `StationarityProblem`: pseudo-transient continuation.** Each step solves `(J + I/δ) d = −F`,
+  with the regularisation `μ` of the `Newton` added to `1/δ`, and is accepted; `δ` starts at `δ₀`
+  in each solve and follows the switched evolution relaxation
+  `δₖ₊₁ = min(δₖ ‖F(xₖ)‖₂ / ‖F(xₖ₊₁)‖₂, δ_max)`. On the double well
+  `S(x, y) = (x² − 1)²/4 + y²/2` from `(0.1, 1)`, `Newton()` converges to the saddle `(0, 0)` and
+  `PseudoTransient(0.1)` to the minimum `(1, 0)`. A non-finite `δ`, `1/δ` or residual returns
+  `NONFINITE`; every problem other than a `StationarityProblem` (a `NonlinearProblem`, a
+  `LeastSquaresProblem`, the problem that `LeftPreconditioned` builds), `reuse`, a refinement and
+  a matrix-free linear method (`GMRES`, `BiCGStab`, `DQGMRES`, `MINRESQLP`) or a
+  `KroneckerFactorization` raise an `ArgumentError`.
+
+- **`scripts/recycling_spike.jl` (new) counts the Jacobian–vector products of Krylov recycling
+  under a lagged preconditioner.** On `sparse_bracket_problem` at `N = 125` and `768`, ten Newton
+  solves along `p = 1.00, 1.05, …, 1.45`, each from the root before, with `FixedForcing(η)` and
+  the LU of the analytic Jacobian as a right preconditioner that `Newton(; reuse = k)` refreshes,
+  it gives the products of the package's `GMRES(; restart = m)` and of a GCRO-DR(m, k) written in
+  the script, without and with the recycled space kept between linear solves, the `k` products of
+  `A·U` included, over `m ∈ {20, 30}`, `k ∈ {5, 10}` and `η ∈ {1e-2, 1e-6}`. A control with six
+  eigenvalues in `[0.01, 0.05]` must give fewer products with recycling than without, and fewer
+  without than with `GMRES(m)`, and each GCRO-DR count must equal a direct count of the
+  operator's calls; the script stops with an error otherwise. It prints one verdict line for each
+  of the rules decided before the run. On the base `cd7fa81` with this script, on an Apple M4 Max
+  with Julia 1.13.4 and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every
+  cell of the grid gave the same count in all three columns (23 at `η = 1e-2`, 36 at `η = 1e-6`,
+  over 21 Newton steps). No linear solve started from a recycled space: the inner solves before
+  the last ran fewer than `k` Arnoldi steps each, and such a cycle leaves none. The stop rule
+  (`r ≥ 0.90` in every cell) held. `test/integration/hardware_scripts.jl` runs the script at
+  `N = 125`, `m = 20`, `k = 5`, `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the
+  package's steps and refreshes, and its verdict on synthetic rows.
 
 ### Changed
+
+- **A factor in the matrix's own element type divides a matrix whose largest entry lies below 1
+  by the power of two of that entry, so a matrix of subnormal or near-`floatmin` entries is
+  factorised in the normal range.** `load_factors!` (host `DenseLU`, `DenseQR`, `DenseLDLT`,
+  `DenseCholesky` and the device LU, QR and LDLᵀ), the static `factor_matrix` and the load kernel
+  of `DeviceCholesky` divide by `2^e`, `e = scale_exponent(J)`, for `e < 0`; for `e ≥ 0` they keep
+  the copy, bit for bit, because with `e > 0` the solve would hold up to `2^e` times its solution,
+  which overflows near `floatmax`. A Cholesky factor in the matrix's own element type rounds that
+  `e < 0` down to an even exponent, so that its factor is that of `J` times a power of two and
+  the solve of a normal-range matrix keeps its bits. For an IEEE element type, the load kernel of
+  `DeviceCholesky` takes the largest entry and its exponent from the bits (`abs_bits`,
+  `bits_exponent`), not from `abs`, `max` and `frexp`, because the Apple GPU flushes subnormals
+  to zero in its arithmetic: there a `Float32` matrix of subnormal entries read as zero, kept
+  `e = 0` and gave `SINGULAR`; it gives `SUCCESS`, the host's `e` and an error within
+  `32 eps(Float32) · 16` in `Float32` and `ComplexF32` (testset "Metal KA Cholesky of a matrix of
+  subnormal entries" of `test/devices/metal_ka.jl`). The scale of a matrix of `ForwardDiff.Dual`
+  entries, real or complex, is taken from their values alone (`scale_value`), on the host and in
+  the kernel, which reads the bits of each value as those of an IEEE entry, because ForwardDiff's
+  `iszero`, `==`, `<` and `max` of a `Dual` also read its partials: a `Dual` matrix of zero values
+  and nonzero partials keeps `e = 0`, and its factor takes it as it is. `ldexp2` divides a `Dual`
+  in its value and in each partial, in their own type, not by ForwardDiff's `ldexp`, whose
+  `exp2(e)` is a `Float64`: so the load kernel of a `Dual{Float32}` matrix holds no `Float64`
+  operation, which the Apple GPU does not compile (testset "Metal KA Cholesky of a
+  ForwardDiff.Dual matrix" of `test/devices/metal_ka.jl`). In the kernel, a real type
+  whose value is no `Base.IEEEFloat`, such as `BigFloat`, gives `e = 0`. A factor of
+  another element type divides for every `e`, as before,
+  and a static factor still copies an own-type `BigFloat` matrix whose exponent lies outside the
+  `Int32` range (K108). The static SVD divides by the exponent of a subnormal largest entry,
+  which `matrix_exponent` clamps to `-exponent(floatmax)`, so its largest entry lies in `[1, 2)`
+  also there (`svd_exponent`, `src/linear/static/svd.jl`). A
+  matrix `2^-1070 A₀` (`2^-145 A₀` in `Float32`) then solves on `SMatrix`, `Array` and `JLArray`
+  in the four element types within `32 eps κ₁`, `eps` of the factor's type (testset "a subnormal
+  matrix" of `test/linear/linearproblem.jl`), where LU, QR and Cholesky gave `SUCCESS` with a
+  large error, LDLᵀ `NONFINITE`, and the static `SVDFactorization(Float32)` `SINGULAR`. The
+  same-type `ldiv!!` of a factor with `e < 0` lifts a small right-hand side with the matrix: it
+  divides `r` by `2^k`, `k` the exponent of `r` clamped to `-exponent(floatmax)` and then to
+  `[e, 0]`, unless the headroom of `rhs_exponent` below `floatmax` needs a larger `k`, so that a
+  subnormal `r` keeps its bits
+  (testsets "a subnormal b with a matrix near floatmin" and "a b near floatmax with a matrix of
+  exponent below 0" of `test/linear/linearproblem.jl`). `r` is not lifted past the exponent 0, so
+  the solve holds `2^(e - k) x`, never larger than the solution `x`, and the LU back substitution
+  of `2^kA W`, `W` the Wilkinson growth matrix of size `n`, `kA < 0`, stays finite for a solution
+  near `floatmax / 2^n`, as on `main` (testset "the LU solve of 2^kA W …"). A factor with
+  `e ≥ 0` solves as before, bit for bit. The static QR and SVD solves of `m < n` and the dense
+  QR one take the same `k` for `b` (testsets "m < n, …"): they took `b` as it is, which lost a
+  subnormal `b` to 0 or to a power of two of the solution, and the dense QR solve of
+  `[2 1 0; 1 2 1]` and `b = 2^(emax - 1) (1, -2)` gave `NONFINITE` (testset "m < n, the dense QR
+  of a matrix of exponent above 0 and a b near floatmax"). The
+  Cholesky solve of `[2t t; t t]`, `t = nextfloat(0)`, gives `(-1, 2)` within `8 eps κ₁`, where
+  it gave `(-0.5, 1)`. The R1 Golub–Pereyra reduced Jacobian of
+  `VariableProjection` (`_pinv_adj_mul_r1`) applies the static SVD's exponent to each coefficient
+  by `ldexp2`, in the wider of the factor's and the matrix's element types, because `2^-e`
+  overflows for `e` below `-exponent(floatmax)`; the static
+  `SVDFactorization(Float32)` of a `Float64` matrix at `2^-130`, which gives `NaN` there on
+  `bf08120`, gives a result within `8 eps(Float32) κ`. This closes K110, K111 and K114. Five limits
+  stay: the dense and device SVD solves of an `m < n` system do not scale a subnormal
+  right-hand side up (K124), nor is a subnormal `w` of
+  `_pinv_adj_mul_r1` (K129), the device `SVDFactorization(Float32)` of a subnormal `Float64`
+  matrix gives `SINGULAR` (K125), `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where
+  `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K140), and a `Dual`
+  matrix of subnormal values and partials 1 gives `NaN` partials, where the Cholesky factors of
+  `ae2a0db` gave `±Inf`, for a true derivative above `floatmax` (K141). A static
+  LU, QR or LDLᵀ of a `0 × 0` matrix in another factor type, which threw an `ArgumentError` from
+  the empty reduction, gives `SUCCESS` and `e = 0`. Two probes against `bf08120`, Julia 1.13.4:
+  of 1 024 normal-range solves (every route, element type and factor, at scales `2^-60` to
+  `2^40`), all 1 024 give the same bits; of 1 620 solves of well-conditioned, ill-conditioned
+  and singular matrices at scales `2^-40` to `2^30` (LU, QR, LDLᵀ, Cholesky and SVD on the three
+  routes, in `Float32`, `Float64` and `ComplexF64`), the 1 619 that both runs record give the
+  same return code and the same error to four digits. `test/verification/standard_reference.csv`
+  is unchanged.
+
+## [0.1.0] — 2026-11-26
+
+The first registered release. GeometricSolvers solves nonlinear systems `F(x, p) = 0` and
+stationarity problems in three regimes: value semantics on a `Number` or an `SVector` (R1), batches
+with `solve_batch!` on the CPU or a GPU (R2), and in place on a host or device array (R3), with a
+matrix-free variant through `GMRES` or `MINRESQLP`. It solves nonlinear least-squares problems in
+R1 and R3; `solve_batch!` takes no `LeastSquaresProblem`. The
+entries below record the development before this release; there is no earlier release to compare
+with, and a "breaking" entry names a change against an earlier state of `main`. The entries on the
+test layout and the Metal workflow state the test groups and the required checks of this release,
+which closes `K94` in `KNOWN_ISSUES.md`.
+
+### Changed
+
+- **The README describes the package and gives five examples.** It states the three regimes and
+  how the storage of the initial iterate selects one, the matrix-free regime, the families of
+  methods, the problem types and the package extensions, with links to the documentation, and
+  replaces the line that called the package early-stage with a pre-1.0 status line. The examples
+  are a scalar and an `SVector` solve (R1), an in-place `Newton` with `Backtracking` through
+  `init` and `solve!` (R3), a batch with `solve_batch!` on the CPU (R2), a least-squares fit with
+  `GaussNewton` and with `LevenbergMarquardt`, and a matrix-free Newton–GMRES solve; the output
+  under each is that of a run of the block. A sixth block, a batch on a GPU, is marked as not
+  run. The Development section, at the end, now states what the git hooks do: the files in
+  `.githooks`, when `pre-commit` runs (a staged `.jl` file, a staged `.jl` deletion, a change
+  below `test/`), each of its stages and whether it blocks, the test-layout check and ast-grep
+  among them, and that `pre-push` runs the suite only on a push to `main` or `master`. The NFC fix
+  names the `nfc.jl` script of the shared hook set in place of a path on one machine.
 
 - **`LUFactorization()` factorises a host matrix of `8 ≤ n ≤ 32` by an own recursive LU.** In
   `Float32`, `Float64` and `ComplexF64`, the `DenseLU` of an `n × n` Jacobian in that band, in the
@@ -1053,141 +1312,6 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
-- **`scripts/recycling_spike.jl` (new) counts the Jacobian–vector products of Krylov recycling
-  under a lagged preconditioner.** On `sparse_bracket_problem` at `N = 125` and `768`, ten Newton
-  solves along `p = 1.00, 1.05, …, 1.45`, each from the root before, with `FixedForcing(η)` and
-  the LU of the analytic Jacobian as a right preconditioner that `Newton(; reuse = k)` refreshes,
-  it gives the products of the package's `GMRES(; restart = m)` and of a GCRO-DR(m, k) written in
-  the script, without and with the recycled space kept between linear solves, the `k` products of
-  `A·U` included, over `m ∈ {20, 30}`, `k ∈ {5, 10}` and `η ∈ {1e-2, 1e-6}`. A control with six
-  eigenvalues in `[0.01, 0.05]` must give fewer products with recycling than without, and fewer
-  without than with `GMRES(m)`, and each GCRO-DR count must equal a direct count of the
-  operator's calls; the script stops with an error otherwise. It prints one verdict line for each
-  of the rules decided before the run. On the base `cd7fa81` with this script, on an Apple M4 Max
-  with Julia 1.13.4 and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every
-  cell of the grid gave the same count in all three columns (23 at `η = 1e-2`, 36 at `η = 1e-6`,
-  over 21 Newton steps). No linear solve started from a recycled space: the inner solves before
-  the last ran fewer than `k` Arnoldi steps each, and such a cycle leaves none. The stop rule
-  (`r ≥ 0.90` in every cell) held. `test/integration/hardware_scripts.jl` runs the script at
-  `N = 125`, `m = 20`, `k = 5`, `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the
-  package's steps and refreshes, and its verdict on synthetic rows.
-
-- **`GMRES` takes two new keywords, `flexible = false` and `basis_eltype = Nothing`, and a
-  `Newton` with a preconditioned `GMRES` takes `reuse = k`.** `GMRES(; flexible = true)` is the
-  flexible GMRES of Saad (1993, doi:10.1137/0914028): with a preconditioner it keeps each
-  `z_j = M_j⁻¹ v_j` in a working-precision matrix `Z` of `min(restart, n)` columns and forms the
-  direction and the restart residual from `Z y`, so a preconditioner that changes between inner
-  iterations still gives the minimal-residual direction; without one it allocates no `Z` and
-  solves as `flexible = false`. `GMRES(; basis_eltype = TB)` stores the Krylov basis in `TB`
-  (`Complex{TB}` for a complex iterate), as the compressed basis of Aliaga et al. (2020,
-  arXiv:2009.12101), with every product, coefficient, norm and update in the working type; the
-  preconditioner reads a working-precision copy of each basis vector. Its Givens estimate is not
-  the true residual, so each cycle ends on `‖b − J d‖`, one more Jacobian–vector product, and
-  restarts where it misses the tolerance; its CGS2 step takes three reductions. One cycle of `j`
-  CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist, Luszczek and
-  Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve reaches
-  `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor a
-  concrete `AbstractFloat` type raises an `ArgumentError`, and so does a `DogLeg` with any
-  `basis_eltype` but `Nothing`, because its trial loop reads the basis as orthonormal in the
-  working precision.
-  Both keywords are type parameters, `GMRES{F, P, TJ, TB, FL}` with the fields `basis_eltype` and
-  `flexible::Val{FL}`, and the `forcing` and `preconditioner` keywords of `Newton` keep them.
-  `Newton(; reuse = k)` with a `GMRES` that has a preconditioner refreshes it at the first step,
-  every `k` steps after and at the step after a `STALLED` step or an inner solve that reached its
-  cap, with no retry within a step; without a preconditioner, and with `BiCGStab`, `DQGMRES` or
-  `MINRESQLP`, `reuse` still raises an `ArgumentError`. The message of the refusal for a
-  matrix-free method other than `MINRESQLP` now names the exception.
-
-- **The standard test set has one more column, `Newton Backtracking Float32-basis GMRES`,** after
-  `Newton Backtracking DQGMRES`: 18 columns and 2412 cells. Its 134 cells are new in
-  `test/verification/standard_reference.csv`, 24 of them flagged `unstable`, and the benchmark
-  pairs it with no package method (no Krylov linear solver). Its `Float32` cells equal those of
-  `Newton Backtracking GMRES`, whose basis is then of the same type; 9 of its 67 `Float64` cells
-  differ from that column in the code or the iteration count, on problems 3, 11, 15, 21 and 22.
-
-- **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
-  20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
-  storage does not grow with the iteration count.** `BiCGStab` is the right-preconditioned
-  BiCGStab of van der Vorst (1992, doi:10.1137/0913035): nine vectors, two Jacobian–vector
-  products per iteration and one where the half step meets the tolerance, and no residual
-  minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
-  finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
-  direction; no `ReturnCode` is added. Its recurrence runs on the right-hand side scaled to unit
-  norm and forms `ω` from `‖t‖`, so a system scaled to `4√floatmax` or `floatmax/8` keeps its
-  solution. `DQGMRES` is the right-preconditioned DQGMRES of Saad and Wu (1996,
-  doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8): one product per
-  iteration, a quasi-minimal residual over a window of `min(memory, n)` vectors, `min(memory, n)
-  + 1` basis vectors and `min(memory, n)` directions; with `memory` at least the iteration count
-  its iterate is that of unrestarted `GMRES` with modified Gram–Schmidt. Both take the forcing
-  terms and the right preconditioner of `GMRES`, the `forcing` and `preconditioner` keywords of
-  `Newton`, `Static` and the line searches, on `Array`, `JLArray` and a device array, and count
-  `f_calls` and `jvp_calls` exactly. `DogLeg`, whose trial loop reads the Arnoldi relation of
-  `GMRES`, `reuse`, `Refinement`, `LevenbergMarquardt`, `PseudoTransient`, a `ForwardDiff.Dual`
-  input to `solve`, a `BatchEliminated` problem and `memory < 1` raise an `ArgumentError`.
-
-- **`GeometricSolvers.matrix_free(method)` is a new public trait: `true` for `GMRES`, `BiCGStab`,
-  `DQGMRES` and `MINRESQLP`, `false` for every other linear method.** `Newton` reads it in place of
-  a test for `GMRES` in its refusals of reuse, refinement, `LevenbergMarquardt` and
-  `PseudoTransient`, in its `forcing` and `preconditioner` keywords and where its state is built,
-  a `BatchEliminated` problem reads it before it refuses every method but `GMRES`, and `solve`
-  reads it for the refusal of a `ForwardDiff.Dual` input. `Continuation` reads it for the
-  refusal of its `Newton` method, and `KroneckerFactorization` for the refusal of its block
-  method, so both refuse every matrix-free linear method; `KroneckerFactorization(; block =
-  MINRESQLP())`, which was accepted, now raises an `ArgumentError`. A `Newton` with `GMRES` or
-  `MINRESQLP` keeps every other behaviour. The messages of the refusals of reuse, refinement and
-  `LevenbergMarquardt` with `GMRES`, of a `Dual` input, of a `Continuation` method, of a
-  `JVPFunction` with a factorising method and of a Jacobian function with a matrix-free method,
-  and of `max_inner_iterations`, `f_calls` and `jvp_calls` on a solve that keeps no count, name a
-  matrix-free linear method in place of `GMRES` or of `GMRES` and `MINRESQLP`. The message of
-  the `forcing` and `preconditioner` keywords of `Newton` names `GMRES`, `BiCGStab` or `DQGMRES`
-  as the methods they configure, and `MINRESQLP` for `forcing`, and says to pass them to the
-  method.
-
-- **The standard test set has two more columns, `Newton Backtracking BiCGStab` and `Newton
-  Backtracking DQGMRES`,** after `Newton Backtracking GMRES`: 17 columns and 2278 cells. Their
-  268 cells are new in `test/verification/standard_reference.csv`, and the benchmark pairs each
-  with no package method (no Krylov linear solver). The benchmark's GeometricSolvers adapter
-  hands the shared Jacobian to no `Newton` with a matrix-free linear method.
-
-- **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
-  exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
-  `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,
-  `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x)/σ + (1 − λ)(x − x₀)` with `σ` the
-  largest absolute entry of `J(x₀)`, or of `F(x₀)` where `J(x₀) = 0`, or 1 where both are 0, or
-  `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's problem; the
-  `NonlinearProblem` holds no `λ`. A tangent predictor and a bordered Newton corrector follow the
-  path through a fold of `λ`, where a step in `λ` alone stops. A failed corrector halves the step,
-  a corrector of at most 3 iterations doubles it up to `h_max`, and a step below `h_min` returns
-  `STALLED`. `GeometricSolvers.continuation_steps(state)` reads `λ` and the length of every
-  accepted and rejected step of the last solve, and the status counts the rejected steps in
-  `step_failures`. It solves the Powell badly scaled function (problem 3 of the standard test set)
-  from `100u0` in `Float32` and `Float64`, where every other column fails in `Float64`, and the
-  cubic `x³ − 3x − 5/2` from `−2.2` through both folds. It refuses a `ForwardDiff.Dual` input in
-  `solve`, a `LeastSquaresProblem`, a complex or a device array iterate, and a member that forms no
-  Jacobian matrix, each with an `ArgumentError`. The division by `σ` makes the path of the
-  fixed-point homotopy independent of a scale of `F`: `F(x) = s (A x − b)` gives the same root at
-  `s = 4 √floatmax` and `floatmax/8` with both homotopies, in `Float32` and `Float64`. Since `σ`
-  has the units of the Jacobian, the path from a start a few ulps from the root of `A x − b`
-  accepts every step and ends at that root; a non-finite `J(x₀)` returns `NONFINITE` with no
-  step.
-
-- **The standard test set has a fifteenth column, `Continuation FixedPointHomotopy`,** before the
-  `Fallback` column: 43 of 67 starts give `SUCCESS` in `Float32` and 49 of 67 in `Float64`. The
-  benchmark pairs it with SimpleNonlinearSolve's `ArcLengthContinuation`, with
-  `SimpleNewtonRaphson` as its corrector, on the same homotopy; its arclength metric, its
-  predictor and its landing on `λ = 1` differ from the column's.
-
-- **`PseudoTransient(δ₀; δ_max = 1e12)` is a new exported globalization of `Newton` for a
-  `StationarityProblem`: pseudo-transient continuation.** Each step solves `(J + I/δ) d = −F`,
-  with the regularisation `μ` of the `Newton` added to `1/δ`, and is accepted; `δ` starts at `δ₀`
-  in each solve and follows the switched evolution relaxation
-  `δₖ₊₁ = min(δₖ ‖F(xₖ)‖₂ / ‖F(xₖ₊₁)‖₂, δ_max)`. On the double well
-  `S(x, y) = (x² − 1)²/4 + y²/2` from `(0.1, 1)`, `Newton()` converges to the saddle `(0, 0)` and
-  `PseudoTransient(0.1)` to the minimum `(1, 0)`. A non-finite `δ`, `1/δ` or residual returns
-  `NONFINITE`; every problem other than a `StationarityProblem` (a `NonlinearProblem`, a
-  `LeastSquaresProblem`, the problem that `LeftPreconditioned` builds), `reuse`, a refinement and
-  a `GMRES`, `MINRESQLP` or `KroneckerFactorization` linear method raise an `ArgumentError`.
-
 - **`MINRESQLP(; maxiter = 30, forcing = EisenstatWalkerChoice2(), preconditioner = nothing)` is a
   new exported matrix-free linear method for `Newton` on a `StationarityProblem` with `E == U`.**
   It is MINRES-QLP (Choi, Paige and Saunders 2011, doi:10.1137/100787921) on the symmetric
@@ -1927,14 +2051,14 @@ so that a compat-only bump can be told apart from an interface change.
 - The test suite follows the shared layout. The test dependencies move from `[extras]` and
   `[targets]` to `test/Project.toml`, with their bounds; `Adapt`, which the tests use directly,
   takes its bound from `Project.toml` alone, and `Documenter` is new. `test/runtests.jl` selects
-  the groups `core`, `slow` and `metal` from `ARGS`, and the next entry gives the groups of a run
-  with empty `ARGS`. `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to
-  `test/quality/aqua.jl` and `test/quality/jet.jl`, the line-function fixture moves to
-  `test/helpers/linefunctions.jl`, and the new `test/quality/doctests.jl` in `slow` runs the
-  docstring doctests. No file of `test/gpu/` moves.
+  its test groups from `ARGS`, and the next entry gives the groups of a run with empty `ARGS`.
+  `test/aqua_tests.jl` and `test/jet_tests.jl` are renamed to `test/quality/aqua.jl` and
+  `test/quality/jet.jl`, the line-function fixture moves to `test/helpers/linefunctions.jl`, and
+  the new `test/quality/doctests.jl`, the one file of the group `doctests`, runs the docstring
+  doctests. No file of `test/gpu/` moves.
 - A default test run on an Apple-silicon Mac runs the Metal device tests. When `ARGS` is empty,
-  `test/runtests.jl` runs the groups `core`, `slow` and `metal` on an Apple-silicon Mac and `core`
-  and `slow` everywhere else. The new `test/devices/metal.jl`, in the `metal` group, includes
+  `test/runtests.jl` runs the groups that `test/ci-groups.toml` lists, and on an Apple-silicon Mac
+  the group `metal` after them. The new `test/devices/metal.jl`, in the `metal` group, includes
   `test/gpu/runtests.jl` and runs its Metal case, the `axpy` kernel in `Float32` and `Float16`;
   `test/gpu/` stays the separate suite for a run by hand, and `test/gpu/README.md` and the header
   of `test/gpu/runtests.jl` say that the Metal case alone has device CI. Where
@@ -1942,8 +2066,8 @@ so that a compat-only bump can be told apart from an interface change.
   (`@test_skip Metal.functional()`), also under `test_args = ["metal"]`. Metal (1.10 or later) is
   a test dependency on every platform; it installs on Linux and Windows, and no default run there
   loads it. A new `Metal` workflow runs the group on GitHub's `macos-15` runner, for the `min` and
-  `1` Julia versions, and a step before the tests fails that job where Metal is not functional. The
-  job is not a required check.
+  `1` Julia versions, and a step before the tests fails that job where Metal is not functional. Its
+  two jobs are required checks.
 - The `Adapt` floor is 4.7.3. Metal 1.12, which the test environments take, needs `GPUArrays`
   12.1, and that needs Adapt 4.7.3, so a test environment with `Metal = "1.12"` does not resolve
   with Adapt held below it.
