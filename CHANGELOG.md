@@ -7,6 +7,81 @@ This package is pre-1.0, so *every* minor release is potentially breaking in the
 so that a compat-only bump can be told apart from an interface change.
 
 
+## [Unreleased]
+
+### Changed
+
+- **A factor in the matrix's own element type divides a matrix whose largest entry lies below 1
+  by the power of two of that entry, so a matrix of subnormal or near-`floatmin` entries is
+  factorised in the normal range.** `load_factors!` (host `DenseLU`, `DenseQR`, `DenseLDLT`,
+  `DenseCholesky` and the device LU, QR and LDLᵀ), the static `factor_matrix` and the load kernel
+  of `DeviceCholesky` divide by `2^e`, `e = scale_exponent(J)`, for `e < 0`; for `e ≥ 0` they keep
+  the copy, bit for bit, because with `e > 0` the solve would hold up to `2^e` times its solution,
+  which overflows near `floatmax`. A Cholesky factor in the matrix's own element type rounds that
+  `e < 0` down to an even exponent, so that its factor is that of `J` times a power of two and
+  the solve of a normal-range matrix keeps its bits. For an IEEE element type, the load kernel of
+  `DeviceCholesky` takes the largest entry and its exponent from the bits (`abs_bits`,
+  `bits_exponent`), not from `abs`, `max` and `frexp`, because the Apple GPU flushes subnormals
+  to zero in its arithmetic: there a `Float32` matrix of subnormal entries read as zero, kept
+  `e = 0` and gave `SINGULAR`; it gives `SUCCESS`, the host's `e` and an error within
+  `32 eps(Float32) · 16` in `Float32` and `ComplexF32` (testset "Metal KA Cholesky of a matrix of
+  subnormal entries" of `test/devices/metal_ka.jl`). The scale of a matrix of `ForwardDiff.Dual`
+  entries, real or complex, is taken from their values alone (`scale_value`), on the host and in
+  the kernel, which reads the bits of each value as those of an IEEE entry, because ForwardDiff's
+  `iszero`, `==`, `<` and `max` of a `Dual` also read its partials: a `Dual` matrix of zero values
+  and nonzero partials keeps `e = 0`, and its factor takes it as it is. `ldexp2` divides a `Dual`
+  in its value and in each partial, in their own type, not by ForwardDiff's `ldexp`, whose
+  `exp2(e)` is a `Float64`: so the load kernel of a `Dual{Float32}` matrix holds no `Float64`
+  operation, which the Apple GPU does not compile (testset "Metal KA Cholesky of a
+  ForwardDiff.Dual matrix" of `test/devices/metal_ka.jl`). In the kernel, a real type
+  whose value is no `Base.IEEEFloat`, such as `BigFloat`, gives `e = 0`. A factor of
+  another element type divides for every `e`, as before,
+  and a static factor still copies an own-type `BigFloat` matrix whose exponent lies outside the
+  `Int32` range (K108). The static SVD divides by the exponent of a subnormal largest entry,
+  which `matrix_exponent` clamps to `-exponent(floatmax)`, so its largest entry lies in `[1, 2)`
+  also there (`svd_exponent`, `src/linear/static/svd.jl`). A
+  matrix `2^-1070 A₀` (`2^-145 A₀` in `Float32`) then solves on `SMatrix`, `Array` and `JLArray`
+  in the four element types within `32 eps κ₁`, `eps` of the factor's type (testset "a subnormal
+  matrix" of `test/linear/linearproblem.jl`), where LU, QR and Cholesky gave `SUCCESS` with a
+  large error, LDLᵀ `NONFINITE`, and the static `SVDFactorization(Float32)` `SINGULAR`. The
+  same-type `ldiv!!` of a factor with `e < 0` lifts a small right-hand side with the matrix: it
+  divides `r` by `2^k`, `k` the exponent of `r` clamped to `-exponent(floatmax)` and then to
+  `[e, 0]`, unless the headroom of `rhs_exponent` below `floatmax` needs a larger `k`, so that a
+  subnormal `r` keeps its bits
+  (testsets "a subnormal b with a matrix near floatmin" and "a b near floatmax with a matrix of
+  exponent below 0" of `test/linear/linearproblem.jl`). `r` is not lifted past the exponent 0, so
+  the solve holds `2^(e - k) x`, never larger than the solution `x`, and the LU back substitution
+  of `2^kA W`, `W` the Wilkinson growth matrix of size `n`, `kA < 0`, stays finite for a solution
+  near `floatmax / 2^n`, as on `main` (testset "the LU solve of 2^kA W …"). A factor with
+  `e ≥ 0` solves as before, bit for bit. The static QR and SVD solves of `m < n` and the dense
+  QR one take the same `k` for `b` (testsets "m < n, …"): they took `b` as it is, which lost a
+  subnormal `b` to 0 or to a power of two of the solution, and the dense QR solve of
+  `[2 1 0; 1 2 1]` and `b = 2^(emax - 1) (1, -2)` gave `NONFINITE` (testset "m < n, the dense QR
+  of a matrix of exponent above 0 and a b near floatmax"). The
+  Cholesky solve of `[2t t; t t]`, `t = nextfloat(0)`, gives `(-1, 2)` within `8 eps κ₁`, where
+  it gave `(-0.5, 1)`. The R1 Golub–Pereyra reduced Jacobian of
+  `VariableProjection` (`_pinv_adj_mul_r1`) applies the static SVD's exponent to each coefficient
+  by `ldexp2`, in the wider of the factor's and the matrix's element types, because `2^-e`
+  overflows for `e` below `-exponent(floatmax)`; the static
+  `SVDFactorization(Float32)` of a `Float64` matrix at `2^-130`, which gives `NaN` there on
+  `bf08120`, gives a result within `8 eps(Float32) κ`. This closes K110, K111 and K114. Five limits
+  stay: the dense and device SVD solves of an `m < n` system do not scale a subnormal
+  right-hand side up (K124), nor is a subnormal `w` of
+  `_pinv_adj_mul_r1` (K129), the device `SVDFactorization(Float32)` of a subnormal `Float64`
+  matrix gives `SINGULAR` (K125), `_pinv_adj_mul_r1` of a subnormal `Φ` gives `NaN` where
+  `bf08120` gave `±Inf` for a true result with entries above `floatmax` (K140), and a `Dual`
+  matrix of subnormal values and partials 1 gives `NaN` partials, where the Cholesky factors of
+  `ae2a0db` gave `±Inf`, for a true derivative above `floatmax` (K141). A static
+  LU, QR or LDLᵀ of a `0 × 0` matrix in another factor type, which threw an `ArgumentError` from
+  the empty reduction, gives `SUCCESS` and `e = 0`. Two probes against `bf08120`, Julia 1.13.4:
+  of 1 024 normal-range solves (every route, element type and factor, at scales `2^-60` to
+  `2^40`), all 1 024 give the same bits; of 1 620 solves of well-conditioned, ill-conditioned
+  and singular matrices at scales `2^-40` to `2^30` (LU, QR, LDLᵀ, Cholesky and SVD on the three
+  routes, in `Float32`, `Float64` and `ComplexF64`), the 1 619 that both runs record give the
+  same return code and the same error to four digits. `test/verification/standard_reference.csv`
+  is unchanged.
+
+
 ## [0.1.0] — 2026-11-26
 
 The first registered release. GeometricSolvers solves nonlinear systems `F(x, p) = 0` and

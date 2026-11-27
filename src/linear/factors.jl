@@ -21,7 +21,12 @@ factors, [`factor_eltype`](@ref). Where that is not the element type of `J`, `J`
 by the power of two `2^e` that brings its largest `|re|` or `|im|` into `[1, 2)`, or as close as the
 exponent range allows, and `e` is kept in the factor, so that the overall scale of `J` neither
 overflows nor underflows in the factor type (for Cholesky, `e` is taken from the lower triangle and
-the real part of the diagonal alone). A zero or non-finite `J` gives `e = 0`. A singular
+the real part of the diagonal alone). Where it is the element type of `J`, `J` is divided only for
+`e < 0`, so that a matrix of subnormal or near-`floatmin` entries is factorised in the normal
+range; for `e > 0`, the solve with the factor of `J / 2^e` would hold up to `2^e` times its
+solution, which can overflow near `floatmax`. Cholesky then rounds `e` down to an even exponent,
+so that the factor of `J / 2^e` is that of `J` times the power of two `2^(-e/2)`. A zero or
+non-finite `J` gives `e = 0`. A singular
 `J` does not throw. LU
 records the first zero pivot in `info`, QR the first zero diagonal entry of `R`, LDLᵀ the first
 zero pivot block (or `1` for a non-finite entry), Cholesky the order of the first leading minor
@@ -38,11 +43,11 @@ For a dense or device factor (R3), `fac` is a [`DenseLU`](@ref), [`DenseQR`](@re
 [`DenseSVD`](@ref), [`DenseLDLT`](@ref), [`DenseCholesky`](@ref), [`DeviceLU`](@ref),
 [`DeviceQR`](@ref), [`DeviceSVD`](@ref), [`DeviceLDLT`](@ref) or [`DeviceCholesky`](@ref) built
 by [`init_linear`](@ref).
-`J` is written into `fac.factors`, divided by `2^e` as for a static matrix where its element type
-is not that of `fac.factors`, and `fac.factors` is factorised in
-place; `J === fac.factors` is factorised as it is. A [`DenseSVD`](@ref) or [`DeviceSVD`](@ref)
-divides `J` by `2^e` unconditionally, `J === fac.factors` too: into `fac.factors` on the host before
-`gesvd`, and into `fac.U` on a device before the one-sided Jacobi sweep. For [`DenseSVD`](@ref),
+`J` is written into `fac.factors`, divided by `2^e` as for a static matrix, and `fac.factors` is
+factorised in place; `J === fac.factors` takes the same division in place. A [`DenseSVD`](@ref)
+or [`DeviceSVD`](@ref) divides `J` by `2^e` unconditionally, `J === fac.factors` too: into
+`fac.factors` on the host before `gesvd`, and into `fac.U` on a device before the one-sided Jacobi
+sweep. For [`DenseSVD`](@ref),
 `info` is `1` where `J` has a non-finite entry, which is refused before `gesvd` and
 leaves `U`, `S` and `VT` unwritten, `gesvd`'s non-convergence code where it fails, or `1` where a
 singular value of `J / 2^e` is not finite; for [`DeviceSVD`](@ref) it is `1` where the Jacobi
@@ -74,19 +79,22 @@ solution of `A d = r`, the minimum-norm one where an SVD factor has numerical ra
 
 For a static factor (R1), `d` is `nothing` and the result is a new `SVector`. For a dense factor
 (R3), `d` is the vector buffer written in place and returned. Where the element
-type of `r` is the element type of the factors, the solve runs directly in it. There a finite,
-nonzero `r` whose largest `|re|` or `|im|` is within a few bits of `floatmax` (`2 + ⌈log2 N⌉`
-bits for `N` entries) is divided by the smallest power of two `2^k` that leaves that headroom; any
-other `r` is solved as it is. This keeps `Qᴴ r` and `Uᴴ r`, which the QR and SVD solves form
-first, finite. The SVD, whose factors are those of `J / 2^e`, then divides the coordinates
-`Uᴴ r` by its singular values times the smallest power of two `2^t` that keeps the coordinates
-the same headroom below `floatmax`; `t` is 0 wherever they are already below it, and for LU and
-QR. The step is multiplied by `2^(k + t - e)`, in one rounding, with `e` the exponent of
-[`factorize!!`](@ref), so that the SVD step does not overflow where it is representable. The LU
-and QR solves can still overflow in the triangular solve for such an `r`. An entry of `r` within
-`k` bits of the subnormal range can lose those bits to the division, and a coordinate within `t`
-bits of it to the SVD's. The step still overflows on every route where the solution itself
-exceeds `floatmax`.
+type of `r` is the element type of the factors, the solve runs directly in it. There `r` is
+divided by a power of two `2^k`: `k` is the exponent of the largest `|re|` or `|im|` of `r`,
+clamped to `[min(e, 0), 0]`, with `e` the exponent of [`factorize!!`](@ref), so that a factor
+with `e < 0` lifts a small `r` with the matrix, by up to `2^-e` and never past the exponent 0,
+and a small `r` keeps its bits in the solve. Where `r / 2^k` has a largest `|re|` or `|im|`
+within a few bits of `floatmax` (`2 + ⌈log2 N⌉` bits for `N` entries), `k` is instead the
+smallest exponent that leaves that headroom. This keeps `Qᴴ r` and `Uᴴ r`, which the QR and
+SVD solves form first, finite. The SVD, whose factors are those of `J / 2^e`, then divides the
+coordinates `Uᴴ r` by its singular values times the smallest power of two `2^t` that keeps the
+coordinates the same headroom below `floatmax`; `t` is 0 wherever they are already below it,
+and for LU and QR. The step is multiplied by `2^(k + t - e)`, in one rounding, with `e` the
+exponent of [`factorize!!`](@ref), so that the SVD step does not overflow where it is
+representable. The LU and QR solves can still overflow in the triangular solve for such an `r`.
+An entry of `r` within `k` bits of the subnormal range can lose those bits to the division, and
+a coordinate within `t` bits of it to the SVD's. The step still overflows on every route where
+the solution itself exceeds `floatmax`.
 Where the element types differ,
 a finite, nonzero `r` is scaled by `s = maximum(abs, r)`, converted to the factor type, solved,
 converted back and multiplied by `s` (Kelley 2023, *Newton's Method in Three Precisions*, Pacific
@@ -749,22 +757,57 @@ singular_values(fac::StaticSVD) = map(a -> ldexp2(a, fac.scale_exponent), fac.σ
     end
 end
 @inline ldexp2(a::AbstractFloat, e::Integer) = ldexp(a, e)
-@inline ldexp2(a::Real, e::Integer) = ldexp2(float(a), e)
+# A `ForwardDiff.Dual` scales its value and each partial by `ldexp2` in their own type, down to the
+# innermost values of a `Dual` of `Dual`s, so that each component is correctly rounded. The
+# partials take the type of the value explicitly, so that a `Dual` with no partials keeps it.
+# ForwardDiff's `ldexp(x, e)` multiplies the partials by `exp2(e)`, a `Float64` for an integer
+# `e`, which the Apple GPU cannot compile, and `Inf` for an `e` above `emax`, the exponent of
+# `floatmax`.
+@inline function ldexp2(a::ForwardDiff.Dual{T, V, N}, e::Integer) where {T, V, N}
+    v = ldexp2(ForwardDiff.value(a), e)
+    p = ForwardDiff.Partials{N, typeof(v)}(map(x -> ldexp2(x, e), ForwardDiff.partials(a).values))
+    return ForwardDiff.Dual{T}(v, p)
+end
+# Where `float(a)` is no `IEEEFloat`, such as the `BigFloat` of a `BigInt`, `ldexp` scales it, so
+# the method never calls itself.
+@inline function ldexp2(a::Real, e::Integer)
+    b = float(a)
+    b isa Base.IEEEFloat && return ldexp2(b, e)
+    return ldexp(b, e)
+end
 @inline ldexp2(a::Complex, e::Integer) = complex(ldexp2(real(a), e), ldexp2(imag(a), e))
 
 @inline abs_bits(x::T) where {T <: Base.IEEEFloat} = reinterpret(Unsigned, x) &
                                                      ~Base.sign_mask(T)
 
-# `J` in the factor element type `F`, as an `SMatrix`, which keeps the conversion off the heap, and
-# the exponent `e` of the power of two that `J` was divided by: 0 where `F` is the element type of
-# `J`, else `scale_exponent(J)`: by default `matrix_exponent`, the exponent of the largest |re| or
-# |im| of `J`, which takes no `abs` that can overflow. `e` is clamped to the exponent range, so that
-# `2^-e` is a float and the product with it is exact.
+# The value of a real entry from which the scale of a matrix is taken: the entry itself, and the
+# value of a `ForwardDiff.Dual`, down to its innermost one. ForwardDiff's `iszero`, `==`, `<` and
+# `max` of a `Dual` also read its partials, so that a `Dual` of zero value and nonzero partials is
+# neither zero nor the largest entry by its value, and `exponent` throws on its value.
+@inline scale_value(a) = a
+@inline scale_value(a::ForwardDiff.Dual) = scale_value(ForwardDiff.value(a))
+
+# `J / 2^e` in the factor element type `F`, as an `SMatrix`, which keeps the conversion off the
+# heap, and the exponent `e` of the power of two that `J` was divided by, with
+# `e = scale_exponent(J)`: by default `matrix_exponent`, the exponent of the largest |re| or |im| of
+# `J`, which takes no `abs` that can overflow. `e` is clamped to the exponent range, so that the
+# division is exact in the normal range; it is `ldexp2`, which keeps a subnormal entry on a device
+# that flushes subnormals to zero. Where `F` is the element type of `J`, only `e < 0` divides, as
+# in `load_factors!`, so that a matrix of subnormal or near-`floatmin` entries is factorised in the
+# normal range; `e > 0` converts `J` as it is, and so does an `e` below the `Int32` range of the
+# factor's field, which only a `BigFloat` matrix reaches. A Cholesky factor in the element type of
+# `J` rounds that `e < 0` down to an even exponent, `e & ~1`, as `load_factors!` does. Another `F`
+# divides for every `e`, and `Int32(e)` throws for an `e` outside that range. `e = 0`, which an
+# empty, zero or non-finite `J` gives, converts `J` as it is.
 function factor_matrix(::Type{F}, J::StaticMatrix{M, N, T},
         scale_exponent::E = matrix_exponent) where {F, M, N, T, E}
-    F === T && return SMatrix{M, N, F}(J), Int32(0)
-    e = scale_exponent(J)
-    return SMatrix{M, N, F}(SMatrix(J) * ldexp(one(float(real(T))), -e)), Int32(e)
+    e = isempty(J) ? 0 : scale_exponent(J)
+    if iszero(e) || (F === T && !(typemin(Int32) <= e < 0))
+        return SMatrix{M, N, F}(J), Int32(0)
+    end
+    # a new name, not `e &= ~1`: a closure over a reassigned `e` boxes it
+    s = F === T && scale_exponent === cholesky_exponent ? e & ~1 : e
+    return SMatrix{M, N, F}(map(a -> ldexp2(a, -s), SMatrix{M, N, T}(J))), Int32(s)
 end
 
 # A mutable local copy of a static array for the scalar loops of the R1 kernels: an `MMatrix` or
@@ -785,13 +828,15 @@ end
 end
 
 # The exponent of the largest |re| or |im| of a nonempty array `J`, a matrix or a right-hand side,
-# clamped to the exponent range, and 0 for a zero or non-finite `J`.
+# clamped to the exponent range, and 0 for a zero or non-finite `J`. |re| and |im| are those of
+# `scale_value`, the value of a `ForwardDiff.Dual`.
 function matrix_exponent(J::AbstractArray)
-    R = real(eltype(J))
+    R = typeof(scale_value(zero(real(eltype(J)))))
     m = if R <: Base.IEEEFloat
-        reinterpret(R, maximum(a -> max(abs_bits(real(a)), abs_bits(imag(a))), J))
+        reinterpret(R,
+            maximum(a -> max(abs_bits(scale_value(real(a))), abs_bits(scale_value(imag(a)))), J))
     else
-        float(maximum(a -> max(abs(real(a)), abs(imag(a))), J))
+        float(maximum(a -> max(abs(scale_value(real(a))), abs(scale_value(imag(a)))), J))
     end
     emax = exponent(floatmax(m))
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
@@ -801,34 +846,42 @@ end
 # a square `J`, the entries that a Cholesky factorisation reads, as `matrix_exponent` gives it:
 # clamped to the exponent range, and 0 for a zero or non-finite lower triangle. An entry above the
 # diagonal or an imaginary part of the diagonal sets no scale, so that the lower triangle of a
-# factor in a narrower precision does not underflow by it.
+# factor in a narrower precision does not underflow by it. |re| and |im| are those of
+# `scale_value`, the value of a `ForwardDiff.Dual`.
 function cholesky_exponent(J::AbstractMatrix)
-    m = float(zero(real(eltype(J))))
+    m = float(scale_value(zero(real(eltype(J)))))
     @inbounds for j in axes(J, 2)
-        m = max(m, float(abs(real(J[j, j]))))
+        m = max(m, float(abs(scale_value(real(J[j, j])))))
         for i in (j + 1):size(J, 1)
             a = J[i, j]
-            m = max(m, float(abs(real(a))), float(abs(imag(a))))
+            m = max(m, float(abs(scale_value(real(a)))), float(abs(scale_value(imag(a)))))
         end
     end
     emax = exponent(floatmax(m))
     return isfinite(m) && !iszero(m) ? clamp(exponent(m), -emax, emax) : 0
 end
 
-# The exponent `k ≥ 0` of the power of two `2^k` that the same-type solve divides the right-hand
-# side `r` by, the smallest one with which this bound keeps `Qᴴ r` and `Uᴴ r` of the QR and SVD
-# solves finite: their entries sum `N` products of an entry of `r` with a factor of modulus at most
-# 1, a complex one up to twice the largest |re| or |im| of `r`, so the largest |re| or |im| of
-# `r / 2^k` is held below `2^(emax - 1 - ⌈log2 N⌉)`, with `emax` the exponent of `floatmax`, and
-# each |re| and |im| of `Qᴴ r` and `Uᴴ r` below `2^emax`. An `r` below the first bound is not
-# scaled, and an `r` above it is divided by at most `2 + ⌈log2 N⌉` bits, so that only a small
-# entry of such an `r`, within that many bits of the subnormal range, can lose bits to the scaling,
-# and the large entries keep a scaled solution far above the subnormal range. 0 for a zero,
-# non-finite or empty `r`.
-function rhs_exponent(r::AbstractVector)
+# The exponent `k` of the power of two `2^k` that the same-type solve divides the right-hand side
+# `r` by, for the factors of `J / 2^e`. With `m` the exponent of the largest |re| or |im| of `r`,
+# `k = m` clamped to `[min(e, 0), 0]` where that keeps the bound below: a factor with `e < 0` then
+# lifts a small `r` with the matrix, by up to `2^-e` and never past the exponent 0, so that the
+# solve gives `2^(e - k) x` with `e ≤ k ≤ 0`, never larger than the solution `x`. Lifted to the
+# scale of `x` itself (`k = e`), a solve whose intermediates exceed `x` by its growth, as the back
+# substitution of an LU factor can, would overflow where `x` is finite. Where `e ≥ 0`, `k` is 0
+# below the bound. The bound keeps `Qᴴ r` and `Uᴴ r` of the QR and SVD solves
+# finite: their entries sum `N` products of an entry of `r` with a factor of modulus at most 1, a
+# complex one up to twice the largest |re| or |im| of `r`, so the largest |re| or |im| of `r / 2^k`
+# is held below `2^(emax - 1 - ⌈log2 N⌉)`, with `emax` the exponent of `floatmax`, and each |re|
+# and |im| of `Qᴴ r` and `Uᴴ r` below `2^emax`. Where the clamped `m` breaks the bound, `k` is the
+# smallest exponent that keeps it, which divides an `r` above the bound by at most `2 + ⌈log2 N⌉`
+# bits, so that only a small entry of such an `r`, within that many bits of the subnormal range,
+# can lose bits to the scaling, and the large entries keep a scaled solution far above the
+# subnormal range. 0 for an empty `r`; a zero or non-finite `r` counts as of exponent 0.
+function rhs_exponent(r::AbstractVector, e::Integer)
     isempty(r) && return 0
     emax = exponent(floatmax(float(real(eltype(r)))))
-    return max(0, matrix_exponent(r) - (emax - headroom(length(r))))
+    m = matrix_exponent(r)
+    return max(clamp(m, min(e, 0), 0), m - (emax - headroom(length(r))))
 end
 
 # The bits `2 + ⌈log2 n⌉` that `rhs_exponent` and `divisor_exponent` keep below `floatmax`, for
@@ -876,7 +929,7 @@ const StaticFac{N, TF} = Union{
     StaticLUQR{N, TF}, StaticSVDLDLT{N, TF}, StaticCholesky{N, TF}}
 
 function ldiv!!(::Nothing, fac::StaticFac{N, TF}, r::StaticVector{N, TF}) where {N, TF}
-    k = rhs_exponent(r)
+    k = rhs_exponent(r, fac.scale_exponent)
     r̂ = iszero(k) ? SVector{N, TF}(r) : map(a -> ldexp2(a, -k), SVector{N, TF}(r))
     d, t = backsolve_shifted(fac, r̂)
     return unscale(fac, d, k + t)

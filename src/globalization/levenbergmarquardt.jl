@@ -177,9 +177,11 @@ end
         R <: AbstractFloat, T <: Number}
     damping = lm_step_damping(μ)
     sqrt_damping = ldexp2(sqrt(damping), -e)
-    # `2^{-e} √μ` overflows at the bottom of the factor's scale range, where `e = -1023` and a
-    # `μ` near `μ_max` put it above `floatmax`; the weight is then below the rounding of `x`, so
-    # the coordinate is dropped rather than formed as a `NaN`.
+    # `2^{-e} √μ` overflows for `μ > 2^{2(emax + 1 + e)}`, `emax = exponent(floatmax(R))`, so for
+    # a `μ` far below `μ_max` where `e` is at or below `-emax`, which the static SVD of a matrix of
+    # subnormal entries reaches (down to `exponent(nextfloat(zero(R)))`). The coefficient is then
+    # below `σ̂ · 2^{-2(emax + 1) - e}`, and the coordinate is dropped rather than formed as a
+    # `NaN`.
     isfinite(sqrt_damping) || return zero(T)
     s = max(σ̂, sqrt_damping)
     σ_s = σ̂ / s
