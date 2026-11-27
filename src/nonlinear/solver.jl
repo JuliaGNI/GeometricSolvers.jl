@@ -42,7 +42,8 @@ function step!! end
 Prepare `state` for a solve from `x`, with residual `Fx` and its norm `fnorm₀`, and return the
 state that the first step reads. [`solve!!`](@ref) calls it once, before its stopping test at 0
 iterations, so a state reused across solves starts each solve afresh. The default returns
-`state`. [`Newton`](@ref) resets its rule state, and [`Newton`](@ref) and [`Picard`](@ref) set
+`state`. [`Newton`](@ref) resets its rule state, except under `keep_factor = true`, which keeps
+the factor and its age that the last solve left, and [`Newton`](@ref) and [`Picard`](@ref) set
 the anchor merit `norm2(Fx)` of a line search, which `init_state` leaves at `NaN`.
 """
 @inline start!!(state, method, prob, x, Fx, p, fnorm₀) = state
@@ -207,9 +208,10 @@ and calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 
 At the start of each call, `solve!!` evaluates `Fx = residual!!(residual_buffer(state), prob, x₀,
 p)` and `fnorm₀ = rnorm(Fx)`, and calls [`start!!`](@ref) once, which resets the per-solve state
-of the method (the reuse age and the stalled flag under factor reuse, the radius under
-[`DogLeg`](@ref), the damping parameter under [`LevenbergMarquardt`](@ref), the pseudo-time step
-under [`PseudoTransient`](@ref), and the anchor merit of a line search). Every return goes through
+of the method (the reuse age and the stalled flag under factor reuse, unless a [`Newton`](@ref)
+with `keep_factor = true` keeps them from the last solve, the radius under [`DogLeg`](@ref), the
+damping parameter under [`LevenbergMarquardt`](@ref), the pseudo-time step under
+[`PseudoTransient`](@ref), and the anchor merit of a line search). Every return goes through
 [`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns. The residual test
 reads the [`StoppingNorm`](@ref) of `options`: under [`MaxNorm`](@ref), `solve!!` takes one
 [`rmaxnorm`](@ref) of the residual at the start and after each step that reaches the test, and
@@ -262,8 +264,9 @@ Reaching `options.max_iterations` without convergence returns `MAXITERS`.
 `status.rate`. The rate test of [`Options`](@ref) joins the step test: after a step that is
 neither `STALLED` nor `limited`, where the residual test fails and the rate test, which reads the
 larger of the rates of that step and of the step before it, holds, along a last fresh factor
-that reports no rank or full column rank, and on a [`LeastSquaresProblem`](@ref) or a
-[`VariableProjection`](@ref) along a fresh factor only, the solve returns `SUCCESS` with
+that reports no rank or full column rank, and on a [`LeastSquaresProblem`](@ref), a
+[`VariableProjection`](@ref) or a [`Reparametrized`](@ref) problem around a
+`LeastSquaresProblem` along a fresh factor only, the solve returns `SUCCESS` with
 `status.contracted == true`, unless the stationarity test, re-measured at that iterate, holds,
 which returns `SUCCESS` with `status.stationary == true`. Under
 `options.roundoff` the round-off stop joins the step test too: it returns `STALLED` at that

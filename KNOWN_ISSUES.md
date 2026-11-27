@@ -803,7 +803,7 @@
 
 ### K109 · No public solve is known to fail a step rule or to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.step_failures` and `status.promoted` on that return
 
-- **location:** `src/nonlinear/solver.jl:106` (`discarded_step_status`, which takes
+- **location:** `src/nonlinear/solver.jl:107` (`discarded_step_status`, which takes
   `step_failures` and `promoted` from the status after `record` folds in the discarded step)
 - **evidence:** the solve discards only a step that does not lower `‖F‖`. A count of the calls
   of `discarded_step_status` on the mirror-symmetric saddle problem (b) of the testset "a step
@@ -1019,7 +1019,7 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:323` (the stationarity test of `solve!!` after a step,
+- **location:** `src/nonlinear/solver.jl:326` (the stationarity test of `solve!!` after a step,
   which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
   at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
@@ -1209,7 +1209,7 @@
 
 ### K142 · A `Newton(; reuse = k)` solve with `k > 1`, or with a kept factor, of a least-squares problem with a nonzero residual at its minimum often returns `STALLED` near the stationary point
 
-- **location:** `src/nonlinear/solver.jl:83` (`rate_test_step`)
+- **location:** `src/nonlinear/solver.jl:84` (`rate_test_step`)
 - **evidence:** the steps along a reused factor converge to the fixed point of the frozen
   Gauss–Newton map, which is not the stationary point, and the rate test reads no such step. With
   `r(x) = (x² − 5, x − 1)`, its Jacobian, `Newton(; linsolve = QRFactorization(), jacobian, reuse
@@ -1230,7 +1230,7 @@
 - **location:** `src/nonlinear/reparametrized.jl:709`
 - **evidence:** `rate_test_step(ip::_InnerReparametrized, state)` forwards to
   `ip.reparam.prob`. When that problem is itself a `Reparametrized`, the generic
-  `rate_test_step(::AbstractNonlinearProblem, state) = true` (`solver.jl:82`) answers, so the
+  `rate_test_step(::AbstractNonlinearProblem, state) = true` (`solver.jl:83`) answers, so the
   least-squares guard is lost. With `r` and its Jacobian of K142 as static vectors, the identity
   chart `id(y, p) = y`, `did(y, p) = SMatrix{1, 1}(one(y[1]))`,
   `solve(Reparametrized(Reparametrized(LeastSquaresProblem(r, j), id, did), id, did),
