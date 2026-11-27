@@ -38,6 +38,7 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             "Newton reuse 3 Backtracking LU", "Picard Backtracking",
             "Newton Backtracking GMRES", "Broyden",
             "LeftPreconditioned Picard Backtracking Newton",
+            "Continuation FixedPointHomotopy",
             "Fallback Newton DogLeg LevenbergMarquardt"]
         @test MAX_ITERATIONS == 200
         @test Set(keys(PAIRING)) == Set(COLUMNS)
@@ -56,7 +57,7 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
         @test PAIRING["Newton Static LU"][1].label == "Newton+Static+LUFactorization"
         @test PAIRING["Newton reuse 3 Backtracking LU"][1].label ==
               "Newton(3)+Backtracking+LUFactorization"
-        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 14 + 20
+        @test count(e -> e isa Paired, Iterators.flatten(values(PAIRING))) == 15 + 21
         # The nine `Newton` columns with a factorisation take the shared Jacobian, and the
         # GeometricSolvers adapter hands it to no other column: a Jacobian that throws reaches
         # the solve on those nine alone.
@@ -108,6 +109,32 @@ rosenbrock_row(T) = Row{T}("selftest", "rosenbrock", "x0", rosenbrock!, T[-1.2, 
             c = run_cell(row, column, package)
             c.status == "ran" || continue
             @test c.success == (column != "Newton Static LU")
+        end
+    end
+
+    @testset "the continuation pairing follows the column's homotopy" begin
+        # `F(x) = (x₁² − 2 x₂, x₁ x₂)`, with `J = [2x₁ −2; x₂ x₁]`, from `x0 = (0.25, 3)`, where
+        # `σ = max|J(x0)| = 3` and `‖F(x0)‖∞ = 95/16`, and from its root `(0, 0)`, where `σ = 2`
+        # and `F(x0) = 0`; `G(x) = (x₁² − 1, x₂² − 4)` from `(0, 0)`, where `J(x0) = 0` and
+        # `σ = ‖G(x0)‖∞ = 4`. Both homotopies at `u = (1.5, −0.5)`, `λ = 0.3`, with the column's
+        # `σ` from `homotopy_scale`.
+        F(y, x, p) = (y[1] = x[1]^2 - 2x[2]; y[2] = x[1] * x[2]; nothing)
+        JF!(Jm, x, p) = (Jm .= [2x[1] -2; x[2] x[1]]; nothing)
+        G(y, x, p) = (y[1] = x[1]^2 - 1; y[2] = x[2]^2 - 4; nothing)
+        JG!(Jm, x, p) = (Jm .= [2x[1] 0; 0 2x[2]]; nothing)
+        alg = PAIRING["Continuation FixedPointHomotopy"][3].build(Float64).alg
+        u, λ = [1.5, -0.5], 0.3
+        for (F!, J!, x0, σ₀) in ((F, JF!, [0.25, 3.0], 3), (F, JF!, [0.0, 0.0], 2),
+            (G, JG!, [0.0, 0.0], 4))
+            Fq(x, p) = (y = similar(x); F!(y, x, p); y)
+            Jq(x, p) = (Jm = similar(x, 2, 2); J!(Jm, x, p); Jm)
+            prob = sns_problem(alg, Counted(F!), J!, x0)
+            F0 = Fq(x0, nothing)
+            σ = GS.homotopy_scale(GS.FixedPointHomotopy(), Jq, x0, F0, nothing)
+            @test σ == σ₀
+            H = GS.homotopy_residual!(
+                similar(u), GS.FixedPointHomotopy(), Fq, u, λ, x0, F0, σ, nothing)
+            @test isapprox(prob.f(u, nothing, λ), H; rtol = 8 * eps())
         end
     end
 
@@ -488,7 +515,7 @@ elapse!(c::FakeClock, t) = (c.ns += round(UInt64, t * 1e9); nothing)
             @test out.result isa Thrown
         end
         # The block tables' counts.
-        @test length.(block_cells.(BLOCKS)) == (395, 672, 1264, 20)
+        @test length.(block_cells.(BLOCKS)) == (395, 720, 1264, 20)
     end
 
     @testset "nsol: a Jacobian at every iteration, and a start that meets the test" begin

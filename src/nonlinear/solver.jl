@@ -176,8 +176,8 @@ and calls `solve!!(state₀, prob, x_i, m, p_i, opt)` in each work-item.
 At the start of each call, `solve!!` evaluates `Fx = residual!!(residual_buffer(state), prob, x₀,
 p)` and `fnorm₀ = rnorm(Fx)`, and calls [`start!!`](@ref) once, which resets the per-solve state
 of the method (the reuse age and the stalled flag under factor reuse, the radius under
-[`DogLeg`](@ref), the damping parameter under [`LevenbergMarquardt`](@ref), and the anchor merit
-of a line search). Every return goes through
+[`DogLeg`](@ref), the damping parameter under [`LevenbergMarquardt`](@ref), the pseudo-time step
+under [`PseudoTransient`](@ref), and the anchor merit of a line search). Every return goes through
 [`finish!!`](@ref), and `solve!!` returns the triple that `finish!!` returns. The residual test
 reads the [`StoppingNorm`](@ref) of `options`: under [`MaxNorm`](@ref), `solve!!` takes one
 [`rmaxnorm`](@ref) of the residual at the start and after each step that reaches the test, and

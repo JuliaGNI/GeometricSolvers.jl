@@ -10,7 +10,8 @@ Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) an
 matrix-free [`GMRES`](@ref) and [`MINRESQLP`](@ref), or [`KroneckerFactorization`](@ref) for the
 stage system of an implicit Runge–Kutta method), globalization `globalization` ([`Static`](@ref),
 [`Backtracking`](@ref), [`Bisection`](@ref), [`StrongWolfe`](@ref), the trust regions
-[`DogLeg`](@ref) and [`Steihaug`](@ref) or the damped step [`LevenbergMarquardt`](@ref)),
+[`DogLeg`](@ref) and [`Steihaug`](@ref), the damped step [`LevenbergMarquardt`](@ref) or, for a
+[`StationarityProblem`](@ref), the pseudo-transient continuation [`PseudoTransient`](@ref)),
 Jacobian selector `jacobian`, iterative refinement `refinement` ([`NoRefinement`](@ref),
 [`Refinement`](@ref) or [`GMRESRefinement`](@ref)), diagonal regularisation `regularization`, and
 factor-reuse period `reuse`.
@@ -33,7 +34,8 @@ factor-reuse period `reuse`.
   `(x, Fx)` that the last `start!!` or `step!!` on its state returned, as in [`solve!!`](@ref).
   A line-search step on a state that no `start!!` saw, or that `solve!!` returned, returns
   `NONFINITE` and keeps its iterate, and so does a [`LevenbergMarquardt`](@ref) step, whose
-  damping parameter that state holds as `NaN`.
+  damping parameter that state holds as `NaN`, and a [`PseudoTransient`](@ref) step, whose
+  pseudo-time step it holds as `NaN`.
 - `jacobian::J`: `nothing` (use `prob.J` when present, or `AutoForwardDiff()` otherwise), an
   `AbstractADType`, or a custom Jacobian callable: `J(x, p)`, which returns the Jacobian, on a
   value iterate (a `Number` or a `StaticArray`), and `J!(J, x, p)`, which writes it into `J`, on
@@ -63,7 +65,9 @@ factor-reuse period `reuse`.
   step-rule failure). A line search along a reused factor that fails without a step is retried
   once, in the same step, from a fresh factor. A [`DogLeg`](@ref) or
   [`LevenbergMarquardt`](@ref) globalization takes no reuse: its model needs the Jacobian of the
-  current iterate, and the constructor raises an `ArgumentError`.
+  current iterate, and the constructor raises an `ArgumentError`. A [`PseudoTransient`](@ref)
+  globalization takes no reuse and no refinement either, because its shift changes at every
+  step.
 - `best::B`: `Val(false)`, the default, or `Val(true)` from the keyword `best = true`, which
   returns the best iterate (below). The six-argument positional constructor gives `Val(false)`.
 
@@ -94,11 +98,12 @@ the norm of the global residual; its inner method takes `best = true`, which has
 `forcing` and `preconditioner` configure the [`GMRES`](@ref) of `linsolve`, `forcing` configures a
 [`MINRESQLP`](@ref) too, and a `Newton` that takes either of them with any other linear method, or
 a `preconditioner` with `MINRESQLP`, raises an `ArgumentError`. A `Newton` with `GMRES` or
-`MINRESQLP` forms no factor, so it takes no `reuse`, no [`Refinement`](@ref) and no
-[`LevenbergMarquardt`](@ref) globalization, and a [`DogLeg`](@ref) needs an unrestarted `GMRES`
-without a preconditioner. A [`Steihaug`](@ref) globalization needs a `MINRESQLP`. A
-[`JVPFunction`](@ref) in `jacobian` needs a `GMRES` or a `MINRESQLP`, because a factorising method
-needs a Jacobian matrix. Each refusal is an `ArgumentError`.
+`MINRESQLP` forms no factor, so it takes no `reuse`, no [`Refinement`](@ref), no
+[`LevenbergMarquardt`](@ref) and no [`PseudoTransient`](@ref) globalization, and a
+[`DogLeg`](@ref) needs an unrestarted `GMRES` without a preconditioner. A [`Steihaug`](@ref)
+globalization needs a `MINRESQLP`. A [`JVPFunction`](@ref) in `jacobian` needs a `GMRES` or a
+`MINRESQLP`, because a factorising method needs a Jacobian matrix. Each refusal is an
+`ArgumentError`.
 
 - `forcing`: an [`AbstractForcingTerm`](@ref) that replaces the forcing term of `linsolve`, and so
   the relative tolerance of every Newton step's inner solve.
@@ -133,9 +138,17 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
                 throw(ArgumentError("Newton with a DogLeg globalization takes no reuse"))
             globalization isa LevenbergMarquardt &&
                 throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no reuse"))
+            globalization isa PseudoTransient &&
+                throw(ArgumentError("Newton with a PseudoTransient globalization takes no reuse: its shift changes at every step"))
         end
         globalization isa LevenbergMarquardt && is_refining(refinement) &&
             throw(ArgumentError("Newton with a LevenbergMarquardt globalization takes no refinement: a refinement corrects the solve of J d = -F, which the damped step does not take; use refinement = NoRefinement()"))
+        if globalization isa PseudoTransient
+            is_refining(refinement) &&
+                throw(ArgumentError("Newton with a PseudoTransient globalization takes no refinement; use refinement = NoRefinement()"))
+            linsolve isa Union{GMRES, MINRESQLP, KroneckerFactorization} &&
+                throw(ArgumentError("Newton with a PseudoTransient globalization needs a factorising linear method other than KroneckerFactorization: its step factorises the shifted Jacobian J + I/δ"))
+        end
         if linsolve isa GMRES
             reuse === nothing ||
                 throw(ArgumentError("Newton with GMRES takes no factor reuse: a GMRES step has no factor"))
@@ -550,6 +563,13 @@ struct DampingParameter{R}
     μ::R
 end
 
+# The rule state of `Newton` with `PseudoTransient`: the pseudo-time step `δ`, `NaN` in
+# `init_state` and after `finish!!`, as the damping of `LevenbergMarquardt` is, and `R(pt.δ₀)`
+# after `start!!`.
+struct PseudoTimeStep{R}
+    δ::R
+end
+
 @inline newton_rule(m::Newton, x) = newton_rule(m.globalization, m.reuse, real(eltype(x)))
 @inline newton_rule(globalization, ::Nothing, ::Type{R}) where {R} = nothing
 @inline newton_rule(globalization, ::Int32, ::Type{R}) where {R} = FactorAge(Int32(0), false)
@@ -564,12 +584,18 @@ end
 @inline function newton_rule(::LevenbergMarquardt, ::Nothing, ::Type{R}) where {R}
     return DampingParameter(R(NaN))
 end
+@inline function newton_rule(::PseudoTransient, ::Nothing, ::Type{R}) where {R}
+    return PseudoTimeStep(R(NaN))
+end
 
 @inline reset_rule(::Nothing, _) = nothing
 @inline reset_rule(::FactorAge, _) = FactorAge(Int32(0), false)
 @inline reset_rule(r::TrustRadius, _) = TrustRadius(r.radius₀, r.radius₀)
 @inline function reset_rule(::DampingParameter{R}, lm::LevenbergMarquardt) where {R}
     return DampingParameter(R(lm.μ₀))
+end
+@inline function reset_rule(::PseudoTimeStep{R}, pt::PseudoTransient) where {R}
+    return PseudoTimeStep(R(pt.δ₀))
 end
 
 # The range and spectrum diagnostics of the last `newton_factor` call of the solve, which
@@ -587,11 +613,11 @@ end
 end
 
 # The state of `Newton`: the AD preparations, the residual, direction, factor, Jacobian and
-# globalization workspace, the rule state of its reuse, its `DogLeg` or `Steihaug` or its
-# `LevenbergMarquardt`, the merit `norm2(Fx)` of the current residual for a line search (`nothing`
-# for any other globalization), the norm `‖Fx‖` of the current residual, the diagnostics of the
-# last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1), the
-# working-precision factor slot for mixed-precision promotion (`nothing` where the factorisation
+# globalization workspace, the rule state of its reuse, its `DogLeg` or `Steihaug`, its
+# `LevenbergMarquardt` or its `PseudoTransient`, the merit `norm2(Fx)` of the current residual for a
+# line search (`nothing` for any other globalization), the norm `‖Fx‖` of the current residual, the
+# diagnostics of the last factorisation, the refinement buffer (`nothing` for `NoRefinement` or R1),
+# the working-precision factor slot for mixed-precision promotion (`nothing` where the factorisation
 # runs in the working precision, and for `LevenbergMarquardt`, which promotes nothing), the
 # promotion flag, the count of consecutive slow steps a promotion waits for, the linear-solver
 # workspace, which only a [`GMRES`](@ref) or a [`MINRESQLP`](@ref) solve has (`nothing` for every
@@ -863,6 +889,18 @@ end
         "a LeastSquaresProblem with more residuals than unknowns (m = $m_rows, n = $(length(x))) takes no factor in a lower precision than the element type $T of the iterate; a factor in $F moves the Gauss–Newton fixed point off the least-squares point"))
 end
 
+# A `PseudoTransient` step takes only the problem that a `StationarityProblem` solve hands to its
+# method, the `_ReducedStationarityProblem`. Where `E == U` its `F` is the gradient of the action
+# in the unknowns, and the shift follows the gradient flow of that action; for other index sets
+# `F` is no gradient, and the shifted steps still aim at a root of `F`. Every other problem is
+# refused, the problems that a combinator builds included. `stationarity.jl` defines that type
+# after this file, so the test is an `isa` in the body and not a method signature.
+@inline function check_pseudotransient_problem(prob::AbstractNonlinearProblem)
+    prob isa _ReducedStationarityProblem || throw(ArgumentError(
+        "PseudoTransient solves a StationarityProblem: its shifted step follows the gradient flow of the action S where E == U, and the residual of a problem of another type is no gradient; use another globalization"))
+    return nothing
+end
+
 # The state of every linear method, with the record of the best iterate where `best = true`. On a
 # `LeftPreconditionedProblem` the record would rank `‖rˡ‖₂` while `status.fnorm` is the global
 # `‖F‖₂`, so `best = true` is refused there, for an outer `Newton` at any depth of a combinator.
@@ -875,6 +913,7 @@ end
 end
 
 @inline function newton_init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
+    m.globalization isa PseudoTransient && check_pseudotransient_problem(prob)
     m.linsolve isa GMRES && return init_gmres_state(m, m.linsolve, prob, x, p)
     m.linsolve isa MINRESQLP && return init_minresqlp_state(m, m.linsolve, prob, x, p)
     m.linsolve isa KroneckerFactorization &&
@@ -1042,6 +1081,8 @@ end
         state.promoted, Int32(0))
     if state.rule isa DampingParameter
         state_end = with_rule(state_end, DampingParameter(R(NaN)))
+    elseif state.rule isa PseudoTimeStep
+        state_end = with_rule(state_end, PseudoTimeStep(R(NaN)))
     end
     return x, st, state_end
 end
@@ -1784,6 +1825,47 @@ end
             return x, Fx, state_fail, info
         end
     end
+end
+
+# The `PseudoTransient` step: one Jacobian, one factorisation of `J + (μ + 1/δ) I`, with `μ` the
+# regularisation of `m`, and the full step along its direction, which is accepted. `δ` then follows
+# the switched evolution relaxation. The constructor refuses reuse, refinement and a method with
+# no factor, so the step reads none of them, and a mixed-precision factor solves in its own
+# precision with no promotion.
+@inline function newton_step!!(
+        state::NewtonState, m::Newton{L, G, J, RF, Reg, Nothing},
+        prob::AbstractNonlinearProblem, x, Fx, p) where {
+        L, G <: PseudoTransient, J, RF, Reg}
+    R = real(eltype(x))
+    fnorm = R(rnorm(Fx))
+    δ = state.rule.δ
+    shift = inv(δ)
+    if !(isfinite(δ) && isfinite(shift) && isfinite(fnorm))
+        info = StepInfo{R}(NONFINITE, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state, info
+    end
+    # A root is a step of zero, as for `LevenbergMarquardt`, and leaves `δ` as it is.
+    if iszero(fnorm)
+        info = StepInfo{R}(SUCCESS, zero(R), zero(R), Int32(0), false, false)
+        return x, Fx, state, info
+    end
+    Jmat = jacobian!!(state.J, state.jacprep, prob, x, p)
+    gr, jnorm = grad_ratio_and_norm(state.d, Jmat, Fx, fnorm)
+    Jreg = regularize!!(Jmat, m.regularization + shift)
+    fac = factorize!!(state.fac, m.linsolve, Jreg)
+    rk, nn = factor_diagnostics(state.d, fac, Fx, fnorm)
+    state_d = with_diag(state, NewtonDiagnostics{R}(rk, nn, gr, jnorm))
+    if fac.info > Int32(0)
+        info = StepInfo{R}(SINGULAR, fnorm, zero(R), Int32(0), false, false)
+        return x, Fx, state_d, info
+    end
+    d = newton_solve(state, fac, Fx)
+    x₊, F₊, _, info = globalize!!(state.g, Static(one(R)), prob, x, Fx, d, p, state.jvpprep)
+    info.code == SUCCESS || return x₊, F₊, state_d, info
+    δ₊ = pt_next_step(m.globalization, δ, fnorm, info.fnorm)
+    state₊ = with_rule(with_merit(state_d, state.merit, info.fnorm), PseudoTimeStep(δ₊))
+    info = StepInfo{R}(SUCCESS, info.fnorm, info.stepnorm, Int32(0), false, true)
+    return x₊, F₊, state₊, info
 end
 
 # ─── R5 matrix-free Newton–Krylov ────────────────────────────────────────────

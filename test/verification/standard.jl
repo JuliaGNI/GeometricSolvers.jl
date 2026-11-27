@@ -193,6 +193,14 @@ end
     @test fbp.members[1].refinement isa PerturbedDirection
     @test fbp.members[2] === gmres && fbp.members[3] === fb.members[3]
     @test perturbed_direction(Fallback(gmres, picard), 1) === nothing
+    # a continuation perturbs the direction of its member, and keeps its homotopy and steps
+    co = Continuation(FixedPointHomotopy(); h₀ = 0.2)
+    cop = perturbed_direction(co, 1)
+    @test cop.method.refinement isa PerturbedDirection
+    @test cop.homotopy === co.homotopy && cop.h₀ == co.h₀
+    @test length(perturbed_runs(
+        sp, "u0", sp.u0(Float64), "Continuation FixedPointHomotopy",
+        co)) == 20
     @test length(perturbed_runs(sp, "u0", sp.u0(Float64), first(last(STANDARD_COLUMNS)),
         last(last(STANDARD_COLUMNS)))) == 20
 end
@@ -325,16 +333,18 @@ end
 @testset "The reference" begin
     cells, iterates = run_standard_cells()
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
-    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 1876
+    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 2010
     @test all(c -> c.code in codes, cells)
     # Every cell runs with max_iterations = 200. A fallback cell sums the iterations of its
-    # members, each of which runs with that cap.
+    # members, each of which runs with that cap, and a continuation cell adds the path steps to
+    # the iterations of its last corrector, which runs with that cap too.
     @test any(c -> c.code == "MAXITERS", cells)
     fallback = first(last(STANDARD_COLUMNS))
+    summed = (fallback, "Continuation FixedPointHomotopy")
     @test all(c -> c.code != "MAXITERS" || c.iterations == 200,
-        filter(c -> c.column != fallback, cells))
+        filter(c -> !(c.column in summed), cells))
     @test all(c -> c.code != "MAXITERS" || c.iterations >= 200,
-        filter(c -> c.column == fallback, cells))
+        filter(c -> c.column in summed, cells))
 
     # The fallback succeeds on every row on which one of its members succeeds from the same
     # start: the list of exceptions is empty, and no fallback cell throws.

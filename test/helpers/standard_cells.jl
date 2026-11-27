@@ -23,14 +23,14 @@ const STANDARD_MAX_ITERATIONS = 200
 """
     STANDARD_COLUMNS
 
-The fourteen columns of the standard test set, each a name and a method: `Newton` with each
+The fifteen columns of the standard test set, each a name and a method: `Newton` with each
 globalisation on LU, `Newton` with `Backtracking` on QR and on SVD, `Newton` with
 `LevenbergMarquardt` on SVD, `Newton` with `reuse = 3` and `Backtracking` on LU, `Picard` with
 `Backtracking`, the matrix-free `Newton` with `GMRES` and `Backtracking`, whose column holds no
 Jacobian, `Broyden()`, whose default `Picard` member is damped by 0.5, `Picard` with
-`Backtracking` left-preconditioned by one `Newton()` step, and the `Fallback` of the methods of
-the columns "Newton Static LU", "Newton DogLeg LU" and "Newton LevenbergMarquardt SVD", in this
-order.
+`Backtracking` left-preconditioned by one `Newton()` step, `Continuation` on the fixed-point
+homotopy with its default `Newton()` member, and the `Fallback` of the methods of the columns
+"Newton Static LU", "Newton DogLeg LU" and "Newton LevenbergMarquardt SVD", in this order.
 """
 const STANDARD_COLUMNS = (
     "Newton Static LU" => Newton(; globalization = Static()),
@@ -51,6 +51,7 @@ const STANDARD_COLUMNS = (
     "Broyden" => Broyden(),
     "LeftPreconditioned Picard Backtracking Newton" =>
         LeftPreconditioned(Picard(; globalization = Backtracking()), Newton()),
+    "Continuation FixedPointHomotopy" => Continuation(FixedPointHomotopy()),
     "Fallback Newton DogLeg LevenbergMarquardt" => Fallback(
         Newton(), Newton(; globalization = DogLeg()),
         Newton(; globalization = LevenbergMarquardt(), linsolve = SVDFactorization()))
@@ -228,6 +229,14 @@ function perturbed_direction(m::LeftPreconditioned, seed)
     outer = perturbed_direction(m.outer, seed)
     outer === nothing && return nothing
     return LeftPreconditioned(outer, m.inner)
+end
+
+# A continuation perturbs the direction of its member, the last corrector at `λ = 1`; its path's
+# bordered solves pass no direction through `refine!!`.
+function perturbed_direction(m::Continuation, seed)
+    member = perturbed_direction(m.method, seed)
+    member === nothing && return nothing
+    return Continuation(m.homotopy, member, m.h₀, m.h_min, m.h_max)
 end
 
 # A fallback perturbs the direction of each member that has one, and keeps the others; a fallback

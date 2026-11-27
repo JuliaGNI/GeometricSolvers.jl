@@ -40,6 +40,7 @@ export LinearProblem, LinearSolver, LinearStatus, refactorize!!
 export TF32, FP16, BF16
 export jacobi_eigen
 export Static, Backtracking, Bisection, StrongWolfe, DogLeg, LevenbergMarquardt, Steihaug
+export PseudoTransient
 export MINRESQLP
 export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice1,
        FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
@@ -49,6 +50,7 @@ export default_method
 export stored_factors, promoted_factors, preconditioned_buffer, linear_residual_buffer
 export OptimalWeights, FixedWeights, Additive, Multiplicative, Repeat, Switch, Fallback,
        Anderson, Broyden
+export Continuation, NewtonHomotopy, FixedPointHomotopy, ParameterHomotopy
 export BlockResidual, block_residuals, block_jacobians, block_residual, block_jacobian
 export BlockPartition, RAS, RASState, ras_prolongate!, ras_sweep!!, ras_counts
 export LeftPreconditioned, LeftPreconditionedState, LeftPreconditionedProblem,
@@ -58,6 +60,7 @@ export BatchParams, BatchSummary, BatchEliminated, DepositedMoments, batch_summa
        deposited_moments, eliminated_indices, reset_batch!
 
 public solve!!, sciml_retcode, certify
+public continuation_steps
 
 include("base/returncodes.jl")
 include("base/status.jl")
@@ -108,6 +111,7 @@ include("globalization/linefunction.jl")
 include("globalization/dogleg.jl")
 include("globalization/steihaug.jl")
 include("globalization/levenbergmarquardt.jl")
+include("globalization/pseudotransient.jl")
 include("nonlinear/solver.jl")
 include("nonlinear/refinement.jl")
 include("nonlinear/newton.jl")
@@ -128,6 +132,7 @@ include("composition/multiplicative.jl")
 include("composition/repeat.jl")
 include("composition/switch.jl")
 include("composition/fallback.jl")
+include("composition/continuation.jl")
 include("composition/anderson.jl")
 include("composition/ras.jl")
 include("composition/preconditioning.jl")

@@ -353,12 +353,12 @@
 
 ### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
 
-- **location:** `src/nonlinear/stationarity.jl:458` (`_init_stationarity_state`),
-  `src/ad/hessian.jl:316-317` (`_build_pos_maps`)
+- **location:** `src/nonlinear/stationarity.jl:483` (`_init_stationarity_state`),
+  `src/ad/hessian.jl:318-319` (`_build_pos_maps`)
 - **evidence:** With `prob = @allowscalar StationarityProblem(S, JLArray([1, 2]), JLArray([1, 2]))`
   and `allowscalar(false)`, `solve(prob, JLArray([1.0, 1.0]), Newton())` raises "Scalar indexing
-  is disallowed" at `stationarity.jl:458` (`Int[Int(i) for i in prob.U]`), and
-  `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:316`,
+  is disallowed" at `stationarity.jl:483` (`Int[Int(i) for i in prob.U]`), and
+  `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:318`,
   where `prepare_ad` copies `E` and `U` to the host by iteration. The same problems with host
   index sets `[1, 2]` and a `JLArray` iterate return `SUCCESS` (merge of `main` into `task/ay`,
   Julia 1.13.3). The constructor also checks for duplicates by scalar indexing, so
@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1899`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1980`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1093,6 +1093,49 @@
 - **kind:** defect
 - **found:** #121, issue #123
 
+### K133 · `Continuation` from a start at a fold of its homotopy returns `STALLED` with no step, although a path to `λ = 1` leaves that start
+
+- **location:** `src/composition/continuation.jl` (`solve!!`, the start's corrector and tangent)
+- **evidence:** `solve(NonlinearProblem((x, p) -> x^3 - 3x - 5/2), 1.0,
+  Continuation(NewtonHomotopy()))` returns `STALLED` at `x = 1.0` with 0 iterations and an empty
+  record, in `Float32` and `Float64`. At `x₀ = 1` the derivative `3x² − 3` is zero, so `H_x` is
+  singular, and the start's bordered system along `t = e_λ`, `[H_x F(x₀); 0 1]`, is singular too.
+  The Newton-homotopy path leaves `(1, 0)` along `x` (Julia 1.13.4).
+- **kind:** found late
+- **found:** 2026-11-25; the limit of the decided start: a start whose bordered system at
+  `(x₀, 0)` along `e_λ` is singular (a fold of `λ` at the start) returns `STALLED` with no step
+  (the user's decision on part CO, 2026-11-25)
+
+### K134 · `Newton()` returns `STALLED` from a start whose residual is already at round-off, because its default residual test is relative to `‖F(x₀)‖` alone
+
+- **location:** `src/base/options.jl` (the defaults `f_abstol = 0`, `f_reltol = √eps`)
+- **evidence:** `F(x) = A x − b` with `A = T[3 1; 1 2] / 3` and `b = T[1, −3] / 3`, whose root lies
+  within a few ulps of `(1, −2)`, solved with `solve(NonlinearProblem(F!), x₀, Newton())` from the
+  289 starts `x₀ = (1, −2) + (k₁ eps(T), 2 k₂ eps(T))`, `k₁, k₂ ∈ −8:8`: all 289 return `STALLED`,
+  in `Float32` and in `Float64` (`origin/main` at `e7af5e7`, Julia 1.13.4). There `‖F(x₀)‖` is of
+  the order of `eps`, so the test `‖F‖ ≤ √eps ‖F(x₀)‖` asks for a residual below the round-off of
+  `F`, which no step reaches. The last corrector of a `Continuation` runs this `Newton` from a
+  point near the root, so a path that ends within round-off of the root can return `STALLED` too.
+- **kind:** found late
+- **found:** 2026-11-25
+
+### K135 · `Continuation` does not reach the root of the linear check `F(x) = s (A x − b)` at a subnormal scale `s`, where `Newton()` reaches it in `Float64`
+
+- **location:** `src/composition/continuation.jl:177` (`homotopy_residual!`; the fixed-point form
+  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:187`)
+- **evidence:** `A = [3 1; 1 2]`, `b = [1, −3]`, root `(1, −2)`, start `zeros(T, 2)`,
+  `f_abstol = 0`, at `s = 2^20 · nextfloat(zero(T))`. `Float64`:
+  `Continuation(FixedPointHomotopy())` returns `MAXITERS` at `(0.263, −0.628)`,
+  `Continuation(NewtonHomotopy())` returns `STALLED` at `(6.4e-7, −1.2e-6)`, and `Newton()` returns
+  `SUCCESS` at `(1.0000000000000002, −2.0)`. `Float32`: `Continuation(NewtonHomotopy())` returns
+  `STALLED` at `(1.2e-4, −1.4e-4)`; `Continuation(FixedPointHomotopy())` and `Newton()` return
+  `SUCCESS` with a relative error of about `1e-5` and `1e-4`. At `s = 1e-8`, `1e-20` and
+  `4 floatmin(T)` all three return `SUCCESS` at `(1, −2)` in both types (Julia 1.13.4, at
+  35ed7e8).
+- **kind:** found late
+- **found:** 2026-11-25; the homotopy forms that the part's spec decides (its clause 3), at a
+  scale outside those that its clauses and the scale row name
+
 ### K139 · `DeviceCholesky` of a `JLArray{BigFloat}` throws `InvalidIRError` while it compiles the load kernel
 
 - **location:** `src/linear/ka/cholesky.jl:36` (`ka_cholesky_load_kernel!`)
@@ -1181,3 +1224,19 @@
   not affected.
 - **kind:** defect
 - **found:** 2026-11-26, the pre-PR verification of PR #125
+
+### K143 · A `StationarityProblem` evaluates a callable datum at the parameters `p` of the solve, which a `ParameterHomotopy` maps before its problem reads them
+
+- **location:** `src/nonlinear/stationarity.jl` (`_init_stationarity_state`, the `solve!!` of a
+  `DenseStationarityState` and `_solve_stationarity_solver!`, which evaluate `b(p)` to check its
+  length and fill the datum buffer)
+- **evidence:** With `h = ParameterHomotopy((p, λ) -> p.a + λ * (p.b - p.a))` and
+  `p = (a = 0.5, b = 2.0)`, `solve(StationarityProblem((x, q) -> x^4 / 4 + x^2 / 2; b = q -> q),
+  0.0, Continuation(h), p)` raises `MethodError: no method matching _static_datum(…, ::Float64,
+  ::@NamedTuple{a::Float64, b::Float64})`, and `solve(StationarityProblem((x, q) -> sum(abs2, x) /
+  2; b = q -> [q, q]), zeros(2), Continuation(h), p)` raises `MethodError: Cannot convert an
+  object of type @NamedTuple{a::Float64, b::Float64} to an object of type Float64`. The path
+  itself evaluates `b` at `map(p, λ)` only; a map with `map(p, 0) = p`, such as
+  `(p, λ) -> p + 3λ / 2`, solves (Julia 1.13.4).
+- **kind:** defect
+- **found:** PR #126, the round that evaluates a callable datum at `map(p, λ)`

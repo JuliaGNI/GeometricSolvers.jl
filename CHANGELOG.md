@@ -9,6 +9,58 @@ so that a compat-only bump can be told apart from an interface change.
 
 ## [Unreleased]
 
+### New Features
+
+- **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
+  exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
+  `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,
+  `F(x) − (1 − λ) F(x₀)`, `FixedPointHomotopy()`, `λ F(x)/σ + (1 − λ)(x − x₀)` with `σ` the
+  largest absolute entry of `J(x₀)`, or of `F(x₀)` where `J(x₀) = 0`, or 1 where both are 0, or
+  `ParameterHomotopy(map)`, `F(x, map(p, λ))` in a parameter of the user's problem; the
+  `NonlinearProblem` holds no `λ`. On a `StationarityProblem`, a callable datum `b(p)`, from
+  `prob.b` or from the `b` keyword of `solve`, `init` or `solve!`, is evaluated at `map(p, λ)`
+  along the path and at the last corrector too: the internal reduced problem holds `b` unevaluated,
+  and the reduced residual evaluates it at the parameters it is called with. For
+  `StationarityProblem((x, p) -> x^2 / 2; b = p -> p)` from `p = 0.0`, `x₀ = 0.0` and
+  `ParameterHomotopy((p, λ) -> p + λ)` the solve ends at `−1.0`, the root that `Newton()` finds at
+  `p = 1.0`, where it would otherwise return a `SUCCESS` at `0.0`, the root for `b` at the start
+  parameters. A non-callable datum is unchanged. Since the callable runs at every residual
+  evaluation in place of once per solve, an R3 (`Vector`) `solve!` with `Newton` and a callable
+  that returns a new array allocates, 160 bytes on a quadratic of two equations where it
+  allocated none; an R3 callable that writes into a buffer, and an R1 (`SVector`, `Number`)
+  `solve`, allocate nothing, as before. A tangent predictor and a bordered Newton corrector follow the
+  path through a fold of `λ`, where a step in `λ` alone stops. A failed corrector halves the step,
+  a corrector of at most 3 iterations doubles it up to `h_max`, and a step below `h_min` returns
+  `STALLED`. `GeometricSolvers.continuation_steps(state)` reads `λ` and the length of every
+  accepted and rejected step of the last solve, and the status counts the rejected steps in
+  `step_failures`. It solves the Powell badly scaled function (problem 3 of the standard test set)
+  from `100u0` in `Float32` and `Float64`, where every other column fails in `Float64`, and the
+  cubic `x³ − 3x − 5/2` from `−2.2` through both folds. It refuses a `ForwardDiff.Dual` input in
+  `solve`, a `LeastSquaresProblem`, a complex or a device array iterate, and a member that forms no
+  Jacobian matrix, each with an `ArgumentError`. The division by `σ` makes the path of the
+  fixed-point homotopy independent of a scale of `F`: `F(x) = s (A x − b)` gives the same root at
+  `s = 4 √floatmax` and `floatmax/8` with both homotopies, in `Float32` and `Float64`. Since `σ`
+  has the units of the Jacobian, the path from a start a few ulps from the root of `A x − b`
+  accepts every step and ends at that root; a non-finite `J(x₀)` returns `NONFINITE` with no
+  step.
+
+- **The standard test set has a fifteenth column, `Continuation FixedPointHomotopy`,** before the
+  `Fallback` column: 43 of 67 starts give `SUCCESS` in `Float32` and 49 of 67 in `Float64`. The
+  benchmark pairs it with SimpleNonlinearSolve's `ArcLengthContinuation`, with
+  `SimpleNewtonRaphson` as its corrector, on the same homotopy; its arclength metric, its
+  predictor and its landing on `λ = 1` differ from the column's.
+
+- **`PseudoTransient(δ₀; δ_max = 1e12)` is a new exported globalization of `Newton` for a
+  `StationarityProblem`: pseudo-transient continuation.** Each step solves `(J + I/δ) d = −F`,
+  with the regularisation `μ` of the `Newton` added to `1/δ`, and is accepted; `δ` starts at `δ₀`
+  in each solve and follows the switched evolution relaxation
+  `δₖ₊₁ = min(δₖ ‖F(xₖ)‖₂ / ‖F(xₖ₊₁)‖₂, δ_max)`. On the double well
+  `S(x, y) = (x² − 1)²/4 + y²/2` from `(0.1, 1)`, `Newton()` converges to the saddle `(0, 0)` and
+  `PseudoTransient(0.1)` to the minimum `(1, 0)`. A non-finite `δ`, `1/δ` or residual returns
+  `NONFINITE`; every problem other than a `StationarityProblem` (a `NonlinearProblem`, a
+  `LeastSquaresProblem`, the problem that `LeftPreconditioned` builds), `reuse`, a refinement and
+  a `GMRES`, `MINRESQLP` or `KroneckerFactorization` linear method raise an `ArgumentError`.
+
 ### Changed
 
 - **A factor in the matrix's own element type divides a matrix whose largest entry lies below 1
@@ -80,7 +132,6 @@ so that a compat-only bump can be told apart from an interface change.
   routes, in `Float32`, `Float64` and `ComplexF64`), the 1 619 that both runs record give the
   same return code and the same error to four digits. `test/verification/standard_reference.csv`
   is unchanged.
-
 
 ## [0.1.0] — 2026-11-26
 

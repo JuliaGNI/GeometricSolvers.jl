@@ -10,9 +10,10 @@ two kinds:
 - **line searches** ([`Static`](@ref), [`Backtracking`](@ref), [`Bisection`](@ref),
   [`StrongWolfe`](@ref)) search along the direction `d` on the merit
   ``\varphi(\alpha) = \|F(x + \alpha d)\|_2^2``. They serve [`Newton`](@ref) and [`Picard`](@ref).
-- **trust-region and damped steps** ([`DogLeg`](@ref), [`LevenbergMarquardt`](@ref)) change the
-  direction itself and need the Jacobian and its factor. They serve [`Newton`](@ref) only, which
-  keeps the radius or the damping parameter in its state.
+- **trust-region and damped steps** ([`DogLeg`](@ref), [`LevenbergMarquardt`](@ref),
+  [`PseudoTransient`](@ref) for a `StationarityProblem`) change the direction itself and need the
+  Jacobian and its factor. They serve [`Newton`](@ref) only, which keeps the radius, the damping
+  parameter or the pseudo-time step in its state.
 
 A line search is scalar code: [`linesearch`](@ref) sees the line only through ``\varphi`` and its
 derivative ``\varphi'``, allocates nothing and never throws, so the same search runs on the host
