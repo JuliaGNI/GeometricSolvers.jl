@@ -123,9 +123,11 @@ Adapt.@adapt_structure StationarityProblem
 @inline _eval_datum(b::Union{AbstractArray, Number}, p) = b
 @inline _eval_datum(b, p) = b(p)
 
+# The datum source of a solve: the keyword `b`, or `prob.b` where the keyword is `nothing`.
+@inline _datum_source(prob::StationarityProblem, b_kw) = b_kw === nothing ? prob.b : b_kw
+
 @inline function _resolve_datum(prob::StationarityProblem, p, b_kw)
-    b_raw = b_kw === nothing ? prob.b : b_kw
-    return _eval_datum(b_raw, p)
+    return _eval_datum(_datum_source(prob, b_kw), p)
 end
 
 function _validate_stationarity_solve(prob::StationarityProblem, x₀, b_val)
@@ -176,6 +178,20 @@ end
     return T(@inbounds(b[1]))
 end
 @inline _static_datum(::Any, ::T, b::Number) where {T <: Number} = T(b)
+
+# The datum that the reduced problem of a solve holds: a callable `b(p)` unevaluated, so that the
+# reduced residual evaluates it at the parameters it is called with, which a `ParameterHomotopy`
+# moves along its path, and a value in the form of `_static_datum` for an R1/R2 solve.
+@inline function _reduced_datum(prob, x₀::StaticOrNumber, b_src, p)
+    _is_callable_datum(b_src) && return b_src
+    return _static_datum(prob, x₀, _eval_datum(b_src, p))
+end
+
+# The datum of the reduced problem `rprob` of an R1/R2 solve at the full state `x` and the
+# parameters `p`.
+@inline _datum_at(rprob, x, p) = _datum_at(rprob.prob, x, rprob.b, p)
+@inline _datum_at(::StationarityProblem, x, b::Union{Nothing, Number, AbstractArray}, p) = b
+@inline _datum_at(prob::StationarityProblem, x, b, p) = _static_datum(prob, x, b(p))
 
 @inline _idx_pos(::Colon, i::Int) = i
 @inline function _idx_pos(idx::SVector{N, Int}, i::Int) where {N}
@@ -284,8 +300,8 @@ end
 
 # Internal reduced problem over the `m = |U|` unknowns `u = x[U]`, holding the full-state
 # reference `x_ref` (or workspace `x_work` in R3) whose complement `x[∉ U]` stays fixed at
-# `x₀[∉ U]`, together with the active datum `b` and, in R3, the preallocated index maps and
-# AD preparation.
+# `x₀[∉ U]`, together with the active datum `b`, a callable `b(p)` unevaluated, and, in R3, the
+# preallocated index maps and AD preparation.
 struct _ReducedStationarityProblem{P, X, B, HB, IV, UP, PR} <: AbstractNonlinearProblem
     prob::P
     x_ref::X
@@ -302,6 +318,15 @@ const ReducedStatProb = _ReducedStationarityProblem
     N = Nothing
     TR = _ReducedStationarityProblem{P, X, B, N, N, N, N}
     return TR(prob, x_ref, b, nothing, nothing, nothing, nothing)
+end
+
+# The reduced problem of an R3 solve with the datum source `b_src`: a callable `b(p)` takes the
+# place of the datum buffer, so that the reduced residual evaluates it at the parameters it is
+# called with.
+@inline function _with_reduced_datum(rprob::ReducedStatProb, b_src)
+    _is_callable_datum(b_src) || return rprob
+    return _ReducedStationarityProblem(
+        rprob.prob, rprob.x_ref, b_src, nothing, rprob.u_idx, rprob.u_pos, rprob.prep)
 end
 
 struct StaticStationarityState{ST}
@@ -494,8 +519,7 @@ end
         opt::Options{R}; b = nothing) where {R <: Real}
     p_sys = p isa _StationaritySysParams ? p.p : p
     b_sys = p isa _StationaritySysParams && b === nothing ? p.b : b
-    b_raw = _resolve_datum(prob, p_sys, b_sys)
-    b_eff = _static_datum(prob, x₀, b_raw)
+    b_eff = _reduced_datum(prob, x₀, _datum_source(prob, b_sys), p_sys)
     rprob = _ReducedStationarityProblem(prob, x₀, b_eff)
     u₀ = _extract_unknowns(prob.U, x₀)
     u, status, inner₊ = solve!!(s.inner, rprob, u₀, m, p_sys, opt)
@@ -510,7 +534,8 @@ end
 function solve!!(
         s::DenseStatState, prob::StatProb, x₀, method, p,
         options::Options{R}; b = nothing) where {R <: Real}
-    b_raw = _resolve_datum(prob, p, b)
+    b_src = _datum_source(prob, b)
+    b_raw = _eval_datum(b_src, p)
     rprob = s.rprob
     if b_raw isa AbstractVector
         m = length(s.u_work)
@@ -520,7 +545,8 @@ function solve!!(
     copyto!(rprob.x_ref, x₀)
     _extract_u!(s.u_work, rprob.x_ref, rprob.u_idx)
     _update_datum_buf!(rprob.b, rprob.has_b, b_raw)
-    u, status, inner₊ = solve!!(s.inner, rprob, s.u_work, method, p, options)
+    u, status, inner₊ = solve!!(
+        s.inner, _with_reduced_datum(rprob, b_src), s.u_work, method, p, options)
     _embed_u!(x₀, rprob.x_ref, u, rprob.u_pos)
     if inner₊ === s.inner
         state₊ = s

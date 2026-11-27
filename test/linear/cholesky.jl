@@ -563,6 +563,51 @@ end
     @test f_tiny.scale_exponent == fh_tiny.scale_exponent == -exponent(floatmax(R))
 end
 
+# For an IEEE element type, the load kernel takes the largest entry and its exponent from the bits,
+# so that a device that flushes subnormals to zero in its arithmetic, as the Apple GPU does, reads
+# a subnormal matrix.
+# The CPU does not flush, so these rows check the bit path against `exponent` and the host's
+# `cholesky_exponent`; the Metal rows of `test/devices/metal_ka.jl` check the flush.
+@testset "The bit exponent of the load kernel is exponent, normal and subnormal ($R)" for R in REAL_ELTYPES
+    bits_exponent = GeometricSolvers.bits_exponent
+    abs_bits = GeometricSolvers.abs_bits
+    xs = R[nextfloat(zero(R)), prevfloat(floatmin(R)), floatmin(R), nextfloat(floatmin(R)),
+        one(R), prevfloat(floatmax(R)), floatmax(R)]
+    append!(xs, (ldexp(one(R), k)
+    for k in exponent(nextfloat(zero(R))):exponent(floatmax(R))))
+    append!(xs, (3 * nextfloat(zero(R)) * k for k in 1:97))
+    append!(xs, abs.(R.(randn(Xoshiro(83), 64))) .*
+                ldexp.(one(R), rand(Xoshiro(89), -200:120, 64)))
+    for x in filter(x -> isfinite(x) && !iszero(x), xs)
+        @test bits_exponent(R, abs_bits(x)) == exponent(x)
+        @test bits_exponent(R, abs_bits(-x)) == exponent(x)
+    end
+end
+
+@testset "DeviceCholesky on a JLArray takes the host's exponent from normal to subnormal scales ($T)" for T in ELTYPES
+    allowscalar(false)
+    R = real(T)
+    emax = exponent(floatmax(R))
+    TF = mixed_precision(T)
+    W = T <: Real ? T[2 0.3 0; 0.3 2 0.3; 0 0.3 2] :
+        T[2 0.3+0.1im 0; 0.3-0.1im 2 0.3im; 0 -0.3im 2]
+    b = cholesky_rhs(T, 3, 97)
+    tiny = exponent(nextfloat(zero(R)))
+    # every scale from the smallest subnormal to the normal range, then a coarse normal sweep
+    ks = unique(vcat(collect(tiny:(-emax + 4)), collect((-emax + 4):37:(emax - 2))))
+    for k in ks
+        A = GeometricSolvers.ldexp2.(W, k)
+        e = GeometricSolvers.cholesky_exponent(A)
+        for (method, expected) in ((CholeskyFactorization(), e < 0 ? e & ~1 : 0),
+            (CholeskyFactorization(TF), e))
+            f = factorize!!(dense_factor(method, nothing, JLArray(b), nothing), method,
+                JLArray(A))
+            fh = factorize!!(dense_factor(method, nothing, b, nothing), method, A)
+            @test f.scale_exponent == fh.scale_exponent == expected
+        end
+    end
+end
+
 @testset "DeviceCholesky: factorize!! and ldiv!! are inferred and JET clean ($T)" for T in ELTYPES
     allowscalar(false)
     A = randhpd(T, 6, 10, 73)

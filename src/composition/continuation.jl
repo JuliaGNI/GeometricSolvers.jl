@@ -30,7 +30,8 @@ The homotopy ``H(x, λ) = F(x, p_λ)`` of a [`Continuation`](@ref) in a paramete
 problem: `map(p, λ)` returns the parameters `p_λ` at `λ` from the parameters `p` of the solve. The
 path starts at `x₀`, which is corrected onto `H(x, 0) = 0` first, and its `λ = 1` end is a root of
 `F(x, map(p, 1))`. The derivative ``∂H/∂λ`` is the central difference of step
-``\\sqrt[3]{\\varepsilon} \\max(1, |λ|)``, with `ε` the machine epsilon of the iterate.
+``\\sqrt[3]{\\varepsilon} \\max(1, |λ|)``, with `ε` the machine epsilon of the iterate. On a
+[`StationarityProblem`](@ref), a callable datum `b(p)` is evaluated at `p_λ` too.
 """
 struct ParameterHomotopy{F}
     map::F
@@ -81,8 +82,9 @@ step is the norm of `F` at `x₀` and `λ = 1`; a parameter homotopy evaluates `
 alone, and its path does not. A halved `h` below `h_min` returns `STALLED`,
 and `max_iterations` path steps of the [`Options`](@ref) return `MAXITERS`; both return the last
 accepted point of the path, with `fnorm` the norm of `F` there at `λ = 1`, `stepnorm` the length
-of the last step, and `step_failures` the rejected steps. [`continuation_steps`](@ref) reads `λ`
-and the step length of every step of the last solve.
+of the last step, and `step_failures` the rejected steps. These `NONFINITE`, `STALLED` and
+`MAXITERS` returns thus evaluate `F` at `λ = 1`, so a residual that is not defined there raises.
+[`continuation_steps`](@ref) reads `λ` and the step length of every step of the last solve.
 
 `method` is a [`Newton`](@ref) whose step forms the Jacobian matrix: its Jacobian source gives
 ``H_x``, and a matrix-free linear method ([`matrix_free`](@ref)), such as [`GMRES`](@ref) or

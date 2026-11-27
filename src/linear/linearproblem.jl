@@ -356,15 +356,20 @@ end
 
 @inline static_solve(fac, b, ::Val{false}, ::Type{T}) where {T} = ldiv!!(nothing, fac, b)
 
-# `x = z · 2^-e` of the solution `z` in `TF` of `Aᴴ / 2^e`, or, where `b` was divided by its largest
-# absolute entry `s = frac · 2^ex` before it was converted to `TF`, `z · frac · 2^(ex - e)` in one
-# rounding, converted to `T`.
+# `x = z · 2^(k - e)` of the solution `z` in `TF` of `Aᴴ / 2^e` and `b / 2^k`, with
+# `k = rhs_exponent(b, e)` of the square and tall solves, which lifts a small `b` with the matrix
+# where `e < 0`, so that the QR's forward substitution `Rᴴ y = b / 2^k` and the SVD's coordinates
+# `Vᴴ b / 2^k` do not run on the subnormal grid; or, where `b` was divided by its largest absolute
+# entry `s = frac · 2^ex` before it was converted to `TF`, `z · frac · 2^(ex - e)` in one rounding,
+# converted to `T`.
 @inline function static_solve(fac::Union{StaticRectQR{N, M, TF}, StaticRectSVD{N, M, TF}},
         b::StaticVector{M}, ::Val{true}, ::Type{T}) where {N, M, TF, T}
     e = Int(getfield(fac, :scale_exponent))
     if TF === T
-        z = static_wide_solve(fac, SVector{M, TF}(b))
-        return iszero(e) ? z : map(a -> ldexp2(a, -e), z)
+        k = rhs_exponent(b, e)
+        r = iszero(k) ? SVector{M, TF}(b) : map(a -> ldexp2(a, -k), SVector{M, TF}(b))
+        z = static_wide_solve(fac, r)
+        return iszero(k - e) ? z : map(a -> ldexp2(a, k - e), z)
     end
     s = maximum(abs, b)
     iszero(s) && return zero(SVector{N, T})
@@ -394,8 +399,8 @@ end
 # The minimum-norm solution `z = Q R⁻ᴴ (r / s)` of `Rᴴ Qᴴ z = r / s` from the Householder QR
 # `Q R` of the `n × m` matrix `Aᴴ`, `n > m`, in `factors` and `τ`: the forward substitution
 # `Rᴴ y = r / s`, then `z = Q [y; 0] = H₁ ⋯ Hₘ [y; 0]` with `Hₖ = I - τₖ w wᴴ`, `w[k] = 1`, `Hₘ`
-# applied first. `s = nothing` takes `r` as it is. Scalar loops, for a static factor and a host
-# array.
+# applied first. `s = nothing` takes `r` as it is, and an integer `s = k` takes `r / 2^k`, each
+# entry scaled by `ldexp2`. Scalar loops, for a static factor and a host array.
 @inline function wide_qr_solve!(z::AbstractVector{F}, factors::AbstractMatrix{F},
         τ::AbstractVector, r::AbstractVector, s) where {F}
     n, m = size(factors)
@@ -426,6 +431,7 @@ end
 end
 
 @inline scaled_entry(a, ::Nothing) = a
+@inline scaled_entry(a, k::Integer) = ldexp2(a, -k)
 @inline scaled_entry(a, s) = a / s
 
 # --- the m < n solves of a dense or device matrix ---
@@ -472,14 +478,16 @@ end
 svd_divisors(fac::DenseSVD, m::Int) = view(fac.rwork, 1:m)
 svd_divisors(fac::DeviceSVD, m::Int) = fac.σ̂
 
-# `x = Q R⁻ᴴ b · 2^-e` from the QR `Q R` of `Aᴴ / 2^e`, on the host: scalar loops in `x`, or in the
-# factor's buffer `rhs` of `n` entries where the factor element type is not that of `A`.
+# `x = Q R⁻ᴴ (b / 2^k) · 2^(k - e)` from the QR `Q R` of `Aᴴ / 2^e`, on the host: scalar loops in
+# `x`, or in the factor's buffer `rhs` of `n` entries where the factor element type is not that of
+# `A`. In the element type of `A`, `k = rhs_exponent(b, e)`, as in the static solve.
 function wide_solve!(x::AbstractVector{T}, fac::DenseQR, b::AbstractVector{T}, y,
         e::Int) where {T}
     F = eltype(fac.factors)
     if F === T
-        wide_qr_solve!(x, fac.factors, fac.τ, b, nothing)
-        iszero(e) || (x .= ldexp2.(x, -e))
+        k = rhs_exponent(b, e)
+        wide_qr_solve!(x, fac.factors, fac.τ, b, k)
+        iszero(k - e) || (x .= ldexp2.(x, k - e))
         return x
     end
     s = maximum(abs, b)

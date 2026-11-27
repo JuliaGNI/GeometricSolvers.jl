@@ -16,7 +16,8 @@ using StaticArrays: SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Backtracking, BiCGStab, DQGMRES, DogLeg, EisenstatWalkerChoice1,
+using GeometricSolvers: Backtracking, BiCGStab, Bisection, DQGMRES, DogLeg,
+                        EisenstatWalkerChoice1, StrongWolfe,
                         FixedForcing, GMRES, JVPFunction, Static, compute_forcing,
                         LeastSquaresProblem, LeftPreconditioned, LevenbergMarquardt,
                         LUFactorization, MINRESQLP, NONFINITE, NonlinearProblem, Newton,
@@ -253,6 +254,32 @@ end
     @test st.f_calls == fcalls[]
     @test GeometricSolvers.f_calls(solver) == fcalls[]
     @test 0 < GeometricSolvers.max_inner_iterations(solver) <= 20
+end
+
+# `Bisection` and `StrongWolfe` evaluate the slope of the merit, `φ′`, through a Jacobian–vector
+# product, which `Backtracking` and `Static` never take: the status counts those products too, and
+# the solve reaches the root `x = 1` of `x^3 + 2x - 3`.
+@testset "A line search that measures the slope solves and counts, $M, $(nameof(G)), $T" for M in FIXED_METHODS,
+    G in (Bisection, StrongWolfe),
+    T in REAL_ELTYPES
+
+    counts = FixedCounts(0)
+    fcalls = Ref(0)
+    prob = NonlinearProblem((r, x, q) -> (fcalls[] += 1; r5_diagonal!(r, x, q)))
+    x₀ = T[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 0.25, 1.25]
+    m = Newton(; linsolve = fixed(M; maxiter = 20, forcing = FixedForcing(T(1e-4))),
+        jacobian = JVPFunction(DiagonalJVP(counts)), globalization = G())
+    solver = init(prob, copy(x₀), m)
+    fcalls[] = 0
+    x, st = solve!(solver, copy(x₀))
+    @test st.code == SUCCESS
+    @test st.jvp_calls == counts.jvp
+    @test st.f_calls == fcalls[]
+    @test st.jvp_calls > st.iterations
+    # `F′ = 3x^2 + 2 ≥ 2` gives `|x_i - 1| ≤ |F_i(x)| / 2`, and the residual test of the solve
+    # bounds `‖F(x)‖` by `√eps ‖F(x₀)‖`, in the max norm or the 2-norm
+    F₀ = r5_diagonal!(similar(x₀), x₀, nothing)
+    @test maximum(abs, x .- 1) <= sqrt(eps(T)) * norm(F₀) / 2 + 4 * eps(T)
 end
 
 # ─── The four guards of BiCGStab ────────────────────────────────────────────
@@ -714,6 +741,63 @@ end
     @test info.converged
     @test all(isfinite, d)
     @test norm(d - x_true) <= 1000 * tol * norm(x_true)
+end
+
+# `A = 2^k A0` with `k = -(emax + 3)`, `emax = exponent(floatmax(T))`, has subnormal entries, and
+# `b = 2^-(emax ÷ 4) b0` keeps the solution `2^-(k + emax ÷ 4) A0⁻¹ b0` far below `floatmax`. The
+# scalars `α`, `ω` and `1 / r_jj` of the unscaled recurrences are about `2^-k`, above `floatmax`.
+# The reference is the `Float64` solve of the unscaled system, scaled exactly; its error is far
+# below `tol`.
+@testset "The solution at a subnormal scale of J, $M, $T" for M in FIXED_METHODS,
+    T in REAL_ELTYPES
+
+    A0 = [4 1 0; 1 3 1; 0 1 2]
+    b0 = [1, -2, 1]
+    emax = exponent(floatmax(T))
+    k = -(emax + 3)
+    sb = -(emax ÷ 4)
+    A = ldexp.(T.(A0), k)
+    b = ldexp.(T.(b0), sb)
+    @test all(a -> iszero(a) || issubnormal(a), A)
+    x_ref = ldexp.(Float64.(A0) \ Float64.(b0), sb - k)
+    tol = T(10) * sqrt(eps(T))
+    # a relative residual `tol` bounds the relative error by `cond(A0) tol`
+    bound = 2 * LinearAlgebra.cond(Float64.(A0)) * tol
+    ws = workspace(M, fixed(M), b)
+    d, info = linear_solve!(M, ws, CountingMatrix(A), nothing, b, tol, 40)
+    @test info.converged
+    @test all(isfinite, d)
+    @test norm(Float64.(d) - x_ref) <= bound * norm(x_ref)
+    # the Newton step, whose residual test is `‖F‖ ≤ √eps ‖F(x₀)‖`
+    prob = NonlinearProblem((r, x, q) -> (mul!(r, A, x); r .-= b; r))
+    jvp! = (Jv, x, v, q) -> mul!(Jv, A, v)
+    x, st = solve(prob, zeros(T, 3), Newton(; linsolve = fixed(M), jacobian = JVPFunction(jvp!)))
+    @test st.code == SUCCESS
+    @test norm(Float64.(x) - x_ref) <=
+          2 * LinearAlgebra.cond(Float64.(A0)) * sqrt(eps(T)) * norm(x_ref)
+end
+
+# One dimension, where the coefficient of the step overflows unscaled and the solution does not.
+# BiCGStab: `J = 1`, a right preconditioner that divides by `2^8` and `b = 2^(emax - 4)`, so that
+# `bnorm α = 2^(emax + 4)` and the solution is `b`. DQGMRES: `J = c = 2^-(emax + 1)`, a subnormal,
+# and `b = 2^-3`, so that the direction `z / r_jj = 2^(emax + 1)` and the solution is
+# `b / c = 2^(emax - 2)`. Each solve is exact in one iteration.
+@testset "A one-dimensional step whose unscaled coefficient overflows, $T" for T in REAL_ELTYPES
+    emax = exponent(floatmax(T))
+    b = [ldexp(one(T), emax - 4)]
+    P = DiagonalRightPreconditioner(Ref(0), [ldexp(one(T), 8)])
+    ws = init_bicgstab_workspace(BiCGStab(), b)
+    d, info = bicgstab_solve!(ws, CountingMatrix(ones(T, 1, 1)), P, b, rnorm(b), T(1e-3), 5)
+    @test info.converged
+    @test isapprox(d, b; rtol = 8 * eps(T))
+    c = ldexp(one(T), -(emax + 1))
+    @test issubnormal(c)
+    b = [ldexp(one(T), -3)]
+    ws = init_dqgmres_workspace(DQGMRES(), b)
+    d, info = dqgmres_solve!(
+        ws, CountingMatrix(fill(c, 1, 1)), nothing, b, rnorm(b), T(1e-3), 5)
+    @test info.converged
+    @test isapprox(d, [ldexp(one(T), emax - 2)]; rtol = 8 * eps(T))
 end
 
 # ─── The refusals of the trait ──────────────────────────────────────────────

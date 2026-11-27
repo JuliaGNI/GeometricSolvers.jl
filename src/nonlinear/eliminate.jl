@@ -517,7 +517,9 @@ end
 
 # Apply (Φ^+)^H * w in R1 for Φ of size M × Ny and w of length Ny, returning an SVector{M, T}: from
 # the SVD factors of Φ for a StaticRectSVD or StaticSVD, and through the normal equations
-# Φ (Φ^H Φ)^+ w for any other factorization.
+# Φ (Φ^H Φ)^+ w for any other factorization. The SVD methods apply the scale 2^-e of the factor to
+# each coefficient in the wider of T and TF, before the division by σ̂, so that the scaled
+# coefficient leaves the range of T only where its quotient by σ̂ does.
 @inline function _pinv_adj_mul_r1(
         fac::StaticRectSVD{M, Ny, TF, L, LN, R},
         ::SMatrix{M, Ny, T}, w::SVector{Ny, T}) where {M, Ny, TF, L, LN, R, T}
@@ -528,13 +530,12 @@ end
     e = getfield(fac, :scale_exponent)
     out = local_array(zero(SVector{M, T}))
     rk == 0 && return SVector{M, T}(out)
-    scale = ldexp(one(R), -e)
     @inbounds for k in 1:rk
         ck = zero(T)
         for i in 1:Ny
             ck += conj(T(V[i, k])) * w[i]
         end
-        ck = (ck * scale) / σ̂[k]
+        ck = ldexp2(promote_type(T, TF)(ck), -e) / σ̂[k]
         for row in 1:M
             out[row] += T(U[row, k]) * ck
         end
@@ -552,13 +553,12 @@ end
     e = fac.scale_exponent
     out = local_array(zero(SVector{Ny, T}))
     rk == 0 && return SVector{Ny, T}(out)
-    scale = ldexp(one(R), -e)
     @inbounds for k in 1:rk
         ck = zero(T)
         for i in 1:Ny
             ck += conj(T(V[i, k])) * w[i]
         end
-        ck = (ck * scale) / σ̂[k]
+        ck = ldexp2(promote_type(T, TF)(ck), -e) / σ̂[k]
         for row in 1:Ny
             out[row] += T(U[row, k]) * ck
         end
