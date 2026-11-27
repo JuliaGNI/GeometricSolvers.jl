@@ -1341,7 +1341,7 @@
   `fnorm = 1.3e-4`, and `GMRES`, `BiCGStab` and `DQGMRES` with `FixedForcing(1e-12)` each end
   `STALLED` after 2 iterations at `fnorm = √3`, the residual of `x₀` (Julia 1.13.4). `main` at
   907d20b gives the same for the dense `Newton` and `GMRES`. The line searches that evaluate the
-  slope take the product of `J` alone (`merit_jvp`, `:1389`), so `Bisection` and `StrongWolfe` do
+  slope take the product of `J` alone (`merit_jvp`, `:1587`), so `Bisection` and `StrongWolfe` do
   not have this limit. A fix chooses the step kind of a regularized direction, such as the measured
   slope or the attained ratio of `J` at one more product, and is a choice for all four methods
   together with K144.
