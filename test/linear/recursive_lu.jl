@@ -142,7 +142,7 @@ end
     @test fac.info == 0
 
     # the factor of the kernel that the band selects, from the matrix that `load_factors!` wrote
-    A_F = F === T ? A : F.(A .* ldexp(one(real(T)), -fac.scale_exponent))
+    A_F = F.(A .* ldexp(one(real(T)), -fac.scale_exponent))
     K, ipiv_k = copy(A_F), Vector{BlasInt}(undef, n)
     if use_recursive_lu(F, n)
         @test recursive_lu!(K, ipiv_k, RECURSIVE_LU_BASE) == 0

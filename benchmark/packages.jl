@@ -466,7 +466,10 @@ end
 # SimpleNonlinearSolve's problem for `alg`: the problem of the residual `c` with the Jacobian
 # `J!`, or, for `ArcLengthContinuation`, the `HomotopyProblem` of the fixed-point homotopy of `c`
 # from `x0` that the column `Continuation FixedPointHomotopy` follows, with its `σ`: the largest
-# absolute entry of `J(x0)`, or of `F(x0)` where `J(x0) = 0`, or 1 where both are 0.
+# absolute entry of `J(x0)`, or of `F(x0)` where `J(x0) = 0`, or 1 where both are 0. Its residual
+# at `λ = 1` is `F/σ`, so with `abstol = tol` the landing solve of this pairing stops on
+# `‖F/σ‖∞ ≤ tol`, where the harness tests `‖F‖∞ ≤ tol`; the same `abstol` reaches the corrector of
+# every path step, so no value of it changes the landing alone.
 function sns_problem(alg, c, J!, x0)
     f = SciMLBase.NonlinearFunction{true}(c; jac = J!)
     return SciMLBase.NonlinearProblem(f, x0, nothing)

@@ -1,8 +1,9 @@
 # `Continuation`: the pseudo-arclength follower on the Newton, the fixed-point and a parameter
 # homotopy; the standard row that every other column fails in `Float64`; the two-fold cubic; a
 # system with no path to `λ = 1`; a non-finite start; the record of the steps and its step
-# control, a failed tangent among them, and the record of a `StationarityProblem` solve; the
-# residual and the Jacobian of each homotopy; the refusals; a linear system scaled to the ends of
+# control, a failed tangent among them, and the record of a `StationarityProblem` solve; a
+# parameter homotopy on a `StationarityProblem` with a callable datum; the residual and the
+# Jacobian of each homotopy; the refusals; a linear system scaled to the ends of
 # the float range; a start near the root; and the scale of the fixed-point homotopy where the
 # Jacobian at the start is zero or not finite.
 
@@ -358,6 +359,65 @@ parabola!(y, x, p) = (y[1] = x[1]^2 - p; y[2] = x[2] - x[1]; nothing)
         x, status = solve(NonlinearProblem(parabola!), T[1.1, 0.9], Continuation(h), p)
         @test status.code == SUCCESS
         @test isapprox(x, T[2, 2]; rtol = 8 * eps(T))
+    end
+end
+
+# The stationarity equations `x₁³ + x₁ + b₁ = 0` and `(1 + q) x₂ + b₂ = 0`, and their value form
+# `x³ + x + b = 0`, whose datum `b(q) = (q, −q²)` gives the root `(−1, 4/3)` at `q = 2`, and
+# `b(q) = (5q, −q²)` the root `(−2, 4/3)`; at the start `q = 1/2` the root is another.
+quartic_action(x::Number, q) = x^4 / 4 + x^2 / 2
+quartic_action(x, q) = x[1]^4 / 4 + x[1]^2 / 2 + (1 + q) * x[2]^2 / 2
+quartic_datum(x₀::Number) = q -> q
+quartic_datum(x₀) = q -> [q, -q^2]
+quartic_datum5(x₀::Number) = q -> 5q
+quartic_datum5(x₀) = q -> [5q, -q^2]
+quartic_root(x₀::Number, x₁) = x₁
+quartic_root(x₀, x₁) = [x₁, 4 // 3]
+
+@testset "a parameter homotopy on a StationarityProblem with a callable datum" begin
+    @testset "$T" for T in REAL_ELTYPES
+        # the reproducer: `x + b(q) = 0` with `b(q) = q` from `q = 0` to `q = 1`, whose root at
+        # the end is −1 and at the start 0
+        prob = StationarityProblem((x, q) -> x^2 / 2; b = q -> q)
+        h₁ = ParameterHomotopy((p, λ) -> p + λ)
+        x, status = solve(prob, zero(T), Continuation(h₁), zero(T))
+        @test status.code == SUCCESS && isapprox(x, -1; rtol = 8 * eps(T))
+        # from `q = 1/2` to `q = 2`, with `map(p, 0) = p`: the stationarity solve also evaluates
+        # the datum at `p`, to check its length. `f_reltol = 0` runs each Newton solve to the
+        # step tolerance, so that its root is exact to round-off.
+        h = ParameterHomotopy((p, λ) -> p + 3λ / 2)
+        p = T(1) / 2
+        @testset "$(typeof(x₀))" for x₀ in (zero(T), zeros(SVector{2, T}), zeros(T, 2))
+            x_end = quartic_root(x₀, -one(T))
+            # the end against a Newton solve at the end parameter
+            x_ref, st_ref = solve(
+                StationarityProblem(quartic_action; b = quartic_datum(x₀)),
+                x₀, Newton(), T(2); f_reltol = 0)
+            @test st_ref.code == SUCCESS && isapprox(x_ref, x_end; rtol = 8 * eps(T))
+            # the datum of the problem, and a keyword datum of `solve` and of `init`
+            prob = StationarityProblem(quartic_action; b = quartic_datum(x₀))
+            x, status = solve(prob, copy(x₀), Continuation(h), p; f_reltol = 0)
+            @test status.code == SUCCESS && isapprox(x, x_ref; rtol = 8 * eps(T))
+            prob = StationarityProblem(quartic_action)
+            x, status = solve(prob, copy(x₀), Continuation(h), p; b = quartic_datum(x₀),
+                f_reltol = 0)
+            @test status.code == SUCCESS && isapprox(x, x_ref; rtol = 8 * eps(T))
+            solver = init(prob, copy(x₀), Continuation(h), p; b = quartic_datum(x₀),
+                f_reltol = 0)
+            x, status = solve!(solver)
+            @test status.code == SUCCESS && isapprox(x, x_ref; rtol = 8 * eps(T))
+            # a fixed datum, `b(2)`, has the same end, and a keyword datum of `solve!` overrides
+            # it. The fixed datum holds `x₁ = −1` at every `q`, which the corrector at `λ = 0`
+            # does not reach from 0 in its six iterations in `Float64`, so the path starts there.
+            prob = StationarityProblem(quartic_action; b = quartic_datum(x₀)(T(2)))
+            x_start = x₀ isa Number ? -one(T) : typeof(x₀)(T[-1, 0])
+            solver = init(prob, x_start, Continuation(h), p; f_reltol = 0)
+            x, status = solve!(solver)
+            @test status.code == SUCCESS && isapprox(x, x_ref; rtol = 8 * eps(T))
+            x, status = solve!(solver; b = quartic_datum5(x₀))
+            @test status.code == SUCCESS &&
+                  isapprox(x, quartic_root(x₀, -2one(T)); rtol = 8 * eps(T))
+        end
     end
 end
 

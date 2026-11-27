@@ -57,12 +57,12 @@ end
 ka_backsolve!(fac::DeviceQR, d) = GeometricSolvers.ka_qr_backsolve!(fac.factors, fac.τ, d)
 
 # The solve that `ldiv!!` runs for a square factor, with the KA backsolve kernels in place of
-# `backsolve!`, which an extension can define for the device's arrays: `rhs_exponent(r)`, a
-# device-wide maximum that the host reads, gives `k`; `d` takes `r / 2^k`; the kernels solve in
-# place; and `d` is multiplied by `2^(k - e)`, with `e` the exponent that the factorisation divided
-# `J` by.
+# `backsolve!`, which an extension can define for the device's arrays: `rhs_exponent(r, e)`, of a
+# device-wide maximum that the host reads, gives `k`, with `e` the exponent that the factorisation
+# divided `J` by; `d` takes `r / 2^k`; the kernels solve in place; and `d` is multiplied by
+# `2^(k - e)`.
 function ka_solve!(d, fac, r)
-    k = rhs_exponent(r)
+    k = rhs_exponent(r, fac.scale_exponent)
     if iszero(k)
         copyto!(d, r)
     else

@@ -189,18 +189,27 @@ function qr_zero_diag(R::AbstractMatrix)
     return 0
 end
 
-# `J` into the factor buffer `A`, and the exponent `e` of the power of two that it was divided by,
-# as `factor_matrix` does for R1: 0 where `J` has the element type of `A`, which is then copied,
-# else `scale_exponent(J)`: `matrix_exponent` by default, or `cholesky_exponent` for the entries
-# that a Cholesky factorisation reads.
+# `J / 2^e` into the factor buffer `A`, and the exponent `e` of the power of two that it was
+# divided by, as `factor_matrix` does for R1, with `e = scale_exponent(J)`: `matrix_exponent` by
+# default, or `cholesky_exponent` for the entries that a Cholesky factorisation reads. Where `A`
+# has the element type of `J`, only `e < 0` divides, so that a matrix of subnormal or
+# near-`floatmin` entries is factorised in the normal range; `e > 0` copies `J`, because the solve
+# with the factor of `J / 2^e` and `r / 2^k` holds `2^(e - k)` times the solution before `ldiv!!`
+# scales it back, which can overflow near `floatmax`. A Cholesky factor of the element type of `J`
+# rounds that `e < 0` down to an even exponent, `e & ~1`, so that the factor of `J / 2^e` is that
+# of `J` times the power of two `2^(-e/2)`, and the solve of a normal-range `J` gives the bits of
+# the solve with the factor of `J`. Another element type divides for every `e`. `e = 0`, which an
+# empty, zero or non-finite `J` gives, copies `J` as it is. The division is `ldexp2`, which keeps a
+# subnormal entry on a device that flushes subnormals to zero.
 function load_factors!(A::AbstractMatrix{F}, J::AbstractMatrix,
         scale_exponent::E = matrix_exponent) where {F, E}
-    if eltype(J) === F || isempty(J)
+    e = isempty(J) ? 0 : scale_exponent(J)
+    if iszero(e) || (eltype(J) === F && e > 0)
         J === A || copyto!(A, J)
         return 0
     end
-    e = scale_exponent(J)
-    A .= J .* ldexp(one(float(real(eltype(J)))), -e)
+    eltype(J) === F && scale_exponent === cholesky_exponent && (e &= ~1)
+    A .= ldexp2.(J, -e)
     return e
 end
 
@@ -213,7 +222,7 @@ const DenseFactor{A} = Union{
 # that solution times `2^(k + t - e)`.
 function ldiv!!(d::AbstractVector{T}, fac::DenseFactor{<:AbstractMatrix{T}},
         r::AbstractVector{T}) where {T <: Number}
-    k = rhs_exponent(r)
+    k = rhs_exponent(r, fac.scale_exponent)
     t = if length(r) == length(d)
         if iszero(k)
             d === r || copyto!(d, r)
@@ -506,9 +515,9 @@ end
 
 # --- DenseCholesky ---
 
-# The scale of a factor in another element type is taken from the entries that the factorisation
-# reads, the lower triangle and the real diagonal (`cholesky_exponent`). A non-finite entry of `J`
-# anywhere is refused before the factorisation: `potrf` reads the lower triangle only and returns
+# The scale of the factor is taken from the entries that the factorisation reads, the lower
+# triangle and the real diagonal (`cholesky_exponent`). A non-finite entry of `J` anywhere is
+# refused before the factorisation: `potrf` reads the lower triangle only and returns
 # `info = 0` for a `NaN` below the diagonal of the first column (OpenBLAS 0.3.30, n = 2 to 8). The
 # test is on `J`, not on the factor buffer, where an entry above the diagonal or an imaginary part
 # of the diagonal can overflow in the conversion and is not read. `potrf` leaves the upper triangle

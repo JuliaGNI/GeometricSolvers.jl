@@ -49,9 +49,9 @@ end
 end
 
 function svd_rect_matrix(::Type{F}, J::StaticMatrix{M, N, T}) where {F, M, N, T}
-    e = matrix_exponent(J)
+    e = svd_exponent(J)
     S = SMatrix{M, N, T}(J)
-    return SMatrix{M, N, F}(iszero(e) ? S : S * ldexp(one(float(real(T))), -e)), Int32(e)
+    return SMatrix{M, N, F}(iszero(e) ? S : map(a -> ldexp2(a, -e), S)), Int32(e)
 end
 
 @inline function rect_column_norm2(A::StaticMatrix{M, N, F}, j) where {M, N, F}
@@ -214,7 +214,7 @@ function ldiv!!(
         ::Union{Nothing, StaticVector{N}},
         fac::StaticRectSVD{M, N, TF},
         r::StaticVector{M, TF}) where {M, N, TF}
-    k = rhs_exponent(r)
+    k = rhs_exponent(r, getfield(fac, :scale_exponent))
     r̂ = iszero(k) ? SVector{M, TF}(r) : map(a -> ldexp2(a, -k), SVector{M, TF}(r))
     d, t = backsolve_shifted(fac, r̂)
     return unscale(fac, d, k + t)
