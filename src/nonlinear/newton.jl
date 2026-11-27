@@ -1383,6 +1383,14 @@ end
     return axpby!!(Jv, one(T), Jv₀, T(r.μ), v)
 end
 
+# The product that the globalization of a matrix-free step reads, with the counters of the solve:
+# that of `J` itself, without the shift `μ I` that the inner solve takes, so that the slope `φ′`
+# of `Bisection` and `StrongWolfe` is that of `‖F‖²`.
+@inline function merit_jvp(c::R5JVP{<:RegularizedJVP, W, TJ}) where {W, TJ}
+    return R5JVP{typeof(c.prep.prep), W, TJ}(c.prep.prep, c.ws)
+end
+@inline merit_jvp(c) = c
+
 # The step from the factor `fac` that the step factorised from `Jreg` at `x`: `SINGULAR` for a
 # failed factor, else the globalized step along the refined direction.
 @inline function newton_globalize(m::Newton, state::NewtonState, prob, x, Fx, p, fac, Jreg)
@@ -2178,7 +2186,7 @@ end
     counted = counting_problem(prob, ws)
     dnorm = R(rnorm(d))
     x₊, F₊, _, info, merit = globalize_merit!!(
-        state.g, m.globalization, counted, x, Fx, d, p, state.jvpprep,
+        state.g, m.globalization, counted, x, Fx, d, p, merit_jvp(state.jvpprep),
         InexactStep(η_ach), state.merit)
     accepted_linres!(ws, info.stepnorm, dnorm)
     info = bump_failures(info, failures)
@@ -2376,7 +2384,7 @@ Base.adjoint(J::SymmetricJVP) = J
     η_ach = iszero(fnorm) ? zero(R) : min(inner.resnorm / fnorm, η)
     dnorm = R(rnorm(d))
     x₊, F₊, _, info, merit = globalize_merit!!(
-        state.g, m.globalization, counted, x, Fx, d, p, state.jvpprep,
+        state.g, m.globalization, counted, x, Fx, d, p, merit_jvp(state.jvpprep),
         InexactStep(R(η_ach)), state.merit)
     accepted_linres!(ws, info.stepnorm, dnorm, fnorm, inner.resnorm)
     info = bump_failures(info, failures)
@@ -2425,7 +2433,8 @@ const FixedKrylovWorkspace = Union{BiCGStabWorkspace, DQGMRESWorkspace}
         return x, Fx, state, StepInfo{R}(NONFINITE, fnorm, zero(R), failures, false, false)
     η_ach = iszero(fnorm) ? zero(R) : min(inner.resnorm / fnorm, η)
     x₊, F₊, _, info, merit = globalize_merit!!(
-        state.g, m.globalization, counting_problem(prob, ws), x, Fx, d, p, state.jvpprep,
+        state.g, m.globalization, counting_problem(prob, ws), x, Fx, d, p,
+        merit_jvp(state.jvpprep),
         InexactStep(R(η_ach)), state.merit)
     info = bump_failures(info, failures)
     return x₊, F₊, with_merit(state, merit, info.fnorm), info
