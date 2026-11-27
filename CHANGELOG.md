@@ -166,14 +166,15 @@ so that a compat-only bump can be told apart from an interface change.
   eigenvalues in `[0.01, 0.05]` must give fewer products with recycling than without, and fewer
   without than with `GMRES(m)`, and each GCRO-DR count must equal a direct count of the
   operator's calls; the script stops with an error otherwise. It prints one verdict line for each
-  of the rules decided before the run. On the base `cd7fa81` with this script, on an Apple M4 Max
-  with Julia 1.13.4 and OpenBLAS 0.3.30, the control gave 779, 408 and 271 products, and every
-  cell of the grid gave the same count in all three columns (23 at `η = 1e-2`, 36 at `η = 1e-6`,
-  over 21 Newton steps). No linear solve started from a recycled space: the inner solves before
-  the last ran fewer than `k` Arnoldi steps each, and such a cycle leaves none. The stop rule
-  (`r ≥ 0.90` in every cell) held. `test/integration/hardware_scripts.jl` runs the script at
-  `N = 125`, `m = 20`, `k = 5`, `η = 1e-2`, and checks its GCRO-DR, its Newton loop against the
-  package's steps and refreshes, and its verdict on synthetic rows.
+  of the rules decided before the run. Measured with this script on commit `5a19709`, on an Apple
+  M4 Max with Julia 1.13.4, OpenBLAS 0.3.30 and 2 BLAS threads, the control gave 779, 408 and 271
+  products, and every cell of the grid gave the same count in all three columns (23 at
+  `η = 1e-2`, 36 at `η = 1e-6`, over 21 Newton steps). No linear solve started from a recycled
+  space in any of the 16 cells: the inner solves before the last ran fewer than `k` Arnoldi steps
+  each, and such a cycle leaves none. The stop rule (`r ≥ 0.90`) held in 16 of 16 cells, and so
+  measures that recycling never ran, not what it does. `test/integration/hardware_scripts.jl`
+  runs the script at `N = 125`, `m = 20`, `k = 5`, `η = 1e-2`, and checks its GCRO-DR, its Newton
+  loop against the package's steps and refreshes, and its verdict on synthetic rows.
 
 ### Changed
 
