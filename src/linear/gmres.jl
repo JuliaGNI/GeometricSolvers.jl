@@ -280,7 +280,10 @@ doi:10.1137/0914028).
   without convergence. Below that the cycle ends on its true residual and restarts. An operator
   that is nonsingular on the space but singular at the precision of `TB` reads as singular too,
   and stops so: ``J = u_2 (u_1 + u_2)^T + \\delta u_1 u_1^T`` and ``b = u_1`` in a rotated
-  frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``. An invariant
+  frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``, and with a
+  `Float16` basis on `Float32` or `Float64` and ``\\delta = 10^{-7}``. There the ratio of that
+  entry to the residual is 0.986–1.00, and on the singular systems of the tests it is at least
+  0.895. An invariant
   space whose stored columns also
   carry a direction error of order ``\\mathrm{eps}(TB)`` leaves a remainder of that order, which the test does not see: the cycle goes on with it as a
   new direction. Any other
@@ -777,11 +780,12 @@ end
 # `sqrt(eps(TB)) β` for the residual `β` at the start of the cycle; below that the cycle ends on
 # its true residual and restarts. On the singular systems of the tests and their rotated frames
 # `gj / β` is at least 0.895, and on the consistent operator `u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ` in a
-# rotated frame it is at most 0.0143 for a Float16 basis and 3.03e-8 for a Float32 one at the
-# steps that restart (`scripts/gmres_singular_ratio.jl`, with either `--check-bounds`). That
-# operator reads as singular at the precision of a Float16 basis where `δ ≤ 3e-5` on Float64 and
-# where `δ = 1e-7`, with ratios of 0.986–1.00, and at one step of a Float16 basis on Float32 after
-# many restarts, with 0.0508: the solve stops there without convergence.
+# rotated frame it is at most 2.91e-4 (`--check-bounds=auto`) and 0.0143 (`yes`) for a Float16
+# basis and 3.03e-8 (either) for a Float32 one at the steps that restart
+# (`scripts/gmres_singular_ratio.jl`). That operator reads as singular at the precision of a
+# Float16 basis where `δ ≤ 3e-5` on Float64 and where `δ = 1e-7`, with ratios of 0.986–1.00, and,
+# with `--check-bounds=yes` only, at one step of a Float16 basis on Float32 after many restarts,
+# with 0.0508: the solve stops there without convergence (K154).
 @inline function singular_breakdown(
         ws::GMRESWorkspace{T, R, V}, a, w₀, gj, β) where {T, R, V}
     return basis_breakdown(ws, a, w₀) && gj > sqrt(R(eps(real(eltype(V))))) * β

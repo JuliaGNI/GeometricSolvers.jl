@@ -97,7 +97,8 @@ so that a compat-only bump can be told apart from an interface change.
   right-hand side, the residual that the step cannot remove, exceeds `sqrt(eps(TB)) ‖r₀‖` with `r₀`
   the residual at the start of the cycle; below that, the cycle ends on its true residual and
   restarts. `|g[j]| / ‖r₀‖` is at least 0.895 on the singular systems of the tests and their
-  rotated frames, and at most 0.0143 for a `Float16` basis and 3.03e-8 for a `Float32` basis at the
+  rotated frames, and at most 2.91e-4 (`--check-bounds=auto`) or 0.0143 (`yes`) for a `Float16`
+  basis and 3.03e-8 for a `Float32` basis at the
   steps that restart on the consistent `J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ`, `b = u₁` in a rotated frame
   (`scripts/gmres_singular_ratio.jl`); with a `Float16` basis on `Float64`, the rows with δ = 0.1
   and 0.3 (CGS2 δ = 0.3; MGS δ = 0.1 and 0.3) now restart and converge. A consistent operator that

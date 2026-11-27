@@ -2254,9 +2254,10 @@ end
 # converges. Each row stops without convergence where every such step reads `J` as singular. The
 # rows of the other basis types that restart there converge or not with the summation order, as
 # `--check-bounds` sets it (K149), and are not asserted.
-@testset "A consistent operator whose rotated pivot is at the round-off of a reduced basis restarts and converges, δ = $δ, mgs = $mgs, $TB on $T" for (T, TB, mgs, δ) in (
-    (Float64, Float16, false, 0.3),
-    (Float64, Float16, true, 0.1), (Float64, Float16, true, 0.3))
+@testset "A consistent operator whose rotated pivot is at the round-off of a reduced basis restarts and converges, δ = $δ, mgs = $mgs, Float16 on Float64" for (mgs, δ) in (
+    (false, 0.3), (true, 0.1), (true, 0.3))
+    T = Float64
+    TB = Float16
     n = 50
     Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
     u₁ = Q * [fill(T(0.2), 25); zeros(T, 25)]
@@ -2285,7 +2286,9 @@ end
         10, 1), (200, 2)),
     mgs in (false, true)
 
-    T, TB, n = Float64, Float16, 60
+    T = Float64
+    TB = Float16
+    n = 60
     Q = Matrix(qr(randn(Xoshiro(7), n, n)).Q)
     e(k) = Q * [i in (20(k - 1) + 1):(20k) ? 1 / sqrt(20) : 0.0 for i in 1:n]
     u₁, u₂, u₃ = e(1), e(2), e(3)
