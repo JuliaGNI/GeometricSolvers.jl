@@ -1180,7 +1180,7 @@
 
 ### K140 · `solve!` on a `ReparametrizedSolver` takes no `refactorize` keyword, so a `Newton(; reuse = k, keep_factor = true)` inside it refreshes its kept factor only by the rate rule
 
-- **location:** `src/nonlinear/reparametrized.jl:1051`
+- **location:** `src/nonlinear/reparametrized.jl:1057`
 - **evidence:** `solve!(solver::ReparametrizedSolver)` and `solve!(solver::ReparametrizedSolver, y,
   p = solver.p)` take no keywords, so `solve!(solver, y, p; refactorize = true)` raises a
   `MethodError`. The `solve!` of a `NonlinearSolver` takes `refactorize`. A caller that changes the
@@ -1206,3 +1206,55 @@
 - **kind:** found late
 - **found:** 2026-11-27, the review of the branch that keeps a `Newton` factor across solves; the
   limit of the decided rule for a kept factor after `SUCCESS`
+
+### K142 · A `Newton(; reuse = k)` solve with `k > 1`, or with a kept factor, of a least-squares problem with a nonzero residual at its minimum often returns `STALLED` near the stationary point
+
+- **location:** `src/nonlinear/solver.jl:83` (`rate_test_step`)
+- **evidence:** the steps along a reused factor converge to the fixed point of the frozen
+  Gauss–Newton map, which is not the stationary point, and the rate test reads no such step. With
+  `r(x) = (x² − 5, x − 1)`, its Jacobian, `Newton(; linsolve = QRFactorization(), jacobian, reuse
+  = k)`, default `Options(T)`, from `3`: in `Float64`, `k = 1` returns `SUCCESS` by
+  `:stationarity` at `2.1748339274858415` after 7 iterations, `k = 3` returns `STALLED` at
+  `2.17483438331406` after 12, and `k = 10` returns `STALLED` at `2.17527521960677` after 17. In
+  `Float32`, `k = 3` returns `SUCCESS` by `:stationarity` and `k = 10` returns `STALLED` after 13.
+  A `VariableProjection` with `reuse = 3` or `10` also returns `STALLED`. The input of K143, which
+  loses the rule that the rate test reads no reused step, returns `SUCCESS` by `:contraction` at
+  the same `Float64` points; the step test of the base stalls in the same way.
+- **kind:** defect
+- **found:** 2026-11-27, the review of the branch that keeps a `Newton` factor across solves; the
+  limit of the decided rule that the rate test of a least-squares problem reads no step along a
+  reused factor
+
+### K143 · A `Reparametrized` around a `Reparametrized` around a `LeastSquaresProblem` reads the rate test on steps along a reused factor
+
+- **location:** `src/nonlinear/reparametrized.jl:709`
+- **evidence:** `rate_test_step(ip::_InnerReparametrized, state)` forwards to
+  `ip.reparam.prob`. When that problem is itself a `Reparametrized`, the generic
+  `rate_test_step(::AbstractNonlinearProblem, state) = true` (`solver.jl:82`) answers, so the
+  least-squares guard is lost. With `r` and its Jacobian of K142 as static vectors, the identity
+  chart `id(y, p) = y`, `did(y, p) = SMatrix{1, 1}(one(y[1]))`,
+  `solve(Reparametrized(Reparametrized(LeastSquaresProblem(r, j), id, did), id, did),
+  SVector{1, T}(3), Newton(; linsolve = QRFactorization(), reuse = k); options = Options(T))`
+  returns `SUCCESS` by `:contraction` with `reused == true` for `k = 3` and `10` in `Float32` and
+  `Float64` (`Float64`, `k = 3`: at `2.17483438331406` after 12 iterations). One layer of
+  `Reparametrized` returns `STALLED` for each of the four inputs. A method
+  `rate_test_step(rp::Reparametrized, state) = rate_test_step(rp.prob, state)` would forward the
+  guard through every layer.
+- **kind:** found late
+- **found:** 2026-11-27, the review of the branch that keeps a `Newton` factor across solves; the
+  input is outside the decided rule, which names one `Reparametrized` around a
+  `LeastSquaresProblem`
+
+### K144 · `solve!` on a static `ReparametrizedSolver` of a `LeastSquaresProblem` raises a `MethodError`
+
+- **location:** `src/nonlinear/reparametrized.jl:951`
+- **evidence:** with `r`, its Jacobian and the identity chart of K143,
+  `s = init(Reparametrized(LeastSquaresProblem(r, j), id, did), SVector(3.0), Newton(; linsolve =
+  QRFactorization(), reuse = k); options = Options(Float64))` followed by
+  `solve!(s, SVector(3.0))` raises `MethodError: Cannot convert an object of type
+  GeometricSolvers.StaticReparamState{…}` at the assignment `solver.state = state₊`, for `k = 1`
+  and `3`. The same pair with a square `NonlinearProblem` returns `SUCCESS`, and `solve` of the
+  least-squares problem returns a status. The error is the same on the commit that the branch
+  that keeps a `Newton` factor across solves starts from.
+- **kind:** defect
+- **found:** 2026-11-27
