@@ -71,10 +71,16 @@ so that a compat-only bump can be told apart from an interface change.
   arXiv:2009.12101), with every product, coefficient, norm and update in the working type; the
   preconditioner reads a working-precision copy of each basis vector. Its Givens estimate is not
   the true residual, so each cycle ends on `‖b − J d‖`, one more Jacobian–vector product, and
-  restarts where it misses the tolerance; its CGS2 step takes three reductions. One cycle of `j`
-  CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist, Luszczek and
-  Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve reaches
-  `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor a
+  restarts where it misses the tolerance; its CGS2 step takes three reductions, and its MGS step a
+  second pass, `2j + 1` reductions at inner iteration `j`, because a stored column has unit norm
+  only to the round-off of `TB`. On a Krylov space that is invariant to the round-off of `TB`, as
+  that of `J = c I` and a constant `b`, the CGS2 step takes its remainder of order eps(TB)² for a
+  new basis vector, and the cycle makes no more progress. A solve with `maxiter == restart` and a
+  tolerance below about eps(TB)² can end without convergence near eps(TB) ‖b‖, about 2.4e-4 ‖b‖
+  for a `Float16` basis on `Float64`; with room for a restart it converges (known issue K146).
+  One cycle of `j` CGS2 iterations with a `Float32` basis is tested against the bound of Lindquist,
+  Luszczek and Dongarra (2022, Theorem 1, doi:10.1109/TPDS.2021.3090757), and the restarted solve
+  reaches `‖b − J d‖ ≤ 10⁻¹³ ‖b‖` on `R5Diagonal`. A `basis_eltype` that is neither `Nothing` nor a
   concrete `AbstractFloat` type raises an `ArgumentError`, and so does a `DogLeg` with any
   `basis_eltype` but `Nothing`, because its trial loop reads the basis as orthonormal in the
   working precision.

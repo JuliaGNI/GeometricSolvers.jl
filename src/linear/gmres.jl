@@ -252,18 +252,26 @@ doi:10.1137/0914028).
   ``w_2`` is ``\\sqrt{s_1 - \\|h_2\\|^2}`` where ``s_1`` is finite, at least `n * floatmin` and
   ``\\|h_2\\|^2 \\le s_1 / 2``, and one more reduction, `rnorm` of ``w_2``, elsewhere. `true`
   orthogonalises by modified Gram–Schmidt, which takes ``j + 1`` reductions at inner iteration
-  `j`.
+  `j`, and ``2j + 1`` on a basis stored in a type other than `T` (`basis_eltype` below).
 - `basis_eltype::Type{TB}`: `Nothing` stores the Krylov basis in the working type `T` of the
   iterate; a concrete `AbstractFloat` type `TB` stores it in `TB`, and a complex iterate in
   `Complex{TB}`, as the compressed basis of Aliaga et al. (2020, arXiv:2009.12101) does. Every
   product, coefficient, norm and update stays in `T`, and the preconditioner reads a copy of each
   basis vector in `T`. A basis in a type other than `T` is not orthonormal in `T`, so the Givens
   estimate of the residual is not the true one: each cycle ends on the true residual
-  ``\\|b - J d\\|``, one product, and restarts where it misses the tolerance. With restarts the
-  solve reaches the accuracy of `T`; one cycle of `j` CGS2 iterations reaches that of the cycle
-  in `T` within the bound of Lindquist, Luszczek and Dongarra (2022, Theorem 1,
-  doi:10.1109/TPDS.2021.3090757) for the unit roundoff of `TB`. The CGS2 step takes three
-  reductions here, because column `j + 1` of the basis cannot hold ``w_1`` in `T`. Any other
+  ``\\|b - J d\\|``, one product, and restarts where it misses the tolerance. With room for
+  restarts the solve reaches the accuracy of `T`; one cycle of `j` CGS2 iterations reaches that
+  of the cycle in `T` within the bound of Lindquist, Luszczek and Dongarra (2022, Theorem 1,
+  doi:10.1109/TPDS.2021.3090757) for the unit roundoff of `TB`. A stored column has unit norm
+  only to the round-off of `TB`, so one projection leaves a remainder of that order along the
+  basis: the CGS2 step takes three reductions here, because column `j + 1` of the basis cannot
+  hold ``w_1`` in `T`, and the MGS step takes a second pass. On a Krylov space that is invariant,
+  as that of `J = c I` and a constant `b`, the CGS2 step takes its remainder, of order
+  ``\\mathrm{eps}(TB)^2``, for a new basis vector parallel to the last one, and the cycle makes
+  no more progress; its true residual then restarts it. So a solve with `maxiter == restart` and
+  a tolerance below about ``\\mathrm{eps}(TB)^2`` can end without convergence near
+  ``\\mathrm{eps}(TB) \\|b\\|``, about ``2.4 \\cdot 10^{-4} \\|b\\|`` for a `Float16` basis on
+  `Float64`. Any other
   `basis_eltype` raises an `ArgumentError`, and so does a [`Newton`](@ref) with a
   [`DogLeg`](@ref) globalization and a `basis_eltype` that is not `Nothing`.
 - `flexible::Val{FL}`: `Val(false)`, from `flexible = false`, forms the direction
@@ -564,6 +572,15 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
                     h = arnoldi_dot(@view(ws.V[:, i]), ws.w)
                     ws.H[i, j] = h
                     @views ws.w .-= h .* ws.V[:, i]
+                end
+                # a basis stored in another type is orthonormal only to its own round-off, so one
+                # pass leaves a remainder of that order along the basis, which a second removes
+                if reduced_basis(ws)
+                    for i in 1:j
+                        h = arnoldi_dot(@view(ws.V[:, i]), ws.w)
+                        ws.H[i, j] += h
+                        @views ws.w .-= h .* ws.V[:, i]
+                    end
                 end
                 hj = R(rnorm(ws.w))
             else
