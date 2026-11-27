@@ -95,10 +95,13 @@ end
 
 # `κ` of the rate test, in the precision `R` of the options: the test bounds the error estimate
 # `θ / (1 - θ) ‖Δ‖` by the fraction `κ` of the step tolerance, so `κ` lies in `(0, 1)`. `NaN` fails
-# both comparisons, and a value that rounds to `0` or `1` in `R` is refused as that value.
+# both comparisons, and a value that rounds to `0` or `1` in `R` is refused as that value. The
+# positional `Options{R}` runs this check, and an R1 solve of an eliminated problem rebuilds its
+# inner options through that constructor inside a device kernel, which cannot format a value, so
+# the message is constant.
 @inline function check_kappa(kappa::Real)
     zero(kappa) < kappa < one(kappa) ||
-        throw(ArgumentError("kappa must be finite and in (0, 1), got $kappa"))
+        throw(ArgumentError("kappa must be finite and in (0, 1)"))
     return nothing
 end
 

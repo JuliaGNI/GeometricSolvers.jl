@@ -235,6 +235,19 @@ end
     @test eltype(rep_f32.g(SVector(1.0f0, 2.0f0), nothing)) === Float32
 end
 
+@testset "a Reparametrized refuses a Reparametrized inner problem" begin
+    nested = r"^ArgumentError: Reparametrized cannot wrap a Reparametrized; compose the charts"
+    prob_ls = GS.LeastSquaresProblem((x, p) -> SVector(x[1]^2 - 5, x[1] - 1, x[2]))
+    for prob in (NonlinearProblem(f_polar_target), prob_ls)
+        rp = Reparametrized(prob, g_polar, dg_polar)
+        @test_throws nested Reparametrized(rp, g_polar, dg_polar)
+        # the inner constructor, which `adapt` calls, holds the check
+        @test_throws nested Reparametrized{
+            typeof(rp), typeof(g_polar), typeof(dg_polar), false, true}(
+            rp, g_polar, dg_polar)
+    end
+end
+
 @testset "Polar map root equivalence in R1 and R3 ($T)" for T in REAL_ELTYPES
     allowscalar(false)
     tol = T === Float64 ? 8 * eps(T) : 32 * eps(T)

@@ -11,6 +11,15 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### Changed
 
+- **`Reparametrized(prob, g, ∂g)` refuses a `prob` that is itself a `Reparametrized`.** Every
+  constructor form raises an `ArgumentError`, because the check sits in the inner constructor
+  `Reparametrized{P, G, DG, C, K}`, which `adapt` also calls. The message says to compose the
+  charts into one `Reparametrized`, with the chart `g₁∘g₂` and the chart Jacobian `∂g₁(g₂)·∂g₂`.
+  A nested chart adds no capability, since composed charts are one chart and composed covariant
+  pull-backs are one pull-back, and the seams of the solve, such as the least-squares rate-test
+  guard, read only one layer. New test: the testset "a Reparametrized refuses a Reparametrized
+  inner problem" in `test/nonlinear/reparametrized.jl`.
+
 - **A solve can return `SUCCESS` through a contraction-rate test, and a `Newton` factor can
   survive a sequence of solves.** `record` measures the rate `θₖ = ‖Δₖ‖ / ‖Δₖ₋₁‖` of each step
   into the new field `SolverStatus.rate` (`NaN` at the first step and after a step of zero norm).

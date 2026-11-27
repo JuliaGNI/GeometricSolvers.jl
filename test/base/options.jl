@@ -209,3 +209,14 @@ end
     @test o9.norm === MaxNorm()
     @test o9.f_abstol === 1.0f-3 && o9.max_iterations === Int32(7)
 end
+
+# An R1 solve of an eliminated problem rebuilds its inner options through the positional form
+# inside a device kernel, so its check of `κ` raises the constant message, with no value in it.
+@testset "the positional Options{R} refuses κ outside (0, 1) with a constant message" begin
+    msg = ArgumentError("kappa must be finite and in (0, 1)")
+    # `1 - 1e-9` lies in `(0, 1)` in Float64 and rounds to `1f0` in Float32
+    for κ in (2.0f0, 1 - 1e-9, NaN32)
+        @test_throws msg Options{Float32}(
+            1.0f-3, 0.0f0, 0.0f0, 0.0f0, 0, 10, 2, 1.0f-3, L2Norm(), κ)
+    end
+end
