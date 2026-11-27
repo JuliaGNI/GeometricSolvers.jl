@@ -92,8 +92,19 @@ so that a compat-only bump can be told apart from an interface change.
   Float32-basis column of the standard test set; the separation holds on those systems only. A
   genuine remainder below the bound is taken as round-off and costs a restart: a Newton step with
   a `Float16` basis on `Float64` meets one of ratio 3.74e-4 and still converges. At such a
-  breakdown, a rotated diagonal entry below the same bound is zero, so a `J` singular on the
-  Krylov space stops the solve without convergence. An invariant space whose stored columns also carry
+  breakdown, a rotated diagonal entry below the same bound counts as zero, a `J` singular on the
+  Krylov space, and the solve stops without convergence, only where the entry `g[j]` of the rotated
+  right-hand side, the residual that the step cannot remove, exceeds `sqrt(eps(TB)) ‖r₀‖` with `r₀`
+  the residual at the start of the cycle; below that, the cycle ends on its true residual and
+  restarts. `|g[j]| / ‖r₀‖` is at least 0.895 on the singular systems of the tests and their
+  rotated frames, and at most 0.0143 for a `Float16` basis and 3.03e-8 for a `Float32` basis at the
+  steps that restart on the consistent `J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ`, `b = u₁` in a rotated frame
+  (`scripts/gmres_singular_ratio.jl`); with a `Float16` basis on `Float64`, the rows with δ = 0.1
+  and 0.3 (CGS2 δ = 0.3; MGS δ = 0.1 and 0.3) now restart and converge. A consistent operator that
+  is singular at the precision of a `Float16` basis still reads as singular and stops without
+  convergence: that operator on `Float64` with δ ≤ 3e-5 gives ratios 0.986–1.00 (known issue
+  K154). An
+  invariant space whose stored columns also carry
   a direction error of order eps(TB) (ratios 0.27-0.63 measured) leaves a remainder the test does
   not see, and the cycle goes on with it as a new direction; those solves converge. With
   `basis_eltype = Nothing` nothing changes: the test and its reduction act only on a reduced basis.

@@ -2246,6 +2246,64 @@ end
     @test all(isfinite, d)
 end
 
+# A consistent operator in the frame above, `J = Q (u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ) Qᵀ` and `b = Q u₁`:
+# on `span(u₁, u₂)` it is `[δ 0; 1 1]`, nonsingular, and `d = (u₁ - u₂) / δ` solves it. The stored
+# Float16 basis leaves a rotated diagonal entry at its round-off at a breakdown step, but the
+# entry `g[j]` of the rotated right-hand side there is about 2e-4 ‖r₀‖, below
+# `sqrt(eps(Float16)) ‖r₀‖`: the cycle ends on its true residual and restarts, and the solve
+# converges. Each row stops without convergence where every such step reads `J` as singular. The
+# rows of the other basis types that restart there converge or not with the summation order, as
+# `--check-bounds` sets it (K149), and are not asserted.
+@testset "A consistent operator whose rotated pivot is at the round-off of a reduced basis restarts and converges, δ = $δ, mgs = $mgs, $TB on $T" for (T, TB, mgs, δ) in (
+    (Float64, Float16, false, 0.3),
+    (Float64, Float16, true, 0.1), (Float64, Float16, true, 0.3))
+    n = 50
+    Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
+    u₁ = Q * [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = Q * [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v) .+ T(δ) .* u₁ .* sum(u₁ .* v); Jv)
+    b = copy(u₁)
+    tol = T === Float64 ? 1e-8 : 1.0f-4
+    ws = init_gmres_workspace(GMRES(; maxiter = 40, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(40), Int32(20); mgs)
+    @test info.converged
+    @test info.iterations < 40
+    @test rnorm(b .- op(similar(d), d)) <= tol * rnorm(b)
+    @test isapprox(info.resnorm, rnorm(b .- op(similar(d), d)); rtol = 8 * eps(T))
+end
+
+# A singular operator with a part that `J` reaches, `J = Q (u₂ (u₁ + u₂)ᵀ + u₃ u₃ᵀ) Qᵀ` and
+# `b = Q (u₁ + c u₃)` for orthonormal `u₁`, `u₂`, `u₃`: `range(J) = span(Q u₂, Q u₃)`, so every
+# residual is at least 1, and the rotated right-hand side keeps about 1 at the singular step of
+# the first cycle, where `‖r₀‖ = ‖b‖ ≈ c`. With `c = 10` that is 0.094 ‖r₀‖, above
+# `sqrt(eps(Float16)) ‖r₀‖ = 0.031 ‖r₀‖`, and the first cycle stops; with `c = 200` it is
+# 0.0049 ‖r₀‖, below it, and the cycle ends on its true residual and restarts, and the second
+# cycle, whose `r₀` is that residual, keeps 0.6 ‖r₀‖ and stops. On a reduced basis every cycle
+# ends on one product, so the cycles are the products less the iterations.
+@testset "A singular step of a reduced basis stops where its residual is a large part of r₀ and restarts where it is a small one, c = $c, mgs = $mgs" for (c, cycles) in ((
+        10, 1), (200, 2)),
+    mgs in (false, true)
+
+    T, TB, n = Float64, Float16, 60
+    Q = Matrix(qr(randn(Xoshiro(7), n, n)).Q)
+    e(k) = Q * [i in (20(k - 1) + 1):(20k) ? 1 / sqrt(20) : 0.0 for i in 1:n]
+    u₁, u₂, u₃ = e(1), e(2), e(3)
+    s = u₁ .+ u₂
+    products = Ref(0)
+    op = (Jv, v) -> (products[] += 1; Jv .= u₂ .* sum(s .* v) .+ u₃ .* sum(u₃ .* v); Jv)
+    b = u₁ .+ c .* u₃
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-10, Int32(20), Int32(20); mgs)
+    @test products[] - info.iterations == cycles
+    @test info.iterations < 20
+    @test info.breakdown
+    @test !info.converged
+    Jd = op(similar(d), d)
+    @test isapprox(info.resnorm, rnorm(b .- Jd); rtol = 8 * eps(T))
+    @test info.resnorm >= 1 - 8 * eps(T)
+end
+
 # `J = diag(1, 1 + eps(TB), 2, 3)` and `b = 1`: the space is not invariant before step 4, but
 # the cluster leaves a remainder at step 3 of about 0.8 eps(TB) ‖w₀‖, below the round-off of the
 # basis and above the breakdown test's `2e-3 eps(TB) ‖w₀‖`; the one cycle of `maxiter = 4` runs

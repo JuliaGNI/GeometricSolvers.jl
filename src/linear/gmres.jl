@@ -274,8 +274,14 @@ doi:10.1137/0914028).
   stored column is parallel to its vector and has unit norm only to the round-off of `TB`;
   without the test the step would take it for a new basis vector parallel to the last one. A
   genuine remainder below that bound is taken as round-off too, which costs a restart. At such a
-  breakdown, a rotated diagonal entry below the same bound is zero: `J` is singular on the Krylov
-  space, and the solve stops without convergence. An invariant space whose stored columns also
+  breakdown, a rotated diagonal entry below the same bound is zero where the entry of the rotated
+  right-hand side, which the step cannot remove, exceeds ``\\sqrt{\\mathrm{eps}(TB)}`` times the
+  residual at the start of the cycle: `J` is singular on the Krylov space, and the solve stops
+  without convergence. Below that the cycle ends on its true residual and restarts. An operator
+  that is nonsingular on the space but singular at the precision of `TB` reads as singular too,
+  and stops so: ``J = u_2 (u_1 + u_2)^T + \\delta u_1 u_1^T`` and ``b = u_1`` in a rotated
+  frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``. An invariant
+  space whose stored columns also
   carry a direction error of order ``\\mathrm{eps}(TB)`` leaves a remainder of that order, which the test does not see: the cycle goes on with it as a
   new direction. Any other
   `basis_eltype` raises an `ArgumentError`, and so does a [`Newton`](@ref) with a
@@ -631,12 +637,14 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             # direction where the cycle would go on: the Krylov space is invariant to that
             # round-off, and the step is a breakdown: the diagonal entry `H[j, j]`, `g[j]` and the
             # residual become those of a rotation of a zero `H[j+1, j]`, which the weights and the
-            # stop of the cycle read. A diagonal entry `a` at that round-off is zero too: `J` is
-            # singular on the space, and the residual keeps `g[j]`
+            # stop of the cycle read. A diagonal entry `a` at that round-off is zero too where
+            # `g[j]` is above `sqrt(eps(TB))` of the residual at the start of the cycle: `J` is
+            # singular on the space, and the residual keeps `g[j]`; below that the cycle ends on
+            # its true residual and restarts
             if reduced_basis(ws) && linres > atol && j < mr && used < maxiter &&
                basis_breakdown(ws, hj, w₀)
                 hj = zero(R)
-                singular = basis_breakdown(ws, R(abs(a)), w₀)
+                singular = singular_breakdown(ws, R(abs(a)), w₀, R(abs(gj)), β)
                 ws.H[j, j] = singular ? zero(T) : a
                 ws.g[j] = gj
                 linres = singular ? R(abs(gj)) : zero(R)
@@ -761,6 +769,22 @@ end
 # rotated diagonal entry of a breakdown step is zero.
 @inline function basis_breakdown(ws::GMRESWorkspace{T, R, V}, hj, w₀) where {T, R, V}
     return hj < R(2e-3) * R(eps(real(eltype(V)))) * w₀
+end
+
+# Whether a breakdown step on a reduced basis reads `J` as singular on the Krylov space: its
+# rotated diagonal entry `a` is at the round-off of the basis, as `basis_breakdown` tests, and the
+# entry `gj` of the rotated right-hand side, which the residual then keeps, exceeds
+# `sqrt(eps(TB)) β` for the residual `β` at the start of the cycle; below that the cycle ends on
+# its true residual and restarts. On the singular systems of the tests and their rotated frames
+# `gj / β` is at least 0.895, and on the consistent operator `u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ` in a
+# rotated frame it is at most 0.0143 for a Float16 basis and 3.03e-8 for a Float32 one at the
+# steps that restart (`scripts/gmres_singular_ratio.jl`, with either `--check-bounds`). That
+# operator reads as singular at the precision of a Float16 basis where `δ ≤ 3e-5` on Float64 and
+# where `δ = 1e-7`, with ratios of 0.986–1.00, and at one step of a Float16 basis on Float32 after
+# many restarts, with 0.0508: the solve stops there without convergence.
+@inline function singular_breakdown(
+        ws::GMRESWorkspace{T, R, V}, a, w₀, gj, β) where {T, R, V}
+    return basis_breakdown(ws, a, w₀) && gj > sqrt(R(eps(real(eltype(V))))) * β
 end
 
 # `z = M⁻¹ v_j` for column `j` of the basis, kept in column `j` of `Z` on the flexible path. The
