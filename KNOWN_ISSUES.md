@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2030`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2038`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2049` for `GMRES`, `:2292` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2057` for `GMRES`, `:2300` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1282,7 +1282,7 @@
 
 ### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
 
-- **location:** `src/nonlinear/newton.jl:2039` (`GMRES`), `:2261` (`MINRESQLP`), `:2311`
+- **location:** `src/nonlinear/newton.jl:2047` (`GMRES`), `:2269` (`MINRESQLP`), `:2319`
   (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
 - **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
   ratio asks `Backtracking` for more decrease than the direction gives. With
@@ -1296,3 +1296,24 @@
   above `η` passes, for example the measured slope, for all four methods together.
 - **kind:** defect
 - **found:** PR #127, its review and the CodeRabbit comment on the BiCGStab and DQGMRES step
+
+### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
+
+- **location:** `src/nonlinear/newton.jl:2047` (`GMRES`), `:2269` (`MINRESQLP`), `:2319`
+  (`BiCGStab` and `DQGMRES`), each `η_ach` from the inner solve on `J + μ I`
+  (`RegularizedJVP`, `:1992` and `:2170`); `:2068` (`dogleg_step_mf`, on the Arnoldi relation of
+  that solve; read, not measured)
+- **evidence:** `InexactStep(η)` states `‖F + J d‖ ≤ η ‖F‖`; the inner solve bounds
+  `‖F + (J + μ I) d‖` instead, and `‖F + J d‖` exceeds it by up to `μ ‖d‖`. With
+  `F(x) = x − 1` on three entries, `x₀ = 0`, `regularization = 10.0` and
+  `Backtracking(; c₁ = 0.5)`, the dense `Newton` ends `MAXITERS` after 100 iterations at
+  `fnorm = 1.3e-4`, and `GMRES`, `BiCGStab` and `DQGMRES` with `FixedForcing(1e-12)` each end
+  `STALLED` after 2 iterations at `fnorm = √3`, the residual of `x₀` (Julia 1.13.4). `main` at
+  907d20b gives the same for the dense `Newton` and `GMRES`. The line searches that evaluate the
+  slope take the product of `J` alone (`merit_jvp`, `:1297`), so `Bisection` and `StrongWolfe` do
+  not have this limit. A fix chooses the step kind of a regularized direction, such as the measured
+  slope or the attained ratio of `J` at one more product, and is a choice for all four methods
+  together with K144.
+- **kind:** defect
+- **found:** PR #127, the CodeRabbit comment on the regularized product of the matrix-free step;
+  the part on `Bisection` and `StrongWolfe` is fixed there

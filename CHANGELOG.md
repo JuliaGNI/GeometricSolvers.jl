@@ -19,17 +19,22 @@ so that a compat-only bump can be told apart from an interface change.
   minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
   finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
   direction; no `ReturnCode` is added. Its recurrence runs on the right-hand side scaled to unit
-  norm, divides each preconditioned vector and each product by the power of two of its norm, and
-  forms `ω` from `‖t‖`, so a system scaled to `4√floatmax`, `floatmax/8` or into the subnormal
+  norm, divides each preconditioned vector and each product by the power of two of its norm,
+  forms `ω` from `‖t‖`, and forms `β` and the next direction so that no intermediate overflows
+  where `β` or the direction does not (the shift by the power of two comes before the division
+  where that shrinks it), so a system scaled to `4√floatmax`, `floatmax/8` or into the subnormal
   range, and a right preconditioner of large scale, keep their solution. `DQGMRES` is the
   right-preconditioned DQGMRES of Saad and Wu (1996,
   doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8): one product per
   iteration, a quasi-minimal residual over a window of `min(memory, n)` vectors, `min(memory, n)
-  + 1` basis vectors and `min(memory, n)` directions, each stored as `p_j 2^e_j` with `2^e_j ≤
-  |r_jj| < 2^(e_j+1)` for the diagonal entry `r_jj` of its band, so that it keeps its solution
-  over the same range of scales; with `memory` at least the iteration count its iterate is that
-  of unrestarted `GMRES` with modified Gram–Schmidt. The divisions of both are exact, so in the
-  normal range the iterates are those of the unscaled recurrences. Both take the forcing
+  + 1` basis vectors and `min(memory, n)` directions, each stored as `q_j = p_j 2^-f_j`, whose
+  norm lies in (1/2, 2); each coefficient takes its power of two back (`r_ij 2^f_i` in the band,
+  `g_j 2^f_j` in the solution) and so lies within a factor 2 of the norm of the product it
+  scales, so neither the scale of the system nor a right preconditioner of small scale at a
+  large right-hand side makes a coefficient overflow where the solution is representable; with
+  `memory` at least the iteration count its iterate is that of unrestarted `GMRES` with modified
+  Gram–Schmidt. The divisions of both are exact, so in the normal range the iterates are those
+  of the unscaled recurrences. Both take the forcing
   terms and the right preconditioner of `GMRES`, the `forcing` and `preconditioner` keywords of
   `Newton`, `Static` and the line searches, on `Array`, `JLArray` and a device array, and count
   `f_calls` and `jvp_calls` exactly. `DogLeg`, whose trial loop reads the Arnoldi relation of
@@ -182,6 +187,16 @@ so that a compat-only bump can be told apart from an interface change.
   routes, in `Float32`, `Float64` and `ComplexF64`), the 1 619 that both runs record give the
   same return code and the same error to four digits. `test/verification/standard_reference.csv`
   is unchanged.
+
+- **With `regularization = μ > 0`, a matrix-free `Newton` (`GMRES`, `MINRESQLP`, `BiCGStab`,
+  `DQGMRES`) passes the product of `J` alone to its globalization, so `Bisection` and
+  `StrongWolfe` take the slope of `‖F‖²`.** It passed the regularized product `J v + μ v`, so
+  they took the slope of `2 Re⟨F, (J + μI) d⟩`; the inner solve keeps `J + μ I`. On `main` at
+  907d20b (`GMRES`) one regularized step differs from that of the dense `Newton` with
+  `LUFactorization` by 4.8e13 eps relative to the step under `Bisection` and by 8.1e14 eps under
+  `StrongWolfe(; c₁ = 0.4)`; now all four methods agree with the dense step to at most 11 eps,
+  in `Float32` and `Float64`. `Backtracking` with `regularization` is not fixed: it still reads
+  the residual ratio of the regularized system as `InexactStep` (K147).
 
 ## [0.1.0] — 2026-11-26
 
