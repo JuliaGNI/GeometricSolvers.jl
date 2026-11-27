@@ -187,6 +187,10 @@ end
     @test perturbed_direction(gmres, 1) === nothing
     @test length(perturbed_runs(
         sp, "u0", sp.u0(Float64), "Newton Backtracking GMRES", gmres)) == 16
+    # so does the step of every other matrix-free column
+    for column in ("Newton Backtracking BiCGStab", "Newton Backtracking DQGMRES")
+        @test perturbed_direction(Dict(STANDARD_COLUMNS)[column], 1) === nothing
+    end
     # a fallback perturbs the direction of each member that has one
     fb = Fallback(Newton(), gmres, Picard(; globalization = Backtracking()))
     fbp = perturbed_direction(fb, 1)
@@ -333,7 +337,7 @@ end
 @testset "The reference" begin
     cells, iterates = run_standard_cells()
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
-    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 2010
+    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 2278
     @test all(c -> c.code in codes, cells)
     # Every cell runs with max_iterations = 200. A fallback cell sums the iterations of its
     # members, each of which runs with that cap, and a continuation cell adds the path steps to

@@ -1,4 +1,5 @@
-# The matrix-free R5 Newton–GMRES on Metal in `Float32`, under `allowscalar(false)`.
+# The matrix-free R5 Newton–GMRES on Metal in `Float32`, under `allowscalar(false)`, and a Newton
+# solve with each of `BiCGStab` and `DQGMRES`.
 #
 # The R5 state holds the mutable Krylov workspace, so it is not `isbits` and not a kernel
 # argument: the solve runs on the host and every array it touches is an `MtlArray`. A shared
@@ -12,7 +13,8 @@ using Metal: Metal
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: ChunkedForwardDiff, FixedForcing, GMRES, JVPFunction, NONFINITE,
+using GeometricSolvers: BiCGStab, ChunkedForwardDiff, DQGMRES, FixedForcing, GMRES,
+                        JVPFunction, NONFINITE,
                         NonlinearProblem, Newton, SUCCESS, init, max_inner_iterations,
                         rnorm,
                         solve!
@@ -94,6 +96,23 @@ metal_r5_residual!(r, x, q) = (@. r = x^3 + 2x - 3; r)
             @test st.step_failures >= 1
             @test max_inner_iterations(solver) <= 1
             @test all(isfinite, Array(x))
+        end
+
+        @testset "Check 1 on MtlArray with $(nameof(typeof(g))), Float32" for g in (
+            BiCGStab(; maxiter = 10, forcing = FixedForcing(1.0f-6)),
+            DQGMRES(; maxiter = 10, memory = 4, forcing = FixedForcing(1.0f-6)))
+            prob = NonlinearProblem(metal_r5_residual!)
+            x₀ = Metal.MtlArray(Float32[0.5, 1, 1.5, 2, 2.5, 3, 0.25, 1.25])
+            fnorm₀ = rnorm(x₀ .^ 3 .+ 2 .* x₀ .- 3)
+            solver = init(prob, x₀, Newton(; linsolve = g))
+            @test solver.state.J === nothing
+            x, st = solve!(solver, copy(x₀))
+            @test x isa Metal.MtlArray
+            @test st.code == SUCCESS
+            @test st.fnorm <= max(zero(Float32), sqrt(eps(Float32)) * fnorm₀)
+            @test all(isfinite, Array(x))
+            @test st.jvp_calls == GeometricSolvers.jvp_calls(solver) > 0
+            @test max_inner_iterations(solver) <= 10
         end
 
         @testset "E1 on MtlArray: a non-finite residual at the start" begin

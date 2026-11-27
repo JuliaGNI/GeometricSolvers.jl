@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:1980`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2038`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1136,6 +1136,45 @@
 - **found:** 2026-11-25; the homotopy forms that the part's spec decides (its clause 3), at a
   scale outside those that its clauses and the scale row name
 
+### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
+
+- **location:** `src/nonlinear/newton.jl:1043` (`stored_factors`), `:1059` (`promoted_factors`);
+  `docs/src/manual/regimes.md:147`
+- **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
+  factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
+  The two docstring lines read the same at `9023f76` (`newton.jl:1006`, `:1022`), where
+  `MINRESQLP` already held no factor. The wording "a matrix-free solve ([`matrix_free`](@ref))"
+  covers every such method.
+- **kind:** docs
+- **found:** 2026-11-26
+
+### K137 · A comment in the GMRES tests says that no linear method other than `GMRES` takes the `forcing` and `preconditioner` keywords of `Newton`
+
+- **location:** `test/nonlinear/krylov.jl:1374`
+- **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
+  them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
+  (`src/nonlinear/newton.jl:211–214`, `with_forcing`). The comment was already false at `9023f76`,
+  for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
+- **kind:** docs
+- **found:** 2026-11-26
+
+### K138 · A matrix-free Newton step with a `Float32` iterate and the default `Static()` or `Backtracking()` infers `Union{StepInfo{Float32}, StepInfo{Float64}}`
+
+- **location:** `src/globalization/static.jl:20` (`Static(α::Real = 1.0)`),
+  `src/globalization/backtracking.jl:46` (`Backtracking(; c₁ = 1e-4, p = 0.5)`)
+- **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
+  `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
+  while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2057` for `GMRES`, `:2300` for `BiCGStab` and
+  `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
+  step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
+  and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
+  `Static()`, `Backtracking()` in a fresh process with `--check-bounds=auto` (Julia 1.13.4, at
+  b2c3bba). The cause is in the two default constructors and not in a step, so the `GMRES` step
+  infers the same union.
+- **kind:** defect
+- **found:** PR #127
+
 ### K139 · `DeviceCholesky` of a `JLArray{BigFloat}` throws `InvalidIRError` while it compiles the load kernel
 
 - **location:** `src/linear/ka/cholesky.jl:36` (`ka_cholesky_load_kernel!`)
@@ -1240,3 +1279,41 @@
   `(p, λ) -> p + 3λ / 2`, solves (Julia 1.13.4).
 - **kind:** defect
 - **found:** PR #126, the round that evaluates a callable datum at `map(p, λ)`
+
+### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
+
+- **location:** `src/nonlinear/newton.jl:2047` (`GMRES`), `:2269` (`MINRESQLP`), `:2319`
+  (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
+- **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
+  ratio asks `Backtracking` for more decrease than the direction gives. With
+  `F(x) = A x − b`, `A = [1e-3 1; −1 1e-3]`, `b = [1, 0]`, `x₀ = 0`, `Backtracking()` and
+  `GMRES(; maxiter = 1, forcing = FixedForcing(0.5))`, the solve ends `STALLED` after 2 iterations
+  at `fnorm = 1.0` (Julia 1.13.4). The attained ratio in its place, `η_ach = resnorm / fnorm`, is
+  not a one-line fix: a ratio of one or more promises no decrease, and the search rejects every
+  step, so the testset "The Newton step goes on after the BiCGStab guard on ω" of
+  `test/nonlinear/fixedkrylov.jl`, whose direction has the ratio 1 and decreases `‖F‖`, ends
+  `LINESEARCH_FAILED` instead of `SUCCESS` with it. A fix chooses what a step with a ratio at or
+  above `η` passes, for example the measured slope, for all four methods together.
+- **kind:** defect
+- **found:** PR #127, its review and the CodeRabbit comment on the BiCGStab and DQGMRES step
+
+### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
+
+- **location:** `src/nonlinear/newton.jl:2047` (`GMRES`), `:2269` (`MINRESQLP`), `:2319`
+  (`BiCGStab` and `DQGMRES`), each `η_ach` from the inner solve on `J + μ I`
+  (`RegularizedJVP`, `:1992` and `:2170`); `:2068` (`dogleg_step_mf`, on the Arnoldi relation of
+  that solve; read, not measured)
+- **evidence:** `InexactStep(η)` states `‖F + J d‖ ≤ η ‖F‖`; the inner solve bounds
+  `‖F + (J + μ I) d‖` instead, and `‖F + J d‖` exceeds it by up to `μ ‖d‖`. With
+  `F(x) = x − 1` on three entries, `x₀ = 0`, `regularization = 10.0` and
+  `Backtracking(; c₁ = 0.5)`, the dense `Newton` ends `MAXITERS` after 100 iterations at
+  `fnorm = 1.3e-4`, and `GMRES`, `BiCGStab` and `DQGMRES` with `FixedForcing(1e-12)` each end
+  `STALLED` after 2 iterations at `fnorm = √3`, the residual of `x₀` (Julia 1.13.4). `main` at
+  907d20b gives the same for the dense `Newton` and `GMRES`. The line searches that evaluate the
+  slope take the product of `J` alone (`merit_jvp`, `:1297`), so `Bisection` and `StrongWolfe` do
+  not have this limit. A fix chooses the step kind of a regularized direction, such as the measured
+  slope or the attained ratio of `J` at one more product, and is a choice for all four methods
+  together with K144.
+- **kind:** defect
+- **found:** PR #127, the CodeRabbit comment on the regularized product of the matrix-free step;
+  the part on `Bisection` and `StrongWolfe` is fixed there

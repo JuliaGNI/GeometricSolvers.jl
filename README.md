@@ -40,9 +40,9 @@ In R1 every operation returns a new value. The problem, the solver state and the
 one kernel launch, one work-item per system. In R3 the residual and the Jacobian write into
 buffers that `init` allocates once.
 
-An R3 iterate with a Krylov linear solver, `GMRES` or `MINRESQLP`, gives the **matrix-free**
-regime: the solve holds no Jacobian matrix, and each inner iteration takes one Jacobian–vector
-product. See [The three regimes](https://JuliaGNI.github.io/GeometricSolvers.jl/dev/manual/regimes/)
+An R3 iterate with a Krylov linear solver, `GMRES`, `BiCGStab`, `DQGMRES` or `MINRESQLP`, gives
+the **matrix-free** regime: the solve holds no Jacobian matrix, and each inner iteration takes one
+Jacobian–vector product, two for `BiCGStab`. See [The three regimes](https://JuliaGNI.github.io/GeometricSolvers.jl/dev/manual/regimes/)
 and [Methods by regime](https://JuliaGNI.github.io/GeometricSolvers.jl/dev/guide/).
 
 ### Methods
@@ -56,7 +56,7 @@ and [Methods by regime](https://JuliaGNI.github.io/GeometricSolvers.jl/dev/guide
   `LDLTFactorization`, `CholeskyFactorization`, `QRFactorization`, `SVDFactorization`) on static,
   dense host and device matrices, sparse LU (`UMFPACKFactorization`, and Sparspak or cuDSS through
   `LUFactorization`), `KroneckerFactorization` for the stage systems of implicit Runge–Kutta
-  methods, and the matrix-free `GMRES` and `MINRESQLP`.
+  methods, and the matrix-free `GMRES`, `BiCGStab`, `DQGMRES` and `MINRESQLP`.
 - **Automatic differentiation**: ForwardDiff by default, other ADTypes back ends through
   DifferentiationInterface on a host array, sparse Jacobians by colouring, and a user-supplied
   Jacobian or Jacobian–vector product (`JVPFunction`).

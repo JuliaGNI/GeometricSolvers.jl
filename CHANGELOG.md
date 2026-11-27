@@ -11,6 +11,60 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
+  20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
+  storage does not grow with the iteration count.** `BiCGStab` is the right-preconditioned
+  BiCGStab of van der Vorst (1992, doi:10.1137/0913035): nine vectors, two Jacobian–vector
+  products per iteration and one where the half step meets the tolerance, and no residual
+  minimisation. Where `σ = r̂ᴴv`, `‖t‖`, `ω` or `ρ = r̂ᴴr` is exactly zero it stops with the last
+  finite iterate, `breakdown = true` and no convergence, and the Newton step goes on with that
+  direction; no `ReturnCode` is added. Its recurrence runs on the right-hand side scaled to unit
+  norm, divides each preconditioned vector and each product by the power of two of its norm,
+  forms `ω` from `‖t‖`, and forms `β` and the next direction so that no intermediate overflows
+  where `β` or the direction does not (the shift by the power of two comes before the division
+  where that shrinks it), so a system scaled to `4√floatmax`, `floatmax/8` or into the subnormal
+  range, and a right preconditioner of large scale, keep their solution. `DQGMRES` is the
+  right-preconditioned DQGMRES of Saad and Wu (1996,
+  doi:10.1002/(SICI)1099-1506(199607/08)3:4<329::AID-NLA86>3.0.CO;2-8): one product per
+  iteration, a quasi-minimal residual over a window of `min(memory, n)` vectors, `min(memory, n)
+  + 1` basis vectors and `min(memory, n)` directions, each stored as `q_j = p_j 2^-f_j`, whose
+  norm lies in (1/2, 2); each coefficient takes its power of two back (`r_ij 2^f_i` in the band,
+  `g_j 2^f_j` in the solution) and so lies within a factor 2 of the norm of the product it
+  scales, so neither the scale of the system nor a right preconditioner of small scale at a
+  large right-hand side makes a coefficient overflow where the solution is representable; with
+  `memory` at least the iteration count its iterate is that of unrestarted `GMRES` with modified
+  Gram–Schmidt. The divisions of both are exact, so in the normal range the iterates are those
+  of the unscaled recurrences. Both take the forcing
+  terms and the right preconditioner of `GMRES`, the `forcing` and `preconditioner` keywords of
+  `Newton`, `Static` and the line searches, on `Array`, `JLArray` and a device array, and count
+  `f_calls` and `jvp_calls` exactly. `DogLeg`, whose trial loop reads the Arnoldi relation of
+  `GMRES`, `reuse`, `Refinement`, `LevenbergMarquardt`, `PseudoTransient`, a `ForwardDiff.Dual`
+  input to `solve`, a `BatchEliminated` problem and `memory < 1` raise an `ArgumentError`.
+
+- **`GeometricSolvers.matrix_free(method)` is a new public trait: `true` for `GMRES`, `BiCGStab`,
+  `DQGMRES` and `MINRESQLP`, `false` for every other linear method.** `Newton` reads it in place of
+  a test for `GMRES` in its refusals of reuse, refinement, `LevenbergMarquardt` and
+  `PseudoTransient`, in its `forcing` and `preconditioner` keywords and where its state is built,
+  a `BatchEliminated` problem reads it before it refuses every method but `GMRES`, and `solve`
+  reads it for the refusal of a `ForwardDiff.Dual` input. `Continuation` reads it for the
+  refusal of its `Newton` method, and `KroneckerFactorization` for the refusal of its block
+  method, so both refuse every matrix-free linear method; `KroneckerFactorization(; block =
+  MINRESQLP())`, which was accepted, now raises an `ArgumentError`. A `Newton` with `GMRES` or
+  `MINRESQLP` keeps every other behaviour. The messages of the refusals of reuse, refinement and
+  `LevenbergMarquardt` with `GMRES`, of a `Dual` input, of a `Continuation` method, of a
+  `JVPFunction` with a factorising method and of a Jacobian function with a matrix-free method,
+  and of `max_inner_iterations`, `f_calls` and `jvp_calls` on a solve that keeps no count, name a
+  matrix-free linear method in place of `GMRES` or of `GMRES` and `MINRESQLP`. The message of
+  the `forcing` and `preconditioner` keywords of `Newton` names `GMRES`, `BiCGStab` or `DQGMRES`
+  as the methods they configure, and `MINRESQLP` for `forcing`, and says to pass them to the
+  method.
+
+- **The standard test set has two more columns, `Newton Backtracking BiCGStab` and `Newton
+  Backtracking DQGMRES`,** after `Newton Backtracking GMRES`: 17 columns and 2278 cells. Their
+  268 cells are new in `test/verification/standard_reference.csv`, and the benchmark pairs each
+  with no package method (no Krylov linear solver). The benchmark's GeometricSolvers adapter
+  hands the shared Jacobian to no `Newton` with a matrix-free linear method.
+
 - **`Continuation(homotopy; method = Newton(), h₀ = 0.1, h_min = 1e-6, h_max = Inf)` is a new
   exported whole-solve method: pseudo-arclength continuation of a homotopy from `(x₀, λ = 0)` to
   `λ = 1`, then a solve with `method` at `λ = 1`.** The homotopy is `NewtonHomotopy()`,
@@ -44,7 +98,7 @@ so that a compat-only bump can be told apart from an interface change.
   accepts every step and ends at that root; a non-finite `J(x₀)` returns `NONFINITE` with no
   step.
 
-- **The standard test set has a fifteenth column, `Continuation FixedPointHomotopy`,** before the
+- **The standard test set has a sixteenth column, `Continuation FixedPointHomotopy`,** before the
   `Fallback` column: 43 of 67 starts give `SUCCESS` in `Float32` and 49 of 67 in `Float64`. The
   benchmark pairs it with SimpleNonlinearSolve's `ArcLengthContinuation`, with
   `SimpleNewtonRaphson` as its corrector, on the same homotopy; its arclength metric, its
@@ -59,7 +113,8 @@ so that a compat-only bump can be told apart from an interface change.
   `PseudoTransient(0.1)` to the minimum `(1, 0)`. A non-finite `δ`, `1/δ` or residual returns
   `NONFINITE`; every problem other than a `StationarityProblem` (a `NonlinearProblem`, a
   `LeastSquaresProblem`, the problem that `LeftPreconditioned` builds), `reuse`, a refinement and
-  a `GMRES`, `MINRESQLP` or `KroneckerFactorization` linear method raise an `ArgumentError`.
+  a matrix-free linear method (`GMRES`, `BiCGStab`, `DQGMRES`, `MINRESQLP`) or a
+  `KroneckerFactorization` raise an `ArgumentError`.
 
 ### Changed
 
@@ -132,6 +187,16 @@ so that a compat-only bump can be told apart from an interface change.
   routes, in `Float32`, `Float64` and `ComplexF64`), the 1 619 that both runs record give the
   same return code and the same error to four digits. `test/verification/standard_reference.csv`
   is unchanged.
+
+- **With `regularization = μ > 0`, a matrix-free `Newton` (`GMRES`, `MINRESQLP`, `BiCGStab`,
+  `DQGMRES`) passes the product of `J` alone to its globalization, so `Bisection` and
+  `StrongWolfe` take the slope of `‖F‖²`.** It passed the regularized product `J v + μ v`, so
+  they took the slope of `2 Re⟨F, (J + μI) d⟩`; the inner solve keeps `J + μ I`. On `main` at
+  907d20b (`GMRES`) one regularized step differs from that of the dense `Newton` with
+  `LUFactorization` by 4.8e13 eps relative to the step under `Bisection` and by 8.1e14 eps under
+  `StrongWolfe(; c₁ = 0.4)`; now all four methods agree with the dense step to at most 11 eps,
+  in `Float32` and `Float64`. `Backtracking` with `regularization` is not fixed: it still reads
+  the residual ratio of the regularized system as `InexactStep` (K147).
 
 ## [0.1.0] — 2026-11-26
 

@@ -87,12 +87,13 @@ of the last step, and `step_failures` the rejected steps. These `NONFINITE`, `ST
 [`continuation_steps`](@ref) reads `λ` and the step length of every step of the last solve.
 
 `method` is a [`Newton`](@ref) whose step forms the Jacobian matrix: its Jacobian source gives
-``H_x``, and a [`GMRES`](@ref), a [`MINRESQLP`](@ref) or a [`KroneckerFactorization`](@ref)
-raises an `ArgumentError`. The step lengths satisfy `0 < h_min ≤ h₀ ≤ h_max`, with `h_min` and
-`h₀` finite, else the constructor raises an `ArgumentError`; [`ToReal`](@ref) converts them to
-the real type of the iterate. The path and its bordered systems are dense, in `Vector` and
-`Matrix` storage of the iterate's element type, so a solve allocates; the iterate is real and on
-the host, and a complex or a device array iterate raises an `ArgumentError` in `init_state`.
+``H_x``, and a matrix-free linear method ([`matrix_free`](@ref)), such as [`GMRES`](@ref) or
+[`MINRESQLP`](@ref), or a [`KroneckerFactorization`](@ref) raises an `ArgumentError`. The step
+lengths satisfy `0 < h_min ≤ h₀ ≤ h_max`, with `h_min` and `h₀` finite, else the constructor
+raises an `ArgumentError`; [`ToReal`](@ref) converts them to the real type of the iterate. The
+path and its bordered systems are dense, in `Vector` and `Matrix` storage of the iterate's
+element type, so a solve allocates; the iterate is real and on the host, and a complex or a
+device array iterate raises an `ArgumentError` in `init_state`.
 Like every combinator, `Continuation` refuses a `ForwardDiff.Dual` in `x₀` or `p` in
 [`solve`](@ref) and a [`LeastSquaresProblem`](@ref) in `init_state`.
 """
@@ -107,8 +108,8 @@ struct Continuation{H <: Homotopy, M, R <: AbstractFloat}
     function Continuation{H, M, R}(homotopy::H, method::M, h₀::R, h_min::R,
             h_max::R) where {H <: Homotopy, M, R <: AbstractFloat}
         method isa Newton &&
-        !(method.linsolve isa Union{GMRES, MINRESQLP, KroneckerFactorization}) ||
-            throw(ArgumentError("Continuation needs a Newton method whose step forms the Jacobian matrix: not GMRES, MINRESQLP or KroneckerFactorization"))
+        !(matrix_free(method.linsolve) || method.linsolve isa KroneckerFactorization) ||
+            throw(ArgumentError("Continuation needs a Newton method whose step forms the Jacobian matrix: not a matrix-free linear method or KroneckerFactorization"))
         # a finite `h₀` bounds `h_min`, and a `NaN` fails every comparison
         isfinite(h₀) && zero(R) < h_min <= h₀ <= h_max ||
             throw(ArgumentError("Continuation requires finite step lengths 0 < h_min ≤ h₀ ≤ h_max"))

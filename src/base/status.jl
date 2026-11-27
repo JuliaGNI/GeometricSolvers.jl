@@ -8,8 +8,8 @@ is in `R = real(T)` for the element type `T` of the iterate.
 
 - `code::ReturnCode`: why the solve ended.
 - `f_calls::Int16`: the evaluations of the residual `F` of the solve, saturated at
-  `typemax(Int16)`; `0` for a method that keeps no count. A `Newton` with a [`GMRES`](@ref) or a
-  [`MINRESQLP`](@ref) keeps the count, and so does a [`Repeat`](@ref) of it. The other
+  `typemax(Int16)`; `0` for a method that keeps no count. A `Newton` with a matrix-free linear
+  method ([`matrix_free`](@ref)) keeps the count, and so does a [`Repeat`](@ref) of it. The other
   combinators keep none and report `0`: the members of a step-level combinator count only their
   own steps, and [`Fallback`](@ref) does not add the counts of the solves of its members.
 - `iterations::Int32`: the number of steps taken; for a solve that returns the start point of a

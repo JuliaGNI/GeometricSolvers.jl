@@ -171,11 +171,11 @@ conjugate: a Gauss or Radau IIA tableau of `s` stages takes `⌊s/2⌋` blocks i
 `s mod 2` in `T`. For a complex `T` each of the `s` eigenvalues takes one block in `T`. `block` is
 the linear method of each block, a method that factorises a general square matrix in the working
 precision, such as [`LUFactorization`](@ref), [`QRFactorization`](@ref) or
-[`SVDFactorization`](@ref). A [`GMRES`](@ref), a `KroneckerFactorization`, a method with a
-factorisation precision, a [`CholeskyFactorization`](@ref) or
-[`LDLTFactorization`](@ref), which read one triangle of a block that is in general not Hermitian,
-and an [`UMFPACKFactorization`](@ref), which needs a sparse pattern that a block does not have,
-raise an `ArgumentError`.
+[`SVDFactorization`](@ref). A matrix-free linear method ([`matrix_free`](@ref)) such as
+[`GMRES`](@ref), a `KroneckerFactorization`, a method with a factorisation precision, a
+[`CholeskyFactorization`](@ref) or [`LDLTFactorization`](@ref), which read one triangle of a
+block that is in general not Hermitian, and an [`UMFPACKFactorization`](@ref), which needs a
+sparse pattern that a block does not have, raise an `ArgumentError`.
 
 The step `h` is read from the parameters as `p.h` at each refresh, and `jac!` is called at each
 refresh, which the `reuse` rule of `Newton` governs. Each block is factorised as `γᵢ I - J` scaled
@@ -209,7 +209,7 @@ struct KroneckerFactorization{TF <: FactorisationPrecision, B <: LinearMethod} <
             TF, B}(block::B) where {
             TF <: FactorisationPrecision, B <: LinearMethod}
         (block isa LinearMethod{Nothing} &&
-         !(block isa Union{GMRES, KroneckerFactorization})) ||
+         !(matrix_free(block) || block isa KroneckerFactorization)) ||
             throw(ArgumentError(
                 "KroneckerFactorization takes a block method that factorises in the working precision, such as LUFactorization()"))
         block isa Union{CholeskyFactorization, LDLTFactorization} && throw(ArgumentError(

@@ -352,6 +352,7 @@ end
 function solve_implicit(
         prob::NonlinearProblem, x₀, method, p,
         options::Union{Nothing, Options}, kwargs)
+    check_dual_method(method)
     D_in = validate_dual_types(typeof(x₀), typeof(p))
     x_val = Adapt.adapt(StripDual(), x₀)
     p_val = Adapt.adapt(StripDual(), p)
@@ -368,11 +369,12 @@ function solve_implicit(
     return _implicit_tangent(D, state, prob, x_star, m, p, p_val, status)
 end
 
-# The tangent solve factorises `J(x*, p)`, and a `Newton` with `GMRES` forms no Jacobian, so
-# `solve` refuses a dual input for it before the primal solve, as it does for a combinator.
-function solve_implicit(
-        ::NonlinearProblem, x₀, method::Newton{<:GMRES}, p,
-        options::Union{Nothing, Options}, kwargs)
-    throw(ArgumentError(
-        "solve does not accept ForwardDiff.Dual inputs for a Newton with GMRES; implicit differentiation through a matrix-free solve is not implemented, so use a factorising linsolve such as LUFactorization()"))
+# The tangent solve factorises `J(x*, p)`, and a `Newton` with a matrix-free linear method forms no
+# Jacobian, so `solve` refuses a dual input for it before the primal solve, as it does for a
+# combinator.
+@inline check_dual_method(method) = nothing
+@inline function check_dual_method(method::Newton)
+    matrix_free(method.linsolve) && throw(ArgumentError(
+        "solve does not accept ForwardDiff.Dual inputs for a Newton with a matrix-free linear method such as GMRES; implicit differentiation through a matrix-free solve is not implemented, so use a factorising linsolve such as LUFactorization()"))
+    return nothing
 end
