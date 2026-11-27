@@ -164,8 +164,8 @@ The residual test of [`Options`](@ref) reads the 2-norm of the residual, or with
 [`MaxNorm`](@ref) are exported, and their supertype `GeometricSolvers.StoppingNorm` is not.
 
 Each step's rate ``θ_k = \|Δ_k\| / \|Δ_{k-1}\|`` goes into `status.rate`. The rate test of
-[`Options`](@ref) joins the step test: a step of rate ``θ_k < 1`` with
-``θ_k / (1 - θ_k) \|Δ_k\| ≤ κ \max(x_{abstol}, x_{reltol} \|x\|)`` returns `SUCCESS` with
+[`Options`](@ref) joins the step test: a step with ``\hat θ_k = \max(θ_k, θ_{k-1}) < 1`` and
+``\hat θ_k / (1 - \hat θ_k) \|Δ_k\| ≤ κ \max(x_{abstol}, x_{reltol} \|x\|)`` returns `SUCCESS` with
 `status.contracted` set, and [`stopping_test`](@ref) then returns `:contraction`; it reads no step
 along a rank-deficient SVD factor (`0 ≤ status.rank < length(x)`). With
 `roundoff = true`, a step whose increment stops decreasing returns `STALLED` at the iterate it

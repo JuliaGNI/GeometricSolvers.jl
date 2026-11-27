@@ -16,11 +16,15 @@ so that a compat-only bump can be told apart from an interface change.
   into the new field `SolverStatus.rate` (`NaN` at the first step and after a step of zero norm).
   The rate test joins the step test of `Options` (Hairer and Wanner 1996, *Solving Ordinary
   Differential Equations II*, (8.9)–(8.10)): after a step that is neither `STALLED` nor limited,
-  where the residual test fails, a step of rate `θₖ < 1` with
-  `θₖ / (1 - θₖ) ‖Δₖ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)` returns `SUCCESS` with the new flag
+  where the residual test fails, a step with `θ̂ₖ = max(θₖ, θₖ₋₁) < 1` and
+  `θ̂ₖ / (1 - θ̂ₖ) ‖Δₖ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)` returns `SUCCESS` with the new flag
   `status.contracted`, unless the stationarity test holds there, and `stopping_test` returns
-  `:contraction`; the test reads no step whose last fresh factor is a rank-deficient SVD factor,
-  so a least-squares point with no root still returns `STALLED`. So `SUCCESS` no longer comes from the residual and stationarity tests alone. The
+  `:contraction`. The larger of the last two rates keeps one small rate after a step that a line
+  search shrank, or after an irregular secant step, from ending a solve far from a root, and the
+  test holds at the third step at the earliest. It reads no step whose last fresh factor is a
+  rank-deficient SVD factor, also the outer factor of an eliminated problem, so a least-squares
+  point with no root still returns `STALLED`. So `SUCCESS` no longer comes from the residual and
+  stationarity tests alone. The
   new `Options` field `kappa` is `κ`, default `1/10`, and a value outside `(0, 1)` in `real(T)`
   raises an `ArgumentError`. The new flag `roundoff`, default `false`, returns `STALLED` at the
   first step of rate `θₖ ≥ 1` after a step of rate below `1` (Hairer, McLachlan and Razakarivony

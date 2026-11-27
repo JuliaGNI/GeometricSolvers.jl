@@ -41,8 +41,9 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
 - `norm::N`: the [`StoppingNorm`](@ref) of the residual test, [`L2Norm`](@ref) or
   [`MaxNorm`](@ref). It is a singleton, so `Options` has the size of its other fields.
 - `kappa::R`: the factor ``κ ∈ (0, 1)`` of the rate test
-  ``θ_k / (1 - θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)``, with the rate
-  ``θ_k = \\|Δ_k\\|_2 / \\|Δ_{k-1}\\|_2`` of the step ``Δ_k``.
+  ``\\hat θ_k / (1 - \\hat θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)``, with
+  ``\\hat θ_k = \\max(θ_k, θ_{k-1})`` and the rate ``θ_k = \\|Δ_k\\|_2 / \\|Δ_{k-1}\\|_2`` of the
+  step ``Δ_k``.
 - `roundoff::Bool`: the round-off stop, which ends a solve with `STALLED` at the first step of
   rate ``θ_k ≥ 1`` after a step of rate ``θ_{k-1} < 1``.
 
@@ -144,11 +145,14 @@ scale of `F` can.
 **The rate test joins the step test** (Hairer and Wanner 1996, *Solving Ordinary Differential
 Equations II*, Sec. IV.8, (8.9)–(8.10), doi:10.1007/978-3-642-05221-7). From the
 second step on, the rate of the step ``Δ_k`` is ``θ_k = \\|Δ_k\\|_2 / \\|Δ_{k-1}\\|_2``, and once
-the residual test fails, a step of rate ``θ_k < 1`` with
-``θ_k / (1 - θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)`` returns `SUCCESS` with
-`status.contracted == true`. The left side estimates the distance of `x` to the limit of a
-contraction of rate ``θ_k``. The rate is `NaN` at the first step and after a step of zero norm, and
-a `NaN` rate passes no test. The test reads only a solve whose last fresh factor reports no rank
+the residual test fails, a step with ``\\hat θ_k = \\max(θ_k, θ_{k-1}) < 1`` and
+``\\hat θ_k / (1 - \\hat θ_k) \\|Δ_k\\|_2 ≤ κ \\max(x_{abstol}, x_{reltol} \\|x\\|_2)`` returns
+`SUCCESS` with `status.contracted == true`. The left side estimates the distance of `x` to the
+limit of a contraction of rate ``\\hat θ_k``. The larger of the last two rates keeps one small
+rate, after a step that a line search shrank or after an irregular secant step, from ending a
+solve. The rate is `NaN` at the first step and after a step of zero norm, and a `NaN` rate passes
+no test, so the rate test holds at the third step at the earliest; `status.rate` is ``θ_k``. The
+test reads only a solve whose last fresh factor reports no rank
 (`status.rank == -1`, as an LU or a QR factor does) or full column rank: along a rank-deficient
 SVD factor the steps can contract onto a point that is no root, and the step test decides.
 
@@ -253,13 +257,15 @@ end
            status.stepnorm <= max(options.x_abstol, options.x_reltol * xnorm)
 end
 
-# The rate test of `Options` for an iterate of norm `xnorm`, once `min_iterations` steps are taken:
-# a step of nonzero norm and rate `θ < 1` with `θ / (1 - θ) ‖Δ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)`.
-# A `NaN` rate fails `θ < 1`.
+# The rate test of `Options` for an iterate of norm `xnorm`, once `min_iterations` steps are taken,
+# after a step of rate `status.rate` where the step before it had the rate `θ_prev`: a step of
+# nonzero norm and `θ < 1` with `θ / (1 - θ) ‖Δ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)`, for the larger
+# `θ` of the two rates. One small rate after a step that a line search shrank, or after an
+# irregular secant step, does not pass it. A `NaN` rate, of either step, fails `θ < 1`.
 @inline function rate_converged(
-        options::Options{R}, status::SolverStatus{R}, xnorm::R) where {R}
+        options::Options{R}, status::SolverStatus{R}, θ_prev::R, xnorm::R) where {R}
     status.iterations >= options.min_iterations || return false
-    θ = status.rate
+    θ = max(status.rate, θ_prev)
     status.stepnorm > 0 && θ < one(R) || return false
     return θ / (one(R) - θ) * status.stepnorm <=
            options.kappa * max(options.x_abstol, options.x_reltol * xnorm)

@@ -2255,14 +2255,20 @@ struct DenseElimState{OST, WS <: Union{BlockElimPrep, VarProPrep}, OP}
 end
 
 # The factor that `solve!(…; refactorize = true)` drops is that of the outer solve.
-@inline function refactorize!!(st::StaticElimState, m)
+@inline function drop_factor!!(st::StaticElimState, m)
     return StaticElimState(
-        refactorize!!(st.outer_state, m), st.inner_state, st.y_warm, st.z_curr,
+        drop_factor!!(st.outer_state, m), st.inner_state, st.y_warm, st.z_curr,
         st.fnorm_z_prev, st.Y, st.Z, st.E_y, st.E_z, st.init_failures)
 end
-@inline function refactorize!!(st::DenseElimState, m)
-    return DenseElimState(refactorize!!(st.outer_state, m), st.ws, st.oprob)
+@inline function drop_factor!!(st::DenseElimState, m)
+    return DenseElimState(drop_factor!!(st.outer_state, m), st.ws, st.oprob)
 end
+
+# The rate test reads the factor of the outer solve, whose columns are the outer unknowns: the
+# iterate of the solver loop holds the eliminated unknowns too, so the rank is compared with the
+# length of the outer iterate.
+@inline rate_test_rank(st::StaticElimState, x) = rate_test_rank(st.outer_state, st.z_curr)
+@inline rate_test_rank(st::DenseElimState, x) = rate_test_rank(st.outer_state, st.ws.z_curr)
 
 @inline residual_buffer(::StaticElimState) = nothing
 @inline residual_buffer(st::DenseElimState) = _ElimResBuffer(st.ws)

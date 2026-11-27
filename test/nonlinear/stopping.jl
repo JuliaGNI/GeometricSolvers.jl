@@ -1,8 +1,8 @@
 # The contraction-rate stopping test, the round-off stop, and a factor kept across a sequence of
 # `solve!` calls: the rate `θₖ = ‖Δₖ‖ / ‖Δₖ₋₁‖` that `record` measures, the `SUCCESS` of the rate
-# test `θₖ / (1 - θₖ) ‖Δₖ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)`, the `STALLED` of `roundoff = true`,
-# and the factorisations of `Newton(; reuse = k, keep_factor = true)` and of
-# `solve!(solver, x, p; refactorize = true)`.
+# test `θ̂ₖ / (1 - θ̂ₖ) ‖Δₖ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)` with `θ̂ₖ = max(θₖ, θₖ₋₁)`, the
+# `STALLED` of `roundoff = true`, and the factorisations of
+# `Newton(; reuse = k, keep_factor = true)` and of `solve!(solver, x, p; refactorize = true)`.
 
 using Adapt: Adapt
 using JET: JET
@@ -17,6 +17,7 @@ using GeometricSolvers: L2Norm, LUFactorization, MAXITERS, Newton, NonlinearProb
                         init_state, record, solve, solve!, solve_batch!, stopping_test
 
 include("../helpers/matrix.jl")
+include("../helpers/standard_problems.jl")
 
 # The scalar linear residual `F(x) = a x` with the constant Jacobian `b`: a Newton step maps `x` to
 # `(1 - a / b) x`, a linear contraction of rate `θ = |1 - a / b|` where `θ < 1`.
@@ -103,15 +104,15 @@ end
     @test st_min.code == SUCCESS
     @test st_min.contracted
     @test st_min.iterations == 4
-    # the bound holds with equality: rate `1/2`, so `θ / (1 - θ) ‖Δ₂‖ = ‖Δ₂‖ = 1/4`, and
-    # `κ x_abstol = 1/4`, all exact in `T`; `min_iterations = 2` keeps the step test off the first
-    # step, and it would hold at the second too
+    # the bound holds with equality: rate `1/2`, so `θ / (1 - θ) ‖Δ₃‖ = ‖Δ₃‖ = 1/8`, and
+    # `κ x_abstol = 1/8`, all exact in `T`; `min_iterations = 3` keeps the step test off the
+    # second step, and it would hold at the third too
     _, st_eq = solve(linear_problem(T(1) / 2), one(T), m;
-        options = Options(T; f_reltol = 0, x_abstol = T(1) / 2, kappa = T(1) / 2,
-            min_iterations = 2))
+        options = Options(T; f_reltol = 0, x_abstol = T(1) / 4, kappa = T(1) / 2,
+            min_iterations = 3))
     @test st_eq.code == SUCCESS
     @test st_eq.contracted
-    @test st_eq.iterations == 2
+    @test st_eq.iterations == 3
     # a zero step has rate `0`, and the rate test needs a step of nonzero norm: from `x₀ = 2` the
     # step along the Jacobian `4/3` lands at `1/2`, and the step along the infinite Jacobian there
     # is zero
@@ -149,6 +150,39 @@ end
     @test stopping_test(st_v) == :contraction
 end
 
+# Least-squares residuals in `x = (y, z₁, z₂)` for a `VariableProjection` that eliminates `y`. The
+# reduced residual of `vp_deficient` reads `z₁ + z₂` alone, so its Jacobian in `z` has rank `1`;
+# that of `vp_full` has rank `2`. Neither has a root, and Gauss–Newton steps contract linearly.
+vp_deficient(x, p) = SVector(x[1] - x[2], (x[2] + x[3])^2 - 2, (x[2] + x[3]) - 7 // 5)
+vp_full(x, p) = SVector(x[1] - x[2], x[2]^2 - 2, x[2] - 7 // 5, x[3] - x[2])
+vp_deficient!(y, x, p) = (y .= vp_deficient(x, p); y)
+vp_full!(y, x, p) = (y .= vp_full(x, p); y)
+
+@testset "the rate test of a VariableProjection reads the rank of its outer factor, $T" for T in REAL_ELTYPES
+    # under `x_abstol = 10⁻²` the rate test holds at the fourth step, with `g_tol = 0` that keeps
+    # the stationarity test off; along the outer SVD factor of rank `1` in two outer unknowns the
+    # step test returns `STALLED` there, and along rank `2`, two of the three entries of the
+    # iterate, the rate test ends the solve. R1 on `SVector`s and R3 on `Vector`s.
+    opt = Options(T; x_abstol = T(1e-2), g_tol = 0)
+    m = Newton(; linsolve = GeometricSolvers.SVDFactorization())
+    x₀ = SVector{3, T}(0, 3, 1 // 2)
+    for (r, r!, nr, rank, contracts) in ((vp_deficient, vp_deficient!, 3, 1, false),
+        (vp_full, vp_full!, 4, 2, true))
+        vp1 = GeometricSolvers.VariableProjection(
+            GeometricSolvers.LeastSquaresProblem(r, nr), (1,); outer = (2, 3))
+        vp3 = GeometricSolvers.VariableProjection(
+            GeometricSolvers.LeastSquaresProblem(r!, nr), [1]; outer = [2, 3])
+        for (vp, x) in ((vp1, x₀), (vp3, Vector(x₀)))
+            _, st = solve(vp, x, m; options = opt)
+            @test st.code == (contracts ? SUCCESS : STALLED)
+            @test st.rank == rank
+            @test st.contracted == contracts
+            @test st.iterations == 4
+            @test stopping_test(st) == (contracts ? :contraction : :none)
+        end
+    end
+end
+
 @testset "the stationarity test comes before the rate test, $T" for T in REAL_ELTYPES
     # `r(x) = (x² - 2, x - 1)` has no root, and Gauss–Newton converges to its least-squares point
     # at a linear rate: the solve ends on the stationarity test, also where the rate test holds
@@ -180,7 +214,8 @@ end
 
 @testset "a diverging scalar of rate 3/2 never returns SUCCESS, $T" for T in REAL_ELTYPES
     # `F(x) = -x/2` with `b = 1` maps `x` to `3x/2`. Without the guard `θ < 1`, the rate test
-    # `θ / (1 - θ) ‖Δ‖ = -3 ‖Δ‖ ≤ κ x_reltol ‖x‖` would hold at the second step
+    # `θ / (1 - θ) ‖Δ‖ = -3 ‖Δ‖ ≤ κ x_reltol ‖x‖` would hold at the third step, the first with two
+    # rates
     prob = linear_problem(-one(T) / 2)
     m = linear_newton(one(T))
     for k in 2:12
@@ -210,7 +245,7 @@ function GeometricSolvers.step!!(state, m::ScriptedStep, prob, x, Fx, p)
 end
 
 @testset "the rate test skips a limited and a STALLED step, $T" for T in REAL_ELTYPES
-    # under `x_abstol = 1` the rate test holds at the second step of each method; the step test
+    # under `x_abstol = 1` the rate test holds at the third step of each method; the step test
     # does not read these steps either
     prob = linear_problem(one(T))
     opt = Options(T; f_reltol = 0, x_abstol = 1, max_iterations = 5)
@@ -222,13 +257,14 @@ end
     @test st_stalled.code == STALLED
     @test st_stalled.iterations == 2
     @test !st_stalled.contracted
-    # the same steps, neither limited nor stalled, end on the rate test at the second step; under
-    # `x_abstol = 1/2` the first step, of norm `0.99`, passes no step test
+    # the same steps, neither limited nor stalled, end on the rate test at the third step; under
+    # `x_abstol = 1/200` the steps of norm `0.99` and `0.0099` pass no step test, and at the second
+    # step the bound `θ / (1 - θ) ‖Δ₂‖ ≈ 10⁻⁴ ≤ κ x_abstol = 5 · 10⁻⁴` of its own rate alone holds
     _, st_plain = solve(prob, one(T), ScriptedStep(SUCCESS, false);
-        options = Options(T; f_reltol = 0, x_abstol = T(1) / 2, max_iterations = 5))
+        options = Options(T; f_reltol = 0, x_abstol = T(1) / 200, max_iterations = 5))
     @test st_plain.code == SUCCESS
     @test st_plain.contracted
-    @test st_plain.iterations == 2
+    @test st_plain.iterations == 3
 end
 
 # A method whose steps from `x₀ = 1` go to `1/2`, `1/4`, `-1/4` and back to `1/4`: the step norms
@@ -262,6 +298,66 @@ end
     @test !st_limited.contracted
 end
 
+# A method whose steps from `x₀ = 0` go to `1`, `2` and `2 + 1/1024`, and then by `1` each: the step
+# norms `1`, `1`, `1/1024` and `1` have the rates `1`, `1/1024` and `1024`, all exact.
+struct JumpStep end
+GeometricSolvers.init_state(::JumpStep, prob, x, p) = nothing
+function GeometricSolvers.step!!(state, m::JumpStep, prob, x, Fx, p)
+    T = typeof(x)
+    x₊ = x == 0 ? one(T) : x == 1 ? T(2) : x == 2 ? T(2) + T(1) / 1024 : x + 1
+    F₊ = prob.F(x₊, p)
+    return x₊, F₊, state, StepInfo{T}(SUCCESS, abs(F₊), abs(x₊ - x), Int32(0), false, false)
+end
+
+@testset "the rate test reads the larger of the last two rates, $T" for T in REAL_ELTYPES
+    # one small rate after a step of rate `1`: the third step of `JumpStep` has the rate `1/1024`,
+    # and `θ / (1 - θ) ‖Δ₃‖ ≈ 10⁻⁶ ≤ κ x_abstol = 10⁻³`, but the larger rate `1` of the last two
+    # fails `θ < 1`, and the step test `‖Δ₃‖ ≤ x_abstol` returns `STALLED`
+    prob = NonlinearProblem((x, p) -> x - 100)
+    opt = Options(T; f_reltol = 0, x_abstol = T(1e-2))
+    x, st = solve(prob, zero(T), JumpStep(); options = opt)
+    @test st.code == STALLED
+    @test !st.contracted
+    @test st.iterations == 3
+    @test st.rate == T(1) / 1024
+    @test x == T(2) + T(1) / 1024
+    # a rate `θ₃ = 2 ≥ 1` after `θ₂ = 1/2`, at the step norm `1/2` where the bound of the smaller
+    # rate holds with equality: `(1/2) / (1/2) · 1/2 ≤ κ x_abstol = 1/2`. The larger rate fails
+    # `θ < 1`, and the step test returns `STALLED`; `min_iterations = 3` keeps both tests off the
+    # first two steps
+    _, st_cycle = solve(linear_problem(one(T)), one(T), CycleStep(false);
+        options = Options(T; f_reltol = 0, x_abstol = 1, kappa = T(1) / 2,
+            min_iterations = 3))
+    @test st_cycle.code == STALLED
+    @test !st_cycle.contracted
+    @test st_cycle.iterations == 3
+    @test st_cycle.rate == 2
+    # the first step with a rate is the second, and the larger of its rate and the `NaN` of the
+    # first step is no rate: at the second step of the rate-`1/100` contraction, of norm `0.0099`,
+    # the bound `θ / (1 - θ) ‖Δ₂‖ ≈ 10⁻⁴ ≤ κ x_abstol = 1/20` of its own rate holds, and the step
+    # test `‖Δ₂‖ ≤ x_abstol = 1/2` returns `STALLED`
+    _, st_lin = solve(linear_problem(T(99) / 100), one(T), linear_newton(one(T));
+        options = Options(T; f_reltol = 0, x_abstol = T(1) / 2))
+    @test st_lin.code == STALLED
+    @test !st_lin.contracted
+    @test st_lin.iterations == 2
+end
+
+@testset "a line search that shrinks one step does not end a solve on the rate test" begin
+    # the Powell badly scaled function from `u0` under a matrix-free `Newton` with `GMRES` and
+    # `Backtracking`: at iteration 77 one rate of about `8e-8` follows a step that the line search
+    # shrank, about `1` away from the root. The larger of the last two rates fails the bound, and
+    # the solve reaches the root by the residual test
+    sp = STANDARD_PROBLEMS[3]
+    m = Newton(; linsolve = GeometricSolvers.GMRES(),
+        globalization = GeometricSolvers.Backtracking())
+    _, st = solve(sp.prob, sp.u0(Float64), m; max_iterations = 200)
+    @test st.code == SUCCESS
+    @test !st.contracted
+    @test stopping_test(st) == :residual
+    @test st.iterations > 77
+end
+
 @testset "a NaN rate never stops a solve" begin
     # the first step of the rate-3/2 scalar has no rate, and under `roundoff = true` neither it nor
     # the next step of rate `3/2 ≥ 1` stops it: no step before it had a rate below `1`
@@ -277,8 +373,10 @@ end
 # `10⁶` times over a change of `x` by `δ`, so that it takes an unrelated value at each iterate, as
 # the rounding error of a residual evaluated in finite precision does near its root. With the
 # Jacobian `1`, every step after the first has a norm of order `δ`, and the rate of each is the
-# ratio of two such perturbations. `δ = 64 √eps(T)` keeps the rate test off at the second step:
-# there `θ / (1 - θ) ‖Δ‖ ≈ δ² / 2` is above `κ x_reltol ‖x‖ = eps(T) / 5`.
+# ratio of two such perturbations. The second step, of rate at most about `δ / 2` after a first
+# step of norm about `2`, is the one step of small rate, and the rate test, which needs two rates,
+# does not read it alone; at the later steps it stays off for `δ = 64 √eps(T)`, as the stop at
+# `k_stop` below shows.
 struct FloorResidual{T}
     δ::T
 end
@@ -549,6 +647,35 @@ end
     @test calls[] == st.iterations
 end
 
+@testset "refactorize = true changes nothing for a method without a kept factor, $T" for T in REAL_ELTYPES
+    # `Picard`, and a `Newton` without `reuse`: the solve with the keyword returns what the same
+    # solve without it returns
+    q₀ = SVector{2, T}(1, 0)
+    p = (; q₀, h = T(1) / 20)
+    prob = NonlinearProblem(midpoint_residual)
+    for m in (GeometricSolvers.Picard(), Newton(; jacobian = midpoint_jacobian))
+        solver_plain = init(prob, q₀, m, p)
+        solver_refresh = init(prob, q₀, m, p)
+        x_plain, st_plain = solve!(solver_plain, q₀ .+ 1, p)
+        x_refresh, st_refresh = solve!(solver_refresh, q₀ .+ 1, p; refactorize = true)
+        @test st_plain.code == SUCCESS
+        @test st_plain.iterations > 1
+        @test x_refresh == x_plain
+        @test st_refresh === st_plain
+    end
+end
+
+@testset "the factor seam of solve! is no method of refactorize!!" begin
+    # `refactorize!!(solver, A)` of a `LinearSolver` takes a matrix; any other argument is a
+    # `MethodError`, on a static and on an array solver
+    A = [2.0 1.0; 1.0 3.0]
+    for solver in (init(LinearProblem(SMatrix{2, 2}(A)), LUFactorization()),
+        init(LinearProblem(A), LUFactorization()))
+        @test solver isa LinearSolver
+        @test_throws r"^MethodError: no method matching refactorize!!\(" refactorize!!(solver, 3)
+    end
+end
+
 @testset "no factor survives a solve that is not SUCCESS, $T" for T in REAL_ELTYPES
     # Two solves of one step each from the far start `q₀ + 1`, whose residual is about `1.4` and
     # about `10⁻²` after one step. Under `f_abstol = 1/2` the first solve ends with `SUCCESS` after
@@ -644,12 +771,14 @@ end
         solver = init(elim, copy(x₀), Newton(; reuse = 10, keep_factor = true))
         x, st = solve!(solver)
         @test st.code == SUCCESS
-        _, st₂ = solve!(solver, x .+ 1e-9)
+        # a solve of two steps from near the root, with a last rate below `10⁻³`, keeps its factor
+        _, st₂ = solve!(solver, x .+ 1e-7)
         @test st₂.code == SUCCESS
+        @test st₂.rate <= 1e-3
         @test solver.state.outer_state.rule.age > 0
-        dropped = GeometricSolvers.refactorize!!(solver.state, solver.method)
+        dropped = GeometricSolvers.drop_factor!!(solver.state, solver.method)
         @test dropped.outer_state.rule.age == 0
-        _, st₃ = solve!(solver, x .+ 1e-9; refactorize = true)
+        _, st₃ = solve!(solver, x .+ 1e-7; refactorize = true)
         @test st₃.code == SUCCESS
     end
 end

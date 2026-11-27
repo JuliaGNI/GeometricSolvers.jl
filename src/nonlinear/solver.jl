@@ -117,7 +117,7 @@ end
 # The state of a solve whose next step factorises afresh, which `solve!(solver, x, p;
 # refactorize = true)` starts from. The default keeps `state`: a method that keeps no factor across
 # its steps has none to refresh.
-@inline refactorize!!(state, method) = state
+@inline drop_factor!!(state, method) = state
 
 # The status that the residual test of `solve!!` reads at `x`. It is `status` itself, unless a
 # problem steps on a scaled residual and converges on its unscaled one: a `Deflated` problem sets
@@ -257,9 +257,9 @@ Reaching `options.max_iterations` without convergence returns `MAXITERS`.
 
 [`record`](@ref) measures the rate ``θ_k = \\|Δ_k\\| / \\|Δ_{k-1}\\|`` of each step into
 `status.rate`. The rate test of [`Options`](@ref) joins the step test: after a step that is
-neither `STALLED` nor `limited`, where the residual test fails and the rate test holds, along a
-last fresh factor that reports no rank or full column rank, the solve
-returns `SUCCESS` with `status.contracted == true`, unless the stationarity test, re-measured at
+neither `STALLED` nor `limited`, where the residual test fails and the rate test, which reads the
+larger of the rates of that step and of the step before it, holds, along a last fresh factor
+that reports no rank or full column rank, the solve returns `SUCCESS` with `status.contracted == true`, unless the stationarity test, re-measured at
 that iterate, holds, which returns `SUCCESS` with `status.stationary == true`. Under
 `options.roundoff` the round-off stop joins the step test too: it returns `STALLED` at that
 iterate, unless the stationarity test holds there. Each rate goes to the method's state after its
@@ -336,7 +336,7 @@ function solve!!(
         steptested = !(info.code == STALLED || info.limited)
         xnorm = steptested ? R(rnorm(x)) : R(NaN)
         contracted = steptested && rate_test_rank(state, x) &&
-                     rate_converged(options, status, xnorm)
+                     rate_converged(options, status, status_k.rate, xnorm)
         if contracted ||
            steptested &&
            (step_converged(options, status, xnorm) ||
@@ -496,7 +496,7 @@ function solve!(solver::NonlinearSolver{T, P, M, O, S, X, Q}, x,
     b === nothing || stationarity ||
         throw(ArgumentError(
             "keyword `b` is only supported for a `StationarityProblem` or a `BlockEliminated` `StationarityProblem`"))
-    refactorize && (solver.state = refactorize!!(solver.state, solver.method))
+    refactorize && (solver.state = drop_factor!!(solver.state, solver.method))
     P <: StationarityProblem && return _solve_stationarity_solver!(solver, x, p, b)
     is_elim_stationarity_problem(P) &&
         return _solve_elim_stationarity_solver!(solver, x, p, b)

@@ -315,11 +315,11 @@ struct DenseStationarityState{ST, RP, U}
 end
 
 # The factor of a stationarity solve is that of its solve over the unknowns.
-@inline function refactorize!!(s::StaticStationarityState, m)
-    return StaticStationarityState(refactorize!!(s.inner, m))
+@inline function drop_factor!!(s::StaticStationarityState, m)
+    return StaticStationarityState(drop_factor!!(s.inner, m))
 end
-@inline function refactorize!!(s::DenseStationarityState, m)
-    return DenseStationarityState(refactorize!!(s.inner, m), s.rprob, s.u_work)
+@inline function drop_factor!!(s::DenseStationarityState, m)
+    return DenseStationarityState(drop_factor!!(s.inner, m), s.rprob, s.u_work)
 end
 
 const StaticStatState = StaticStationarityState

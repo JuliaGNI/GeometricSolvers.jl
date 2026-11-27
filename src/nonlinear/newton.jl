@@ -1199,7 +1199,7 @@ end
 end
 
 # The state whose next step factorises afresh: the age of a `reuse` factor at `0`.
-@inline function refactorize!!(state::NewtonState, m::Newton)
+@inline function drop_factor!!(state::NewtonState, m::Newton)
     state.rule isa FactorAge || return state
     return with_rule(state, FactorAge(Int32(0), false, false))
 end

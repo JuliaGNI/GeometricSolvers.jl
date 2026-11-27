@@ -783,11 +783,11 @@ struct DenseDeflatedState{ST, DP, U}
 end
 
 # The factor of a deflated stationarity solve is that of its solve over the unknowns.
-@inline function refactorize!!(s::StaticDeflatedState, m)
-    return StaticDeflatedState(refactorize!!(s.inner, m))
+@inline function drop_factor!!(s::StaticDeflatedState, m)
+    return StaticDeflatedState(drop_factor!!(s.inner, m))
 end
-@inline function refactorize!!(s::DenseDeflatedState, m)
-    return DenseDeflatedState(refactorize!!(s.inner, m), s.dprob, s.u_work)
+@inline function drop_factor!!(s::DenseDeflatedState, m)
+    return DenseDeflatedState(drop_factor!!(s.inner, m), s.dprob, s.u_work)
 end
 
 # The `U` entries of the full-state roots: the unknown part the distance is taken on.
@@ -1004,7 +1004,7 @@ function solve!(
     p isa Q || throw(ArgumentError(
         "`solve!` needs parameters of type $Q, like those given to `init`; " *
         "got type $(typeof(p))"))
-    refactorize && (solver.state = refactorize!!(solver.state, solver.method))
+    refactorize && (solver.state = drop_factor!!(solver.state, solver.method))
     solver.x = x
     solver.p = p
     x₊, status, state = solve!!(
