@@ -474,8 +474,9 @@ Jacobian–vector products alone and forms no Jacobian matrix: `false` by defaul
 is the period of the preconditioner's refresh, and no [`Refinement`](@ref), its `forcing` keyword
 configures the method, and so does its `preconditioner` keyword for every method but
 `MINRESQLP`, a [`JVPFunction`](@ref) is a `jacobian` it takes, and `solve` refuses a
-`ForwardDiff.Dual` in `x₀` or `p`. A method that extends it to `true` brings the workspace and the
-step of its solve.
+`ForwardDiff.Dual` in `x₀` or `p`. The trait is a query on the linear methods of this package,
+not an extension point: the workspace and the step of a matrix-free solve are internal, and a
+`Newton` with another method that extends it to `true` raises a `MethodError` in `init`.
 """
 @inline matrix_free(::LinearMethod) = false
 @inline matrix_free(::Union{GMRES, BiCGStab, DQGMRES, MINRESQLP}) = true

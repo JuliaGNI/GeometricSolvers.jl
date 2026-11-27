@@ -9,7 +9,8 @@ one applies. It names no method as the right one: the choice depends on the prob
 cost of its residual and its Jacobian, and the start. The pages under *Algorithms* describe each
 method in full.
 
-The storage of the iterate selects the regime (see [The three regimes](@ref regimes)). R5 is an R3
+The entry point and the storage of the iterate select the regime (see
+[The three regimes](@ref regimes)). R5 is an R3
 iterate with a matrix-free linear solver:
 
 | regime | iterate | entry point | linear solver |
@@ -17,7 +18,7 @@ iterate with a matrix-free linear solver:
 | **R1** value semantics | `Number` or `SVector` | [`solve`](@ref) | a factorisation of a static matrix |
 | **R2** batched | an array of `Number` or `SVector`, one entry per system | [`solve_batch!`](@ref) | a factorisation of a static matrix, per system |
 | **R3** in place | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | a factorisation of a dense or sparse matrix |
-| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref) or [`MINRESQLP`](@ref), with no Jacobian matrix |
+| **R5** matrix-free | an `AbstractVector` that is not static | [`solve`](@ref), [`init`](@ref), [`solve!`](@ref) | [`GMRES`](@ref), [`BiCGStab`](@ref), [`DQGMRES`](@ref) or [`MINRESQLP`](@ref), with no Jacobian matrix |
 
 `Newton()` takes `linsolve = LUFactorization()` and `globalization = Static()` unless the caller
 gives others (see [Nonlinear methods](@ref nonlinear)).

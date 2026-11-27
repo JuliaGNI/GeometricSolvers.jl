@@ -3,11 +3,15 @@
 #
 # The iteration keeps nine vectors of the length of the iterate and no basis, takes two
 # Jacobian–vector products per iteration and one where the half step already meets the tolerance,
-# and minimises no residual. The recurrence runs on the right-hand side scaled to unit norm, so
-# that its scalars stay near the scale of the system, and `‖t‖` takes the place of `tᴴt`, which
-# overflows from `‖t‖ ≈ √floatmax` on. Every vector is in the storage of the iterate, the loop
-# allocates nothing after `init_bicgstab_workspace`, and it indexes no entry of a vector, so the
-# same code runs on a `JLArray` under `allowscalar(false)`.
+# and minimises no residual. The recurrence runs on the right-hand side scaled to unit norm, and
+# each preconditioned vector and each product is divided by the power of two of its norm, so that
+# the scalars of the recurrence carry neither the scale of the system nor that of the
+# preconditioner; `‖t‖` takes the place of `tᴴt`, which overflows from `‖t‖ ≈ √floatmax` on. The
+# update of the solution takes the powers of two back in its coefficients, `scaled_coefficient`.
+# A division by a power of two is exact, so in the normal range the recurrence rounds as it does
+# unscaled. Every vector is in the storage of the iterate, the loop allocates nothing after
+# `init_bicgstab_workspace`, and it indexes no entry of a vector, so the same code runs on a
+# `JLArray` under `allowscalar(false)`.
 
 """
     BiCGStab(; maxiter = 30, forcing = EisenstatWalkerChoice2(), preconditioner = nothing)
@@ -116,6 +120,17 @@ function scaled_dot(a, b, c)
     return sum(products)
 end
 
+# The exponent `e` of the power of two `2^e ≤ ν < 2^(e+1)` that a vector of norm `ν` is divided
+# by, and `0` for a `ν` that is zero or not finite, which the guards of the solve read unscaled.
+@inline norm_exponent(ν) = isfinite(ν) && !iszero(ν) ? exponent(ν) : 0
+
+# The coefficient `β α 2^-e` of a scaled vector in the solution, for the real `β ≥ 0`: with
+# `β ≥ 1` the result is at least `|α 2^-e|`, and with `β < 1` the product `β α` is at most `|α|`,
+# so an intermediate overflows only where the result does.
+@inline function scaled_coefficient(β, α, e)
+    return β >= one(β) ? β * ldexp2(α, -e) : ldexp2(β * α, -e)
+end
+
 """
     bicgstab_solve!(ws::BiCGStabWorkspace, jvp_op!, P, b, bnorm, tol, maxiter) -> (d, GMRESInfo)
 
@@ -126,13 +141,19 @@ residual of the recurrence ``\\|b - J d\\|_2 \\le tol \\cdot bnorm`` or after `m
 iterations.
 
 The recurrence runs on `b / bnorm`, with the shadow residual ``\\hat r = b / bnorm``, and
-the solution adds the steps times `bnorm`. The inner products ``\\sigma = \\hat r^H v``,
-``\\rho = \\hat r^H r`` and ``\\omega = t^H s / t^H t`` conjugate their first argument
-([`arnoldi_dot`](@ref)), and ``\\omega`` is formed as ``((t / \\|t\\|)^H s) / \\|t\\|``. A
-`σ`, `‖t‖`, `ω` or `ρ` that is exactly zero stops the solve with `breakdown = true` and the last
-finite iterate; its residual norm is that of the recurrence at that iterate. A residual norm of
-the half step or of the full step that is not finite stops the solve in that iteration, with that
-norm; a `σ` or an `ω` that is not finite gives such a norm. `b = 0` takes no product.
+the solution adds the steps times `bnorm`. The preconditioned vectors `M⁻¹ p` and `M⁻¹ s` and
+their products `v` and `t` are each divided by the power of two `2^e ≤ ‖·‖ < 2^(e+1)` of their
+norm, and the scalars ``\\alpha`` and ``\\omega`` of the recurrence are formed on the scaled
+vectors, so that they carry neither the scale of `J` nor that of `M⁻¹`; the coefficient of a step
+in the solution takes `bnorm` and the powers of two back. The divisions are exact, so in the
+normal range the iterates are those of the unscaled recurrence. The inner products
+``\\sigma = \\hat r^H v``, ``\\rho = \\hat r^H r`` and ``\\omega = t^H s / t^H t`` conjugate their
+first argument ([`arnoldi_dot`](@ref)), and ``\\omega`` is formed as
+``((t / \\|t\\|)^H s) / \\|t\\|``. A `σ`, `‖t‖`, `ω` or `ρ` that is exactly zero stops the solve
+with `breakdown = true` and the last finite iterate; its residual norm is that of the recurrence
+at that iterate. A residual norm of the half step or of the full step that is not finite stops
+the solve in that iteration, with that norm; a `σ` or an `ω` that is not finite gives such a norm.
+`b = 0` takes no product.
 """
 function bicgstab_solve!(ws::BiCGStabWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
         maxiter) where {T, R}
@@ -151,14 +172,21 @@ function bicgstab_solve!(ws::BiCGStabWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
     breakdown = false
     while !converged && k < maxiter
         k += one(Int32)
+        # `ph` and `v` hold `M⁻¹p 2^-eμ` and `J M⁻¹p 2^-(eμ+eν)`, so `α` is the step along `v`,
+        # and `α 2^-(eμ+eν)` that along `J M⁻¹p`
         apply_preconditioner!(ph, P, p)
+        eμ = norm_exponent(R(rnorm(ph)))
+        iszero(eμ) || (ph .= ldexp2.(ph, -eμ))
         jvp_op!(v, ph)
+        eν = norm_exponent(R(rnorm(v)))
+        iszero(eν) || (v .= ldexp2.(v, -eν))
         σ = arnoldi_dot(rh, v)
         if iszero(σ)
             breakdown = true
             break
         end
         α = ρ / σ
+        cα = scaled_coefficient(β₀, α, eν)
         # the half step: `r` holds `s = r - α v` from here on
         r .-= α .* v
         rel = R(rnorm(r))
@@ -166,25 +194,33 @@ function bicgstab_solve!(ws::BiCGStabWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
             break
         end
         if rel <= rtol
-            d .+= (β₀ * α) .* ph
+            d .+= cα .* ph
             converged = true
             break
         end
+        # `sh` and `t` hold `M⁻¹s 2^-eη` and `J M⁻¹s 2^-(eη+eτ)`, and `τ` is the norm of `t`
         apply_preconditioner!(sh, P, r)
+        eη = norm_exponent(R(rnorm(sh)))
+        iszero(eη) || (sh .= ldexp2.(sh, -eη))
         jvp_op!(t, sh)
         τ = R(rnorm(t))
+        eτ = norm_exponent(τ)
+        if !iszero(eτ)
+            t .= ldexp2.(t, -eτ)
+            τ = ldexp2(τ, -eτ)
+        end
         if iszero(τ)
-            d .+= (β₀ * α) .* ph
+            d .+= cα .* ph
             breakdown = true
             break
         end
         ω = scaled_dot(t, r, τ) / τ
         if iszero(ω)
-            d .+= (β₀ * α) .* ph
+            d .+= cα .* ph
             breakdown = true
             break
         end
-        d .+= (β₀ * α) .* ph .+ (β₀ * ω) .* sh
+        d .+= cα .* ph .+ scaled_coefficient(β₀, ω, eτ) .* sh
         r .-= ω .* t
         rel = R(rnorm(r))
         if !isfinite(rel)
@@ -199,9 +235,12 @@ function bicgstab_solve!(ws::BiCGStabWorkspace{T, R}, jvp_op!, P, b, bnorm, tol,
             breakdown = true
             break
         end
-        β = (ρ₊ / ρ) * (α / ω)
+        # `β = (ρ₊/ρ)(α'/ω')` and `p - ω' J M⁻¹p` of the unscaled steps `α' = α 2^-(eμ+eν)` and
+        # `ω' = ω 2^-(eη+eτ)`, with `J M⁻¹p = v 2^(eμ+eν)`
+        Δ = (eη + eτ) - (eμ + eν)
+        β = (ρ₊ / ρ) * ldexp2(α / ω, Δ)
         ρ = ρ₊
-        p .= r .+ β .* (p .- ω .* v)
+        p .= r .+ β .* (p .- ldexp2(ω, -Δ) .* v)
     end
     return d, GMRESInfo{R}(k, β₀ * rel, β₀, converged, breakdown)
 end
