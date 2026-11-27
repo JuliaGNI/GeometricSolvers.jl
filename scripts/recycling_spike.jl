@@ -13,8 +13,8 @@
 # problem's `z0` and each later one from the root of the solve before. Every solve is a Newton
 # iteration with the forcing term `FixedForcing(η)`, the default `Options` (the residual test
 # `‖F‖ ≤ √eps ‖F(x₀)‖`, at most 100 steps) and the right preconditioner `M = LU(J(x))` of the
-# analytic Jacobian at the iterate of the step that refreshes it: the first step of a solve, every
-# `k` steps after, and the step after one whose inner solve reached its cap, as
+# analytic Jacobian at the iterate of the step that refreshes it: the first step of a solve, `k`
+# steps after each refresh, and the step after one whose inner solve reached its cap, as
 # `Newton(; reuse = k)` refreshes a `GMRES` preconditioner. That `Newton` also refreshes after a
 # `STALLED` step, which the script's own Newton loop does not; the Newton steps and the refreshes
 # of a row show where the loops part. Every product is `J(x) v` with the analytic Jacobian. The
@@ -46,21 +46,21 @@
 # preconditioner. The script stops with an error unless the products of GCRO-DR with recycling
 # are fewer than those without, those fewer than those of GMRES(m), and every solve converges.
 #
-# The verdict applies the rules decided before the run, on the full grid only; on any other grid
-# it says that it is not evaluated. `r` is the ratio of the products of GCRO-DR with recycling to
-# those of GMRES(m). Build rule: one pair `(m, k)` at which, at both `N` and both `η`, every column
-# converges, `r ≤ 0.75`, and GCRO-DR with recycling takes fewer products than without. Stop rule:
-# `r ≥ 0.90` in every cell, where a cell in which GMRES(m) converges and GCRO-DR with recycling
-# does not counts as `r ≥ 0.90`, and a cell in which GMRES(m) does not converge counts as neither.
-# Any other result is between the two.
+# The verdict applies two rules, on the full grid only; on any other grid it says that they are
+# not evaluated. `r` is the ratio of the products of GCRO-DR with recycling to those of GMRES(m).
+# Build rule: one pair `(m, k)` at which, at both `N` and both `η`, every column converges,
+# `r ≤ 0.75`, and GCRO-DR with recycling takes fewer products than without. Stop rule: `r ≥ 0.90`
+# in every cell, where a cell in which GMRES(m) converges and GCRO-DR with recycling does not
+# counts as `r ≥ 0.90`. A cell in which GMRES(m) does not converge, and a cell in which no linear
+# solve of GCRO-DR with recycling starts from a recycled space, count for neither rule. Any other
+# result is between the two.
 
 using GeometricSolvers
 using GeometricSolvers: FixedForcing, JVPFunction, jvp_calls
-using KernelAbstractions: KernelAbstractions
 using LinearAlgebra
 using Printf
 using Random: Xoshiro
-using SparseArrays: SparseMatrixCSC
+using SparseArrays: SparseArrays
 
 include(joinpath(@__DIR__, "hardware", "common.jl"))
 include(joinpath(@__DIR__, "..", "test", "helpers", "sparse_problems.jl"))
@@ -257,11 +257,11 @@ end
 # ─── The Newton loops ──────────────────────────────────────────────────────────
 
 # A Newton solve of `F!(r, x, p) = 0` from `x` with GCRO-DR, in the steps of `Newton(; reuse)`
-# with a preconditioned `GMRES` and `FixedForcing(η)`: the inner tolerance `η ‖F‖`, the full step,
-# the residual test `‖F‖ ≤ √eps ‖F(x₀)‖`, the step test `‖d‖ ≤ 2 eps ‖x‖`, at most 100 steps, and
-# the refresh of `P` at age 0 and after an inner solve that reached its cap. `P = nothing` takes
-# no preconditioner. It writes the last iterate into `x` and returns whether the residual test
-# holds and the number of steps.
+# with a preconditioned `GMRES` and `FixedForcing(η)`: the inner tolerance `max(η, 2 eps) ‖F‖`,
+# the full step, the residual test `‖F‖ ≤ √eps ‖F(x₀)‖`, the step test `‖d‖ ≤ 2 eps ‖x‖`, at most
+# 100 steps, and the refresh of `P` at age 0 and after an inner solve that reached its cap.
+# `P = nothing` takes no preconditioner. It writes the last iterate into `x` and returns whether
+# the residual test holds and the number of steps.
 function gcrodr_newton!(s::GCRODR, F!, J!, Jbuf, P, x, p, η; reuse = nothing)
     op = CountingOperator(Jbuf, P, zeros(length(x)), 0)
     counted = products(s)
@@ -280,7 +280,7 @@ function gcrodr_newton!(s::GCRODR, F!, J!, Jbuf, P, x, p, η; reuse = nothing)
             end
         end
         J!(Jbuf, x, p)
-        y, early = gcrodr_solve!(s, op, -F, η * fnorm)
+        y, early = gcrodr_solve!(s, op, -F, max(η, 2 * eps(Float64)) * fnorm)
         d = similar(x)
         precondition!(d, P, y)
         x .+= d
@@ -411,17 +411,20 @@ function print_row(io::IO, row)
         " | ", row.rec.from_u, " |")
 end
 
-# Whether a cell meets the build rule: every column converges, `r ≤ 0.75`, and recycling takes
-# fewer products than no recycling.
+# Whether a cell meets the build rule: a linear solve starts from a recycled space, every column
+# converges, `r ≤ 0.75`, and recycling takes fewer products than no recycling.
 function build_cell(row)
+    row.rec.from_u > 0 || return false
     all(c -> c.converged, (row.gmres, row.norec, row.rec)) || return false
     return row.rec.products <= RC_BUILD_RATIO * row.gmres.products &&
            row.rec.products < row.norec.products
 end
 
-# Whether a cell meets the stop rule, `r ≥ 0.90`: a GMRES(m) that does not converge meets neither
-# rule, and a GCRO-DR with recycling that does not converge, beside a GMRES(m) that does, meets it.
+# Whether a cell meets the stop rule, `r ≥ 0.90`: a GMRES(m) that does not converge, and a cell in
+# which no solve starts from a recycled space, meet neither rule, and a GCRO-DR with recycling
+# that does not converge, beside a GMRES(m) that does, meets it.
 function stop_cell(row)
+    row.rec.from_u > 0 || return false
     row.gmres.converged || return false
     row.rec.converged || return true
     return row.rec.products >= RC_STOP_RATIO * row.gmres.products

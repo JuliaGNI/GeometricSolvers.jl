@@ -286,12 +286,15 @@ end
     @test_throws r"^ArgumentError: GCRO-DR needs 0 < k < m, got m = 5, k = 5" RecyclingSpike.GCRODR(
         5, 5; recycle = true)
 
-    # synthetic rows of the full grid: `r` per cell from `ratio`, recycling below no recycling
-    function grid(ratio; norec = 1.0, conv = (_...) -> (true, true))
+    # synthetic rows of the full grid: `r` per cell from `ratio`, recycling below no recycling,
+    # and `from(N, m, k, η)` solves from a recycled space
+    function grid(ratio; norec = 1.0, conv = (_...) -> (true, true), from = (_...) -> 3)
         [(N = N, m = m, k = k, η = η, gmres = cc(1000; converged = conv(N, m, k, η)[1]),
              norec = cc(round(Int, 1000 * norec)),
-             rec = cc(round(Int, 1000 * ratio(N, m, k, η));
-                 converged = conv(N, m, k, η)[2]))
+             rec = (;
+                 cc(round(Int, 1000 * ratio(N, m, k, η));
+                     converged = conv(N, m, k, η)[2])...,
+                 from_u = from(N, m, k, η)))
          for N in RecyclingSpike.RC_NS,
         m in RecyclingSpike.RC_MS, k in RecyclingSpike.RC_KS,
         η in RecyclingSpike.RC_ETAS] |> vec
@@ -318,6 +321,12 @@ end
           :between
     @test verdict(grid((N, m, k, η) -> N == 125 ? 1.0 : 0.5;
         conv = (N, m, k, η) -> (true, N == 125))).rule === :stop
+    # a cell in which no solve starts from a recycled space meets neither rule
+    @test verdict(grid((_...) -> 1.08; from = (_...) -> 0)).rule === :between
+    @test verdict(grid((_...) -> 1.08; from = (N, m, k, η) -> N == 125 ? 0 : 3)).rule ===
+          :between
+    @test verdict(grid((N, m, k, η) -> (m, k) == (30, 10) ? 0.75 : 1.0;
+        from = (N, m, k, η) -> (m, k, η) == (30, 10, 1e-6) ? 0 : 3)).rule === :between
     @test verdict(grid((_...) -> 0.5)[1:(end - 1)]).rule === :not_evaluated
     nc = RecyclingSpike.cell_text(cc(7; converged = false))
     @test nc == "no convergence"

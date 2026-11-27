@@ -800,6 +800,114 @@ end
     @test isapprox(d, [ldexp(one(T), emax - 2)]; rtol = 8 * eps(T))
 end
 
+# `β = ρq (α / ω) 2^Δ` of the scaled BiCGStab recurrence: with `ω = 2^-(emax + 3)` and `Δ = -4`,
+# `α / ω` is above `floatmax` and `β = 2^(emax - 1)` is not; with `Δ ≥ 0` the shift grows, and
+# `β` overflows exactly where its value does.
+@testset "BiCGStab forms β at both signs of the shift, $T" for T in REAL_ELTYPES
+    emax = exponent(floatmax(T))
+    ω = ldexp(one(T), -(emax + 3))
+    @test isapprox(GeometricSolvers.bicgstab_beta(one(T), one(T), ω, -4),
+        ldexp(one(T), emax - 1); rtol = 8 * eps(T))
+    @test isapprox(GeometricSolvers.bicgstab_beta(T(0.5), one(T), T(0.125), 2), T(16);
+        rtol = 8 * eps(T))
+    @test isinf(GeometricSolvers.bicgstab_beta(one(T), one(T), ω, 4))
+end
+
+# The next direction `r + β (p - ω 2^-Δ v)`: with `ω = 1` and `Δ = -(emax + 4)`, `ω 2^-Δ` is above
+# `floatmax` while `β ω 2^-Δ = ρq α` is not; with `Δ = emax + 3` it is below `floatmin`. The
+# reference is `r + β p - ρq α v` in `Float64` of the same values; in the normal range, `Δ = 1`,
+# the direction is the unscaled one, `r + β (p - (ω / 2) v)`.
+@testset "The BiCGStab direction at both signs of the shift, $T" for T in REAL_ELTYPES
+    emax = exponent(floatmax(T))
+    r = T[0.5, -1]
+    v = T[1, 1]
+    for (α, ω, Δ) in ((T(0.75), one(T), -(emax + 4)), (
+        ldexp(one(T), -(emax + 3)), one(T), emax + 3))
+        ρq = T(1.5)
+        β = GeometricSolvers.bicgstab_beta(ρq, α, ω, Δ)
+        @test isfinite(β)
+        p = T[1, 2]
+        ref = Float64.(r) .+ Float64(β) .* Float64.(p) .-
+              Float64(ρq) * Float64(α) .* Float64.(v)
+        GeometricSolvers.bicgstab_direction!(p, r, v, β, ρq, α, ω, Δ)
+        @test all(isfinite, p)
+        @test isapprox(Float64.(p), ref; rtol = 8 * eps(T))
+    end
+    p = T[1, 2]
+    β = GeometricSolvers.bicgstab_beta(T(1.5), T(0.75), one(T), 1)
+    GeometricSolvers.bicgstab_direction!(p, r, v, β, T(1.5), T(0.75), one(T), 1)
+    @test isapprox(p, r .+ β .* (T[1, 2] .- T(0.5) .* v); rtol = 8 * eps(T))
+end
+
+# `J = [1 1/2; δ 1]` and `b = e₁` with `δ = 2^-(emax + 2)`: the half step leaves `s = [0, -δ]`,
+# so `ω ≈ 0.8δ` on the scaled vectors and the shift `Δ` is about `-(emax + 2)`; the scaled
+# `α / ω` is above `floatmax`, while `β ≈ δ / 2`. Two iterations solve the system to rounding.
+@testset "BiCGStab solves where the scaled α / ω overflows, $T" for T in REAL_ELTYPES
+    emax = exponent(floatmax(T))
+    δ = ldexp(one(T), -(emax + 2))
+    A = T[1 0.5; δ 1]
+    b = T[1, 0]
+    ws = init_bicgstab_workspace(BiCGStab(), b)
+    d, info = bicgstab_solve!(ws, CountingMatrix(A), nothing, b, rnorm(b), zero(T), 2)
+    @test info.iterations == 2
+    @test isfinite(info.resnorm)
+    @test all(isfinite, d)
+    @test norm(b - A * d) <= 8 * eps(T) * norm(b)
+end
+
+# DQGMRES with a right preconditioner that divides by `2^8`, at `b` near `floatmax / 2^5`: the
+# pivots `r_jj` carry the scale `2^-8` of the preconditioner and the stored directions do not, so
+# a coefficient `g_j / r_jj` of the unscaled direction lies above `floatmax`, while the solution
+# `A⁻¹ b` does not. One and two dimensions, the second through the band term of the recurrence; a
+# full window solves each to the rounding of `κ(A) < 3`.
+@testset "DQGMRES with a preconditioner of small scale at a large b, n = $n, $T" for n in (1, 2),
+    T in REAL_ELTYPES
+
+    emax = exponent(floatmax(T))
+    A0 = n == 1 ? fill(1, 1, 1) : [2 1; 1 3]
+    b0 = n == 1 ? [1] : [1, -1]
+    A = T.(A0)
+    b = ldexp.(T.(b0), emax - 6)
+    x_ref = ldexp.(Float64.(A0) \ Float64.(b0), emax - 6)
+    P = DiagonalRightPreconditioner(Ref(0), fill(ldexp(one(T), 8), n))
+    ws = init_dqgmres_workspace(DQGMRES(), b)
+    d, info = dqgmres_solve!(ws, CountingMatrix(A), P, b, rnorm(b), 10 * eps(T), 5)
+    @test info.converged
+    @test all(isfinite, d)
+    @test norm(Float64.(d) - x_ref) <= 32 * eps(T) * norm(x_ref)
+end
+
+# With `regularization = μ`, the inner solve takes `J + μ I`, and the line search takes the slope
+# of `‖F‖²`, which `J` gives: one step of a matrix-free `Newton` matches that of the dense `Newton`
+# with `LUFactorization`, whose line search reads `J`. The bound is the inner tolerance `10 eps`
+# times `κ(J + μ I) < 4` on this start, with a factor for the rounding of the line search; with the
+# slope of `J + μ I` the steps differ by more than `9000 eps`.
+@testset "A regularized matrix-free step takes the slope of ‖F‖², $(nameof(L)), $(nameof(typeof(g))), $T" for L in (
+        GMRES, BiCGStab, DQGMRES, MINRESQLP),
+    g in (Bisection(), StrongWolfe(; c₁ = 0.4)),
+    T in REAL_ELTYPES
+
+    x₀ = T[0.5, 1.5, 2.5, 0.25]
+    μ = T(10)
+    opt = GeometricSolvers.Options(T; max_iterations = 1)
+    prob = if L === MINRESQLP
+        GeometricSolvers.StationarityProblem((x, q) -> sum(x .^ 4) / 4 + sum(x .^ 2) / 2 +
+                                                       T(0.1) * sum(x .* circshift(x, 1)) -
+                                                       sum(x))
+    else
+        NonlinearProblem((r, x, q) -> (
+            r .= x .^ 3 .+ 2 .* x .- 3 .+
+                 T(0.3) .* circshift(x, 1); r))
+    end
+    xd, _ = solve(prob, copy(x₀), Newton(; regularization = μ, globalization = g), nothing;
+        options = opt)
+    m = Newton(; linsolve = L(; forcing = FixedForcing(10 * eps(T))), regularization = μ,
+        globalization = g)
+    xm, _ = solve(prob, copy(x₀), m, nothing; options = opt)
+    @test xm != x₀
+    @test norm(xm - xd) <= 1000 * eps(T) * norm(xd - x₀)
+end
+
 # ─── The refusals of the trait ──────────────────────────────────────────────
 
 @testset "The matrix_free trait" begin
