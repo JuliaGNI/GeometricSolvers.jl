@@ -252,6 +252,10 @@ end
                         Newton(; globalization = DogLeg()),
                         Newton(; reuse = 2),
                         Newton(; globalization = Backtracking(), reuse = 2),
+                    # the pairs of a `BroydenUpdate` in the state of the kernel
+                        Newton(;
+                        globalization = Backtracking(), reuse = 3,
+                        update = BroydenUpdate(2)),
                         Additive(Newton(), Picard(; damping = 0.1)),
                         Additive(
                         Newton(), Picard(; damping = 0.1);

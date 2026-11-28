@@ -19,6 +19,7 @@ Three packages are left out:
 | script | what it does |
 |:--|:--|
 | `correctness.jl [outdir]` | runs every cell, writes `correctness.csv` and `rows.csv` (by default to `benchmark/results/`), and prints the tables of this report |
+| `broyden_update.jl [outdir]` | runs GeometricSolvers alone with `Broyden` and the column `Newton reuse 3 Broyden Backtracking LU`, writes `broyden_update.csv` and prints the table of section Y1's Broyden updates |
 | `verify.jl <dir> [--structure] [--all-cards]` | checks the tables of `<dir>`, this report and the traces with code of its own |
 | `selftest.jl` | tests the harness: the pairing, the label and the method of each call, the options of each package, the counting wrapper, the shared Jacobian, the measured `‖F‖∞`, the success rule, the agreement bound, the verdict, a throwing residual, the SVD solve of NLsolve on a non-finite matrix, and the element types and starts of the midpoint rows |
 | `check_midpoint.jl` | checks each midpoint residual against one step of `ImplicitMidpoint` |
@@ -159,6 +160,25 @@ pair that does not run.
 | Newton Backtracking GMRES | 67/79 | 68/79 | — | — | — | — | — | — |
 | Broyden | 22/79 | 22/79 | — | — | 44/79 | 47/79 | — | 51/79 |
 | LeftPreconditioned Picard Backtracking Newton | 50/79 | 51/79 | — | — | — | — | — | — |
+
+### Broyden updates of a reused factor
+
+The column `Newton reuse 3 Broyden Backtracking LU` (`Newton(; reuse = 3, update =
+BroydenUpdate(2), globalization = Backtracking())`) is not in the tables above, which stay the run
+at `301f366`. The three other packages have no method for it (no Broyden update of a reused
+factor; `SimpleBroyden` and NLsolve's `:broyden` factorise no Jacobian). This table is
+GeometricSolvers alone at `b86fc6c`, over the 79 rows in each precision, with the success rule
+above, beside `Broyden` of the same run: `julia --project=benchmark benchmark/broyden_update.jl`
+writes its 316 cells to `results/broyden_update.csv`. Each entry is the success count of the
+column and precision, and the Jacobian count `Σ dual_evals / chunks`, where `chunks` is the number
+of ForwardDiff chunks of the shared Jacobian of the row. That count also holds the directional
+derivatives that the line search takes, so it is an upper bound on the Jacobian evaluations;
+`Broyden` takes no Jacobian.
+
+| column | Float32 successes | Float32 Jacobian count | Float64 successes | Float64 Jacobian count |
+|:--|--:|--:|--:|--:|
+| Broyden | 22/79 | 0.0 | 22/79 | 0.0 |
+| Newton reuse 3 Broyden Backtracking LU | 66/79 | 1779.0 | 68/79 | 1829.0 |
 
 ### Verdicts
 

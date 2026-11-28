@@ -45,6 +45,7 @@ export MINRESQLP
 export BiCGStab, DQGMRES
 export GMRES, AbstractForcingTerm, EisenstatWalkerChoice2, EisenstatWalkerChoice1,
        FixedForcing, JVPFunction, refresh!, apply_preconditioner!, f_calls, jvp_calls
+export BroydenUpdate
 export Newton, GaussNewton, QuasiNewton, NoRefinement, Refinement, GMRESRefinement,
        PerSystem, Picard, NonlinearSolver, ReparametrizedSolver, init, solve, solve!
 export default_method

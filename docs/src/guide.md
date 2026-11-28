@@ -59,6 +59,7 @@ matrix-free and never a combinator: the problem carries no information that sele
 | [`Newton`](@ref) with [`SVDFactorization`](@ref) | a rank-deficient or nearly singular Jacobian, or a [`LeastSquaresProblem`](@ref); the status reports the numerical rank |
 | [`Newton`](@ref) with `regularization = μ` | a singular or nearly singular Jacobian, where the step of ``J + \mu I`` is acceptable |
 | [`QuasiNewton`](@ref)`(k)`, or [`Newton`](@ref) with `reuse = k` | the Jacobian and its factorisation dominate the cost of a step; the rate is then linear |
+| [`Newton`](@ref) with `reuse = k` and `update = `[`BroydenUpdate`](@ref)`(m)`, `2 ≤ k ≤ m + 1` | as `reuse = k`, where the steps along a reused factor take the good Broyden update of its inverse; a factorisation other than [`KroneckerFactorization`](@ref), in the element type of the iterate, with no refinement, and not a [`LeastSquaresProblem`](@ref) |
 | [`Refinement`](@ref), [`GMRESRefinement`](@ref) | a factorisation precision below the working type, and not a [`LeastSquaresProblem`](@ref); in R1 a `GMRESRefinement` runs the LU-IR passes alone |
 | [`GaussNewton`](@ref) | a [`LeastSquaresProblem`](@ref) |
 | [`Picard`](@ref) | ``I - \omega J`` is a contraction; it needs no Jacobian, and the rate is linear |

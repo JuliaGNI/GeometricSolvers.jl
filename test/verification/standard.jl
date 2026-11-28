@@ -192,6 +192,16 @@ end
         "Newton Backtracking Float32-basis GMRES")
         @test perturbed_direction(Dict(STANDARD_COLUMNS)[column], 1) === nothing
     end
+    # the direction of a column with a Broyden update is perturbed before its pairs act on it, and
+    # the perturbed method keeps the update and the period
+    broyden = Dict(STANDARD_COLUMNS)["Newton reuse 3 Broyden Backtracking LU"]
+    bp = perturbed_direction(broyden, 1)
+    @test bp.refinement isa PerturbedDirection
+    @test bp.update === broyden.update === BroydenUpdate(2)
+    @test bp.reuse === broyden.reuse === Int32(3)
+    @test without_refinement(bp) === broyden
+    @test length(perturbed_runs(sp, "u0", sp.u0(Float64),
+        "Newton reuse 3 Broyden Backtracking LU", broyden)) == 20
     # a fallback perturbs the direction of each member that has one
     fb = Fallback(Newton(), gmres, Picard(; globalization = Backtracking()))
     fbp = perturbed_direction(fb, 1)
@@ -338,7 +348,7 @@ end
 @testset "The reference" begin
     cells, iterates = run_standard_cells()
     codes = [collect(string.(instances(ReturnCode))); "ERROR"]
-    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 2412
+    @test length(cells) == 67 * length(STANDARD_COLUMNS) * length(REAL_ELTYPES) == 2546
     @test all(c -> c.code in codes, cells)
     # Every cell runs with max_iterations = 200. A fallback cell sums the iterations of its
     # members, each of which runs with that cap, and a continuation cell adds the path steps to

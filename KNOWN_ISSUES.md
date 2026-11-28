@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2138`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2358`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -1138,7 +1138,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1093` (`stored_factors`), `:1109` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1303` (`stored_factors`), `:1319` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -1153,7 +1153,7 @@
 - **location:** `test/nonlinear/krylov.jl:1374`
 - **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
   them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
-  (`src/nonlinear/newton.jl:244–247`, `with_forcing`). The comment was already false at `9023f76`,
+  (`src/nonlinear/newton.jl:306–309`, `with_forcing`). The comment was already false at `9023f76`,
   for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
 - **kind:** docs
 - **found:** 2026-11-26
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2172` for `GMRES`, `:2419` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2392` for `GMRES`, `:2639` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1282,7 +1282,7 @@
 
 ### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
 
-- **location:** `src/nonlinear/newton.jl:2147` (`GMRES`), `:2388` (`MINRESQLP`), `:2438`
+- **location:** `src/nonlinear/newton.jl:2367` (`GMRES`), `:2608` (`MINRESQLP`), `:2658`
   (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
 - **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
   ratio asks `Backtracking` for more decrease than the direction gives. With
@@ -1299,7 +1299,7 @@
 
 ### K145 · The test of the summary of the standard test set finds the line of a column by its name and a space, so a column whose name is another column's name, a space and more matches two lines
 
-- **location:** `test/verification/standard.jl:399`
+- **location:** `test/verification/standard.jl:409`
 - **evidence:** `only(filter(startswith(column * " "), split(summary, "\n")))` raises
   `ArgumentError: Collection has multiple elements, must contain exactly 1 element` for the
   column `Newton Backtracking GMRES` once a column named `Newton Backtracking GMRES Float32 basis`
@@ -1330,9 +1330,9 @@
 
 ### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
 
-- **location:** `src/nonlinear/newton.jl:2147` (`GMRES`), `:2388` (`MINRESQLP`), `:2438`
+- **location:** `src/nonlinear/newton.jl:2367` (`GMRES`), `:2608` (`MINRESQLP`), `:2658`
   (`BiCGStab` and `DQGMRES`), each `η_ach` from the inner solve on `J + μ I`
-  (`RegularizedJVP`, `:2091` and `:2289`); `:2184` (`dogleg_step_mf`, on the Arnoldi relation of
+  (`RegularizedJVP`, `:2311` and `:2509`); `:2404` (`dogleg_step_mf`, on the Arnoldi relation of
   that solve; read, not measured)
 - **evidence:** `InexactStep(η)` states `‖F + J d‖ ≤ η ‖F‖`; the inner solve bounds
   `‖F + (J + μ I) d‖` instead, and `‖F + J d‖` exceeds it by up to `μ ‖d‖`. With
@@ -1341,7 +1341,7 @@
   `fnorm = 1.3e-4`, and `GMRES`, `BiCGStab` and `DQGMRES` with `FixedForcing(1e-12)` each end
   `STALLED` after 2 iterations at `fnorm = √3`, the residual of `x₀` (Julia 1.13.4). `main` at
   907d20b gives the same for the dense `Newton` and `GMRES`. The line searches that evaluate the
-  slope take the product of `J` alone (`merit_jvp`, `:1389`), so `Bisection` and `StrongWolfe` do
+  slope take the product of `J` alone (`merit_jvp`, `:1601`), so `Bisection` and `StrongWolfe` do
   not have this limit. A fix chooses the step kind of a regularized direction, such as the measured
   slope or the attained ratio of `J` at one more product, and is a choice for all four methods
   together with K144.
@@ -1351,7 +1351,7 @@
 
 ### K150 · `solve!` on a `ReparametrizedSolver` takes no `refactorize` keyword, so a `Newton(; reuse = k, keep_factor = true)` inside it refreshes its kept factor only by the rate rule
 
-- **location:** `src/nonlinear/reparametrized.jl:1061`
+- **location:** `src/nonlinear/reparametrized.jl:1065`
 - **evidence:** `solve!(solver::ReparametrizedSolver)` and `solve!(solver::ReparametrizedSolver, y,
   p = solver.p)` take no keywords, so `solve!(solver, y, p; refactorize = true)` raises a
   `MethodError`. The `solve!` of a `NonlinearSolver` takes `refactorize`. A caller that changes the
@@ -1363,7 +1363,7 @@
 
 ### K151 · A `Newton(; reuse = k, keep_factor = true)` solve that returns `SUCCESS` at its start, with no step, drops the kept factor, so the next solve factorises at its first step
 
-- **location:** `src/nonlinear/newton.jl:1198` (`keeps_factor`)
+- **location:** `src/nonlinear/newton.jl:1410` (`keeps_factor`)
 - **evidence:** `keeps_factor` keeps the factor after `SUCCESS` only with `status.iterations == 1`
   or a last rate `θ ≤ 10⁻³`; a solve of no step has `iterations == 0` and the rate `NaN`, which
   fails both. With the midpoint residual of `test/nonlinear/stopping.jl`,
@@ -1397,7 +1397,7 @@
 
 ### K153 · `solve!` on a static `ReparametrizedSolver` of a `LeastSquaresProblem` raises a `MethodError`
 
-- **location:** `src/nonlinear/reparametrized.jl:955`
+- **location:** `src/nonlinear/reparametrized.jl:959`
 - **evidence:** with `r` and its Jacobian of K152 as static vectors, and the identity chart
   `id(y, p) = y`, `did(y, p) = SMatrix{1, 1}(one(y[1]))`,
   `s = init(Reparametrized(LeastSquaresProblem(r, j), id, did), SVector(3.0), Newton(; linsolve =
@@ -1409,6 +1409,44 @@
   that keeps a `Newton` factor across solves starts from.
 - **kind:** defect
 - **found:** 2026-11-27
+
+### K160 · A run of full-length secant steps along the pairs of a `BroydenUpdate` can pass the rate test away from a root, because the larger of the last two rates guards one irregular step only
+
+- **location:** `src/nonlinear/solver.jl:349` (the rate test of `solve!!`),
+  `src/base/options.jl:290` (`rate_converged`)
+- **evidence:** `scripts/broyden_rate_test.jl` solves `F(x) = g(x − X)`, with `g(t) = 1 − t + θ t²`
+  up to a kink at each method's own second iterate and a line of slope `−σ` beyond it. In
+  `Float32`, `Newton(; reuse = 3, update = BroydenUpdate(2))` with `Static()` or `Backtracking()`
+  returns `SUCCESS` with `contracted = true` after 3 iterations: at `X = 1e3`, `θ = 0.025`,
+  `σ = 0.05` with `fnorm = 6.298e-4`, above the residual tolerance `3.45e-4`, at
+  `|x − root| = 1.257e-2`; at `X = 3e3`, `θ = 0.03` with `fnorm = 8.345e-4` at
+  `|x − root| = 1.660e-2`. `Newton(; reuse = 3)` reaches the root after 4 iterations on both rows.
+  In `Float64`, at `X = 1e6` and `1e8`, `Newton(; reuse = 3)` stops early with
+  `contracted = true` as well (`|x − root| = 1.592e-5` and `3.978e-4`), and the same on the base
+  of #148 at a935115, so that half is a property of the rate test along a reused factor. Under
+  `Options(T; rate_test = false)` each of these solves returns `SUCCESS` after 4 iterations at
+  `|x − root| = 0`, in both precisions. A fix that skips a step along stored pairs in the rate
+  test, as it skips a shortened step, needs the step to report such a step.
+- **kind:** defect
+- **found:** #148
+
+### K161 · The LU-factor and the refinement refusals of `newton_init_state` do not act on a `Reparametrized` around a `LeastSquaresProblem`
+
+- **location:** `src/nonlinear/newton.jl:1215` (the refusal of an LU, LDLT or Cholesky factor),
+  `src/nonlinear/newton.jl:1223` (the refusal of a refinement, K80)
+- **evidence:** both guards test `prob isa LeastSquaresProblem`, and the chart solve of a
+  `Reparametrized` problem passes its inner wrapper, which is no `LeastSquaresProblem`. With
+  `lsq = LeastSquaresProblem((x, p) -> SVector(x[1] - 1, x[1] + 1), nothing, 2)` and the identity
+  chart `chart(y, p) = y`, `init_state(m, lsq, SVector(3.0), nothing)` raises
+  `ArgumentError: LeastSquaresProblem does not support LUFactorization` for
+  `m = Newton(; linsolve = LUFactorization())` and `ArgumentError: LeastSquaresProblem does not
+  support refinement` for `m = Newton(; linsolve = QRFactorization(), refinement = Refinement())`,
+  while `init_state(m, Reparametrized(lsq, chart), SVector(3.0), nothing)` builds a state for
+  both. The two guards are code of `main`, read, not run there. The fix tests
+  `least_squares_steps(prob)`, which the chart solve forwards to its inner problem, in both
+  guards, as the refusal of a `BroydenUpdate` does; it goes to a separate pull request on `main`.
+- **kind:** defect
+- **found:** #148, the review of the merged branch
 
 ### K165 · A `Multiplicative` or `Repeat` contraction whose sub-steps alternate in sign does not end on the rate test
 

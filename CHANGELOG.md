@@ -11,6 +11,38 @@ so that a compat-only bump can be told apart from an interface change.
 
 ### New Features
 
+- **`Newton(; reuse = k, update = BroydenUpdate(m))` steps along a reused factor `B₀` with the
+  good Broyden update of its inverse; `BroydenUpdate` is a new export.** Each step on a factor
+  that the next step reuses stores the pair `u = (s - Hⱼ y) / (sᴴ Hⱼ y)`, `s`, from its accepted
+  step `s` and its residual change `y`, and the next step takes the direction
+  `-(I + uⱼ sⱼᴴ) ⋯ (I + u₁ s₁ᴴ) B₀⁻¹ F`, so that each stored pair meets the secant condition
+  `Hⱼ₊₁ y = s`; a complex element type conjugates `s`. A fresh factorisation steps along `B₀⁻¹`
+  alone and clears the pairs, and so does `start!!`, also under `keep_factor = true`. A step
+  whose `sᴴ Hⱼ y` is zero or not finite, or whose `u` is not finite, stores no pair, and the next
+  step factorises afresh. The memory `m` is a type parameter: a value iterate holds all `m` pairs
+  as `NTuple`s whatever `reuse` is, so its state and the compiled step grow with `m`, and its
+  state stays `isbits` and runs in the `solve_batch!` kernel on Metal; an array iterate holds
+  them in two `n × min(m, reuse - 1)` arrays, the most pairs that one factor stores, on `Array`
+  and on `JLArray`, and a solve on an `Array` allocates nothing. An `m` above `reuse - 1` adds no
+  pair: the iterates are those of `m = reuse - 1`. The constructor raises an `ArgumentError` for
+  `reuse` outside `2 ≤ reuse ≤ m + 1`, for `Refinement`, for `GMRESRefinement` and for a
+  matrix-free linear method or `KroneckerFactorization`, and `init_state` for a factorisation
+  precision other than the element type of the iterate and for a `LeastSquaresProblem`, also
+  inside a `Reparametrized` problem. `update` is the last type parameter of `Newton`, so the six-
+  to eight-argument positional constructors and the methods on `Newton{L, G, J, RF, Reg, Int32}`
+  keep working. A run of up to `reuse - 1` full-length secant steps along the stored pairs can
+  pass the rate test of `Options` away from a root, because the larger of the last two rates
+  guards one irregular step only; with `Options(T; rate_test = false)` each solve of
+  `scripts/broyden_rate_test.jl` that stops early returns `SUCCESS` after 4 iterations at the root
+  (K160). The standard test set has the new column `Newton reuse 3 Broyden Backtracking LU`
+  (`reuse = 3`, `BroydenUpdate(2)`): 56/67 `SUCCESS` cells in `Float32` and 57/67 in `Float64`,
+  against 57/67 and 59/67 for `reuse = 3` alone, and 2546 cells in all; no other cell of the
+  reference table changes. `benchmark/REPORT.md` has a table of the column beside `Broyden`, from
+  `benchmark/broyden_update.jl` (GeometricSolvers alone at `b86fc6c`, 79 rows in each precision,
+  checked by `verify.jl`): 66/79 and 68/79 successes and Jacobian counts
+  `Σ dual_evals / chunks` of 1779 and 1829, an upper bound that holds the line search's
+  directional derivatives too; the 13-column tables stay the run at `301f366`.
+
 - **`BiCGStab(; maxiter = 30, forcing, preconditioner)` and `DQGMRES(; maxiter = 30, memory =
   20, forcing, preconditioner)` are new exported matrix-free linear methods of `Newton`, whose
   storage does not grow with the iteration count.** `BiCGStab` is the right-preconditioned
@@ -99,7 +131,7 @@ so that a compat-only bump can be told apart from an interface change.
   names the exception.
 
 - **The standard test set has one more column, `Newton Backtracking Float32-basis GMRES`,** after
-  `Newton Backtracking DQGMRES`: 18 columns and 2412 cells. Its 134 cells are new in
+  `Newton Backtracking DQGMRES`. Its 134 cells are new in
   `test/verification/standard_reference.csv`, 24 of them flagged `unstable`, and the benchmark
   pairs it with no package method (no Krylov linear solver). Its `Float32` cells equal those of
   `Newton Backtracking GMRES`, whose basis is then of the same type; 9 of its 67 `Float64` cells

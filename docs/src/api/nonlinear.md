@@ -5,18 +5,19 @@ CurrentModule = GeometricSolvers
 # Nonlinear solvers
 
 A nonlinear solver holds its algorithmic configuration (`linsolve`, `globalization`, `jacobian`,
-`refinement`, `regularization` and `reuse` for [`Newton`](@ref); `damping` and `globalization` for
-[`Picard`](@ref)) and nothing about the problem or the iterate. [`GaussNewton`](@ref) constructs a
-[`Newton`](@ref) configured for [`LeastSquaresProblem`](@ref) (`linsolve = QRFactorization()`,
-`globalization = Static()`). The section [The solve interface](@ref) describes how a method enters
-a solve. [`default_method`](@ref) gives the method of an [`init`](@ref) or a [`solve`](@ref) call
-that names none.
+`refinement`, `regularization`, `reuse` and `update` for [`Newton`](@ref); `damping` and
+`globalization` for [`Picard`](@ref)) and nothing about the problem or the iterate.
+[`GaussNewton`](@ref) constructs a [`Newton`](@ref) configured for [`LeastSquaresProblem`](@ref)
+(`linsolve = QRFactorization()`, `globalization = Static()`). The section
+[The solve interface](@ref) describes how a method enters a solve. [`default_method`](@ref) gives
+the method of an [`init`](@ref) or a [`solve`](@ref) call that names none.
 
 ```@docs
 default_method
 Newton
 GaussNewton
 QuasiNewton
+BroydenUpdate
 Picard
 NoRefinement
 Refinement

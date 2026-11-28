@@ -772,7 +772,7 @@ end
     @test Newton().best === Val(false)
     @test Newton(; best = true).best === Val(true)
     @test Newton(; best = false).best === Val(false)
-    @test fieldnames(Newton)[(end - 1):end] === (:best, :keep_factor)
+    @test fieldnames(Newton)[(end - 2):end] === (:best, :keep_factor, :update)
     @test isbits(Newton(; best = true)) == isbits(Newton())
     # the type check of the keyword `best::Bool`
     @test_throws r"^TypeError: non-boolean \(Int64\) used in boolean context$" Newton(;
