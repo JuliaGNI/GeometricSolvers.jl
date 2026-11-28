@@ -691,7 +691,7 @@
 
 ### K103 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
 
-- **location:** `src/linear/gmres.jl:616` (`linres` from the rotated right-hand side)
+- **location:** `src/linear/gmres.jl:642` (`linres` from the rotated right-hand side)
 - **evidence:** with `rng = Xoshiro(1)`, `A = T.(Diagonal(1:6) + 0.1 randn(rng, 6, 6))`, then
   `b = T.(randn(rng, 6))`, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32`
   reports `resnorm = 8.7e-17`, while the true residual is `‖b − A d‖ = 5.8e-8 ‖b‖`; in `Float64`
@@ -1309,25 +1309,6 @@
 - **kind:** defect
 - **found:** 2026-11-26
 
-### K146 · On a reduced basis, the CGS2 step does not see a Krylov space that is invariant to the round-off of the basis type, and the rest of the cycle makes no progress
-
-- **location:** `src/linear/gmres.jl:691` (`cgs2_reduced_step!`)
-- **evidence:** with `J = 14 I`, `b = fill(-9.0, 100)`, `GMRES(; maxiter = 20, basis_eltype =
-  Float16)` and `tol = 1e-10`, the stored `v₁` has `‖v₁‖² = 1 − 4.9e-4`, and the two CGS2 passes
-  leave `hj = 3.3e-6` along `v₁`, a Givens estimate of `2.4e-7 ‖b‖`; the step stores `v₂ = v₁`
-  bit for bit, classical Gram–Schmidt over the two equal columns doubles the projection, and the
-  subdiagonal of the Hessenberg matrix grows to `1.1e3` at `j = 10` and `1.2e4` at `j = 30`,
-  where `‖J v_j‖ = 14`. The cycle ends at its cap on a true residual of `2.4e-4 ‖b‖` without
-  convergence; with `restart = 10` the restart converges at 12 iterations (Julia 1.13.4). With a
-  `Float32` basis the remainder, `1.2e-14`, lies below the tolerance, and the solve converges in 2.
-  The MGS step with its second pass converges in 4 on the same system. The docstring of `GMRES`
-  states the limit, and the testset "A CGS2 cycle on a Krylov space invariant to a Float16 basis
-  makes no progress, and a restart recovers" of `test/nonlinear/krylov.jl:2199` asserts it. A
-  test of `hj` against the round-off of the stored basis would see the breakdown.
-- **kind:** defect
-- **found:** PR #129, the second fix round, where the remedy of the review's MGS finding was
-  decided as a second MGS pass and this limit as a documented one
-
 ### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
 
 - **location:** `src/nonlinear/newton.jl:2147` (`GMRES`), `:2388` (`MINRESQLP`), `:2438`
@@ -1348,6 +1329,56 @@
 - **kind:** defect
 - **found:** PR #127, the CodeRabbit comment on the regularized product of the matrix-free step;
   the part on `Bisection` and `StrongWolfe` is fixed there
+
+### K148 · `gmres_solve!` reports convergence at 0 iterations for a right-hand side with an `Inf` entry
+
+- **location:** `src/linear/gmres.jl:565` (`atol = R(tol) * R(bnorm)`) and `:572`
+  (`converged = resnorm <= atol`)
+- **evidence:** with `J = 14 I`, `n = 10`, `b = ones(10)`, `b[3] = Inf`, `GMRES(; maxiter = 10)`
+  and `tol = 1e-10`, `gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-10, 10, 10)` returns
+  `GMRESInfo(0, Inf, Inf, true, false)` and `d = 0`: `bnorm = Inf` makes `atol = Inf`, and
+  `Inf <= Inf` holds before the first iteration. The same holds with `basis_eltype = Float32`
+  and without the breakdown test of a reduced basis (Julia 1.13.4). A non-finite `bnorm` reported as no
+  convergence would close it.
+- **kind:** defect
+- **found:** 2026-11-27
+
+### K149 · On a reduced basis, a `J` singular on a Krylov space in a general frame stops at the breakdown with a direction of order `1 / eps(TB)`
+
+- **location:** `src/linear/gmres.jl:654` (`basis_breakdown(ws, hj, w₀)`) and `:673` (the weights
+  of the reduced least-squares problem)
+- **evidence:** with a random orthonormal `Q` (`qr(randn(Xoshiro(7), 50, 50)).Q`), the unit
+  vectors `u₁ = Q [0.2·1₂₅; 0]` and `u₂ = Q [0; 0.2·1₂₅]`, `J = u₂ (u₁ + u₂)ᵀ`, `b = u₁`,
+  `GMRES(; maxiter = 20, basis_eltype = TB)` and `maxiter = restart = 20`, the Krylov space is
+  `span(u₁, u₂)` and `min ‖b − J d‖ = ‖b‖ = 1`. The remainder of step 2 carries the direction
+  error of the stored basis, `hj / (eps(TB) ‖w₀‖) = 0.15` (`Float16`) and `0.19` (`Float32`),
+  above the breakdown test's `2e-3`, so the step takes it for `v₃`; step 3 is the breakdown, and
+  the solve stops there without convergence after 3 iterations. The rotated diagonal of step 2 is
+  then of the order of that remainder, and its weight gives `‖d‖ = 429` for a `Float16` basis on
+  `Float64` or `Float32` and `‖d‖ = 1.17e7` for a `Float32` basis on `Float64`, with a true
+  residual `1.000002` and `1.0014` (Julia 1.13.4, with either `--check-bounds`). A solve that does
+  not stop at that breakdown runs to `maxiter` with a larger `‖d‖`: from `1.03e8` to `9.79e22`
+  without the breakdown test, and from `1.15e12` to `3.91e23` where the step takes the rotated
+  diagonal of step 3 as nonzero and restarts (Julia 1.13.4, `--check-bounds=auto`). The
+  consistent operator `J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ` in the same frame, `b = u₁`, `tol = 1e-8` on
+  `Float64` and `1e-4` on `Float32`, `restart = 20`, restarts at such breakdowns with a `Float32`
+  basis on `Float64` and a `Float16` basis on `Float32`, where the rotated pivot at the round-off
+  of the basis counts as zero, and over `δ` in `1e-7`–`0.3` and both Gram–Schmidt forms converges
+  within `maxiter = 200` in 18 of 44 solves with `--check-bounds=auto` and in 6 of 44 with
+  `--check-bounds=yes`, with a true residual up to `96 ‖b‖` and `‖d‖` up to `1.5e15`
+  (`scripts/gmres_singular_ratio.jl` sets the grid; two runs per mode, Julia 1.13.4 on aarch64
+  macOS). With that pivot kept on the restart, 11 and 1 of 44 converge, with a true residual up to
+  `1.1e6 ‖b‖` and `‖d‖` up to `1.1e17`; one row, a `Float16` basis on `Float32` with MGS and
+  `δ = 1e-5`, converges only then, with `--check-bounds=auto`, and with the zero pivot it reads
+  `J` as singular (K154). The counts depend on the platform: the CGS2 row with a `Float32` basis
+  and `δ = 0.3`, which converges here in 5 iterations, runs to `maxiter = 200` at
+  `1.6e-8 ‖b‖` on x86_64 Linux (CI of a2c37e0, Julia min and 1). The weight of step 2 above leaves
+  `‖d‖` at `3.9e8`–`7.6e8` on that row, and its true residual at `2.7e-9`–`9.5e-9 ‖b‖` over seven
+  emulated summation orders of the reductions, at the tolerance `1e-8`; with the pivot kept it
+  converges in none of them, at `3.0e-6`–`1.4 ‖b‖`. A Newton step on such a direction depends on
+  its line search to reject it.
+- **kind:** defect
+- **found:** 2026-11-27
 
 ### K150 · `solve!` on a `ReparametrizedSolver` takes no `refactorize` keyword, so a `Newton(; reuse = k, keep_factor = true)` inside it refreshes its kept factor only by the rate rule
 
@@ -1409,6 +1440,28 @@
   that keeps a `Newton` factor across solves starts from.
 - **kind:** defect
 - **found:** 2026-11-27
+
+### K154 · On a reduced basis, a consistent operator that is singular at the precision of a `Float16` basis stops at the breakdown without convergence
+
+- **location:** `src/linear/gmres.jl:794` (`singular_breakdown`)
+- **evidence:** with the frame of K149, `J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ`, nonsingular on
+  `span(u₁, u₂)` with the solution `d = (u₁ − u₂) / δ`, `b = u₁`,
+  `GMRES(; maxiter = 40, basis_eltype = Float16)` on `Float64`, `restart = 20`, `tol = 1e-8` and
+  CGS2: for `δ = 1e-5` the rotated diagonal of step 3 is at the round-off of the basis and
+  `|g[3]| = 1.00 ‖r₀‖`, above `sqrt(eps(Float16)) ‖r₀‖ = 0.031 ‖r₀‖`, so the solve stops after 3
+  iterations with `breakdown = true`, no convergence and a true residual `0.998 ‖b‖`. On the grid
+  of `scripts/gmres_singular_ratio.jl` the ratio is `0.986`–`1.00` for `δ ≤ 3e-5` with a `Float16`
+  basis on `Float64` and for `δ = 1e-7` with a `Float16` basis, `0.999` for `δ = 1e-5` with a
+  `Float16` basis on `Float32` and MGS under `--check-bounds=auto`, and at least `0.895` on the
+  singular systems, so no threshold on `|g[j]| / ‖r₀‖` separates the two. A solve that restarts at
+  every such step (the code of 2c06d73) converges the `δ = 1e-5` row in 14 iterations, to
+  `3.0e-10 ‖b‖` (Julia 1.13.4, `--check-bounds=auto`). A trial rule, not on any branch, that
+  restarted once and stopped where the next cycle read `J` as singular again without halving its
+  true residual stopped this row after 15 iterations at `1.76e-5 ‖b‖`: that figure is a record
+  of the decision, not reproducible from the code.
+- **kind:** defect
+- **found:** #149; the limit of the decided threshold `sqrt(eps(TB)) ‖r₀‖` of the singular
+  decision, chosen after the restart-once rule did not converge this row
 
 ### K165 · A `Multiplicative` or `Repeat` contraction whose sub-steps alternate in sign does not end on the rate test
 

@@ -252,7 +252,7 @@ doi:10.1137/0914028).
   ``w_2`` is ``\\sqrt{s_1 - \\|h_2\\|^2}`` where ``s_1`` is finite, at least `n * floatmin` and
   ``\\|h_2\\|^2 \\le s_1 / 2``, and one more reduction, `rnorm` of ``w_2``, elsewhere. `true`
   orthogonalises by modified Gram–Schmidt, which takes ``j + 1`` reductions at inner iteration
-  `j`, and ``2j + 1`` on a basis stored in a type other than `T` (`basis_eltype` below).
+  `j`, and ``2j + 2`` on a basis stored in a type other than `T` (`basis_eltype` below).
 - `basis_eltype::Type{TB}`: `Nothing` stores the Krylov basis in the working type `T` of the
   iterate; a concrete `AbstractFloat` type `TB` stores it in `TB`, and a complex iterate in
   `Complex{TB}`, as the compressed basis of Aliaga et al. (2020, arXiv:2009.12101) does. Every
@@ -265,13 +265,28 @@ doi:10.1137/0914028).
   doi:10.1109/TPDS.2021.3090757) for the unit roundoff of `TB`. A stored column has unit norm
   only to the round-off of `TB`, so one projection leaves a remainder of that order along the
   basis: the CGS2 step takes three reductions here, because column `j + 1` of the basis cannot
-  hold ``w_1`` in `T`, and the MGS step takes a second pass. On a Krylov space that is invariant,
-  as that of `J = c I` and a constant `b`, the CGS2 step takes its remainder, of order
-  ``\\mathrm{eps}(TB)^2``, for a new basis vector parallel to the last one, and the cycle makes
-  no more progress; its true residual then restarts it. So a solve with `maxiter == restart` and
-  a tolerance below about ``\\mathrm{eps}(TB)^2`` can end without convergence near
-  ``\\mathrm{eps}(TB) \\|b\\|``, about ``2.4 \\cdot 10^{-4} \\|b\\|`` for a `Float16` basis on
-  `Float64`. Any other
+  hold ``w_1`` in `T`, and the MGS step takes a second pass. Each step takes one more reduction,
+  the norm of ``w = J M^{-1} v_j`` before the projections, for a breakdown test: where the cycle
+  would go on, its Givens estimate above the tolerance and neither `restart` nor `maxiter` reached,
+  a remainder ``h_{j+1,j} < 2 \\cdot 10^{-3}\\, \\mathrm{eps}(TB) \\|w\\|`` is a breakdown, and
+  the cycle ends on its true residual. That remainder is what the projections
+  leave on a Krylov space that is invariant, as that of `J = c I` and a constant `b`, where each
+  stored column is parallel to its vector and has unit norm only to the round-off of `TB`;
+  without the test the step would take it for a new basis vector parallel to the last one. A
+  genuine remainder below that bound is taken as round-off too, which costs a restart. At such a
+  breakdown, a rotated diagonal entry below the same bound is zero, and so is the weight of its
+  column. Where the entry of the rotated right-hand side, which the step cannot remove, exceeds
+  ``\\sqrt{\\mathrm{eps}(TB)}`` times the residual at the start of the cycle, `J` is singular on
+  the Krylov space, and the solve stops without convergence. Below that the cycle ends on its true
+  residual and restarts. An operator
+  that is nonsingular on the space but singular at the precision of `TB` reads as singular too,
+  and stops so, for example ``J = u_2 (u_1 + u_2)^T + \\delta u_1 u_1^T`` and ``b = u_1`` in a
+  rotated frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``, and
+  with a `Float16` basis on `Float32` or `Float64` and ``\\delta = 10^{-7}``. There the ratio of
+  that entry to the residual is 0.986–1.00, and on the singular systems of the tests it is at least
+  0.895. An invariant space whose stored columns also carry a direction error of order
+  ``\\mathrm{eps}(TB)`` leaves a remainder of that order, which the test does not see: the cycle
+  goes on with it as a new direction. Any other
   `basis_eltype` raises an `ArgumentError`, and so does a [`Newton`](@ref) with a
   [`DogLeg`](@ref) globalization and a `basis_eltype` that is not `Nothing`.
 - `flexible::Val{FL}`: `Val(false)`, from `flexible = false`, forms the direction
@@ -522,18 +537,26 @@ take the conjugated inner product, so a complex iterate is supported and every n
 `real(T)`. The solution update ``u \\mathrel{+}= V_j y`` of a cycle is one matrix–vector product
 on the CGS2 path and one update per column of ``V_j`` on the MGS path, which `ws.mgs` records for
 `reduced_direction!`. A zero `H[j+1, j]` is a breakdown: the Krylov space is invariant, and the
-solve stops there rather than dividing by zero. The residual of
+solve stops there rather than dividing by zero. On a basis stored in a type other than that of
+`b`, a remainder at the round-off of the stored basis is a breakdown too, where the cycle would
+go on, as the `basis_eltype` field of [`GMRES`](@ref) states; the rotation of the step then
+takes `H[j+1, j]` as zero. The residual of
 the reduced problem is then zero, unless `J` is singular on that space: the rotated diagonal entry
 is then zero too, the residual is that of the last entry of the right-hand side, and the solve
-reports no convergence. A restarted cycle forms its new residual with one more product,
-`b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. On a workspace with `Z`, the
-flexible path, the solution update is ``u \\mathrel{+}= Z_k y``, the direction is `u` itself and the
-restart residual is `b - J u`. On a basis stored in a type other than that of `b`, every cycle
-ends on that product, and the solve converges where the true residual meets the tolerance; a
-cycle that misses it restarts, unless it ended at `maxiter` or on a breakdown whose reduced
-residual misses the tolerance too, and the reported residual is the true one. The least-squares
-problem is solved from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only
-where the reduced system is singular, and the corresponding weight is then `0`.
+reports no convergence. On a basis stored in another type, a rotated diagonal entry at the
+round-off of the basis is zero at such a breakdown, and the solve stops so only where that last
+entry exceeds ``\\sqrt{\\mathrm{eps}(TB)}`` times the residual at the start of the cycle; below
+that the cycle ends on its true residual and restarts.
+A restarted cycle forms its new residual with one
+more product, `b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. On a workspace with
+`Z`, the flexible path, the solution update is ``u \\mathrel{+}= Z_k y``, the direction is `u`
+itself and the restart residual is `b - J u`. On a basis stored in a type other than that of `b`,
+every cycle ends on that product, and the solve converges where the true residual meets the
+tolerance; a cycle that misses it restarts, unless it ended at `maxiter` or on a breakdown whose
+reduced residual misses the tolerance too, and the reported residual is the true one. The
+least-squares problem is solved from the Givens-rotated Hessenberg matrix, whose diagonal entry is
+`0` only where the reduced system is singular or, on a basis stored in another type, at the
+round-off of the basis at a breakdown, and the corresponding weight is then `0`.
 """
 function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxiter,
         restart; mgs::Bool = false) where {T, R}
@@ -566,6 +589,9 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             used += one(Int32)
             precondition_column!(ws, P, j)
             jvp_op!(ws.w, ws.z)
+            # the norm of `w` before the projections, which the breakdown test of a reduced basis
+            # reads
+            w₀ = reduced_basis(ws) ? R(rnorm(ws.w)) : zero(R)
             if mgs
                 # modified Gram–Schmidt: one pass of projections, in the order of the basis
                 for i in 1:j
@@ -615,6 +641,23 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             # the Krylov space
             linres = iszero(radius) ? R(hypot(abs(ws.g[j]), abs(ws.g[j + 1]))) :
                      R(abs(ws.g[j + 1]))
+            # on a reduced basis, a remainder at the round-off of the stored basis is no new
+            # direction where the cycle would go on: the Krylov space is invariant to that
+            # round-off, and the step is a breakdown: the diagonal entry `H[j, j]`, `g[j]` and the
+            # residual become those of a rotation of a zero `H[j+1, j]`, which the weights and the
+            # stop of the cycle read. A diagonal entry `a` at that round-off is zero too, so the
+            # weight of column `j` is zero rather than of order 1 / eps(TB). Where `g[j]` is above
+            # `sqrt(eps(TB))` of the residual at the start of the cycle, `J` is singular on the
+            # space, and the residual keeps `g[j]`; below that the cycle ends on its true residual
+            # and restarts
+            if reduced_basis(ws) && linres > atol && j < mr && used < maxiter &&
+               basis_breakdown(ws, hj, w₀)
+                hj = zero(R)
+                singular = singular_breakdown(ws, R(abs(a)), w₀, R(abs(gj)), β)
+                ws.H[j, j] = basis_breakdown(ws, R(abs(a)), w₀) ? zero(T) : a
+                ws.g[j] = gj
+                linres = singular ? R(abs(gj)) : zero(R)
+            end
             if iszero(hj) || linres <= atol
                 break
             end
@@ -722,6 +765,36 @@ end
 
 # Whether the basis of `ws` is stored in a type other than the working type `T`.
 @inline reduced_basis(::GMRESWorkspace{T, R, V}) where {T, R, V} = eltype(V) !== T
+
+# Whether the remainder `hj` of an Arnoldi step on a reduced basis is at the round-off of the
+# stored basis, `hj < c eps(TB) ‖w₀‖` for the norm `w₀` of the vector before the projections and
+# the unit roundoff `eps(TB)` of the real type of the basis. `c = 2e-3` lies between the largest
+# `hj / (eps(TB) ‖w₀‖)` of an invariant step whose remainder lies along the stored basis,
+# 2.44e-4, and the smallest of a non-invariant step, 0.0168, at the steps where the test acts on
+# the reduced-basis systems of the tests and of the standard test set
+# (`scripts/gmres_breakdown_ratio.jl`); the separation holds on those measured systems, and a
+# genuine remainder below the bound costs a restart. The same bound decides whether the rotated
+# diagonal entry of a breakdown step is zero.
+@inline function basis_breakdown(ws::GMRESWorkspace{T, R, V}, hj, w₀) where {T, R, V}
+    return hj < R(2e-3) * R(eps(real(eltype(V)))) * w₀
+end
+
+# Whether a breakdown step on a reduced basis reads `J` as singular on the Krylov space: its
+# rotated diagonal entry `a` is at the round-off of the basis, as `basis_breakdown` tests, and the
+# entry `gj` of the rotated right-hand side, which the residual then keeps, exceeds
+# `sqrt(eps(TB)) β` for the residual `β` at the start of the cycle; below that the cycle ends on
+# its true residual and restarts. On the singular systems of the tests and their rotated frames
+# `gj / β` is at least 0.895, and on the consistent operator `u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ` in a
+# rotated frame it is at most 1.72e-3 (`--check-bounds=auto`) and 0.0143 (`yes`) for a Float16
+# basis and 2.3e-8 (either) for a Float32 one at the steps that restart
+# (`scripts/gmres_singular_ratio.jl`). That operator reads as singular at the precision of a
+# Float16 basis where `δ ≤ 3e-5` on Float64 and where `δ = 1e-7`, and, with
+# `--check-bounds=auto` only, where `δ = 1e-5` on Float32 with MGS, with ratios of 0.986–1.00:
+# the solve stops there without convergence (K154).
+@inline function singular_breakdown(
+        ws::GMRESWorkspace{T, R, V}, a, w₀, gj, β) where {T, R, V}
+    return basis_breakdown(ws, a, w₀) && gj > sqrt(R(eps(real(eltype(V))))) * β
+end
 
 # `z = M⁻¹ v_j` for column `j` of the basis, kept in column `j` of `Z` on the flexible path. The
 # preconditioner reads a copy of `v_j` in the working type, in `ws.w`, where the basis is stored in

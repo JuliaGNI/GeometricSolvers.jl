@@ -2164,20 +2164,20 @@ end
 
     # one pass of MGS takes that remainder for a new direction, and the cycle ends at its cap
     # with a true residual of 1, Inf or near eps(TB) ‖b‖; its second pass removes the remainder,
-    # and the cycle ends early and restarts from its true residual. The CGS2 row of a Float16
-    # basis on Float64 and J = 14 I is the limit of the testset below.
-    if mgs || !(T === Float64 && TB === Float16 && kind === :scaled_identity)
-        jd, b = invariant_krylov_system(T, kind)
-        tol = T === Float64 ? 1e-10 : 1.0f-5
-        op = (Jv, v) -> (Jv .= jd .* v; Jv)
-        ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
-        d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
-        @test eltype(ws.V) === TB
-        @test info.converged
-        @test info.iterations < 20
-        @test rnorm(b .- jd .* d) <= tol * rnorm(b)
-        @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(T))
-    end
+    # and the cycle ends early and restarts from its true residual. On `J = 14 I` the stored `v₁`
+    # is parallel to `b`, so the remainder lies along `v₁`, of order eps(TB)² ‖J v₁‖ after the two
+    # passes of either step, and the breakdown test ends the cycle there: without it, the CGS2
+    # cycle on a Float16 basis on Float64 takes the remainder for `v₂ = v₁` and ends at its cap
+    jd, b = invariant_krylov_system(T, kind)
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+    @test eltype(ws.V) === TB
+    @test info.converged
+    @test info.iterations < 20
+    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+    @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(T))
 end
 
 @testset "Newton with a reduced basis solves x³ + 2x − 3 = 0 on both paths, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
@@ -2196,25 +2196,200 @@ end
     @test maximum(abs, x .- 1) <= sqrt(eps(T))
 end
 
-@testset "A CGS2 cycle on a Krylov space invariant to a Float16 basis makes no progress, and a restart recovers" begin
-    # `J = 14 I` and a constant `b` on Float64: the two CGS2 passes leave a remainder of order
-    # eps(Float16)² along `v₁`, above the tolerance, which the step takes for `v₂`; the cycle runs
-    # to its cap and ends on its true residual near eps(Float16) ‖b‖, without convergence
-    jd, b = invariant_krylov_system(Float64, :scaled_identity)
-    tol = 1e-10
-    op = (Jv, v) -> (Jv .= jd .* v; Jv)
-    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = Float16), zeros(length(b)))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20))
+# `J = u₂ (u₁ + u₂)ᵀ` for the unit vectors `u₁` and `u₂`, constant on the first and on the second
+# half of the entries, and `b = u₁`: the Krylov space is `span(u₁, u₂)`, invariant, and `J` is
+# singular on it. Their entries, 0.2, have no exact value in the basis type, so each stored column
+# is parallel to its vector and has unit norm only to the round-off of `TB`, and the second step
+# leaves a remainder of order eps(TB)² ‖w₀‖ along `v₂`; the reduced system has no solution.
+@testset "A breakdown at the round-off of a reduced basis on a singular operator stops without convergence, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    n = 50
+    u₁ = [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v); Jv)
+    b = copy(u₁)
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+    Jd = op(similar(d), d)
+    @test info.breakdown
     @test !info.converged
-    @test info.iterations == 20
-    @test tol * rnorm(b) < rnorm(b .- jd .* d) <= eps(Float16) * rnorm(b)
-    @test isapprox(info.resnorm, rnorm(b .- jd .* d); rtol = 8 * eps(Float64))
-    # with room for a restart, the restart from that true residual converges
-    ws = init_gmres_workspace(
-        GMRES(; maxiter = 20, restart = 10, basis_eltype = Float16), zeros(length(b)))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(10))
+    @test info.iterations == 2
+    @test isapprox(info.resnorm, rnorm(b .- Jd); rtol = 8 * eps(T))
+    @test isapprox(info.resnorm, rnorm(b); rtol = sqrt(eps(TB)))
+end
+
+# The singular operator above in a random orthonormal frame `Q`, `J = Q u₂ (u₁ + u₂)ᵀ Qᵀ` and
+# `b = Q u₁`: the rotated diagonal entry of the breakdown step is then not exactly zero but at the
+# round-off of the basis, and the breakdown test takes it as zero, so the solve stops there
+# rather than dividing `g[j]` by it and restarting to `maxiter`. The residual is at least `‖b‖`,
+# the minimum over every `d` since `b ⟂ range(J)`; an earlier step of the frame leaves a
+# remainder with a direction error of order eps(TB), which the test does not see, so `d` holds a
+# component of order 1 / eps(TB) (K149), and the residual exceeds `‖b‖`. The two breakdown
+# tests read the norm `‖w₀‖` of the product, which does not scale with `b`: at the breakdown
+# step it is about 2e-4, and with `‖b‖ = 1e-10` a pivot test on `‖b‖` would take the Float16
+# pivot as nonzero.
+@testset "A breakdown on a singular operator in a rotated frame stops without convergence, ‖b‖ = $σ, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true),
+    σ in (1, 1e-10)
+
+    n = 50
+    Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
+    u₁ = Q * [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = Q * [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v); Jv)
+    b = T(σ) .* u₁
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+    Jd = op(similar(d), d)
+    @test info.breakdown
+    @test !info.converged
+    @test info.iterations < 20
+    @test isapprox(info.resnorm, rnorm(b .- Jd); rtol = 8 * eps(T))
+    @test info.resnorm >= rnorm(b) * (1 - 8 * eps(T))
+    # the reduced system is singular at the breakdown step: its diagonal entry and its weight are 0
+    @test iszero(ws.H[ws.arnoldi, ws.arnoldi])
+    @test iszero(ws.y[ws.arnoldi])
+    @test all(isfinite, d)
+end
+
+# A consistent operator in the frame above, `J = Q (u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ) Qᵀ` and `b = Q u₁`:
+# on `span(u₁, u₂)` it is `[δ 0; 1 1]`, nonsingular, and `d = (u₁ - u₂) / δ` solves it. The stored
+# Float16 basis leaves a rotated diagonal entry at its round-off at a breakdown step, but the
+# entry `g[j]` of the rotated right-hand side there is about 2e-4 ‖r₀‖, below
+# `sqrt(eps(Float16)) ‖r₀‖`: the cycle ends on its true residual and restarts, and the solve
+# converges. Each row stops without convergence where every such step reads `J` as singular. The
+# pivot of such a step counts as zero, so `d` takes no weight of order 1 / eps(TB) from it: `‖d‖`
+# is 1.2e5–3.3e5 here and 1.3e8–7.6e8 with the pivot kept, the same in seven emulated summation
+# orders and with either `--check-bounds`, and the bound 10 / eps(TB)² lies 12 times or more
+# from both. The rows of the other basis types that restart there converge or not with the
+# summation order and the platform (K149), and are not asserted.
+@testset "A consistent operator whose rotated pivot is at the round-off of a reduced basis restarts and converges, δ = $δ, mgs = $mgs, Float16 on Float64" for (mgs, δ) in (
+    (false, 0.3), (true, 0.1), (true, 0.3))
+    T = Float64
+    TB = Float16
+    n = 50
+    Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
+    u₁ = Q * [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = Q * [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v) .+ T(δ) .* u₁ .* sum(u₁ .* v); Jv)
+    b = copy(u₁)
+    tol = 1e-8
+    ws = init_gmres_workspace(GMRES(; maxiter = 40, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(40), Int32(20); mgs)
     @test info.converged
-    @test rnorm(b .- jd .* d) <= tol * rnorm(b)
+    @test info.iterations < 40
+    @test rnorm(b .- op(similar(d), d)) <= tol * rnorm(b)
+    @test isapprox(info.resnorm, rnorm(b .- op(similar(d), d)); rtol = 8 * eps(T))
+    @test norm(d) < 10 / T(eps(TB))^2
+end
+
+# A singular operator with a part that `J` reaches, `J = Q (u₂ (u₁ + u₂)ᵀ + u₃ u₃ᵀ) Qᵀ` and
+# `b = Q (u₁ + c u₃)` for orthonormal `u₁`, `u₂`, `u₃`: `range(J) = span(Q u₂, Q u₃)`, so every
+# residual is at least 1, and the rotated right-hand side keeps about 1 at the singular step of
+# the first cycle, where `‖r₀‖ = ‖b‖ ≈ c`. With `c = 10` that is 0.094 ‖r₀‖, above
+# `sqrt(eps(Float16)) ‖r₀‖ = 0.031 ‖r₀‖`, and the first cycle stops; with `c = 60` it is
+# 0.016 ‖r₀‖ and with `c = 200` 0.0049 ‖r₀‖, below it, and the cycle ends on its true residual
+# and restarts, and the second cycle, whose `r₀` is that residual, keeps 0.6–0.7 ‖r₀‖ and stops.
+# On a reduced basis every cycle ends on one product, so the cycles are the products less the
+# iterations.
+@testset "A singular step of a reduced basis stops where its residual is a large part of r₀ and restarts where it is a small one, c = $c, mgs = $mgs" for (c, cycles) in ((
+        10, 1), (60, 2), (200, 2)),
+    mgs in (false, true)
+
+    T = Float64
+    TB = Float16
+    n = 60
+    Q = Matrix(qr(randn(Xoshiro(7), n, n)).Q)
+    e(k) = Q * [i in (20(k - 1) + 1):(20k) ? 1 / sqrt(20) : 0.0 for i in 1:n]
+    u₁, u₂, u₃ = e(1), e(2), e(3)
+    s = u₁ .+ u₂
+    products = Ref(0)
+    op = (Jv, v) -> (products[] += 1; Jv .= u₂ .* sum(s .* v) .+ u₃ .* sum(u₃ .* v); Jv)
+    b = u₁ .+ c .* u₃
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-10, Int32(20), Int32(20); mgs)
+    @test products[] - info.iterations == cycles
+    @test info.iterations < 20
+    @test info.breakdown
+    @test !info.converged
+    Jd = op(similar(d), d)
+    @test isapprox(info.resnorm, rnorm(b .- Jd); rtol = 8 * eps(T))
+    @test info.resnorm >= 1 - 8 * eps(T)
+end
+
+# `J = diag(1, 1 + eps(TB), 2, 3)` and `b = 1`: the space is not invariant before step 4, but
+# the cluster leaves a remainder at step 3 of about 0.8 eps(TB) ‖w₀‖, below the round-off of the
+# basis and above the breakdown test's `2e-3 eps(TB) ‖w₀‖`; the one cycle of `maxiter = 4` runs
+# through it to step 4
+@testset "A reduced-basis remainder below the round-off of the basis on a cluster is no breakdown, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    jd = T[1, 1 + eps(TB), 2, 3]
+    b = ones(T, 4)
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 4, basis_eltype = TB), zeros(T, 4))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(4), Int32(4); mgs)
+    @test ws.arnoldi == 4
+    @test info.iterations == 4
+    @test !info.breakdown
+end
+
+# `J = diag(1, 2)` and `b = (1, ε)` for `ε = eps(TB) / 128`, which the basis type holds: the
+# stored `v₁` is `b`, of unit norm to `ε²`, and the remainder of step 1 is `ε ‖w₀‖` to first
+# order, a ratio `hj / (eps(TB) ‖w₀‖)` of 1/128, between the breakdown test's 2e-3 and the
+# smallest ratio of a non-invariant step of `scripts/gmres_breakdown_ratio.jl`, 0.0168; the one
+# cycle of `maxiter = 2` runs through it to step 2
+@testset "A reduced-basis remainder of eps(TB) / 128 is no breakdown, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    jd = T[1, 2]
+    b = T[1, eps(TB) / 128]
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 2, basis_eltype = TB), zeros(T, 2))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(2), Int32(2); mgs)
+    @test ws.arnoldi == 2
+    @test info.iterations == 2
+end
+
+# The breakdown test of a reduced basis acts only where the cycle would go on. On `J = 14 I` the
+# last cycle meets the tolerance on its Givens estimate at the invariant step, so it reports no
+# breakdown. On the singular operator `J = u₂ (u₁ + u₂)ᵀ` above, the second step is the last of
+# the budget with `maxiter = 2`, and the last of each cycle with `restart = 2`: the cycle ends
+# there without the test, so neither solve reports a breakdown.
+@testset "The breakdown test of a reduced basis acts only where the cycle would go on, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    tol = T === Float64 ? 1e-10 : 1.0f-5
+    jd, b = invariant_krylov_system(T, :scaled_identity)
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, length(b)))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
+    @test info.converged
+    @test !info.breakdown
+
+    u₁ = [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v); Jv)
+    for (maxiter, restart) in ((2, 20), (20, 2))
+        ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, 50))
+        _, info = gmres_solve!(ws, op, nothing, u₁, rnorm(u₁), tol, Int32(maxiter),
+            Int32(restart); mgs)
+        @test !info.converged
+        @test !info.breakdown
+        @test info.iterations == maxiter
+    end
 end
 
 @testset "reuse takes a GMRES with a preconditioner only" begin
