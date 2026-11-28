@@ -223,7 +223,9 @@ end
 
     # one factor of `reuse = k` stores at most `k - 1` pairs, so an array iterate allocates
     # `min(m, k - 1)` columns, while a value iterate keeps all `m` pairs as `NTuple`s; the value
-    # iterate runs with `m = 6`, because `NTuple`s of 1000 entries take long to compile
+    # iterate runs with `m = 6`, because `NTuple`s of 1000 entries take long to compile; on an
+    # array backend both memories allocate `reuse - 1` columns, so there the `size` assertion
+    # checks the storage and the iterate comparison runs one code path twice
     R = real(T)
     A, B₀, b, x₀ = linear_system(T)
     big_m = V <: SVector ? 6 : 1000
