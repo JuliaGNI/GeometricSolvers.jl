@@ -162,6 +162,7 @@ end
     )
         _, st = solve(prob, x₀, svd_newton(), pp)
         @test st.code === STALLED
+        @test !st.contracted
         @test st.rank === Int32(1)
         @test st.gradratio <= R(1e-6)
         @test near(st.nullnorm, st.fnorm, R; k = 8)

@@ -303,6 +303,13 @@ continuation_steps(solver::NonlinearSolver) = continuation_steps(solver.state)
     return ContinuationState(member, buffer(x), buffer(x), buffer(x), ws, record)
 end
 
+# The member runs the last corrector as a solve of its own, which reads its own rates;
+# `refactorize` drops its factor.
+@inline function drop_factor!!(state::ContinuationState, m::Continuation)
+    return ContinuationState(drop_factor!!(state.member, m.method), state.x₀, state.xw,
+        state.fbuf, state.ws, state.record)
+end
+
 # The iterate of the first `n` entries of `z`, in the storage of `x`: written into the array `xw`,
 # or a new value.
 @inline path_iterate(xw::AbstractArray, x, z, n) = copyto!(xw, 1, z, 1, n)
@@ -461,7 +468,8 @@ function solve!!(
                 st.code, st.f_calls, _sat_add32(st.iterations, Int32(min(steps, typemax(Int32)))),
                 st.fnorm, st.stepnorm,
                 _sat_add32(st.step_failures, Int32(min(rejected, typemax(Int32)))),
-                st.promoted, st.stationary, st.jvp_calls, st.rank, st.nullnorm, st.gradratio)
+                st.promoted, st.stationary, st.jvp_calls, st.rank, st.nullnorm, st.gradratio,
+                st.rate, st.contracted, st.reused)
             state₊ = ContinuationState(member, state.x₀, xw, state.fbuf, ws, rec)
             return x, status, state₊
         end

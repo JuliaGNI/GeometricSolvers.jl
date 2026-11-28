@@ -24,6 +24,7 @@ its globalization. Its keywords are:
 | `reuse` | `nothing` | the factor-reuse period `k`, or the refresh period of a preconditioned `GMRES` |
 | `forcing`, `preconditioner` | `nothing` | the forcing term and the right preconditioner of a `GMRES`, `BiCGStab` or `DQGMRES`; the forcing term of a `MINRESQLP` |
 | `best` | `false` | return the iterate of the smallest ``\|F\|_2`` of a solve that ends without `SUCCESS` |
+| `keep_factor` | `false` | keep the factor of `reuse = k` across a sequence of solves on one solver |
 
 ```jldoctest nonlinear
 julia> using GeometricSolvers
@@ -43,8 +44,9 @@ true
 ### Factor reuse
 
 With `reuse = k`, a `Newton` step factorises the Jacobian and reuses the factor for up to `k`
-consecutive steps. It refactorises early after a `STALLED` step and after a failed refinement on a
-reused factor. [`QuasiNewton`](@ref)`(k)` is `Newton(; reuse = k)`. A reused factor saves the
+consecutive steps. It refactorises early after a `STALLED` step, after a step along a reused factor
+of rate ``θ_k = \|Δ_k\| / \|Δ_{k-1}\| ≥ 1``, and after a failed refinement on a reused factor.
+[`QuasiNewton`](@ref)`(k)` is `Newton(; reuse = k)`. A reused factor saves the
 evaluation and the factorisation of the Jacobian at the price of a linear rate, so it pays where
 those dominate the cost of a step.
 
@@ -57,6 +59,16 @@ true
 
 [`DogLeg`](@ref) and [`LevenbergMarquardt`](@ref) take no reuse, because their model needs the
 Jacobian at the current iterate.
+
+With `keep_factor = true` as well, the factor and its age survive from one solve of a
+[`NonlinearSolver`](@ref) to the next, as in the steps of an integrator: a solve that ends with
+`SUCCESS` in one step, or with `SUCCESS` after more steps with a last rate ``θ ≤ 10^{-3}``, and
+that did not promote its factorisation to the working precision, hands its factor on. Every other
+solve leaves the next one to factorise at its first step: a solve that does not end with
+`SUCCESS`, a promoted solve, and a solve that ends with `SUCCESS` at its start, with no step. A
+caller that changes the Jacobian
+between two solves, such as with a new step size, passes
+`solve!(solver, x, p; refactorize = true)`.
 
 ### Regularisation
 

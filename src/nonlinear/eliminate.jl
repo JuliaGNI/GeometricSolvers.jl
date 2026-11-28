@@ -302,7 +302,8 @@ end
     R = typeof(f_abs)
     return Options{R}(
         f_abs, f_rel, x_abs, x_rel,
-        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t, opt.norm)
+        opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t, opt.norm,
+        Adapt.adapt(to, opt.kappa), opt.roundoff, opt.rate_test)
 end
 
 function Adapt.adapt_structure(
@@ -2253,6 +2254,40 @@ struct DenseElimState{OST, WS <: Union{BlockElimPrep, VarProPrep}, OP}
     oprob::OP
 end
 
+# The factor that `solve!(…; refactorize = true)` drops is that of the outer solve.
+@inline function drop_factor!!(st::StaticElimState, m)
+    return StaticElimState(
+        drop_factor!!(st.outer_state, m), st.inner_state, st.y_warm, st.z_curr,
+        st.fnorm_z_prev, st.Y, st.Z, st.E_y, st.E_z, st.init_failures)
+end
+@inline function drop_factor!!(st::DenseElimState, m)
+    return DenseElimState(drop_factor!!(st.outer_state, m), st.ws, st.oprob)
+end
+
+# The rate test reads the factor of the outer solve, whose columns are the outer unknowns: the
+# iterate of the solver loop holds the eliminated unknowns too, so the rank is compared with the
+# length of the outer iterate.
+@inline rate_test_rank(st::StaticElimState, x) = rate_test_rank(st.outer_state, st.z_curr)
+@inline rate_test_rank(st::DenseElimState, x) = rate_test_rank(st.outer_state, st.ws.z_curr)
+
+# The steps of the solver loop are those of the outer solve, and so is its factor. The outer
+# problem of a `VariableProjection` is a least-squares problem, whose rate test reads no step
+# along a reused factor.
+@inline reused_step(st::Union{
+    StaticElimState, DenseElimState}) = reused_step(st.outer_state)
+@inline rate_test_step(::VariableProjection, state) = !reused_step(state)
+
+# The rate of a step, which refreshes a reused factor at `θ ≥ 1`, goes to the outer solve, whose
+# factor the steps reuse.
+@inline function observe_rate!!(st::StaticElimState, m, rate)
+    return StaticElimState(
+        observe_rate!!(st.outer_state, m, rate), st.inner_state, st.y_warm, st.z_curr,
+        st.fnorm_z_prev, st.Y, st.Z, st.E_y, st.E_z, st.init_failures)
+end
+@inline function observe_rate!!(st::DenseElimState, m, rate)
+    return DenseElimState(observe_rate!!(st.outer_state, m, rate), st.ws, st.oprob)
+end
+
 @inline residual_buffer(::StaticElimState) = nothing
 @inline residual_buffer(st::DenseElimState) = _ElimResBuffer(st.ws)
 
@@ -2521,7 +2556,8 @@ end
                  ((pre_fail | jac_fail | step_fail) ? Int32(1) : Int32(0))
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     st₊ = StaticElimState(
         outer_state₊, st.inner_state, y₊, z₊, fnorm₊,
         st.Y, st.Z, st.E_y, st.E_z, Int32(0))
@@ -2551,7 +2587,8 @@ end
     extra_fail = st.init_failures + ((jac_fail | step_fail) ? Int32(1) : Int32(0))
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     st₊ = StaticElimState(
         outer_state₊, st.inner_state, y₊, z₊, fnorm_prev_vp,
         st.Y, st.Z, st.E_y, st.E_z, Int32(0))
@@ -2588,7 +2625,8 @@ end
     ws.init_failures = Int32(0)
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
 end
 
@@ -2616,7 +2654,8 @@ end
     ws.init_failures = Int32(0)
     info = StepInfo{R}(
         info_outer.code, fnorm₊, info_outer.stepnorm,
-        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited)
+        info_outer.failures + extra_fail, info_outer.promoted, info_outer.limited,
+        info_outer.shortened)
     return x, Fx, DenseElimState(outer_state₊, ws, st.oprob), info
 end
 
@@ -2630,10 +2669,11 @@ end
         st.outer_state, m_r, oprob, st.z_curr, Fx, status)
     if st.init_failures > Int32(0)
         status_out = SolverStatus{R}(
-            status_out.code, status_out.iterations, status_out.fnorm,
+            status_out.code, Int16(0), status_out.iterations, status_out.fnorm,
             status_out.stepnorm, status_out.step_failures + st.init_failures,
-            status_out.promoted, status_out.stationary,
-            status_out.rank, status_out.nullnorm, status_out.gradratio)
+            status_out.promoted, status_out.stationary, Int16(0),
+            status_out.rank, status_out.nullnorm, status_out.gradratio, status_out.rate,
+            status_out.contracted, status_out.reused)
     end
     x_end = all(isfinite, st.y_warm) ?
             _scatter_yz_r1(st.y_warm, st.z_curr, st.Y, st.Z, Val(N)) : x
@@ -2653,10 +2693,11 @@ end
         st.outer_state, m_r, st.oprob, ws.z_curr, Fx, status)
     if ws.init_failures > Int32(0)
         status_out = SolverStatus{R}(
-            status_out.code, status_out.iterations, status_out.fnorm,
+            status_out.code, Int16(0), status_out.iterations, status_out.fnorm,
             status_out.stepnorm, status_out.step_failures + ws.init_failures,
-            status_out.promoted, status_out.stationary,
-            status_out.rank, status_out.nullnorm, status_out.gradratio)
+            status_out.promoted, status_out.stationary, Int16(0),
+            status_out.rank, status_out.nullnorm, status_out.gradratio, status_out.rate,
+            status_out.contracted, status_out.reused)
     end
     if all(isfinite, ws.y_warm)
         _scatter_yz!(x, ws.y_warm, ws.z_curr, ws.Y_h, ws.Z_h, ws.Y_d, ws.Z_d)
@@ -3112,7 +3153,10 @@ R_{\\text{in}}\\left(\\tfrac{1}{2}\\min(\\texttt{inner\\_atol\\_cap},
 so that the batch residual satisfies ``\\|g_1\\| < \\|g_2(\\text{prev})\\|^2`` wherever
 ``\\|g_2(\\text{prev})\\|^2 > 4\\,\\varepsilon(R_{\\text{in}})\\sqrt{N_p}``. Below that bound the
 floor binds: no arithmetic in `R_in` reaches the quadratic, and the batch residual stops at the
-floor of the batch's own precision instead of following the schedule. Each evaluation
+floor of the batch's own precision instead of following the schedule. The inner solves take the
+step test, the iteration bounds, the norm and the round-off stop of `inner_options`, and no rate
+test (`rate_test = false` in their [`Options`](@ref)): the rate test ends a solve at a residual
+above the inner tolerance, so a batch converges only by the residual test. Each evaluation
 records the pair `(‖g₁‖, ‖g₂(prev)‖)` in the fields `g₁_history` and `g₂_prev_history`, with `Inf`
 before the first outer residual exists, the index set it eliminated in `eliminated_index_log`, and
 accumulates its inner counts in `statuses`. A batch whose systems did not all converge, with a
@@ -3337,14 +3381,17 @@ end
 end
 
 # The options of the batch's inner solve at the tolerance `tol`: the template of `inner_options` for
-# the step test, the iteration bounds and the norm, with the residual test `tol` absolutely and not
-# at all relatively, so that a second evaluation at the same tolerance stops at `0` iterations,
-# and the default `g_tol`.
+# the step test, the iteration bounds, the norm and the round-off stop, with the residual test
+# `tol` absolutely and not at all relatively, so that a second evaluation at the same tolerance
+# stops at `0` iterations, the default `g_tol`, and no rate test. The schedule bounds the batch
+# residual, and the rate test ends a solve at a residual above `tol`, which the deposit then
+# carries as a converged one.
 @inline function _batch_inner_options(prob::BatchEliminated, tol)
     RIn, _ = _batch_real_types(prob)
     t = prob.inner_options
     return Options{RIn}(tol, zero(RIn), t.x_abstol, t.x_reltol,
-        t.min_iterations, t.max_iterations, t.max_stalls, sqrt(eps(RIn)), t.norm)
+        t.min_iterations, t.max_iterations, t.max_stalls, sqrt(eps(RIn)), t.norm,
+        t.kappa, t.roundoff, false)
 end
 
 # One inner batch solve from the warm start `prob.Y` at the tolerance `tol`, with the shared
