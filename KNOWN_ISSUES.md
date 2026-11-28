@@ -1412,8 +1412,8 @@
 
 ### K160 · A run of full-length secant steps along the pairs of a `BroydenUpdate` can pass the rate test away from a root, because the larger of the last two rates guards one irregular step only
 
-- **location:** `src/nonlinear/solver.jl:348` (the rate test of `solve!!`), `src/base/options.jl:281`
-  (`rate_converged`)
+- **location:** `src/nonlinear/solver.jl:348` (the rate test of `solve!!`),
+  `src/base/options.jl:281` (`rate_converged`)
 - **evidence:** `scripts/broyden_rate_test.jl` solves `F(x) = g(x − X)`, with `g(t) = 1 − t + θ t²`
   up to a kink at each method's own second iterate and a line of slope `−σ` beyond it. In
   `Float32`, `Newton(; reuse = 3, update = BroydenUpdate(2))` with `Static()` or `Backtracking()`
