@@ -243,6 +243,21 @@ end
     op = RecyclingSpike.CountingOperator(Jbuf, nothing, zeros(length(x0)), 0)
     y, capped = RecyclingSpike.gcrodr_solve!(s, op, zeros(length(x0)), 0.0)
     @test op.calls == 0 && iszero(y) && !capped
+    # a zero Jacobian takes `τ = 1`, and so takes no product at a zero right-hand side either
+    op0 = RecyclingSpike.CountingOperator(zeros(2, 2), nothing, zeros(2), 0)
+    @test RecyclingSpike.operator_scale(op0) == 1
+    y, capped = RecyclingSpike.gcrodr_solve!(
+        RecyclingSpike.GCRODR(3, 1; recycle = true), op0, zeros(2), 0.0)
+    @test op0.calls == 0 && iszero(y) && !capped
+    # an Arnoldi product of zero at the first step, `J = diag(1, 0)` and `b = e₂`, leaves `y` and
+    # `r` as they are and forms no recycled space, also where `k = 1` meets the one step of the
+    # cycle: each cycle takes one product, up to the cap
+    for k in (1, 2)
+        opz = RecyclingSpike.CountingOperator([1.0 0.0; 0.0 0.0], nothing, zeros(2), 0)
+        sz = RecyclingSpike.GCRODR(3, k; recycle = true, maxiter = 4)
+        y, capped = RecyclingSpike.gcrodr_solve!(sz, opz, [0.0, 1.0], 1e-10)
+        @test iszero(y) && capped && opz.calls == 4 && sz.U === nothing
+    end
 
     # `F(x) = x − 1 + 10⁻²⁰ e₁` stays at `10⁻²⁰` at `x = 1`, where `x₁ − 10⁻²⁰` rounds to `1`:
     # the solve stops on the step test after one step, not after 100, and fails the residual test
@@ -384,9 +399,8 @@ end
     # on each problem, the package's `Newton(; reuse = 1000, keep_factor)` with a preconditioned
     # `GMRES` and the Newton loop of GCRO-DR take the same steps, refreshes and kept starts, and
     # those are the ones that the rule gives
-    function both(prob, x0, ps; keep_factor = true)
-        kw = (; m = 2, k = 1, η = 1e-2, preconditioned = true,
-            reuse = RecyclingSpike.RC_REUSE, keep_factor)
+    function both(prob, x0, ps; keep_factor = true, reuse = RecyclingSpike.RC_REUSE)
+        kw = (; m = 2, k = 1, η = 1e-2, preconditioned = true, reuse, keep_factor)
         a = RecyclingSpike.run_column(:gmres, prob, x0, ps; kw...)
         b = RecyclingSpike.run_column(:norec, prob, x0, ps; kw...)
         @test (a.converged, a.steps, a.refreshes, a.kept) ==
@@ -401,6 +415,12 @@ end
     osc = NonlinearProblem((r, x, p) -> (r .= x .- 1), (J, x, p) -> copyto!(J, 0.5I);
         jacobian_prototype = zeros(n, n))
     @test both(osc, zeros(n), [1]) == (false, 100, 50, 0)
+    # `reuse = nothing` refreshes at every step, as in `Newton`, which takes no
+    # `keep_factor = true` without `reuse`
+    @test both(osc, zeros(n), [1]; keep_factor = false, reuse = nothing) ==
+          (false, 100, 100, 0)
+    @test_throws r"^ArgumentError: keep_factor = true needs reuse = k, as in Newton$" RecyclingSpike.PreconditionerRule(
+        nothing; keep = true)
     # `F(x) = x − p c` with the exact Jacobian: each solve takes one step and keeps the
     # preconditioner, so only the first step of the sequence refreshes it
     c = [1.0, 2.0, 3.0, 4.0]
@@ -464,6 +484,19 @@ end
         @test τ(s) < 1 && ispow2(τ(s))
         @test τ(s) * n * maximum(abs, s .* A) <= floatmax(Float64) / 32
     end
+    # the solve runs on `τ b`, so that no iterate exceeds the solution: at `J = diag(2¹⁰²³, 1)`,
+    # where `τ = 2⁻⁷`, the solution `(0, 2¹⁰²⁰)` of `b = (0, 2¹⁰²⁰)` is `2⁷` times larger in the
+    # solve of `(τ J) y = b`, and overflows
+    let J = [2.0^1023 0.0; 0.0 1.0], b = [0.0, 2.0^1020]
+        opb = RecyclingSpike.CountingOperator(J, nothing, zeros(2), 0)
+        @test RecyclingSpike.operator_scale(opb) == 2.0^-7
+        y, capped = RecyclingSpike.gcrodr_solve!(
+            RecyclingSpike.GCRODR(3, 1; recycle = true), opb, b, 1e-8 * norm(b))
+        @test !capped && opb.calls == 1
+        @test isapprox(y, b; rtol = 8 * eps(Float64))
+    end
+    # `A` does not depend on the seed or the scale
+    Anorm = opnorm(A)
     @testset "right-hand sides of the seed $seed" for seed in 1:8
         B = randn(Xoshiro(seed), n, 3)
         B ./= norm.(eachcol(B))'
@@ -474,7 +507,7 @@ end
                 y, capped = RecyclingSpike.gcrodr_solve!(g, op, s .* b, tol * s)
                 @test !capped
                 # the residual of `A y = b` meets the tolerance, to the round-off of `A y`
-                @test norm(b - A * y) <= tol + n * eps(Float64) * opnorm(A) * norm(y)
+                @test norm(b - A * y) <= tol + n * eps(Float64) * Anorm * norm(y)
                 return y
             end
             return ys, g
@@ -502,17 +535,24 @@ end
         end
     end
     # a residual whose norm is not finite ends the solve with an error: a right-hand side of the
-    # norm 2.5 floatmax at its start; a preconditioner whose inverse overflows in the Arnoldi
-    # process; and the same preconditioner on the `A·U` products of a solve that starts from a
-    # recycled space
+    # norm 2.5 floatmax at its start, on `A`, where `τ = 1`; a preconditioner whose inverse
+    # overflows in the Arnoldi process; and the same preconditioner on the `A·U` products of a
+    # solve that starts from a recycled space
     s = floatmax(Float64) / 8
     braw = randn(Xoshiro(5), n)
     braw .*= 20 / norm(braw)
-    op = RecyclingSpike.CountingOperator(s .* A, nothing, zeros(n), 0)
+    op = RecyclingSpike.CountingOperator(copy(A), nothing, zeros(n), 0)
     @test_throws r"^GCRO-DR: the residual norm is not finite$" RecyclingSpike.gcrodr_solve!(
         RecyclingSpike.GCRODR(30, 10; recycle = true), op, s .* braw, tol * s)
     # it fails at its start, before any product
     @test op.calls == 0
+    # on `s A`, where `τ < 1`, the same right-hand side has the finite norm `2.5 τ floatmax` in
+    # the solve of `(τ s A) y = τ s braw`, which gives the solution of `A y = braw`
+    op = RecyclingSpike.CountingOperator(s .* A, nothing, zeros(n), 0)
+    y, capped = RecyclingSpike.gcrodr_solve!(
+        RecyclingSpike.GCRODR(30, 10; recycle = true), op, s .* braw, tol * s)
+    @test !capped
+    @test norm(braw - A * y) <= tol + n * eps(Float64) * Anorm * norm(y)
     tiny = (J, x, p) -> (fill!(J, 0); J[diagind(J)] .= 1e-320; J)
     Ptiny = RecyclingSpike.LUPreconditioner(tiny, zeros(n, n), zeros(n), 1)
     optiny = RecyclingSpike.CountingOperator(copy(A), Ptiny, zeros(n), 0)

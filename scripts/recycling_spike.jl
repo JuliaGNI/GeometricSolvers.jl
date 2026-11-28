@@ -201,8 +201,10 @@ end
 
 # The least-squares solution `z` of `G z ≈ rhs` and its residual `rhs − G z`. The residual is
 # formed in the scaled system too: a product `G z` overflows where `z` holds an entry above 1.
+# A zero `G`, from an Arnoldi product of zero at the first step, has the solution `z = 0`.
 function scaled_lsq(G, rhs)
     σ = maximum(abs, G)
+    iszero(σ) && return zeros(size(G, 2)), copy(rhs)
     Ĝ = G ./ σ
     r̂ = rhs ./ σ
     z = Ĝ \ r̂
@@ -232,8 +234,9 @@ end
 # where a recycled space `(C, Û, d)` is given, with `A Û Diagonal(1 ./ d) = C`, until the
 # least-squares residual reaches `tol`. It updates `y` and `r`, and returns the number of steps
 # and the new recycled space `(C, Û, d)` from the harmonic Ritz vectors of the cycle, or `nothing`
-# where the cycle spans fewer than `k` vectors. Dividing the Hessenberg matrix of the pencil by its
-# largest entry leaves the eigenvectors and the order of the eigenvalues by modulus as they are.
+# where the cycle spans fewer than `k` vectors or its Hessenberg matrix is zero. Dividing the
+# Hessenberg matrix of the pencil by its largest entry leaves the eigenvectors and the order of the
+# eigenvalues by modulus as they are.
 function gcrodr_cycle!(s::GCRODR, op, y, r, β, rec, nsteps, tol)
     n = length(r)
     kc = rec === nothing ? 0 : size(rec[1], 2)
@@ -269,7 +272,7 @@ function gcrodr_cycle!(s::GCRODR, op, y, r, β, rec, nsteps, tol)
     V̂ = kc > 0 ? hcat(Û, W[:, (kc + 1):(kc + j)]) : W[:, 1:j]
     y .+= V̂ * z
     r .= Wj * e
-    J < s.k && return j, nothing
+    (J < s.k || iszero(Gj)) && return j, nothing
     Ĝ = Gj ./ maximum(abs, Gj)
     P = harmonic_basis(Ĝ' * Ĝ, Ĝ' * (Wj' * V̂), s.k)
     Q, R, σ = scaled_qr(Gj * P)
@@ -291,10 +294,12 @@ end
 
 # The power of two `τ ≤ 1` that keeps `τ J v` and its norm below `floatmax / 32` for a unit `v`:
 # `‖J v‖ ≤ n max|Jᵢⱼ|`. It is 1 where `n max|Jᵢⱼ|` lies below `floatmax / 256`. The bound is that of
-# `J` alone; with a preconditioner, an overflow in `M⁻¹ v` ends the solve in `residual_norm`.
+# `J` alone; with a preconditioner, an overflow in `M⁻¹ v` ends the solve in `residual_norm`. A
+# zero `J` takes `τ = 1`.
 function operator_scale(op::CountingOperator)
-    e = exponent(maximum(abs, op.J)) + ceil(Int, log2(size(op.J, 2))) + 6 -
-        exponent(floatmax(Float64))
+    a = maximum(abs, op.J)
+    iszero(a) && return 1.0
+    e = exponent(a) + ceil(Int, log2(size(op.J, 2))) + 6 - exponent(floatmax(Float64))
     return exp2(-max(0, e))
 end
 
@@ -309,13 +314,13 @@ end
 # The GCRO-DR solve of `A y = b` from `y = 0` to `‖b − A y‖ ≤ tol`, with `A` the operator `op`.
 # It returns `y` and whether the solve reached its cap of `maxiter` Arnoldi steps without `tol`.
 # The Arnoldi process and the `A·U` products run on `τ A` with the `τ` of `operator_scale`, so that
-# no product with a unit vector overflows; the solve finds `y / τ`, and the residual
-# `b − (τ A)(y / τ)` is that of `A y = b`. A power of two scales exactly, so the solve at `τ = 1`
-# is that on `A`, and the unit columns of `U` do not depend on `τ`.
+# no product with a unit vector overflows; the solve is that of `(τ A) y = τ b` to `τ tol`, whose
+# solution is `y` and whose residual is `τ` times that of `A y = b`, so that no iterate is larger
+# than `y`. A power of two scales exactly, so the solve at `τ = 1` is that on `A`, and the unit
+# columns of `U` do not depend on `τ`.
 function gcrodr_solve!(s::GCRODR, op::CountingOperator, b, tol)
     τ = operator_scale(op)
-    y, capped = gcrodr_solve!(s, ScaledOperator(op, τ, zeros(length(b))), b, tol)
-    return τ .* y, capped
+    return gcrodr_solve!(s, ScaledOperator(op, τ, zeros(length(b))), τ .* b, τ * tol)
 end
 
 function gcrodr_solve!(s::GCRODR, op::ScaledOperator, b, tol)
@@ -371,6 +376,13 @@ end
 
 function PreconditionerRule(reuse::Integer; keep::Bool)
     PreconditionerRule(reuse, keep, 0, false, false)
+end
+
+# `reuse = nothing` refreshes at every step, as the period 1 does; as in `Newton`, it keeps no
+# preconditioner across solves.
+function PreconditionerRule(::Nothing; keep::Bool)
+    keep && throw(ArgumentError("keep_factor = true needs reuse = k, as in Newton"))
+    return PreconditionerRule(1; keep)
 end
 
 function drop!(rule::PreconditionerRule)
