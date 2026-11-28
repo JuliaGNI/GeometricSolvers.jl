@@ -90,8 +90,7 @@ so that a compat-only bump can be told apart from an interface change.
   2.44e-4, and the smallest of a non-invariant step, 0.0168, measured by
   `scripts/gmres_breakdown_ratio.jl` on the reduced-basis systems of the tests and the
   Float32-basis column of the standard test set; the separation holds on those systems only. A
-  genuine remainder below the bound is taken as round-off and costs a restart: a Newton step with
-  a `Float16` basis on `Float64` meets one of ratio 3.74e-4 and still converges. At such a
+  genuine remainder below the bound is taken as round-off and costs a restart. At such a
   breakdown, a rotated diagonal entry below the same bound counts as zero, a `J` singular on the
   Krylov space, and the solve stops without convergence, only where the entry `g[j]` of the rotated
   right-hand side, the residual that the step cannot remove, exceeds `sqrt(eps(TB)) ‖r₀‖` with `r₀`

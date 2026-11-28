@@ -2228,10 +2228,14 @@ end
 # rather than dividing `g[j]` by it and restarting to `maxiter`. The residual is at least `‖b‖`,
 # the minimum over every `d` since `b ⟂ range(J)`; an earlier step of the frame leaves a
 # remainder with a direction error of order eps(TB), which the test does not see, so `d` holds a
-# component of order 1 / eps(TB) (K149), and the residual exceeds `‖b‖`.
-@testset "A breakdown on a singular operator in a rotated frame stops without convergence, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+# component of order 1 / eps(TB) (K149), and the residual exceeds `‖b‖`. The two breakdown
+# tests read the norm `‖w₀‖` of the product, which does not scale with `b`: at the breakdown
+# step it is about 2e-4, and with `‖b‖ = 1e-10` a pivot test on `‖b‖` would take the Float16
+# pivot as nonzero.
+@testset "A breakdown on a singular operator in a rotated frame stops without convergence, ‖b‖ = $σ, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
     TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
-    mgs in (false, true)
+    mgs in (false, true),
+    σ in (1, 1e-10)
 
     n = 50
     Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
@@ -2239,7 +2243,7 @@ end
     u₂ = Q * [zeros(T, 25); fill(T(0.2), 25)]
     s = u₁ .+ u₂
     op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v); Jv)
-    b = copy(u₁)
+    b = T(σ) .* u₁
     tol = T === Float64 ? 1e-10 : 1.0f-5
     ws = init_gmres_workspace(GMRES(; maxiter = 20, basis_eltype = TB), zeros(T, n))
     d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(20), Int32(20); mgs)
@@ -2287,12 +2291,13 @@ end
 # `b = Q (u₁ + c u₃)` for orthonormal `u₁`, `u₂`, `u₃`: `range(J) = span(Q u₂, Q u₃)`, so every
 # residual is at least 1, and the rotated right-hand side keeps about 1 at the singular step of
 # the first cycle, where `‖r₀‖ = ‖b‖ ≈ c`. With `c = 10` that is 0.094 ‖r₀‖, above
-# `sqrt(eps(Float16)) ‖r₀‖ = 0.031 ‖r₀‖`, and the first cycle stops; with `c = 200` it is
-# 0.0049 ‖r₀‖, below it, and the cycle ends on its true residual and restarts, and the second
-# cycle, whose `r₀` is that residual, keeps 0.6 ‖r₀‖ and stops. On a reduced basis every cycle
-# ends on one product, so the cycles are the products less the iterations.
+# `sqrt(eps(Float16)) ‖r₀‖ = 0.031 ‖r₀‖`, and the first cycle stops; with `c = 60` it is
+# 0.016 ‖r₀‖ and with `c = 200` 0.0049 ‖r₀‖, below it, and the cycle ends on its true residual
+# and restarts, and the second cycle, whose `r₀` is that residual, keeps 0.6–0.7 ‖r₀‖ and stops.
+# On a reduced basis every cycle ends on one product, so the cycles are the products less the
+# iterations.
 @testset "A singular step of a reduced basis stops where its residual is a large part of r₀ and restarts where it is a small one, c = $c, mgs = $mgs" for (c, cycles) in ((
-        10, 1), (200, 2)),
+        10, 1), (60, 2), (200, 2)),
     mgs in (false, true)
 
     T = Float64
@@ -2332,6 +2337,24 @@ end
     @test ws.arnoldi == 4
     @test info.iterations == 4
     @test !info.breakdown
+end
+
+# `J = diag(1, 2)` and `b = (1, ε)` for `ε = eps(TB) / 128`, which the basis type holds: the
+# stored `v₁` is `b`, of unit norm to `ε²`, and the remainder of step 1 is `ε ‖w₀‖` to first
+# order, a ratio `hj / (eps(TB) ‖w₀‖)` of 1/128, between the breakdown test's 2e-3 and the
+# smallest ratio of a non-invariant step of `scripts/gmres_breakdown_ratio.jl`, 0.0168; the one
+# cycle of `maxiter = 2` runs through it to step 2
+@testset "A reduced-basis remainder of eps(TB) / 128 is no breakdown, mgs = $mgs, $TB on $T" for T in REAL_ELTYPES,
+    TB in filter(S -> sizeof(S) < sizeof(T), (Float16, REAL_ELTYPES...)),
+    mgs in (false, true)
+
+    jd = T[1, 2]
+    b = T[1, eps(TB) / 128]
+    op = (Jv, v) -> (Jv .= jd .* v; Jv)
+    ws = init_gmres_workspace(GMRES(; maxiter = 2, basis_eltype = TB), zeros(T, 2))
+    _, info = gmres_solve!(ws, op, nothing, b, rnorm(b), zero(T), Int32(2), Int32(2); mgs)
+    @test ws.arnoldi == 2
+    @test info.iterations == 2
 end
 
 # The breakdown test of a reduced basis acts only where the cycle would go on. On `J = 14 I` the

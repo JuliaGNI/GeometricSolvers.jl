@@ -691,7 +691,7 @@
 
 ### K103 · On the CGS2 path, the residual that `gmres_solve!` reports once the Krylov space is full lies far below the true residual, and a tolerance below the round-off then reports convergence
 
-- **location:** `src/linear/gmres.jl:636` (`linres` from the rotated right-hand side)
+- **location:** `src/linear/gmres.jl:638` (`linres` from the rotated right-hand side)
 - **evidence:** with `rng = Xoshiro(1)`, `A = T.(Diagonal(1:6) + 0.1 randn(rng, 6, 6))`, then
   `b = T.(randn(rng, 6))`, `GMRES(; maxiter = 6)` and `tol = 0`, the default path in `Float32`
   reports `resnorm = 8.7e-17`, while the true residual is `‖b − A d‖ = 5.8e-8 ‖b‖`; in `Float64`
@@ -1332,7 +1332,7 @@
 
 ### K148 · `gmres_solve!` reports convergence at 0 iterations for a right-hand side with an `Inf` entry
 
-- **location:** `src/linear/gmres.jl:559` (`atol = R(tol) * R(bnorm)`) and `:566`
+- **location:** `src/linear/gmres.jl:561` (`atol = R(tol) * R(bnorm)`) and `:568`
   (`converged = resnorm <= atol`)
 - **evidence:** with `J = 14 I`, `n = 10`, `b = ones(10)`, `b[3] = Inf`, `GMRES(; maxiter = 10)`
   and `tol = 1e-10`, `gmres_solve!(ws, op, nothing, b, rnorm(b), 1e-10, 10, 10)` returns
@@ -1345,7 +1345,7 @@
 
 ### K149 · On a reduced basis, a `J` singular on a Krylov space in a general frame stops at the breakdown with a direction of order `1 / eps(TB)`
 
-- **location:** `src/linear/gmres.jl:647` (`basis_breakdown(ws, hj, w₀)`) and `:666` (the weights
+- **location:** `src/linear/gmres.jl:649` (`basis_breakdown(ws, hj, w₀)`) and `:668` (the weights
   of the reduced least-squares problem)
 - **evidence:** with a random orthonormal `Q` (`qr(randn(Xoshiro(7), 50, 50)).Q`), the unit
   vectors `u₁ = Q [0.2·1₂₅; 0]` and `u₂ = Q [0; 0.2·1₂₅]`, `J = u₂ (u₁ + u₂)ᵀ`, `b = u₁`,
@@ -1433,7 +1433,7 @@
 
 ### K154 · On a reduced basis, a consistent operator that is singular at the precision of a `Float16` basis stops at the breakdown without convergence
 
-- **location:** `src/linear/gmres.jl:788` (`singular_breakdown`)
+- **location:** `src/linear/gmres.jl:789` (`singular_breakdown`)
 - **evidence:** with the frame of K149, `J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ`, nonsingular on
   `span(u₁, u₂)` with the solution `d = (u₁ − u₂) / δ`, `b = u₁`,
   `GMRES(; maxiter = 40, basis_eltype = Float16)` on `Float64`, `restart = 20`, `tol = 1e-8` and
@@ -1451,8 +1451,8 @@
   true residual stopped this row after 15 iterations at `1.76e-5 ‖b‖`: that figure is a record
   of the decision, not reproducible from the code.
 - **kind:** defect
-- **found:** 2026-11-27; the threshold `sqrt(eps(TB)) ‖r₀‖` of the singular decision is the form
-  that the plan decided after the restart-once rule did not converge this row
+- **found:** #149; the limit of the decided threshold `sqrt(eps(TB)) ‖r₀‖` of the singular
+  decision, chosen after the restart-once rule did not converge this row
 
 ### K165 · A `Multiplicative` or `Repeat` contraction whose sub-steps alternate in sign does not end on the rate test
 

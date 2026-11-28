@@ -279,10 +279,10 @@ doi:10.1137/0914028).
   residual at the start of the cycle: `J` is singular on the Krylov space, and the solve stops
   without convergence. Below that the cycle ends on its true residual and restarts. An operator
   that is nonsingular on the space but singular at the precision of `TB` reads as singular too,
-  and stops so: ``J = u_2 (u_1 + u_2)^T + \\delta u_1 u_1^T`` and ``b = u_1`` in a rotated
-  frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``, and with a
-  `Float16` basis on `Float32` or `Float64` and ``\\delta = 10^{-7}``. There the ratio of that
-  entry to the residual is 0.986–1.00, and on the singular systems of the tests it is at least
+  and stops so, for example ``J = u_2 (u_1 + u_2)^T + \\delta u_1 u_1^T`` and ``b = u_1`` in a
+  rotated frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``, and
+  with a `Float16` basis on `Float32` or `Float64` and ``\\delta = 10^{-7}``. There the ratio of
+  that entry to the residual is 0.986–1.00, and on the singular systems of the tests it is at least
   0.895. An invariant space whose stored columns also carry a direction error of order
   ``\\mathrm{eps}(TB)`` leaves a remainder of that order, which the test does not see: the cycle
   goes on with it as a new direction. Any other
@@ -542,15 +542,17 @@ go on, as the `basis_eltype` field of [`GMRES`](@ref) states; the rotation of th
 takes `H[j+1, j]` as zero. The residual of
 the reduced problem is then zero, unless `J` is singular on that space: the rotated diagonal entry
 is then zero too, the residual is that of the last entry of the right-hand side, and the solve
-reports no convergence. A restarted cycle forms its new residual with one more product,
-`b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. On a workspace with `Z`, the
-flexible path, the solution update is ``u \\mathrel{+}= Z_k y``, the direction is `u` itself and the
-restart residual is `b - J u`. On a basis stored in a type other than that of `b`, every cycle
-ends on that product, and the solve converges where the true residual meets the tolerance; a
-cycle that misses it restarts, unless it ended at `maxiter` or on a breakdown whose reduced
-residual misses the tolerance too, and the reported residual is the true one. The least-squares
-problem is solved from the Givens-rotated Hessenberg matrix, whose diagonal entry is `0` only
-where the reduced system is singular, and the corresponding weight is then `0`.
+reports no convergence. On a basis stored in another type, it stops so only where that entry
+exceeds ``\\sqrt{\\mathrm{eps}(TB)}`` times the residual at the start of the cycle; below that the
+cycle ends on its true residual and restarts. A restarted cycle forms its new residual with one
+more product, `b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. On a workspace with
+`Z`, the flexible path, the solution update is ``u \\mathrel{+}= Z_k y``, the direction is `u`
+itself and the restart residual is `b - J u`. On a basis stored in a type other than that of `b`,
+every cycle ends on that product, and the solve converges where the true residual meets the
+tolerance; a cycle that misses it restarts, unless it ended at `maxiter` or on a breakdown whose
+reduced residual misses the tolerance too, and the reported residual is the true one. The
+least-squares problem is solved from the Givens-rotated Hessenberg matrix, whose diagonal entry is
+`0` only where the reduced system is singular, and the corresponding weight is then `0`.
 """
 function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxiter,
         restart; mgs::Bool = false) where {T, R}
@@ -766,9 +768,8 @@ end
 # 2.44e-4, and the smallest of a non-invariant step, 0.0168, at the steps where the test acts on
 # the reduced-basis systems of the tests and of the standard test set
 # (`scripts/gmres_breakdown_ratio.jl`); the separation holds on those measured systems, and a
-# genuine remainder below the bound costs a restart, as on a Newton step with a Float16 basis on
-# Float64 whose ratio is 3.74e-4 and which still converges. The same bound decides whether the
-# rotated diagonal entry of a breakdown step is zero.
+# genuine remainder below the bound costs a restart. The same bound decides whether the rotated
+# diagonal entry of a breakdown step is zero.
 @inline function basis_breakdown(ws::GMRESWorkspace{T, R, V}, hj, w₀) where {T, R, V}
     return hj < R(2e-3) * R(eps(real(eltype(V)))) * w₀
 end
