@@ -712,6 +712,10 @@ end
 # least-squares inner problem keeps its guard on steps along a reused factor.
 @inline rate_test_step(ip::_InnerReparametrized, state) = rate_test_step(ip.reparam.prob, state)
 
+# The chart solve of a least-squares inner problem takes least-squares steps, so a `Newton` with a
+# `BroydenUpdate` refuses it as it refuses the inner problem.
+@inline least_squares_steps(ip::_InnerReparametrized) = least_squares_steps(ip.reparam.prob)
+
 @inline function prepare_ad(
         ::AutoForwardDiff, iprob::_InnerReparametrized, r::AbstractArray, y::AbstractArray, p)
     return iprob.ws

@@ -275,6 +275,7 @@ bcells = [split(l, ",") for l in blines[2:end]]
 check(length(bcells) == N_BROYDEN && all(c -> length(c) == 17, bcells),
     "broyden_update.csv: $(length(bcells)) cells, not $N_BROYDEN of 17 fields")
 bcells = filter(c -> length(c) == 17, bcells)
+correctness_rows = Set(join(c[1:4], ",") for c in cells)       # set, problem, start, eltype
 broyden_count = Dict{Tuple{String, String}, Vector{Int}}()     # column, eltype => successes, cells
 broyden_jac = Dict{Tuple{String, String}, Float64}()            # column, eltype => Σ dual / chunks
 for c in bcells
@@ -283,7 +284,7 @@ for c in bcells
     where = "broyden_update.csv: cell $(join(c[1:5], ","))"
     check(pkg == "GeometricSolvers" && status == "ran" && column in BROYDEN_COLUMNS,
         "$where: package $pkg, status $status, column $column")
-    check(join(c[1:5], ",") in keys(cellsof) || !(column in columns),
+    check(join(c[1:4], ",") in correctness_rows,
         "$where: a row that correctness.csv does not hold")
     check(iscount(fe) && iscount(de) && iscount(chunks) && parse(Int, chunks) ≥ 1,
         "$where: f_evals '$fe', dual_evals '$de', chunks '$chunks'")
@@ -291,13 +292,11 @@ for c in bcells
     ok = code != "ERROR" && code in OK_CODES[pkg] &&
          all(isfinite, number.(split(x, ";"), T)) && 0 ≤ number(fn, T) ≤ sqrt(eps(T))
     check(succ == string(ok), "$where: success $succ, recomputed $ok")
-    n = get!(broyden_count, (String(column), String(el)), [0, 0])
+    key = (String(column), String(el))
+    n = get!(broyden_count, key, [0, 0])
     n[1] += ok
     n[2] += 1
-    broyden_jac[(String(column), String(el))] = get(
-        broyden_jac, (
-            String(column), String(el)), 0.0) +
-                                                parse(Int, de) / parse(Int, chunks)
+    broyden_jac[key] = get(broyden_jac, key, 0.0) + parse(Int, de) / parse(Int, chunks)
 end
 check(length(Set(join(c[1:5], ",") for c in bcells)) == length(bcells),
     "broyden_update.csv: a cell twice")

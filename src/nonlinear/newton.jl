@@ -24,7 +24,8 @@ and compile time and adds no pair. `m < 1` raises an `ArgumentError`.
 The rate test of [`Options`](@ref) reads a full-length step along stored pairs as it reads any
 other full-length step. A run of up to `k - 1` such secant steps can contract onto a point that
 is no root, and the larger of the last two rates, which keeps one small rate from ending a solve,
-does not guard such a run.
+does not guard such a run. `Options(T; rate_test = false)` turns the rate test off, and the
+residual and the step test then end the solve.
 """
 struct BroydenUpdate{M}
     # `adapt` passes the update through unchanged. The message is constant, as in every check of a
@@ -214,10 +215,8 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
             (reuse !== nothing &&
              Int32(2) <= reuse && reuse - Int32(1) <= update_memory(update)) ||
                 throw(ArgumentError("Newton with update = BroydenUpdate(m) needs 2 ≤ reuse ≤ m + 1: a factor serves at most reuse steps and collects at most reuse - 1 pairs, which the memory of m pairs holds"))
-            refinement isa Refinement &&
-                throw(ArgumentError("Newton with a BroydenUpdate takes no Refinement: a refinement corrects the solve of the factor, and the update steps along another inverse"))
-            refinement isa GMRESRefinement &&
-                throw(ArgumentError("Newton with a BroydenUpdate takes no GMRESRefinement: a refinement corrects the solve of the factor, and the update steps along another inverse"))
+            is_refining(refinement) &&
+                throw(ArgumentError("Newton with a BroydenUpdate takes no refinement: a refinement corrects the solve of the factor, and the update steps along another inverse"))
             (matrix_free(linsolve) || linsolve isa KroneckerFactorization) &&
                 throw(ArgumentError("Newton with a BroydenUpdate needs a factorising linear method other than KroneckerFactorization: the update acts on the solve of a dense or sparse factor"))
         end
@@ -1196,6 +1195,11 @@ end
     return with_best(state, init_best(m.best, x, state.Fx))
 end
 
+# Whether the steps of a solve of `prob` are least-squares steps: a `LeastSquaresProblem`, and a
+# wrapper whose solve steps on one, which `reparametrized.jl` forwards. A `BroydenUpdate` refuses
+# such a problem.
+@inline least_squares_steps(prob) = prob isa LeastSquaresProblem
+
 @inline function newton_init_state(m::Newton, prob::AbstractNonlinearProblem, x, p)
     m.globalization isa PseudoTransient && check_pseudotransient_problem(prob)
     m.linsolve isa MINRESQLP && return init_minresqlp_state(m, m.linsolve, prob, x, p)
@@ -1203,7 +1207,7 @@ end
     m.linsolve isa KroneckerFactorization &&
         return init_kronecker_state(m, m.linsolve, prob, x, p)
     if m.update !== nothing
-        prob isa LeastSquaresProblem && throw(ArgumentError(
+        least_squares_steps(prob) && throw(ArgumentError(
             "Newton with a BroydenUpdate takes no LeastSquaresProblem: its secant update needs a square Jacobian"))
         factor_eltype(m.linsolve, eltype(x)) === eltype(x) || throw(ArgumentError(
             "Newton with a BroydenUpdate needs a factor in the element type of the iterate: the pairs are formed and applied in that precision, with the solve of the factor"))

@@ -27,15 +27,17 @@ so that a compat-only bump can be told apart from an interface change.
   pair: the iterates are those of `m = reuse - 1`. The constructor raises an `ArgumentError` for
   `reuse` outside `2 ≤ reuse ≤ m + 1`, for `Refinement`, for `GMRESRefinement` and for a
   matrix-free linear method or `KroneckerFactorization`, and `init_state` for a factorisation
-  precision other than the element type of the iterate and for a `LeastSquaresProblem`. `update`
-  is the last type parameter of `Newton`, so the six- to eight-argument positional constructors
-  and the methods on `Newton{L, G, J, RF, Reg, Int32}` keep working. A run of up to `reuse - 1`
-  full-length secant steps along the stored pairs can pass the rate test of `Options` away from a
-  root, because the larger of the last two rates guards one irregular step only (K160). The
-  standard test set has the new column `Newton reuse 3 Broyden Backtracking LU` (`reuse = 3`,
-  `BroydenUpdate(2)`): 56/67 `SUCCESS` cells in `Float32` and 57/67 in `Float64`, against 57/67
-  and 59/67 for `reuse = 3` alone, and 2546 cells in all; no other cell of the reference table
-  changes. `benchmark/REPORT.md` has a table of the column beside `Broyden`, from
+  precision other than the element type of the iterate and for a `LeastSquaresProblem`, also
+  inside a `Reparametrized` problem. `update` is the last type parameter of `Newton`, so the six-
+  to eight-argument positional constructors and the methods on `Newton{L, G, J, RF, Reg, Int32}`
+  keep working. A run of up to `reuse - 1` full-length secant steps along the stored pairs can
+  pass the rate test of `Options` away from a root, because the larger of the last two rates
+  guards one irregular step only; with `Options(T; rate_test = false)` each solve of
+  `scripts/broyden_rate_test.jl` that stops early returns `SUCCESS` after 4 iterations at the root
+  (K160). The standard test set has the new column `Newton reuse 3 Broyden Backtracking LU`
+  (`reuse = 3`, `BroydenUpdate(2)`): 56/67 `SUCCESS` cells in `Float32` and 57/67 in `Float64`,
+  against 57/67 and 59/67 for `reuse = 3` alone, and 2546 cells in all; no other cell of the
+  reference table changes. `benchmark/REPORT.md` has a table of the column beside `Broyden`, from
   `benchmark/broyden_update.jl` (GeometricSolvers alone at `b86fc6c`, 79 rows in each precision,
   checked by `verify.jl`): 66/79 and 68/79 successes and Jacobian counts
   `Σ dual_evals / chunks` of 1779 and 1829, an upper bound that holds the line search's

@@ -355,12 +355,10 @@ end
     for reuse in (nothing, 1, 4, 10)
         @test_throws range_phrase Newton(; reuse, update = BroydenUpdate(2))
     end
-    @test_throws r"^ArgumentError: Newton with a BroydenUpdate takes no Refinement" Newton(;
-        reuse = 3, update = BroydenUpdate(2), refinement = Refinement())
-    @test_throws r"^ArgumentError: Newton with a BroydenUpdate takes no Refinement" Newton(;
-        reuse = 3, update = BroydenUpdate(2), refinement = true)
-    @test_throws r"^ArgumentError: Newton with a BroydenUpdate takes no GMRESRefinement" Newton(;
-        reuse = 3, update = BroydenUpdate(2), refinement = GMRESRefinement())
+    refinement_phrase = r"^ArgumentError: Newton with a BroydenUpdate takes no refinement"
+    for refinement in (Refinement(), true, GMRESRefinement())
+        @test_throws refinement_phrase Newton(; reuse = 3, update = BroydenUpdate(2), refinement)
+    end
     factor_phrase = r"^ArgumentError: Newton with a BroydenUpdate needs a factorising linear method other than KroneckerFactorization"
     @test_throws factor_phrase Newton(;
         reuse = 3, update = BroydenUpdate(2), linsolve = GMRES(), preconditioner = I)
@@ -378,11 +376,10 @@ end
         end
     @test message(() -> Newton(; reuse = 7, update = BroydenUpdate(2))) ==
           "Newton with update = BroydenUpdate(m) needs 2 ≤ reuse ≤ m + 1: a factor serves at most reuse steps and collects at most reuse - 1 pairs, which the memory of m pairs holds"
-    @test message(() -> Newton(; reuse = 3, update = BroydenUpdate(2), refinement = true)) ==
-          "Newton with a BroydenUpdate takes no Refinement: a refinement corrects the solve of the factor, and the update steps along another inverse"
-    @test message(() -> Newton(;
-        reuse = 3, update = BroydenUpdate(2), refinement = GMRESRefinement())) ==
-          "Newton with a BroydenUpdate takes no GMRESRefinement: a refinement corrects the solve of the factor, and the update steps along another inverse"
+    for refinement in (true, GMRESRefinement())
+        @test message(() -> Newton(; reuse = 3, update = BroydenUpdate(2), refinement)) ==
+              "Newton with a BroydenUpdate takes no refinement: a refinement corrects the solve of the factor, and the update steps along another inverse"
+    end
     @test message(() -> Newton(;
         reuse = 3, update = BroydenUpdate(2), linsolve = GMRES(), preconditioner = I)) ==
           "Newton with a BroydenUpdate needs a factorising linear method other than KroneckerFactorization: the update acts on the solve of a dense or sparse factor"
@@ -411,6 +408,27 @@ end
     # the same method in the precision of the iterate builds its state
     m_T = Newton(; reuse = 3, update = BroydenUpdate(2), linsolve = LUFactorization(T))
     @test init_state(m_T, F, ones(T, 3), nothing).pairs.count == 0
+end
+
+@testset "the state build refuses a Reparametrized LeastSquaresProblem, $T" for T in REAL_ELTYPES
+    # the chart solve steps on the inner problem, so its refusal is that of the inner problem, on
+    # the R3 and the R1 path, for a rectangular and a square least-squares problem
+    m_qr = Newton(; reuse = 3, update = BroydenUpdate(2), linsolve = QRFactorization())
+    lsq = LeastSquaresProblem((y, x, p) -> (y .= [x[1] - 1, x[1] + 1, x[2]]; nothing), nothing, 3)
+    chart!(x, y, p) = (x .= y; nothing)
+    @test_throws r"^ArgumentError: Newton with a BroydenUpdate takes no LeastSquaresProblem" init_state(
+        m_qr, GS.Reparametrized(lsq, chart!), ones(T, 2), nothing)
+    chart(y, p) = y
+    rect = LeastSquaresProblem((x, p) -> SVector(x[1] - 1, x[1] + 1), nothing, 2)
+    square = LeastSquaresProblem((x, p) -> SVector(x[1]^2 - 2), nothing, 1)
+    for lsq1 in (rect, square)
+        @test_throws r"^ArgumentError: Newton with a BroydenUpdate takes no LeastSquaresProblem" init_state(
+            m_qr, GS.Reparametrized(lsq1, chart), SVector{1, T}(3), nothing)
+    end
+    # a square NonlinearProblem under the same chart builds its state with the pairs
+    sq = GS.Reparametrized(NonlinearProblem((x, p) -> SVector(x[1]^2 - 2)), chart)
+    m_lu = Newton(; reuse = 3, update = BroydenUpdate(2))
+    @test init_state(m_lu, sq, SVector{1, T}(3), nothing).inner.pairs.count == 0
 end
 
 @testset "the R1 state with the pairs as NTuples is isbits, $T" for T in REAL_ELTYPES
