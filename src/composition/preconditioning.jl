@@ -274,6 +274,20 @@ end
     return LeftPreconditionedState(lprob, outer_state, state.Fx, p)
 end
 
+# The factor that the rate test and the rate of a step read is that of the outer method, which
+# steps on the preconditioned residual.
+@inline function rate_test_rank(state::LeftPreconditionedState, x)
+    return rate_test_rank(state.outer_state, x)
+end
+@inline function observe_rate!!(state::LeftPreconditionedState, m::LeftPreconditioned, rate)
+    outer_state = observe_rate!!(state.outer_state, m.outer, rate)
+    return LeftPreconditionedState(state.problem, outer_state, state.Fx, state.p)
+end
+@inline function drop_factor!!(state::LeftPreconditionedState, m::LeftPreconditioned)
+    outer_state = drop_factor!!(state.outer_state, m.outer)
+    return LeftPreconditionedState(state.problem, outer_state, state.Fx, state.p)
+end
+
 @inline function step!!(
         state::LeftPreconditionedState, m::LeftPreconditioned, prob, x, Fx, p)
     lprob = state.problem
@@ -300,7 +314,8 @@ end
     # `rˡ` there and reports `NONFINITE`: the inner `MAXITERS` names the cause instead
     code = info.code == NONFINITE && lprob.code[] == MAXITERS ? MAXITERS : info.code
     info₊ = StepInfo{R}(
-        code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited)
+        code, rnorm(F₊), info.stepnorm, info.failures, info.promoted, info.limited,
+        info.shortened)
     return x₊, F₊, LeftPreconditionedState(lprob, outer_state, state.Fx, p), info₊
 end
 

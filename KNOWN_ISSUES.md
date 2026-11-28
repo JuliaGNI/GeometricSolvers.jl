@@ -353,11 +353,11 @@
 
 ### K75 · An R3 `StationarityProblem` with a device-resident `E` or `U` reads the index set by scalar indexing
 
-- **location:** `src/nonlinear/stationarity.jl:483` (`_init_stationarity_state`),
+- **location:** `src/nonlinear/stationarity.jl:491` (`_init_stationarity_state`),
   `src/ad/hessian.jl:318-319` (`_build_pos_maps`)
 - **evidence:** With `prob = @allowscalar StationarityProblem(S, JLArray([1, 2]), JLArray([1, 2]))`
   and `allowscalar(false)`, `solve(prob, JLArray([1.0, 1.0]), Newton())` raises "Scalar indexing
-  is disallowed" at `stationarity.jl:483` (`Int[Int(i) for i in prob.U]`), and
+  is disallowed" at `stationarity.jl:491` (`Int[Int(i) for i in prob.U]`), and
   `solve(Reparametrized(prob, g!), JLArray([1.5, 0.5]), Newton())` raises it at `hessian.jl:318`,
   where `prepare_ad` copies `E` and `U` to the host by iteration. The same problems with host
   index sets `[1, 2]` and a `JLArray` iterate return `SUCCESS` (merge of `main` into `task/ay`,
@@ -625,7 +625,7 @@
   mechanism of K91), so the solution is wrong for complex `T` at every shape. The call sites of
   `ldiv!!` in `src/` (`grep -rn "ldiv!!(" src/`) pass no view to a `DeviceQR` solve; the implicit
   tangent, for example, passes a right-hand side that `similar` allocates
-  (`src/nonlinear/implicit.jl:340`). So no solver path reaches it; a caller that calls `ldiv!!`
+  (`src/nonlinear/implicit.jl:341`). So no solver path reaches it; a caller that calls `ldiv!!`
   or `backsolve!` with a `SubArray` does.
 - **kind:** found late
 - **found:** #96
@@ -699,7 +699,7 @@
   `1.57e-7` against `1.46e-7 ‖b‖`, and `3.0e-16` against `2.4e-16 ‖b‖`. At `j = n` the vector `w₂`
   is round-off, and CGS2 orthogonalises it once more, so `H[n+1, n] = rnorm(w₂)` is the round-off
   of a round-off vector, and the recursive residual, which `H[n+1, n]` scales, falls with it.
-  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2058`). The true
+  `Newton` stores the reported value as `ws.linres` (`src/nonlinear/newton.jl:2138`). The true
   residual stays at the round-off of the solve; the reported value is low only where the solve
   runs to `j = n`. The `converged` flag is wrong too where `tol` lies between the two: with
   `tol = 1e-20`, `restart = 6` and `maxiter = 12`, the default path reports `converged = true`:
@@ -791,7 +791,7 @@
 
 ### K109 · No public solve is known to fail a step rule or to promote on a step that a least-squares solve discards, so only a unit test of the status helper checks `status.step_failures` and `status.promoted` on that return
 
-- **location:** `src/nonlinear/solver.jl:83` (`discarded_step_status`, which takes
+- **location:** `src/nonlinear/solver.jl:107` (`discarded_step_status`, which takes
   `step_failures` and `promoted` from the status after `record` folds in the discarded step)
 - **evidence:** the solve discards only a step that does not lower `‖F‖`. A count of the calls
   of `discarded_step_status` on the mirror-symmetric saddle problem (b) of the testset "a step
@@ -982,7 +982,7 @@
 
 ### K126 · `DogLeg` returns `SUCCESS` with `status.stationary == true` at a saddle of `‖F‖²` that the Gauss–Newton model reads as a minimum
 
-- **location:** `src/nonlinear/solver.jl:277` (the stationarity test of `solve!!` after a step,
+- **location:** `src/nonlinear/solver.jl:327` (the stationarity test of `solve!!` after a step,
   which returns `SUCCESS`), `src/globalization/dogleg.jl:180` (the `LINESEARCH_FAILED` zero step
   at the floor of the radius)
 - **evidence:** on the mirror-symmetric saddle problem (b) of the testset "a step that leaves a
@@ -1033,7 +1033,7 @@
 
 ### K129 · `_pinv_adj_mul_r1` does not scale a subnormal `w` up, so the products `Vᴴ w` of the Golub–Pereyra Jacobian run on subnormal numbers
 
-- **location:** `src/nonlinear/eliminate.jl:522` and `:545` (`_pinv_adj_mul_r1` of
+- **location:** `src/nonlinear/eliminate.jl:523` and `:546` (`_pinv_adj_mul_r1` of
   `StaticRectSVD` and `StaticSVD`)
 - **evidence:** with `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, `Φ = 2^k A₀` and
   `w = 2^k (1, -2, 0.5)`, `_pinv_adj_mul_r1(factorize!!(nothing, SVDFactorization(), Φ), Φ, w)`
@@ -1052,14 +1052,14 @@
 
 ### K130 · The R3 `_pinv_adj_mul_r3!` of a `DenseSVD` in `Float32` of a `Float64` matrix near `2^-130` gives `NaN`
 
-- **location:** `src/nonlinear/eliminate.jl:1295` (`_pinv_adj_mul_r3!` of `DenseSVD`)
+- **location:** `src/nonlinear/eliminate.jl:1296` (`_pinv_adj_mul_r3!` of `DenseSVD`)
 - **evidence:** the method forms `scale = ldexp(one(R), -fac.scale_exponent)` with
   `R = real(eltype(fac.tmp))`, `Float32` for `SVDFactorization(Float32)`. For
   `Φ = 2^-130 A₀` in `Float64`, `A₀ = [4 1 0.5; 1 5 0.25; 0.5 0.25 3]`, the factor has
   `scale_exponent = -128`, `2^128` is `Inf` in `Float32`, and
   `_pinv_adj_mul_r3!(out, factorize!!(init_linear(m, nothing, w), m, Φ), w)` with
   `w = 2^-130 (1, -2, 0.5)` gives `[NaN, -Inf, NaN]`, on `bf08120` and on `091997c`
-  (Julia 1.13.4). The `DeviceSVD` method at `:1310` forms the same product; that it gives `NaN`
+  (Julia 1.13.4). The `DeviceSVD` method at `:1311` forms the same product; that it gives `NaN`
   is not verified.
 - **kind:** defect
 - **found:** 2026-11-25
@@ -1121,8 +1121,8 @@
 
 ### K135 · `Continuation` does not reach the root of the linear check `F(x) = s (A x − b)` at a subnormal scale `s`, where `Newton()` reaches it in `Float64`
 
-- **location:** `src/composition/continuation.jl:177` (`homotopy_residual!`; the fixed-point form
-  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:187`)
+- **location:** `src/composition/continuation.jl:178` (`homotopy_residual!`; the fixed-point form
+  `λ F(x)/σ + (1 − λ)(x − x₀)` at `:188`)
 - **evidence:** `A = [3 1; 1 2]`, `b = [1, −3]`, root `(1, −2)`, start `zeros(T, 2)`,
   `f_abstol = 0`, at `s = 2^20 · nextfloat(zero(T))`. `Float64`:
   `Continuation(FixedPointHomotopy())` returns `MAXITERS` at `(0.263, −0.628)`,
@@ -1138,7 +1138,7 @@
 
 ### K136 · The docstrings of `stored_factors` and `promoted_factors` and the regimes page name `GMRES` as the matrix-free solve that holds no factor, and leave out `MINRESQLP`, `BiCGStab` and `DQGMRES`
 
-- **location:** `src/nonlinear/newton.jl:1061` (`stored_factors`), `:1077` (`promoted_factors`);
+- **location:** `src/nonlinear/newton.jl:1093` (`stored_factors`), `:1109` (`promoted_factors`);
   `docs/src/manual/regimes.md:147`
 - **evidence:** each line names "a matrix-free [`GMRES`](@ref) solve" as the solve that holds no
   factor. A `Newton` with any linear method for which `matrix_free` is `true` holds no factor.
@@ -1153,7 +1153,7 @@
 - **location:** `test/nonlinear/krylov.jl:1374`
 - **evidence:** the comment reads "the keywords configure a GMRES, and no other linear method takes
   them". `MINRESQLP` takes `forcing`, and `BiCGStab` and `DQGMRES` take both
-  (`src/nonlinear/newton.jl:218–221`, `with_forcing`). The comment was already false at `9023f76`,
+  (`src/nonlinear/newton.jl:244–247`, `with_forcing`). The comment was already false at `9023f76`,
   for `MINRESQLP`. The two `@test_throws` below it use the default `LUFactorization()` and hold.
 - **kind:** docs
 - **found:** 2026-11-26
@@ -1165,7 +1165,7 @@
 - **evidence:** the default constructors fix `Float64` parameters whatever the type of the iterate.
   `globalize_merit!!` with `Static{Float64}` and a `Float32` iterate returns `StepInfo{Float64}`,
   while the early returns of the step build `StepInfo{Float32}`, so `code_typed` of `step!!` and
-  of `gmres_step!!` (`src/nonlinear/newton.jl:2092` for `GMRES`, `:2339` for `BiCGStab` and
+  of `gmres_step!!` (`src/nonlinear/newton.jl:2172` for `GMRES`, `:2419` for `BiCGStab` and
   `DQGMRES`) infers the union. With `Static(1f0)` or `Backtracking(; c₁ = 1f-4, p = 0.5f0)` each
   step infers `StepInfo{Float32}`. `solve` infers `Tuple{Vector{T}, SolverStatus{T}}` in every case,
   and the whole solve allocates 0 bytes for `BiCGStab` and `DQGMRES` × `Float32`, `Float64` ×
@@ -1197,7 +1197,7 @@
 
 ### K140 · `_pinv_adj_mul_r1` of a subnormal `Φ` and a normal `w` gives `NaN` where the true `(Φ⁺)ᴴ w` has entries above `floatmax`
 
-- **location:** `src/nonlinear/eliminate.jl:522` and `:545` (`_pinv_adj_mul_r1` of
+- **location:** `src/nonlinear/eliminate.jl:523` and `:546` (`_pinv_adj_mul_r1` of
   `StaticRectSVD` and `StaticSVD`)
 - **evidence:**
 
@@ -1282,7 +1282,7 @@
 
 ### K144 · A matrix-free Newton step whose inner solve stops short of the forcing term `η` passes `InexactStep(η)`, not the ratio it attained, to the line search
 
-- **location:** `src/nonlinear/newton.jl:2067` (`GMRES`), `:2308` (`MINRESQLP`), `:2358`
+- **location:** `src/nonlinear/newton.jl:2147` (`GMRES`), `:2388` (`MINRESQLP`), `:2438`
   (`BiCGStab` and `DQGMRES`), each `η_ach = min(resnorm / fnorm, η)`
 - **evidence:** `InexactStep(η)` states `‖r + J d‖ ≤ η ‖r‖`, so a smaller `η` than the attained
   ratio asks `Backtracking` for more decrease than the direction gives. With
@@ -1311,9 +1311,9 @@
 
 ### K147 · With `regularization = μ > 0`, a matrix-free Newton step passes the residual ratio of the regularized system `J + μ I` as `InexactStep`, and a `DogLeg` on `GMRES` models `J + μ I`, so `Backtracking` stalls where the dense `Newton` makes progress
 
-- **location:** `src/nonlinear/newton.jl:2067` (`GMRES`), `:2308` (`MINRESQLP`), `:2358`
+- **location:** `src/nonlinear/newton.jl:2147` (`GMRES`), `:2388` (`MINRESQLP`), `:2438`
   (`BiCGStab` and `DQGMRES`), each `η_ach` from the inner solve on `J + μ I`
-  (`RegularizedJVP`, `:2011` and `:2209`); `:2104` (`dogleg_step_mf`, on the Arnoldi relation of
+  (`RegularizedJVP`, `:2091` and `:2289`); `:2184` (`dogleg_step_mf`, on the Arnoldi relation of
   that solve; read, not measured)
 - **evidence:** `InexactStep(η)` states `‖F + J d‖ ≤ η ‖F‖`; the inner solve bounds
   `‖F + (J + μ I) d‖` instead, and `‖F + J d‖` exceeds it by up to `μ ‖d‖`. With
@@ -1322,7 +1322,7 @@
   `fnorm = 1.3e-4`, and `GMRES`, `BiCGStab` and `DQGMRES` with `FixedForcing(1e-12)` each end
   `STALLED` after 2 iterations at `fnorm = √3`, the residual of `x₀` (Julia 1.13.4). `main` at
   907d20b gives the same for the dense `Newton` and `GMRES`. The line searches that evaluate the
-  slope take the product of `J` alone (`merit_jvp`, `:1315`), so `Bisection` and `StrongWolfe` do
+  slope take the product of `J` alone (`merit_jvp`, `:1389`), so `Bisection` and `StrongWolfe` do
   not have this limit. A fix chooses the step kind of a regularized direction, such as the measured
   slope or the attained ratio of `J` at one more product, and is a choice for all four methods
   together with K144.
@@ -1370,6 +1370,67 @@
 - **kind:** defect
 - **found:** 2026-11-27
 
+### K150 · `solve!` on a `ReparametrizedSolver` takes no `refactorize` keyword, so a `Newton(; reuse = k, keep_factor = true)` inside it refreshes its kept factor only by the rate rule
+
+- **location:** `src/nonlinear/reparametrized.jl:1061`
+- **evidence:** `solve!(solver::ReparametrizedSolver)` and `solve!(solver::ReparametrizedSolver, y,
+  p = solver.p)` take no keywords, so `solve!(solver, y, p; refactorize = true)` raises a
+  `MethodError`. The `solve!` of a `NonlinearSolver` takes `refactorize`. A caller that changes the
+  step size between two reparametrized solves cannot drop the kept factor: a step of rate `θ ≥ 1`
+  along it refreshes it, and a solve keeps it only after `SUCCESS` in one step or with a last rate
+  `θ ≤ 10⁻³`.
+- **kind:** defect
+- **found:** 2026-11-26
+
+### K151 · A `Newton(; reuse = k, keep_factor = true)` solve that returns `SUCCESS` at its start, with no step, drops the kept factor, so the next solve factorises at its first step
+
+- **location:** `src/nonlinear/newton.jl:1198` (`keeps_factor`)
+- **evidence:** `keeps_factor` keeps the factor after `SUCCESS` only with `status.iterations == 1`
+  or a last rate `θ ≤ 10⁻³`; a solve of no step has `iterations == 0` and the rate `NaN`, which
+  fails both. With the midpoint residual of `test/nonlinear/stopping.jl`,
+  `Newton(; jacobian, reuse = 10, keep_factor = true)` and `Options(Float64; f_abstol = 0.5,
+  max_iterations = 1)`: a solve from `q₀ .+ 1` returns `SUCCESS` in one step with the factor age
+  `1`; a solve from `q₀`, whose residual passes the test, returns `SUCCESS` with `0` iterations and
+  leaves age `0`; the next solve from `q₀ .+ 1` factorises once at its first step. An integrator
+  whose start is already converged refactorises at the next step. The rule follows the decided edge
+  "after a `SUCCESS` the factor's age survives only after one iteration or a last `θ ≤ 10⁻³`" of
+  the part's spec, which does not name a solve of no step.
+- **kind:** found late
+- **found:** 2026-11-27, the review of the branch that keeps a `Newton` factor across solves; the
+  limit of the decided rule for a kept factor after `SUCCESS`
+
+### K152 · A `Newton(; reuse = k)` solve with `k > 1`, or with a kept factor, of a least-squares problem with a nonzero residual at its minimum often returns `STALLED` near the stationary point
+
+- **location:** `src/nonlinear/solver.jl:84` (`rate_test_step`)
+- **evidence:** the steps along a reused factor converge to the fixed point of the frozen
+  Gauss–Newton map, which is not the stationary point, and the rate test reads no such step. With
+  `r(x) = (x² − 5, x − 1)`, its Jacobian, `Newton(; linsolve = QRFactorization(), jacobian, reuse
+  = k)`, default `Options(T)`, from `3`: in `Float64`, `k = 1` returns `SUCCESS` by
+  `:stationarity` at `2.1748339274858415` after 7 iterations, `k = 3` returns `STALLED` at
+  `2.17483438331406` after 12, and `k = 10` returns `STALLED` at `2.17527521960677` after 17. In
+  `Float32`, `k = 3` returns `SUCCESS` by `:stationarity` and `k = 10` returns `STALLED` after 13.
+  A `VariableProjection` with `reuse = 3` or `10` also returns `STALLED`. The step test of the base
+  stalls in the same way.
+- **kind:** defect
+- **found:** 2026-11-27, the review of the branch that keeps a `Newton` factor across solves; the
+  limit of the decided rule that the rate test of a least-squares problem reads no step along a
+  reused factor
+
+### K153 · `solve!` on a static `ReparametrizedSolver` of a `LeastSquaresProblem` raises a `MethodError`
+
+- **location:** `src/nonlinear/reparametrized.jl:955`
+- **evidence:** with `r` and its Jacobian of K152 as static vectors, and the identity chart
+  `id(y, p) = y`, `did(y, p) = SMatrix{1, 1}(one(y[1]))`,
+  `s = init(Reparametrized(LeastSquaresProblem(r, j), id, did), SVector(3.0), Newton(; linsolve =
+  QRFactorization(), reuse = k); options = Options(Float64))` followed by
+  `solve!(s, SVector(3.0))` raises `MethodError: Cannot convert an object of type
+  GeometricSolvers.StaticReparamState{…}` at the assignment `solver.state = state₊`, for `k = 1`
+  and `3`. The same pair with a square `NonlinearProblem` returns `SUCCESS`, and `solve` of the
+  least-squares problem returns a status. The error is the same on the commit that the branch
+  that keeps a `Newton` factor across solves starts from.
+- **kind:** defect
+- **found:** 2026-11-27
+
 ### K154 · On a reduced basis, a consistent operator that is singular at the precision of a `Float16` basis stops at the breakdown without convergence
 
 - **location:** `src/linear/gmres.jl:788` (`singular_breakdown`)
@@ -1392,3 +1453,21 @@
 - **kind:** defect
 - **found:** 2026-11-27; the threshold `sqrt(eps(TB)) ‖r₀‖` of the singular decision is the form
   that the plan decided after the restart-once rule did not converge this row
+
+### K165 · A `Multiplicative` or `Repeat` contraction whose sub-steps alternate in sign does not end on the rate test
+
+- **location:** `src/composition/multiplicative.jl` (`cancelled_substeps`)
+- **evidence:** an outer step of two or more sub-steps that is shorter than its longest sub-step
+  is marked `shortened`, and the rate test reads no such step. A contraction whose sub-steps
+  overshoot the root in turn has such outer steps too. On `F(x) = 1.2 x` with
+  `Newton(; jacobian = (x, p) -> 1.0)`, each sub-step maps `x` to `-0.2 x`, so the outer step of
+  `Multiplicative(nb, nb)` or `Repeat(nb, 2)` maps `x` to `0.04 x`, with the norm `0.96 |x|` below
+  that of its first sub-step, `1.2 |x|`. Under `Options(Float64; f_reltol = 0, x_abstol = 1e-4)`
+  from `1.0`, the commit before the rule returns `SUCCESS` by `:contraction` after 4 iterations,
+  and the rule gives `STALLED` after 4, at the same iterate `|x| = 2.56e-6`. The same-sign case
+  `F(x) = 0.8 x` keeps `SUCCESS` by `:contraction`, and under the default `Options(Float64)` both
+  end by the residual test after 6 iterations. The merge base with `main`, which has no rate
+  test, returns `STALLED` after 4 in both cases.
+- **kind:** defect
+- **found:** #146, the limit of the decided rule that a composite step whose net displacement is
+  shorter than its longest sub-step is `shortened` (CodeRabbit comment 4723565190)

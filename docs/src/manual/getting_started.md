@@ -199,7 +199,7 @@ The return codes are:
 
 | code | meaning |
 |:--|:--|
-| `SUCCESS` | the residual test (or the stationarity test of a least-squares problem) holds |
+| `SUCCESS` | the residual test, the contraction-rate test of [`Options`](@ref) (or the stationarity test of a least-squares problem) holds |
 | `STALLED` | the iterate or the residual stopped improving before the test held |
 | `MAXITERS` | the iteration cap was reached |
 | `SINGULAR` | a factorisation failed; the solve does not throw |

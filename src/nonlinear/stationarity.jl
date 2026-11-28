@@ -339,6 +339,14 @@ struct DenseStationarityState{ST, RP, U}
     u_work::U
 end
 
+# The factor of a stationarity solve is that of its solve over the unknowns.
+@inline function drop_factor!!(s::StaticStationarityState, m)
+    return StaticStationarityState(drop_factor!!(s.inner, m))
+end
+@inline function drop_factor!!(s::DenseStationarityState, m)
+    return DenseStationarityState(drop_factor!!(s.inner, m), s.rprob, s.u_work)
+end
+
 const StaticStatState = StaticStationarityState
 const DenseStatState = DenseStationarityState
 

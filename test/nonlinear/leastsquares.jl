@@ -158,7 +158,7 @@ end
     @test_throws ArgumentError Options(T; g_tol = T(-1e-5))
     @test_throws ArgumentError Options(T; g_tol = T(NaN))
 
-    @test sizeof(SolverStatus{T}) == (T === Float32 ? 36 : 56)
+    @test sizeof(SolverStatus{T}) == (T === Float32 ? 44 : 72)
     st6 = SolverStatus{T}(SUCCESS, Int32(2), zero(T), zero(T), Int32(0), false)
     @test st6.stationary === false
     @test stopping_test(st6) === :residual
@@ -999,8 +999,9 @@ step_of(fac, x::AbstractVector, Fx) = ldiv!!(similar(x), fac, Fx)
         @testset "$regime" begin
             # the refreshed reading fails, so a solve would go on from this iterate
             @test GeometricSolvers.state_gradratio(state) > Options(T).g_tol
-            # the age of a factor that a step has just factorised, and no stall
-            @test state.rule == GeometricSolvers.FactorAge(Int32(1), false)
+            # the age of a factor that a step has just factorised, no stall, and the second step,
+            # which stepped along the reused factor
+            @test state.rule == GeometricSolvers.FactorAge(Int32(1), false, true)
             # the step of the factor the state kept is the step of a fresh factor at this iterate
             δ_stored = step_of(state.fac, x, Fx)
             J = GeometricSolvers.jacobian!!(state.J, state.jacprep, prob, x, nothing)
@@ -1011,7 +1012,8 @@ step_of(fac, x::AbstractVector, Fx) = ldiv!!(similar(x), fac, Fx)
         for (reuse, age) in ((1, Int32(0)), (2, Int32(1)), (3, Int32(1)))
             m = GaussNewton(; reuse)
             _, _, state_k = refreshed_state(prob, x0, m, nothing)
-            @test state_k.rule == GeometricSolvers.FactorAge(age, false)
+            # the second step reuses the factor of the first unless the period is one step
+            @test state_k.rule == GeometricSolvers.FactorAge(age, false, reuse > 1)
         end
     end
 end

@@ -195,8 +195,9 @@ end
 
 @inline function _singular_status(st::SolverStatus{R}) where {R}
     return SolverStatus{R}(
-        SINGULAR, st.iterations, st.fnorm, st.stepnorm, st.step_failures,
-        st.promoted, st.rank, st.nullnorm, st.gradratio)
+        SINGULAR, Int16(0), st.iterations, st.fnorm, st.stepnorm, st.step_failures,
+        st.promoted, false, Int16(0), st.rank, st.nullnorm, st.gradratio, st.rate,
+        st.contracted, st.reused)
 end
 
 @inline function _tangent_jacprep(state::NewtonState, prob::NonlinearProblem, x_star, p_val)

@@ -61,6 +61,13 @@ fallback_member(state::FallbackState) = state.member
     return FallbackState(_init_member_states(m.members, prob, x, p), buffer(x), Int32(0))
 end
 
+# Each member runs a solve of its own, which reads its own rates; `refactorize` drops the factor of
+# every member.
+@inline function drop_factor!!(state::FallbackState, m::Fallback)
+    return FallbackState(
+        _drop_member_factors!!(state.states, m.members), state.x₀, state.member)
+end
+
 # `a + b` for two non-negative counts, saturated at `typemax(Int32)`.
 @inline _sat_add32(a::Int32, b::Int32) = Int32(min(Int64(a) + Int64(b), typemax(Int32)))
 
@@ -68,9 +75,9 @@ end
 @inline function _fallback_status(
         st::SolverStatus{R}, iterations::Int32, failures::Int32, promoted::Bool) where {R}
     return SolverStatus{R}(
-        st.code, _sat_add32(st.iterations, iterations), st.fnorm, st.stepnorm,
+        st.code, Int16(0), _sat_add32(st.iterations, iterations), st.fnorm, st.stepnorm,
         _sat_add32(st.step_failures, failures), st.promoted | promoted, st.stationary,
-        st.rank, st.nullnorm, st.gradratio)
+        Int16(0), st.rank, st.nullnorm, st.gradratio, st.rate, st.contracted, st.reused)
 end
 
 # Solve with the first member from `x`; on a code other than `SUCCESS`, restore `x₀` from `saved`

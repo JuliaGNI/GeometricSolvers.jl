@@ -146,7 +146,7 @@ end
     @test st.fac === nothing
     @test isbits(st)
     st_reuse = init_state(Newton(; reuse = 3), prob, 3.0, nothing)
-    @test st_reuse.rule === GeometricSolvers.FactorAge(Int32(0), false)
+    @test st_reuse.rule === GeometricSolvers.FactorAge(Int32(0), false, false)
     @test st_reuse.fac isa GeometricSolvers.StaticLU
     @test isbits(st_reuse)
     st_dl = init_state(Newton(; globalization = DogLeg()), prob, 3.0, nothing)
@@ -176,10 +176,10 @@ end
     GS = GeometricSolvers
     st = GS.init_state(Newton(; reuse = 3), prob, 3.0, nothing)
     aged = GS.NewtonState(st.jacprep, st.jvpprep, st.Fx, st.d, st.fac, st.J, st.g,
-        GS.FactorAge(Int32(2), true), st.merit, st.fnorm, st.diag,
+        GS.FactorAge(Int32(2), true, true), st.merit, st.fnorm, st.diag,
         st.refbuf, st.fac_T, st.promoted, st.slow_steps)
     @test GS.start!!(aged, Newton(; reuse = 3), prob, 3.0, 5.0, nothing, 5.0).rule ===
-          GS.FactorAge(Int32(0), false)
+          GS.FactorAge(Int32(0), false, false)
     st_dl = GS.init_state(Newton(; globalization = DogLeg(; radius = 2.0)), prob, 3.0, nothing)
     @test st_dl.rule === GS.TrustRadius(2.0, 2.0)
     moved = GS.NewtonState(st_dl.jacprep, st_dl.jvpprep, st_dl.Fx, st_dl.d, st_dl.fac,
@@ -269,7 +269,7 @@ end
     st = GS.init_state(m, prob, 3.0, nothing)
     _, _, st₊, info = step!!(st, m, prob, 3.0, 5.0, nothing)
     @test info.code == SINGULAR
-    @test st₊.rule === GS.FactorAge(Int32(0), false)
+    @test st₊.rule === GS.FactorAge(Int32(0), false, false)
 end
 
 @testset "Newton solves coupled nonlinear systems on SVector, MVector, and Number, $T" for T in ELTYPES
@@ -772,7 +772,7 @@ end
     @test Newton().best === Val(false)
     @test Newton(; best = true).best === Val(true)
     @test Newton(; best = false).best === Val(false)
-    @test fieldnames(Newton)[end] === :best
+    @test fieldnames(Newton)[(end - 1):end] === (:best, :keep_factor)
     @test isbits(Newton(; best = true)) == isbits(Newton())
     # the type check of the keyword `best::Bool`
     @test_throws r"^TypeError: non-boolean \(Int64\) used in boolean context$" Newton(;

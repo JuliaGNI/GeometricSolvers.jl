@@ -8,7 +8,8 @@ using StaticArrays: SMatrix, SVector
 using Test
 
 using GeometricSolvers
-using GeometricSolvers: Additive, Anderson, Backtracking, DogLeg, FixedWeights,
+using GeometricSolvers: Additive, Anderson, Backtracking, BlockEliminated, DogLeg,
+                        FixedWeights,
                         LUFactorization, Multiplicative, Newton, NonlinearProblem,
                         OptimalWeights, Options, PerSystem, Picard, QRFactorization, Repeat,
                         SINGULAR, SUCCESS, SolverStatus, Static, Switch, ToReal, init_state,
@@ -205,7 +206,35 @@ end
         @test all(
             x -> isapprox(x, p_p; rtol = 10 * sqrt(eps(Float32))), xs_p_got)
 
-        # 5. R2 solve_batch! on Metal (per-system status and return-code count forms)
+        # 5. R1 BlockEliminated with inner options in a solve!! kernel: the inner solve rebuilds
+        # its options in the precision of the iterate through the positional `Options{R}`.
+        # F = (y² - z, z + y - p) with p = 6 has the root (y, z) = (2, 4) for y > 0.
+        prob_el = NonlinearProblem((x, q) -> SVector(x[1]^2 - x[2], x[2] + x[1] - q))
+        elim = Adapt.adapt(ToReal{Float32}(),
+            BlockEliminated(prob_el, (1,); outer = (2,),
+                inner_options = Options(Float32; f_abstol = 1.0f-6)))
+        m_el = Adapt.adapt(ToReal{Float32}(), Newton())
+        xs_el_host = [SVector{2, Float32}(1.5f0 + k / 100.0f0, 3.0f0) for k in 1:B_METAL_NL]
+        ps_el_host = fill(6.0f0, B_METAL_NL)
+        state_el = init_state(m_el, elim, xs_el_host[1], ps_el_host[1])
+        @test isbits(elim)
+        @test isbits(state_el)
+        xs_el = Metal.MtlArray(xs_el_host)
+        xs_el_out = similar(xs_el)
+        codes_el = Metal.MtlArray(zeros(Int32, B_METAL_NL))
+        iters_el = Metal.MtlArray(zeros(Int32, B_METAL_NL))
+        backend_el = get_backend(xs_el)
+        solve_nonlinear_kernel!(backend_el)(
+            xs_el_out, codes_el, iters_el, xs_el, Metal.MtlArray(ps_el_host),
+            elim, m_el, state_el, Options(Float32); ndrange = B_METAL_NL)
+        synchronize(backend_el)
+        # The residual test stops at ‖F‖ ≤ √eps ‖F(x₀)‖, so the iterate is within a few √eps of
+        # the root, whose Jacobian has a condition number of order one.
+        @test all(==(Int32(SUCCESS)), Array(codes_el))
+        @test all(x -> isapprox(x, SVector(2.0f0, 4.0f0); rtol = 10 * sqrt(eps(Float32))),
+            Array(xs_el_out))
+
+        # 6. R2 solve_batch! on Metal (per-system status and return-code count forms)
         @testset "Metal R2 solve_batch!" begin
             GPUArraysCore.allowscalar(false)
             for T in filter(T -> real(T) === Float32, ELTYPES)

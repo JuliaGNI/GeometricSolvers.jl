@@ -113,7 +113,10 @@ primal solve, and on `SUCCESS` differentiates the root implicitly at `x*`, while
 [`NonlinearSolver`](@ref) (or a [`ReparametrizedSolver`](@ref) for a [`Reparametrized`](@ref)
 problem) that holds a copy of an array `x₀` and `p`, `solve!(solver)` solves into
 `solver.x` and returns `(solver.x, status)`, and `solve!(solver, x, p)` solves from another `x`
-with other `p` of the same types, in place into an array `x`. `init`, `solve!` and `solve` are the
+with other `p` of the same types, in place into an array `x`; on a [`NonlinearSolver`](@ref), with
+`refactorize = true` its first step factorises afresh, where a [`Newton`](@ref) with
+`keep_factor = true` would otherwise start on the factor of the last solve. `init`, `solve!` and
+`solve` are the
 functions of CommonSolve.jl, which the package extends on its own types, and
 `solve!(init(args...))` returns what `solve(args...)` returns on primal inputs. [`solve!!`](@ref) takes a solver
 state from `init_state(method_R, prob, x₀, p)` and runs the loop in R1 and R3 alike. On a batch
@@ -137,7 +140,9 @@ PerSystem
 Every type in this section is `isbits`, so a kernel can hold it, and every real field is in
 `R = real(T)` for the element type `T` of the iterate. [`SolverStatus`](@ref) also carries the
 range and spectrum diagnostics (`rank`, `nullnorm` and `gradratio`) recorded at the iterate
-``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return; a
+``x_k`` of the last fresh [`Newton`](@ref) factorisation, not at the iterate ``x`` at return (a
+solve that steps only along a factor kept with `keep_factor = true` reports the `rank` of that
+factor and `NaN` for the other two); a
 solve of a [`LeastSquaresProblem`](@ref) that ends on the stationarity test has factorised afresh
 at the iterate it returns. Where such a solve returns the start point of a step it discards, the
 status carries the diagnostics of the factorisation at that point, not those of the later
@@ -160,6 +165,22 @@ with `nullnorm ≈ 0`.
 The residual test of [`Options`](@ref) reads the 2-norm of the residual, or with
 `norm = MaxNorm()` its max norm; `status.fnorm` is the 2-norm under either. [`L2Norm`](@ref) and
 [`MaxNorm`](@ref) are exported, and their supertype `GeometricSolvers.StoppingNorm` is not.
+
+Each step's rate ``θ_k = \|Δ_k\| / \|Δ_{k-1}\|`` goes into `status.rate`. The rate test of
+[`Options`](@ref) joins the step test: a step with ``\hat θ_k = \max(θ_k, θ_{k-1}) < 1`` and
+``\hat θ_k / (1 - \hat θ_k) \|Δ_k\| ≤ κ \max(x_{abstol}, x_{reltol} \|x\|)`` returns `SUCCESS` with
+`status.contracted` set, and [`stopping_test`](@ref) then returns `:contraction`; it reads no step
+that a line search shortened below the full step, no step of a [`Multiplicative`](@ref) or a
+[`Repeat`](@ref) whose sub-steps cancel, so that the step is shorter than its longest sub-step, no
+step along an SVD factor whose rank is below the number of the unknowns it solves for, the outer ones of
+an eliminated problem, nor a step of a composition whose stepping member has such a factor. On a
+[`LeastSquaresProblem`](@ref), a [`VariableProjection`](@ref) and a [`Reparametrized`](@ref)
+problem around a `LeastSquaresProblem` it reads no step along a reused factor, whose steps
+contract onto a point that need not be stationary. With `rate_test = false` no step reads the
+rate test, which the inner solves of a [`BatchEliminated`](@ref) problem use. With
+`roundoff = true`, a step whose increment stops decreasing returns `STALLED` at the iterate it
+reached. `status.reused` is set where the last step of a [`Newton`](@ref) solve with `reuse`
+stepped along a reused factor.
 
 ```@docs
 ReturnCode

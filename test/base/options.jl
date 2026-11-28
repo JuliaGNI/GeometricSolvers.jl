@@ -32,7 +32,9 @@ end
     for name in (:f_abstol, :f_reltol, :x_abstol, :x_reltol)
         @test getfield(opt, name) isa Float32
     end
-    @test all(T -> T === Float32 || T === Int32 || T <: GeometricSolvers.StoppingNorm,
+    @test all(
+        T -> T === Float32 || T === Int32 || T === Bool ||
+             T <: GeometricSolvers.StoppingNorm,
         fieldtypes(typeof(opt)))
     @test opt.f_abstol === 1.0f-9
     @test opt.max_stalls === Int32(5)
@@ -161,7 +163,7 @@ end
 end
 
 # The stopping norm is a type parameter of `Options` and a field of no size, so `Options` stays
-# `isbits` at the size of its other fields, 56 bytes in `Float64` and 32 in `Float32`.
+# `isbits` at the size of its other fields, 72 bytes in `Float64` and 40 in `Float32`.
 @testset "the norm of Options(T; norm), $T" for T in ELTYPES
     R = real(T)
     opt = Options(T)
@@ -171,7 +173,7 @@ end
     @test opt isa Options{R} && opt_max isa Options{R}
     @test typeof(opt) !== typeof(opt_max)
     @test isbits(opt) && isbits(opt_max)
-    @test sizeof(opt) == sizeof(opt_max) == (R === Float32 ? 32 : 56)
+    @test sizeof(opt) == sizeof(opt_max) == (R === Float32 ? 40 : 72)
     @test Options(T; norm = L2Norm()) === opt
     @test GeometricSolvers.check_options(T, opt_max) === nothing
 end
@@ -206,4 +208,15 @@ end
         o.min_iterations, o.max_iterations, o.max_stalls, o.g_tol, o.norm)
     @test o9.norm === MaxNorm()
     @test o9.f_abstol === 1.0f-3 && o9.max_iterations === Int32(7)
+end
+
+# An R1 solve of an eliminated problem rebuilds its inner options through the positional form
+# inside a device kernel, so its check of `κ` raises the constant message, with no value in it.
+@testset "the positional Options{R} refuses κ outside (0, 1) with a constant message" begin
+    msg = ArgumentError("kappa must be finite and in (0, 1)")
+    # `1 - 1e-9` lies in `(0, 1)` in Float64 and rounds to `1f0` in Float32
+    for κ in (2.0f0, 1 - 1e-9, NaN32)
+        @test_throws msg Options{Float32}(
+            1.0f-3, 0.0f0, 0.0f0, 0.0f0, 0, 10, 2, 1.0f-3, L2Norm(), κ)
+    end
 end

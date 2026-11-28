@@ -1,7 +1,7 @@
 """
     Newton(; linsolve = LUFactorization(), globalization = Static(), jacobian = nothing,
              refinement = NoRefinement(), regularization = 0, reuse = nothing,
-             forcing = nothing, preconditioner = nothing, best = false)
+             forcing = nothing, preconditioner = nothing, best = false, keep_factor = false)
 
 Newton's method for [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) and, as
 [`GaussNewton`](@ref) configures it, for [`LeastSquaresProblem`](@ref), with linear solver
@@ -72,8 +72,25 @@ diagonal regularisation `regularization`, and factor-reuse period `reuse`.
   preconditioner: it keeps the preconditioner for up to `k` consecutive steps, so
   [`refresh!`](@ref) runs at the first step, `k` steps after each refresh, and early at the step
   after a `STALLED` step or an inner solve that reached its cap, with no retry within a step.
+  A step along a reused factor or preconditioner whose rate
+  ``θ_k = \\|Δ_k\\| / \\|Δ_{k-1}\\| ≥ 1`` refreshes it at the next step too, as a `STALLED` step
+  does; a `NaN` rate, at the first step of a solve or after a step of zero norm, refreshes nothing.
 - `best::B`: `Val(false)`, the default, or `Val(true)` from the keyword `best = true`, which
   returns the best iterate (below). The six-argument positional constructor gives `Val(false)`.
+- `keep_factor::Bool`: `false`, the default, or `true` from the keyword `keep_factor = true`, which
+  keeps the factor of `reuse = k` across a sequence of solves on one state, such as the
+  [`solve!`](@ref) calls of an integrator. A solve then starts on the factor and its age that the
+  last solve left, and the age counts toward `k` across solves. A solve leaves them only after
+  `SUCCESS` in one step or with a last rate ``θ ≤ 10^{-3}`` (Hairer and Wanner 1996, *Solving
+  Ordinary Differential Equations II*, p. 121), and not after a solve that promoted its
+  factorisation to the working precision; every other solve leaves age `0`, so that the next solve
+  factorises at its first step. A change of the parameters between two solves keeps the factor,
+  and the rate rule above refreshes it where it no longer contracts; a caller that knows the
+  Jacobian changed, such as after a change of the step size, passes
+  `solve!(solver, x, p; refactorize = true)`. A solve that steps only along a kept factor reports
+  in its [`SolverStatus`](@ref) the `rank` of that factor, which the rate test reads, and `NaN`
+  for `nullnorm` and `gradratio`. `keep_factor = true` without `reuse` raises an
+  `ArgumentError`. The six- and seven-argument positional constructors give `false`.
 
 # The best iterate
 
@@ -127,17 +144,21 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
     regularization::R
     reuse::K
     best::B
+    keep_factor::Bool
     # `adapt` rebuilds a method through this constructor, inside a device kernel too, so the check
     # also refuses a value that `ToReal` narrows to `Inf` or to zero. A kernel cannot format a
     # message, so each message is constant.
     function Newton{L, G, J, RF, R, K, B}(
             linsolve::L, globalization::G, jacobian::J,
             refinement::RF, regularization::R,
-            reuse::K, best::B) where {
+            reuse::K, best::B,
+            keep_factor::Bool) where {
             L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
             B <: Union{Val{false}, Val{true}}}
         regularization >= zero(R) && isfinite(regularization) ||
             throw(ArgumentError("Newton regularization must be finite and ≥ 0"))
+        keep_factor && reuse === nothing &&
+            throw(ArgumentError("Newton keep_factor = true needs reuse = k: only a factor that its steps reuse can survive a solve"))
         if reuse !== nothing
             reuse >= Int32(1) ||
                 throw(ArgumentError("Newton reuse must be ≥ 1 or nothing"))
@@ -186,20 +207,24 @@ struct Newton{L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
         globalization isa Steihaug && !(linsolve isa MINRESQLP) &&
             throw(ArgumentError("Newton with a Steihaug globalization needs linsolve = MINRESQLP(...): its conjugate gradients take the place of the MINRES-QLP solve"))
         new{L, G, J, RF, R, K, B}(
-            linsolve, globalization, jacobian, refinement, regularization, reuse, best)
+            linsolve, globalization, jacobian, refinement, regularization, reuse, best,
+            keep_factor)
     end
 end
 
-# The positional forms: the seven fields, which `adapt` rebuilds a method from, and the six before
-# `best`, which give `best = Val(false)`.
+# The positional forms: the eight fields, which `adapt` rebuilds a method from, the seven before
+# `keep_factor`, which give `keep_factor = false`, and the six before `best`, which also give
+# `best = Val(false)`.
 function Newton(
         linsolve::L, globalization::G, jacobian::J,
         refinement::RF, regularization::R,
-        reuse::K, best::B = Val(false)) where {
+        reuse::K, best::B = Val(false),
+        keep_factor::Bool = false) where {
         L, G, J, RF, R <: Real, K <: Union{Nothing, Int32},
         B <: Union{Val{false}, Val{true}}}
     return Newton{L, G, J, RF, R, K, B}(
-        linsolve, globalization, jacobian, refinement, regularization, reuse, best)
+        linsolve, globalization, jacobian, refinement, regularization, reuse, best,
+        keep_factor)
 end
 
 function Newton(;
@@ -211,7 +236,8 @@ function Newton(;
         reuse::Union{Nothing, Integer} = nothing,
         forcing::Union{Nothing, AbstractForcingTerm} = nothing,
         preconditioner = nothing,
-        best::Bool = false)
+        best::Bool = false,
+        keep_factor::Bool = false)
     reg = float(regularization)
     r = reuse === nothing ? nothing : Int32(reuse)
     ref = refinement isa Bool ? (refinement ? Refinement() : NoRefinement()) : refinement
@@ -220,7 +246,7 @@ function Newton(;
             "the forcing and preconditioner keywords of Newton configure a GMRES, BiCGStab or DQGMRES linear method, and forcing a MINRESQLP one; pass them to the method, or set linsolve = GMRES(...)"))
         linsolve = with_forcing(linsolve, forcing, preconditioner)
     end
-    return Newton(linsolve, globalization, jacobian, ref, reg, r, Val(best))
+    return Newton(linsolve, globalization, jacobian, ref, reg, r, Val(best), keep_factor)
 end
 
 # A matrix-free linear method with the forcing term `forcing` and the right preconditioner
@@ -588,11 +614,14 @@ end
     g, linsolve, x)
 
 # The rule state of `Newton` with `reuse = k`: the age of the factor, or of the preconditioner of a
-# `GMRES`, and whether the last step stalled, which refreshes it early; a `GMRES` step also sets
-# the flag where its inner solve reached its cap.
+# `GMRES`, whether the last step stalled, which refreshes it early, and whether the last step
+# stepped along a factor or a preconditioner that an earlier step formed. A `GMRES` step also sets
+# `stalled` where its inner solve reached its cap, and `observe_rate!!` where a step along a reused
+# factor has the rate `θ ≥ 1`.
 struct FactorAge
     age::Int32
     stalled::Bool
+    reused::Bool
 end
 
 # The age of a factor that a step has just factorised: the next step reuses it unless the period
@@ -626,7 +655,8 @@ end
 
 @inline newton_rule(m::Newton, x) = newton_rule(m.globalization, m.reuse, real(eltype(x)))
 @inline newton_rule(globalization, ::Nothing, ::Type{R}) where {R} = nothing
-@inline newton_rule(globalization, ::Int32, ::Type{R}) where {R} = FactorAge(Int32(0), false)
+@inline newton_rule(globalization, ::Int32, ::Type{R}) where {R} = FactorAge(
+    Int32(0), false, false)
 @inline function newton_rule(dl::DogLeg, ::Nothing, ::Type{R}) where {R}
     δ₀ = dogleg_initial_radius(dl, R)
     return TrustRadius(δ₀, δ₀)
@@ -643,7 +673,7 @@ end
 end
 
 @inline reset_rule(::Nothing, _) = nothing
-@inline reset_rule(::FactorAge, _) = FactorAge(Int32(0), false)
+@inline reset_rule(::FactorAge, _) = FactorAge(Int32(0), false, false)
 @inline reset_rule(r::TrustRadius, _) = TrustRadius(r.radius₀, r.radius₀)
 @inline function reset_rule(::DampingParameter{R}, lm::LevenbergMarquardt) where {R}
     return DampingParameter(R(lm.μ₀))
@@ -770,6 +800,8 @@ end
 
 @inline state_gradratio(state::NewtonState) = state.diag.gradratio
 @inline state_jnorm(state::NewtonState) = state.diag.jnorm
+@inline state_rank(state::NewtonState) = state.diag.rank
+@inline reused_step(state::NewtonState) = state.rule isa FactorAge && state.rule.reused
 @inline step_start_buffers(state::NewtonState) = state.kept
 
 # The state whose diagnostics measure the stationarity test at `(x, Fx)`: `solve!!` re-measures
@@ -798,7 +830,7 @@ end
         x, Fx, p) where {L, G, J, RF, Reg}
     _, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     state = with_diag(with_factor(state, fac), diag)
-    return with_rule(state, FactorAge(fresh_age(m), false))
+    return with_rule(state, FactorAge(fresh_age(m), false, state.rule.reused))
 end
 
 @inline function with_factor(s::NewtonState, fac)
@@ -906,7 +938,7 @@ end
     j = m.jacobian
     (j === nothing || j isa AbstractADType) && return m
     return Newton(m.linsolve, m.globalization, ScalarJacobian(j), m.refinement,
-        m.regularization, m.reuse, m.best)
+        m.regularization, m.reuse, m.best, m.keep_factor)
 end
 
 # The state of a one-variable least-squares problem is the state of the lifted problem at the
@@ -1094,12 +1126,19 @@ stage of a [`GMRESRefinement`](@ref) forms for each Krylov vector `v`, in the wo
 @inline preconditioned_buffer(refbuf) = nothing
 
 # The per-solve reset that every `Newton` method shares: the rule state, the anchor merit of a
-# line search, the promotion flags and the diagnostics.
+# line search, the promotion flags and the diagnostics. Under `keep_factor = true` the rule state
+# is the one that the last `finish!!` left, so the first step reuses the factor that it kept, and
+# the diagnostics keep the rank of the last fresh factor, which the rate test reads along it. That
+# factor may be one that the last solve dropped, after a solve that kept no factor or after
+# `refactorize = true`: the first step then factorises afresh, and only a solve that ends with no
+# step reports the dropped factor's rank.
 @inline function newton_start!!(state::NewtonState, m::Newton, x, Fx, fnorm₀)
-    state = with_rule(state, reset_rule(state.rule, m.globalization))
+    R = real(eltype(x))
+    m.keep_factor || (state = with_rule(state, reset_rule(state.rule, m.globalization)))
     state = with_merit(state, start_merit(m.globalization, Fx), fnorm₀)
     state = with_mixed(state, false, Int32(0))
-    return with_diag(state, NewtonDiagnostics(real(eltype(x))))
+    rank = m.keep_factor ? state.diag.rank : Int32(-1)
+    return with_diag(state, NewtonDiagnostics{R}(rank, R(NaN), R(NaN), zero(R)))
 end
 
 # A solve under `best = true` starts its record at `x₀`, whatever an earlier solve on the state
@@ -1127,9 +1166,10 @@ end
         state::NewtonState, m::Newton, x, status::SolverStatus{R}) where {R}
     d = state.diag
     st = SolverStatus{R}(
-        status.code, status.iterations, status.fnorm, status.stepnorm,
-        status.step_failures, status.promoted, status.stationary,
-        d.rank, d.nullnorm, d.gradratio)
+        status.code, Int16(0), status.iterations, status.fnorm, status.stepnorm,
+        status.step_failures, status.promoted, status.stationary, Int16(0),
+        d.rank, d.nullnorm, d.gradratio, status.rate, status.contracted,
+        reused_factor(state.rule, status))
     state_end = with_mixed(
         with_merit(state, init_merit(m.globalization, x), NaN),
         state.promoted, Int32(0))
@@ -1137,8 +1177,42 @@ end
         state_end = with_rule(state_end, DampingParameter(R(NaN)))
     elseif state.rule isa PseudoTimeStep
         state_end = with_rule(state_end, PseudoTimeStep(R(NaN)))
+    elseif state.rule isa FactorAge && m.keep_factor && !keeps_factor(state, status)
+        state_end = with_rule(state_end, FactorAge(Int32(0), false, false))
     end
     return x, st, state_end
+end
+
+# Whether the last step of a solve that took `status.iterations` steps stepped along a reused factor
+# or preconditioner.
+@inline reused_factor(rule, status) = false
+@inline function reused_factor(rule::FactorAge, status::SolverStatus)
+    return rule.reused && status.iterations > Int32(0)
+end
+
+# Whether a solve under `keep_factor = true` leaves its factor, and the factor's age, to the next
+# solve: after `SUCCESS` in one step, or with a last rate `θ ≤ 10⁻³` (Hairer and Wanner 1996,
+# p. 121), and in the precision of the method's factorisation. A solve that is not `SUCCESS` keeps
+# no factor, and neither does a promoted solve, whose factor is the one in the working precision
+# that the next solve, which starts unpromoted, does not read.
+@inline function keeps_factor(state::NewtonState, status::SolverStatus{R}) where {R}
+    status.code == SUCCESS && !state.promoted || return false
+    return status.iterations == Int32(1) || status.rate <= R(1 // 1000)
+end
+
+# Under `reuse`, a step of rate `θ ≥ 1` along a reused factor refreshes the factor at the next
+# step, as a `STALLED` step does. A `NaN` rate refreshes nothing.
+@inline function observe_rate!!(state::NewtonState, m::Newton, rate)
+    rule = state.rule
+    rule isa FactorAge || return state
+    (rule.reused && rate >= one(rate)) || return state
+    return with_rule(state, FactorAge(rule.age, true, rule.reused))
+end
+
+# The state whose next step factorises afresh: the age of a `reuse` factor at `0`.
+@inline function drop_factor!!(state::NewtonState, m::Newton)
+    state.rule isa FactorAge || return state
+    return with_rule(state, FactorAge(Int32(0), false, false))
 end
 
 # The best iterate is restored after the `GMRES` counts are added, so the restored status keeps
@@ -1369,7 +1443,7 @@ end
             return with_mixed(state, true, Int32(0)),
             StepInfo{R}(
                 info.code, info.fnorm, info.stepnorm,
-                info.failures + one(Int32), true, info.limited)
+                info.failures + one(Int32), true, info.limited, info.shortened)
         end
         return with_mixed(state, false, slow), info
     end
@@ -1406,7 +1480,8 @@ end
 @inline function bump_failures(info::StepInfo{R}, n::Int32) where {R <: Real}
     iszero(n) && return info
     return StepInfo{R}(
-        info.code, info.fnorm, info.stepnorm, info.failures + n, info.promoted, info.limited)
+        info.code, info.fnorm, info.stepnorm, info.failures + n, info.promoted, info.limited,
+        info.shortened)
 end
 
 # The state a mixed-precision step returns with `fac` stored, for a solve that reuses its factor:
@@ -1633,7 +1708,8 @@ end
     info = bump_failures(info, md.failures)
     if promoted_step
         info = StepInfo{R}(
-            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited)
+            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited,
+            info.shortened)
         st = with_mixed(md.state, true, Int32(0))
     elseif state.promoted
         st = md.state
@@ -1689,7 +1765,8 @@ end
     info = bump_failures(info, md.failures)
     if promoted_step
         info = StepInfo{R}(
-            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited)
+            info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited,
+            info.shortened)
         st = with_mixed(md.state, true, Int32(0))
     elseif state.promoted
         st = md.state
@@ -1722,22 +1799,24 @@ end
         else
             x₊, F₊, info, merit = newton_line(m, state, prob, x, Fx, p, state.fac, d, false)
             (info.code == LINESEARCH_FAILED && iszero(info.stepnorm)) ||
-                return reuse_result(state, state.fac, state.diag, x₊, F₊, info, merit, age₊)
+                return reuse_result(
+                    state, state.fac, state.diag, x₊, F₊, info, merit, age₊, true)
         end
     end
     Jreg, fac, diag = newton_factor(m, state, prob, x, Fx, p)
     x₊, F₊, info, merit = newton_globalize(m, state, prob, x, Fx, p, fac, Jreg)
     return reuse_result(
-        state, fac, diag, x₊, F₊, bump_failures(info, failures), merit, age_fresh)
+        state, fac, diag, x₊, F₊, bump_failures(info, failures), merit, age_fresh, false)
 end
 
-# The state and the result of a step with reuse from the factor `fac` it took: a `SINGULAR` step
-# resets the age of the factor, and a `STALLED` one refreshes it at the next step.
-@inline function reuse_result(state::NewtonState, fac, diag, x₊, F₊, info, merit, age₊)
+# The state and the result of a step with reuse from the factor `fac` it took, reused or fresh: a
+# `SINGULAR` step resets the age of the factor, and a `STALLED` one refreshes it at the next step.
+@inline function reuse_result(
+        state::NewtonState, fac, diag, x₊, F₊, info, merit, age₊, reused::Bool)
     state = with_diag(with_merit(with_factor(state, fac), merit, info.fnorm), diag)
     info.code == SINGULAR &&
-        return x₊, F₊, with_rule(state, FactorAge(Int32(0), false)), info
-    return x₊, F₊, with_rule(state, FactorAge(age₊, info.code == STALLED)), info
+        return x₊, F₊, with_rule(state, FactorAge(Int32(0), false, reused)), info
+    return x₊, F₊, with_rule(state, FactorAge(age₊, info.code == STALLED, reused)), info
 end
 
 # The same step with a factorisation in `TF ≠ T`: the mixed-precision half of the step, and the
@@ -1760,7 +1839,7 @@ end
         if !md.ok
             info = StepInfo{R}(
                 SINGULAR, R(rnorm(Fx)), zero(R), md.failures, st.promoted, false)
-            return x, Fx, with_rule(st, FactorAge(Int32(0), false)), info
+            return x, Fx, with_rule(st, FactorAge(Int32(0), false, !md.fresh)), info
         end
         promoted_step = st.promoted && !state.promoted
         if promoted_step
@@ -1780,16 +1859,17 @@ end
         info = bump_failures(info, md.failures)
         if promoted_step
             info = StepInfo{R}(
-                info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited)
+                info.code, info.fnorm, info.stepnorm, info.failures, true, info.limited,
+                info.shortened)
             st = with_mixed(st, true, Int32(0))
         elseif md.fresh && !st.promoted
             st, info = read_mixed_stall(st, info, fnorm_old, lin_rel)
         end
         st = with_merit(st, merit, info.fnorm)
         if info.code == SINGULAR
-            return x₊, F₊, with_rule(st, FactorAge(Int32(0), false)), info
+            return x₊, F₊, with_rule(st, FactorAge(Int32(0), false, !md.fresh)), info
         end
-        return x₊, F₊, with_rule(st, FactorAge(age₊, info.code == STALLED)), info
+        return x₊, F₊, with_rule(st, FactorAge(age₊, info.code == STALLED, !md.fresh)), info
     end
 end
 
@@ -2080,7 +2160,7 @@ end
 @inline function preconditioner_rule(
         rule::FactorAge, m::Newton, refreshed::Bool, code, failures)
     age₊ = refreshed ? fresh_age(m) : next_age(rule, m)
-    return FactorAge(age₊, code == STALLED || failures > Int32(0))
+    return FactorAge(age₊, code == STALLED || failures > Int32(0), !refreshed)
 end
 
 # The step of a `Newton` with `GMRES`: the inner solve and the globalization of its direction. A line

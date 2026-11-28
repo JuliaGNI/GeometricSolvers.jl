@@ -3,7 +3,7 @@
                    covariant = prob isa StationarityProblem, curvature = true)
 
 Coordinate-chart wrapper `x = g(y, p)` around an [`AbstractNonlinearProblem`](@ref) `prob`
-([`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref)).
+([`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) or [`LeastSquaresProblem`](@ref)).
 
 Solving a `Reparametrized` problem iterates in the chart coordinates `y`. [`solve`](@ref) and
 [`init`](@ref) / [`solve!`](@ref) return `(x*, status)` and [`solve!!`](@ref) returns
@@ -15,7 +15,10 @@ raises an `ArgumentError`.
 
 # Arguments and keywords
 
-- `prob`: the inner [`NonlinearProblem`](@ref) or [`StationarityProblem`](@ref) in `x`-coordinates.
+- `prob`: the inner [`NonlinearProblem`](@ref), [`StationarityProblem`](@ref) or
+  [`LeastSquaresProblem`](@ref) in `x`-coordinates. For a [`LeastSquaresProblem`](@ref), the
+  rate test of the solve reads no step along a reused factor, as without the chart.
+  A `Reparametrized` inner problem raises an `ArgumentError`: compose the two charts into one.
   A [`StationarityProblem`](@ref) needs `U = :` or `U = 1:n` in order, for the chart dimension
   `n`, and `E = :` or a permutation of `1:n`; [`init`](@ref), [`solve`](@ref),
   [`solve_batch!`](@ref) and [`prepare_ad`](@ref) raise an `ArgumentError` for any other index set.
@@ -47,6 +50,9 @@ struct Reparametrized{P <: AbstractNonlinearProblem, G, DG, C, K} <:
             prob::P, g::G, ∂g::DG) where {P <: AbstractNonlinearProblem, G, DG, C, K}
         C isa Bool || throw(ArgumentError("Reparametrized type parameter C must be a Bool"))
         K isa Bool || throw(ArgumentError("Reparametrized type parameter K must be a Bool"))
+        P <: Reparametrized && throw(ArgumentError(
+            "Reparametrized cannot wrap a Reparametrized; compose the charts into one \
+            Reparametrized, with the chart g₁∘g₂ and the chart Jacobian ∂g₁(g₂)·∂g₂"))
         return new{P, G, DG, C, K}(prob, g, ∂g)
     end
 end
@@ -701,6 +707,10 @@ struct _InnerReparametrized{RP <: Reparametrized, WS} <: AbstractNonlinearProble
     reparam::RP
     ws::WS
 end
+
+# The rate test of the chart solve reads the steps that it reads for the inner problem, so a
+# least-squares inner problem keeps its guard on steps along a reused factor.
+@inline rate_test_step(ip::_InnerReparametrized, state) = rate_test_step(ip.reparam.prob, state)
 
 @inline function prepare_ad(
         ::AutoForwardDiff, iprob::_InnerReparametrized, r::AbstractArray, y::AbstractArray, p)
