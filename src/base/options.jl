@@ -46,6 +46,8 @@ The stopping test of the loop, and nothing else. It is `isbits`, and every toler
   step ``Δ_k``.
 - `roundoff::Bool`: the round-off stop, which ends a solve with `STALLED` at the first step of
   rate ``θ_k ≥ 1`` after a step of rate ``θ_{k-1} < 1``.
+- `rate_test::Bool`: whether the rate test runs. With `false` the residual, stationarity and step
+  tests and the round-off stop end a solve, and `kappa` has no effect.
 
 [`Options(T; kwargs...)`](@ref Options(::Type{T}) where {T <: Number}) builds one from the element
 type `T` of the iterate, so the caller never names `R`. A solve takes only an `Options{R}` for
@@ -65,20 +67,21 @@ struct Options{R <: Real, N <: StoppingNorm}
     norm::N
     kappa::R
     roundoff::Bool
+    rate_test::Bool
 end
 
-# The positional forms in `R`: eight values, a norm, `κ` and the round-off flag, which default to
-# `L2Norm()`, `κ = 1/10` and `false`, and the seven values before `g_tol`, which take
-# `g_tol = √eps(R)`.
+# The positional forms in `R`: eight values, a norm, `κ`, the round-off flag and the rate-test
+# flag, which default to `L2Norm()`, `κ = 1/10`, `false` and `true`, and the seven values before
+# `g_tol`, which take `g_tol = √eps(R)`.
 function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
         min_iterations::Integer, max_iterations::Integer, max_stalls::Integer, g_tol::Real,
         norm::N = L2Norm(), kappa::Real = R(1) / 10,
-        roundoff::Bool = false) where {R <: Real, N <: StoppingNorm}
+        roundoff::Bool = false, rate_test::Bool = true) where {R <: Real, N <: StoppingNorm}
     κ = R(kappa)
     check_kappa(κ)
     return Options{R, N}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
         Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm,
-        κ, roundoff)
+        κ, roundoff, rate_test)
 end
 
 function Options{R}(f_abstol::Real, f_reltol::Real, x_abstol::Real, x_reltol::Real,
@@ -106,7 +109,7 @@ end
 end
 
 """
-    Options(T = Float64; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls, g_tol, norm, kappa, roundoff)
+    Options(T = Float64; f_abstol, f_reltol, x_abstol, x_reltol, min_iterations, max_iterations, max_stalls, g_tol, norm, kappa, roundoff, rate_test)
 
 Build the [`Options`](@ref) of a solve whose iterate has element type `T`, as `Options{real(T)}`.
 The relative tolerances scale with `eps(R)`:
@@ -124,6 +127,7 @@ The relative tolerances scale with `eps(R)`:
 | `norm` | [`L2Norm()`](@ref L2Norm) |
 | `kappa` | `1/10` |
 | `roundoff` | `false` |
+| `rate_test` | `true` |
 
 **The stopping norm is the norm of the residual test only.** With `norm = MaxNorm()` the residual
 test reads ``\\|F(x)\\|_\\infty \\le \\max(f_{abstol}, f_{reltol} \\|F(x₀)\\|_\\infty)``, so the
@@ -168,7 +172,11 @@ onto a point that is no root, and the step test decides. On a [`LeastSquaresProb
 contract onto the point where ``J_0^\\top F(x) = 0`` for the Jacobian ``J_0`` of the factor, which
 is no stationary point of ``\\|F\\|_2^2``, so the stationarity, the step or the residual test
 ends the solve there, as without `reuse`. A step along a fresh factor, and every step of a square
-problem, reads the rate test.
+problem, reads the rate test. With `rate_test = false` no step reads it, and the residual, the
+stationarity and the step test end the solve as they would without it. A caller whose own
+schedule needs the residual tolerance turns it off: the inner solves of a
+[`BatchEliminated`](@ref) problem do, because the rate test stops at a residual above that
+tolerance.
 
 **The round-off stop is off by default.** With `roundoff = true`, the first step of rate
 ``θ_k ≥ 1`` after a step of rate ``θ_{k-1} < 1`` returns `STALLED` with the iterate it reached
@@ -209,7 +217,8 @@ function Options(::Type{T} = Float64;
         g_tol::Real = sqrt(eps(real(T))),
         norm::StoppingNorm = L2Norm(),
         kappa::Real = real(T)(1) / 10,
-        roundoff::Bool = false) where {T <: Number}
+        roundoff::Bool = false,
+        rate_test::Bool = true) where {T <: Number}
     R = real(T)
     # one call per tolerance, because a loop over their mixed types allocates
     nonnegative(:f_abstol, f_abstol)
@@ -225,7 +234,7 @@ function Options(::Type{T} = Float64;
         throw(ArgumentError("max_stalls must be at least 1, got $max_stalls"))
     Options{R}(R(f_abstol), R(f_reltol), R(x_abstol), R(x_reltol),
         Int32(min_iterations), Int32(max_iterations), Int32(max_stalls), R(g_tol), norm,
-        kappa, roundoff)
+        kappa, roundoff, rate_test)
 end
 
 # `nothing` when `options` is an `Options{real(T)}`, the options of an iterate of element type
@@ -277,9 +286,10 @@ end
 # nonzero norm and `θ < 1` with `θ / (1 - θ) ‖Δ‖ ≤ κ max(x_abstol, x_reltol ‖x‖)`, for the larger
 # `θ` of the two rates. The one small rate of an irregular step, such as a secant or an inexact
 # Krylov step, does not pass it. A `NaN` rate, of either step, fails `θ < 1`. `solve!!` does not
-# call it after a step that a line search shortened.
+# call it after a step that a line search shortened. Under `rate_test = false` it never holds.
 @inline function rate_converged(
         options::Options{R}, status::SolverStatus{R}, θ_prev::R, xnorm::R) where {R}
+    options.rate_test || return false
     status.iterations >= options.min_iterations || return false
     θ = max(status.rate, θ_prev)
     status.stepnorm > 0 && θ < one(R) || return false

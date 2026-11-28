@@ -342,6 +342,53 @@ end
     @test stopping_test(st_both) == :stationarity
 end
 
+# A least-squares method whose step divides `x` by `100` along a factor of rank `rank` whose
+# diagnostics read the step's start stationary; their re-measure at the end of the step reports
+# full column rank and the ratio `1`, which is not stationary.
+struct RankStep
+    rank::Int32
+end
+struct RankState{T}
+    rank::Int32
+    gradratio::T
+end
+GeometricSolvers.init_state(::RankStep, prob, x, p) = RankState(Int32(-1), eltype(x)(NaN))
+GeometricSolvers.state_rank(s::RankState) = s.rank
+GeometricSolvers.state_jnorm(s::RankState) = one(s.gradratio)
+GeometricSolvers.state_gradratio(s::RankState) = s.gradratio
+function GeometricSolvers.refresh_diagnostics!!(s::RankState, ::RankStep, prob, x, Fx, p)
+    return RankState(Int32(length(x)), one(s.gradratio))
+end
+rank_residual(x, p) = SVector(x[1], one(eltype(x)) / 1000)
+function GeometricSolvers.step!!(s, m::RankStep, prob, x, Fx, p)
+    T = eltype(x)
+    x₊ = x / 100
+    F₊ = rank_residual(x₊, p)
+    info = StepInfo{T}(SUCCESS, sqrt(sum(abs2, F₊)), sqrt(sum(abs2, x₊ - x)), Int32(0),
+        false, false, false)
+    return x₊, F₊, RankState(m.rank, zero(T)), info
+end
+
+@testset "the rate test reads the rank of the step's factor, not of its re-measure, $T" for T in REAL_ELTYPES
+    # each step's factor reads its start stationary, so the solve re-measures the diagnostics at
+    # the end of the step, where they report full rank and fail the stationarity test; the step
+    # lowers `‖F‖`, so the solve goes on. Under `x_abstol = 1/200` the rate test holds at the third
+    # step: along a step's factor of full rank it ends the solve there, and along one of rank `0`
+    # the step test `‖Δ₃‖ ≤ x_abstol` returns `STALLED`
+    prob = GeometricSolvers.LeastSquaresProblem(rank_residual, 2)
+    opt = Options(T; f_abstol = 0, f_reltol = 0, x_abstol = T(1) / 200, max_iterations = 5)
+    _, st_full = solve(prob, SVector{1, T}(1), RankStep(Int32(1)); options = opt)
+    @test st_full.code == SUCCESS
+    @test st_full.contracted
+    @test st_full.iterations == 3
+    x, st = solve(prob, SVector{1, T}(1), RankStep(Int32(0)); options = opt)
+    @test st.code == STALLED
+    @test !st.contracted
+    @test !st.stationary
+    @test st.iterations == 3
+    @test x[1] ≈ T(1e-6)
+end
+
 @testset "a Deflated problem reports the rate of its steps, $T" for T in REAL_ELTYPES
     # its residual test reads a status of its own, which keeps the rate of the step
     prob = GeometricSolvers.Deflated(NonlinearProblem((x, p) -> SVector(x[1]^2 - 2)),
@@ -464,6 +511,40 @@ end
         @test !st.contracted
         @test st.iterations == 3
     end
+end
+
+@testset "sub-steps that cancel do not end a solve on the rate test" begin
+    # `F(x) = x³ - 2x + 2` has its one real root at `x ≈ -1.7693`, and Newton maps `0` to `1` and
+    # `1` to `0`. From near `0` two Newton sub-steps per outer step approach that cycle: each
+    # sub-step has a norm near `1`, and the outer step, their sum, shrinks fast, so its rates
+    # are small at `‖F‖ = 2`. The outer step is shorter than its longest sub-step, which marks it
+    # shortened, and the step test returns `STALLED` at the iterations that it takes without a
+    # rate test; the same holds for a Newton step followed by a `Picard` step from `0.1`
+    prob = NonlinearProblem((x, p) -> x^3 - 2x + 2)
+    nt = Newton(; jacobian = (x, p) -> 3x^2 - 2)
+    opt = Options(Float64; f_abstol = 0, f_reltol = 0, x_reltol = 0, x_abstol = 1e-8,
+        max_iterations = 50)
+    for m in (Multiplicative(nt, nt), Repeat(nt, 2)),
+        (x₀, k) in ((0.001, 3), (0.01, 4), (0.1, 8))
+
+        x, st = solve(prob, x₀, m; options = opt)
+        @test st.code == STALLED
+        @test !st.contracted
+        @test st.iterations == k
+        @test abs(x) <= 1e-8
+        @test st.fnorm ≈ 2
+    end
+    _, st_p = solve(prob, 0.1, Multiplicative(nt, Picard()); options = opt)
+    @test st_p.code != SUCCESS
+    @test !st_p.contracted
+    # the rule itself: two or more sub-steps, and an outer step shorter than the longest one; one
+    # sub-step is the outer step, and a `NaN` norm marks nothing
+    cancelled = GeometricSolvers.cancelled_substeps
+    @test cancelled(Int32(2), 0.5, 1.0)
+    @test !cancelled(Int32(2), 1.0, 1.0)
+    @test !cancelled(Int32(2), 1.5, 1.0)
+    @test !cancelled(Int32(1), 0.5, 1.0)
+    @test !cancelled(Int32(2), 0.5, NaN)
 end
 
 # A method whose steps from `x₀ = 1` go to `1/2`, `1/4`, `-1/4` and back to `1/4`: the step norms
@@ -692,6 +773,33 @@ end
     opt_p = Options{T}(0, 1, 0, 0, 0, 10, 2)
     @test opt_p.kappa === T(1) / 10
     @test opt_p.roundoff === false
+    @test opt_p.rate_test === true
+end
+
+@testset "rate_test = false turns the rate test off, $T" for T in REAL_ELTYPES
+    @test Options(T).rate_test === true
+    opt_off = Options(T; rate_test = false)
+    @test opt_off.rate_test === false
+    @test isbitstype(typeof(opt_off))
+    @test Options{T}(0, 1, 0, 0, 0, 10, 2, sqrt(eps(T)), L2Norm(), T(1) / 10, false,
+        false).rate_test === false
+    # the steps of rate `1/100` of `ScriptedStep(SUCCESS, false)` end on the rate test at the
+    # third step under `x_abstol = 1/200`; without it the step test returns `STALLED` there, at
+    # the step of norm `9.9e-5`, and a residual test that holds still returns `SUCCESS`
+    prob = linear_problem(one(T))
+    for (rate_test, code) in ((true, SUCCESS), (false, STALLED))
+        opt = Options(T; f_reltol = 0, x_abstol = T(1) / 200, max_iterations = 5, rate_test)
+        x, st = solve(prob, one(T), ScriptedStep(SUCCESS, false); options = opt)
+        @test st.code == code
+        @test st.contracted == rate_test
+        @test st.iterations == 3
+        @test x == one(T) / 100 / 100 / 100
+    end
+    _, st_res = solve(prob, one(T), ScriptedStep(SUCCESS, false);
+        options = Options(T; f_abstol = T(1e-3), f_reltol = 0, rate_test = false))
+    @test st_res.code == SUCCESS
+    @test !st_res.contracted
+    @test stopping_test(st_res) == :residual
 end
 
 @testset "keep_factor needs reuse" begin
@@ -1081,6 +1189,11 @@ end
     @test inner_f32 isa Options{Float32}
     @test inner_f32.kappa === 0.25f0
     @test inner_f32.roundoff === true
+    @test inner_f32.rate_test === true
+    elim_off = GeometricSolvers.BlockEliminated(prob, (1,); outer = (2,),
+        inner_options = Options(Float64; rate_test = false))
+    @test Adapt.adapt(GeometricSolvers.ToReal{Float32}(), elim_off).inner_options.rate_test ===
+          false
     moments = GeometricSolvers.DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2))
     batch = GeometricSolvers.BatchEliminated((F, x, m, s) -> F,
         NonlinearProblem((y, c) -> y .- c), [SVector(0.0) for _ in 1:3],
@@ -1088,6 +1201,40 @@ end
     inner = GeometricSolvers._batch_inner_options(batch, 1e-6)
     @test inner.kappa === 0.25
     @test inner.roundoff === true
+    # the batch's inner solves take no rate test, whatever `inner_options` says
+    @test inner.rate_test === false
+end
+
+@testset "a BatchEliminated batch deposits only a residual that meets its tolerance or ceiling" begin
+    # one system `F(y) = s (y² - 2)` and one outer evaluation at the inner tolerance
+    # `max(2 eps, cap / 2)`, from a cold start: the merge base of the rate test, which has no rate
+    # test, gives each code, iteration count and finite or `NaN` deposit here. With a rate test, the
+    # inner solves of the first five cases end on it with `SUCCESS` at a residual above both the
+    # tolerance and the ceiling `32 eps = 7.1e-15`, and the batch deposited it; in the last two the
+    # residual test holds a step later
+    moments = GeometricSolvers.DepositedMoments(zeros(2), zeros(2), zeros(2), zeros(2))
+    cases = (
+        # scale, x_reltol, cap, y₀, code, iterations, finite deposit
+        (2.0^30, 1e-8, 1e-30, 1.0, STALLED, 5, false),
+        (2.0^30, 1e-8, 1e-30, 10.0, STALLED, 8, false),
+        (2.0^30, 1e-6, 1e-30, 1.0, STALLED, 5, false),
+        (2.0^20, 1e-2, 2e-4, 3.0, STALLED, 4, false),
+        (1.0, 1e-4, 2e-10, 1.2, STALLED, 3, false),
+        (1.0, 1e-5, 2e-10, 30.0, SUCCESS, 9, true),
+        (1.0, 1e-6, 2e-12, 1.5, SUCCESS, 4, true))
+    for (s, xr, cap, y₀, code, k, finite) in cases
+        batch = GeometricSolvers.BatchEliminated((F, x, m, sh) -> (F .= x; F),
+            NonlinearProblem((y, c) -> SVector(s * (y[1]^2 - 2))), [SVector(y₀)],
+            (m, Y, sh, ps) -> m, moments; inner_options = Options(Float64; x_reltol = xr),
+            inner_atol_cap = cap)
+        GeometricSolvers.residual!!(zeros(2), batch, fill(1e-9, 2), nothing)
+        st = batch.statuses[1]
+        @test st.code == code
+        @test !st.contracted
+        @test st.iterations == k
+        @test all(isfinite, batch.F_anchor) == finite
+        finite && @test st.fnorm <= batch.last_inner_tol
+    end
 end
 
 @testset "refactorize drops the outer factor of an eliminated problem" begin

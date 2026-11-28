@@ -62,8 +62,11 @@ Jacobian at the current iterate.
 
 With `keep_factor = true` as well, the factor and its age survive from one solve of a
 [`NonlinearSolver`](@ref) to the next, as in the steps of an integrator: a solve that ends with
-`SUCCESS` in one step, or with a last rate ``θ ≤ 10^{-3}``, hands its factor on, and every other
-solve leaves the next one to factorise at its first step. A caller that changes the Jacobian
+`SUCCESS` in one step, or with `SUCCESS` after more steps with a last rate ``θ ≤ 10^{-3}``, and
+that did not promote its factorisation to the working precision, hands its factor on. Every other
+solve leaves the next one to factorise at its first step: a solve that does not end with
+`SUCCESS`, a promoted solve, and a solve that ends with `SUCCESS` at its start, with no step. A
+caller that changes the Jacobian
 between two solves, such as with a new step size, passes
 `solve!(solver, x, p; refactorize = true)`.
 

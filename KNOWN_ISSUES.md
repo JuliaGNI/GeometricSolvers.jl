@@ -1412,8 +1412,8 @@
 
 ### K160 · A run of full-length secant steps along the pairs of a `BroydenUpdate` can pass the rate test away from a root, because the larger of the last two rates guards one irregular step only
 
-- **location:** `src/nonlinear/solver.jl:348` (the rate test of `solve!!`),
-  `src/base/options.jl:281` (`rate_converged`)
+- **location:** `src/nonlinear/solver.jl:349` (the rate test of `solve!!`),
+  `src/base/options.jl:290` (`rate_converged`)
 - **evidence:** `scripts/broyden_rate_test.jl` solves `F(x) = g(x − X)`, with `g(t) = 1 − t + θ t²`
   up to a kink at each method's own second iterate and a line of slope `−σ` beyond it. In
   `Float32`, `Newton(; reuse = 3, update = BroydenUpdate(2))` with `Static()` or `Backtracking()`
@@ -1428,3 +1428,21 @@
   step to report such a step.
 - **kind:** defect
 - **found:** #148
+
+### K165 · A `Multiplicative` or `Repeat` contraction whose sub-steps alternate in sign does not end on the rate test
+
+- **location:** `src/composition/multiplicative.jl` (`cancelled_substeps`)
+- **evidence:** an outer step of two or more sub-steps that is shorter than its longest sub-step
+  is marked `shortened`, and the rate test reads no such step. A contraction whose sub-steps
+  overshoot the root in turn has such outer steps too. On `F(x) = 1.2 x` with
+  `Newton(; jacobian = (x, p) -> 1.0)`, each sub-step maps `x` to `-0.2 x`, so the outer step of
+  `Multiplicative(nb, nb)` or `Repeat(nb, 2)` maps `x` to `0.04 x`, with the norm `0.96 |x|` below
+  that of its first sub-step, `1.2 |x|`. Under `Options(Float64; f_reltol = 0, x_abstol = 1e-4)`
+  from `1.0`, the commit before the rule returns `SUCCESS` by `:contraction` after 4 iterations,
+  and the rule gives `STALLED` after 4, at the same iterate `|x| = 2.56e-6`. The same-sign case
+  `F(x) = 0.8 x` keeps `SUCCESS` by `:contraction`, and under the default `Options(Float64)` both
+  end by the residual test after 6 iterations. The merge base with `main`, which has no rate
+  test, returns `STALLED` after 4 in both cases.
+- **kind:** defect
+- **found:** #146, the limit of the decided rule that a composite step whose net displacement is
+  shorter than its longest sub-step is `shortened` (CodeRabbit comment 4723565190)
