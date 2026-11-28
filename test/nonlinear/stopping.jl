@@ -342,6 +342,53 @@ end
     @test stopping_test(st_both) == :stationarity
 end
 
+# A least-squares method whose step divides `x` by `100` along a factor of rank `rank` whose
+# diagnostics read the step's start stationary; their re-measure at the end of the step reports
+# full column rank and the ratio `1`, which is not stationary.
+struct RankStep
+    rank::Int32
+end
+struct RankState{T}
+    rank::Int32
+    gradratio::T
+end
+GeometricSolvers.init_state(::RankStep, prob, x, p) = RankState(Int32(-1), eltype(x)(NaN))
+GeometricSolvers.state_rank(s::RankState) = s.rank
+GeometricSolvers.state_jnorm(s::RankState) = one(s.gradratio)
+GeometricSolvers.state_gradratio(s::RankState) = s.gradratio
+function GeometricSolvers.refresh_diagnostics!!(s::RankState, ::RankStep, prob, x, Fx, p)
+    return RankState(Int32(length(x)), one(s.gradratio))
+end
+rank_residual(x, p) = SVector(x[1], one(eltype(x)) / 1000)
+function GeometricSolvers.step!!(s, m::RankStep, prob, x, Fx, p)
+    T = eltype(x)
+    x₊ = x / 100
+    F₊ = rank_residual(x₊, p)
+    info = StepInfo{T}(SUCCESS, sqrt(sum(abs2, F₊)), sqrt(sum(abs2, x₊ - x)), Int32(0),
+        false, false, false)
+    return x₊, F₊, RankState(m.rank, zero(T)), info
+end
+
+@testset "the rate test reads the rank of the step's factor, not of its re-measure, $T" for T in REAL_ELTYPES
+    # each step's factor reads its start stationary, so the solve re-measures the diagnostics at
+    # the end of the step, where they report full rank and fail the stationarity test; the step
+    # lowers `‖F‖`, so the solve goes on. Under `x_abstol = 1/200` the rate test holds at the third
+    # step: along a step's factor of full rank it ends the solve there, and along one of rank `0`
+    # the step test `‖Δ₃‖ ≤ x_abstol` returns `STALLED`
+    prob = GeometricSolvers.LeastSquaresProblem(rank_residual, 2)
+    opt = Options(T; f_abstol = 0, f_reltol = 0, x_abstol = T(1) / 200, max_iterations = 5)
+    _, st_full = solve(prob, SVector{1, T}(1), RankStep(Int32(1)); options = opt)
+    @test st_full.code == SUCCESS
+    @test st_full.contracted
+    @test st_full.iterations == 3
+    x, st = solve(prob, SVector{1, T}(1), RankStep(Int32(0)); options = opt)
+    @test st.code == STALLED
+    @test !st.contracted
+    @test !st.stationary
+    @test st.iterations == 3
+    @test x[1] ≈ T(1e-6)
+end
+
 @testset "a Deflated problem reports the rate of its steps, $T" for T in REAL_ELTYPES
     # its residual test reads a status of its own, which keeps the rate of the step
     prob = GeometricSolvers.Deflated(NonlinearProblem((x, p) -> SVector(x[1]^2 - 2)),
