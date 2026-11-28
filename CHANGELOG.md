@@ -220,6 +220,36 @@ so that a compat-only bump can be told apart from an interface change.
   and its verdict on synthetic rows, among them a cell with no solve from a recycled space, which
   meets neither rule.
 
+- **`scripts/recycling_spike.jl` keeps the preconditioner across the ten solves of a cell, and
+  marks a cell in which no linear solve starts from a recycled space as `vacuous`.** Every column
+  takes the LU preconditioner of `Newton(; reuse = 1000, keep_factor = true)`, and the script's
+  Newton loop of GCRO-DR takes the same rule: a refresh at the first step of the sequence, 1000
+  steps after a refresh, after an inner solve at its cap, after a step along a reused
+  preconditioner with the rate `θ ≥ 1`, and at the first step of a solve after one that kept no
+  preconditioner, and the rate and step tests of the default `Options` for the full step that
+  both loops take. Each row adds the solves that start on a kept preconditioner and the
+  mark; a vacuous cell counts for neither rule, and the verdict counts the vacuous cells and,
+  where all 16 are, evaluates neither rule and says that the spike measures nothing.
+  Its GCRO-DR divides each QR factorisation, least-squares solve and harmonic Ritz pencil by the
+  largest entry of its matrix and holds the recycled space as unit columns, solves
+  `(τ A) y = τ b` to the tolerance `τ tol` for a power of two `τ ≤ 1` that keeps `τ n max|Aᵢⱼ|`
+  below `floatmax/32`, so that its Arnoldi process and its `A·U` products run on `τ A` and no
+  iterate is larger than the solution `y`, and raises an error where the norm of a residual is not
+  finite. On the control matrix scaled by `4√floatmax` and by `floatmax/8`, with right-hand sides
+  of norm 1 times the scale, it raises no exception, where the earlier script raised
+  `LAPACKException(30)` from the pencil `Gᴴ G`, or a `SingularException` for some right-hand sides
+  at `floatmax/8`; it gives the solution of scale 1, and its recycled space spans the six
+  eigenvectors of the smallest eigenvalues that it spans at scale 1. Where `τ < 1`, the right-hand
+  side is scaled with the operator, so the raw right-hand side of the control at `floatmax/8`, of
+  norm 2.5 `floatmax`, gives the solution of scale 1; a right-hand side whose norm overflows ends
+  with the error where `τ = 1`, on an operator that needs no scaling. Its classical Gram–Schmidt
+  with a second pass is one function, and a test fails where the second pass is lost. On the base
+  `a935115` with this script, on an Apple M4 Max with Julia 1.13.4, OpenBLAS 0.3.30 and 2 BLAS
+  threads, the control gave 779, 408 and 271 products, and every cell of the grid gave the same
+  count in all three columns (59 over 30 Newton steps at `η = 1e-2`, 81 over 21 at `η = 1e-6`),
+  with one refresh per column and nine of the ten solves starting on the kept preconditioner. No
+  linear solve started from a recycled space: all 16 cells are vacuous.
+
 ### Changed
 
 - **`Reparametrized(prob, g, ∂g)` refuses a `prob` that is itself a `Reparametrized`, which
