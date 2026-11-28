@@ -1423,8 +1423,8 @@
   `|x − root| = 1.660e-2`. `Newton(; reuse = 3)` reaches the root after 4 iterations on both rows.
   In `Float64`, at `X = 1e6` and `1e8`, `Newton(; reuse = 3)` stops early with
   `contracted = true` as well (`|x − root| = 1.592e-5` and `3.978e-4`), and the same on the base
-  of #148 at a935115, so that half is a property of the rate test along a reused factor. A fix that skips a step along
-  stored pairs in the rate test, as it skips a shortened step, needs the step to report such a
-  step.
+  of #148 at a935115, so that half is a property of the rate test along a reused factor. A fix
+  that skips a step along stored pairs in the rate test, as it skips a shortened step, needs the
+  step to report such a step.
 - **kind:** defect
 - **found:** #148
