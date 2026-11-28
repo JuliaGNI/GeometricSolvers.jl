@@ -90,17 +90,25 @@ so that a compat-only bump can be told apart from an interface change.
   2.44e-4, and the smallest of a non-invariant step, 0.0168, measured by
   `scripts/gmres_breakdown_ratio.jl` on the reduced-basis systems of the tests and the
   Float32-basis column of the standard test set; the separation holds on those systems only. A
-  genuine remainder below the bound is taken as round-off and costs a restart. At such a
-  breakdown, a rotated diagonal entry below the same bound counts as zero, a `J` singular on the
-  Krylov space, and the solve stops without convergence, only where the entry `g[j]` of the rotated
+  genuine remainder below the bound is taken as round-off and costs a restart. At every such
+  breakdown, a rotated diagonal entry (the pivot) below the same bound counts as zero, so the
+  weight of its column is zero, also where the cycle restarts. The solve stops without
+  convergence, `J` singular on the Krylov space, only where the entry `g[j]` of the rotated
   right-hand side, the residual that the step cannot remove, exceeds `sqrt(eps(TB)) ‖r₀‖` with `r₀`
   the residual at the start of the cycle; below that, the cycle ends on its true residual and
   restarts. `|g[j]| / ‖r₀‖` is at least 0.895 on the singular systems of the tests and their
-  rotated frames, and at most 2.91e-4 (`--check-bounds=auto`) or 0.0143 (`yes`) for a `Float16`
-  basis and 3.03e-8 for a `Float32` basis at the
+  rotated frames, and at most 1.72e-3 (`--check-bounds=auto`) or 0.0143 (`yes`) for a `Float16`
+  basis and 2.3e-8 for a `Float32` basis at the
   steps that restart on the consistent `J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ`, `b = u₁` in a rotated frame
   (`scripts/gmres_singular_ratio.jl`); with a `Float16` basis on `Float64`, the rows with δ = 0.1
-  and 0.3 (CGS2 δ = 0.3; MGS δ = 0.1 and 0.3) now restart and converge. A consistent operator that
+  and 0.3 (CGS2 δ = 0.3; MGS δ = 0.1 and 0.3) now restart and converge. On the consistent
+  grid of known issue K149 (`J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ`, `b = u₁` in a rotated frame, a
+  `Float32` basis on `Float64` and a `Float16` basis on `Float32`, restart 20, `maxiter` 200, δ in
+  1e-7–0.3, both Gram–Schmidt forms), 18 of 44 solves converge with `--check-bounds=auto` and 6 of
+  44 with `yes`, against 11 and 1 with the pivot kept, and the largest ‖d‖ falls from 1.1e17 to
+  1.5e15. One row, a `Float16` basis on `Float32` with MGS and δ = 1e-5, converges only with the
+  pivot kept (`auto`) and now reads `J` as singular (known issue K154); the rows with a `Float16`
+  basis on `Float64` are unchanged. A consistent operator that
   is singular at the precision of a `Float16` basis still reads as singular and stops without
   convergence: that operator on `Float64` with δ ≤ 3e-5 gives ratios 0.986–1.00 (known issue
   K154). An

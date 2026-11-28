@@ -274,10 +274,11 @@ doi:10.1137/0914028).
   stored column is parallel to its vector and has unit norm only to the round-off of `TB`;
   without the test the step would take it for a new basis vector parallel to the last one. A
   genuine remainder below that bound is taken as round-off too, which costs a restart. At such a
-  breakdown, a rotated diagonal entry below the same bound is zero where the entry of the rotated
-  right-hand side, which the step cannot remove, exceeds ``\\sqrt{\\mathrm{eps}(TB)}`` times the
-  residual at the start of the cycle: `J` is singular on the Krylov space, and the solve stops
-  without convergence. Below that the cycle ends on its true residual and restarts. An operator
+  breakdown, a rotated diagonal entry below the same bound is zero, and so is the weight of its
+  column. Where the entry of the rotated right-hand side, which the step cannot remove, exceeds
+  ``\\sqrt{\\mathrm{eps}(TB)}`` times the residual at the start of the cycle, `J` is singular on
+  the Krylov space, and the solve stops without convergence. Below that the cycle ends on its true
+  residual and restarts. An operator
   that is nonsingular on the space but singular at the precision of `TB` reads as singular too,
   and stops so, for example ``J = u_2 (u_1 + u_2)^T + \\delta u_1 u_1^T`` and ``b = u_1`` in a
   rotated frame, with a `Float16` basis on `Float64` and ``\\delta \\le 3 \\cdot 10^{-5}``, and
@@ -542,9 +543,11 @@ go on, as the `basis_eltype` field of [`GMRES`](@ref) states; the rotation of th
 takes `H[j+1, j]` as zero. The residual of
 the reduced problem is then zero, unless `J` is singular on that space: the rotated diagonal entry
 is then zero too, the residual is that of the last entry of the right-hand side, and the solve
-reports no convergence. On a basis stored in another type, it stops so only where that entry
-exceeds ``\\sqrt{\\mathrm{eps}(TB)}`` times the residual at the start of the cycle; below that the
-cycle ends on its true residual and restarts. A restarted cycle forms its new residual with one
+reports no convergence. On a basis stored in another type, a rotated diagonal entry at the
+round-off of the basis is zero at such a breakdown, and the solve stops so only where that last
+entry exceeds ``\\sqrt{\\mathrm{eps}(TB)}`` times the residual at the start of the cycle; below
+that the cycle ends on its true residual and restarts.
+A restarted cycle forms its new residual with one
 more product, `b - J M⁻¹ u`, so a restart costs one Jacobian–vector product. On a workspace with
 `Z`, the flexible path, the solution update is ``u \\mathrel{+}= Z_k y``, the direction is `u`
 itself and the restart residual is `b - J u`. On a basis stored in a type other than that of `b`,
@@ -552,7 +555,8 @@ every cycle ends on that product, and the solve converges where the true residua
 tolerance; a cycle that misses it restarts, unless it ended at `maxiter` or on a breakdown whose
 reduced residual misses the tolerance too, and the reported residual is the true one. The
 least-squares problem is solved from the Givens-rotated Hessenberg matrix, whose diagonal entry is
-`0` only where the reduced system is singular, and the corresponding weight is then `0`.
+`0` only where the reduced system is singular or, on a basis stored in another type, at the
+round-off of the basis at a breakdown, and the corresponding weight is then `0`.
 """
 function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxiter,
         restart; mgs::Bool = false) where {T, R}
@@ -641,15 +645,16 @@ function gmres_solve!(ws::GMRESWorkspace{T, R}, jvp_op!, P, b, bnorm, tol, maxit
             # direction where the cycle would go on: the Krylov space is invariant to that
             # round-off, and the step is a breakdown: the diagonal entry `H[j, j]`, `g[j]` and the
             # residual become those of a rotation of a zero `H[j+1, j]`, which the weights and the
-            # stop of the cycle read. A diagonal entry `a` at that round-off is zero too where
-            # `g[j]` is above `sqrt(eps(TB))` of the residual at the start of the cycle: `J` is
-            # singular on the space, and the residual keeps `g[j]`; below that the cycle ends on
-            # its true residual and restarts
+            # stop of the cycle read. A diagonal entry `a` at that round-off is zero too, so the
+            # weight of column `j` is zero rather than of order 1 / eps(TB). Where `g[j]` is above
+            # `sqrt(eps(TB))` of the residual at the start of the cycle, `J` is singular on the
+            # space, and the residual keeps `g[j]`; below that the cycle ends on its true residual
+            # and restarts
             if reduced_basis(ws) && linres > atol && j < mr && used < maxiter &&
                basis_breakdown(ws, hj, w₀)
                 hj = zero(R)
                 singular = singular_breakdown(ws, R(abs(a)), w₀, R(abs(gj)), β)
-                ws.H[j, j] = singular ? zero(T) : a
+                ws.H[j, j] = basis_breakdown(ws, R(abs(a)), w₀) ? zero(T) : a
                 ws.g[j] = gj
                 linres = singular ? R(abs(gj)) : zero(R)
             end
@@ -780,12 +785,12 @@ end
 # `sqrt(eps(TB)) β` for the residual `β` at the start of the cycle; below that the cycle ends on
 # its true residual and restarts. On the singular systems of the tests and their rotated frames
 # `gj / β` is at least 0.895, and on the consistent operator `u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ` in a
-# rotated frame it is at most 2.91e-4 (`--check-bounds=auto`) and 0.0143 (`yes`) for a Float16
-# basis and 3.03e-8 (either) for a Float32 one at the steps that restart
+# rotated frame it is at most 1.72e-3 (`--check-bounds=auto`) and 0.0143 (`yes`) for a Float16
+# basis and 2.3e-8 (either) for a Float32 one at the steps that restart
 # (`scripts/gmres_singular_ratio.jl`). That operator reads as singular at the precision of a
-# Float16 basis where `δ ≤ 3e-5` on Float64 and where `δ = 1e-7`, with ratios of 0.986–1.00, and,
-# with `--check-bounds=yes` only, at one step of a Float16 basis on Float32 after many restarts,
-# with 0.0508: the solve stops there without convergence (K154).
+# Float16 basis where `δ ≤ 3e-5` on Float64 and where `δ = 1e-7`, and, with
+# `--check-bounds=auto` only, where `δ = 1e-5` on Float32 with MGS, with ratios of 0.986–1.00:
+# the solve stops there without convergence (K154).
 @inline function singular_breakdown(
         ws::GMRESWorkspace{T, R, V}, a, w₀, gj, β) where {T, R, V}
     return basis_breakdown(ws, a, w₀) && gj > sqrt(R(eps(real(eltype(V))))) * β

@@ -2287,6 +2287,31 @@ end
     @test isapprox(info.resnorm, rnorm(b .- op(similar(d), d)); rtol = 8 * eps(T))
 end
 
+# The consistent operator above with a Float32 basis on Float64 and δ = 0.3: a breakdown step whose
+# rotated pivot is at the round-off of the basis restarts, and the pivot counts as zero there too,
+# so the weight of its column is zero rather than of order 1 / eps(TB). The restarted solve
+# converges in 4–9 iterations; with that pivot kept, both rows run to `maxiter = 200` without
+# convergence (K149).
+@testset "A breakdown that restarts takes a pivot at the round-off of a reduced basis as zero, mgs = $mgs, Float32 on Float64" for mgs in (
+    false, true)
+    T = Float64
+    TB = Float32
+    n = 50
+    Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
+    u₁ = Q * [fill(T(0.2), 25); zeros(T, 25)]
+    u₂ = Q * [zeros(T, 25); fill(T(0.2), 25)]
+    s = u₁ .+ u₂
+    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v) .+ T(0.3) .* u₁ .* sum(u₁ .* v); Jv)
+    b = copy(u₁)
+    tol = 1e-8
+    ws = init_gmres_workspace(GMRES(; maxiter = 200, basis_eltype = TB), zeros(T, n))
+    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(200), Int32(20); mgs)
+    @test info.converged
+    @test info.iterations < 20
+    @test rnorm(b .- op(similar(d), d)) <= tol * rnorm(b)
+    @test isapprox(info.resnorm, rnorm(b .- op(similar(d), d)); rtol = 8 * eps(T))
+end
+
 # A singular operator with a part that `J` reaches, `J = Q (u₂ (u₁ + u₂)ᵀ + u₃ u₃ᵀ) Qᵀ` and
 # `b = Q (u₁ + c u₃)` for orthonormal `u₁`, `u₂`, `u₃`: `range(J) = span(Q u₂, Q u₃)`, so every
 # residual is at least 1, and the rotated right-hand side keeps about 1 at the singular step of
