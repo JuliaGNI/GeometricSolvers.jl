@@ -1366,11 +1366,17 @@
   of the basis counts as zero, and over `δ` in `1e-7`–`0.3` and both Gram–Schmidt forms converges
   within `maxiter = 200` in 18 of 44 solves with `--check-bounds=auto` and in 6 of 44 with
   `--check-bounds=yes`, with a true residual up to `96 ‖b‖` and `‖d‖` up to `1.5e15`
-  (`scripts/gmres_singular_ratio.jl` sets the grid; two runs per mode, Julia 1.13.4). With that
-  pivot kept on the restart, 11 and 1 of 44 converge, with a true residual up to `1.1e6 ‖b‖` and
-  `‖d‖` up to `1.1e17`; one row, a `Float16` basis on `Float32` with MGS and `δ = 1e-5`, converges
-  only then, with `--check-bounds=auto`, and with the zero pivot it reads `J` as singular (K154).
-  A Newton step on such a direction depends on its line search to reject it.
+  (`scripts/gmres_singular_ratio.jl` sets the grid; two runs per mode, Julia 1.13.4 on aarch64
+  macOS). With that pivot kept on the restart, 11 and 1 of 44 converge, with a true residual up to
+  `1.1e6 ‖b‖` and `‖d‖` up to `1.1e17`; one row, a `Float16` basis on `Float32` with MGS and
+  `δ = 1e-5`, converges only then, with `--check-bounds=auto`, and with the zero pivot it reads
+  `J` as singular (K154). The counts depend on the platform: the CGS2 row with a `Float32` basis
+  and `δ = 0.3`, which converges here in 5 iterations, runs to `maxiter = 200` at
+  `1.6e-8 ‖b‖` on x86_64 Linux (CI of a2c37e0, Julia min and 1). The weight of step 2 above leaves
+  `‖d‖` at `3.9e8`–`7.6e8` on that row, and its true residual at `2.7e-9`–`9.5e-9 ‖b‖` over seven
+  emulated summation orders of the reductions, at the tolerance `1e-8`; with the pivot kept it
+  converges in none of them, at `3.0e-6`–`1.4 ‖b‖`. A Newton step on such a direction depends on
+  its line search to reject it.
 - **kind:** defect
 - **found:** 2026-11-27
 

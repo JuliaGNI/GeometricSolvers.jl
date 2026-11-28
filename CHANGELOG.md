@@ -104,14 +104,14 @@ so that a compat-only bump can be told apart from an interface change.
   and 0.3 (CGS2 δ = 0.3; MGS δ = 0.1 and 0.3) now restart and converge. On the consistent
   grid of known issue K149 (`J = u₂ (u₁ + u₂)ᵀ + δ u₁ u₁ᵀ`, `b = u₁` in a rotated frame, a
   `Float32` basis on `Float64` and a `Float16` basis on `Float32`, restart 20, `maxiter` 200, δ in
-  1e-7–0.3, both Gram–Schmidt forms), 18 of 44 solves converge with `--check-bounds=auto` and 6 of
-  44 with `yes`, against 11 and 1 with the pivot kept, and the largest ‖d‖ falls from 1.1e17 to
-  1.5e15. One row, a `Float16` basis on `Float32` with MGS and δ = 1e-5, converges only with the
-  pivot kept (`auto`) and now reads `J` as singular (known issue K154); the rows with a `Float16`
-  basis on `Float64` are unchanged. A consistent operator that
-  is singular at the precision of a `Float16` basis still reads as singular and stops without
-  convergence: that operator on `Float64` with δ ≤ 3e-5 gives ratios 0.986–1.00 (known issue
-  K154). An
+  1e-7–0.3, both Gram–Schmidt forms), 18 of 44 solves converge on aarch64 macOS with
+  `--check-bounds=auto` and 6 of 44 with `yes`, against 11 and 1 with the pivot kept, and the
+  largest ‖d‖ falls from 1.1e17 to 1.5e15; the counts depend on the platform and the summation
+  order (known issue K149). One row, a `Float16` basis on `Float32` with MGS and δ = 1e-5,
+  converges only with the pivot kept (`auto`) and now reads `J` as singular (known issue K154); the
+  rows with a `Float16` basis on `Float64` are unchanged. A consistent operator that is singular at
+  the precision of a `Float16` basis still reads as singular and stops without convergence: that
+  operator on `Float64` with δ ≤ 3e-5 gives ratios 0.986–1.00 (known issue K154). An
   invariant space whose stored columns also carry
   a direction error of order eps(TB) (ratios 0.27-0.63 measured) leaves a remainder the test does
   not see, and the cycle goes on with it as a new direction; those solves converge. With

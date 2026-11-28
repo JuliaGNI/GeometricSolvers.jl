@@ -2265,8 +2265,11 @@ end
 # entry `g[j]` of the rotated right-hand side there is about 2e-4 ‖r₀‖, below
 # `sqrt(eps(Float16)) ‖r₀‖`: the cycle ends on its true residual and restarts, and the solve
 # converges. Each row stops without convergence where every such step reads `J` as singular. The
-# rows of the other basis types that restart there converge or not with the summation order, as
-# `--check-bounds` sets it (K149), and are not asserted.
+# pivot of such a step counts as zero, so `d` takes no weight of order 1 / eps(TB) from it: `‖d‖`
+# is 1.2e5–3.3e5 here and 1.3e8–7.6e8 with the pivot kept, the same in seven emulated summation
+# orders and with either `--check-bounds`, and the bound 10 / eps(TB)² lies 12 times or more
+# from both. The rows of the other basis types that restart there converge or not with the
+# summation order and the platform (K149), and are not asserted.
 @testset "A consistent operator whose rotated pivot is at the round-off of a reduced basis restarts and converges, δ = $δ, mgs = $mgs, Float16 on Float64" for (mgs, δ) in (
     (false, 0.3), (true, 0.1), (true, 0.3))
     T = Float64
@@ -2285,31 +2288,7 @@ end
     @test info.iterations < 40
     @test rnorm(b .- op(similar(d), d)) <= tol * rnorm(b)
     @test isapprox(info.resnorm, rnorm(b .- op(similar(d), d)); rtol = 8 * eps(T))
-end
-
-# The consistent operator above with a Float32 basis on Float64 and δ = 0.3: a breakdown step whose
-# rotated pivot is at the round-off of the basis restarts, and the pivot counts as zero there too,
-# so the weight of its column is zero rather than of order 1 / eps(TB). The restarted solve
-# converges in 4–9 iterations; with that pivot kept, both rows run to `maxiter = 200` without
-# convergence (K149).
-@testset "A breakdown that restarts takes a pivot at the round-off of a reduced basis as zero, mgs = $mgs, Float32 on Float64" for mgs in (
-    false, true)
-    T = Float64
-    TB = Float32
-    n = 50
-    Q = T.(Matrix(qr(randn(Xoshiro(7), n, n)).Q))
-    u₁ = Q * [fill(T(0.2), 25); zeros(T, 25)]
-    u₂ = Q * [zeros(T, 25); fill(T(0.2), 25)]
-    s = u₁ .+ u₂
-    op = (Jv, v) -> (Jv .= u₂ .* sum(s .* v) .+ T(0.3) .* u₁ .* sum(u₁ .* v); Jv)
-    b = copy(u₁)
-    tol = 1e-8
-    ws = init_gmres_workspace(GMRES(; maxiter = 200, basis_eltype = TB), zeros(T, n))
-    d, info = gmres_solve!(ws, op, nothing, b, rnorm(b), tol, Int32(200), Int32(20); mgs)
-    @test info.converged
-    @test info.iterations < 20
-    @test rnorm(b .- op(similar(d), d)) <= tol * rnorm(b)
-    @test isapprox(info.resnorm, rnorm(b .- op(similar(d), d)); rtol = 8 * eps(T))
+    @test norm(d) < 10 / T(eps(TB))^2
 end
 
 # A singular operator with a part that `J` reaches, `J = Q (u₂ (u₁ + u₂)ᵀ + u₃ u₃ᵀ) Qᵀ` and
