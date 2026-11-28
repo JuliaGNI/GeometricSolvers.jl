@@ -6,7 +6,10 @@
 Sequential nonlinear combinator that runs `count` sub-steps of `method` (`count >= 1`) per
 outer solver iteration, synchronising any line-search baseline merit between sub-steps and
 reporting the combined outer step norm ``\\|x^{(\\text{count})} - x^{(0)}\\|``. The outer step is
-`STALLED` when every sub-step is.
+`STALLED` when every sub-step is. An outer step of two or more sub-steps that is shorter than its
+longest sub-step is `shortened` in its [`StepInfo`](@ref), so the rate test of [`Options`](@ref)
+does not read it: its sub-steps cancel, as along a cycle of `method`, and its small norm is no
+sign of a contraction.
 """
 struct Repeat{M}
     method::M
@@ -67,7 +70,7 @@ end
 # sub-steps before it reached. The step norm is the outer one, also after such a failure: a
 # `LINESEARCH_FAILED` step that earlier sub-steps moved is not a zero step. Otherwise the outer
 # step is `STALLED` when every sub-step is, and `SUCCESS` else, so `Repeat(m, 1)` stalls where
-# `m` does.
+# `m` does. Sub-steps that cancel mark the outer step `shortened`, as `cancelled_substeps` says.
 function step!!(
         state::RepeatState, m::Repeat,
         prob::AbstractNonlinearProblem, x, Fx, p)
@@ -81,6 +84,8 @@ function step!!(
     promoted = false
     limited = false
     shortened = false
+    substeps = Int32(0)
+    longest = zero(R)
     for _ in Base.OneTo(m.count)
         s = sync_merit(s, m.method, norm2(Fx))
         x, Fx, s, info = step!!(s, m.method, prob, x, Fx, p)
@@ -90,6 +95,8 @@ function step!!(
         limited |= info.limited
         shortened |= info.shortened
         stalled &= info.code == STALLED
+        substeps += one(Int32)
+        longest = max(longest, R(info.stepnorm))
         if is_hard_failure(info)
             code = info.code
             break
@@ -97,6 +104,7 @@ function step!!(
     end
     stalled && (code = STALLED)
     stepnorm = rnorm(map!!(-, state.x₀, x, x_start))
+    shortened |= cancelled_substeps(substeps, stepnorm, longest)
     info_out = StepInfo{R}(code, fnorm, stepnorm, failures, promoted, limited, shortened)
     return x, Fx, RepeatState(s, state.Fx, state.x₀), info_out
 end

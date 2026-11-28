@@ -170,12 +170,14 @@ Each step's rate ``θ_k = \|Δ_k\| / \|Δ_{k-1}\|`` goes into `status.rate`. The
 [`Options`](@ref) joins the step test: a step with ``\hat θ_k = \max(θ_k, θ_{k-1}) < 1`` and
 ``\hat θ_k / (1 - \hat θ_k) \|Δ_k\| ≤ κ \max(x_{abstol}, x_{reltol} \|x\|)`` returns `SUCCESS` with
 `status.contracted` set, and [`stopping_test`](@ref) then returns `:contraction`; it reads no step
-that a line search shortened below the full step, no step
-along an SVD factor whose rank is below the number of the unknowns it solves for, the outer ones of
+that a line search shortened below the full step, no step of a [`Multiplicative`](@ref) or a
+[`Repeat`](@ref) whose sub-steps cancel, so that the step is shorter than its longest sub-step, no
+step along an SVD factor whose rank is below the number of the unknowns it solves for, the outer ones of
 an eliminated problem, nor a step of a composition whose stepping member has such a factor. On a
 [`LeastSquaresProblem`](@ref), a [`VariableProjection`](@ref) and a [`Reparametrized`](@ref)
 problem around a `LeastSquaresProblem` it reads no step along a reused factor, whose steps
-contract onto a point that need not be stationary. With
+contract onto a point that need not be stationary. With `rate_test = false` no step reads the
+rate test, which the inner solves of a [`BatchEliminated`](@ref) problem use. With
 `roundoff = true`, a step whose increment stops decreasing returns `STALLED` at the iterate it
 reached. `status.reused` is set where the last step of a [`Newton`](@ref) solve with `reuse`
 stepped along a reused factor.

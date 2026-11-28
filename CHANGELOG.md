@@ -240,16 +240,22 @@ so that a compat-only bump can be told apart from an interface change.
   `status.contracted`, unless the stationarity test holds there, and `stopping_test` returns
   `:contraction`. The rate test reads only full-length steps. `StepInfo` has a new seventh field,
   `shortened`, set where a line search (`Backtracking`, `Bisection`, `StrongWolfe`) accepted a
-  step length `α < 1`, the full step being `α = 1`; the constructor form with the first six fields
-  sets it to `false`, `Static` does not set it, and the compositions (`Repeat`,
-  `Multiplicative`, `Additive`, `Anderson`, `LeftPreconditioned`) and the eliminated problems
-  carry it from their members, as they carry `limited`. A line search that shortens several steps
+  step length `α < 1`, the full step being `α = 1`, and where a `Multiplicative` or `Repeat` outer
+  step of two or more sub-steps is shorter than its longest sub-step; the constructor form with
+  the first six fields sets it to `false`, `Static` does not set it, and the compositions
+  (`Repeat`, `Multiplicative`, `Additive`, `Anderson`, `LeftPreconditioned`) and the eliminated
+  problems carry it from their members, as they carry `limited`. A line search that shortens several steps
   in a row gives each a small rate, though the iterate is not near a root: on
   `F(x) = x³ − 2x + 2` with `Newton(; globalization = Backtracking())` from 0.6, 0.8 and 1.0, a
   rate test that read such steps returned `SUCCESS` at `x = 0.8165`, a local minimum of `|F|` with
   `F = 0.911`, in five of six solves (`x_abstol = 1e-4` and `1e-3`); with the field those solves
-  return `STALLED`, as without the rate test. The step test and the round-off stop still read a
-  shortened step. The larger of the last two rates still keeps the one small rate of an irregular
+  return `STALLED`, as without the rate test. Sub-steps that cancel give the same small rates: on
+  the same `F` with `Multiplicative(Newton, Newton)` or `Repeat(Newton, 2)` from 0.001, 0.01 and
+  0.1, the sub-steps follow the Newton cycle `0 → 1 → 0`, the outer steps shrink, and a rate test
+  that read them returned `SUCCESS` at `‖F‖ = 2`; the shortened outer step makes those solves
+  return `STALLED`, as without the rate test. `Additive`, `Anderson`, `Broyden`, `Switch`,
+  `Fallback` and `LeftPreconditioned` mark no step of their own. The step test and the round-off
+  stop still read a shortened step. The larger of the last two rates still keeps the one small rate of an irregular
   full-length step, such as a secant step or an inexact Krylov step, from ending a solve far from
   a root: the Powell badly scaled problem under matrix-free `Newton` with `GMRES` and
   `Backtracking` has at iteration 77 a full step of rate 8e-8 after a shortened step, and the
@@ -266,13 +272,20 @@ so that a compat-only bump can be told apart from an interface change.
   is `κ`, default `1/10`, and a value outside `(0, 1)` in `real(T)` raises an `ArgumentError`.
   The new flag `roundoff`, default `false`, returns `STALLED` at the
   first step of rate `θₖ ≥ 1` after a step of rate below `1` (Hairer, McLachlan and Razakarivony
-  2008, *BIT Numer. Math.* 48, p. 235). The new `Newton` keyword `keep_factor`, which needs
+  2008, *BIT Numer. Math.* 48, p. 235). The new field and keyword `rate_test`, default `true`, the
+  last positional argument of `Options{R}(…, norm, kappa, roundoff, rate_test)`, turns the rate
+  test off with `false`: no step reads it (`rate_converged` returns `false`), and the residual,
+  stationarity and step tests and the round-off stop end a solve. The new `Newton` keyword `keep_factor`, which needs
   `reuse`, keeps the factor and its age from one solve of a `NonlinearSolver` to the next after a
   `SUCCESS` in one step or with a last rate `θ ≤ 10⁻³`, not after a promoted solve, and
   `solve!(solver, x, p; refactorize = true)` drops it, as after a change of the step size, also on
   a stationarity, a deflated stationarity and an eliminated problem (there the outer factor); the
   `solve!` of a `ReparametrizedSolver` takes no such keyword (K150). The inner options of a
-  `BlockEliminated` and a `BatchEliminated` keep `kappa` and `roundoff`. Under
+  `BlockEliminated` keep `kappa`, `roundoff` and `rate_test`. The inner solves of a
+  `BatchEliminated` keep `kappa` and `roundoff` and run with `rate_test = false`, whatever
+  `inner_options` says: the inner tolerance of a batch follows a residual schedule, and the rate
+  test ended an inner solve with `SUCCESS` at a residual above that tolerance and above the
+  coarse ceiling `32 eps √N`, which the batch then deposited as converged. Under
   `reuse`, a step along a reused factor or preconditioner of rate `θ ≥ 1` refreshes it at the next
   step (the outer factor of an eliminated problem), and the new flag `status.reused` reports a
   last step along a reused factor; the `SINGULAR` status of a failed tangent factorisation in
@@ -285,7 +298,8 @@ so that a compat-only bump can be told apart from an interface change.
   of each step, which refreshes a reused factor at `θ ≥ 1`; and `refactorize = true` drops the
   factors of the members, also of a `Fallback` and a `Continuation`.
   `SolverStatus` grows from 36 to 44 bytes in `Float32` and from 56 to 72 in `Float64`, and
-  `Options` from 32 to 40 and from 56 to 72; both stay `isbits`. The step-test testset of
+  `Options` from 32 to 40 and from 56 to 72, where `rate_test` fits in the padding; both stay
+  `isbits`. The step-test testset of
   `test/nonlinear/solver.jl` sets `kappa = 1e-6`, because under `κ = 1/10` and `x_reltol = 0.5`
   the rate test returns `SUCCESS` before its step test holds. New tests:
   `test/nonlinear/stopping.jl`.
