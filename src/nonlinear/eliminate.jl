@@ -303,7 +303,7 @@ end
     return Options{R}(
         f_abs, f_rel, x_abs, x_rel,
         opt.min_iterations, opt.max_iterations, opt.max_stalls, g_t, opt.norm,
-        Adapt.adapt(to, opt.kappa), opt.roundoff)
+        Adapt.adapt(to, opt.kappa), opt.roundoff, opt.rate_test)
 end
 
 function Adapt.adapt_structure(
@@ -3153,7 +3153,10 @@ R_{\\text{in}}\\left(\\tfrac{1}{2}\\min(\\texttt{inner\\_atol\\_cap},
 so that the batch residual satisfies ``\\|g_1\\| < \\|g_2(\\text{prev})\\|^2`` wherever
 ``\\|g_2(\\text{prev})\\|^2 > 4\\,\\varepsilon(R_{\\text{in}})\\sqrt{N_p}``. Below that bound the
 floor binds: no arithmetic in `R_in` reaches the quadratic, and the batch residual stops at the
-floor of the batch's own precision instead of following the schedule. Each evaluation
+floor of the batch's own precision instead of following the schedule. The inner solves take the
+step test, the iteration bounds, the norm and the round-off stop of `inner_options`, and no rate
+test (`rate_test = false` in their [`Options`](@ref)): the rate test ends a solve at a residual
+above the inner tolerance, so a batch converges only by the residual test. Each evaluation
 records the pair `(‖g₁‖, ‖g₂(prev)‖)` in the fields `g₁_history` and `g₂_prev_history`, with `Inf`
 before the first outer residual exists, the index set it eliminated in `eliminated_index_log`, and
 accumulates its inner counts in `statuses`. A batch whose systems did not all converge, with a
@@ -3378,15 +3381,17 @@ end
 end
 
 # The options of the batch's inner solve at the tolerance `tol`: the template of `inner_options` for
-# the step test, the iteration bounds and the norm, with the residual test `tol` absolutely and not
-# at all relatively, so that a second evaluation at the same tolerance stops at `0` iterations,
-# and the default `g_tol`.
+# the step test, the iteration bounds, the norm and the round-off stop, with the residual test
+# `tol` absolutely and not at all relatively, so that a second evaluation at the same tolerance
+# stops at `0` iterations, the default `g_tol`, and no rate test. The schedule bounds the batch
+# residual, and the rate test ends a solve at a residual above `tol`, which the deposit then
+# carries as a converged one.
 @inline function _batch_inner_options(prob::BatchEliminated, tol)
     RIn, _ = _batch_real_types(prob)
     t = prob.inner_options
     return Options{RIn}(tol, zero(RIn), t.x_abstol, t.x_reltol,
         t.min_iterations, t.max_iterations, t.max_stalls, sqrt(eps(RIn)), t.norm,
-        t.kappa, t.roundoff)
+        t.kappa, t.roundoff, false)
 end
 
 # One inner batch solve from the warm start `prob.Y` at the tolerance `tol`, with the shared
