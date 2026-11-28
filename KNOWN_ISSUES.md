@@ -1430,6 +1430,24 @@
 - **kind:** defect
 - **found:** #148
 
+### K161 · The LU-factor and the refinement refusals of `newton_init_state` do not act on a `Reparametrized` around a `LeastSquaresProblem`
+
+- **location:** `src/nonlinear/newton.jl:1215` (the refusal of an LU, LDLT or Cholesky factor),
+  `src/nonlinear/newton.jl:1223` (the refusal of a refinement, K80)
+- **evidence:** both guards test `prob isa LeastSquaresProblem`, and the chart solve of a
+  `Reparametrized` problem passes its inner wrapper, which is no `LeastSquaresProblem`. With
+  `lsq = LeastSquaresProblem((x, p) -> SVector(x[1] - 1, x[1] + 1), nothing, 2)` and the identity
+  chart `chart(y, p) = y`, `init_state(m, lsq, SVector(3.0), nothing)` raises
+  `ArgumentError: LeastSquaresProblem does not support LUFactorization` for
+  `m = Newton(; linsolve = LUFactorization())` and `ArgumentError: LeastSquaresProblem does not
+  support refinement` for `m = Newton(; linsolve = QRFactorization(), refinement = Refinement())`,
+  while `init_state(m, Reparametrized(lsq, chart), SVector(3.0), nothing)` builds a state for
+  both. The two guards are code of `main`, read, not run there. The fix tests
+  `least_squares_steps(prob)`, which the chart solve forwards to its inner problem, in both
+  guards, as the refusal of a `BroydenUpdate` does; it goes to a separate pull request on `main`.
+- **kind:** defect
+- **found:** #148, the review of the merged branch
+
 ### K165 · A `Multiplicative` or `Repeat` contraction whose sub-steps alternate in sign does not end on the rate test
 
 - **location:** `src/composition/multiplicative.jl` (`cancelled_substeps`)
